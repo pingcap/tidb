@@ -68,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
+	pd "github.com/tikv/pd/client"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
@@ -1422,7 +1423,7 @@ func RunStreamRestore(
 	cfg.tableMappingManager = metaInfoProcessor.GetTableMappingManager()
 
 	// Capture restore start timestamp before any table creation (for blocklist)
-	restoreStartTS, err := restore.GetTSWithRetry(ctx, mgr.GetPDClient())
+	restoreStartTS, err := taskInfo.getRestoreStartTS(ctx, mgr.GetPDClient())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -1603,7 +1604,7 @@ func restoreStream(
 	var sstCheckpointSets map[string]struct{}
 	if cfg.UseCheckpoint {
 		gcRatioFromCheckpoint, err := client.LoadOrCreateCheckpointMetadataForLogRestore(
-			ctx, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder, cfg.logCheckpointMetaManager)
+			ctx, cfg.RestoreStartTS, cfg.StartTS, cfg.RestoreTS, oldGCRatio, cfg.tiflashRecorder, cfg.logCheckpointMetaManager)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1858,6 +1859,8 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		return nil, errors.Trace(err)
 	}
 
+	client.SetRestoreID(cfg.RestoreID)
+
 	return client, nil
 }
 
@@ -2082,6 +2085,13 @@ func (p *PiTRTaskInfo) hasTiFlashItemsInCheckpoint() bool {
 	return p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil && p.CheckpointInfo.Metadata.TiFlashItems != nil
 }
 
+func (p *PiTRTaskInfo) getRestoreStartTS(ctx context.Context, pdClient pd.Client) (uint64, error) {
+	if p.CheckpointInfo != nil && p.CheckpointInfo.Metadata != nil {
+		return p.CheckpointInfo.Metadata.RestoreStartTS, nil
+	}
+	return restore.GetTSWithRetry(ctx, pdClient)
+}
+
 func generatePiTRTaskInfo(
 	ctx context.Context,
 	mgr *conn.Mgr,
@@ -2186,7 +2196,7 @@ func isCurrentIdMapSaved(checkpointTaskInfo *checkpoint.TaskInfoForLogRestore) b
 }
 
 func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*stream.SchemasReplace, error) {
-	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tiflashRecorder,
+	schemasReplace := stream.NewSchemasReplace(cfg.tableMappingManager.DBReplaceMap, cfg.tableMappingManager.IsFromPiTRIDMap(), cfg.tiflashRecorder,
 		client.CurrentTS(), client.RecordDeleteRange, cfg.ExplicitFilter)
 	schemasReplace.AfterTableRewrittenFn = func(deleted bool, tableInfo *model.TableInfo) {
 		// When the table replica changed to 0, the tiflash replica might be set to `nil`.
