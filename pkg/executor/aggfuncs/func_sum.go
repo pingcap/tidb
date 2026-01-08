@@ -425,7 +425,7 @@ func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, s
 			continue
 		}
 
-		memDelta += d.valSet.Insert(key, val) + int64(len(key) + types.MyDecimalStructSize)
+		memDelta += d.valSet.Insert(key, val) + int64(len(key)+types.MyDecimalStructSize)
 
 		newSum := new(types.MyDecimal)
 		if err = types.DecimalAdd(&d.val, val, newSum); err != nil {

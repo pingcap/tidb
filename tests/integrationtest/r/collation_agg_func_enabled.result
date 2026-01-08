@@ -48,50 +48,48 @@ id	task	access object	operator info
 StreamAgg	root		funcs:group_concat(distinct collation_agg_func.t.value separator ",")->Column#5
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select upper(group_concat(distinct value)) from t;
-upper(group_concat(distinct value))
-ABC,DEF
 explain format='plan_tree' select group_concat(distinct value collate utf8mb4_bin) from t;
 id	task	access object	operator info
 StreamAgg	root		funcs:group_concat(distinct Column#6 separator ",")->Column#5
 └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select upper(group_concat(distinct value collate utf8mb4_bin)) from t;
-upper(group_concat(distinct value collate utf8mb4_bin))
-ABC,ABC,DEF
-explain format='plan_tree' select count(distinct value) from t;
+explain format='plan_tree' select count(distinct value) from t order by count(distinct value);
 id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct collation_agg_func.t.value)->Column#5
-└─TableReader	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select count(distinct value) from t;
+Sort	root		Column#5
+└─StreamAgg	root		funcs:count(distinct collation_agg_func.t.value)->Column#5
+  └─TableReader	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select count(distinct value) from t order by count(distinct value);
 count(distinct value)
 2
-explain format='plan_tree' select count(distinct value collate utf8mb4_bin) from t;
+explain format='plan_tree' select count(distinct value collate utf8mb4_bin) from t order by count(distinct value collate utf8mb4_bin);
 id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct Column#8)->Column#5
-└─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8
-  └─TableReader	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select count(distinct value collate utf8mb4_bin) from t;
+Sort	root		Column#5
+└─StreamAgg	root		funcs:count(distinct Column#9)->Column#5
+  └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#9
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select count(distinct value collate utf8mb4_bin) from t order by count(distinct value collate utf8mb4_bin);
 count(distinct value collate utf8mb4_bin)
 3
-explain format='plan_tree' select count(distinct value, value1) from t;
+explain format='plan_tree' select count(distinct value, value1) from t order by count(distinct value, value1);
 id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct collation_agg_func.t.value, collation_agg_func.t.value1)->Column#5
-└─TableReader	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select count(distinct value, value1) from t;
-count(distinct value, value1)
-3
-explain format='plan_tree' select count(distinct value collate utf8mb4_bin, value1) from t;
-id	task	access object	operator info
-StreamAgg	root		funcs:count(distinct Column#8, Column#9)->Column#5
-└─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, collation_agg_func.t.value1->Column#9
+Sort	root		Column#5
+└─StreamAgg	root		funcs:count(distinct collation_agg_func.t.value, collation_agg_func.t.value1)->Column#5
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select count(distinct value collate utf8mb4_bin, value1) from t;
+select count(distinct value, value1) from t order by count(distinct value, value1);
+count(distinct value, value1)
+3
+explain format='plan_tree' select count(distinct value collate utf8mb4_bin, value1) from t order by count(distinct value collate utf8mb4_bin, value1);
+id	task	access object	operator info
+Sort	root		Column#5
+└─StreamAgg	root		funcs:count(distinct Column#9, Column#10)->Column#5
+  └─Projection	root		cast(collation_agg_func.t.value, varchar(20) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#9, collation_agg_func.t.value1->Column#10
+    └─TableReader	root		data:TableFullScan
+      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+select count(distinct value collate utf8mb4_bin, value1) from t order by count(distinct value collate utf8mb4_bin, value1);
 count(distinct value collate utf8mb4_bin, value1)
 4
 explain format='plan_tree' select approx_count_distinct(value) from t;
