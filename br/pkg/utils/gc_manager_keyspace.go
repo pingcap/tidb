@@ -79,7 +79,8 @@ func (m *keyspaceGCManager) UpdateServiceSafePoint(ctx context.Context, sp BRSer
 }
 
 // StartServiceSafePointKeeper starts a goroutine to periodically update the keyspace GC barrier.
-// The keeper will run until the context is canceled, at which point it will delete the barrier.
+// The keeper will run until the context is canceled.
+// Barrier cleanup is handled by the caller setting TTL=0, similar to the unified GC manager.
 func (m *keyspaceGCManager) StartServiceSafePointKeeper(ctx context.Context, sp BRServiceSafePoint) error {
 	if sp.ID == "" || sp.TTL <= 0 {
 		return errors.Annotatef(errors.New("invalid service safe point"), "invalid service safe point %v", sp)
@@ -104,24 +105,6 @@ func (m *keyspaceGCManager) StartServiceSafePointKeeper(ctx context.Context, sp 
 	go func() {
 		defer updateTick.Stop()
 		defer checkTick.Stop()
-
-		// Ensure barrier is deleted when keeper exits
-		defer func() {
-			// Use background context to ensure cleanup completes even if ctx is canceled
-			cleanupCtx := context.Background()
-			_, err := m.gcClient.DeleteGCBarrier(cleanupCtx, sp.ID)
-			if err != nil {
-				log.Warn("failed to delete keyspace GC barrier on keeper exit",
-					zap.Uint32("keyspaceID", m.keyspaceID),
-					zap.String("barrierID", sp.ID),
-					zap.Error(err))
-			} else {
-				log.Debug("deleted keyspace GC barrier on keeper exit",
-					zap.Uint32("keyspaceID", m.keyspaceID),
-					zap.String("barrierID", sp.ID))
-			}
-		}()
-
 		for {
 			select {
 			case <-ctx.Done():
