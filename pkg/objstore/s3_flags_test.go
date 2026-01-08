@@ -17,6 +17,7 @@ package objstore
 import (
 	"net"
 	"testing"
+	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/dumpling/context"
@@ -391,4 +392,18 @@ func TestS3TidbRetryerNeverExhaustTokens(t *testing.T) {
 		_, err := retryer.GetRetryToken(ctx, opErr)
 		require.NoError(t, err)
 	}
+}
+
+func TestS3TiDBRetryer(t *testing.T) {
+	retryer := newTidbRetryer()
+	// S3 will run for retryer.MaxAttempts() attempts, so will have MaxAttempts - 1
+	// retries and delay between retries
+	var totalDelay time.Duration
+	for i := 1; i < retryer.MaxAttempts(); i++ {
+		delay, _ := retryer.RetryDelay(i, nil)
+		totalDelay += delay
+	}
+	require.Greater(t, totalDelay, 7*time.Minute)
+	require.Less(t, totalDelay, 9*time.Minute)
+	t.Log(totalDelay)
 }
