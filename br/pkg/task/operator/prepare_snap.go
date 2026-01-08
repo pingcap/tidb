@@ -232,7 +232,7 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error
 		logutil.CL(cx).Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
 		sp.BackupTS = rts
 	}
-	err = utils.StartServiceSafePointKeeperForGlobal(cx, cx.pdMgr.GetPDClient(), sp)
+	err = utils.StartServiceSafePointKeeperGlobal(cx, cx.pdMgr.GetPDClient(), sp)
 	if err != nil {
 		return err
 	}
@@ -242,7 +242,7 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error
 			ID:  sp.ID,
 			TTL: 0,
 		}
-		return utils.UpdateServiceSafePoint(ctx, cx.pdMgr.GetPDClient(), cancelSP)
+		return utils.UpdateServiceSafePointGlobal(ctx, cx.pdMgr.GetPDClient(), cancelSP)
 	})
 	// Note: in fact we can directly return here.
 	// But the name `keeper` implies once the function exits,

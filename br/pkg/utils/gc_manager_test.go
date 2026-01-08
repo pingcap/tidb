@@ -404,7 +404,7 @@ func TestGlobalGCManager_StartServiceSafePointKeeper(t *testing.T) {
 		codec: &mockCodec{keyspaceID: 0},
 	}
 
-	mgr, err := utils.NewGCSafePointManager(pdClient, storage)
+	_, err := utils.NewGCSafePointManager(pdClient, storage)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -416,8 +416,8 @@ func TestGlobalGCManager_StartServiceSafePointKeeper(t *testing.T) {
 		BackupTS: 2400,
 	}
 
-	// Start keeper
-	err = mgr.StartServiceSafePointKeeper(ctx, sp)
+	// Start keeper using the wrapper function
+	err = utils.StartServiceSafePointKeeper(ctx, pdClient, storage, sp)
 	require.NoError(t, err)
 
 	// Verify initial call happened
@@ -462,8 +462,8 @@ func TestKeyspaceGCManager_StartServiceSafePointKeeper(t *testing.T) {
 		BackupTS: 2600,
 	}
 
-	// Start keeper
-	err = mgr.StartServiceSafePointKeeper(ctx, sp)
+	// Start keeper using the wrapper function
+	err = utils.StartServiceSafePointKeeper(ctx, pdClient, storage, sp)
 	require.NoError(t, err)
 
 	gcClient := pdClient.gcStatesClients[keyspaceID]
@@ -580,7 +580,7 @@ func TestStorageAwareWrappers(t *testing.T) {
 		BackupTS: 2800,
 	}
 
-	err := utils.SetServiceSafePointWithStorage(ctx, pdClient1, storage1, sp)
+	err := utils.SetServiceSafePoint(ctx, pdClient1, storage1, sp)
 	require.NoError(t, err)
 	require.Equal(t, 1, pdClient1.updateServiceCalls)
 
@@ -595,7 +595,7 @@ func TestStorageAwareWrappers(t *testing.T) {
 		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
 	}
 
-	err = utils.SetServiceSafePointWithStorage(ctx, pdClient2, storage2, sp)
+	err = utils.SetServiceSafePoint(ctx, pdClient2, storage2, sp)
 	require.NoError(t, err)
 
 	gcClient := pdClient2.gcStatesClients[keyspaceID]
@@ -603,11 +603,11 @@ func TestStorageAwareWrappers(t *testing.T) {
 	require.Equal(t, 1, gcClient.setGCBarrierCalls)
 	require.Equal(t, 0, pdClient2.updateServiceCalls) // Should NOT call unified API
 
-	// Test 3: StartServiceSafePointKeeperWithStorage
+	// Test 3: StartServiceSafePointKeeper
 	ctx3, cancel3 := context.WithCancel(context.Background())
 	defer cancel3()
 
-	err = utils.StartServiceSafePointKeeperWithStorage(ctx3, pdClient2, storage2, sp)
+	err = utils.StartServiceSafePointKeeper(ctx3, pdClient2, storage2, sp)
 	require.NoError(t, err)
 
 	// Give keeper time to start

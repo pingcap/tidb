@@ -55,7 +55,7 @@ func (m *keyspaceGCManager) SetServiceSafePoint(ctx context.Context, sp BRServic
 
 	// Handle deletion case (TTL <= 0), same as unified manager behavior
 	if sp.TTL <= 0 {
-		return m.DeleteServiceSafePoint(ctx, sp.ID)
+		return m.DeleteServiceSafePoint(ctx, sp)
 	}
 
 	// Convert TTL from int64 seconds to time.Duration
@@ -78,13 +78,13 @@ func (m *keyspaceGCManager) SetServiceSafePoint(ctx context.Context, sp BRServic
 }
 
 // DeleteServiceSafePoint removes the keyspace GC barrier.
-func (m *keyspaceGCManager) DeleteServiceSafePoint(ctx context.Context, id string) error {
-	_, err := m.gcClient.DeleteGCBarrier(ctx, id)
+func (m *keyspaceGCManager) DeleteServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error {
+	_, err := m.gcClient.DeleteGCBarrier(ctx, sp.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	log.Debug("deleted keyspace GC barrier",
 		zap.Uint32("keyspaceID", m.keyspaceID),
-		zap.String("barrierID", id))
+		zap.String("barrierID", sp.ID))
 	return nil
 }

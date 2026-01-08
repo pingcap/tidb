@@ -1565,7 +1565,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
 		// remove the gc-safe-point
-		if err := utils.DeleteServiceSafePoint(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp.ID); err != nil {
+		if err := utils.DeleteServiceSafePoint(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp); err != nil {
 			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)

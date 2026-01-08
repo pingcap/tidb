@@ -24,7 +24,7 @@ type GCSafePointManager interface {
 	SetServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error
 
 	// DeleteServiceSafePoint removes the service safe point.
-	DeleteServiceSafePoint(ctx context.Context, id string) error
+	DeleteServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error
 }
 
 func NewGCSafePointManager(pdClient pd.Client, storage kv.Storage) (GCSafePointManager, error) {
@@ -52,7 +52,7 @@ func StartServiceSafePointKeeper(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return startServiceSafePointKeeper(ctx, sp, mgr)
+	return StartServiceSafePointKeeperInner(ctx, sp, mgr)
 }
 
 // SetServiceSafePoint sets the service safe point with the appropriate GCSafePointManager.
@@ -89,28 +89,28 @@ func DeleteServiceSafePoint(
 	ctx context.Context,
 	pdClient pd.Client,
 	storage kv.Storage,
-	id string,
+	sp BRServiceSafePoint,
 ) error {
 	mgr, err := NewGCSafePointManager(pdClient, storage)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mgr.DeleteServiceSafePoint(ctx, id)
+	return mgr.DeleteServiceSafePoint(ctx, sp)
 }
 
-// The following functions use globalGCManager directly for backward compatibility.
-// They are used by operator and advancer which don't have access to storage.
+// The following functions use globalGCManager directly.
+// They do NOT support keyspace and are used by operator/advancer which don't have access to storage.
 
-// UpdateServiceSafePoint updates the service safe point using globalGCManager.
-// Deprecated: Use SetServiceSafePoint with storage for keyspace support.
-func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
+// UpdateServiceSafePointGlobal updates the service safe point using globalGCManager.
+// NOTE: This does NOT support keyspace. Use SetServiceSafePoint with storage for keyspace support.
+func UpdateServiceSafePointGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
 	mgr := newGlobalGCManager(pdClient)
 	return mgr.SetServiceSafePoint(ctx, sp)
 }
 
-// StartServiceSafePointKeeperForGlobal starts a keeper using globalGCManager.
-// Deprecated: Use StartServiceSafePointKeeper with storage for keyspace support.
-func StartServiceSafePointKeeperForGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
+// StartServiceSafePointKeeperGlobal starts a keeper using globalGCManager.
+// NOTE: This does NOT support keyspace. Use StartServiceSafePointKeeper with storage for keyspace support.
+func StartServiceSafePointKeeperGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
 	mgr := newGlobalGCManager(pdClient)
-	return startServiceSafePointKeeper(ctx, sp, mgr)
+	return StartServiceSafePointKeeperInner(ctx, sp, mgr)
 }

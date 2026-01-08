@@ -52,8 +52,8 @@ func (m *globalGCManager) SetServiceSafePoint(ctx context.Context, sp BRServiceS
 }
 
 // DeleteServiceSafePoint removes the service safe point by setting TTL to 0.
-func (m *globalGCManager) DeleteServiceSafePoint(ctx context.Context, id string) error {
+func (m *globalGCManager) DeleteServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error {
 	// Setting TTL to 0 effectively removes the service safe point
-	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, id, 0, 0)
+	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, 0, 0)
 	return errors.Trace(err)
 }
