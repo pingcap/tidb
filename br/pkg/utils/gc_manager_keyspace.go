@@ -15,8 +15,6 @@ import (
 
 // keyspaceGCManager implements GCSafePointManager using the per-keyspace GC barrier mechanism.
 // It uses the new pd.Client.GetGCStatesClient(keyspaceID).SetGCBarrier API.
-//
-// This implementation is used when --keyspace-name parameter IS provided.
 type keyspaceGCManager struct {
 	pdClient   pd.Client
 	keyspaceID uint32

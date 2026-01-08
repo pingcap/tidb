@@ -10,8 +10,6 @@ import (
 
 // unifiedGCManager implements GCSafePointManager using the global GC safepoint mechanism.
 // It uses the deprecated pd.Client.UpdateServiceGCSafePoint API for backward compatibility.
-//
-// This implementation is used when --keyspace-name parameter is NOT provided.
 type unifiedGCManager struct {
 	pdClient pd.Client
 }
