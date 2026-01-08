@@ -64,7 +64,6 @@ func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 	ctx := context.Background()
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_softdelete_job_enable='ON'")
-	tk.MustExec("set @@tidb_translate_softdelete_sql=ON")
 
 	cases := []struct {
 		name             string
@@ -85,7 +84,9 @@ func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 			setupSQLs: []string{
 				"insert into sd values (1, 10), (2, 20), (3, 30)",
 				"delete from sd where a in (1, 2)",
+				"set @@tidb_translate_softdelete_sql=0",
 				"update sd set _tidb_softdelete_time = date_sub(utc_timestamp(6), interval 8 day) where a = 1",
+				"set @@tidb_translate_softdelete_sql=1",
 			},
 			submitPartitions: false,
 			waitKey:          1,
@@ -104,7 +105,9 @@ func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 			setupSQLs: []string{
 				"insert into sd_p values (1, 10), (20, 200)",
 				"delete from sd_p where a in (1, 20)",
+				"set @@tidb_translate_softdelete_sql=0",
 				"update sd_p set _tidb_softdelete_time = date_sub(utc_timestamp(6), interval 8 day) where a = 1",
+				"set @@tidb_translate_softdelete_sql=1",
 			},
 			submitPartitions: true,
 			waitKey:          1,
@@ -134,6 +137,10 @@ func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			// Keep tidb_translate_softdelete_sql enabled for DML rewriting, but disable it when verifying tombstone rows
+			// in user SQL (otherwise the rewritten SELECT will hide soft-deleted rows).
+			tk.MustExec("set @@tidb_translate_softdelete_sql=1")
+
 			tk.MustExec("drop table if exists " + c.tblName)
 			tk.MustExec(c.createTableSQL)
 			for _, sql := range c.setupSQLs {
@@ -159,14 +166,29 @@ func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 				require.NoError(t, m.SubmitSoftDeleteJob(se, tbl.Meta().ID, physicalID, jobID))
 			}
 
+			// Use tidb_translate_softdelete_sql=0 to observe physical rows (including tombstones).
+			tk.MustExec("set @@tidb_translate_softdelete_sql=0")
 			waitSQL := fmt.Sprintf("select count(*) from %s where a=%d", c.tblName, c.waitKey)
 			require.Eventually(t, func() bool {
-				return tk.MustQuery(waitSQL).Rows()[0][0] == c.wantWaitValue
+				// Always query the base table to avoid any partition pruning surprises.
+				if tk.MustQuery(waitSQL).Rows()[0][0] == c.wantWaitValue {
+					return true
+				}
+				// For partitioned tables, also check the concrete partition to ensure we are observing the correct physical table.
+				if c.submitPartitions {
+					for _, p := range []string{"p0", "p1"} {
+						q := fmt.Sprintf("select count(*) from %s partition(%s) where a=%d", c.tblName, p, c.waitKey)
+						if tk.MustQuery(q).Rows()[0][0] == c.wantWaitValue {
+							return true
+						}
+					}
+				}
+				return false
 			}, 15*time.Second, 50*time.Millisecond)
-
 			for q, want := range c.verifySQLs {
 				tk.MustQuery(q).Check(testkit.Rows(want))
 			}
+			tk.MustExec("set @@tidb_translate_softdelete_sql=1")
 
 			checkCountAtLeast(t, tk, "select count(*) from mysql.tidb_softdelete_table_status", c.minStatusRows)
 			checkCountAtLeast(t, tk, "select count(*) from mysql.tidb_ttl_job_history where job_type='softdelete'", c.minHistoryRows)

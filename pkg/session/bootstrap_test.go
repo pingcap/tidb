@@ -2893,7 +2893,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	}), "versionedBootstrapSchemas should be sorted by version")
 
 	// make sure that later change won't affect existing version schemas.
-	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
+	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 53)
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
 	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
