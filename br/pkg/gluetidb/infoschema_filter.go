@@ -3,10 +3,12 @@
 package gluetidb
 
 import (
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"go.uber.org/zap"
 )
 
 // brInfoSchemaFilter implements issyncer.Filter and encapsulates BR-specific
@@ -24,7 +26,13 @@ func NewInfoSchemaFilter(allow func(ast.CIStr) bool) issyncer.Filter {
 	return &brInfoSchemaFilter{allow: allow}
 }
 
-func (f *brInfoSchemaFilter) SkipLoadDiff(diff *model.SchemaDiff, latestIS infoschema.InfoSchema) bool {
+func (f *brInfoSchemaFilter) SkipLoadDiff(diff *model.SchemaDiff, latestIS infoschema.InfoSchema) (skip bool) {
+	defer func() {
+		if skip {
+			log.Warn("skip load a schema diff due to configuration.", zap.Any("diff", diff), zap.Int64("version", diff.Version))
+		}
+	}()
+
 	if f == nil || f.allow == nil {
 		return false
 	}

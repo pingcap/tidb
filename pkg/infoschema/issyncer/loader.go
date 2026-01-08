@@ -365,7 +365,6 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
 		if l.skipLoadingDiff(diff) {
-			l.logger.Warn("skip load a schema diff due to configuration.", zap.Any("diff", diff), zap.Int64("version", diff.Version))
 			// we still need to set the schema version even if we skip loading
 			// the diff to reflect where the I_S has been synced to.
 			builder.SetSchemaVersion(diff.Version)
@@ -426,7 +425,6 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
 	} else if l.filter != nil {
-		// only load system databases
 		allSchemas = make([]*model.DBInfo, 0, 6)
 		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
 			if !l.filter.SkipLoadSchema(dbInfo) {
