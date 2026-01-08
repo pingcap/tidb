@@ -487,6 +487,12 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols []*express
 			})
 		}
 	}
+	handleCols = append(handleCols, &expression.Column{
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+		ID:       model.ExtraVersionID,
+		UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+		OrigName: model.ExtraVersionName.O,
+	})
 	p.SetSchema(expression.NewSchema(handleCols...))
 }
 
