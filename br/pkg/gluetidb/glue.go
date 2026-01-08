@@ -91,6 +91,9 @@ func (g Glue) getDomainInner(store kv.Storage) (*domain.Domain, error) {
 
 // GetDomain implements glue.Glue.
 func (g Glue) GetDomain(store kv.Storage) (*domain.Domain, error) {
+	// Intentionally pass nil here to probe whether a domain already exists before starting
+	// one for the given store. This avoids re-running initialization logic below when a
+	// domain has already been created elsewhere.
 	existDom, _ := g.getDomainInner(nil)
 	if err := g.startDomainAsNeeded(store); err != nil {
 		return nil, errors.Trace(err)
