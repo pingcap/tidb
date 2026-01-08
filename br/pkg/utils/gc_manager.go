@@ -13,21 +13,22 @@ import (
 
 // GCSafePointManager abstracts GC operations, supporting both global and keyspace-level GC.
 type GCSafePointManager interface {
-	// UpdateServiceSafePoint updates the service safe point.
-	// For UnifiedGCManager: calls pd.Client.UpdateServiceGCSafePoint (deprecated API)
-	// For KeyspaceGCManager: calls GCStatesClient.SetGCBarrier
-	UpdateServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error
+	// GetGCSafePoint returns the current GC safe point.
+	GetGCSafePoint(ctx context.Context) (uint64, error)
 
-	// StartServiceSafePointKeeper starts a goroutine to periodically update the service safe point.
-	// The keeper will run until the context is canceled.
-	StartServiceSafePointKeeper(ctx context.Context, sp BRServiceSafePoint) error
+	// SetServiceSafePoint sets the service safe point with TTL.
+	// If TTL <= 0, it removes the service safe point.
+	SetServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error
+
+	// DeleteServiceSafePoint removes the service safe point.
+	DeleteServiceSafePoint(ctx context.Context, id string) error
 }
 
 func NewGCSafePointManager(pdClient pd.Client, storage kv.Storage) (GCSafePointManager, error) {
 	keyspaceName := config.GetGlobalKeyspaceName()
 
 	if keyspaceName == "" {
-		return newUnifiedGCManager(pdClient), nil
+		return newGlobalGCManager(pdClient), nil
 	}
 
 	codec := storage.GetCodec()
@@ -48,12 +49,12 @@ func StartServiceSafePointKeeperWithStorage(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mgr.StartServiceSafePointKeeper(ctx, sp)
+	return StartServiceSafePointKeeper(ctx, sp, mgr)
 }
 
-// UpdateServiceSafePointWithStorage is the storage-aware wrapper for UpdateServiceSafePoint.
+// SetServiceSafePointWithStorage is the storage-aware wrapper for SetServiceSafePoint.
 // This is the new recommended function that should be used by all BR tasks.
-func UpdateServiceSafePointWithStorage(
+func SetServiceSafePointWithStorage(
 	ctx context.Context,
 	pdClient pd.Client,
 	storage kv.Storage,
@@ -63,5 +64,5 @@ func UpdateServiceSafePointWithStorage(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return mgr.UpdateServiceSafePoint(ctx, sp)
+	return mgr.SetServiceSafePoint(ctx, sp)
 }
