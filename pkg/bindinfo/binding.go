@@ -147,10 +147,11 @@ func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 }
 
 func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	sessionVars := sctx.GetSessionVars()
 	defer func(begin time.Time) {
-		sctx.GetSessionVars().DurationOptimizer.BindingMatch = time.Since(begin)
+		sessionVars.DurationOptimizer.BindingMatch = time.Since(begin)
 	}(time.Now())
-	useBinding := sctx.GetSessionVars().UsePlanBaselines
+	useBinding := sessionVars.UsePlanBaselines
 	if !useBinding || stmtNode == nil {
 		return
 	}
@@ -158,17 +159,15 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 	if sctx.Value(SessionBindInfoKeyType) == nil {
 		return
 	}
-
-	// record the normalization result into info to avoid repeat normalization next time.
-	var noDBDigest string
-	var tableNames []*ast.TableName
 	var cache *BindingCacheItem
-	if item, ok := sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode]; ok {
+	if item, ok := sessionVars.StmtCtx.MatchSQLBindingCache[stmtNode]; ok {
 		cache = item.(*BindingCacheItem)
-		return cache.binding, cache.matched, cache.scope
+		if !intest.InTest {
+			return cache.binding, cache.matched, cache.scope
+		}
 	}
-	_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
-	tableNames = CollectTableNames(stmtNode)
+	_, noDBDigest := NormalizeStmtForBinding(stmtNode, "", true)
+	tableNames := CollectTableNames(stmtNode)
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
@@ -176,11 +175,11 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 			if cache == nil {
 				return true
 			}
-			return cache.matched == true &&
+			return cache.matched &&
 				cache.binding == binding &&
 				cache.scope == metrics.ScopeSession
 		})
-		sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
+		sessionVars.StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
 			binding: binding,
 			matched: matched,
 			scope:   metrics.ScopeSession}
@@ -200,17 +199,20 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 			if cache == nil {
 				return true
 			}
-			return cache.matched == true &&
+			return cache.matched &&
 				cache.binding == binding &&
 				cache.scope == metrics.ScopeGlobal
 		})
-		sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
+		sessionVars.StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
 			binding: binding,
 			matched: matched,
 			scope:   metrics.ScopeGlobal}
 		return binding, matched, metrics.ScopeGlobal
 	}
 	intest.Assert(cache == nil || cache.matched == false)
+	sessionVars.StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
+		binding: nil,
+		matched: false}
 	return
 }
 
