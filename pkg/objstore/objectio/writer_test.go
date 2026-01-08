@@ -26,7 +26,7 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,14 +117,14 @@ func TestExternalFileWriter(t *testing.T) {
 	}
 }
 
-func createSuffixString(compressType objectio.CompressType) string {
+func createSuffixString(compressType compressedio.CompressType) string {
 	txtSuffix := ".txt"
 	switch compressType {
-	case objectio.Gzip:
+	case compressedio.Gzip:
 		txtSuffix += ".gz"
-	case objectio.Snappy:
+	case compressedio.Snappy:
 		txtSuffix += ".snappy"
-	case objectio.Zstd:
+	case compressedio.Zstd:
 		txtSuffix += ".zst"
 	default:
 		return ""
@@ -138,21 +138,21 @@ func TestCompressReaderWriter(t *testing.T) {
 	type testcase struct {
 		name         string
 		content      []string
-		compressType objectio.CompressType
+		compressType compressedio.CompressType
 	}
 	testFn := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
 		suffix := createSuffixString(test.compressType)
 		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
 		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s objstore.Storage) objstore.Storage {
-			return objstore.WithCompression(s, test.compressType, objectio.DecompressConfig{})
+			return objstore.WithCompression(s, test.compressType, compressedio.DecompressConfig{})
 		})
 		writeFile(t, storage, fileName, test.content)
 
 		// make sure compressed file is written correctly
 		file, err := os.Open(filepath.Join(dir, fileName))
 		require.NoError(t, err)
-		r, err := objectio.NewCompressReader(test.compressType, objectio.DecompressConfig{}, file)
+		r, err := compressedio.NewReader(test.compressType, compressedio.DecompressConfig{}, file)
 		require.NoError(t, err)
 		var bf bytes.Buffer
 		_, err = bf.ReadFrom(r)
@@ -169,7 +169,7 @@ func TestCompressReaderWriter(t *testing.T) {
 
 		require.Nil(t, file.Close())
 	}
-	compressTypeArr := []objectio.CompressType{objectio.Gzip, objectio.Snappy, objectio.Zstd}
+	compressTypeArr := []compressedio.CompressType{compressedio.Gzip, compressedio.Snappy, compressedio.Zstd}
 
 	tests := []testcase{
 		{
@@ -216,7 +216,7 @@ func TestNewCompressReader(t *testing.T) {
 
 	// default cfg(decode asynchronously)
 	prevRoutineCnt := runtime.NumGoroutine()
-	r, err := objectio.NewCompressReader(objectio.Zstd, objectio.DecompressConfig{}, bytes.NewReader(compressedData))
+	r, err := compressedio.NewReader(compressedio.Zstd, compressedio.DecompressConfig{}, bytes.NewReader(compressedData))
 	currRoutineCnt := runtime.NumGoroutine()
 	require.NoError(t, err)
 	require.Greater(t, currRoutineCnt, prevRoutineCnt)
@@ -226,8 +226,8 @@ func TestNewCompressReader(t *testing.T) {
 
 	// sync decode
 	prevRoutineCnt = runtime.NumGoroutine()
-	config := objectio.DecompressConfig{ZStdDecodeConcurrency: 1}
-	r, err = objectio.NewCompressReader(objectio.Zstd, config, bytes.NewReader(compressedData))
+	config := compressedio.DecompressConfig{ZStdDecodeConcurrency: 1}
+	r, err = compressedio.NewReader(compressedio.Zstd, config, bytes.NewReader(compressedData))
 	require.NoError(t, err)
 	currRoutineCnt = runtime.NumGoroutine()
 	require.Equal(t, prevRoutineCnt, currRoutineCnt)

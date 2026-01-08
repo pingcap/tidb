@@ -7,6 +7,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/objstore",
+        "//pkg/objstore/objectio",
         "@org_uber_go_mock//gomock",
     ],
 )

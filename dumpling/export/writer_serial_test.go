@@ -3,6 +3,8 @@
 package export
 
 import (
+	"bytes"
+	"context"
 	"database/sql/driver"
 	"fmt"
 	"strings"
@@ -10,10 +12,45 @@ import (
 
 	"github.com/pingcap/errors"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
+
+// BytesWriter is a Writer implementation on top of bytes.Buffer that is useful for testing.
+type BytesWriter struct {
+	buf *bytes.Buffer
+}
+
+// Write delegates to bytes.Buffer.
+func (u *BytesWriter) Write(_ context.Context, p []byte) (int, error) {
+	return u.buf.Write(p)
+}
+
+// Close delegates to bytes.Buffer.
+func (*BytesWriter) Close(_ context.Context) error {
+	// noop
+	return nil
+}
+
+// Bytes delegates to bytes.Buffer.
+func (u *BytesWriter) Bytes() []byte {
+	return u.buf.Bytes()
+}
+
+// String delegates to bytes.Buffer.
+func (u *BytesWriter) String() string {
+	return u.buf.String()
+}
+
+// Reset delegates to bytes.Buffer.
+func (u *BytesWriter) Reset() {
+	u.buf.Reset()
+}
+
+// NewBufferWriter creates a Writer that simply writes to a buffer (useful for testing).
+func NewBufferWriter() *BytesWriter {
+	return &BytesWriter{buf: &bytes.Buffer{}}
+}
 
 func TestWriteMeta(t *testing.T) {
 	createTableStmt := "CREATE TABLE `t1` (\n" +
@@ -21,7 +58,7 @@ func TestWriteMeta(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
 	specCmts := []string{"/*!40103 SET TIME_ZONE='+00:00' */;"}
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
-	writer := objectio.NewBufferWriter()
+	writer := NewBufferWriter()
 
 	err := WriteMeta(tcontext.Background(), meta, writer)
 	require.NoError(t, err)
@@ -48,7 +85,7 @@ func TestWriteInsert(t *testing.T) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	bf := objectio.NewBufferWriter()
+	bf := NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
@@ -86,7 +123,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	rowErr := errors.New("mock row error")
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	tableIR.rowErr = rowErr
-	bf := objectio.NewBufferWriter()
+	bf := NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
@@ -117,7 +154,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-	bf := objectio.NewBufferWriter()
+	bf := NewBufferWriter()
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
@@ -227,7 +264,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	rowErr := errors.New("mock row error")
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.rowErr = rowErr
-	bf := objectio.NewBufferWriter()
+	bf := NewBufferWriter()
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
@@ -263,7 +300,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		conf.CsvOutputDialect = CSVDialectDefault
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := objectio.NewBufferWriter()
+		bf := NewBufferWriter()
 		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
@@ -281,7 +318,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		conf.CsvOutputDialect = CSVDialectRedshift
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := objectio.NewBufferWriter()
+		bf := NewBufferWriter()
 		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
@@ -299,7 +336,7 @@ func TestWriteInsertInCsvWithDialect(t *testing.T) {
 		conf.CsvOutputDialect = CSVDialectBigQuery
 		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := objectio.NewBufferWriter()
+		bf := NewBufferWriter()
 		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
 		require.NoError(t, err)
 		require.Equal(t, uint64(4), n)
@@ -329,7 +366,7 @@ func TestSQLDataTypes(t *testing.T) {
 		tableData := [][]driver.Value{{origin}}
 		colType := []string{sqlType}
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
-		bf := objectio.NewBufferWriter()
+		bf := NewBufferWriter()
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 		m := newMetrics(conf.PromFactory, conf.Labels)

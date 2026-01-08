@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spkg/bom"
@@ -92,7 +92,7 @@ func ExportStatement(ctx context.Context, store objstore.Storage,
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		store = objstore.WithCompression(store, compressType, objectio.DecompressConfig{
+		store = objstore.WithCompression(store, compressType, compressedio.DecompressConfig{
 			ZStdDecodeConcurrency: 1,
 		})
 	}

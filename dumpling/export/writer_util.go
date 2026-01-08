@@ -17,6 +17,7 @@ import (
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
@@ -445,10 +446,10 @@ func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error 
 	return errors.Trace(err)
 }
 
-func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string, compressType objectio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
+func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
 	fileName += compressFileSuffix(compressType)
 	fullPath := s.URI() + "/" + fileName
-	writer, err := objstore.WithCompression(s, compressType, objectio.DecompressConfig{}).Create(tctx, fileName, nil)
+	writer, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(tctx, fileName, nil)
 	if err != nil {
 		tctx.L().Warn("fail to open file",
 			zap.String("path", fullPath),
@@ -473,7 +474,7 @@ func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(pCtx *tcontext.Context, s objstore.Storage, fileName string, compressType objectio.CompressType) (objectio.Writer, func(context.Context) error) {
+func buildInterceptFileWriter(pCtx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(context.Context) error) {
 	fileName += compressFileSuffix(compressType)
 	var writer objectio.Writer
 	fullPath := s.URI() + "/" + fileName
@@ -481,7 +482,7 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s objstore.Storage, fileNa
 	initRoutine := func() error {
 		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
 		// which will cause a context canceled error when closing gcs's Writer
-		w, err := objstore.WithCompression(s, compressType, objectio.DecompressConfig{}).Create(pCtx, fileName, nil)
+		w, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(pCtx, fileName, nil)
 		if err != nil {
 			pCtx.L().Warn("fail to open file",
 				zap.String("path", fullPath),
@@ -587,15 +588,15 @@ func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
 }
 
-func compressFileSuffix(compressType objectio.CompressType) string {
+func compressFileSuffix(compressType compressedio.CompressType) string {
 	switch compressType {
-	case objectio.NoCompression:
+	case compressedio.NoCompression:
 		return ""
-	case objectio.Gzip:
+	case compressedio.Gzip:
 		return ".gz"
-	case objectio.Snappy:
+	case compressedio.Snappy:
 		return ".snappy"
-	case objectio.Zstd:
+	case compressedio.Zstd:
 		return ".zst"
 	default:
 		return ""

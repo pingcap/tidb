@@ -21,19 +21,20 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
 
 type withCompression struct {
 	Storage
-	compressType  objectio.CompressType
-	decompressCfg objectio.DecompressConfig
+	compressType  compressedio.CompressType
+	decompressCfg compressedio.DecompressConfig
 }
 
 // WithCompression returns an Storage with compress option
-func WithCompression(inner Storage, compressionType objectio.CompressType, cfg objectio.DecompressConfig) Storage {
-	if compressionType == objectio.NoCompression {
+func WithCompression(inner Storage, compressionType compressedio.CompressType, cfg compressedio.DecompressConfig) Storage {
+	if compressionType == compressedio.NoCompression {
 		return inner
 	}
 	return &withCompression{
@@ -71,7 +72,7 @@ func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption
 
 func (w *withCompression) WriteFile(ctx context.Context, name string, data []byte) error {
 	bf := bytes.NewBuffer(make([]byte, 0, len(data)))
-	compressBf := objectio.NewCompressWriter(w.compressType, bf)
+	compressBf := compressedio.NewWriter(w.compressType, bf)
 	_, err := compressBf.Write(data)
 	if err != nil {
 		return errors.Trace(err)
@@ -89,7 +90,7 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 		return data, errors.Trace(err)
 	}
 	bf := bytes.NewBuffer(data)
-	compressBf, err := objectio.NewCompressReader(w.compressType, w.decompressCfg, bf)
+	compressBf, err := compressedio.NewReader(w.compressType, w.decompressCfg, bf)
 	if err != nil {
 		return nil, err
 	}
@@ -109,13 +110,13 @@ type compressReader struct {
 // equals total bytes Read() if the decompress reader is used.
 func InterceptDecompressReader(
 	fileReader objectio.Reader,
-	compressType objectio.CompressType,
-	cfg objectio.DecompressConfig,
+	compressType compressedio.CompressType,
+	cfg compressedio.DecompressConfig,
 ) (objectio.Reader, error) {
-	if compressType == objectio.NoCompression {
+	if compressType == compressedio.NoCompression {
 		return fileReader, nil
 	}
-	r, err := objectio.NewCompressReader(compressType, cfg, fileReader)
+	r, err := compressedio.NewReader(compressType, cfg, fileReader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -129,8 +130,8 @@ func InterceptDecompressReader(
 // NewLimitedInterceptReader creates a decompress reader with limit n.
 func NewLimitedInterceptReader(
 	fileReader objectio.Reader,
-	compressType objectio.CompressType,
-	cfg objectio.DecompressConfig,
+	compressType compressedio.CompressType,
+	cfg compressedio.DecompressConfig,
 	n int64,
 ) (objectio.Reader, error) {
 	newFileReader := fileReader
@@ -165,7 +166,7 @@ func (c *compressReader) GetFileSize() (int64, error) {
 
 type flushStorageWriter struct {
 	writer    io.Writer
-	flusher   objectio.Flusher
+	flusher   compressedio.Flusher
 	closer    io.Closer
 	accessRec *recording.AccessStats
 }
@@ -184,7 +185,7 @@ func (w *flushStorageWriter) Close(_ context.Context) error {
 	return w.closer.Close()
 }
 
-func newFlushStorageWriter(writer io.Writer, flusher2 objectio.Flusher, closer io.Closer, accessRec *recording.AccessStats) *flushStorageWriter {
+func newFlushStorageWriter(writer io.Writer, flusher2 compressedio.Flusher, closer io.Closer, accessRec *recording.AccessStats) *flushStorageWriter {
 	return &flushStorageWriter{
 		writer:    writer,
 		flusher:   flusher2,

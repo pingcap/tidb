@@ -33,6 +33,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/util"
@@ -380,7 +381,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	}
 	fw := newFlushStorageWriter(w, &objectio.EmptyFlusher{}, w, s.accessRec)
 	// we already pass the accessRec to flushStorageWriter.
-	bw := objectio.NewBufferedWriter(fw, int(partSize), objectio.NoCompression, nil)
+	bw := objectio.NewBufferedWriter(fw, int(partSize), compressedio.NoCompression, nil)
 	return bw, nil
 }
 

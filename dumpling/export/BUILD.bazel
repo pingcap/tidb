@@ -37,6 +37,8 @@ go_library(
         "//pkg/infoschema/context",
         "//pkg/meta/model",
         "//pkg/objstore",
+        "//pkg/objstore/compressedio",
+        "//pkg/objstore/objectio",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
