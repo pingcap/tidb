@@ -30,10 +30,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/objstore"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -110,7 +110,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	backend, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -121,7 +121,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	defer mgr.Close()
 	client := backup.NewBackupClient(ctx, mgr)
 
-	opts := storage.ExternalStorageOptions{
+	opts := objstore.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
@@ -419,7 +419,7 @@ func newBackupClient(ctx context.Context, storeAddr string, cfg Config, tlsConfi
 	return brpb.NewBackupClient(connection), connection, nil
 }
 
-func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage storage.ExternalStorage) error {
+func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage objstore.Storage) error {
 	data, err := json.Marshal(backupInfo)
 	if err != nil {
 		return errors.Trace(err)

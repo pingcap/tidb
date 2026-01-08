@@ -24,12 +24,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -53,7 +53,7 @@ func TestGlobalSortLocalBasic(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 	lastStepDatas := make([]string, 0, 10)
 	lastStepStats := make([]string, 0, 10)
@@ -110,7 +110,7 @@ func TestGlobalSortLocalWithMerge(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 
 	w := NewWriterBuilder().
@@ -215,7 +215,7 @@ func TestGlobalSortLocalWithMergeV2(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 400
 	multiStats := make([]MultipleFilesStat, 0, 100)
 	randomSize := (rand.Intn(500) + 1) * 1000

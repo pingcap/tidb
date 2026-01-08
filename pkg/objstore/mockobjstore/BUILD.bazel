@@ -1,0 +1,12 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "mockobjstore",
+    srcs = ["objstore_mock.go"],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/mockobjstore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore",
+        "@org_uber_go_mock//gomock",
+    ],
+)

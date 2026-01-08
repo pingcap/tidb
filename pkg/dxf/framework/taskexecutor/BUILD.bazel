@@ -12,7 +12,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//pkg/config",
         "//pkg/dxf/framework/dxfmetric",
         "//pkg/dxf/framework/handle",
@@ -24,6 +23,7 @@ go_library(
         "//pkg/kv",
         "//pkg/lightning/log",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/util",

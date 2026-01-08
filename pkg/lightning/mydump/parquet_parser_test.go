@@ -25,7 +25,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
 	"github.com/apache/arrow-go/v18/parquet/schema"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -70,7 +70,7 @@ func TestParquetParser(t *testing.T) {
 	name := "test123.parquet"
 	WriteParquetFile(dir, name, pc, 100)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	r, err := store.Open(context.Background(), name, nil)
 	require.NoError(t, err)
@@ -204,7 +204,7 @@ func TestParquetVariousTypes(t *testing.T) {
 	name := "test123.parquet"
 	WriteParquetFile(dir, name, pc, 1)
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
@@ -340,7 +340,7 @@ func TestParquetVariousTypes(t *testing.T) {
 }
 
 func TestParquetAurora(t *testing.T) {
-	store, err := storage.NewLocalStorage("examples")
+	store, err := objstore.NewLocalStorage("examples")
 	require.NoError(t, err)
 
 	fileName := "test.parquet"
@@ -399,7 +399,7 @@ func TestParquetAurora(t *testing.T) {
 func TestHiveParquetParser(t *testing.T) {
 	name := "000000_0.parquet"
 	dir := "./parquet/"
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), name, nil)
 	require.NoError(t, err)
@@ -485,7 +485,7 @@ func TestBasicReadFile(t *testing.T) {
 		readBatchSize = origBatchSize
 	}()
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	r, err := store.Open(context.TODO(), fileName, nil)
 	require.NoError(t, err)

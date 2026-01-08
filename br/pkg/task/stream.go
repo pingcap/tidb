@@ -50,7 +50,6 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
@@ -62,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -169,13 +169,13 @@ func DefaultStreamConfig(flagsDef func(*pflag.FlagSet)) StreamConfig {
 	return cfg
 }
 
-func (cfg *StreamConfig) makeStorage(ctx context.Context) (storage.ExternalStorage, error) {
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+func (cfg *StreamConfig) makeStorage(ctx context.Context) (objstore.Storage, error) {
+	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	opts := getExternalStorageOptions(&cfg.Config, u)
-	storage, err := storage.New(ctx, u, &opts)
+	storage, err := objstore.New(ctx, u, &opts)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -359,12 +359,12 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 	if isStreamStart {
 		client := backup.NewBackupClient(ctx, mgr)
 
-		backend, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+		backend, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 
-		opts := storage.ExternalStorageOptions{
+		opts := objstore.Options{
 			NoCredentials:            cfg.NoCreds,
 			SendCredentials:          cfg.SendCreds,
 			CheckS3ObjectLockOptions: true,
@@ -1117,7 +1117,7 @@ func RunStreamTruncate(c context.Context, g glue.Glue, cmdName string, cfg *Stre
 	if err != nil {
 		return err
 	}
-	lock, err := storage.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
+	lock, err := objstore.TryLockRemote(ctx, extStorage, truncateLockPath, hintOnTruncateLock)
 	if err != nil {
 		return err
 	}
@@ -1829,7 +1829,7 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 		}
 	}()
 
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1882,12 +1882,12 @@ func rangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRu
 	return errors.Trace(err)
 }
 
-func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) storage.ExternalStorageOptions {
+func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) objstore.Options {
 	var httpClient *http.Client
 	if u.GetGcs() == nil {
-		httpClient = storage.GetDefaultHttpClient(cfg.MetadataDownloadBatchSize)
+		httpClient = objstore.GetDefaultHTTPClient(cfg.MetadataDownloadBatchSize)
 	}
-	return storage.ExternalStorageOptions{
+	return objstore.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 		HTTPClient:      httpClient,
@@ -1930,7 +1930,7 @@ func getLogInfo(
 
 func getLogInfoFromStorage(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s objstore.Storage,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1970,9 +1970,9 @@ func getLogInfoFromStorage(
 	}, nil
 }
 
-func getGlobalCheckpointFromStorage(ctx context.Context, s storage.ExternalStorage) (uint64, error) {
+func getGlobalCheckpointFromStorage(ctx context.Context, s objstore.Storage) (uint64, error) {
 	var globalCheckPointTS uint64 = 0
-	opt := storage.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
+	opt := objstore.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
 	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".ts") {
 			return nil

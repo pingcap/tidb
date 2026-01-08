@@ -15,7 +15,7 @@
 package metering
 
 import (
-	"github.com/pingcap/tidb/br/pkg/storage/recording"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
 
 // Recorder is used to record metering data.

@@ -24,13 +24,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/dumpling/cli"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -60,7 +60,7 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore storage.ExternalStorage
+	extStore objstore.Storage
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
@@ -75,11 +75,11 @@ type Dumper struct {
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
-		b, err := storage.ParseBackend(path, nil)
+		b, err := objstore.ParseBackend(path, nil)
 		if err != nil {
 			panic(err)
 		}
-		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		s, err := objstore.New(context.Background(), b, &objstore.Options{})
 		if err != nil {
 			panic(err)
 		}

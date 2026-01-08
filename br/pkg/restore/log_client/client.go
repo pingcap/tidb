@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -66,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
@@ -202,7 +202,7 @@ type LogClient struct {
 	keepaliveConf keepalive.ClientParameters
 
 	rawKVClient *rawkv.RawKVBatchClient
-	storage     storage.ExternalStorage
+	storage     objstore.Storage
 
 	// unsafeSession is not thread-safe.
 	// Currently, it is only utilized in some initialization and post-handle functions.
@@ -431,9 +431,9 @@ func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
 	rc.upstreamClusterID = upstreamClusterID
 }
 
-func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
+func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *objstore.Options) error {
 	var err error
-	rc.storage, err = storage.New(ctx, backend, opts)
+	rc.storage, err = objstore.New(ctx, backend, opts)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -666,7 +666,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 
 type LockedMigrations struct {
 	Migs     []*backuppb.Migration
-	ReadLock storage.RemoteLock
+	ReadLock objstore.RemoteLock
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
@@ -1002,7 +1002,7 @@ func (rc *LogClient) RestoreKVFiles(
 
 type FullBackupStorageConfig struct {
 	Backend *backuppb.StorageBackend
-	Opts    *storage.ExternalStorageOptions
+	Opts    *objstore.Options
 }
 
 type GetIDMapConfig struct {

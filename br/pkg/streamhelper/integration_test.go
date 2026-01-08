@@ -19,8 +19,8 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/kv"
@@ -81,7 +81,7 @@ func simpleRanges(tableCount int) streamhelper.Ranges {
 }
 
 func simpleTask(name string, tableCount int) streamhelper.TaskInfo {
-	backend, _ := storage.ParseBackend("noop://", nil)
+	backend, _ := objstore.ParseBackend("noop://", nil)
 	task, err := streamhelper.NewTaskInfo(name).
 		FromTS(1).
 		UntilTS(1000).
@@ -150,7 +150,7 @@ func TestIntegration(t *testing.T) {
 }
 
 func TestChecking(t *testing.T) {
-	noop, _ := storage.ParseBackend("noop://", nil)
+	noop, _ := objstore.ParseBackend("noop://", nil)
 	// The name must not contains slash.
 	_, err := streamhelper.NewTaskInfo("/root").
 		WithRange([]byte("1"), []byte("2")).

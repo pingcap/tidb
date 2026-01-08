@@ -28,12 +28,12 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -347,7 +347,7 @@ type immutableBackupConfig struct {
 	IgnoreStats   bool   `json:"ignore-stats"`
 	UseCheckpoint bool   `json:"use-checkpoint"`
 
-	storage.BackendOptions
+	objstore.BackendOptions
 	Storage      string              `json:"storage"`
 	PD           []string            `json:"pd"`
 	SendCreds    bool                `json:"send-credentials-to-tikv"`
@@ -405,7 +405,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	isIncrementalBackup := cfg.LastBackupTS > 0
 	skipChecksum := !cfg.Checksum || isIncrementalBackup
-	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -458,7 +458,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// set skip checksum status
 	client.SetSkipChecksum(skipChecksum)
 
-	opts := storage.ExternalStorageOptions{
+	opts := objstore.Options{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,

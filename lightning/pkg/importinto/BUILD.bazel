@@ -6,10 +6,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/lightning/pkg/importinto",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
+        "//pkg/objstore",
         "@com_github_joho_sqltocsv//:sqltocsv",
         "@com_github_pingcap_errors//:errors",
     ],
