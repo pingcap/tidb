@@ -196,7 +196,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 	return
 }
 
-// BindingCacheItem is to cache the
+// BindingCacheItem is to cache the bindinfo to avoid getting bindinfo from bind cache again.
 type BindingCacheItem struct {
 	binding *Binding
 	matched bool
