@@ -4247,7 +4247,11 @@ func (e *memtableRetriever) setDataFromSoftDeleteTableStats(ctx context.Context,
 
 		if table.GetPartitionInfo() == nil {
 			// Non-partitioned table: emit one row with table info
-			totalRowCount, softDeletedRowCount := getSoftDeleteTableRowCounts(ctx, sctx, statsHandle, table.ID, softDeleteColID)
+			totalRowCount, softDeletedRowCount, err := getSoftDeleteTableRowCounts(
+				ctx, sctx, statsHandle, table.ID, softDeleteColID)
+			if err != nil {
+				return err
+			}
 			record := types.MakeDatums(
 				schema.O,            // DB_NAME
 				table.Name.O,        // TABLE_NAME
@@ -4263,7 +4267,11 @@ func (e *memtableRetriever) setDataFromSoftDeleteTableStats(ctx context.Context,
 				if !ex.HasPartition(pi.Name.L) {
 					continue
 				}
-				totalRowCount, softDeletedRowCount := getSoftDeleteTableRowCounts(ctx, sctx, statsHandle, pi.ID, softDeleteColID)
+				totalRowCount, softDeletedRowCount, err := getSoftDeleteTableRowCounts(
+					ctx, sctx, statsHandle, pi.ID, softDeleteColID)
+				if err != nil {
+					return err
+				}
 				record := types.MakeDatums(
 					schema.O,            // DB_NAME
 					table.Name.O,        // TABLE_NAME
@@ -4297,23 +4305,23 @@ func getSoftDeleteTableRowCounts(
 	statsHandle *statshandle.Handle,
 	physicalTableID int64,
 	softDeleteColID int64,
-) (totalRowCount any, softDeletedRowCount any) {
+) (totalRowCount any, softDeletedRowCount any, err error) {
 	// If column ID not found, return NULL
 	if softDeleteColID == 0 {
-		return nil, nil
+		return nil, nil, nil
 	}
 	// Try to get stats from cache
 	if statsHandle == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	tblStats, found := statsHandle.GetNonPseudoPhysicalTableStats(physicalTableID)
 	if !found || tblStats == nil || !tblStats.ColAndIdxExistenceMap.HasAnalyzed(softDeleteColID, false) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	colStats := tblStats.GetCol(softDeleteColID)
 	if colStats != nil && !colStats.IsAllEvicted() {
 		// Stats are fully loaded in cache, calculate row counts
-		return uint64(colStats.TotalRowCount()), uint64(colStats.NotNullCount())
+		return uint64(colStats.TotalRowCount()), uint64(colStats.NotNullCount()), nil
 	}
 	// Stats are evicted, fall back to query from storage
 	return getSoftDeleteRowCountsFromStorage(ctx, sctx, physicalTableID, softDeleteColID)
@@ -4324,7 +4332,7 @@ func getSoftDeleteRowCountsFromStorage(
 	sctx sessionctx.Context,
 	physicalTableID int64,
 	colID int64,
-) (totalRowCount any, softDeletedRowCount any) {
+) (totalRowCount any, softDeletedRowCount any, err error) {
 	exec := sctx.GetRestrictedSQLExecutor()
 	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 
@@ -4333,7 +4341,7 @@ func getSoftDeleteRowCountsFromStorage(
 		"SELECT null_count, stats_ver FROM mysql.stats_histograms WHERE table_id = %? AND hist_id = %? AND is_index = 0",
 		physicalTableID, colID)
 	if err != nil || len(histRows) == 0 {
-		return nil, nil
+		return nil, nil, err
 	}
 
 	nullCount := histRows[0].GetInt64(0)
@@ -4343,7 +4351,7 @@ func getSoftDeleteRowCountsFromStorage(
 	if statsVer == 0 {
 		intest.Assert(false,
 			"it should not happen since we already checked analyze status in getSoftDeleteTableRowCounts")
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Query stats_buckets to get the total count from histogram
@@ -4352,13 +4360,13 @@ func getSoftDeleteRowCountsFromStorage(
 		"SELECT SUM(count) FROM mysql.stats_buckets WHERE table_id = %? AND hist_id = %? AND is_index = 0",
 		physicalTableID, colID)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if len(bucketRows) > 0 && !bucketRows[0].IsNull(0) {
 		histogramCountDecimal := bucketRows[0].GetMyDecimal(0)
 		histogramCount, err = histogramCountDecimal.ToInt()
 		if err != nil {
-			return nil, nil
+			return nil, nil, err
 		}
 	}
 
@@ -4369,13 +4377,13 @@ func getSoftDeleteRowCountsFromStorage(
 			"SELECT SUM(count) FROM mysql.stats_top_n WHERE table_id = %? AND hist_id = %? AND is_index = 0",
 			physicalTableID, colID)
 		if err != nil {
-			return nil, nil
+			return nil, nil, err
 		}
 		if len(topNRows) > 0 && !topNRows[0].IsNull(0) {
 			topNCountDecimal := topNRows[0].GetMyDecimal(0)
 			topNCount, err = topNCountDecimal.ToInt()
 			if err != nil {
-				return nil, nil
+				return nil, nil, err
 			}
 		}
 	}
@@ -4383,5 +4391,5 @@ func getSoftDeleteRowCountsFromStorage(
 	softDeleted := histogramCount + topNCount
 	total := softDeleted + nullCount
 
-	return uint64(total), uint64(softDeleted)
+	return uint64(total), uint64(softDeleted), nil
 }
