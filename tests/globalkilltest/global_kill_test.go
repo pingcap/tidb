@@ -874,17 +874,22 @@ func TestKillQueryOnIdleConnection(t *testing.T) {
 
 	rows, err := conn1.QueryContext(ctx, "select 1")
 	require.NoError(t, err)
-	rows.Close()
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
 	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL QUERY %v", connID1))
 	require.NoError(t, err)
 	// verify connection is still alive
 	rows, err = conn1.QueryContext(ctx, "select 1")
 	require.NoError(t, err)
-	rows.Close()
+	require.True(t, rows.Next())
+	require.NoError(t, rows.Err())
+	require.NoError(t, rows.Close())
 
 	_, err = conn2.ExecContext(ctx, fmt.Sprintf("KILL CONNECTION %v", connID1))
 	require.NoError(t, err)
 	// verify connection is closed
 	rows, err = conn1.QueryContext(ctx, "select 1")
 	require.Error(t, err)
+	require.Nil(t, rows)
 }
