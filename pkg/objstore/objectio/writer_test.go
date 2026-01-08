@@ -117,21 +117,6 @@ func TestExternalFileWriter(t *testing.T) {
 	}
 }
 
-func createSuffixString(compressType compressedio.CompressType) string {
-	txtSuffix := ".txt"
-	switch compressType {
-	case compressedio.Gzip:
-		txtSuffix += ".gz"
-	case compressedio.Snappy:
-		txtSuffix += ".snappy"
-	case compressedio.Zstd:
-		txtSuffix += ".zst"
-	default:
-		return ""
-	}
-	return txtSuffix
-}
-
 func TestCompressReaderWriter(t *testing.T) {
 	dir := t.TempDir()
 
@@ -142,7 +127,7 @@ func TestCompressReaderWriter(t *testing.T) {
 	}
 	testFn := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
-		suffix := createSuffixString(test.compressType)
+		suffix := test.compressType.FileSuffix()
 		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
 		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s objstore.Storage) objstore.Storage {
 			return objstore.WithCompression(s, test.compressType, compressedio.DecompressConfig{})

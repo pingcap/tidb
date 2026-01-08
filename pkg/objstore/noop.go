@@ -99,12 +99,12 @@ func (noopReader) GetFileSize() (int64, error) {
 // NoopWriter is a writer that does nothing.
 type NoopWriter struct{}
 
-// Write implements Writer interface.
+// Write implements objectio.Writer interface.
 func (NoopWriter) Write(_ context.Context, p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Close implements Writer interface.
+// Close implements objectio.Writer interface.
 func (NoopWriter) Close(_ context.Context) error {
 	return nil
 }

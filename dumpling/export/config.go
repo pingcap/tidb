@@ -587,7 +587,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.CompressType, err = ParseCompressType(compressType)
+	conf.CompressType, err = compressedio.ParseCompressType(compressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -670,22 +670,6 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 		dbTables[dbName] = append(dbTables[dbName], &TableInfo{tbName, avgRowLength, TableTypeBase})
 	}
 	return dbTables, nil
-}
-
-// ParseCompressType parses compressType string to storage.CompressType
-func ParseCompressType(compressType string) (compressedio.CompressType, error) {
-	switch compressType {
-	case "", "no-compression":
-		return compressedio.NoCompression, nil
-	case "gzip", "gz":
-		return compressedio.Gzip, nil
-	case "snappy":
-		return compressedio.Snappy, nil
-	case "zstd", "zst":
-		return compressedio.Zstd, nil
-	default:
-		return compressedio.NoCompression, errors.Errorf("unknown compress type %s", compressType)
-	}
 }
 
 // ParseOutputDialect parses output dialect string to Dialect

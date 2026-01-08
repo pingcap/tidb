@@ -14,6 +14,8 @@
 
 package compressedio
 
+import "github.com/pingcap/errors"
+
 // CompressType represents the type of compression.
 type CompressType uint8
 
@@ -28,6 +30,22 @@ const (
 	Zstd
 )
 
+// FileSuffix returns the file suffix for the compress type.
+func (ct CompressType) FileSuffix() string {
+	switch ct {
+	case NoCompression:
+		return ""
+	case Gzip:
+		return ".gz"
+	case Snappy:
+		return ".snappy"
+	case Zstd:
+		return ".zst"
+	default:
+		return ""
+	}
+}
+
 // Flusher flush interface.
 type Flusher interface {
 	Flush() error
@@ -38,4 +56,20 @@ type DecompressConfig struct {
 	// ZStdDecodeConcurrency only used for ZStd decompress, see WithDecoderConcurrency.
 	// if not 1, ZStd will decode file asynchronously.
 	ZStdDecodeConcurrency int
+}
+
+// ParseCompressType parses compressType string to storage.CompressType
+func ParseCompressType(compressType string) (CompressType, error) {
+	switch compressType {
+	case "", "no-compression":
+		return NoCompression, nil
+	case "gzip", "gz":
+		return Gzip, nil
+	case "snappy":
+		return Snappy, nil
+	case "zstd", "zst":
+		return Zstd, nil
+	default:
+		return NoCompression, errors.Errorf("unknown compress type %s", compressType)
+	}
 }

@@ -123,7 +123,7 @@ func (b *writerPipe) ShouldSwitchStatement() bool {
 		(b.statementSizeLimit != UnspecifiedSize && b.currentStatementSize >= b.statementSizeLimit)
 }
 
-// WriteMeta writes MetaIR to a storage.Writer
+// WriteMeta writes MetaIR to a objstore.Writer
 func WriteMeta(tctx *tcontext.Context, meta MetaIR, w objectio.Writer) error {
 	tctx.L().Debug("start dumping meta data", zap.String("target", meta.TargetName()))
 
@@ -142,7 +142,7 @@ func WriteMeta(tctx *tcontext.Context, meta MetaIR, w objectio.Writer) error {
 	return nil
 }
 
-// WriteInsert writes TableDataIR to a storage.Writer in sql type
+// WriteInsert writes TableDataIR to a objstore.Writer in sql type
 func WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -290,7 +290,7 @@ func WriteInsert(
 	return counter, wp.Error()
 }
 
-// WriteInsertInCsv writes TableDataIR to a storage.Writer in csv type
+// WriteInsertInCsv writes TableDataIR to a objstore.Writer in csv type
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -447,7 +447,7 @@ func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error 
 }
 
 func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
-	fileName += compressFileSuffix(compressType)
+	fileName += compressType.FileSuffix()
 	fullPath := s.URI() + "/" + fileName
 	writer, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(tctx, fileName, nil)
 	if err != nil {
@@ -475,7 +475,7 @@ func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string
 }
 
 func buildInterceptFileWriter(pCtx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(context.Context) error) {
-	fileName += compressFileSuffix(compressType)
+	fileName += compressType.FileSuffix()
 	var writer objectio.Writer
 	fullPath := s.URI() + "/" + fileName
 	fileWriter := &InterceptFileWriter{}
@@ -559,7 +559,7 @@ type InterceptFileWriter struct {
 	err         error
 }
 
-// Write implements storage.Writer.Write. It check whether writer has written something and init a file at first time
+// Write implements objstore.Writer. It check whether writer has written something and init a file at first time
 func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	w.Do(func() { w.err = w.initRoutine() })
 	if len(p) > 0 {
@@ -586,21 +586,6 @@ func wrapBackTicks(identifier string) string {
 
 func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
-}
-
-func compressFileSuffix(compressType compressedio.CompressType) string {
-	switch compressType {
-	case compressedio.NoCompression:
-		return ""
-	case compressedio.Gzip:
-		return ".gz"
-	case compressedio.Snappy:
-		return ".snappy"
-	case compressedio.Zstd:
-		return ".zst"
-	default:
-		return ""
-	}
 }
 
 // FileFormat is the format that output to file. Currently we support SQL text and CSV file format.
@@ -649,7 +634,7 @@ func (f FileFormat) Extension() string {
 	}
 }
 
-// WriteInsert writes TableDataIR to a storage.Writer in sql/csv type
+// WriteInsert writes TableDataIR to a objstore.Writer in sql/csv type
 func (f FileFormat) WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,

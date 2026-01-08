@@ -783,7 +783,7 @@ func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
 }
 
-// GetFileSize implements storage.Reader.
+// GetFileSize implements objectio.Reader.
 func (*SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
 	return 0, errors.Errorf("unsupported GetFileSize on SimpleSeekerOnReadCloser")
 }
