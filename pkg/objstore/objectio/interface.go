@@ -33,4 +33,3 @@ type Writer interface {
 	// Close writes final chunk and completes the upload
 	Close(ctx context.Context) error
 }
-
