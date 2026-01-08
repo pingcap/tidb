@@ -1874,7 +1874,7 @@ func (p *PlanCacheParamList) String() string {
 		p.forNonPrepCache { // hide non-prep parameter values by default
 		return ""
 	}
-	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
+	return " [arguments: " + types.DatumsToStrNoErrSmart(p.paramValues) + "]"
 }
 
 // Append appends a parameter value to the PlanCacheParams.
