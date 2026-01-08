@@ -426,7 +426,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 	if len(ret) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		// ret can only have one expression.
 		// The inner expression can definitely be pushed down, so ret must be the outer expression.
-		// If they are semantically similar, one should be eliminable, leaving only one.
+		// If they are semantically similar, leaving only one and the other should be eliminable.
 		return nil, false
 	}
 	if _, ok := p.Self().(*LogicalApply); ok {
