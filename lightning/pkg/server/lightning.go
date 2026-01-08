@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/lightning/pkg/importer"
 	"github.com/pingcap/tidb/lightning/pkg/importinto"
@@ -59,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // init expression.EvalSimpleAst related function
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -331,11 +331,11 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
-		b, err := storage.ParseBackend(path, nil)
+		b, err := objstore.ParseBackend(path, nil)
 		if err != nil {
 			panic(err)
 		}
-		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
+		s, err := objstore.New(context.Background(), b, &objstore.Options{})
 		if err != nil {
 			panic(err)
 		}
@@ -563,11 +563,11 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (*mydump.MDLoader, storage.ExternalStorage, error) {
 	s := o.dumpFileStorage
 	if s == nil {
-		u, err := storage.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
+		u, err := objstore.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
 		if err != nil {
 			return nil, nil, common.NormalizeError(err)
 		}
-		s, err = storage.New(ctx, u, &storage.ExternalStorageOptions{})
+		s, err = objstore.New(ctx, u, &objstore.Options{})
 		if err != nil {
 			return nil, nil, common.NormalizeError(err)
 		}
@@ -575,7 +575,7 @@ func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, 
 
 	// return expectedErr means at least meet one file
 	expectedErr := errors.New("Stop Iter")
-	walkErr := s.WalkDir(ctx, &storage.WalkOption{ListCount: 1}, func(string, int64) error {
+	walkErr := s.WalkDir(ctx, &objstore.WalkOption{ListCount: 1}, func(string, int64) error {
 		// return an error when meet the first regular file to break the walk loop
 		return expectedErr
 	})

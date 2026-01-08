@@ -97,7 +97,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/glue",
-        "//br/pkg/storage",
         "//br/pkg/task",
         "//br/pkg/task/show",
         "//br/pkg/utils",
@@ -161,6 +160,7 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
@@ -412,7 +412,6 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
-        "//br/pkg/storage",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl",
@@ -446,6 +445,7 @@ go_test(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",

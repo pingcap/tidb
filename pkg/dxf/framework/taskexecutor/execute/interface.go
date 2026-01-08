@@ -19,9 +19,9 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage/recording"
 	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"go.uber.org/atomic"
 )
 

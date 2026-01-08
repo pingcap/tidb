@@ -21,13 +21,13 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
@@ -70,7 +70,7 @@ func (r *CollectResult) Merge(other *CollectResult) {
 // Collector collects info about conflicted rows.
 type Collector struct {
 	logger         *zap.Logger
-	store          storage.ExternalStorage
+	store          objstore.Storage
 	filenamePrefix string
 	kvGroup        string
 	handler        Handler
@@ -79,14 +79,14 @@ type Collector struct {
 
 	fileSeq      int
 	currFileSize int64
-	writer       storage.ExternalFileWriter
+	writer       objstore.FileWriter
 }
 
 // NewCollector creates a new conflicted KV info collector.
 func NewCollector(
 	targetTbl table.Table,
 	logger *zap.Logger,
-	objStore storage.ExternalStorage,
+	objStore objstore.Storage,
 	store tidbkv.Storage,
 	filenamePrefix string,
 	kvGroup string,
@@ -169,7 +169,7 @@ func (c *Collector) switchFile(ctx context.Context) error {
 	filename := getRowFileName(c.filenamePrefix, c.fileSeq)
 	c.logger.Info("switch conflict row file", zap.String("filename", filename),
 		zap.String("lastFileSize", units.BytesSize(float64(c.currFileSize))))
-	writer, err := c.store.Create(ctx, filename, &storage.WriterOption{
+	writer, err := c.store.Create(ctx, filename, &objstore.WriterOption{
 		Concurrency: 20,
 		PartSize:    external.MinUploadPartSize,
 	})
