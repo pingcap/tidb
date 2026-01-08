@@ -39,7 +39,7 @@ func (*zhPinyinTiDBASCSCollator) KeyWithoutTrimRightSpace(_ string) []byte {
 }
 
 // MaxKeyLen implements Collator interface.
-func (*zhPinyinTiDBASCSCollator) MaxKeyLen(s string) int {
+func (*zhPinyinTiDBASCSCollator) MaxKeyLen(string) int {
 	panic("implement me")
 }
 
