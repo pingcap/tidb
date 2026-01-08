@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -731,4 +732,27 @@ func TestImportIntoBuildPlan(t *testing.T) {
 		"can not execute write statement when 'tidb_snapshot' is set")
 	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t3 FROM select * from t2"),
 		infoschema.ErrTableNotExists)
+}
+
+func TestDecorrelateLimitOptimization(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("CREATE TABLE IF NOT EXISTS employees (\n    id INT PRIMARY KEY,\n    name VARCHAR(50),\n    dept_id INT,\n    salary DECIMAL(10, 2),\n    alias VARCHAR(50)\n)")
+		testKit.MustExec("CREATE TABLE IF NOT EXISTS employee_notes (\n    id INT PRIMARY KEY,\n    employee_id INT,\n    note TEXT,\n    created_at TIMESTAMP,\n    INDEX idx_employee_id (employee_id)\n)")
+		var input []string
+		var output []struct {
+			SQL  string
+			Plan []string
+		}
+		decorrelateLimitSuiteData := core.GetDecorrelateLimitSuiteData()
+		decorrelateLimitSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, sql := range input {
+			plan := testKit.MustQuery(sql)
+			testdata.OnRecord(func() {
+				output[i].SQL = sql
+				output[i].Plan = testdata.ConvertRowsToStrings(plan.Rows())
+			})
+			plan.Check(testkit.Rows(output[i].Plan...))
+		}
+	})
 }

@@ -234,218 +234,267 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			p = join
 		} else if apply.NoDecorrelate {
 			goto NoOptimize
-		} else if sel, ok := innerPlan.(*logicalop.LogicalSelection); ok {
-			// If the inner plan is a selection, we add this condition to join predicates.
-			// Notice that no matter what kind of join is, it's always right.
-			newConds := make([]expression.Expression, 0, len(sel.Conditions))
-			for _, cond := range sel.Conditions {
-				newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
-			}
-			apply.AttachOnConds(newConds)
-			innerPlan = sel.Children()[0]
-			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(ctx, p, groupByColumn)
-		} else if m, ok := innerPlan.(*logicalop.LogicalMaxOneRow); ok {
-			if m.Children()[0].MaxOneRow() {
-				innerPlan = m.Children()[0]
+		} else {
+			switch innerPlanTyped := innerPlan.(type) {
+			case *logicalop.LogicalSelection:
+				// If the inner plan is a selection, we add this condition to join predicates.
+				// Notice that no matter what kind of join is, it's always right.
+				newConds := make([]expression.Expression, 0, len(innerPlanTyped.Conditions))
+				for _, cond := range innerPlanTyped.Conditions {
+					newConds = append(newConds, cond.Decorrelate(outerPlan.Schema()))
+				}
+				apply.AttachOnConds(newConds)
+				innerPlan = innerPlanTyped.Children()[0]
 				apply.SetChildren(outerPlan, innerPlan)
 				return s.optimize(ctx, p, groupByColumn)
-			}
-		} else if proj, ok := innerPlan.(*logicalop.LogicalProjection); ok {
-			// After the column pruning, some expressions in the projection operator may be pruned.
-			// In this situation, we can decorrelate the apply operator.
-			if apply.JoinType == base.LeftOuterJoin {
-				if skipDecorrelateProjectionForLeftOuterApply(apply, proj) {
-					goto NoOptimize
-				}
-			}
-
-			// step1: substitute the all the schema with new expressions (including correlated column maybe, but it doesn't affect the collation infer inside)
-			// eg: projection: constant("guo") --> column8, once upper layer substitution failed here, the lower layer behind
-			// projection can't supply column8 anymore.
-			//
-			//	upper OP (depend on column8)   --> projection(constant "guo" --> column8)  --> lower layer OP
-			//	          |                                                       ^
-			//	          +-------------------------------------------------------+
-			//
-			//	upper OP (depend on column8)   --> lower layer OP
-			//	          |                             ^
-			//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
-			hasFail := apply.ColumnSubstituteAll(proj.Schema(), proj.Exprs)
-			if hasFail {
-				goto NoOptimize
-			}
-			// step2: when it can be substituted all, we then just do the de-correlation (apply conditions included).
-			for i, expr := range proj.Exprs {
-				proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
-			}
-			apply.Decorrelate(outerPlan.Schema())
-
-			innerPlan = proj.Children()[0]
-			apply.SetChildren(outerPlan, innerPlan)
-			if apply.JoinType != base.SemiJoin && apply.JoinType != base.LeftOuterSemiJoin && apply.JoinType != base.AntiSemiJoin && apply.JoinType != base.AntiLeftOuterSemiJoin {
-				proj.SetSchema(apply.Schema())
-				proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
-				apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
-				np, planChanged, err := s.optimize(ctx, p, groupByColumn)
-				if err != nil {
-					return nil, planChanged, err
-				}
-				proj.SetChildren(np)
-				return proj, planChanged, nil
-			}
-			return s.optimize(ctx, p, groupByColumn)
-		} else if li, ok := innerPlan.(*logicalop.LogicalLimit); ok {
-			// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
-			// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
-			// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
-			if apply.JoinType != base.SemiJoin && apply.JoinType != base.LeftOuterSemiJoin && apply.JoinType != base.AntiSemiJoin && apply.JoinType != base.AntiLeftOuterSemiJoin {
-				goto NoOptimize
-			}
-			// If subquery has some filter condition, we will not optimize limit.
-			if len(apply.LeftConditions) > 0 || len(apply.RightConditions) > 0 || len(apply.OtherConditions) > 0 || len(apply.EqualConditions) > 0 {
-				goto NoOptimize
-			}
-			// Limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the exist subquery.
-			if li.Offset == 0 {
-				innerPlan = li.Children()[0]
-				apply.SetChildren(outerPlan, innerPlan)
-				return s.optimize(ctx, p, groupByColumn)
-			}
-		} else if agg, ok := innerPlan.(*logicalop.LogicalAggregation); ok {
-			if apply.CanPullUpAgg() && agg.CanPullUp() {
-				innerPlan = agg.Children()[0]
-				apply.JoinType = base.LeftOuterJoin
-				apply.SetChildren(outerPlan, innerPlan)
-				agg.SetSchema(apply.Schema())
-				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().PKOrUK[0])
-				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
-
-				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
-				for i, col := range outerPlan.Schema().Columns {
-					first, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
-					if err != nil {
-						return nil, planChanged, err
-					}
-					newAggFuncs = append(newAggFuncs, first)
-
-					outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
-					outerCol.RetType = first.RetTp
-					outerColsInSchema = append(outerColsInSchema, outerCol)
-				}
-				apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
-				util.ResetNotNullFlag(apply.Schema(), outerPlan.Schema().Len(), apply.Schema().Len())
-				for i, aggFunc := range agg.AggFuncs {
-					aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))
-					for _, arg := range aggFunc.Args {
-						switch expr := arg.(type) {
-						case *expression.Column:
-							if idx := apply.Schema().ColumnIndex(expr); idx != -1 {
-								aggArgs = append(aggArgs, apply.Schema().Columns[idx])
+			case *logicalop.LogicalMaxOneRow:
+				// Check if MaxOneRow's child is Limit or TopN, and if we can remove it for LeftOuterJoin
+				// Also handle the case where there's a Projection between MaxOneRow and Limit: MaxOneRow -> Projection -> Limit
+				if apply.JoinType == base.LeftOuterJoin {
+					mChild := innerPlanTyped.Children()[0]
+					var removePlan base.LogicalPlan
+					var canRemove bool
+					switch mChild := mChild.(type) {
+					case *logicalop.LogicalLimit:
+						// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
+						if mChild.Offset != 0 {
+							canRemove = false
+						} else {
+							// Check if join key is unique key
+							removePlan = mChild.Children()[0]
+							if isJoinKeyUniqueKey(apply, removePlan) {
+								canRemove = true
+							}
+						}
+					case *logicalop.LogicalProjection:
+						// Check if Projection's child is Limit: MaxOneRow -> Projection -> Limit
+						// This pattern occurs when subqueries contain some clauses like ORDER BY or HAVING clauses that require projection.
+						// Examples:
+						//   - HAVING clause: SELECT ... (SELECT AVG(...) FROM ... GROUP BY ... HAVING ... LIMIT 1)
+						//   - ORDER BY clause: SELECT ... (SELECT ... FROM ... ORDER BY ... LIMIT 1)
+						if li, ok := mChild.Children()[0].(*logicalop.LogicalLimit); ok {
+							// Limit with non-0 offset cannot be removed, but we still check for redundant MaxOneRow
+							if li.Offset != 0 {
+								canRemove = false
 							} else {
-								aggArgs = append(aggArgs, expr)
-							}
-						case *expression.ScalarFunction:
-							expr.RetType = expr.RetType.Clone()
-							expr.RetType.DelFlag(mysql.NotNullFlag)
-							aggArgs = append(aggArgs, expr)
-						default:
-							aggArgs = append(aggArgs, expr)
-						}
-					}
-					desc, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), agg.AggFuncs[i].Name, aggArgs, agg.AggFuncs[i].HasDistinct)
-					if err != nil {
-						return nil, planChanged, err
-					}
-					newAggFuncs = append(newAggFuncs, desc)
-				}
-				agg.AggFuncs = newAggFuncs
-				np, planChanged, err := s.optimize(ctx, p, groupByColumn)
-				if err != nil {
-					return nil, planChanged, err
-				}
-				agg.SetChildren(np)
-				// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
-				// agg.buildProjectionIfNecessary()
-				return agg, planChanged, nil
-			}
-			// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
-			// the equal conditions contain the correlated column of this apply.
-			if sel, ok := agg.Children()[0].(*logicalop.LogicalSelection); ok && apply.JoinType == base.LeftOuterJoin {
-				var (
-					eqCondWithCorCol []*expression.ScalarFunction
-					remainedExpr     []expression.Expression
-				)
-				// Extract the equal condition.
-				for _, cond := range sel.Conditions {
-					if expr := apply.DeCorColFromEqExpr(cond); expr != nil {
-						eqCondWithCorCol = append(eqCondWithCorCol, expr.(*expression.ScalarFunction))
-					} else {
-						remainedExpr = append(remainedExpr, cond)
-					}
-				}
-				if len(eqCondWithCorCol) > 0 {
-					originalExpr := sel.Conditions
-					sel.Conditions = remainedExpr
-					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
-					// There's no other correlated column.
-					groupByCols := expression.NewSchema(agg.GetGroupByCols()...)
-					if len(apply.CorCols) == 0 {
-						appendedGroupByCols := expression.NewSchema()
-						var appendedAggFuncs []*aggregation.AggFuncDesc
-
-						join := &apply.LogicalJoin
-						join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
-						for _, eqCond := range eqCondWithCorCol {
-							clonedCol := eqCond.GetArgs()[1].(*expression.Column)
-							// If the join key is not in the aggregation's schema, add first row function.
-							if agg.Schema().ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
-								newFunc, err := aggregation.NewAggFuncDesc(apply.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
-								if err != nil {
-									return nil, planChanged, err
+								// Check if join key is unique key
+								removePlan = li.Children()[0]
+								if isJoinKeyUniqueKey(apply, removePlan) {
+									canRemove = true
 								}
-								agg.AggFuncs = append(agg.AggFuncs, newFunc)
-								agg.Schema().Append(clonedCol)
-								agg.Schema().Columns[agg.Schema().Len()-1].RetType = newFunc.RetTp
-								appendedAggFuncs = append(appendedAggFuncs, newFunc)
-							}
-							// If group by cols don't contain the join key, add it into this.
-							if !groupByCols.Contains(clonedCol) {
-								agg.GroupByItems = append(agg.GroupByItems, clonedCol)
-								groupByCols.Append(clonedCol)
-								appendedGroupByCols.Append(clonedCol)
 							}
 						}
-						// The selection may be useless, check and remove it.
-						if len(sel.Conditions) == 0 {
-							agg.SetChildren(sel.Children()[0])
-						}
-						defaultValueMap := s.aggDefaultValueMap(agg)
-						// We should use it directly, rather than building a projection.
-						if len(defaultValueMap) > 0 {
-							proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
-							proj.SetSchema(apply.Schema())
-							proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
-							for i, val := range defaultValueMap {
-								pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
-								ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
-								proj.Exprs[pos] = ifNullFunc
-							}
-							proj.SetChildren(apply)
-							p = proj
-						}
+					}
+					// If LIMIT can be removed (join key is unique key), remove it and re-enter decorrelate solver
+					if canRemove {
+						apply.SetChildren(outerPlan, removePlan)
 						return s.optimize(ctx, p, groupByColumn)
 					}
-					sel.Conditions = originalExpr
-					apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
 				}
+				// If child is already MaxOneRow, remove redundant wrapper
+				if innerPlanTyped.Children()[0].MaxOneRow() {
+					innerPlan = innerPlanTyped.Children()[0]
+					apply.SetChildren(outerPlan, innerPlan)
+					return s.optimize(ctx, p, groupByColumn)
+				}
+			case *logicalop.LogicalProjection:
+				proj := innerPlanTyped
+				// After the column pruning, some expressions in the projection operator may be pruned.
+				// In this situation, we can decorrelate the apply operator.
+				if apply.JoinType == base.LeftOuterJoin {
+					if skipDecorrelateProjectionForLeftOuterApply(apply, proj) {
+						goto NoOptimize
+					}
+				}
+
+				// step1: substitute the all the schema with new expressions (including correlated column maybe, but it doesn't affect the collation infer inside)
+				// eg: projection: constant("guo") --> column8, once upper layer substitution failed here, the lower layer behind
+				// projection can't supply column8 anymore.
+				//
+				//	upper OP (depend on column8)   --> projection(constant "guo" --> column8)  --> lower layer OP
+				//	          |                                                       ^
+				//	          +-------------------------------------------------------+
+				//
+				//	upper OP (depend on column8)   --> lower layer OP
+				//	          |                             ^
+				//	          +-----------------------------+      // Fail: lower layer can't supply column8 anymore.
+				hasFail := apply.ColumnSubstituteAll(proj.Schema(), proj.Exprs)
+				if hasFail {
+					goto NoOptimize
+				}
+				// step2: when it can be substituted all, we then just do the de-correlation (apply conditions included).
+				for i, expr := range proj.Exprs {
+					proj.Exprs[i] = expr.Decorrelate(outerPlan.Schema())
+				}
+				apply.Decorrelate(outerPlan.Schema())
+
+				innerPlan = proj.Children()[0]
+				apply.SetChildren(outerPlan, innerPlan)
+				if apply.JoinType != base.SemiJoin && apply.JoinType != base.LeftOuterSemiJoin && apply.JoinType != base.AntiSemiJoin && apply.JoinType != base.AntiLeftOuterSemiJoin {
+					proj.SetSchema(apply.Schema())
+					proj.Exprs = append(expression.Column2Exprs(outerPlan.Schema().Clone().Columns), proj.Exprs...)
+					apply.SetSchema(expression.MergeSchema(outerPlan.Schema(), innerPlan.Schema()))
+					np, planChanged, err := s.optimize(ctx, p, groupByColumn)
+					if err != nil {
+						return nil, planChanged, err
+					}
+					proj.SetChildren(np)
+					return proj, planChanged, nil
+				}
+				return s.optimize(ctx, p, groupByColumn)
+			case *logicalop.LogicalLimit:
+				// The presence of 'limit' in 'exists' will make the plan not optimal, so we need to decorrelate the 'limit' of subquery in optimization.
+				// e.g. select count(*) from test t1 where exists (select value from test t2 where t1.id = t2.id limit 1); When using 'limit' in subquery, the plan will not optimal.
+				// If apply is not SemiJoin, the output of it might be expanded even though we are `limit 1`.
+				if apply.JoinType != base.SemiJoin && apply.JoinType != base.LeftOuterSemiJoin && apply.JoinType != base.AntiSemiJoin && apply.JoinType != base.AntiLeftOuterSemiJoin {
+					goto NoOptimize
+				}
+				// If subquery has some filter condition, we will not optimize limit.
+				if len(apply.LeftConditions) > 0 || len(apply.RightConditions) > 0 || len(apply.OtherConditions) > 0 || len(apply.EqualConditions) > 0 {
+					goto NoOptimize
+				}
+				// Limit with non-0 offset will conduct an impact of itself on the final result set from its sub-child, consequently determining the bool value of the exist subquery.
+				if innerPlanTyped.Offset == 0 {
+					innerPlan = innerPlanTyped.Children()[0]
+					apply.SetChildren(outerPlan, innerPlan)
+					return s.optimize(ctx, p, groupByColumn)
+				}
+			case *logicalop.LogicalAggregation:
+				agg := innerPlanTyped
+				if apply.CanPullUpAgg() && agg.CanPullUp() {
+					innerPlan = agg.Children()[0]
+					apply.JoinType = base.LeftOuterJoin
+					apply.SetChildren(outerPlan, innerPlan)
+					agg.SetSchema(apply.Schema())
+					agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().PKOrUK[0])
+					newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
+
+					outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())
+					for i, col := range outerPlan.Schema().Columns {
+						first, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{col}, false)
+						if err != nil {
+							return nil, planChanged, err
+						}
+						newAggFuncs = append(newAggFuncs, first)
+
+						outerCol, _ := outerPlan.Schema().Columns[i].Clone().(*expression.Column)
+						outerCol.RetType = first.RetTp
+						outerColsInSchema = append(outerColsInSchema, outerCol)
+					}
+					apply.SetSchema(expression.MergeSchema(expression.NewSchema(outerColsInSchema...), innerPlan.Schema()))
+					util.ResetNotNullFlag(apply.Schema(), outerPlan.Schema().Len(), apply.Schema().Len())
+					for i, aggFunc := range agg.AggFuncs {
+						aggArgs := make([]expression.Expression, 0, len(aggFunc.Args))
+						for _, arg := range aggFunc.Args {
+							switch expr := arg.(type) {
+							case *expression.Column:
+								if idx := apply.Schema().ColumnIndex(expr); idx != -1 {
+									aggArgs = append(aggArgs, apply.Schema().Columns[idx])
+								} else {
+									aggArgs = append(aggArgs, expr)
+								}
+							case *expression.ScalarFunction:
+								expr.RetType = expr.RetType.Clone()
+								expr.RetType.DelFlag(mysql.NotNullFlag)
+								aggArgs = append(aggArgs, expr)
+							default:
+								aggArgs = append(aggArgs, expr)
+							}
+						}
+						desc, err := aggregation.NewAggFuncDesc(agg.SCtx().GetExprCtx(), agg.AggFuncs[i].Name, aggArgs, agg.AggFuncs[i].HasDistinct)
+						if err != nil {
+							return nil, planChanged, err
+						}
+						newAggFuncs = append(newAggFuncs, desc)
+					}
+					agg.AggFuncs = newAggFuncs
+					np, planChanged, err := s.optimize(ctx, p, groupByColumn)
+					if err != nil {
+						return nil, planChanged, err
+					}
+					agg.SetChildren(np)
+					// TODO: Add a Projection if any argument of aggregate funcs or group by items are scalar functions.
+					// agg.buildProjectionIfNecessary()
+					return agg, planChanged, nil
+				}
+				// We can pull up the equal conditions below the aggregation as the join key of the apply, if only
+				// the equal conditions contain the correlated column of this apply.
+				if sel, ok := agg.Children()[0].(*logicalop.LogicalSelection); ok && apply.JoinType == base.LeftOuterJoin {
+					var (
+						eqCondWithCorCol []*expression.ScalarFunction
+						remainedExpr     []expression.Expression
+					)
+					// Extract the equal condition.
+					for _, cond := range sel.Conditions {
+						if expr := apply.DeCorColFromEqExpr(cond); expr != nil {
+							eqCondWithCorCol = append(eqCondWithCorCol, expr.(*expression.ScalarFunction))
+						} else {
+							remainedExpr = append(remainedExpr, cond)
+						}
+					}
+					if len(eqCondWithCorCol) > 0 {
+						originalExpr := sel.Conditions
+						sel.Conditions = remainedExpr
+						apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
+						// There's no other correlated column.
+						groupByCols := expression.NewSchema(agg.GetGroupByCols()...)
+						if len(apply.CorCols) == 0 {
+							appendedGroupByCols := expression.NewSchema()
+							var appendedAggFuncs []*aggregation.AggFuncDesc
+
+							join := &apply.LogicalJoin
+							join.EqualConditions = append(join.EqualConditions, eqCondWithCorCol...)
+							for _, eqCond := range eqCondWithCorCol {
+								clonedCol := eqCond.GetArgs()[1].(*expression.Column)
+								// If the join key is not in the aggregation's schema, add first row function.
+								if agg.Schema().ColumnIndex(eqCond.GetArgs()[1].(*expression.Column)) == -1 {
+									newFunc, err := aggregation.NewAggFuncDesc(apply.SCtx().GetExprCtx(), ast.AggFuncFirstRow, []expression.Expression{clonedCol}, false)
+									if err != nil {
+										return nil, planChanged, err
+									}
+									agg.AggFuncs = append(agg.AggFuncs, newFunc)
+									agg.Schema().Append(clonedCol)
+									agg.Schema().Columns[agg.Schema().Len()-1].RetType = newFunc.RetTp
+									appendedAggFuncs = append(appendedAggFuncs, newFunc)
+								}
+								// If group by cols don't contain the join key, add it into this.
+								if !groupByCols.Contains(clonedCol) {
+									agg.GroupByItems = append(agg.GroupByItems, clonedCol)
+									groupByCols.Append(clonedCol)
+									appendedGroupByCols.Append(clonedCol)
+								}
+							}
+							// The selection may be useless, check and remove it.
+							if len(sel.Conditions) == 0 {
+								agg.SetChildren(sel.Children()[0])
+							}
+							defaultValueMap := s.aggDefaultValueMap(agg)
+							// We should use it directly, rather than building a projection.
+							if len(defaultValueMap) > 0 {
+								proj := logicalop.LogicalProjection{}.Init(agg.SCtx(), agg.QueryBlockOffset())
+								proj.SetSchema(apply.Schema())
+								proj.Exprs = expression.Column2Exprs(apply.Schema().Columns)
+								for i, val := range defaultValueMap {
+									pos := proj.Schema().ColumnIndex(agg.Schema().Columns[i])
+									ifNullFunc := expression.NewFunctionInternal(agg.SCtx().GetExprCtx(), ast.Ifnull, types.NewFieldType(mysql.TypeLonglong), agg.Schema().Columns[i], val)
+									proj.Exprs[pos] = ifNullFunc
+								}
+								proj.SetChildren(apply)
+								p = proj
+							}
+							return s.optimize(ctx, p, groupByColumn)
+						}
+						sel.Conditions = originalExpr
+						apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
+					}
+				}
+			case *logicalop.LogicalSort:
+				// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
+				// the top level Sort has no effect on the subquery's result.
+				innerPlan = innerPlanTyped.Children()[0]
+				apply.SetChildren(outerPlan, innerPlan)
+				return s.optimize(ctx, p, groupByColumn)
 			}
-		} else if sort, ok := innerPlan.(*logicalop.LogicalSort); ok {
-			// Since we only pull up Selection, Projection, Aggregation, MaxOneRow,
-			// the top level Sort has no effect on the subquery's result.
-			innerPlan = sort.Children()[0]
-			apply.SetChildren(outerPlan, innerPlan)
-			return s.optimize(ctx, p, groupByColumn)
 		}
 	}
 NoOptimize:
@@ -468,6 +517,160 @@ NoOptimize:
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*DecorrelateSolver) Name() string {
 	return "decorrelate"
+}
+
+// extractJoinKeyFromCondition extracts the inner join key column from an equality condition.
+// It checks if the condition is of the form "outer_col = inner_col" where outer_col is a correlated column
+// from the Apply operator. Returns the inner column if it belongs to the given schema, otherwise returns nil.
+func extractJoinKeyFromCondition(apply *logicalop.LogicalApply, cond expression.Expression, schema *expression.Schema) *expression.Column {
+	decExpr := apply.DeCorColFromEqExpr(cond)
+	if decExpr == nil {
+		return nil
+	}
+	sf, ok := decExpr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.EQ {
+		return nil
+	}
+	args := sf.GetArgs()
+	if len(args) != 2 {
+		return nil
+	}
+	innerCol, ok := args[1].(*expression.Column)
+	if !ok || !schema.Contains(innerCol) {
+		return nil
+	}
+	return innerCol
+}
+
+// findDataSource recursively finds the underlying DataSource in a logical plan tree.
+// It returns the first DataSource found, or nil if none exists.
+func findDataSource(p base.LogicalPlan) *logicalop.DataSource {
+	if ds, ok := p.(*logicalop.DataSource); ok {
+		return ds
+	}
+	for _, child := range p.Children() {
+		if ds := findDataSource(child); ds != nil {
+			return ds
+		}
+	}
+	return nil
+}
+
+// canGenerateMultipleRows returns if the LogicalPlan can generate multiple rows from a single input row.
+// This is used to check if an operator can expand rows, which affects uniqueness constraints.
+// Operators that can generate multiple rows include:
+//   - JOIN (except semi/anti joins which preserve row count)
+//   - UNION ALL
+//   - PartitionUnionAll
+//   - Expand (for GROUPING SETS/ROLLUP)
+//   - TODO: unnest function when implemented
+func canGenerateMultipleRows(p base.LogicalPlan) bool {
+	switch p.(type) {
+	case *logicalop.LogicalJoin:
+		// JOIN operators can generate multiple rows (Cartesian product effect)
+		// Note: Semi/Anti joins preserve row count, but we return true here for safety
+		// as the caller can refine this check if needed
+		return true
+	case *logicalop.LogicalUnionAll, *logicalop.LogicalPartitionUnionAll:
+		// UNION ALL combines multiple inputs, potentially generating multiple rows
+		return true
+	case *logicalop.LogicalExpand:
+		// Expand operator splits rows for GROUPING SETS/ROLLUP
+		return true
+	}
+	return false
+}
+
+// isJoinKeyUniqueKey checks if join key is unique key.
+// Returns true if the join key forms a unique key constraint.
+func isJoinKeyUniqueKey(apply *logicalop.LogicalApply, plan base.LogicalPlan) bool {
+	var hasMultiRowOperator func(base.LogicalPlan) bool
+	hasMultiRowOperator = func(p base.LogicalPlan) bool {
+		// Use centralized function to check if operator can generate multiple rows
+		if canGenerateMultipleRows(p) {
+			return true
+		}
+		// Recursively check children
+		for _, child := range p.Children() {
+			if hasMultiRowOperator(child) {
+				return true
+			}
+		}
+		return false
+	}
+	if hasMultiRowOperator(plan) {
+		return false
+	}
+
+	// Extract join keys from Selection conditions and their children recursively
+	// Join conditions may be pushed down to DataSource or nested in child Selection nodes
+	innerJoinKeys := make([]*expression.Column, 0)
+
+	// Recursively extract all conditions from Selection nodes and their children
+	var extractConditions func(base.LogicalPlan)
+	extractConditions = func(p base.LogicalPlan) {
+		if sel, ok := p.(*logicalop.LogicalSelection); ok {
+			// Check conditions directly on Selection
+			for _, cond := range sel.Conditions {
+				if innerCol := extractJoinKeyFromCondition(apply, cond, sel.Schema()); innerCol != nil {
+					innerJoinKeys = append(innerJoinKeys, innerCol)
+				}
+			}
+			// Continue to check children recursively
+		} else if ds, ok := p.(*logicalop.DataSource); ok {
+			// Check conditions in DataSource (PushedDownConds may contain join key conditions)
+			for _, cond := range ds.PushedDownConds {
+				if innerCol := extractJoinKeyFromCondition(apply, cond, ds.Schema()); innerCol != nil {
+					innerJoinKeys = append(innerJoinKeys, innerCol)
+				}
+			}
+			// Stop recursion at DataSource
+			return
+		}
+		// Continue recursion for other nodes
+		for _, child := range p.Children() {
+			extractConditions(child)
+		}
+	}
+
+	extractConditions(plan)
+	if len(innerJoinKeys) == 0 {
+		return false
+	}
+
+	// Find the underlying DataSource to get PKOrUK
+	ds := findDataSource(plan)
+	if ds == nil {
+		return false
+	}
+
+	// Use PKOrUK from DataSource Schema directly
+	if len(ds.Schema().PKOrUK) == 0 {
+		return false
+	}
+
+	// Check if join keys form a unique key
+	for _, keyInfo := range ds.Schema().PKOrUK {
+		allMatch := true
+		for _, keyCol := range keyInfo {
+			found := false
+			for _, joinKey := range innerJoinKeys {
+				if keyCol.ID == joinKey.ID && keyCol.ID != 0 {
+					found = true
+					break
+				}
+			}
+			if !found {
+				allMatch = false
+				break
+			}
+		}
+		if allMatch && len(keyInfo) > 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // Return true if we should skip decorrelation for LeftOuterApply + Projection.

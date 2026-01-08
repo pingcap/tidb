@@ -850,16 +850,14 @@ NULL
 explain format="plan_tree" select sum(a), (select t1.a from t1 where t1.a = t2.a limit 1), (select t1.b from t1 where t1.b = t2.b limit 1) from t2;
 id	task	access object	operator info
 Projection	root		Column#7, planner__cascades__integration.t1.a, planner__cascades__integration.t1.b
-└─Apply	root		CARTESIAN left outer join, left side:Apply
-  ├─Apply(Build)	root		CARTESIAN left outer join, left side:StreamAgg
+└─Apply	root		CARTESIAN left outer join, left side:IndexJoin
+  ├─IndexJoin(Build)	root		left outer join, inner:TableReader, left side:StreamAgg, outer key:planner__cascades__integration.t2.a, inner key:planner__cascades__integration.t1.a, equal cond:eq(planner__cascades__integration.t2.a, planner__cascades__integration.t1.a)
   │ ├─StreamAgg(Build)	root		funcs:sum(Column#12)->Column#7, funcs:firstrow(Column#13)->planner__cascades__integration.t2.a, funcs:firstrow(Column#14)->planner__cascades__integration.t2.b
   │ │ └─Projection	root		cast(planner__cascades__integration.t2.a, decimal(10,0) BINARY)->Column#12, planner__cascades__integration.t2.a->Column#13, planner__cascades__integration.t2.b->Column#14
   │ │   └─TableReader	root		data:TableFullScan
   │ │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  │ └─Limit(Probe)	root		offset:0, count:1
-  │   └─TableReader	root		data:Limit
-  │     └─Limit	cop[tikv]		offset:0, count:1
-  │       └─TableRangeScan	cop[tikv]	table:t1	range: decided by [eq(planner__cascades__integration.t1.a, planner__cascades__integration.t2.a)], keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:TableRangeScan
+  │   └─TableRangeScan	cop[tikv]	table:t1	range: decided by [planner__cascades__integration.t2.a], keep order:false, stats:pseudo
   └─Limit(Probe)	root		offset:0, count:1
     └─TableReader	root		data:Limit
       └─Limit	cop[tikv]		offset:0, count:1

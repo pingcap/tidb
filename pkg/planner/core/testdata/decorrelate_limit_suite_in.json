@@ -1,0 +1,22 @@
+[
+  {
+    "Name": "TestDecorrelateLimitOptimization",
+    "Cases": [
+      "EXPLAIN format = 'plan_tree'  SELECT e.name, e.salary , ( select salary FROM employees e2 WHERE e2.id = e.id LIMIT 1 OFFSET 0 ) AS avg_dept_salary FROM employees e WHERE e.dept_id > 1",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary , ( select salary FROM employees e2 WHERE e2.id = e.id LIMIT 1 OFFSET 1 ) AS avg_dept_salary FROM employees e WHERE e.dept_id > 1",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, ( SELECT e2.salary FROM employees e2 WHERE e2.dept_id = e.dept_id LIMIT 1 OFFSET 0) AS avg_dept_salary FROM employees e WHERE e.dept_id = 1",
+      "EXPLAIN format = 'plan_tree' SELECT e.id, e.name, e.salary, (SELECT en.note FROM employees e2 JOIN employee_notes en ON en.employee_id = e2.id WHERE e2.id = e.id ORDER BY en.created_at DESC LIMIT 1) AS latest_note FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT en.note FROM employees e2 JOIN employee_notes en ON en.employee_id = e2.id LEFT JOIN employees e3 ON e3.id = e2.dept_id WHERE e2.id = e.id LIMIT 1) AS note_multi_join FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 INNER JOIN employee_notes en ON en.employee_id = e2.id WHERE e2.id = e.id LIMIT 1) AS salary_inner_join FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT AVG(e2.salary)  FROM employees e2  WHERE e2.id = e.id  GROUP BY e2.dept_id  HAVING AVG(e2.salary) > 1000  LIMIT 1) AS avg_salary_having FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT count(e2.dept_id)  FROM employees e2  WHERE e2.id = e.id limit 1) AS distinct_dept_id FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 WHERE e2.id = e.id AND e2.dept_id IN (     SELECT dept_id     FROM employees e3     WHERE e3.id = e.id     LIMIT 1 ) LIMIT 1) AS salary_nested FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,(SELECT e2.salary FROM employees e2 WHERE e2.id = e.id AND EXISTS (     SELECT 1     FROM employee_notes en     WHERE en.employee_id = e2.id ) LIMIT 1) AS salary_exists FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT e2.salary  FROM employees e2  WHERE e2.id = e.id  ORDER BY e2.dept_id, e2.salary DESC  LIMIT 1) AS salary_order_multi FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary,  (SELECT DISTINCT e2.dept_id   FROM employees e2   WHERE e2.id = e.id   LIMIT 1) AS distinct_dept_id FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT ROW_NUMBER() OVER (ORDER BY e2.salary DESC)  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS row_num FROM employees e",
+      "EXPLAIN format = 'plan_tree' SELECT e.name, e.salary, (SELECT DISTINCT e2.dept_id  FROM employees e2  WHERE e2.id = e.id  LIMIT 1) AS distinct_dept_id FROM employees e"
+    ]
+  }
+]
+
