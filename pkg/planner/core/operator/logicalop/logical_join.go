@@ -314,6 +314,8 @@ func vaildProj4ConvertAntiJoin(proj *LogicalProjection) bool {
 	// Sometimes there is a projection between select and join.
 	// We require that this projection does not make additional changes to any columns,
 	// then we can continue converting to a semi join.
+	//  Pass: Projection[col1,col2]
+	//  Fail: Projection[col2->ABC, col2+1->col2]
 	for idx, c := range proj.Schema().Columns {
 		if !c.Equals(proj.Exprs[idx]) {
 			return false
