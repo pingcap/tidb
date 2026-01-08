@@ -20,7 +20,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: TiDB Tests
-        uses: ./.github/actions/tidb-tests
+        uses: ./.github/actions/tidb_build
         with:
           bazelrc: ${{ secrets.BAZELRC }}
           gcp_sa_key: ${{ secrets.GCP_SA_KEY }}
