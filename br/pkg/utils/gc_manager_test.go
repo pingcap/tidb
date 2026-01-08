@@ -230,7 +230,7 @@ func TestNewGCSafePointManager_WithoutKeyspace(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, mgr)
 
-	// Verify it's UnifiedGCManager by checking it uses UpdateServiceGCSafePoint
+	// Verify it's GlobalGCManager by checking it uses UpdateServiceGCSafePoint
 	ctx := context.Background()
 	sp := utils.BRServiceSafePoint{
 		ID:       "test-service",
@@ -238,7 +238,7 @@ func TestNewGCSafePointManager_WithoutKeyspace(t *testing.T) {
 		BackupTS: 2334,
 	}
 
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	err = mgr.SetServiceSafePoint(ctx, sp)
 	require.NoError(t, err)
 
 	// Verify UpdateServiceGCSafePoint was called (unified manager behavior)
@@ -276,7 +276,7 @@ func TestNewGCSafePointManager_WithKeyspace(t *testing.T) {
 		BackupTS: 2335,
 	}
 
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	err = mgr.SetServiceSafePoint(ctx, sp)
 	require.NoError(t, err)
 
 	// Verify SetGCBarrier was called (keyspace manager behavior)
@@ -291,7 +291,7 @@ func TestNewGCSafePointManager_WithKeyspace(t *testing.T) {
 	require.Equal(t, 0, pdClient.updateServiceCalls)
 }
 
-func TestUnifiedGCManager_UpdateServiceSafePoint(t *testing.T) {
+func TestGlobalGCManager_UpdateServiceSafePoint(t *testing.T) {
 	// Setup: no keyspace
 	originalCfg := *config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(&originalCfg)
@@ -318,7 +318,7 @@ func TestUnifiedGCManager_UpdateServiceSafePoint(t *testing.T) {
 		BackupTS: 2334, // Use a value > mock GC safepoint (2333)
 	}
 
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	err = mgr.SetServiceSafePoint(ctx, sp)
 	require.NoError(t, err)
 	require.Equal(t, 1, pdClient.updateServiceCalls)
 	require.Equal(t, "br-test", pdClient.lastServiceID)
@@ -328,7 +328,7 @@ func TestUnifiedGCManager_UpdateServiceSafePoint(t *testing.T) {
 
 	// Test 2: Delete safepoint (TTL = 0)
 	sp.TTL = 0
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	err = mgr.SetServiceSafePoint(ctx, sp)
 	require.NoError(t, err)
 	require.Equal(t, 2, pdClient.updateServiceCalls)
 	require.Equal(t, int64(0), pdClient.lastTTL)
@@ -363,7 +363,7 @@ func TestKeyspaceGCManager_UpdateServiceSafePoint(t *testing.T) {
 		BackupTS: 3000,
 	}
 
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	err = mgr.SetServiceSafePoint(ctx, sp)
 	require.NoError(t, err)
 	require.Equal(t, 1, gcClient.setGCBarrierCalls)
 	require.Equal(t, "br-barrier", gcClient.lastBarrierID)
@@ -379,7 +379,7 @@ func TestKeyspaceGCManager_UpdateServiceSafePoint(t *testing.T) {
 
 	// Test 2: Delete barrier (TTL = 0)
 	sp.TTL = 0
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	err = mgr.SetServiceSafePoint(ctx, sp)
 	require.NoError(t, err)
 	require.Equal(t, 1, gcClient.deleteGCBarrierCalls)
 
@@ -389,7 +389,7 @@ func TestKeyspaceGCManager_UpdateServiceSafePoint(t *testing.T) {
 	require.Empty(t, state.GCBarriers)
 }
 
-func TestUnifiedGCManager_StartServiceSafePointKeeper(t *testing.T) {
+func TestGlobalGCManager_StartServiceSafePointKeeper(t *testing.T) {
 	// Setup: no keyspace
 	originalCfg := *config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(&originalCfg)
@@ -489,7 +489,7 @@ func TestKeyspaceGCManager_StartServiceSafePointKeeper(t *testing.T) {
 
 	// Simulate the cleanup that the caller (backup.go/restore.go) would do
 	sp.TTL = 0
-	err = mgr.UpdateServiceSafePoint(context.Background(), sp)
+	err = mgr.SetServiceSafePoint(context.Background(), sp)
 	require.NoError(t, err)
 
 	// Now DeleteGCBarrier should have been called
@@ -530,7 +530,7 @@ func TestKeyspaceGCManager_ErrorHandling(t *testing.T) {
 		BackupTS: 4000, // Behind txn safe point 5000
 	}
 
-	err = mgr.UpdateServiceSafePoint(ctx, sp)
+	err = mgr.SetServiceSafePoint(ctx, sp)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "behind")
 
@@ -540,12 +540,12 @@ func TestKeyspaceGCManager_ErrorHandling(t *testing.T) {
 		TTL:      60,
 		BackupTS: 6000, // Ahead of txn safe point
 	}
-	err = mgr.UpdateServiceSafePoint(ctx, sp2)
+	err = mgr.SetServiceSafePoint(ctx, sp2)
 	require.NoError(t, err)
 
 	// Test 3: Delete barrier (should succeed)
 	sp2.TTL = 0
-	err = mgr.UpdateServiceSafePoint(ctx, sp2)
+	err = mgr.SetServiceSafePoint(ctx, sp2)
 	require.NoError(t, err)
 
 	// Test 4: Delete non-existent barrier (should return nil/no error)
@@ -554,7 +554,7 @@ func TestKeyspaceGCManager_ErrorHandling(t *testing.T) {
 		TTL:      0,
 		BackupTS: 7000,
 	}
-	err = mgr.UpdateServiceSafePoint(ctx, sp3)
+	err = mgr.SetServiceSafePoint(ctx, sp3)
 	// Should not panic or error - deleting non-existent barrier is a no-op
 	require.NoError(t, err)
 }
@@ -563,7 +563,7 @@ func TestStorageAwareWrappers(t *testing.T) {
 	originalCfg := *config.GetGlobalConfig()
 	defer config.StoreGlobalConfig(&originalCfg)
 
-	// Test 1: Without keyspace - should use UnifiedGCManager
+	// Test 1: Without keyspace - should use GlobalGCManager
 	newCfg1 := originalCfg
 	newCfg1.KeyspaceName = ""
 	config.StoreGlobalConfig(&newCfg1)
@@ -580,7 +580,7 @@ func TestStorageAwareWrappers(t *testing.T) {
 		BackupTS: 2800,
 	}
 
-	err := utils.UpdateServiceSafePointWithStorage(ctx, pdClient1, storage1, sp)
+	err := utils.SetServiceSafePointWithStorage(ctx, pdClient1, storage1, sp)
 	require.NoError(t, err)
 	require.Equal(t, 1, pdClient1.updateServiceCalls)
 
@@ -595,7 +595,7 @@ func TestStorageAwareWrappers(t *testing.T) {
 		codec: &mockCodec{keyspaceID: tikv.KeyspaceID(keyspaceID)},
 	}
 
-	err = utils.UpdateServiceSafePointWithStorage(ctx, pdClient2, storage2, sp)
+	err = utils.SetServiceSafePointWithStorage(ctx, pdClient2, storage2, sp)
 	require.NoError(t, err)
 
 	gcClient := pdClient2.gcStatesClients[keyspaceID]

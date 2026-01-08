@@ -37,24 +37,25 @@ func newKeyspaceGCManager(pdClient pd.Client, keyspaceID uint32) (*keyspaceGCMan
 	}, nil
 }
 
-// UpdateServiceSafePoint updates the keyspace GC barrier using SetGCBarrier API.
-// If sp.TTL is 0, it calls DeleteGCBarrier to remove the barrier.
-func (m *keyspaceGCManager) UpdateServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error {
-	log.Debug("update keyspace GC barrier",
+// GetGCSafePoint returns the current GC safe point for this keyspace.
+func (m *keyspaceGCManager) GetGCSafePoint(ctx context.Context) (uint64, error) {
+	state, err := m.gcClient.GetGCState(ctx)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	return state.GCSafePoint, nil
+}
+
+// SetServiceSafePoint sets the keyspace GC barrier using SetGCBarrier API.
+// If sp.TTL <= 0, it calls DeleteGCBarrier to remove the barrier (same as unified manager behavior).
+func (m *keyspaceGCManager) SetServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error {
+	log.Debug("set keyspace GC barrier",
 		zap.Uint32("keyspaceID", m.keyspaceID),
 		zap.Object("safePoint", sp))
 
-	// Handle deletion case (TTL = 0)
+	// Handle deletion case (TTL <= 0), same as unified manager behavior
 	if sp.TTL <= 0 {
-		// Delete the barrier
-		_, err := m.gcClient.DeleteGCBarrier(ctx, sp.ID)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		log.Debug("deleted keyspace GC barrier",
-			zap.Uint32("keyspaceID", m.keyspaceID),
-			zap.String("barrierID", sp.ID))
-		return nil
+		return m.DeleteServiceSafePoint(ctx, sp.ID)
 	}
 
 	// Convert TTL from int64 seconds to time.Duration
@@ -67,7 +68,7 @@ func (m *keyspaceGCManager) UpdateServiceSafePoint(ctx context.Context, sp BRSer
 		return errors.Trace(err)
 	}
 
-	log.Debug("set keyspace GC barrier",
+	log.Debug("set keyspace GC barrier succeeded",
 		zap.Uint32("keyspaceID", m.keyspaceID),
 		zap.String("barrierID", barrierInfo.BarrierID),
 		zap.Uint64("barrierTS", barrierInfo.BarrierTS),
@@ -76,60 +77,14 @@ func (m *keyspaceGCManager) UpdateServiceSafePoint(ctx context.Context, sp BRSer
 	return nil
 }
 
-// StartServiceSafePointKeeper starts a goroutine to periodically update the keyspace GC barrier.
-// The keeper will run until the context is canceled.
-// Barrier cleanup is handled by the caller setting TTL=0, similar to the unified GC manager.
-func (m *keyspaceGCManager) StartServiceSafePointKeeper(ctx context.Context, sp BRServiceSafePoint) error {
-	if sp.ID == "" || sp.TTL <= 0 {
-		return errors.Annotatef(errors.New("invalid service safe point"), "invalid service safe point %v", sp)
-	}
-
-	// Check GC safe point first (reuse existing check)
-	if err := CheckGCSafePoint(ctx, m.pdClient, sp.BackupTS); err != nil {
+// DeleteServiceSafePoint removes the keyspace GC barrier.
+func (m *keyspaceGCManager) DeleteServiceSafePoint(ctx context.Context, id string) error {
+	_, err := m.gcClient.DeleteGCBarrier(ctx, id)
+	if err != nil {
 		return errors.Trace(err)
 	}
-
-	// Set initial barrier immediately to cover the gap between starting
-	// update goroutine and updating the barrier.
-	if err := m.UpdateServiceSafePoint(ctx, sp); err != nil {
-		return errors.Trace(err)
-	}
-
-	// Calculate update interval (TTL / 3, same as existing keeper logic)
-	updateGapTime := time.Duration(sp.TTL) * time.Second / preUpdateServiceSafePointFactor
-	updateTick := time.NewTicker(updateGapTime)
-	checkTick := time.NewTicker(checkGCSafePointGapTime)
-
-	go func() {
-		defer updateTick.Stop()
-		defer checkTick.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				log.Debug("keyspace GC barrier keeper exited",
-					zap.Uint32("keyspaceID", m.keyspaceID))
-				return
-
-			case <-updateTick.C:
-				// Periodically refresh the barrier to extend its TTL
-				if err := m.UpdateServiceSafePoint(ctx, sp); err != nil {
-					log.Warn("failed to update keyspace GC barrier, backup may fail if gc triggered",
-						zap.Uint32("keyspaceID", m.keyspaceID),
-						zap.Error(err))
-				}
-
-			case <-checkTick.C:
-				// Periodically check if GC has advanced past our backup TS
-				// This is a safety mechanism - if this check fails, we panic to prevent data loss
-				if err := CheckGCSafePoint(ctx, m.pdClient, sp.BackupTS); err != nil {
-					log.Panic("cannot pass gc safe point check, aborting",
-						zap.Uint32("keyspaceID", m.keyspaceID),
-						zap.Error(err),
-						zap.Object("safePoint", sp))
-				}
-			}
-		}
-	}()
-
+	log.Debug("deleted keyspace GC barrier",
+		zap.Uint32("keyspaceID", m.keyspaceID),
+		zap.String("barrierID", id))
 	return nil
 }
