@@ -64,16 +64,40 @@ Standard Go tests throughout `/pkg/` packages
 
 ```bash
 # in the root directory of the repository
-make failpoint-enable
 pushd pkg/<package_name>
-go test -v -run  <TestName>  -record --tags=intest
+go test -run  <TestName>  -record --tags=intest
 popd
-make failpoint-disable # The command should be executed regardless of whether the `go test` is successful or not.
 ```
 
 - If the execution is successful, please check whether the result set file has been modified. If it has been modified, 
   Please verify that the modifications are correct and notify the developer.
 - If the execution fails, please check the error message and notify the developer.
+
+#### When to enable failpoint
+
+Before running unit tests, check if the target package uses failpoint:
+
+```bash
+grep -R -n "failpoint.Enable" pkg/<package_name>
+grep -R -n "testfailpoint.Enable" pkg/<package_name>
+```
+
+**Rules:**
+- If grep returns matches → `make failpoint-enable` is required
+- If grep returns nothing → do NOT enable failpoint (unnecessary overhead)
+
+**Ensure failpoint is always disabled** (use this pattern):
+
+```bash
+make failpoint-enable && (
+  pushd pkg/<package_name>
+  go test -run <TestName> --tags=intest;
+  rc=$?;
+  popd;
+  make failpoint-disable;
+  exit $rc
+)
+```
 
 #### Unit Tests Specification
 
@@ -98,6 +122,99 @@ popd
 ```
 
 If you modify the test set `t/planner/core/binary_plan.test`, then the `TestName` will be `planner/core/binary_plan`.
+
+### RealTiKV Tests
+
+RealTiKV tests are located in the `/tests/realtikvtest` directory. These tests run against a real TiKV cluster (not mocktikv/unistore).
+
+#### When to use realtikvtest
+
+- Tests that require real TiKV / TiUP Playground / TiKV real environment
+- Tests located under `tests/realtikvtest/` directory tree
+
+#### 1. Start TiDB Playground
+
+Before running `realtikvtest`, start a minimal PD + TiKV cluster (`tikv-slim`). Most test cases use PD address `127.0.0.1:2379` by default.
+
+**Must run in background (do not omit `&`)**:
+
+```bash
+tiup playground --mode tikv-slim &
+```
+
+(Optional) Use `--tag` to distinguish different playgrounds:
+
+```bash
+tiup playground --mode tikv-slim --tag realtikvtest &
+```
+
+#### How to verify cluster is ready
+
+Check PD API - if it returns JSON, the cluster is ready:
+
+```bash
+curl -f http://127.0.0.1:2379/pd/api/v1/version
+```
+
+Wait until ready:
+
+```bash
+until curl -sf http://127.0.0.1:2379/pd/api/v1/version >/dev/null; do sleep 1; done
+```
+
+#### 2. Enable Failpoint (if needed)
+
+If target test uses `failpoint` / `testfailpoint`, enable failpoint before running tests.
+
+**How to check if needed**:
+```bash
+grep -R -n "failpoint.Enable" tests/realtikvtest/<dir>
+grep -R -n "testfailpoint.Enable" tests/realtikvtest/<dir>
+```
+
+If needed, use this pattern to ensure failpoint is always disabled:
+
+```bash
+make failpoint-enable && (
+  go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/...;
+  rc=$?;
+  make failpoint-disable;
+  exit $rc
+)
+```
+
+#### 3. Run Tests
+
+```bash
+go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/...
+```
+
+**Note**: Do not add `-v` by default to avoid excessive log output. Only add `-v` when debugging.
+
+#### 4. Cleanup
+
+**Required**: If you started TiUP Playground, you must clean up after tests.
+
+```bash
+# 1) Stop playground (will also stop pd/tikv)
+pkill -f "tiup playground" || true
+
+# 2) (Optional) Clean component data directories
+tiup clean --all
+```
+
+Verify stopped (should fail to connect):
+
+```bash
+curl -f http://127.0.0.1:2379/pd/api/v1/version
+```
+
+#### Key Tips
+
+- **Failpoints**: Use `failpoint` and `testfailpoint` to simulate abnormal behavior.
+- **Atomicity**: Use `atomic` variables to track logic in concurrent tests.
+- **Environment check**: Check for running playground processes before starting.
+- **Fmt-only changes**: If PR only involves code formatting (gofmt, indentation), do NOT run time-consuming `realtikvtest`. Just ensure local compilation passes.
 
 ## Pull Request Instructions
 
