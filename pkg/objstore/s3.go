@@ -78,8 +78,8 @@ const (
 	notFound             = "NotFound"
 	noSuchBucket         = "NoSuchBucket"
 	noSuchKey            = "NoSuchKey"
-	// number of retries to make of operations.
-	maxRetries = 7
+	// number of attempts to make of operations, i.e. maxAttempts - 1 retries
+	maxAttempts = 20
 	// max number of retries when meets error
 	maxErrorRetries = 3
 	ec2MetaAddress  = "169.254.169.254"
@@ -1450,8 +1450,10 @@ type tidbRetryer struct {
 func newTidbRetryer() aws.Retryer {
 	return &tidbRetryer{
 		standardRetryer: retry.NewStandard(func(so *retry.StandardOptions) {
-			so.MaxAttempts = maxRetries
-			so.MaxBackoff = 30 * time.Second
+			so.MaxAttempts = maxAttempts
+			// Standard uses exponential backoff with jitter by default, it will
+			// calculate maxBackoffAttempts by log2, so we set it a power of 2.
+			so.MaxBackoff = 32 * time.Second
 			// this rate limiter is shared by all requests on the same S3 store
 			// instance, if there are network issues, we might easily exhaust the
 			// token bucket which doesn't add tokens back on error. such as for
@@ -1509,7 +1511,7 @@ func (tr *tidbRetryer) IsErrorRetryable(err error) bool {
 }
 
 func (tr *tidbRetryer) MaxAttempts() int {
-	return maxRetries
+	return maxAttempts
 }
 
 func (tr *tidbRetryer) RetryDelay(attempt int, err error) (time.Duration, error) {
