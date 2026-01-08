@@ -233,4 +233,3 @@ func TestAnalyzeSessionMemTrackerDetachOnClose(t *testing.T) {
 	tk.Session().Close()
 	require.Equal(t, base, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
 }
-
