@@ -1950,6 +1950,21 @@ func checkTableExistence(ctx context.Context, mgr *conn.Mgr, tables []*metautil.
 	return nil
 }
 
+func checkDbExistence(mgr *conn.Mgr, dbs []*model.DBInfo) error {
+	message := "database already exists: "
+	allUnique := true
+	for _, db := range dbs {
+		if mgr.GetDomain().InfoSchema().SchemaExists(db.Name) {
+			message += db.Name.O + " "
+			allUnique = false
+		}
+	}
+	if !allUnique {
+		return errors.Annotate(berrors.ErrDatabasesAlreadyExisted, message)
+	}
+	return nil
+}
+
 func getAnyFileKeyFromTables(tables []*metautil.Table) []byte {
 	for _, table := range tables {
 		for _, files := range table.FilesOfPhysicals {
@@ -2586,7 +2601,11 @@ func checkOptionalClusterRequirements(
 				return errors.Trace(err)
 			}
 			if isPitr {
-				if err := checkTableExistence(ctx, mgr, buildLogBackupMetaTables(cfg.PiTRTableTracker.DBNameToTableNames)); err != nil {
+				dbs, tables := buildLogBackupMetaTables(cfg.PiTRTableTracker.DBNameToTableNames)
+				if err := checkDbExistence(mgr, dbs); err != nil {
+					return errors.Annotate(err, "The log restore may modify or drop the existing database")
+				}
+				if err := checkTableExistence(ctx, mgr, tables); err != nil {
 					return errors.Trace(err)
 				}
 			}
@@ -2595,15 +2614,18 @@ func checkOptionalClusterRequirements(
 	return nil
 }
 
-func buildLogBackupMetaTables(dbNameToTableNames map[string]map[string]struct{}) []*metautil.Table {
+func buildLogBackupMetaTables(dbNameToTableNames map[string]map[string]struct{}) ([]*model.DBInfo, []*metautil.Table) {
+	dbs := make([]*model.DBInfo, 0)
 	tables := make([]*metautil.Table, 0)
 
 	for dbName, tableNames := range dbNameToTableNames {
+		dbInfo := &model.DBInfo{
+			Name: ast.NewCIStr(dbName),
+		}
+		dbs = append(dbs, dbInfo)
 		for tableName := range tableNames {
 			table := &metautil.Table{
-				DB: &model.DBInfo{
-					Name: ast.NewCIStr(dbName),
-				},
+				DB: dbInfo,
 				Info: &model.TableInfo{
 					Name: ast.NewCIStr(tableName),
 				},
@@ -2611,7 +2633,7 @@ func buildLogBackupMetaTables(dbNameToTableNames map[string]map[string]struct{})
 			tables = append(tables, table)
 		}
 	}
-	return tables
+	return dbs, tables
 }
 
 func createDBsAndTables(
