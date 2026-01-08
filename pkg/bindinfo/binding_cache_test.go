@@ -166,7 +166,22 @@ func TestExtractTableName(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		require.NoErrorf(t, err, "sql: %s", tt.sql)
 		rs := CollectTableNames(stmt)
-		result := getTableName(rs)
+		result, err := getTableName(rs)
+		require.NoErrorf(t, err, "sql: %s", tt.sql)
 		require.Equalf(t, tt.tables, result, "sql: %s", tt.sql)
 	}
+}
+
+func getTableName(n []*ast.TableName) ([]string, error) {
+	result := make([]string, 0, len(n))
+	for _, v := range n {
+		var sb strings.Builder
+		restoreFlags := format.RestoreKeyWordLowercase
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := v.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
+		result = append(result, sb.String())
+	}
+	return result, nil
 }
