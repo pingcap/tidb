@@ -412,8 +412,17 @@ WHERE B.status IS NULL;
 |   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
 +----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
 ```
+
+Additionally, we found that there may be a projection between select and join.
+
+	Select[isnull(col1)] <- Projection[col1,col2,col3,col4] <- left outer join[outer side: col1 col2, inner side: col3 col4]
+
+Currently, we only support projections with column mapping relationships, not transformation relationships.
+
+	Projection[null->col1,null->col2,col3,col4] <- anti semi join[outer side: col1 col2, inner side: col3 col4]
+
 */
-func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (result *LogicalProjection, selConditionColInOuter bool) {
+func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, selConditionColInOuter bool) {
 	if len(ret) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		// ret can only have one expression.
 		// The inner expression can definitely be pushed down, so ret must be the outer expression.
@@ -464,27 +473,28 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 	}
 	filterOutNullEQAndOtherCondition4ConvertAntiJoin(innerChildIdx, &joinOuterKeySch, p.EqualConditions, p.OtherConditions)
 	selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
-	// proj is to generate the NULL values for the columns of the outer table, which is the
+	// resultProj is to generate the NULL values for the columns of the outer table, which is the
 	// expected result for this kind of anti-join query.
 	if selConditionColInOuter {
-		// column in IsNull expression is from the outer side columns in the eq/other condition.
+		// Scenario 1: column in IsNull expression is from the outer side columns in the eq/other condition.
 		if proj != nil {
-			result = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
+			resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
 		} else {
-			result = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+			resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
 		}
 	} else if outerSchSet.Has(int(isNullcol.UniqueID)) {
-		// column in IsNull expression is from the outer side columns.
-		// but it is not in the equal/other condition.
-		// We need to check whether outer column is not null in the origin table schema.
-		// If it is not null column, it can be directly converted into an anti semi join.
+		// Scenario 2:
+		//  column in IsNull expression is from the outer side columns.
+		//  but it is not in the equal/other condition.
+		//  We need to check whether outer column is not null in the origin table schema.
+		//  If it is not null column, it can be directly converted into an anti semi join.
 		outerSch := p.Children()[1^innerChildIdx].Schema()
 		idx := outerSch.ColumnIndex(isNullcol)
 		if mysql.HasNotNullFlag(outerSch.Columns[idx].RetType.GetFlag()) {
 			if proj != nil {
-				result = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
+				resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
 			} else {
-				result = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+				resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
 			}
 			selConditionColInOuter = true
 		}
@@ -506,7 +516,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(ret []expression.Expression, selectSch 
 		}
 		p.JoinType = base.AntiSemiJoin
 	}
-	return result, selConditionColInOuter
+	return resultProj, selConditionColInOuter
 }
 
 // generateProject4ConvertAntiJoin is generate projection and put it on the anti semi join which is from outer join.
