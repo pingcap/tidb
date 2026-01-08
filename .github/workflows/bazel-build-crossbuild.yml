@@ -1,4 +1,4 @@
-name: Bazel crossbuild for TiDB/Lightning
+name: Bazel Crossbuild for TiDB/Lightning
 on:
   push:
     branches:
@@ -8,7 +8,7 @@ on:
       - master
 jobs:
   master:
-    name: Bazel Crossbuild Build
+    name: Bazel Crossbuild
     runs-on: ${{ matrix.os }}-latest
     strategy:
       matrix:
