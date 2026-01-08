@@ -325,18 +325,17 @@ func vaildProj4ConvertAntiJoin(proj *LogicalProjection) bool {
 // CanConvertAntiJoin is used in outer-join-to-semi-join rule.
 /*
 #### Scenario 1: IS NULL on the Join Condition Column
-//
+
 - In this scenario, the IS NULL filter is applied directly to the join key from the outer table.
-//
+
 ##### Table Schema
 CREATE TABLE Table_A (id INT, name VARCHAR(50));
 CREATE TABLE Table_B (id INT, info VARCHAR(50));
-//
+
 ##### Plan
-//
+```
 -- The optimizer rewrites the LEFT JOIN ... WHERE ... IS NULL pattern into an efficient
 -- Anti Semi Join to retrieve rows from Table A that have no match in Table B.
-```
 SELECT Table_A.id, Table_A.name
 FROM
 	Table_A
