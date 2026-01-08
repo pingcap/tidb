@@ -28,11 +28,11 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/encryption"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -262,7 +262,7 @@ func (m *MetadataHelper) ReadFile(
 	offset uint64,
 	length uint64,
 	compressionType backuppb.CompressionType,
-	storage storage.ExternalStorage,
+	storage objstore.Storage,
 	encryptionInfo *encryptionpb.FileEncryptionInfo,
 ) ([]byte, error) {
 	var err error
@@ -422,7 +422,7 @@ func FilterPathByTs(path string, left, right uint64) string {
 // read metadata content from external_storage.
 func FastUnmarshalMetaData(
 	ctx context.Context,
-	s storage.ExternalStorage,
+	s objstore.Storage,
 	startTS uint64,
 	endTS uint64,
 	metaDataWorkerPoolSize uint,
@@ -431,7 +431,7 @@ func FastUnmarshalMetaData(
 	log.Info("use workers to speed up reading metadata files", zap.Uint("workers", metaDataWorkerPoolSize))
 	pool := util.NewWorkerPool(metaDataWorkerPoolSize, "metadata")
 	eg, ectx := errgroup.WithContext(ctx)
-	opt := &storage.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
+	opt := &objstore.WalkOption{SubDir: GetStreamBackupMetaPrefix()}
 	err := s.WalkDir(ectx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, metaSuffix) {
 			return nil

@@ -1,0 +1,27 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "bootstraptest2_test",
+    timeout = "short",
+    srcs = [
+        "boot_test.go",
+        "main_test.go",
+    ],
+    flaky = True,
+    shard_count = 6,
+    deps = [
+        "//pkg/config",
+        "//pkg/config/kerneltype",
+        "//pkg/domain",
+        "//pkg/meta",
+        "//pkg/session",
+        "//pkg/testkit/testmain",
+        "//pkg/testkit/testsetup",
+        "@com_github_pingcap_log//:log",
+        "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@org_uber_go_goleak//:goleak",
+        "@org_uber_go_zap//:zap",
+        "@org_uber_go_zap//zapcore",
+    ],
+)

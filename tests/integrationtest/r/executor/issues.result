@@ -765,10 +765,10 @@ c_int	c_str	c_decimal
 explain format = 'plan_tree' select * from t1 where c_str <> any (select c_str from t2 where c_decimal < 5) for update;
 id	task	access object	operator info
 SelectLock	root		for update 0
-└─HashJoin	root		CARTESIAN inner join, other cond:or(gt(Column#8, 1), or(ne(executor__issues.t1.c_str, Column#7), if(ne(Column#9, 0), NULL, 0)))
-  ├─Selection(Build)	root		ne(Column#10, 0)
-  │ └─StreamAgg	root		funcs:max(Column#27)->Column#7, funcs:count(distinct Column#28)->Column#8, funcs:sum(Column#29)->Column#9, funcs:count(1)->Column#10
-  │   └─Projection	root		executor__issues.t2.c_str->Column#27, executor__issues.t2.c_str->Column#28, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column#29
+└─HashJoin	root		CARTESIAN inner join, other cond:or(gt(Column, 1), or(ne(executor__issues.t1.c_str, Column), if(ne(Column, 0), NULL, 0)))
+  ├─Selection(Build)	root		ne(Column, 0)
+  │ └─StreamAgg	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
+  │   └─Projection	root		executor__issues.t2.c_str->Column, executor__issues.t2.c_str->Column, cast(isnull(executor__issues.t2.c_str), decimal(20,0) BINARY)->Column
   │     └─TableReader	root	partition:all	data:Selection
   │       └─Selection	cop[tikv]		lt(executor__issues.t2.c_decimal, 5)
   │         └─TableFullScan	cop[tikv]	table:t2	keep order:false

@@ -21,15 +21,15 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
 func TestSeekPropsOffsets(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 
 	rc1 := &rangePropertiesCollector{
 		props: []*rangeProperty{
@@ -135,7 +135,7 @@ func TestSeekPropsOffsets(t *testing.T) {
 
 func TestGetAllFileNames(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	w := NewWriterBuilder().
 		SetMemorySizeLimit(10*(lengthBytes*2+2)).
 		SetBlockSize(10*(lengthBytes*2+2)).
@@ -199,7 +199,7 @@ func TestGetAllFileNames(t *testing.T) {
 
 func TestCleanUpFiles(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	w := NewWriterBuilder().
 		SetMemorySizeLimit(10*(lengthBytes*2+2)).
 		SetBlockSize(10*(lengthBytes*2+2)).
@@ -470,7 +470,7 @@ func TestMarshalFields(t *testing.T) {
 
 func TestReadWriteJSON(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 
 	type testStruct struct {
 		BaseExternalMeta

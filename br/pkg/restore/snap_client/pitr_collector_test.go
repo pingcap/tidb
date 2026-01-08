@@ -15,14 +15,14 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
-func tmp(t *testing.T) *storage.LocalStorage {
+func tmp(t *testing.T) *objstore.LocalStorage {
 	tmpDir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpDir)
+	s, err := objstore.NewLocalStorage(tmpDir)
 	require.NoError(t, err)
 	s.IgnoreEnoentForDelete = true
 	return s

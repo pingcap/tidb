@@ -76,11 +76,11 @@ go_test(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
-        "//br/pkg/storage",
         "//br/pkg/streamhelper/config",
         "//br/pkg/streamhelper/spans",
         "//br/pkg/utils",
         "//pkg/kv",
+        "//pkg/objstore",
         "//pkg/sessionctx/vardef",
         "//pkg/tablecodec",
         "//pkg/util/codec",

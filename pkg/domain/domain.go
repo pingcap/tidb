@@ -69,6 +69,7 @@ import (
 	lcom "github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -661,7 +662,7 @@ func (do *Domain) Init(
 	do.cancelFns.fns = append(do.cancelFns.fns, cancelFunc)
 	do.cancelFns.mu.Unlock()
 
-	ddlNotifierStore := notifier.OpenTableStore("mysql", ddl.NotifierTableName)
+	ddlNotifierStore := notifier.OpenTableStore("mysql", metadef.NotifierTableName)
 	do.ddlNotifier = notifier.NewDDLNotifier(
 		do.sysSessionPool,
 		ddlNotifierStore,

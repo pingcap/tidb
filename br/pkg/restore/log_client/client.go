@@ -52,7 +52,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -66,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
@@ -202,7 +202,7 @@ type LogClient struct {
 	keepaliveConf keepalive.ClientParameters
 
 	rawKVClient *rawkv.RawKVBatchClient
-	storage     storage.ExternalStorage
+	storage     objstore.Storage
 
 	// unsafeSession is not thread-safe.
 	// Currently, it is only utilized in some initialization and post-handle functions.
@@ -225,6 +225,10 @@ type LogClient struct {
 
 	logFilesStat logFilesStatistic
 	restoreStat  restoreStatistics
+}
+
+func (rc *LogClient) SetRestoreID(restoreID uint64) {
+	rc.restoreID = restoreID
 }
 
 type restoreStatistics struct {
@@ -427,9 +431,9 @@ func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
 	rc.upstreamClusterID = upstreamClusterID
 }
 
-func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storage.ExternalStorageOptions) error {
+func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *objstore.Options) error {
 	var err error
-	rc.storage, err = storage.New(ctx, backend, opts)
+	rc.storage, err = objstore.New(ctx, backend, opts)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -611,7 +615,7 @@ func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
 
 func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 	ctx context.Context,
-	startTS, restoredTS uint64,
+	restoreStartTS, startTS, restoredTS uint64,
 	gcRatio string,
 	tiflashRecorder *tiflashrec.TiFlashRecorder,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
@@ -647,6 +651,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 		zap.String("gc-ratio", gcRatio), zap.Int("tiflash-item-count", len(items)))
 	if err := logCheckpointMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{
 		UpstreamClusterID: rc.upstreamClusterID,
+		RestoreStartTS:    restoreStartTS,
 		RestoredTS:        restoredTS,
 		StartTS:           startTS,
 		RewriteTS:         rc.currentTS,
@@ -661,7 +666,7 @@ func (rc *LogClient) LoadOrCreateCheckpointMetadataForLogRestore(
 
 type LockedMigrations struct {
 	Migs     []*backuppb.Migration
-	ReadLock storage.RemoteLock
+	ReadLock objstore.RemoteLock
 }
 
 func (rc *LogClient) GetLockedMigrations(ctx context.Context) (*LockedMigrations, error) {
@@ -997,7 +1002,7 @@ func (rc *LogClient) RestoreKVFiles(
 
 type FullBackupStorageConfig struct {
 	Backend *backuppb.StorageBackend
-	Opts    *storage.ExternalStorageOptions
+	Opts    *objstore.Options
 }
 
 type GetIDMapConfig struct {
@@ -1017,7 +1022,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	hasFullBackupStorageConfig,
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-	tableMappingManger *stream.TableMappingManager,
+	tableMappingManager *stream.TableMappingManager,
 ) error {
 	var (
 		err        error
@@ -1056,7 +1061,8 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 
 	stream.LogDBReplaceMap("base db replace info", dbReplaces)
 	if len(dbReplaces) != 0 {
-		tableMappingManger.MergeBaseDBReplace(dbReplaces)
+		tableMappingManager.SetFromPiTRIDMap()
+		tableMappingManager.MergeBaseDBReplace(dbReplaces)
 	}
 	return nil
 }

@@ -9,9 +9,9 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -94,8 +94,8 @@ func hashCheck(t *testing.T, cfg *BackupConfig, originalHash []byte, check bool)
 func TestBackupConfigHash(t *testing.T) {
 	cfg := &BackupConfig{
 		Config: Config{
-			BackendOptions: storage.BackendOptions{
-				S3: storage.S3BackendOptions{
+			BackendOptions: objstore.BackendOptions{
+				S3: objstore.S3BackendOptions{
 					Endpoint: "123",
 				},
 			},

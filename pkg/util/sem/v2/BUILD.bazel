@@ -11,7 +11,7 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/util/sem/v2",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
+        "//pkg/objstore",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",

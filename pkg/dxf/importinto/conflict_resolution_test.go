@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -31,6 +30,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
@@ -42,7 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func writeConflictKVFile(t *testing.T, kvGroup string, objStore storage.ExternalStorage, kvs []*external.KVPair) *engineapi.ConflictInfo {
+func writeConflictKVFile(t *testing.T, kvGroup string, objStore objstore.Storage, kvs []*external.KVPair) *engineapi.ConflictInfo {
 	t.Helper()
 	ctx := context.Background()
 	var summary *external.WriterSummary

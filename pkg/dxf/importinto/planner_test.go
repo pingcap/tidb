@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/stretchr/testify/require"
@@ -323,7 +323,7 @@ func TestGetSortedKVMetas(t *testing.T) {
 func TestSplitForOneSubtask(t *testing.T) {
 	ctx := context.Background()
 	workDir := t.TempDir()
-	store, err := storage.NewLocalStorage(workDir)
+	store, err := objstore.NewLocalStorage(workDir)
 	require.NoError(t, err)
 
 	// about 140MB data

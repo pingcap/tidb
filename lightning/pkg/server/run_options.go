@@ -17,21 +17,21 @@ package server
 import (
 	"database/sql"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
 type options struct {
-	dumpFileStorage         storage.ExternalStorage
-	checkpointStorage       storage.ExternalStorage
-	checkpointName          string
-	promFactory             promutil.Factory
-	promRegistry            promutil.Registry
-	logger                  log.Logger
-	dupIndicator            *atomic.Bool
+	dumpFileStorage   objstore.Storage
+	checkpointStorage objstore.Storage
+	checkpointName    string
+	promFactory       promutil.Factory
+	promRegistry      promutil.Registry
+	logger            log.Logger
+	dupIndicator      *atomic.Bool
 	keepJobsOnContextCancel *atomic.Bool
 	// only used in tests
 	db *sql.DB
@@ -49,7 +49,7 @@ func WithKeepJobsOnContextCancel(b *atomic.Bool) Option {
 
 // WithDumpFileStorage sets the external storage to a lightning task.
 // Typically, the external storage is set when lightning is integrated with dataflow engine by DM.
-func WithDumpFileStorage(s storage.ExternalStorage) Option {
+func WithDumpFileStorage(s objstore.Storage) Option {
 	return func(o *options) {
 		o.dumpFileStorage = s
 	}
@@ -57,7 +57,7 @@ func WithDumpFileStorage(s storage.ExternalStorage) Option {
 
 // WithCheckpointStorage sets the checkpoint name in external storage to a lightning task.
 // Typically, the checkpoint name is set when lightning is integrated with dataflow engine by DM.
-func WithCheckpointStorage(s storage.ExternalStorage, cpName string) Option {
+func WithCheckpointStorage(s objstore.Storage, cpName string) Option {
 	return func(o *options) {
 		o.checkpointStorage = s
 		o.checkpointName = cpName

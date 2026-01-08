@@ -30,11 +30,11 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	md "github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	router "github.com/pingcap/tidb/pkg/util/table-router"
@@ -189,7 +189,7 @@ func TestTableInfoNotFound(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -214,7 +214,7 @@ func TestTableUnexpectedError(t *testing.T) {
 	s.touch(t, "db.tbl-schema.sql")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -236,7 +236,7 @@ func TestMissingTableSchema(t *testing.T) {
 	s.touch(t, "db.tbl.csv")
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	loader, err := md.NewLoader(ctx, md.NewLoaderCfg(s.cfg))
@@ -967,7 +967,7 @@ func TestInputWithSpecialChars(t *testing.T) {
 func TestMDLoaderSetupOption(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	require.NoError(t, memStore.WriteFile(ctx, "/test-src/db1.tbl1-schema.sql",
 		[]byte("CREATE TABLE db1.tbl1 ( id INTEGER, val VARCHAR(255) );"),
 	))
@@ -1086,7 +1086,7 @@ func TestExternalDataRoutes(t *testing.T) {
 
 func TestSampleFileCompressRatio(t *testing.T) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1132,7 +1132,7 @@ func TestEstimateFileSize(t *testing.T) {
 
 func testSampleParquetDataSize(t *testing.T, count int) {
 	s := newTestMydumpLoaderSuite(t)
-	store, err := storage.NewLocalStorage(s.sourceDir)
+	store, err := objstore.NewLocalStorage(s.sourceDir)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())

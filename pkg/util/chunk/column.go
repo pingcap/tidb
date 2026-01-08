@@ -264,23 +264,9 @@ func (c *Column) appendNullBitmap(notNull bool) {
 
 // Reserve allocates some memory for the column
 func (c *Column) Reserve(moreBytesNumNullBitmapNeed int64, moreBytesNumDataNeed int64, moreBytesNumOffsetNeed int64) {
-	currentNullBitmapLen := int64(len(c.nullBitmap))
-	nullBitmapExpectedCap := currentNullBitmapLen + moreBytesNumNullBitmapNeed
-	if int64(cap(c.nullBitmap)) < nullBitmapExpectedCap {
-		c.nullBitmap = slices.Grow(c.nullBitmap, int(nullBitmapExpectedCap))
-	}
-
-	currentDataLen := int64(len(c.data))
-	dataExpectedCap := currentDataLen + moreBytesNumDataNeed
-	if int64(cap(c.data)) < dataExpectedCap {
-		c.data = slices.Grow(c.data, int(dataExpectedCap))
-	}
-
-	currentOffsetLen := int64(len(c.offsets))
-	offsetExpectedCap := currentOffsetLen + moreBytesNumOffsetNeed
-	if int64(cap(c.offsets)) < offsetExpectedCap {
-		c.offsets = slices.Grow(c.offsets, int(offsetExpectedCap))
-	}
+	c.nullBitmap = slices.Grow(c.nullBitmap, int(moreBytesNumNullBitmapNeed))
+	c.data = slices.Grow(c.data, int(moreBytesNumDataNeed))
+	c.offsets = slices.Grow(c.offsets, int(moreBytesNumOffsetNeed))
 }
 
 // CalculateLenDeltaForAppendCellNTimesForNullBitMap calculates the memory usage of nullBitmap for `AppendCellNTimes` function
@@ -610,6 +596,12 @@ func (c *Column) ResizeTime(n int, isNull bool) {
 // ReserveString changes the column capacity to store n string elements and set the length to zero.
 func (c *Column) ReserveString(n int) {
 	c.reserve(n, 8)
+}
+
+// ReserveStringWithSizeHint changes the column capacity to store n strings of a predetermined size.
+// example: a 36 character text format UUID: ReserveStringWithSizeHint(1, 36) for a single entry.
+func (c *Column) ReserveStringWithSizeHint(n int, size int) {
+	c.reserve(n, size)
 }
 
 // ReserveBytes changes the column capacity to store n bytes elements and set the length to zero.

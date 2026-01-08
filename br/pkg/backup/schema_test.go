@@ -16,8 +16,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -37,14 +37,14 @@ func createMockCluster(t *testing.T) *mock.Cluster {
 	return m
 }
 
-func GetRandomStorage(t *testing.T) storage.ExternalStorage {
+func GetRandomStorage(t *testing.T) objstore.Storage {
 	base := t.TempDir()
-	es, err := storage.NewLocalStorage(base)
+	es, err := objstore.NewLocalStorage(base)
 	require.NoError(t, err)
 	return es
 }
 
-func GetSchemasFromMeta(t *testing.T, es storage.ExternalStorage) []*metautil.Table {
+func GetSchemasFromMeta(t *testing.T, es objstore.Storage) []*metautil.Table {
 	ctx := context.Background()
 	metaBytes, err := es.ReadFile(ctx, metautil.MetaFile)
 	require.NoError(t, err)

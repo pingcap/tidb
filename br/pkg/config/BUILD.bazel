@@ -10,7 +10,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/metautil",
-        "//br/pkg/storage",
+        "//pkg/objstore",
         "@com_github_docker_go_units//:go-units",
         "@com_github_masterminds_semver//:semver",
         "@com_github_pingcap_errors//:errors",

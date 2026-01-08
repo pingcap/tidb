@@ -28,9 +28,9 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -341,7 +341,7 @@ func formReader4Capture(args map[string]string, tiproxyNum int) ([]io.Reader, er
 		return nil, errors.Wrapf(err, "parse output path failed")
 	}
 	readers := make([]io.Reader, tiproxyNum)
-	if storage.IsLocal(u) {
+	if objstore.IsLocal(u) {
 		form := getForm(args)
 		for i := range tiproxyNum {
 			readers[i] = strings.NewReader(form)
@@ -362,7 +362,7 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	if !ok || len(input) == 0 {
 		return nil, errors.New("the input path for replay must be specified")
 	}
-	backend, err := storage.ParseBackend(input, nil)
+	backend, err := objstore.ParseBackend(input, nil)
 	if err != nil {
 		return nil, errors.Wrapf(err, "parse input path failed")
 	}
@@ -375,18 +375,18 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		return readers, nil
 	}
 
-	var store storage.ExternalStorage
+	var store objstore.Storage
 	if mockStore := ctx.Value(trafficStoreKey); mockStore != nil {
-		store = mockStore.(storage.ExternalStorage)
+		store = mockStore.(objstore.Storage)
 	} else {
-		store, err = storage.NewWithDefaultOpt(ctx, backend)
+		store, err = objstore.NewWithDefaultOpt(ctx, backend)
 		if err != nil {
 			return nil, errors.Wrapf(err, "create storage for input failed")
 		}
 		defer store.Close()
 	}
 	names := make(map[string]struct{}, tiproxyNum)
-	err = store.WalkDir(ctx, &storage.WalkOption{
+	err = store.WalkDir(ctx, &objstore.WalkOption{
 		ObjPrefix: filePrefix,
 	}, func(name string, _ int64) error {
 		if idx := strings.Index(name, "/"); idx >= 0 {
@@ -402,7 +402,7 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 	}
 	readers := make([]io.Reader, 0, len(names))
 	// ParseBackendFromURL clears URL.RawQuery, so no need to reuse the *url.URL.
-	u, err := storage.ParseRawURL(input)
+	u, err := objstore.ParseRawURL(input)
 	if err != nil {
 		return nil, errors.Wrapf(err, "parse input path failed")
 	}

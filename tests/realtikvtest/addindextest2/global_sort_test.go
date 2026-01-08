@@ -28,7 +28,6 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/phayes/freeport"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -93,9 +93,9 @@ func genServerWithStorage(t *testing.T) (*fakestorage.Server, string) {
 }
 
 func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	storeBackend, err := objstore.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
@@ -108,9 +108,9 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 
 // check the file under dir or partitioned dir have files with keyword
 func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	storeBackend, err := objstore.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)

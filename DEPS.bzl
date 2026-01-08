@@ -3830,13 +3830,13 @@ def go_deps():
         name = "com_github_google_uuid",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/google/uuid",
-        sha256 = "d0f02f377217f42702e259684e06441edbf5140dddcc34ba9bea56038b38a6ed",
-        strip_prefix = "github.com/google/uuid@v1.6.0",
+        sha256 = "d955c9e160041902f710b737f6ebd3ac562541c56821c299327f57abff831b10",
+        strip_prefix = "github.com/google/uuid@v1.6.1-0.20241114170450-2d3c2a9cc518",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
-            "http://ats.apps.svc/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
+            "http://ats.apps.svc/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
         ],
     )
     go_repository(
