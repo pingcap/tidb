@@ -23,74 +23,17 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-var coll = newCollector()
+var tempIndexOpsCollectorInstance = newTempIndexOpsCollector()
 
 func init() {
-	prometheus.MustRegister(coll)
-	metrics.DDLCommitTempIndexWrite = func(connID uint64) {
-		c, ok := coll.write.Load(connID)
-		if !ok {
-			return
-		}
-		//nolint:forcetypeassert
-		c.(*connIDCollector).tblID2Count.Range(func(_, value any) bool {
-			tblColl := value.(*tableCollector)
-			tblColl.totalSingleWriteCnt.Add(tblColl.singleWriteCnt.Load())
-			tblColl.singleWriteCnt.Store(0)
-			tblColl.totalDoubleWriteCnt.Add(tblColl.doubleWriteCnt.Load())
-			tblColl.doubleWriteCnt.Store(0)
-			return true
-		})
-	}
-	metrics.DDLAddOneTempIndexWrite = func(connID uint64, tableID int64, doubleWrite bool) {
-		c, _ := coll.write.LoadOrStore(connID, &connIDCollector{
-			tblID2Count: sync.Map{},
-		})
-		//nolint:forcetypeassert
-		tc, _ := c.(*connIDCollector).tblID2Count.LoadOrStore(tableID, &tableCollector{})
-		if doubleWrite {
-			//nolint:forcetypeassert
-			tc.(*tableCollector).doubleWriteCnt.Add(1)
-		} else {
-			//nolint:forcetypeassert
-			tc.(*tableCollector).singleWriteCnt.Add(1)
-		}
-	}
-	metrics.DDLRollbackTempIndexWrite = func(connID uint64) {
-		c, ok := coll.write.Load(connID)
-		if !ok {
-			return
-		}
-		//nolint:forcetypeassert
-		connIDColl := c.(*connIDCollector)
-		connIDColl.tblID2Count.Range(func(_, value any) bool {
-			//nolint:forcetypeassert
-			tblColl := value.(*tableCollector)
-			tblColl.singleWriteCnt.Store(0)
-			tblColl.doubleWriteCnt.Store(0)
-			return true
-		})
-	}
-	metrics.DDLResetTempIndexWrite = func(tblID int64) {
-		coll.write.Range(func(_, value any) bool {
-			//nolint:forcetypeassert
-			connIDCollector := value.(*connIDCollector)
-			connIDCollector.tblID2Count.Delete(tblID)
-			return true
-		})
-		coll.read.Delete(tblID)
-	}
-	metrics.DDLClearTempIndexWrite = func(connID uint64) {
-		coll.write.Delete(connID)
-	}
+	prometheus.MustRegister(tempIndexOpsCollectorInstance)
 
-	metrics.DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {
-		c, _ := coll.read.LoadOrStore(tableID, &mergeAndScan{})
-		//nolint:forcetypeassert
-		c.(*mergeAndScan).scan.Add(scanCnt)
-		//nolint:forcetypeassert
-		c.(*mergeAndScan).merge.Add(mergeCnt)
-	}
+	metrics.DDLCommitTempIndexWrite = tempIndexOpsCollectorInstance.commitWrites
+	metrics.DDLAddOneTempIndexWrite = tempIndexOpsCollectorInstance.addWrite
+	metrics.DDLRollbackTempIndexWrite = tempIndexOpsCollectorInstance.rollbackWrites
+	metrics.DDLClearTempIndexWrite = tempIndexOpsCollectorInstance.clearConn
+	metrics.DDLSetTempIndexScanAndMerge = tempIndexOpsCollectorInstance.addScanAndMerge
+	metrics.DDLClearTempIndexOps = tempIndexOpsCollectorInstance.clearTable
 }
 
 const (
@@ -100,33 +43,43 @@ const (
 	labelScan        = "scan"
 )
 
-type collector struct {
-	write sync.Map // connectionID => connIDCollector
-	read  sync.Map // tableID => mergeAndScan
+type tempIndexOpsCollector struct {
+	// write tracks temp-index writes scoped by connection.
+	// connID => *connWriteState
+	write sync.Map
+	// read tracks scan/merge counters scoped by table.
+	// tableID => *scanMergeCounters
+	read sync.Map
 
 	desc *prometheus.Desc
 }
 
-type mergeAndScan struct {
+type scanMergeCounters struct {
 	merge atomic.Uint64
 	scan  atomic.Uint64
 }
 
-type connIDCollector struct {
-	tblID2Count sync.Map // tableID => tableCollector
-}
-type tableCollector struct {
-	singleWriteCnt atomic.Uint64
-	doubleWriteCnt atomic.Uint64
-
-	totalSingleWriteCnt atomic.Uint64
-	totalDoubleWriteCnt atomic.Uint64
+type connWriteState struct {
+	// tableID => *tableWriteCounters
+	byTable sync.Map
 }
 
-func newCollector() *collector {
-	return &collector{
-		write: sync.Map{},
-		read:  sync.Map{},
+func (s *connWriteState) getOrCreateTableCounters(tableID int64) *tableWriteCounters {
+	value, _ := s.byTable.LoadOrStore(tableID, &tableWriteCounters{})
+	counters, _ := value.(*tableWriteCounters)
+	return counters
+}
+
+type tableWriteCounters struct {
+	pendingSingleWrites atomic.Uint64
+	pendingDoubleWrites atomic.Uint64
+
+	committedSingleWrites atomic.Uint64
+	committedDoubleWrites atomic.Uint64
+}
+
+func newTempIndexOpsCollector() *tempIndexOpsCollector {
+	return &tempIndexOpsCollector{
 		desc: prometheus.NewDesc(
 			"tidb_ddl_temp_index_op_count",
 			"Gauge of temp index operation count",
@@ -135,72 +88,122 @@ func newCollector() *collector {
 	}
 }
 
-func (c *collector) Describe(ch chan<- *prometheus.Desc) {
+func (c *tempIndexOpsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.desc
 }
 
-func (c *collector) Collect(ch chan<- prometheus.Metric) {
-	singleMap := make(map[int64]uint64)
-	doubleMap := make(map[int64]uint64)
+func (c *tempIndexOpsCollector) Collect(ch chan<- prometheus.Metric) {
+	emit := func(typ string, tableID int64, value uint64) {
+		ch <- prometheus.MustNewConstMetric(
+			c.desc,
+			prometheus.GaugeValue,
+			float64(value),
+			typ,
+			strconv.FormatInt(tableID, 10),
+		)
+	}
+
+	committedByTable := c.buildCommittedWritesByTable()
+	for tableID, counts := range committedByTable {
+		emit(labelSingleWrite, tableID, counts[0])
+		emit(labelDoubleWrite, tableID, counts[1])
+	}
+
+	c.read.Range(func(key, value any) bool {
+		tableID, _ := key.(int64)
+		counters, _ := value.(*scanMergeCounters)
+		emit(labelMerge, tableID, counters.merge.Load())
+		emit(labelScan, tableID, counters.scan.Load())
+		return true
+	})
+}
+
+func (c *tempIndexOpsCollector) buildCommittedWritesByTable() map[int64][2]uint64 {
+	committedByTable := make(map[int64][2]uint64)
 	c.write.Range(func(_, value any) bool {
-		//nolint:forcetypeassert
-		connIDColl := value.(*connIDCollector)
-		connIDColl.tblID2Count.Range(func(tableKey, tableValue any) bool {
-			//nolint:forcetypeassert
-			tableID := tableKey.(int64)
-			//nolint:forcetypeassert
-			tblColl := tableValue.(*tableCollector)
-			singleMap[tableID] += tblColl.totalSingleWriteCnt.Load()
-			doubleMap[tableID] += tblColl.totalDoubleWriteCnt.Load()
+		state, _ := value.(*connWriteState)
+		state.byTable.Range(func(key, tableValue any) bool {
+			tableID, _ := key.(int64)
+			counters, _ := tableValue.(*tableWriteCounters)
+			counts := committedByTable[tableID]
+			counts[0] += counters.committedSingleWrites.Load()
+			counts[1] += counters.committedDoubleWrites.Load()
+			committedByTable[tableID] = counts
 			return true
 		})
 		return true
 	})
-	for tableID, cnt := range singleMap {
-		ch <- prometheus.MustNewConstMetric(
-			c.desc,
-			prometheus.GaugeValue,
-			float64(cnt),
-			labelSingleWrite,
-			strconv.FormatInt(tableID, 10),
-		)
+	return committedByTable
+}
+
+func (c *tempIndexOpsCollector) addWrite(connID uint64, tableID int64, doubleWrite bool) {
+	state := c.getOrCreateConnWriteState(connID)
+	counters := state.getOrCreateTableCounters(tableID)
+	if doubleWrite {
+		counters.pendingDoubleWrites.Add(1)
+		return
 	}
-	for tableID, cnt := range doubleMap {
-		ch <- prometheus.MustNewConstMetric(
-			c.desc,
-			prometheus.GaugeValue,
-			float64(cnt),
-			labelDoubleWrite,
-			strconv.FormatInt(tableID, 10),
-		)
+	counters.pendingSingleWrites.Add(1)
+}
+
+func (c *tempIndexOpsCollector) commitWrites(connID uint64) {
+	value, ok := c.write.Load(connID)
+	if !ok {
+		return
 	}
-	mergeMap := make(map[int64]uint64)
-	scanMap := make(map[int64]uint64)
-	c.read.Range(func(key, value any) bool {
-		//nolint:forcetypeassert
-		tableID := key.(int64)
-		//nolint:forcetypeassert
-		ms := value.(*mergeAndScan)
-		mergeMap[tableID] += ms.merge.Load()
-		scanMap[tableID] += ms.scan.Load()
+	state, ok := value.(*connWriteState)
+	if !ok {
+		return
+	}
+	state.byTable.Range(func(_, tableValue any) bool {
+		counters, _ := tableValue.(*tableWriteCounters)
+		single := counters.pendingSingleWrites.Swap(0)
+		double := counters.pendingDoubleWrites.Swap(0)
+		counters.committedSingleWrites.Add(single)
+		counters.committedDoubleWrites.Add(double)
 		return true
 	})
-	for tableID, cnt := range mergeMap {
-		ch <- prometheus.MustNewConstMetric(
-			c.desc,
-			prometheus.GaugeValue,
-			float64(cnt),
-			labelMerge,
-			strconv.FormatInt(tableID, 10),
-		)
+}
+
+func (c *tempIndexOpsCollector) rollbackWrites(connID uint64) {
+	value, ok := c.write.Load(connID)
+	if !ok {
+		return
 	}
-	for tableID, cnt := range scanMap {
-		ch <- prometheus.MustNewConstMetric(
-			c.desc,
-			prometheus.GaugeValue,
-			float64(cnt),
-			labelScan,
-			strconv.FormatInt(tableID, 10),
-		)
+	state, ok := value.(*connWriteState)
+	if !ok {
+		return
 	}
+	state.byTable.Range(func(_, tableValue any) bool {
+		counters, _ := tableValue.(*tableWriteCounters)
+		counters.pendingSingleWrites.Store(0)
+		counters.pendingDoubleWrites.Store(0)
+		return true
+	})
+}
+
+func (c *tempIndexOpsCollector) clearConn(connID uint64) {
+	c.write.Delete(connID)
+}
+
+func (c *tempIndexOpsCollector) addScanAndMerge(tableID int64, scanCnt, mergeCnt uint64) {
+	value, _ := c.read.LoadOrStore(tableID, &scanMergeCounters{})
+	counters, _ := value.(*scanMergeCounters)
+	counters.scan.Add(scanCnt)
+	counters.merge.Add(mergeCnt)
+}
+
+func (c *tempIndexOpsCollector) clearTable(tableID int64) {
+	c.read.Delete(tableID)
+	c.write.Range(func(_, value any) bool {
+		state, _ := value.(*connWriteState)
+		state.byTable.Delete(tableID)
+		return true
+	})
+}
+
+func (c *tempIndexOpsCollector) getOrCreateConnWriteState(connID uint64) *connWriteState {
+	value, _ := c.write.LoadOrStore(connID, &connWriteState{})
+	state, _ := value.(*connWriteState)
+	return state
 }
