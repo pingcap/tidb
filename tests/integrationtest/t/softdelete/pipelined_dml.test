@@ -3,7 +3,12 @@ set tidb_dml_type = "bulk";
 insert into t values (1,1),(2,2),(3,3),(4,4);
 select json_extract(@@tidb_last_txn_info, "$.pipelined");
 
-delete from t where id < 3;
+delete from t where id <= 3;
+select json_extract(@@tidb_last_txn_info, "$.pipelined");
+
+-- error 1062
+insert into t values (2, 2), (3, 3), (4, 4);
+insert into t values (2, 2), (3, 3);
 select json_extract(@@tidb_last_txn_info, "$.pipelined");
 
 set @@tidb_translate_softdelete_sql = 0;
@@ -14,7 +19,7 @@ update t set v = v + 1;
 select json_extract(@@tidb_last_txn_info, "$.pipelined");
 select * from t;
 
-replace into t values (2, 22), (3, 33), (5, 55);
+replace into t values (1, 11), (3, 33), (5, 55);
 select json_extract(@@tidb_last_txn_info, "$.pipelined");
 select * from t;
 set @@tidb_translate_softdelete_sql = 0;
