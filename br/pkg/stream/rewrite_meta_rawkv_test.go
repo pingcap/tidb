@@ -569,13 +569,13 @@ func TestFromPitrIdMap(t *testing.T) {
 	}
 	dbInfo := &model.DBInfo{
 		ID:   2,
-		Name: ast.NewCIStr("test_db2"),
+		Name: pmodel.NewCIStr("test_db2"),
 	}
 	dbInfoValue, err := json.Marshal(dbInfo)
 	require.Nil(t, err)
 	tableInfo := &model.TableInfo{
 		ID:   101,
-		Name: ast.NewCIStr("test_table2"),
+		Name: pmodel.NewCIStr("test_table2"),
 	}
 	tableInfoValue, err := json.Marshal(tableInfo)
 	require.Nil(t, err)
