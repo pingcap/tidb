@@ -280,6 +280,9 @@ func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.S
 			}
 			if !inOneRegion && len(thisBatchBackupFileSet) > 0 {
 				// not in the same region, so this batch backup file set can be output
+				log.Info("generating one batch.", zap.Int("size", len(thisBatchBackupFileSet)),
+					zap.Binary("from", lastEndKey),
+					zap.Binary("to", file.startKey))
 				fn(thisBatchBackupFileSet)
 				thisBatchBackupFileSet = make([]BackupFileSet, 0)
 			}
@@ -310,6 +313,9 @@ func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.S
 	}
 	// output the last batch backup file set
 	if len(thisBatchBackupFileSet) > 0 {
+		log.Info("generating one batch.", zap.Int("size", len(thisBatchBackupFileSet)),
+			zap.Binary("from", lastEndKey),
+			zap.Binary("to", []byte{}))
 		fn(thisBatchBackupFileSet)
 	}
 	return nil
