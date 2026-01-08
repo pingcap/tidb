@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -555,16 +554,4 @@ func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
 		return err
 	}
 	return nil
-}
-
-func getTableName(n []*ast.TableName) []string {
-	result := make([]string, 0, len(n))
-	for _, v := range n {
-		var sb strings.Builder
-		restoreFlags := format.RestoreKeyWordLowercase
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		v.Restore(restoreCtx)
-		result = append(result, sb.String())
-	}
-	return result
 }
