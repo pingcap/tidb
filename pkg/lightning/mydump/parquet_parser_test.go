@@ -106,6 +106,122 @@ func TestParquetParser(t *testing.T) {
 	require.ErrorIs(t, reader.ReadRow(), io.EOF)
 }
 
+func TestParquetVectorList(t *testing.T) {
+	dir := t.TempDir()
+	name := "vector_list.parquet"
+	gens := []parquetListGen{
+		func() ([]float32, []int16, []int16) {
+			// 4 rows:
+			// 1) NULL
+			// 2) []
+			// 3) [1,2]
+			// 4) [3]
+			// Standard 3-level LIST encoding (maxDef=3, maxRep=1) for schema:
+			// optional group vec (LIST) { repeated group list { optional float element; } }
+			// null list => def=0, rep=0
+			// empty list => def=1, rep=0
+			// null element => def=2 (not supported)
+			// element present => def=3
+			values := []float32{1, 2, 3}
+			def := []int16{0, 1, 3, 3, 3}
+			rep := []int16{0, 0, 0, 1, 0}
+			return values, def, rep
+		},
+	}
+	require.NoError(t, WriteParquetListFile(dir, name, gens))
+
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+	ctx := context.Background()
+	r, err := store.Open(ctx, name, nil)
+	require.NoError(t, err)
+	pp, err := NewParquetParser(ctx, store, r, name, ParquetFileMeta{})
+	require.NoError(t, err)
+	defer pp.Close()
+
+	// row1: NULL
+	require.NoError(t, pp.ReadRow())
+	row := pp.LastRow()
+	require.Len(t, row.Row, 1)
+	require.True(t, row.Row[0].IsNull())
+	pp.RecycleRow(row)
+
+	// row2: empty list => zero-length vector
+	require.NoError(t, pp.ReadRow())
+	row = pp.LastRow()
+	require.Len(t, row.Row, 1)
+	if row.Row[0].Kind() != types.KindVectorFloat32 {
+		t.Fatalf("expected KindVectorFloat32, got kind=%v isNull=%v", row.Row[0].Kind(), row.Row[0].IsNull())
+	}
+	require.Len(t, row.Row[0].GetVectorFloat32().Elements(), 0)
+	pp.RecycleRow(row)
+
+	// row3: [1,2]
+	require.NoError(t, pp.ReadRow())
+	row = pp.LastRow()
+	require.Equal(t, []float32{1, 2}, row.Row[0].GetVectorFloat32().Elements())
+	pp.RecycleRow(row)
+
+	// row4: [3]
+	require.NoError(t, pp.ReadRow())
+	row = pp.LastRow()
+	require.Equal(t, []float32{3}, row.Row[0].GetVectorFloat32().Elements())
+	pp.RecycleRow(row)
+
+	require.ErrorIs(t, pp.ReadRow(), io.EOF)
+}
+
+func TestParquetNullElementInList(t *testing.T) {
+	dir := t.TempDir()
+	name := "vector_null_elem.parquet"
+	gens := []parquetListGen{
+		func() ([]float32, []int16, []int16) {
+			// 4 rows encoded in leaf levels:
+			// null, [], [1,2], [3, null]
+			values := []float32{1, 2, 3}
+			def := []int16{0, 1, 3, 3, 3, 2}
+			rep := []int16{0, 0, 0, 1, 0, 1}
+			return values, def, rep
+		},
+	}
+	require.NoError(t, WriteParquetListFile(dir, name, gens))
+
+	store, err := storage.NewLocalStorage(dir)
+	require.NoError(t, err)
+	ctx := context.Background()
+	r, err := store.Open(ctx, name, nil)
+	require.NoError(t, err)
+	pp, err := NewParquetParser(ctx, store, r, name, ParquetFileMeta{})
+	require.NoError(t, err)
+	defer pp.Close()
+
+	// row1: NULL
+	require.NoError(t, pp.ReadRow())
+	row := pp.LastRow()
+	require.True(t, row.Row[0].IsNull())
+	pp.RecycleRow(row)
+
+	// row2: []
+	require.NoError(t, pp.ReadRow())
+	row = pp.LastRow()
+	if row.Row[0].Kind() != types.KindVectorFloat32 {
+		t.Fatalf("expected KindVectorFloat32, got kind=%v isNull=%v", row.Row[0].Kind(), row.Row[0].IsNull())
+	}
+	require.Len(t, row.Row[0].GetVectorFloat32().Elements(), 0)
+	pp.RecycleRow(row)
+
+	// row3: [1,2]
+	require.NoError(t, pp.ReadRow())
+	row = pp.LastRow()
+	require.Equal(t, []float32{1, 2}, row.Row[0].GetVectorFloat32().Elements())
+	pp.RecycleRow(row)
+
+	// row4: [3,null] => error
+	err = pp.ReadRow()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "null element")
+}
+
 func TestParquetVariousTypes(t *testing.T) {
 	pc := []ParquetColumn{
 		{
@@ -487,9 +603,9 @@ func TestBasicReadFile(t *testing.T) {
 
 	store, err := storage.NewLocalStorage(dir)
 	require.NoError(t, err)
-	r, err := store.Open(context.TODO(), fileName, nil)
+	r, err := store.Open(context.Background(), fileName, nil)
 	require.NoError(t, err)
-	reader, err := NewParquetParser(context.TODO(), store, r, fileName, ParquetFileMeta{})
+	reader, err := NewParquetParser(context.Background(), store, r, fileName, ParquetFileMeta{})
 	require.NoError(t, err)
 	defer reader.Close()
 

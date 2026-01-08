@@ -47,16 +47,20 @@ var (
 	unsupportedParquetTypes = map[schema.ConvertedType]struct{}{
 		schema.ConvertedTypes.Map:         {},
 		schema.ConvertedTypes.MapKeyValue: {},
-		// TODO(joechenrh): support read list type as vector
-		schema.ConvertedTypes.List:     {},
-		schema.ConvertedTypes.Interval: {},
-		schema.ConvertedTypes.NA:       {},
+		schema.ConvertedTypes.Interval:    {},
+		schema.ConvertedTypes.NA:          {},
 	}
 
 	// readBatchSize is the number of rows to read in a single batch
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
+
+	errParquetListNullElement = errors.New("parquet list contains null element, which is not supported")
 )
+
+func errInvalidParquetListDefLevel(def, maxDef int16) error {
+	return errors.Errorf("invalid parquet definition level %d for list (maxDef=%d)", def, maxDef)
+}
 
 func estimateRowSize(row []types.Datum) int {
 	length := 0
@@ -100,6 +104,9 @@ type columnIterator[T parquet.ColumnTypes, R innerReader[T]] struct {
 	repLevels      []int16
 	values         []T
 
+	maxDef int16
+	maxRep int16
+
 	setter setter[T]
 }
 
@@ -122,6 +129,10 @@ func newColumnIterator[T parquet.ColumnTypes, R innerReader[T]](
 func (it *columnIterator[T, R]) SetReader(colReader file.ColumnChunkReader) {
 	it.baseReader = colReader
 	it.reader, _ = colReader.(R)
+	if desc := colReader.Descriptor(); desc != nil {
+		it.maxDef = desc.MaxDefinitionLevel()
+		it.maxRep = desc.MaxRepetitionLevel()
+	}
 }
 
 func (it *columnIterator[T, R]) Close() error {
@@ -134,9 +145,9 @@ func (it *columnIterator[T, R]) Close() error {
 	return err
 }
 
+// ReadBatchInPage reads a batch of values from the current page.
+// And the values returned may be shallow copies from the internal page buffer.
 func (it *columnIterator[T, R]) readNextBatch() error {
-	// ReadBatchInPage reads a batch of values from the current page.
-	// And the values returned may be shallow copies from the internal page buffer.
 	var err error
 	it.levelsBuffered, it.valuesBuffered, err = it.reader.ReadBatchInPage(
 		it.batchSize,
@@ -150,19 +161,26 @@ func (it *columnIterator[T, R]) readNextBatch() error {
 	return err
 }
 
+func (it *columnIterator[T, R]) ensureBatch() error {
+	if it.levelOffset < it.levelsBuffered {
+		return nil
+	}
+	err := it.readNextBatch()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if it.levelsBuffered == 0 {
+		return io.EOF
+	}
+	return nil
+}
+
 // Next reads the next value with proper level handling.
 func (it *columnIterator[T, R]) Next(d *types.Datum) error {
-	if it.levelOffset == it.levelsBuffered {
-		err := it.readNextBatch()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		if it.levelsBuffered == 0 {
-			return io.EOF
-		}
+	if err := it.ensureBatch(); err != nil {
+		return err
 	}
 
-	// Check definition level for NULL handling
 	defLevel := it.defLevels[it.levelOffset]
 	it.levelOffset++
 
@@ -174,6 +192,100 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 	value := it.values[it.valueOffset]
 	it.valueOffset++
 	it.setter(value, d)
+	return nil
+}
+
+type vectorFloat32Iterator struct {
+	*columnIterator[float32, *file.Float32ColumnChunkReader]
+
+	vecBuf []float32
+}
+
+func newVectorFloat32Iterator(batchSize int) *vectorFloat32Iterator {
+	return &vectorFloat32Iterator{
+		columnIterator: newColumnIterator[float32, *file.Float32ColumnChunkReader](
+			batchSize, nil),
+	}
+}
+
+func (it *vectorFloat32Iterator) Next(d *types.Datum) error {
+	// For a standard 3-level LIST, leaf maxDef must be 3:
+	// def=0 => null list
+	// def=1 => empty list
+	// def=2 => null element (not supported)
+	// def=3 => element present
+	const (
+		nullListDef    int16 = 0
+		emptyListDef   int16 = 1
+		nullElementDef int16 = 2
+		elementPresent int16 = 3
+	)
+
+	if err := it.ensureBatch(); err != nil {
+		return err
+	}
+
+	it.vecBuf = it.vecBuf[:0]
+
+	def0 := it.defLevels[it.levelOffset]
+	rep0 := it.repLevels[it.levelOffset]
+	it.levelOffset++
+	if rep0 != 0 {
+		return errors.Errorf("invalid repetition level %d at start of list", rep0)
+	}
+
+	switch def0 {
+	case nullListDef:
+		d.SetNull()
+		return nil
+	case emptyListDef:
+		vec, err := types.CreateVectorFloat32(nil)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		d.SetVectorFloat32(vec)
+		return nil
+	case nullElementDef:
+		return errParquetListNullElement
+	case elementPresent:
+	default:
+		return errInvalidParquetListDefLevel(def0, it.maxDef)
+	}
+
+	it.vecBuf = append(it.vecBuf, it.values[it.valueOffset])
+	it.valueOffset++
+
+	for {
+		if err := it.ensureBatch(); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
+		}
+
+		def := it.defLevels[it.levelOffset]
+		rep := it.repLevels[it.levelOffset]
+		if rep == 0 {
+			break
+		}
+		it.levelOffset++
+
+		switch def {
+		case nullElementDef:
+			return errParquetListNullElement
+		case elementPresent:
+			it.vecBuf = append(it.vecBuf, it.values[it.valueOffset])
+			it.valueOffset++
+		default:
+			return errInvalidParquetListDefLevel(def, it.maxDef)
+		}
+	}
+
+	vec, err := types.CreateVectorFloat32(it.vecBuf)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	d.SetVectorFloat32(vec)
 	return nil
 }
 
@@ -287,6 +399,64 @@ func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeekerOpener, error) {
 	return newPf, nil
 }
 
+// validateOptionalFloat32ListRoot validates the LIST schema for float vector.
+// Currently only support the standard 3-level LIST encoding with optional element:
+//
+//	optional group <name> (LIST) {
+//	  repeated group <name> {
+//	    optional float element;
+//	  }
+//	}
+func validateOptionalFloat32ListRoot(root schema.Node, leaf *schema.Column) error {
+	wrap := func(err error) error {
+		return errors.Annotate(err, "unsupported parquet list encoding")
+	}
+
+	rootGroup, ok := root.(*schema.GroupNode)
+	if !ok {
+		return wrap(errors.New("root is not group"))
+	}
+	if rootGroup.RepetitionType() != parquet.Repetitions.Optional {
+		return wrap(errors.Errorf("root repetition=%s", rootGroup.RepetitionType().String()))
+	}
+	if rootGroup.NumFields() != 1 {
+		return wrap(errors.Errorf("expect 1 child, got %d", rootGroup.NumFields()))
+	}
+
+	repeatedGroup, ok := rootGroup.Field(0).(*schema.GroupNode)
+	if !ok {
+		return wrap(errors.New("list child is not group"))
+	}
+	if repeatedGroup.RepetitionType() != parquet.Repetitions.Repeated {
+		return wrap(errors.Errorf("list repetition=%s", repeatedGroup.RepetitionType().String()))
+	}
+	if repeatedGroup.NumFields() != 1 {
+		return wrap(errors.Errorf("repeated group expects 1 field, got %d", repeatedGroup.NumFields()))
+	}
+
+	elementNode, ok := repeatedGroup.Field(0).(*schema.PrimitiveNode)
+	if !ok {
+		return wrap(errors.New("element is not primitive"))
+	}
+	if elementNode.RepetitionType() != parquet.Repetitions.Optional {
+		return wrap(errors.Errorf("element repetition=%s", elementNode.RepetitionType().String()))
+	}
+	if elementNode.PhysicalType() != parquet.Types.Float {
+		return wrap(errors.Errorf("element physical type=%s", elementNode.PhysicalType().String()))
+	}
+
+	if leaf.PhysicalType() != parquet.Types.Float {
+		return wrap(errors.Errorf("leaf physical type=%s", leaf.PhysicalType().String()))
+	}
+	if leaf.MaxRepetitionLevel() != 1 {
+		return wrap(errors.Errorf("leaf maxRep=%d", leaf.MaxRepetitionLevel()))
+	}
+	if leaf.MaxDefinitionLevel() != 3 {
+		return wrap(errors.Errorf("leaf maxDef=%d", leaf.MaxDefinitionLevel()))
+	}
+	return nil
+}
+
 // ParquetParser parses a parquet file for import
 // It implements the Parser interface.
 type ParquetParser struct {
@@ -326,6 +496,10 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 		loc = timeutil.SystemLocation()
 	}
 	for i := range numCols {
+		if pp.colTypes[i].converted == schema.ConvertedTypes.List {
+			pp.iterators[i] = newVectorFloat32Iterator(readBatchSize)
+			continue
+		}
 		pp.iterators[i] = createColumnIterator(
 			meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, readBatchSize)
 		if pp.iterators[i] == nil {
@@ -564,6 +738,15 @@ func NewParquetParser(
 	for i := range colTypes {
 		desc := reader.MetaData().Schema.Column(i)
 		colNames = append(colNames, strings.ToLower(desc.Name()))
+
+		root := reader.MetaData().Schema.ColumnRoot(i)
+		if root != nil && root.ConvertedType() == schema.ConvertedTypes.List {
+			if err := validateOptionalFloat32ListRoot(root, desc); err != nil {
+				return nil, errors.Trace(err)
+			}
+			colTypes[i].converted = schema.ConvertedTypes.List
+			continue
+		}
 
 		logicalType := desc.LogicalType()
 		if logicalType.IsValid() {

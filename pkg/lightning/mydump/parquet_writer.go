@@ -37,6 +37,8 @@ type ParquetColumn struct {
 	Gen       func(numRows int) (any, []int16)
 }
 
+type parquetListGen func() (values []float32, defLevels, repLevels []int16)
+
 type writeWrapper struct {
 	Writer storage.ExternalFileWriter
 }
@@ -132,6 +134,9 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 		case *file.Float64ColumnChunkWriter:
 			buf, _ := vals.([]float64)
 			_, err = w.WriteBatch(buf, defLevel, nil)
+		case *file.Float32ColumnChunkWriter:
+			buf, _ := vals.([]float32)
+			_, err = w.WriteBatch(buf, defLevel, nil)
 		case *file.ByteArrayColumnChunkWriter:
 			buf, _ := vals.([]parquet.ByteArray)
 			_, err = w.WriteBatch(buf, defLevel, nil)
@@ -145,6 +150,80 @@ func WriteParquetFile(path, fileName string, pcolumns []ParquetColumn, rows int,
 			return fmt.Errorf("unsupported column type %T", cw)
 		}
 
+		if err != nil {
+			return err
+		}
+		if err := cw.Close(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func WriteParquetListFile(path, fileName string, generators []parquetListGen, addOpts ...parquet.WriterProperty) error {
+	s, err := getStore(path)
+	if err != nil {
+		return err
+	}
+	writer, err := s.Create(context.Background(), fileName, nil)
+	if err != nil {
+		return err
+	}
+	wrapper := &writeWrapper{Writer: writer}
+
+	fields := make([]schema.Node, len(generators))
+	opts := make([]parquet.WriterProperty, 0, len(generators)*2)
+	for i := range generators {
+		// Column name doesn't matter for current tests.
+		colName := fmt.Sprintf("c%d", i)
+		element, err := schema.NewPrimitiveNode("element", parquet.Repetitions.Optional, parquet.Types.Float, -1, -1)
+		if err != nil {
+			return err
+		}
+		listGroup, err := schema.NewGroupNode("list", parquet.Repetitions.Repeated, []schema.Node{element}, -1)
+		if err != nil {
+			return err
+		}
+		fields[i], err = schema.NewGroupNodeConverted(colName, parquet.Repetitions.Optional, []schema.Node{listGroup}, schema.ConvertedTypes.List, -1)
+		if err != nil {
+			return err
+		}
+		opts = append(opts, parquet.WithCompressionFor(colName, compress.Codecs.Snappy))
+	}
+
+	node, _ := schema.NewGroupNode("schema", parquet.Repetitions.Required, fields, -1)
+	opts = append(opts, addOpts...)
+	props := parquet.NewWriterProperties(opts...)
+	pw := file.NewParquetWriter(wrapper, node, file.WithWriterProps(props))
+	//nolint: errcheck
+	defer pw.Close()
+
+	rgw := pw.AppendRowGroup()
+	//nolint: errcheck
+	defer rgw.Close()
+
+	for i, gen := range generators {
+		cw, err := rgw.NextColumn()
+		if err != nil {
+			return err
+		}
+		vals, defLevels, repLevels := gen()
+		switch w := cw.(type) {
+		case *file.Float32ColumnChunkWriter:
+			expectedValues := 0
+			for _, d := range defLevels {
+				if d == 3 {
+					expectedValues++
+				}
+			}
+			if len(vals) != expectedValues {
+				return fmt.Errorf("parquet list column %d has %d values but expects %d (defLevels=%v)", i, len(vals), expectedValues, defLevels)
+			}
+			_, err = w.WriteBatch(vals, defLevels, repLevels)
+		default:
+			return fmt.Errorf("unsupported column type %T", cw)
+		}
 		if err != nil {
 			return err
 		}
