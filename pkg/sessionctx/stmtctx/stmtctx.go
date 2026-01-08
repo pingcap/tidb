@@ -329,7 +329,7 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
-	// MatchSQLBindingCache is to cache the
+	// MatchSQLBindingCache is to cache the bindinfo to avoid getting bindinfo from bind cache again.
 	MatchSQLBindingCache map[ast.StmtNode]any
 
 	// ExecRetryCount records the number of retries for executing the statement.
