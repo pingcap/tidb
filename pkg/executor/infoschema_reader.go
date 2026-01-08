@@ -4360,7 +4360,7 @@ func getSoftDeleteRowCountsFromStorage(
 		"SELECT SUM(count) FROM mysql.stats_buckets WHERE table_id = %? AND hist_id = %? AND is_index = 0",
 		physicalTableID, colID)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, err
 	}
 	if len(bucketRows) > 0 && !bucketRows[0].IsNull(0) {
 		histogramCountDecimal := bucketRows[0].GetMyDecimal(0)
