@@ -342,7 +342,7 @@ func (c *bindingCache) SetBinding(sqlDigest string, binding *Binding) (err error
 	}
 	_, noDBDigest := NormalizeStmtForBinding(stmt, "", true)
 	c.digestBiMap.Add(noDBDigest, sqlDigest)
-	// NOTE: due to LRU eviction, the underlying BindingCache state might be inconsistent with digestBiMap,
+	// NOTE: due to LRU eviction, the underlying MatchSQLBindingCache state might be inconsistent with digestBiMap,
 	// but it's acceptable, the optimizer will load the binding when cache-miss.
 	// NOTE: the Set might fail if the operation is too frequent, but binding update is a low-frequently operation, so
 	// this risk seems acceptable.

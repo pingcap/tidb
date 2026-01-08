@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
@@ -162,8 +163,18 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	var noDBDigest string
 	var tableNames []*ast.TableName
 	if info == nil || info.TableNames == nil || info.NoDBDigest == "" {
-		_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
-		tableNames = CollectTableNames(stmtNode)
+		if item, ok := sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode]; ok {
+			cache := item.(*BindingCacheItem)
+			noDBDigest = cache.noDBDigest
+			tableNames = cache.tableNames
+		} else {
+			_, noDBDigest = NormalizeStmtForBinding(stmtNode, "", true)
+			tableNames = CollectTableNames(stmtNode)
+			sctx.GetSessionVars().StmtCtx.MatchSQLBindingCache[stmtNode] = &BindingCacheItem{
+				noDBDigest: noDBDigest,
+				tableNames: tableNames,
+			}
+		}
 		if info != nil {
 			info.NoDBDigest = noDBDigest
 			info.TableNames = tableNames
@@ -191,6 +202,12 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode, info *Bindi
 	}
 
 	return
+}
+
+// BindingCacheItem is to cache the
+type BindingCacheItem struct {
+	noDBDigest string
+	tableNames []*ast.TableName
 }
 
 func noDBDigestFromBinding(binding *Binding) (string, error) {
@@ -538,4 +555,16 @@ func checkBindingValidation(sctx sessionctx.Context, bindingSQL string) error {
 		return err
 	}
 	return nil
+}
+
+func getTableName(n []*ast.TableName) []string {
+	result := make([]string, 0, len(n))
+	for _, v := range n {
+		var sb strings.Builder
+		restoreFlags := format.RestoreKeyWordLowercase
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		v.Restore(restoreCtx)
+		result = append(result, sb.String())
+	}
+	return result
 }

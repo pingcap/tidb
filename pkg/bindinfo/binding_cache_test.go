@@ -132,18 +132,6 @@ func TestBindCache(t *testing.T) {
 	}, time.Second*5, time.Millisecond*100)
 }
 
-func getTableName(n []*ast.TableName) []string {
-	result := make([]string, 0, len(n))
-	for _, v := range n {
-		var sb strings.Builder
-		restoreFlags := format.RestoreKeyWordLowercase
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		v.Restore(restoreCtx)
-		result = append(result, sb.String())
-	}
-	return result
-}
-
 func TestExtractTableName(t *testing.T) {
 	tc := []struct {
 		sql    string
