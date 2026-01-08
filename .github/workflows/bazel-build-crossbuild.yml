@@ -17,8 +17,6 @@ jobs:
           - ubuntu
     steps:
       - uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
       - name: Build Prepare
         uses: ./.github/actions/tidb_build
         with:
