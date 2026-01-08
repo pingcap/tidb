@@ -19,12 +19,12 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-// Filter allows caller to customize which schema objects should be loaded or checked
+// Filter allows caller to customize which schema objects should be loaded
 // when syncing the information schema.
 //
 // The semantics of the return values are:
 //   - true:  skip the corresponding operation
-//   - false: continue the default loading/checking logic
+//   - false: continue the default loading logic
 type Filter interface {
 	// SkipLoadDiff returns true when the given schema diff should be ignored.
 	// latestIS is the newest InfoSchema cached by the loader. It can be nil when
