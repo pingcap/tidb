@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -192,14 +193,14 @@ func DefineStreamStartFlags(flags *pflag.FlagSet) {
 	flags.String(flagStreamEndTS, "999999999999999999", "end ts, indicate stopping observe after endTS"+
 		"support TSO or datetime")
 	_ = flags.MarkHidden(flagStreamEndTS)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamStartSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, gc.DefaultStreamStartSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 	_ = flags.MarkHidden(flagGCSafePointTTS)
 }
 
 func DefineStreamPauseFlags(flags *pflag.FlagSet) {
 	DefineStreamCommonFlags(flags)
-	flags.Int64(flagGCSafePointTTS, utils.DefaultStreamPauseSafePointTTL,
+	flags.Int64(flagGCSafePointTTS, gc.DefaultStreamPauseSafePointTTL,
 		"the TTL (in seconds) that PD holds for BR's GC safepoint")
 	flags.String(flagMessage, "", "The message for the pause task.")
 }
@@ -290,7 +291,7 @@ func (cfg *StreamConfig) ParseStreamStartFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultStreamStartSafePointTTL
+		cfg.SafePointTTL = gc.DefaultStreamStartSafePointTTL
 	}
 
 	return nil
@@ -311,7 +312,7 @@ func (cfg *StreamConfig) ParseStreamPauseFromFlags(flags *pflag.FlagSet) error {
 		return errors.Trace(err)
 	}
 	if cfg.SafePointTTL <= 0 {
-		cfg.SafePointTTL = utils.DefaultStreamPauseSafePointTTL
+		cfg.SafePointTTL = gc.DefaultStreamPauseSafePointTTL
 	}
 	return nil
 }
@@ -433,14 +434,14 @@ func (s *streamMgr) checkImportTaskRunning(ctx context.Context, etcdCLI *clientv
 }
 
 // setGCSafePoint sets the server safe point to PD.
-func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp.BackupTS)
+func (s *streamMgr) setGCSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
+	err := gc.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp.BackupTS)
 	if err != nil {
 		return errors.Annotatef(err,
 			"failed to check gc safePoint, ts %v", sp.BackupTS)
 	}
 
-	err = utils.SetServiceSafePoint(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp)
+	err = gc.SetServiceSafePoint(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -630,8 +631,8 @@ func RunStreamStart(
 		cfg.StartTS = logInfo.logMaxTS
 		if err = streamMgr.setGCSafePoint(
 			ctx,
-			utils.BRServiceSafePoint{
-				ID:       utils.MakeSafePointID(),
+			gc.BRServiceSafePoint{
+				ID:       gc.MakeSafePointID(),
 				TTL:      cfg.SafePointTTL,
 				BackupTS: cfg.StartTS,
 			},
@@ -641,8 +642,8 @@ func RunStreamStart(
 	} else {
 		if err = streamMgr.setGCSafePoint(
 			ctx,
-			utils.BRServiceSafePoint{
-				ID:       utils.MakeSafePointID(),
+			gc.BRServiceSafePoint{
+				ID:       gc.MakeSafePointID(),
 				TTL:      cfg.SafePointTTL,
 				BackupTS: cfg.StartTS,
 			},
@@ -792,7 +793,7 @@ func RunStreamStop(
 	}
 
 	if err := streamMgr.setGCSafePoint(ctx,
-		utils.BRServiceSafePoint{
+		gc.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      0, // 0 means remove this service safe point.
 			BackupTS: math.MaxUint64,
@@ -854,7 +855,7 @@ func RunStreamPause(
 	}
 	if err = streamMgr.setGCSafePoint(
 		ctx,
-		utils.BRServiceSafePoint{
+		gc.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
 			TTL:      cfg.SafePointTTL,
 			BackupTS: globalCheckPointTS,
@@ -927,7 +928,7 @@ func RunStreamResume(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = utils.CheckGCSafePoint(ctx, streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetStorage(), globalCheckPointTS)
+	err = gc.CheckGCSafePoint(ctx, streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetStorage(), globalCheckPointTS)
 	if err != nil {
 		return errors.Annotatef(err, "the global checkpoint ts: %v(%s) has been gc. ",
 			globalCheckPointTS, oracle.GetTimeFromTS(globalCheckPointTS))
@@ -944,9 +945,9 @@ func RunStreamResume(
 	}
 
 	if err := streamMgr.setGCSafePoint(ctx,
-		utils.BRServiceSafePoint{
+		gc.BRServiceSafePoint{
 			ID:       buildPauseSafePointName(ti.Info.Name),
-			TTL:      utils.DefaultStreamStartSafePointTTL,
+			TTL:      gc.DefaultStreamStartSafePointTTL,
 			BackupTS: globalCheckPointTS,
 		},
 	); err != nil {
