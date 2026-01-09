@@ -143,6 +143,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/objstore",
+        "//pkg/objstore/s3store",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/statistics/util",

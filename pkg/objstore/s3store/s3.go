@@ -62,6 +62,7 @@ import (
 	"go.uber.org/zap"
 )
 
+// HardcodedChunkSize is the hardcoded chunk size.
 var HardcodedChunkSize = 5 * 1024 * 1024
 
 const (
@@ -109,8 +110,8 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `Storage` interface.
 type S3Storage struct {
-	svc     S3API
-	options *backuppb.S3
+	svc       S3API
+	options   *backuppb.S3
 	accessRec *recording.AccessStats
 	// used to indicate that the S3 storage is not the official AWS S3, but a
 	// S3-compatible storage, such as minio/KS3/OSS.
@@ -151,8 +152,8 @@ func (rs *S3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec stor
 
 // S3Uploader does multi-part upload to s3.
 type S3Uploader struct {
-	svc          S3API
-	createOutput *s3.CreateMultipartUploadOutput
+	svc           S3API
+	createOutput  *s3.CreateMultipartUploadOutput
 	completeParts []types.CompletedPart
 }
 
