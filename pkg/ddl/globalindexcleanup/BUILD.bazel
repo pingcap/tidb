@@ -1,0 +1,54 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "globalindexcleanup",
+    srcs = [
+        "ddl_worker.go",
+        "executor.go",
+        "meta.go",
+        "scheduler.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/ddl/globalindexcleanup",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/config/kerneltype",
+        "//pkg/ddl/logutil",
+        "//pkg/dxf/framework/handle",
+        "//pkg/dxf/framework/proto",
+        "//pkg/dxf/framework/scheduler",
+        "//pkg/dxf/framework/storage",
+        "//pkg/dxf/framework/taskexecutor",
+        "//pkg/dxf/framework/taskexecutor/execute",
+        "//pkg/errctx",
+        "//pkg/keyspace",
+        "//pkg/kv",
+        "//pkg/lightning/common",
+        "//pkg/meta/model",
+        "//pkg/store/helper",
+        "//pkg/tablecodec",
+        "//pkg/types",
+        "//pkg/util/backoff",
+        "//pkg/util/codec",
+        "//pkg/util/dbterror",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//util",
+        "@org_golang_x_sync//errgroup",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "globalindexcleanup_test",
+    timeout = "short",
+    srcs = ["globalindexcleanup_test.go"],
+    embed = [":globalindexcleanup"],
+    flaky = True,
+    race = "on",
+    shard_count = 6,
+    deps = [
+        "//pkg/dxf/framework/proto",
+        "//pkg/meta/model",
+        "@com_github_stretchr_testify//require",
+    ],
+)

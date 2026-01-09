@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/ddl/globalindexcleanup"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -2422,15 +2423,43 @@ func (w *worker) cleanGlobalIndexEntriesFromDroppedPartitions(jobCtx *jobContext
 		return false, dbterror.ErrInvalidDDLState.GenWithStackByArgs("partition", job.SchemaState)
 	}
 
+	// Collect global index IDs.
+	globalIndexIDs := make([]int64, 0, len(tblInfo.Indices))
 	elements := make([]*meta.Element, 0, len(tblInfo.Indices))
 	for _, idxInfo := range tblInfo.Indices {
 		if idxInfo.Global {
+			globalIndexIDs = append(globalIndexIDs, idxInfo.ID)
 			elements = append(elements, &meta.Element{ID: idxInfo.ID, TypeKey: meta.IndexElementKey})
 		}
 	}
 	if len(elements) == 0 {
 		return true, nil
 	}
+
+	// Try distributed task framework if enabled.
+	if globalindexcleanup.ShouldUseDistTask(job) {
+		stepCtx := jobCtx.stepCtx
+		isReorgRunnable := func() error {
+			return w.isReorgRunnable(stepCtx, true)
+		}
+		updateRowCount := func(count int64) {
+			if rc := w.getReorgCtx(job.ID); rc != nil {
+				rc.setRowCount(count)
+			}
+		}
+		return globalindexcleanup.ExecuteDistCleanupTask(
+			w.workCtx,
+			w.store,
+			job,
+			tblInfo,
+			oldIDs,
+			globalIndexIDs,
+			isReorgRunnable,
+			updateRowCount,
+		)
+	}
+
+	// Fallback to local reorg.
 	sctx, err1 := w.sessPool.Get()
 	if err1 != nil {
 		return false, err1
