@@ -265,6 +265,277 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
+// filterOutNullEQAndOtherCondition4ConvertAntiJoin is to iterate all equal condition's out columns except NullEQ ones
+// and all other condition's columns except GT, GE, LE, LT, NE ones.
+func filterOutNullEQAndOtherCondition4ConvertAntiJoin(inner int, joinOuterKeySch *intset.FastIntSet, eq []*expression.ScalarFunction, other []expression.Expression) {
+	for _, s := range eq {
+		if s.FuncName.L == ast.NullEQ {
+			continue
+		}
+		col1, col2, ok := expression.IsColOpCol(s)
+		if ok {
+			var col *expression.Column
+			// In left outer join，equal condition is inner colomn =  outer column
+			// In right outer join, equal condition is outer colomn = inner column
+			if inner == 0 {
+				col = col2
+			} else {
+				col = col1
+			}
+			joinOuterKeySch.Insert(int(col.UniqueID))
+		}
+	}
+	for _, s := range other {
+		if sf, ok := s.(*expression.ScalarFunction); ok {
+			switch sf.FuncName.L {
+			case ast.GT, ast.GE, ast.LE, ast.LT, ast.NE:
+				col1, col2, ok := expression.IsColOpCol(sf)
+				if ok {
+					var col *expression.Column
+					// In left outer join，equal condition is inner colomn =  outer column
+					// In right outer join, equal condition is outer colomn = inner column
+					if inner == 0 {
+						col = col2
+					} else {
+						col = col1
+					}
+					joinOuterKeySch.Insert(int(col.UniqueID))
+				}
+			default:
+			}
+		}
+	}
+}
+
+func vaildProj4ConvertAntiJoin(proj *LogicalProjection) bool {
+	if proj == nil {
+		return true
+	}
+	// Sometimes there is a projection between select and join.
+	// We require that this projection does not make additional changes to any columns,
+	// then we can continue converting to a semi join.
+	//  Pass: Projection[col1,col2]
+	//  Fail: Projection[col2->ABC, col2+1->col2]
+	for idx, c := range proj.Schema().Columns {
+		if !c.Equals(proj.Exprs[idx]) {
+			return false
+		}
+	}
+	return true
+}
+
+// CanConvertAntiJoin is used in outer-join-to-semi-join rule.
+/*
+#### Scenario 1: IS NULL on the Join Condition Column
+
+- In this scenario, the IS NULL filter is applied directly to the join key from the outer table.
+
+##### Table Schema
+CREATE TABLE Table_A (id INT, name VARCHAR(50));
+CREATE TABLE Table_B (id INT, info VARCHAR(50));
+
+##### Plan
+```
+-- The optimizer rewrites the LEFT JOIN ... WHERE ... IS NULL pattern into an efficient
+-- Anti Semi Join to retrieve rows from Table A that have no match in Table B.
+SELECT Table_A.id, Table_A.name
+FROM
+	Table_A
+LEFT JOIN
+	Table_B ON Table_A.id = Table_B.id
+WHERE
+	Table_B.id IS NULL;
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| id                       | task      | access object | operator info                                                                        |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| Projection               | root      |               | test.table_a.id, test.table_a.name                                                   |
+| └─Selection              | root      |               | isnull(test.table_b.id)                                                              |
+|   └─HashJoin             | root      |               | left outer join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+|     ├─TableReader(Build) | root      |               | data:Selection                                                                       |
+|     │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                         |
+|     │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                       |
+|     └─TableReader(Probe) | root      |               | data:TableFullScan                                                                   |
+|       └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                       |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+=>
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| id                   | task      | access object | operator info                                                                       |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| HashJoin             | root      |               | anti semi join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+| ├─TableReader(Build) | root      |               | data:Selection                                                                      |
+| │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                        |
+| │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                      |
+| └─TableReader(Probe) | root      |               | data:TableFullScan                                                                  |
+|   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+```
+#### Scenario 2: IS NULL on a Non-Join NOT NULL Column
+
+If a column in the outer table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join, it implies that the join failed to find a match. This allows us to convert the join into ```ANTI SEMI JOIN``` even if the column is not part of the join keys.
+
+##### Table Schema:
+
+CREATE TABLE Table_A (id INT,name VARCHAR(50));
+CREATE TABLE Table_B (
+	id INT,
+	status VARCHAR(20) NOT NULL -- Non-join column with NOT NULL constraint
+);
+
+##### Plan
+```
+-- Even though 'status' is not a join key, its NOT NULL constraint
+-- ensures that 'B.status IS NULL' only occurs when no match is found.
+SELECT A.* FROM Table_A A
+LEFT JOIN Table_B B ON A.id = B.id
+WHERE B.status IS NULL;
+
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| id                       | task      | access object | operator info                                                                        |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+| Projection               | root      |               | test.table_a.id, test.table_a.name                                                   |
+| └─Selection              | root      |               | isnull(test.table_b.status)                                                          |
+|   └─HashJoin             | root      |               | left outer join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+|     ├─TableReader(Build) | root      |               | data:Selection                                                                       |
+|     │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                         |
+|     │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                       |
+|     └─TableReader(Probe) | root      |               | data:TableFullScan                                                                   |
+|       └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                       |
++--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+ =>
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| id                   | task      | access object | operator info                                                                       |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+| HashJoin             | root      |               | anti semi join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
+| ├─TableReader(Build) | root      |               | data:Selection                                                                      |
+| │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                        |
+| │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                      |
+| └─TableReader(Probe) | root      |               | data:TableFullScan                                                                  |
+|   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
++----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+```
+
+Additionally, we found that there may be a projection between select and join.
+
+	Select[isnull(col1)] <- Projection[col1,col2,col3,col4] <- left outer join[outer side: col1 col2, inner side: col3 col4]
+
+Currently, we only support projections with column mapping relationships, not transformation relationships.
+
+	Projection[null->col1,null->col2,col3,col4] <- anti semi join[outer side: col1 col2, inner side: col3 col4]
+
+*/
+func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, selConditionColInOuter bool) {
+	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
+		// selectCond can only have one expression.
+		// The inner expression can definitely be pushed down, so selectCond must be the outer expression.
+		// If they are semantically similar, leaving only one and the other should be eliminable.
+		return nil, false
+	}
+	if _, ok := p.Self().(*LogicalApply); ok {
+		return nil, false
+	}
+	innerChildIdx := 0
+	switch p.JoinType {
+	case base.LeftOuterJoin:
+		innerChildIdx = 0
+	case base.RightOuterJoin:
+		innerChildIdx = 1
+	default:
+		return nil, false
+	}
+
+	var sf *expression.ScalarFunction
+	var ok bool
+	var isNullcol *expression.Column
+	sf, ok = selectCond[0].(*expression.ScalarFunction)
+	if !ok || sf == nil {
+		return nil, false
+	}
+	if sf.FuncName.L != ast.IsNull {
+		return nil, false
+	}
+	args := sf.GetArgs()
+	// Get the Column in the IsNull
+	isNullcol, ok = args[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	inner := p.children[innerChildIdx]
+	innerSch := inner.Schema()
+	outerSchSet := intset.NewFastIntSet()
+	// Obtain all the columns that meet the requirements in the eq condition and other condition.
+	// If the column that is isnull is an outside column in the eq/other condition,
+	// It can be directly converted into an anti semi join.
+	expression.ExtractColumnsSetFromExpressions(&outerSchSet, func(c *expression.Column) bool {
+		return !innerSch.Contains(c)
+	}, expression.Column2Exprs(p.Schema().Columns)...)
+	joinOuterKeySch := intset.NewFastIntSet()
+	if !vaildProj4ConvertAntiJoin(proj) {
+		return nil, false
+	}
+	filterOutNullEQAndOtherCondition4ConvertAntiJoin(innerChildIdx, &joinOuterKeySch, p.EqualConditions, p.OtherConditions)
+	selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
+	// resultProj is to generate the NULL values for the columns of the outer table, which is the
+	// expected result for this kind of anti-join query.
+	if selConditionColInOuter {
+		// Scenario 1: column in IsNull expression is from the outer side columns in the eq/other condition.
+		if proj != nil {
+			resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
+		} else {
+			resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+		}
+	} else if outerSchSet.Has(int(isNullcol.UniqueID)) {
+		// Scenario 2:
+		//  column in IsNull expression is from the outer side columns.
+		//  but it is not in the equal/other condition.
+		//  We need to check whether outer column is not null in the origin table schema.
+		//  If it is not null column, it can be directly converted into an anti semi join.
+		outerSch := p.Children()[1^innerChildIdx].Schema()
+		idx := outerSch.ColumnIndex(isNullcol)
+		if mysql.HasNotNullFlag(outerSch.Columns[idx].RetType.GetFlag()) {
+			if proj != nil {
+				resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, proj.Schema())
+			} else {
+				resultProj = p.generateProject4ConvertAntiJoin(&outerSchSet, selectSch)
+			}
+			selConditionColInOuter = true
+		}
+	}
+
+	if selConditionColInOuter {
+		// Anti semi join's first child is inner, the second child is outer. join condition is inner op outer
+		// right outer join's first child is outer, the second child is inner, join condition is outer op inner
+		// left outer join's  first child is inner, the second child is outer. join condition is inner op outer
+		// So we have to transfer it here.
+		ctx := p.SCtx().GetExprCtx()
+		if p.JoinType == base.RightOuterJoin {
+			for idx, expr := range p.EqualConditions {
+				args := expr.GetArgs()
+				p.EqualConditions[idx] = expression.NewFunctionInternal(ctx, expr.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0]).(*expression.ScalarFunction)
+			}
+			args := p.Children()
+			p.SetChildren(args[1], args[0])
+		}
+		p.JoinType = base.AntiSemiJoin
+	}
+	return resultProj, selConditionColInOuter
+}
+
+// generateProject4ConvertAntiJoin is generate projection and put it on the anti semi join which is from outer join.
+// inner column will not changed. outer column will output the null.
+func (p *LogicalJoin) generateProject4ConvertAntiJoin(outerSchSet *intset.FastIntSet, selectSch *expression.Schema) (proj *LogicalProjection) {
+	projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
+	for _, c := range selectSch.Columns {
+		if outerSchSet.Has(int(c.UniqueID)) {
+			projExprs = append(projExprs, expression.NewNull())
+		} else {
+			projExprs = append(projExprs, c.Clone())
+		}
+	}
+	proj = LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
+	proj.SetSchema(selectSch.Clone())
+	return
+}
+
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
 	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {
