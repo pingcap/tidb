@@ -169,6 +169,7 @@ func TestMakeExprContextStatic(t *testing.T) {
 		WithEvalCtx(evalCtx),
 		WithCharset("a", "b"),
 		WithDefaultCollationForUTF8MB4("c"),
+		WithDefaultCollationForUTF8("e"),
 		WithBlockEncryptionMode("d"),
 		WithSysDateIsNow(true),
 		WithNoopFuncsMode(1),
@@ -238,6 +239,15 @@ func TestExprCtxLoadSystemVars(t *testing.T) {
 			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
 				require.Equal(t, "utf8mb4_general_ci", ctx.GetDefaultCollationForUTF8MB4())
 				require.Equal(t, vars.DefaultCollationForUTF8MB4, ctx.GetDefaultCollationForUTF8MB4())
+			},
+		},
+		{
+			name:  "default_collation_for_utf8",
+			val:   "utf8_general_ci",
+			field: "$.defaultCollationForUTF8",
+			assert: func(ctx *ExprContext, vars *variable.SessionVars) {
+				require.Equal(t, "utf8_general_ci", ctx.GetDefaultCollationForUTF8())
+				require.Equal(t, vars.DefaultCollationForUTF8, ctx.GetDefaultCollationForUTF8())
 			},
 		},
 		{

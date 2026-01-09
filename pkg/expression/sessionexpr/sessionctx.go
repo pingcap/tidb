@@ -73,6 +73,11 @@ func (ctx *ExprContext) GetDefaultCollationForUTF8MB4() string {
 	return ctx.sctx.GetSessionVars().DefaultCollationForUTF8MB4
 }
 
+// GetDefaultCollationForUTF8 returns the default collation of UTF8.
+func (ctx *ExprContext) GetDefaultCollationForUTF8() string {
+	return ctx.sctx.GetSessionVars().DefaultCollationForUTF8
+}
+
 // GetBlockEncryptionMode returns the variable block_encryption_mode
 func (ctx *ExprContext) GetBlockEncryptionMode() string {
 	blockMode, _ := ctx.sctx.GetSessionVars().GetSystemVar(vardef.BlockEncryptionMode)
