@@ -4256,7 +4256,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	// Build ReplaceConflictIfExpr for soft delete tables
-	b.buildSoftDeleteReplaceExpr(insertPlan, tableInfo)
+	insertPlan.ReplaceConflictIfExpr = b.buildSoftDeleteReplaceExpr(insertPlan.SCtx().GetSessionVars(), insertPlan.TableColNames, insertPlan.TableSchema.Columns, tableInfo)
 
 	err = insertPlan.ResolveIndices()
 	if err != nil {
@@ -4268,17 +4268,17 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 
 // buildSoftDeleteReplaceExpr builds the ReplaceConflictIfExpr for soft delete enabled tables.
 // It creates an expression: NOT(ISNULL(_tidb_softdelete_time)) to check if a row is soft-deleted.
-func (b *PlanBuilder) buildSoftDeleteReplaceExpr(insertPlan *physicalop.Insert, tableInfo *model.TableInfo) {
+func (b *PlanBuilder) buildSoftDeleteReplaceExpr(vars *variable.SessionVars, tableColNames types.NameSlice, columns []*expression.Column, tableInfo *model.TableInfo) []expression.Expression {
 	if tableInfo.SoftdeleteInfo == nil ||
-		!insertPlan.SCtx().GetSessionVars().SoftDeleteRewrite {
-		return
+		!vars.SoftDeleteRewrite {
+		return nil
 	}
 
 	// Find the _tidb_softdelete_time column in the table schema
 	var softDeleteCol *expression.Column
-	for i, name := range insertPlan.TableColNames {
+	for i, name := range tableColNames {
 		if name.ColName.L == model.ExtraSoftDeleteTimeName.L {
-			softDeleteCol = insertPlan.TableSchema.Columns[i]
+			softDeleteCol = columns[i]
 			break
 		}
 	}
@@ -4289,8 +4289,9 @@ func (b *PlanBuilder) buildSoftDeleteReplaceExpr(insertPlan *physicalop.Insert, 
 	if softDeleteCol != nil {
 		// Build the expression: NOT(ISNULL(_tidb_softdelete_time))
 		notNullExpr := expression.BuildNotNullExpr(b.ctx.GetExprCtx(), softDeleteCol)
-		insertPlan.ReplaceConflictIfExpr = []expression.Expression{notNullExpr}
+		return []expression.Expression{notNullExpr}
 	}
+	return nil
 }
 
 func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physicalop.Insert) (affectedValuesCols []*table.Column, err error) {
@@ -4634,6 +4635,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 	mockTablePlan.SetOutputNames(names)
 
 	p.GenCols, err = b.resolveGeneratedColumns(ctx, tableInPlan.Cols(), nil, mockTablePlan)
+
+	// Build ReplaceConflictIfExpr for soft delete tables
+	p.ReplaceConflictIfExpr = b.buildSoftDeleteReplaceExpr(b.ctx.GetSessionVars(), names, schema.Columns, tableInfo)
 	return p, err
 }
 
