@@ -156,6 +156,13 @@ type AccessPath struct {
 	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
 	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
+
+	PreMatchExprs []expression.Expression
+	// PreMatchCanBeFalse indicates whether this index path is always valid.
+	// It's designed for the partial index with condition. We only check the IS NULL currently.
+	// e.g. for partial index idx(b) where a IS NULL, if the filter is b = ? and a IS NULL/a > 0, then the index path is valid.
+	// We add this field to make the plan cache usable for the partial index with limited cases.
+	PreMatchCanBeFalse bool
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -473,4 +480,29 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 		return true
 	}
 	return false
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.ConditionExprString != "" {
+		return true
+	}
+	return false
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// If path is mv index path:
+// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+// on mvi, it will return many index rows which breaks handle-unique attribute here.
+// So we cannot use mv index path for index join.
+// If path is partial index path:
+// We need to first determine whether we already meet the partial index condition.
+// Currently we don't support that, so we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
 }
