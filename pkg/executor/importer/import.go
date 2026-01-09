@@ -1004,11 +1004,6 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 	names := make([]string, 0, len(tableCols))
 	tableInfo := e.Table.Meta()
 	for _, v := range tableCols {
-		// Data for generated column is generated from the other rows rather than from the parsed data.
-		fieldMapping := &FieldMapping{
-			Column: v,
-		}
-
 		// When we're using soft delete or active-active table, there are some extra hidden columns
 		// like _tidb_origin_ts, _tidb_soft_delete_time, if user is not explicitly specifying them,
 		// load data should ignore them.
@@ -1018,6 +1013,10 @@ func (e *LoadDataController) tableVisCols2FieldMappings() ([]*FieldMapping, []st
 			continue
 		}
 
+		// Data for generated column is generated from the other rows rather than from the parsed data.
+		fieldMapping := &FieldMapping{
+			Column: v,
+		}
 		mappings = append(mappings, fieldMapping)
 		names = append(names, v.Name.O)
 	}
