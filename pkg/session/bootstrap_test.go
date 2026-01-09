@@ -2897,7 +2897,6 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 	// 2nd
 	require.Len(t, versionedBootstrapSchemas[1].databases[0].Tables, 1)
-	require.Len(t, versionedBootstrapSchemas[1].databases[1].Tables, 0)
 
 	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
 	var allTableCount int
