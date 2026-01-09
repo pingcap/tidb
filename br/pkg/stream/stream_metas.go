@@ -211,7 +211,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	ctx context.Context,
 	from uint64,
 	st storeapi.Storage,
-// num = deleted files
+	// num = deleted files
 	updateFn func(num int64),
 ) ([]string, error) {
 	hst := ms.hook(st)
