@@ -418,8 +418,10 @@ create table t (a int, b int);
 insert t values (1, 7), (1, 8), (1, 9), (1, 10);
 prepare stmt from 'select * from t where _tidb_rowid in (1, ?, ?)';
 set @a2=2, @a3=3;
+--sorted_result
 execute stmt using @a2, @a3;
 set @a2=4, @a3=2;
+--sorted_result
 execute stmt using @a2, @a3;
 select @@last_plan_from_cache;
 
