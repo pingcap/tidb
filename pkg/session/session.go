@@ -2598,6 +2598,21 @@ func (s *session) Close() {
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
 	}
+<<<<<<< HEAD
+=======
+	if s.sessionVars.ConnectionID != 0 {
+		memory.RemovePoolFromGlobalMemArbitrator(s.sessionVars.ConnectionID)
+	}
+	// Detach session trackers during session cleanup.
+	// ANALYZE attaches session MemTracker to GlobalAnalyzeMemoryTracker; without
+	// detachment, closed sessions cannot be garbage collected.
+	if s.sessionVars.MemTracker != nil {
+		s.sessionVars.MemTracker.Detach()
+	}
+	if s.sessionVars.DiskTracker != nil {
+		s.sessionVars.DiskTracker.Detach()
+	}
+>>>>>>> 69a1b2ce8ec (session: fix memory leak when sessions close after ANALYZE statements (#65492))
 }
 
 // GetSessionVars implements the context.Context interface.
