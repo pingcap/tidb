@@ -101,6 +101,8 @@ type DDLReorgMeta struct {
 	Concurrency   atomic.Int64 `json:"concurrency"`
 	BatchSize     atomic.Int64 `json:"batch_size"`
 	MaxWriteSpeed atomic.Int64 `json:"max_write_speed"`
+	// IsValidating indicates whether this job is validating the data.
+	IsValidating bool `json:"is_validating"`
 }
 
 // ShallowCopy creates a shallow copy of DDLReorgMeta.

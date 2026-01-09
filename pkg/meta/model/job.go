@@ -782,7 +782,17 @@ func (job *Job) MayNeedReorg() bool {
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
-		return job.NeedReorg
+		if job.NeedReorg {
+			return true
+		}
+		if job.Version != JobVersion1 && job.Version != JobVersion2 {
+			return false
+		}
+		if args, err := GetModifyColumnArgs(job); err == nil {
+			return args.ModifyColumnType == ModifyTypeReorg ||
+				args.ModifyColumnType == ModifyTypeIndexReorg
+		}
+		return false
 	case ActionMultiSchemaChange:
 		for _, sub := range job.MultiSchemaInfo.SubJobs {
 			proxyJob := Job{Type: sub.Type, NeedReorg: sub.NeedReorg}
@@ -914,6 +924,7 @@ type SubJob struct {
 	ReorgTp      ReorgType       `json:"reorg_tp"`
 	ReorgStage   ReorgStage      `json:"reorg_stage"`
 	AnalyzeState int8            `json:"analyze_state"`
+	IsValidating bool            `json:"is_validating"`
 }
 
 // IsNormal returns true if the sub-job is normally running.
@@ -942,6 +953,7 @@ func (sub *SubJob) ToProxyJob(parentJob *Job, seq int) Job {
 		reorgMeta.ReorgTp = sub.ReorgTp
 		reorgMeta.Stage = sub.ReorgStage
 		reorgMeta.AnalyzeState = sub.AnalyzeState
+		reorgMeta.IsValidating = sub.IsValidating
 	}
 	return Job{
 		Version:         parentJob.Version,
@@ -994,6 +1006,7 @@ func (sub *SubJob) FromProxyJob(proxyJob *Job, ver int64) {
 		sub.ReorgTp = proxyJob.ReorgMeta.ReorgTp
 		sub.ReorgStage = proxyJob.ReorgMeta.Stage
 		sub.AnalyzeState = proxyJob.ReorgMeta.AnalyzeState
+		sub.IsValidating = proxyJob.ReorgMeta.IsValidating
 	}
 }
 

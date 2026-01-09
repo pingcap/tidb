@@ -286,7 +286,7 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 			}
 			req.AppendString(11, subJob.State.String())
 			if inShowStmt {
-				req.AppendString(12, showCommentsFromSubjob(subJob, useDXF, isCloud))
+				req.AppendString(12, showCommentsFromSubjob(job, subJob, useDXF, isCloud))
 			} else {
 				req.AppendString(12, job.Query)
 			}
@@ -299,12 +299,15 @@ func (e *DDLJobRetriever) appendJobToChunk(req *chunk.Chunk, job *model.Job, che
 	}
 }
 
+// showCommentsFromJob generates the comments for a DDL job, including reorg status,
+// analyze status and reorg parameters.
 func showCommentsFromJob(job *model.Job) string {
+	labels := getReorgAndVerifyLabels(job.Type, job.MayNeedReorg(),
+		job.ReorgMeta != nil && job.ReorgMeta.IsValidating)
 	m := job.ReorgMeta
 	if m == nil {
-		return ""
+		return strings.Join(labels, ", ")
 	}
-	var labels []string
 	switch m.AnalyzeState {
 	case model.AnalyzeStateRunning:
 		labels = append(labels, "analyzing")
@@ -317,7 +320,9 @@ func showCommentsFromJob(job *model.Job) string {
 	isAddingIndex := job.Type == model.ActionAddIndex ||
 		job.Type == model.ActionAddPrimaryKey
 	if isAddingIndex && kerneltype.IsNextGen() {
-		// The parameters are determined automatically in next-gen.
+		// In next-gen, the parameters (concurrency, batch size, etc.) are determined
+		// automatically by the distributed framework, so we don't show them.
+		// However, we still show the status labels (like analyze status) collected above.
 		return strings.Join(labels, ", ")
 	}
 	if isAddingIndex {
@@ -335,6 +340,12 @@ func showCommentsFromJob(job *model.Job) string {
 		case model.ReorgTypeTxnMerge:
 			labels = append(labels, model.ReorgTypeTxnMerge.String())
 		}
+		if m.IsDistReorg && m.TargetScope != "" {
+			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
+		}
+		if m.IsDistReorg && m.MaxNodeCount != 0 {
+			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
+		}
 	}
 	if job.MayNeedReorg() {
 		concurrency := m.GetConcurrency()
@@ -349,24 +360,37 @@ func showCommentsFromJob(job *model.Job) string {
 		if maxWriteSpeed != vardef.DefTiDBDDLReorgMaxWriteSpeed {
 			labels = append(labels, fmt.Sprintf("max_write_speed=%d", maxWriteSpeed))
 		}
-		if m.TargetScope != "" {
-			labels = append(labels, fmt.Sprintf("service_scope=%s", m.TargetScope))
-		}
-		if m.MaxNodeCount != 0 {
-			labels = append(labels, fmt.Sprintf("max_node_count=%d", m.MaxNodeCount))
-		}
 	}
 	return strings.Join(labels, ", ")
 }
 
-func showCommentsFromSubjob(sub *model.SubJob, useDXF, useCloud bool) string {
-	if kerneltype.IsNextGen() {
-		// The parameters are determined automatically in next-gen.
-		return ""
-	}
+func getReorgAndVerifyLabels(jobType model.ActionType, mayNeedReorg bool, isValidating bool) []string {
 	var labels []string
+	isAddingIndex := jobType == model.ActionAddIndex ||
+		jobType == model.ActionAddPrimaryKey
+	// For adding index, we don't need to show 'need reorg' to users.
+	if mayNeedReorg && !isAddingIndex && jobType != model.ActionMultiSchemaChange {
+		labels = append(labels, "need reorg")
+	}
+	if isValidating {
+		labels = append(labels, "validating")
+	}
+	return labels
+}
+
+// showCommentsFromSubjob generates the comments for a sub-job in a multi-schema change.
+func showCommentsFromSubjob(job *model.Job, sub *model.SubJob, useDXF, useCloud bool) string {
+	proxy := sub.ToProxyJob(job, 0)
+	labels := getReorgAndVerifyLabels(sub.Type, proxy.MayNeedReorg(), sub.IsValidating)
+
+	if kerneltype.IsNextGen() {
+		// In next-gen, the parameters are determined automatically, so we don't show them.
+		// We only show the status labels collected above.
+		return strings.Join(labels, ", ")
+	}
+
 	if sub.ReorgTp == model.ReorgTypeNone {
-		return ""
+		return strings.Join(labels, ", ")
 	}
 	labels = append(labels, sub.ReorgTp.String())
 	if useDXF {
