@@ -359,7 +359,6 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		switch prefixKeyType {
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
-			break
 		default:
 			return errors.NewNoStackErrorf("Get unexpected type %d", prefixKeyType)
 		}
@@ -632,12 +631,8 @@ func (e *TopNExec) executeRankTopN() {
 	// have received all chunks now.
 	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
 
-	if len(e.chkHeap.rowPtrs) < int(e.chkHeap.totalLimit) {
-		e.resultChannel <- rowWithError{err: errors.NewNoStackErrorf("Invalid rowPtrs count. len(e.chkHeap.rowPtrs): %d, e.chkHeap.totalLimit: %d", len(e.chkHeap.rowPtrs), e.chkHeap.totalLimit)}
-		return
-	}
-
-	for ; e.chkHeap.idx < int(e.chkHeap.totalLimit); e.chkHeap.idx++ {
+	rowCount := len(e.chkHeap.rowPtrs)
+	for ; e.chkHeap.idx < int(e.chkHeap.totalLimit) && e.chkHeap.idx < rowCount; e.chkHeap.idx++ {
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
 	}
 }

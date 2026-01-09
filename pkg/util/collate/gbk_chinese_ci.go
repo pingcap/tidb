@@ -75,8 +75,9 @@ func (*gbkChineseCICollator) Clone() Collator {
 }
 
 // ImmutablePrefixKey implements Collator interface
-func (*gbkChineseCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	return hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
+func (g *gbkChineseCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+	strSlice := hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
+	return  g.ImmutableKey(string(hack.String(strSlice)))
 }
 
 type gbkChineseCIPattern struct {

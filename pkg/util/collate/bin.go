@@ -141,11 +141,11 @@ func (p *binPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchBinary(str, p.patChars, p.patTypes)
 }
 
-type UTF8BinPaddingCollator struct {
+type utf8BinPaddingCollator struct {
 	binPaddingCollator
 }
 
 // ImmutablePrefixKey implements Collator interface
-func (*UTF8BinPaddingCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
+func (*utf8BinPaddingCollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
 	return hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
 }

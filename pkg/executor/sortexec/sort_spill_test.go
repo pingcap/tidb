@@ -113,7 +113,10 @@ func (r *resultChecker) check(resultChunks []*chunk.Chunk, offset int64, count i
 		if count < 0 {
 			count = (int64(len(r.rowPtrs)) - offset)
 		}
-		r.rowPtrs = r.rowPtrs[offset : offset+count]
+
+		start := min(int64(len(r.rowPtrs)), offset)
+		end := min(int64(len(r.rowPtrs)), offset+count)
+		r.rowPtrs = r.rowPtrs[start:end]
 	}
 
 	cursor := 0

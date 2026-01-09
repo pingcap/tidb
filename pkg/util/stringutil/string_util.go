@@ -447,7 +447,6 @@ func Utf8Len(b byte) int {
 	return length
 }
 
-// TODO(x) add ut
 // GetCharsByteCount returns byte count of the specified number of chars in a string
 func GetCharsByteCount(str string, charCount int) int {
 	bytes := hack.Slice(str)
