@@ -780,18 +780,6 @@ func BenchmarkDatumsToStringLongStr(b *testing.B) {
 		}
 	}
 }
-<<<<<<< HEAD
-=======
-
-func BenchmarkDatumTruncatedStringify(b *testing.B) {
-	d1 := NewStringDatum(strings.Repeat("1", 128))
-	d2 := NewIntDatum(2)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		_ = d1.TruncatedStringify()
-		_ = d2.TruncatedStringify()
-	}
-}
 
 func TestIsPrintable(t *testing.T) {
 	testcases := []struct {
@@ -827,4 +815,3 @@ func BenchmarkIsPrintable(b *testing.B) {
 		}
 	}
 }
->>>>>>> 2a5e1bb6f7b (types: print argument as hex literal if non-printable (#65384))

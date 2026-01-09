@@ -2238,7 +2238,6 @@ func SortDatums(ctx Context, datums []Datum) error {
 	return sorter.err
 }
 
-<<<<<<< HEAD
 type datumsSorter struct {
 	datums []Datum
 	ctx    Context
@@ -2264,7 +2263,6 @@ func (ds *datumsSorter) Swap(i, j int) {
 
 var strBuilderPool = sync.Pool{New: func() any { return &strings.Builder{} }}
 
-=======
 // Check if a string is considered printable
 //
 // Checks
@@ -2282,7 +2280,6 @@ func isPrintable(s string) bool {
 	return true
 }
 
->>>>>>> 2a5e1bb6f7b (types: print argument as hex literal if non-printable (#65384))
 // DatumsToString converts several datums to formatted string.
 func DatumsToString(datums []Datum, handleSpecialValue bool) (string, error) {
 	return datumsToString(datums, handleSpecialValue, false)
