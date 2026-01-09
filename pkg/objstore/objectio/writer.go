@@ -76,7 +76,7 @@ type BufferedWriter struct {
 	accessRec *recording.AccessStats
 }
 
-// Write implements objstoreapi.Writer.
+// Write implements Writer.
 func (u *BufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 	n, err := u.write0(ctx, p)
 	u.accessRec.RecWrite(n)
@@ -125,7 +125,7 @@ func (u *BufferedWriter) uploadChunk(ctx context.Context) error {
 	return errors.Trace(err)
 }
 
-// Close implements objstoreapi.Writer.
+// Close implements Writer.
 func (u *BufferedWriter) Close(ctx context.Context) error {
 	u.buf.Close()
 	err := u.uploadChunk(ctx)

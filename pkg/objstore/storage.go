@@ -107,14 +107,6 @@ type Uploader interface {
 	CompleteUpload(ctx context.Context) error
 }
 
-// Writer is like io.Writer but with Context.
-type Writer interface {
-	// Write writes to buffer and if chunk is filled will upload it
-	Write(ctx context.Context, p []byte) (int, error)
-	// Close writes final chunk and completes the upload
-	Close(ctx context.Context) error
-}
-
 // WriterOption writer option.
 type WriterOption struct {
 	Concurrency int

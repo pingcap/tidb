@@ -142,7 +142,7 @@ func WriteMeta(tctx *tcontext.Context, meta MetaIR, w objectio.Writer) error {
 	return nil
 }
 
-// WriteInsert writes TableDataIR to a objstore.Writer in sql type
+// WriteInsert writes TableDataIR to an objectio.Writer in SQL type
 func WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,
@@ -290,7 +290,7 @@ func WriteInsert(
 	return counter, wp.Error()
 }
 
-// WriteInsertInCsv writes TableDataIR to a objstore.Writer in csv type
+// WriteInsertInCsv writes TableDataIR to objectio.Writer in csv type
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
