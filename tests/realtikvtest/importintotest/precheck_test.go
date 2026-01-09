@@ -16,6 +16,7 @@ package importintotest
 
 import (
 	"context"
+	_ "embed"
 	"fmt"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
@@ -28,6 +29,53 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
+
+//go:embed list.parquet
+var listParquetContent []byte
+
+//go:embed map.parquet
+var mapParquetContent []byte
+
+func (s *mockGCSSuite) TestPrecheckParquet() {
+	s.prepareAndUseDB("check_parquet")
+
+	type testCase struct {
+		name        string
+		content     []byte
+		expectError error
+	}
+
+	// Write file with map type
+	for _, tc := range []testCase{
+		{
+			// List logical type is not supported.
+			// Note: we will support list type in the future, but not now.
+			name:        "list.parquet",
+			content:     listParquetContent,
+			expectError: exeerrors.ErrLoadDataPreCheckFailed,
+		},
+		{
+			// Map logical type is not supported.
+			name:        "map.parquet",
+			content:     mapParquetContent,
+			expectError: exeerrors.ErrLoadDataPreCheckFailed,
+		},
+	} {
+		s.server.CreateObject(fakestorage.Object{
+			ObjectAttrs: fakestorage.ObjectAttrs{
+				BucketName: "precheck-parquet",
+				Name:       tc.name,
+			},
+			Content: tc.content,
+		})
+
+		s.tk.MustExec("drop table if exists t;")
+		s.tk.MustExec("create table t (a char(16))")
+		sql := fmt.Sprintf(`IMPORT INTO t FROM 'gs://precheck-parquet/%s?endpoint=%s'`, tc.name, gcsEndpoint)
+		err := s.tk.QueryToErr(sql)
+		require.ErrorIs(s.T(), err, tc.expectError)
+	}
+}
 
 func (s *mockGCSSuite) TestPreCheckTotalFileSize0() {
 	s.server.CreateObject(fakestorage.Object{

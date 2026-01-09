@@ -18,6 +18,8 @@ go_test(
         "test.parquet",
         "part0.parquet",
         "part1.parquet",
+        "list.parquet",
+        "map.parquet",
     ],
     flaky = True,
     race = "on",

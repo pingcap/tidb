@@ -498,3 +498,35 @@ func TestBasicReadFile(t *testing.T) {
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
 	}
 }
+
+func TestTrackingAllocator(t *testing.T) {
+	alloc := &trackingAllocator{}
+
+	b1 := alloc.Allocate(100)
+	assert.EqualValues(t, 100, alloc.currentAllocation.Load())
+	assert.EqualValues(t, 100, alloc.peakAllocation.Load())
+	assert.Len(t, b1, 100)
+
+	b2 := alloc.Allocate(200)
+	assert.EqualValues(t, 300, alloc.currentAllocation.Load())
+	assert.EqualValues(t, 300, alloc.peakAllocation.Load())
+	assert.Len(t, b2, 200)
+
+	alloc.Free(b1)
+	assert.EqualValues(t, 200, alloc.currentAllocation.Load())
+	assert.EqualValues(t, 300, alloc.peakAllocation.Load())
+
+	b3 := alloc.Reallocate(400, b2)
+	assert.EqualValues(t, 400, alloc.currentAllocation.Load())
+	assert.EqualValues(t, 400, alloc.peakAllocation.Load())
+	assert.Len(t, b3, 400)
+
+	alloc.Free(b3)
+	assert.EqualValues(t, 0, alloc.currentAllocation.Load())
+	assert.EqualValues(t, 400, alloc.peakAllocation.Load())
+
+	b4 := make([]byte, 500)
+	assert.EqualValues(t, 0, alloc.currentAllocation.Load())
+	alloc.Free(b4)
+	assert.EqualValues(t, 400, alloc.peakAllocation.Load())
+}

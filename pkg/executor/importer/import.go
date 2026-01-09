@@ -1210,34 +1210,6 @@ func initExternalStore(ctx context.Context, u *url.URL, target string) (objstore
 	return s, nil
 }
 
-func estimateCompressionRatio(
-	ctx context.Context,
-	filePath string,
-	fileSize int64,
-	tp mydump.SourceType,
-	store objstore.Storage,
-) (float64, error) {
-	if tp != mydump.SourceTypeParquet {
-		return 1.0, nil
-	}
-	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
-		if v, ok := val.(bool); ok && v {
-			failpoint.Return(2.0, nil)
-		}
-	})
-	rows, rowSize, err := mydump.SampleStatisticsFromParquet(ctx, filePath, store)
-	if err != nil {
-		return 1.0, err
-	}
-	// No row in the file, use 2.0 as default compression ratio.
-	if rowSize == 0 || rows == 0 {
-		return 2.0, nil
-	}
-
-	compressionRatio := (rowSize * float64(rows)) / float64(fileSize)
-	return compressionRatio, nil
-}
-
 // maxSampledCompressedFiles indicates the max number of files we used to sample
 // compression ratio for each compression type. Consider the extreme case that
 // user data contains all 3 compression types. Then we need to sample about 1,500
@@ -1381,6 +1353,19 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// For non-parquet format, it's always 1.0.
 		sizeExpansionRatio = 1.0
 	)
+
+	detectFirstFile := func(s objstore.Storage, path string) error {
+		e.detectAndUpdateFormat(path)
+		sourceType = e.getSourceType()
+		if sourceType != mydump.SourceTypeParquet {
+			return nil
+		}
+
+		var err error
+		sizeExpansionRatio, _, err = mydump.SampleStatisticsFromParquet(ctx, s, path)
+		return err
+	}
+
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto
 	// check glob pattern is present in filename.
@@ -1398,10 +1383,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		if err3 != nil {
 			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err3), "failed to read file size by seek")
 		}
-		e.detectAndUpdateFormat(fileNameKey)
-		sourceType = e.getSourceType()
-		compressionRatio, err := estimateCompressionRatio(ctx, fileNameKey, size, sourceType, s)
-		if err != nil {
+		if err := detectFirstFile(s, fileNameKey); err != nil {
 			return errors.Trace(err)
 		}
 		compressTp := mydump.ParseCompressionOnFileExtension(fileNameKey)
@@ -1412,7 +1394,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Type:        sourceType,
 		}
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
-		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
+		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * sizeExpansionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1454,9 +1436,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				// pick arbitrary one file to detect the format.
 				var err2 error
 				once.Do(func() {
-					e.detectAndUpdateFormat(path)
-					sourceType = e.getSourceType()
-					sizeExpansionRatio, err2 = estimateCompressionRatio(ctx, path, size, sourceType, s)
+					err2 = detectFirstFile(s, path)
 				})
 				if err2 != nil {
 					return nil, err2

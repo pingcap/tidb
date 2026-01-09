@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -65,6 +66,11 @@ func (e *LoadDataController) CheckRequirements(ctx context.Context, se sessionct
 	if !e.DisablePrecheck {
 		if err := e.checkCDCPiTRTasks(ctx, se); err != nil {
 			return err
+		}
+		if e.Format == DataFormatParquet && len(e.dataFiles) > 0 {
+			if err := mydump.PrecheckParquetFile(ctx, e.dataStore, e.dataFiles[0].Path); err != nil {
+				return err
+			}
 		}
 	}
 	if e.IsGlobalSort() {

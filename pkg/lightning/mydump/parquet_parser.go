@@ -16,15 +16,23 @@ package mydump
 
 import (
 	"context"
+	goerrors "errors"
+	"fmt"
 	"io"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/types"
@@ -41,6 +49,22 @@ const (
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
+)
+
+var (
+	// parquetParserMemoryLimit is the memory limit for the parquet parser
+	// during precheck. It is used to validate that parsing a parquet file
+	// does not consume excessive memory. If the peak memory usage exceeds this
+	// limit, the precheck will fail to prevent potential OOM during the actual
+	// import.
+	//
+	// This value is chosen experimentally based on the assumption that worker nodes
+	// have at least 2GiB of memory per core. Due to memory taken by OS, Kubernetes,
+	// and sidecars (metrics/log collectors), the usable memory on a node with
+	// CPU:MEM 1:2 is only around 1.8GiB per core. Assuming half of the memory is
+	// allocated to the external writer, we set this limit to 460 MiB to ensure
+	// safe operation.
+	parquetParserMemoryLimit int64 = 460 * units.MiB
 )
 
 var (
@@ -271,7 +295,7 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeekerOpener, error) {
+func (pf *parquetFileWrapper) Open() (*parquetFileWrapper, error) {
 	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -290,7 +314,7 @@ func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeekerOpener, error) {
 // ParquetParser parses a parquet file for import
 // It implements the Parser interface.
 type ParquetParser struct {
-	reader   *file.Reader
+	readers  []*file.Reader
 	colTypes []convertedType
 	colNames []string
 
@@ -315,9 +339,9 @@ type ParquetParser struct {
 
 // Init initializes the Parquet parser and allocate necessary buffers
 func (pp *ParquetParser) Init(loc *time.Location) error {
-	meta := pp.reader.MetaData()
+	meta := pp.readers[0].MetaData()
 
-	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.reader.NumRowGroups(), int(meta.NumRows)
+	pp.curRowGroup, pp.totalRowGroup, pp.totalRows = -1, pp.readers[0].NumRowGroups(), int(meta.NumRows)
 
 	numCols := meta.Schema.NumColumns()
 	pp.iterators = make([]iterator, numCols)
@@ -329,7 +353,8 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 		pp.iterators[i] = createColumnIterator(
 			meta.Schema.Column(i).PhysicalType(), &pp.colTypes[i], loc, readBatchSize)
 		if pp.iterators[i] == nil {
-			return errors.Errorf("unsupported parquet type %s", meta.Schema.Column(i).PhysicalType().String())
+			return common.ErrParquetSchemaInvalid.FastGenByArgs(
+				fmt.Sprintf("%s has invalid physical type", meta.Schema.Column(i).Name()))
 		}
 	}
 
@@ -365,15 +390,15 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 			return io.EOF
 		}
 
-		rowGroup := pp.reader.RowGroup(pp.curRowGroup)
 		for c := range len(pp.iterators) {
+			rowGroup := pp.readers[c].RowGroup(pp.curRowGroup)
 			colReader, err := rowGroup.Column(c)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			pp.iterators[c].SetReader(colReader)
 		}
-		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.reader.MetaData().RowGroups[pp.curRowGroup].NumRows)
+		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.readers[0].MetaData().RowGroups[pp.curRowGroup].NumRows)
 	}
 
 	// Read in this group
@@ -432,7 +457,12 @@ func (pp *ParquetParser) Close() error {
 	if err := pp.resetIterators(); err != nil {
 		pp.logger.Warn("Close parquet parser get error", zap.Error(err))
 	}
-	return pp.reader.Close()
+	for _, r := range pp.readers {
+		if err := r.Close(); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
 }
 
 // ReadRow reads a row in the parquet file by the parser.
@@ -547,19 +577,33 @@ func NewParquetParser(
 		}
 	}
 
-	allocator := memory.NewGoAllocator()
+	allocator := meta.allocator
+	if allocator == nil {
+		allocator = memory.NewGoAllocator()
+	}
 	prop := parquet.NewReaderProperties(allocator)
 	prop.BufferedStreamEnabled = true
 	prop.BufferSize = 1024
 
-	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop), file.WithPrefetch(8))
+	reader, err := file.NewParquetReader(wrapper, file.WithReadProps(prop))
 	if err != nil {
+		_ = r.Close()
 		return nil, errors.Trace(err)
 	}
 
 	fileSchema := reader.MetaData().Schema
 	colTypes := make([]convertedType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
+	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
+	subreaders = append(subreaders, reader)
+
+	defer func() {
+		if err != nil {
+			for _, subreader := range subreaders {
+				_ = subreader.Close()
+			}
+		}
+	}()
 
 	for i := range colTypes {
 		desc := reader.MetaData().Schema.Column(i)
@@ -581,7 +625,8 @@ func NewParquetParser(
 		}
 
 		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
-			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
+			return nil, common.ErrParquetSchemaInvalid.FastGenByArgs(
+				fmt.Sprintf("%s is not supported", colTypes[i].converted.String()))
 		}
 	}
 
@@ -590,8 +635,27 @@ func NewParquetParser(
 		return make([]types.Datum, numColumns)
 	})
 
+	for i := 1; i < fileSchema.NumColumns(); i++ {
+		var newWrapper *parquetFileWrapper
+		// Open file for each column.
+		newWrapper, err = wrapper.Open()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+
+		reader, err := file.NewParquetReader(newWrapper,
+			file.WithReadProps(prop),
+			file.WithMetadata(reader.MetaData()),
+		)
+		if err != nil {
+			_ = newWrapper.Close()
+			return nil, errors.Trace(err)
+		}
+		subreaders = append(subreaders, reader)
+	}
+
 	parser := &ParquetParser{
-		reader:   reader,
+		readers:  subreaders,
 		colTypes: colTypes,
 		colNames: colNames,
 		alloc:    allocator,
@@ -605,24 +669,30 @@ func NewParquetParser(
 	return parser, nil
 }
 
-// SampleStatisticsFromParquet samples row size of the parquet file.
+// SampleStatisticsFromParquet samples row size and compression ratio for this file.
 func SampleStatisticsFromParquet(
 	ctx context.Context,
-	path string,
 	store objstore.Storage,
+	path string,
 ) (
-	rowCount int64,
+	parquetCompressRatio float64,
 	avgRowSize float64,
 	err error,
 ) {
+	failpoint.Inject("skipEstimateCompressionForParquet", func(val failpoint.Value) {
+		if v, ok := val.(bool); ok && v {
+			failpoint.Return(2, 1, nil)
+		}
+	})
+
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
-		return 0, 0, err
+		return 2, 1, err
 	}
 
 	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{})
 	if err != nil {
-		return 0, 0, err
+		return 2, 1, err
 	}
 
 	//nolint: errcheck
@@ -630,20 +700,24 @@ func SampleStatisticsFromParquet(
 
 	var rowSize int64
 
-	reader := parser.reader
+	reader := parser.readers[0]
 	if reader.NumRowGroups() == 0 || reader.MetaData().RowGroups[0].NumRows == 0 {
-		return 0, 0, nil
+		return 2, 1, nil
 	}
 
-	totalReadRows := reader.MetaData().NumRows
-	readRows := min(totalReadRows, int64(1024))
+	var (
+		totalReadRows = reader.MetaData().NumRows
+		readRows      = min(totalReadRows, int64(512))
+		rowCount      int64
+	)
+
 	for range readRows {
 		err = parser.ReadRow()
 		if err != nil {
 			if errors.Cause(err) == io.EOF {
 				break
 			}
-			return 0, 0, err
+			return 2, 1, err
 		}
 		lastRow := parser.LastRow()
 		rowSize += int64(lastRow.Length)
@@ -652,5 +726,108 @@ func SampleStatisticsFromParquet(
 	}
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
-	return totalReadRows, avgRowSize, err
+	parquetCompressRatio = float64(rowSize) / float64(reader.MetaData().GetSourceFileSize())
+	return
+}
+
+// PrecheckParquetFile checks a Parquet file's schema and performs a parse to
+// estimate parser memory usage. If the observed peak allocation exceeds
+// `parquetParserMemoryLimit`, a warning is logged; this warning is advisory and
+// does not block the import.
+func PrecheckParquetFile(
+	ctx context.Context,
+	store objstore.Storage,
+	path string,
+) error {
+	logger := logutil.Logger(ctx).With(zap.String("path", path))
+
+	r, err := store.Open(ctx, path, nil)
+	if err != nil {
+		return err
+	}
+
+	allocator := &trackingAllocator{}
+	parser, err := NewParquetParser(ctx, store, r, path, ParquetFileMeta{allocator: allocator})
+
+	if err != nil {
+		if goerrors.Is(err, common.ErrParquetSchemaInvalid) {
+			logger.Error("the schema of parquet file is invalid",
+				zap.Error(err))
+		}
+		return err
+	}
+
+	//nolint: errcheck
+	defer parser.Close()
+
+	reader := parser.readers[0]
+	if len(reader.MetaData().RowGroups) == 0 {
+		return nil
+	}
+
+	for range reader.MetaData().RowGroups[0].NumRows {
+		if err = parser.ReadRow(); err != nil {
+			return nil
+		}
+
+		if allocator.peakAllocation.Load() >= parquetParserMemoryLimit {
+			logger.Warn("memory consumption of parquet parser exceeds the limit",
+				zap.String("limit", units.HumanSize(float64(parquetParserMemoryLimit))),
+			)
+			break
+		}
+	}
+
+	return nil
+}
+
+// addressOf returns the address of a buffer, return 0 if the buffer is nil or
+// empty. It's used to create unique identifiers for tracking buffer allocations.
+func addressOf(buf []byte) uintptr {
+	if buf == nil || cap(buf) == 0 {
+		return 0
+	}
+	buf = buf[:1]
+	return uintptr(unsafe.Pointer(&buf[0]))
+}
+
+// trackingAllocator is a simple memory allocator that tracks current and peak
+// memory allocation. It's used to estimate the memory consumption of parquet
+// parser during precheck.
+type trackingAllocator struct {
+	currentAllocation atomic.Int64
+	peakAllocation    atomic.Int64
+	allocMap          sync.Map // uintptr -> size
+}
+
+func (a *trackingAllocator) Allocate(n int) []byte {
+	b := make([]byte, n)
+	a.allocMap.Store(addressOf(b), n)
+
+	current := a.currentAllocation.Add(int64(n))
+	for {
+		oldPeak := a.peakAllocation.Load()
+		if current <= oldPeak {
+			break
+		}
+		if a.peakAllocation.CompareAndSwap(oldPeak, current) {
+			break
+		}
+	}
+	return b
+}
+
+func (a *trackingAllocator) Free(b []byte) {
+	addr := addressOf(b)
+	v, ok := a.allocMap.Load(addr)
+	size, _ := v.(int)
+	if ok {
+		a.currentAllocation.Add(-int64(size))
+		a.allocMap.Delete(addr)
+	}
+}
+
+func (a *trackingAllocator) Reallocate(size int, b []byte) []byte {
+	a.Free(b)
+	return a.Allocate(size)
 }
