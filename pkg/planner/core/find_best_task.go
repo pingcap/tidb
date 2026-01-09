@@ -1693,6 +1693,14 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 	}()
 
+	// TiFlash doesn't support ExtraCommitTS column now.
+	accessCommitTSCol := false
+	for _, col := range ds.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			accessCommitTSCol = true
+			break
+		}
+	}
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
@@ -1818,11 +1826,11 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if path.IsTablePath() {
 			// prefer tiflash, while current table path is tikv, skip it.
-			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV {
+			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV && !accessCommitTSCol {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
-			if ds.PreferStoreType&h.PreferTiKV != 0 && path.StoreType == kv.TiFlash {
+			if (ds.PreferStoreType&h.PreferTiKV != 0 || accessCommitTSCol) && path.StoreType == kv.TiFlash {
 				continue
 			}
 			var tblTask base.Task
