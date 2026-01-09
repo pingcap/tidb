@@ -25,13 +25,13 @@ import (
 )
 
 type options struct {
-	dumpFileStorage   objstore.Storage
-	checkpointStorage objstore.Storage
-	checkpointName    string
-	promFactory       promutil.Factory
-	promRegistry      promutil.Registry
-	logger            log.Logger
-	dupIndicator      *atomic.Bool
+	dumpFileStorage         objstore.Storage
+	checkpointStorage       objstore.Storage
+	checkpointName          string
+	promFactory             promutil.Factory
+	promRegistry            promutil.Registry
+	logger                  log.Logger
+	dupIndicator            *atomic.Bool
 	keepJobsOnContextCancel *atomic.Bool
 	// only used in tests
 	db *sql.DB
