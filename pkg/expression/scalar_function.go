@@ -17,6 +17,7 @@ package expression
 import (
 	"bytes"
 	"slices"
+	"sync/atomic"
 	"unsafe"
 
 	"github.com/pingcap/errors"
@@ -45,6 +46,7 @@ type ScalarFunction struct {
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
+	indexResolved     atomic.Bool
 }
 
 // SafeToShareAcrossSession returns if the function can be shared across different sessions.
@@ -353,6 +355,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
 	}
+	c.indexResolved.Store(sf.indexResolved.Load())
 	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
 	if sf.canonicalhashcode != nil {
 		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
@@ -361,6 +364,21 @@ func (sf *ScalarFunction) Clone() Expression {
 	c.SetCoercibility(sf.Coercibility())
 	c.SetRepertoire(sf.Repertoire())
 	return c
+}
+
+// CloneAndClearIndexResolvedFlag implements Expression interface.
+func (sf *ScalarFunction) CloneAndClearIndexResolvedFlag() Expression {
+	newSf := sf.Clone()
+	newSf.ClearIndexResolvedFlag()
+	return newSf
+}
+
+// ClearIndexResolvedFlag implements Expression interface.
+func (sf *ScalarFunction) ClearIndexResolvedFlag() {
+	sf.indexResolved.Store(false)
+	for _, arg := range sf.GetArgs() {
+		arg.ClearIndexResolvedFlag()
+	}
 }
 
 // GetType implements Expression interface.
@@ -779,17 +797,28 @@ func ReHashCode(sf *ScalarFunction) {
 }
 
 // ResolveIndices implements Expression interface.
-func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, error) {
-	newSf := sf.Clone()
+func (sf *ScalarFunction) ResolveIndices(schema *Schema) (Expression, bool, error) {
+	if sf.indexResolved.CompareAndSwap(false, true) {
+		// don't need copy
+		err := sf.resolveIndices(schema)
+		return sf, false, err
+	}
+	// need copy
+	newSf := sf.CloneAndClearIndexResolvedFlag()
 	err := newSf.resolveIndices(schema)
-	return newSf, err
+	newSf.(*ScalarFunction).indexResolved.Store(true)
+	return newSf, true, err
 }
 
 func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
-	for _, arg := range sf.GetArgs() {
-		err := arg.resolveIndices(schema)
+	for index, arg := range sf.GetArgs() {
+		newArg, cloned, err := arg.ResolveIndices(schema)
 		if err != nil {
 			return err
+		}
+		if cloned {
+			// if cloned is true, then update the arg, otherwise keep the original arg
+			sf.GetArgs()[index] = newArg
 		}
 	}
 	return nil
