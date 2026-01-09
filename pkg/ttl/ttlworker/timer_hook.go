@@ -87,7 +87,7 @@ func (t *ttlJobTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.Time
 		logutil.BgLogger().Error("invalid timer data",
 			zap.String("timerID", event.Timer().ID),
 			zap.String("timerKey", event.Timer().Key),
-			zap.String("job_type", string(t.cfg.jobType)),
+			zap.String("jobType", t.cfg.jobType),
 			zap.ByteString("data", event.Timer().Data),
 		)
 		r.Delay = time.Minute
@@ -124,7 +124,7 @@ func (t *ttlJobTimerHook) OnSchedEvent(ctx context.Context, event timerapi.Timer
 	logger := logutil.BgLogger().With(
 		zap.String("key", timer.Key),
 		zap.String("eventID", eventID),
-		zap.String("job_type", string(t.cfg.jobType)),
+		zap.String("jobType", t.cfg.jobType),
 		zap.Time("eventStart", timer.EventStart),
 		zap.Strings("tags", timer.Tags),
 	)
