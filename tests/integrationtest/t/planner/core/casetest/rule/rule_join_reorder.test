@@ -520,6 +520,27 @@ explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 right join t3 on t1.a = t3.a;
 --disable_warnings
 
+# TestLeadingJoinHint4DerivedTable
+set tidb_cost_model_version=2;
+drop table if exists t1, t2, t3, t4, t5;
+create table t1(a int, b int, key(a));
+create table t2(a int, b int, key(a));
+create table t3(a int, b int, key(a));
+create table t4(a int, b int, key(a));
+create table t5(a int, b int, key(a));
+--enable_warnings
+explain format='plan_tree' select * from t1 join t2 on t1.a=t2.a join (select t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading(sub) */ * from t1 join t2 on t1.a=t2.a join (select t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading(t2, t1, sub) */ * from t1 join t2 on t1.a=t2.a join (select t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading(sub, t1, t2) */ * from t1 join t2 on t1.a=t2.a join (select t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading((t1, t2), sub) */ * from t1 join t2 on t1.a=t2.a join (select t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading((t1, sub), t2) */ * from t1 join t2 on t1.a=t2.a join (select t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select * from t1 join t2 on t1.a=t2.a join (select /*+ leading(t4, t3, t5) */ t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading(sub) */ * from t1 join t2 on t1.a=t2.a join (select /*+ leading(t5, t4, t3) */ t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading(t1, (t2, sub)) */ * from t1 join t2 on t1.a=t2.a join (select t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+explain format='plan_tree' select /*+ leading(sub) */ * from t1 join t2 on t1.a=t2.a join (select /*+ leading(t3, t5, t4) */ t3.a, t3.b from t3 join t4 on t3.a=t4.a join t5 on t4.b=t5.b) sub on t2.b=sub.b and t1.a=sub.a;
+--disable_warnings
+
 # TestStraightJoinHintInCTEAndSubquery
 # Test straight_join hint works inside CTE and subquery
 # The key test is: with straight_join(), different table orders in SQL should produce
