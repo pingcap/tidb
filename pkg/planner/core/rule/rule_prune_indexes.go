@@ -17,6 +17,7 @@ package rule
 import (
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -86,6 +87,19 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	indexMergeIndexPaths := make([]*util.AccessPath, 0, 1)
 	preferMerge := ShouldPreferIndexMerge(ds)
 
+	// Check if IndexMerge hints specify specific index names
+	// We need to import the function from indexmerge_path.go, but since it's in a different package,
+	// we'll implement the check inline here
+	hasSpecifiedIndexes := false
+	if len(ds.IndexMergeHints) > 0 {
+		for _, hint := range ds.IndexMergeHints {
+			if hint.IndexHint != nil && len(hint.IndexHint.IndexNames) > 0 {
+				hasSpecifiedIndexes = true
+				break
+			}
+		}
+	}
+
 	// Track consecutive column orderings to ensure we keep indexes with different orderings
 	consecutiveOrderings := make(map[string]struct{})
 
@@ -117,11 +131,47 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 		path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 
-		// If index merge is preferred, keep all indexes as index merge might need any of them
-		if preferMerge && idxScore.consecutiveCount > 0 {
-			// Keep all indexes when index merge is preferred
-			preferredIndexes = append(preferredIndexes, idxScore)
-			continue
+		// Check if this index is specified in IndexMerge hints
+		// Note: Indexes specified in USE_INDEX_MERGE(t, idx1, idx2) are NOT marked as "forced"
+		// (only USE_INDEX/FORCE_INDEX mark indexes as forced), so we need to collect them here
+		// to ensure they're not pruned. This is only needed when hints specify specific index names.
+		if hasSpecifiedIndexes {
+			indexName := path.Index.Name.L
+			isSpecified := false
+			for _, hint := range ds.IndexMergeHints {
+				if hint.IndexHint == nil || len(hint.IndexHint.IndexNames) == 0 {
+					continue
+				}
+				for _, hintName := range hint.IndexHint.IndexNames {
+					// Use case-insensitive comparison like isSpecifiedInIndexMergeHints does
+					if strings.EqualFold(indexName, hintName.String()) {
+						isSpecified = true
+						break
+					}
+				}
+				if isSpecified {
+					break
+				}
+			}
+			if isSpecified {
+				// This index is explicitly specified in IndexMerge hints, keep it
+				// Add it to indexMergeIndexPaths so it's guaranteed to be included even if it doesn't score well
+				indexMergeIndexPaths = append(indexMergeIndexPaths, path)
+				continue
+			}
+		}
+
+		// If index merge is preferred (via general hints without index names, or fix control),
+		// keep indexes that have any coverage. Note: When specific indexes are mentioned in hints,
+		// those are handled above. Here we handle general IndexMerge hints (no specific index names)
+		// or fix control. We still apply some filtering (consecutiveCount > 0 OR other coverage)
+		// to avoid keeping completely useless indexes, but we're more lenient than normal pruning.
+		if preferMerge && !hasSpecifiedIndexes {
+			// When IndexMerge is preferred without specific index names, keep any index with coverage
+			if idxScore.consecutiveCount > 0 || path.IsSingleScan || idxScore.interestingCount > 0 {
+				preferredIndexes = append(preferredIndexes, idxScore)
+				continue
+			}
 		}
 
 		// Add to preferred indexes if it has any coverage or is a covering scan
