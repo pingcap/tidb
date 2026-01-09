@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -202,6 +203,22 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		stmtCtx.SetCacheType(contextutil.SessionPrepared)
 		cacheEnabled = sessVars.EnablePreparedPlanCache
 	}
+
+	paramTypes := parseParamTypes(sctx, params)
+	if cacheEnabled && sessVars.PlanCacheMaxDecimalParamNums >= 0 {
+		// Check the number of parameters' decimal types
+		decimalNums := 0
+		for _, param := range paramTypes {
+			if param.GetType() == mysql.TypeNewDecimal {
+				decimalNums++
+			}
+		}
+		if decimalNums > sessVars.PlanCacheMaxDecimalParamNums {
+			sctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError("skip prepared plan-cache: too many decimal parameters"))
+			cacheEnabled = false
+		}
+	}
+
 	if stmt.StmtCacheable && cacheEnabled {
 		stmtCtx.EnablePlanCache()
 	}
@@ -221,7 +238,6 @@ func GetPlanFromPlanCache(ctx context.Context, sctx sessionctx.Context,
 		}
 	}
 
-	paramTypes := parseParamTypes(sctx, params)
 	if stmtCtx.UseCache() {
 		plan, outputCols, stmtHints, hit := lookupPlanCache(ctx, sctx, cacheKey, paramTypes)
 		skipPrivCheck := stmt.PointGet.Executor != nil // this case is specially handled
