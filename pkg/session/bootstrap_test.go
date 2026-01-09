@@ -54,7 +54,7 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
-	require.Len(t, tablesInSystemDatabase, 52,
+	require.Len(t, tablesInSystemDatabase, 53,
 		"remember to add the new tables to versionedBootstrapSchemas too")
 	testTableBasicInfoSlice(t, tablesInSystemDatabase)
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
