@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/mock"
 	. "github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -324,7 +325,7 @@ func TestS3Storage(t *testing.T) {
 		name           string
 		s3             *backuppb.S3
 		errReturn      bool
-		hackPermission []Permission
+		hackPermission []storeapi.Permission
 		sendCredential bool
 	}
 
@@ -341,7 +342,7 @@ func TestS3Storage(t *testing.T) {
 			Backend: &backuppb.StorageBackend_S3{
 				S3: test.s3,
 			},
-		}, &Options{
+		}, &storeapi.Options{
 			SendCredentials:  test.sendCredential,
 			CheckPermissions: test.hackPermission,
 		})
@@ -466,7 +467,7 @@ func TestS3URI(t *testing.T) {
 	}
 	backend, err := ParseBackend("s3://bucket/prefix/", options)
 	require.NoError(t, err)
-	storage, err := New(context.Background(), backend, &Options{})
+	storage, err := New(context.Background(), backend, &storeapi.Options{})
 	require.NoError(t, err)
 	require.Equal(t, "s3://bucket/prefix/", storage.URI())
 }
@@ -531,7 +532,7 @@ func TestMultiUploadErrorNotOverwritten(t *testing.T) {
 		CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, errors.New("mock error"))
 
-	w, err := s.storage.Create(ctx, "file", &WriterOption{Concurrency: 2})
+	w, err := s.storage.Create(ctx, "file", &storeapi.WriterOption{Concurrency: 2})
 	require.NoError(t, err)
 	// data should be larger than 5MB to trigger CreateMultipartUploadWithContext path
 	data := make([]byte, 5*1024*1024+6716)
@@ -930,7 +931,7 @@ func TestS3RangeReaderRetryRead(t *testing.T) {
 				ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", start, len(content)-1, len(content))),
 			}, nil
 		}).Times(2)
-	reader, err := s.storage.Open(ctx, "random", &ReaderOption{StartOffset: aws.Int64(3)})
+	reader, err := s.storage.Open(ctx, "random", &storeapi.ReaderOption{StartOffset: aws.Int64(3)})
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())
@@ -963,7 +964,7 @@ func TestS3RangeReaderShouldNotRetryWhenContextCancelled(t *testing.T) {
 				ContentRange: aws.String(fmt.Sprintf("bytes %d-%d/%d", start, len(content)-1, len(content))),
 			}, nil
 		})
-	reader, err := s.storage.Open(ctx, "random", &ReaderOption{StartOffset: aws.Int64(3)})
+	reader, err := s.storage.Open(ctx, "random", &storeapi.ReaderOption{StartOffset: aws.Int64(3)})
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, reader.Close())
@@ -1240,7 +1241,7 @@ func TestWalkDir(t *testing.T) {
 	i := 0
 	err := s.storage.WalkDir(
 		ctx,
-		&WalkOption{SubDir: "sp", ListCount: 2},
+		&storeapi.WalkOption{SubDir: "sp", ListCount: 2},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
@@ -1255,7 +1256,7 @@ func TestWalkDir(t *testing.T) {
 	i = 0
 	err = s.storage.WalkDir(
 		ctx,
-		&WalkOption{ListCount: 4},
+		&storeapi.WalkOption{ListCount: 4},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
@@ -1270,7 +1271,7 @@ func TestWalkDir(t *testing.T) {
 	i = 2
 	err = s.storage.WalkDir(
 		ctx,
-		&WalkOption{SubDir: "sp", ObjPrefix: "1", ListCount: 3},
+		&storeapi.WalkOption{SubDir: "sp", ObjPrefix: "1", ListCount: 3},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
@@ -1348,7 +1349,7 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	i := 0
 	err := storage.WalkDir(
 		ctx,
-		&WalkOption{SubDir: "", ListCount: 2},
+		&storeapi.WalkOption{SubDir: "", ListCount: 2},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
@@ -1363,7 +1364,7 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	i = 0
 	err = storage.WalkDir(
 		ctx,
-		&WalkOption{SubDir: "sp", ListCount: 2},
+		&storeapi.WalkOption{SubDir: "sp", ListCount: 2},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)
@@ -1388,7 +1389,7 @@ func TestSendCreds(t *testing.T) {
 	}
 	backend, err := ParseBackend("s3://bucket/prefix/", &backendOpt)
 	require.NoError(t, err)
-	opts := &Options{
+	opts := &storeapi.Options{
 		SendCredentials: true,
 	}
 	_, err = New(context.TODO(), backend, opts)
@@ -1409,7 +1410,7 @@ func TestSendCreds(t *testing.T) {
 	}
 	backend, err = ParseBackend("s3://bucket/prefix/", &backendOpt)
 	require.NoError(t, err)
-	opts = &Options{
+	opts = &storeapi.Options{
 		SendCredentials: false,
 	}
 	_, err = New(context.TODO(), backend, opts)
@@ -1528,7 +1529,7 @@ func TestS3StorageBucketRegion(t *testing.T) {
 			t.Log(name)
 			es, err := New(context.Background(),
 				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
-				&Options{})
+				&storeapi.Options{})
 			require.NoError(t, err)
 			ss, ok := es.(*S3Storage)
 			require.True(t, ok)
@@ -1576,7 +1577,7 @@ func TestRetryError(t *testing.T) {
 		SecretAccessKey: "none",
 		Provider:        "skip check region",
 		ForcePathStyle:  true,
-	}, &Options{})
+	}, &storeapi.Options{})
 	require.NoError(t, err)
 	err = s.WriteFile(ctx, "reset", []byte(errString))
 	require.NoError(t, err)
@@ -1632,7 +1633,7 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 				ContentRange: aws.String("bytes 10-20/20"),
 			}, nil
 		})
-	reader, err := s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	reader, err := s.storage.Open(ctx, "test", &storeapi.ReaderOption{StartOffset: &start, EndOffset: &end})
 	require.ErrorContains(t, err, "expected range: bytes=10-29, got: bytes 10-20/20")
 	require.Nil(t, reader)
 
@@ -1641,7 +1642,7 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 		DoAndReturn(func(_ context.Context, input *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 			return &s3.GetObjectOutput{}, nil
 		})
-	reader, err = s.storage.Open(ctx, "test", &ReaderOption{StartOffset: &start, EndOffset: &end})
+	reader, err = s.storage.Open(ctx, "test", &storeapi.ReaderOption{StartOffset: &start, EndOffset: &end})
 	// other function will throw error
 	require.ErrorContains(t, err, "ContentRange is empty")
 	require.Nil(t, reader)

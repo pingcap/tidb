@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/coreos/go-semver/semver"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+
 	// import mysql driver
 	"github.com/go-sql-driver/mysql"
 	"github.com/google/uuid"
@@ -60,7 +62,7 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore objstore.Storage
+	extStore storeapi.Storage
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
@@ -79,7 +81,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		if err != nil {
 			panic(err)
 		}
-		s, err := objstore.New(context.Background(), b, &objstore.Options{})
+		s, err := objstore.New(context.Background(), b, &storeapi.Options{})
 		if err != nil {
 			panic(err)
 		}

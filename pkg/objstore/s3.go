@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"github.com/spf13/pflag"
@@ -95,11 +96,11 @@ const (
 	domainAWS    = "amazonaws.com"
 )
 
-var permissionCheckFn = map[Permission]func(context.Context, S3API, *backuppb.S3) error{
-	AccessBuckets:      s3BucketExistenceCheck,
-	ListObjects:        listObjectsCheck,
-	GetObject:          getObjectCheck,
-	PutAndDeleteObject: PutAndDeleteObjectCheck,
+var permissionCheckFn = map[storeapi.Permission]func(context.Context, S3API, *backuppb.S3) error{
+	storeapi.AccessBuckets:      s3BucketExistenceCheck,
+	storeapi.ListObjects:        listObjectsCheck,
+	storeapi.GetObject:          getObjectCheck,
+	storeapi.PutAndDeleteObject: PutAndDeleteObjectCheck,
 }
 
 // WriteBufferSize is the size of the buffer used for writing. (64K may be a better choice)
@@ -130,7 +131,7 @@ func (rs *S3Storage) GetOptions() *backuppb.S3 {
 }
 
 // CopyFrom implements the Storage interface.
-func (rs *S3Storage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
+func (rs *S3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec storeapi.CopySpec) error {
 	s, ok := e.(*S3Storage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
@@ -418,7 +419,7 @@ func (p pingcapLogger) Logf(classification logging.Classification, format string
 }
 
 // NewS3Storage initialize a new s3 storage for metadata.
-func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *Options) (obj *S3Storage, errRet error) {
+func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Options) (obj *S3Storage, errRet error) {
 	qs := *backend
 
 	// Start with default configuration loading
@@ -952,9 +953,9 @@ func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) 
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (rs *S3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
-		opt = &WalkOption{}
+		opt = &storeapi.WalkOption{}
 	}
 	prefix := path.Join(rs.options.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
@@ -1026,7 +1027,7 @@ func (rs *S3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *S3Storage) Open(ctx context.Context, path string, o *ReaderOption) (objectio.Reader, error) {
+func (rs *S3Storage) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	start := int64(0)
 	end := int64(0)
 	prefetchSize := 0
@@ -1371,7 +1372,7 @@ func (s *s3ObjectWriter) Close(_ context.Context) error {
 }
 
 // Create creates multi upload request.
-func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOption) (objectio.Writer, error) {
+func (rs *S3Storage) Create(ctx context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	var uploader objectio.Writer
 	var err error
 	if option == nil || option.Concurrency <= 1 {

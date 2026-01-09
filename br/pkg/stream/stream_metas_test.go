@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/log"
 	. "github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
@@ -64,7 +65,7 @@ func effectsOf(efs []objstore.Effect) effects {
 	return out
 }
 
-func fakeDataFiles(s objstore.Storage, base, item int) (result []*backuppb.DataFileInfo) {
+func fakeDataFiles(s storeapi.Storage, base, item int) (result []*backuppb.DataFileInfo) {
 	ctx := context.Background()
 	for i := base; i < base+item; i++ {
 		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
@@ -79,7 +80,7 @@ func fakeDataFiles(s objstore.Storage, base, item int) (result []*backuppb.DataF
 	return
 }
 
-func fakeDataFilesV2(s objstore.Storage, base, item int) (result []*backuppb.DataFileGroup) {
+func fakeDataFilesV2(s storeapi.Storage, base, item int) (result []*backuppb.DataFileGroup) {
 	ctx := context.Background()
 	for i := base; i < base+item; i++ {
 		path := fmt.Sprintf("%04d_to_%04d.log", i, i+2)
@@ -130,7 +131,7 @@ func tsOfFileGroup(dfs []*backuppb.DataFileGroup) (uint64, uint64) {
 	return minTS, maxTS
 }
 
-func fakeStreamBackup(s objstore.Storage) error {
+func fakeStreamBackup(s storeapi.Storage) error {
 	ctx := context.Background()
 	base := 0
 	for i := range 6 {
@@ -157,7 +158,7 @@ func fakeStreamBackup(s objstore.Storage) error {
 	return nil
 }
 
-func fakeStreamBackupV2(s objstore.Storage) error {
+func fakeStreamBackupV2(s storeapi.Storage) error {
 	ctx := context.Background()
 	base := 0
 	for i := range 6 {
@@ -249,7 +250,7 @@ func TestTruncateLog(t *testing.T) {
 		return true
 	})
 
-	err = l.WalkDir(ctx, &objstore.WalkOption{
+	err = l.WalkDir(ctx, &storeapi.WalkOption{
 		SubDir: GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, removedMetaFiles, s)
@@ -322,7 +323,7 @@ func TestTruncateLogV2(t *testing.T) {
 		return true
 	})
 
-	err = l.WalkDir(ctx, &objstore.WalkOption{
+	err = l.WalkDir(ctx, &storeapi.WalkOption{
 		SubDir: GetStreamBackupMetaPrefix(),
 	}, func(s string, i int64) error {
 		require.NotContains(t, removedMetaFiles, s)
@@ -369,9 +370,9 @@ func TestTruncateSafepointForGCS(t *testing.T) {
 		CredentialsBlob: "Fake Credentials",
 	}
 
-	l, err := objstore.NewGCSStorage(ctx, gcs, &objstore.Options{
+	l, err := objstore.NewGCSStorage(ctx, gcs, &storeapi.Options{
 		SendCredentials:  false,
-		CheckPermissions: []objstore.Permission{objstore.AccessBuckets},
+		CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
 	})
 	require.NoError(t, err)
@@ -437,7 +438,7 @@ func TestReplaceMetadataTs(t *testing.T) {
 	require.Equal(t, m.MaxTs, uint64(4))
 }
 
-func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s objstore.Storage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storeapi.Storage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {
@@ -613,7 +614,7 @@ func mt(ops ...metaOp) *backuppb.Metadata {
 }
 
 // pmt is abbrev. of persisted meta.
-func pmt(s objstore.Storage, path string, mt *backuppb.Metadata) {
+func pmt(s storeapi.Storage, path string, mt *backuppb.Metadata) {
 	data, err := mt.Marshal()
 	if err != nil {
 		panic(err)
@@ -624,7 +625,7 @@ func pmt(s objstore.Storage, path string, mt *backuppb.Metadata) {
 	}
 }
 
-func pmlt(s objstore.Storage, path string, mt *backuppb.Metadata, logPath func(i int) string) {
+func pmlt(s storeapi.Storage, path string, mt *backuppb.Metadata, logPath func(i int) string) {
 	for i, g := range mt.FileGroups {
 		g.Path = logPath(i)
 		maxLen := uint64(0)
@@ -638,7 +639,7 @@ func pmlt(s objstore.Storage, path string, mt *backuppb.Metadata, logPath func(i
 	pmt(s, path, mt)
 }
 
-func pmig(s objstore.Storage, num uint64, mt *backuppb.Migration) string {
+func pmig(s storeapi.Storage, num uint64, mt *backuppb.Migration) string {
 	numS := fmt.Sprintf("%08d", num)
 	name := fmt.Sprintf("%s_%08X.mgrt", numS, hashMigration(mt))
 	if num == baseMigrationSN {
@@ -728,9 +729,9 @@ func m_2(
 }
 
 // clean the files in the external storage
-func cleanFiles(ctx context.Context, s objstore.Storage) error {
+func cleanFiles(ctx context.Context, s storeapi.Storage) error {
 	names := make([]string, 0)
-	err := s.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 		names = append(names, path)
 		return nil
 	})
@@ -755,7 +756,7 @@ func logName(storeId int64, minTS, maxTS uint64) string {
 }
 
 // generate the files to the external storage
-func generateFiles(ctx context.Context, s objstore.Storage, metas []*backuppb.Metadata, tmpDir string) error {
+func generateFiles(ctx context.Context, s storeapi.Storage, metas []*backuppb.Metadata, tmpDir string) error {
 	if err := cleanFiles(ctx, s); err != nil {
 		return err
 	}
@@ -786,7 +787,7 @@ func generateFiles(ctx context.Context, s objstore.Storage, metas []*backuppb.Me
 }
 
 // check the files in the external storage
-func checkFiles(ctx context.Context, s objstore.Storage, metas []*backuppb.Metadata, t *testing.T) {
+func checkFiles(ctx context.Context, s storeapi.Storage, metas []*backuppb.Metadata, t *testing.T) {
 	pathSet := make(map[string]struct{})
 	for _, meta := range metas {
 		metaPath := metaName(meta.StoreId)
@@ -812,7 +813,7 @@ func checkFiles(ctx context.Context, s objstore.Storage, metas []*backuppb.Metad
 		}
 	}
 
-	err := s.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
+	err := s.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 		_, exists := pathSet[path]
 		require.True(t, exists, path)
 		return nil
@@ -849,8 +850,8 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{5},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, DefaultCF, 0),
-					},
+					m_1(1, 10, 20, DefaultCF, 0),
+				},
 				}, {
 					until:        []uint64{10},
 					shiftUntilTS: 10, restMetadata: []*backuppb.Metadata{
@@ -884,8 +885,8 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 7, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -911,9 +912,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 8, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 5, 8, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 9, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -941,9 +942,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 10, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 5, 10, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 9, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -971,9 +972,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 12, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 5, 12, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 9, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1001,9 +1002,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 20, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 5, 20, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1031,9 +1032,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 5, 22, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 5, 22, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 15, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1071,9 +1072,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 14, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 10, 14, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 12, 14, 18, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1101,9 +1102,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 20, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 10, 20, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1131,9 +1132,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 10, 22, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 10, 22, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1171,9 +1172,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 12, 18, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 12, 18, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 11, 12, 15, 18, 19, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1201,9 +1202,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 20, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 14, 20, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1231,9 +1232,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 14, 22, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 14, 22, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1271,9 +1272,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 20, 22, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 20, 22, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1311,9 +1312,9 @@ func TestTruncate1(t *testing.T) {
 				{
 					until:        []uint64{3},
 					shiftUntilTS: 3, restMetadata: []*backuppb.Metadata{
-						m_1(1, 21, 24, DefaultCF, 0),
-						m_1(2, 10, 20, WriteCF, 5),
-					},
+					m_1(1, 21, 24, DefaultCF, 0),
+					m_1(2, 10, 20, WriteCF, 5),
+				},
 				}, {
 					until:        []uint64{5, 8, 10, 14, 20},
 					shiftUntilTS: 5, restMetadata: []*backuppb.Metadata{
@@ -1407,11 +1408,11 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{5},
 					shiftUntilTS: returnV(5), restMetadata: []*backuppb.Metadata{
-						m_2(1,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 8,
-						),
-					},
+					m_2(1,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 8,
+					),
+				},
 				}, {
 					until:        []uint64{8, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(8), restMetadata: []*backuppb.Metadata{
@@ -1443,12 +1444,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{0},
 					shiftUntilTS: returnV(0), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 8,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 8,
+					),
+				},
 				}, {
 					until:        []uint64{1, 2, 3, 4, 6, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
@@ -1481,12 +1482,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 3,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 3,
+					),
+				},
 				}, {
 					until:        []uint64{3, 4, 6, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(3), restMetadata: []*backuppb.Metadata{
@@ -1519,12 +1520,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 7, DefaultCF, 0),
-						m_2(2,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 5,
-						),
-					},
+					m_1(1, 3, 7, DefaultCF, 0),
+					m_2(2,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 5,
+					),
+				},
 				}, {
 					until:        []uint64{5, 6, 7, 9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(5), restMetadata: []*backuppb.Metadata{
@@ -1557,12 +1558,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4, 6, 7},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 7, DefaultCF, 0),
-						m_2(2,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 7,
-						),
-					},
+					m_1(1, 3, 7, DefaultCF, 0),
+					m_2(2,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 7,
+					),
+				},
 				}, {
 					until:        []uint64{9, 10, 12, 13, 14, 15, 18, 20},
 					shiftUntilTS: returnV(7), restMetadata: []*backuppb.Metadata{
@@ -1595,12 +1596,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 8,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 8,
+					),
+				},
 				}, {
 					until:        []uint64{7},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
@@ -1640,12 +1641,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 10,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 10,
+					),
+				},
 				}, {
 					until:        []uint64{7, 8, 9},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
@@ -1685,12 +1686,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							9, 13, DefaultCF, 0,
-							15, 20, WriteCF, 11,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						9, 13, DefaultCF, 0,
+						15, 20, WriteCF, 11,
+					),
+				},
 				}, {
 					until:        []uint64{7, 8, 9, 10},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
@@ -1730,12 +1731,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							10, 13, DefaultCF, 0,
-							15, 20, WriteCF, 13,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						10, 13, DefaultCF, 0,
+						15, 20, WriteCF, 13,
+					),
+				},
 				}, {
 					until:        []uint64{7, 8, 9, 10, 12},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
@@ -1775,12 +1776,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							10, 12, DefaultCF, 0,
-							16, 20, WriteCF, 14,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						10, 12, DefaultCF, 0,
+						16, 20, WriteCF, 14,
+					),
+				},
 				}, {
 					until:        []uint64{7, 8, 9, 10, 11, 12},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
@@ -1822,12 +1823,12 @@ func TestTruncate2(t *testing.T) {
 				{
 					until:        []uint64{2, 3, 4, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_1(1, 3, 6, DefaultCF, 0),
-						m_2(2,
-							10, 12, DefaultCF, 0,
-							16, 20, WriteCF, 14,
-						),
-					},
+					m_1(1, 3, 6, DefaultCF, 0),
+					m_2(2,
+						10, 12, DefaultCF, 0,
+						16, 20, WriteCF, 14,
+					),
+				},
 				}, {
 					until:        []uint64{7, 8, 9, 10, 11, 12},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
@@ -1911,15 +1912,15 @@ func TestTruncate3(t *testing.T) {
 				{
 					until:        []uint64{2},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
-						m_2(1,
-							3, 7, DefaultCF, 0,
-							5, 10, DefaultCF, 0,
-						),
-						m_2(2,
-							12, 18, WriteCF, 3,
-							15, 20, WriteCF, 5,
-						),
-					},
+					m_2(1,
+						3, 7, DefaultCF, 0,
+						5, 10, DefaultCF, 0,
+					),
+					m_2(2,
+						12, 18, WriteCF, 3,
+						15, 20, WriteCF, 5,
+					),
+				},
 				}, {
 					until:        []uint64{3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
 					shiftUntilTS: returnV(3), restMetadata: []*backuppb.Metadata{
@@ -1972,15 +1973,15 @@ func TestTruncate3(t *testing.T) {
 				{
 					until:        []uint64{1},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
-						m_2(1,
-							2, 6, DefaultCF, 0,
-							4, 10, DefaultCF, 0,
-						),
-						m_2(2,
-							12, 18, WriteCF, 2,
-							15, 20, WriteCF, 8,
-						),
-					},
+					m_2(1,
+						2, 6, DefaultCF, 0,
+						4, 10, DefaultCF, 0,
+					),
+					m_2(2,
+						12, 18, WriteCF, 2,
+						15, 20, WriteCF, 8,
+					),
+				},
 				}, {
 					until:        []uint64{2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
@@ -2032,15 +2033,15 @@ func TestTruncate3(t *testing.T) {
 				{
 					until:        []uint64{1},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
-						m_2(1,
-							2, 6, DefaultCF, 0,
-							4, 10, DefaultCF, 0,
-						),
-						m_2(2,
-							14, 18, WriteCF, 2,
-							16, 20, WriteCF, 12,
-						),
-					},
+					m_2(1,
+						2, 6, DefaultCF, 0,
+						4, 10, DefaultCF, 0,
+					),
+					m_2(2,
+						14, 18, WriteCF, 2,
+						16, 20, WriteCF, 12,
+					),
+				},
 				}, {
 					until:        []uint64{2, 3, 4, 5, 6, 7, 8, 10, 11, 12, 13, 14, 15, 16, 18},
 					shiftUntilTS: returnV(2), restMetadata: []*backuppb.Metadata{
@@ -2089,15 +2090,15 @@ func TestTruncate3(t *testing.T) {
 				{
 					until:        []uint64{1},
 					shiftUntilTS: returnV(1), restMetadata: []*backuppb.Metadata{
-						m_2(1,
-							2, 6, DefaultCF, 0,
-							8, 10, WriteCF, 4,
-						),
-						m_2(2,
-							14, 18, DefaultCF, 0,
-							16, 20, WriteCF, 14,
-						),
-					},
+					m_2(1,
+						2, 6, DefaultCF, 0,
+						8, 10, WriteCF, 4,
+					),
+					m_2(2,
+						14, 18, DefaultCF, 0,
+						16, 20, WriteCF, 14,
+					),
+				},
 				}, {
 					until:        []uint64{2, 3},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
@@ -2170,18 +2171,18 @@ func TestTruncate3(t *testing.T) {
 				{
 					until:        []uint64{1, 2, 3, 6},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{
-						m_2(1,
-							2, 6, DefaultCF, 0,
-							8, 10, DefaultCF, 0,
-						),
-						m_2(2,
-							14, 18, WriteCF, 9,
-							16, 22, DefaultCF, 0,
-						),
-						m_1(3,
-							24, 26, WriteCF, 20,
-						),
-					},
+					m_2(1,
+						2, 6, DefaultCF, 0,
+						8, 10, DefaultCF, 0,
+					),
+					m_2(2,
+						14, 18, WriteCF, 9,
+						16, 22, DefaultCF, 0,
+					),
+					m_1(3,
+						24, 26, WriteCF, 20,
+					),
+				},
 				}, {
 					until:        []uint64{7, 8},
 					shiftUntilTS: returnSelf(), restMetadata: []*backuppb.Metadata{

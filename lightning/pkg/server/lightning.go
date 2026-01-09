@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/tikv"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // init expression.EvalSimpleAst related function
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -335,7 +336,7 @@ func (l *Lightning) RunOnceWithOptions(taskCtx context.Context, taskCfg *config.
 		if err != nil {
 			panic(err)
 		}
-		s, err := objstore.New(context.Background(), b, &objstore.Options{})
+		s, err := objstore.New(context.Background(), b, &storeapi.Options{})
 		if err != nil {
 			panic(err)
 		}
@@ -567,7 +568,7 @@ func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, 
 		if err != nil {
 			return nil, nil, common.NormalizeError(err)
 		}
-		s, err = objstore.New(ctx, u, &objstore.Options{})
+		s, err = objstore.New(ctx, u, &storeapi.Options{})
 		if err != nil {
 			return nil, nil, common.NormalizeError(err)
 		}
@@ -575,7 +576,7 @@ func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, 
 
 	// return expectedErr means at least meet one file
 	expectedErr := errors.New("Stop Iter")
-	walkErr := s.WalkDir(ctx, &objstore.WalkOption{ListCount: 1}, func(string, int64) error {
+	walkErr := s.WalkDir(ctx, &storeapi.WalkOption{ListCount: 1}, func(string, int64) error {
 		// return an error when meet the first regular file to break the walk loop
 		return expectedErr
 	})

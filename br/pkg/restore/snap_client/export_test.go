@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/exp/slices"
 )
@@ -116,7 +116,7 @@ func (rc *SnapClient) CreateTablesTest(
 
 func (rc *SnapClient) RegisterUpdateMetaAndLoadStats(
 	builder *PipelineConcurrentBuilder,
-	s objstore.Storage,
+	s storeapi.Storage,
 	updateCh glue.Progress,
 	statsConcurrency uint,
 ) {

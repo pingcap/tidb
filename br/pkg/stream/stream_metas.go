@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
@@ -97,7 +98,7 @@ func (ms *StreamMetadataSet) TEST_GetMetadataInfos() map[string]*MetadataInfo {
 // from transaction committed before that TS.
 func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 	until uint64,
 ) (uint64, error) {
 	metadataMap := struct {
@@ -164,7 +165,7 @@ func (ms *StreamMetadataSet) LoadUntilAndCalculateShiftTS(
 }
 
 // LoadFrom loads data from an external storage into the stream metadata set. (Now only for test)
-func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s objstore.Storage) error {
+func (ms *StreamMetadataSet) LoadFrom(ctx context.Context, s storeapi.Storage) error {
 	_, err := ms.LoadUntilAndCalculateShiftTS(ctx, s, math.MaxUint64)
 	return err
 }
@@ -209,8 +210,8 @@ func (hook updateFnHook) DeletedAFileForTruncating(count int) {
 func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	ctx context.Context,
 	from uint64,
-	st objstore.Storage,
-	// num = deleted files
+	st storeapi.Storage,
+// num = deleted files
 	updateFn func(num int64),
 ) ([]string, error) {
 	hst := ms.hook(st)
@@ -242,7 +243,7 @@ func (ms *StreamMetadataSet) RemoveDataFilesAndUpdateMetadataInBatch(
 	return notDeleted, nil
 }
 
-func truncateAndWrite(ctx context.Context, s objstore.Storage, path string, data []byte) error {
+func truncateAndWrite(ctx context.Context, s storeapi.Storage, path string, data []byte) error {
 	// Performance hack: the `Write` implementation would truncate the file if it exists.
 	if err := s.WriteFile(ctx, path, data); err != nil {
 		return errors.Annotatef(err, "failed to save the file %s to %s", path, s.URI())
@@ -260,7 +261,7 @@ const (
 // which means logs before this TS would probably be deleted or incomplete.
 func GetTSFromFile(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 	filename string,
 ) (uint64, error) {
 	exists, err := s.FileExists(ctx, filename)
@@ -286,7 +287,7 @@ func GetTSFromFile(
 // which means logs before this TS would probably be deleted or incomplete.
 func SetTSToFile(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 	safepoint uint64,
 	filename string,
 ) error {
@@ -484,7 +485,7 @@ layers = {
   { sn = 2, content = [ compaction, deleteFiles, ... ] },
 */
 type MigrationExt struct {
-	s      objstore.Storage
+	s      storeapi.Storage
 	prefix string
 	// The hooks used for tracking the execution.
 	// See the `Hooks` type for more details.
@@ -594,7 +595,7 @@ func (NoHooks) HandledAMetaEdit(*pb.MetaEdit)                                   
 func (NoHooks) HandingMetaEditDone()                                               {}
 
 // MigrationExtension installs the extension methods to an `Storage`.
-func MigrationExtension(s objstore.Storage) MigrationExt {
+func MigrationExtension(s storeapi.Storage) MigrationExt {
 	return MigrationExt{
 		s:      s,
 		prefix: migrationPrefix,
@@ -698,7 +699,7 @@ func (m MigrationExt) Load(ctx context.Context, opts ...LoadOptions) (Migrations
 		o(&cfg)
 	}
 
-	opt := &objstore.WalkOption{
+	opt := &storeapi.WalkOption{
 		SubDir: m.prefix,
 	}
 	items := objstore.UnmarshalDir(ctx, opt, m.s, func(t *OrderedMigration, name string, b []byte) error {
@@ -1333,7 +1334,7 @@ func (ebs IngestedSSTsGroup) GroupTS() uint64 {
 
 func LoadIngestedSSTs(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 	paths []string,
 ) iter.TryNextor[IngestedSSTsGroup] {
 	fullBackupDirIter := iter.FromSlice(paths)
@@ -1394,7 +1395,7 @@ func groupExtraBackups(ctx context.Context, i iter.TryNextor[PathedIngestedSSTs]
 	return res, nil
 }
 
-func readIngestedSSTs(ctx context.Context, name string, s objstore.Storage) (*pb.IngestedSSTs, error) {
+func readIngestedSSTs(ctx context.Context, name string, s storeapi.Storage) (*pb.IngestedSSTs, error) {
 	reader, err := s.ReadFile(ctx, name)
 	if err != nil {
 		return nil, err
@@ -1408,7 +1409,7 @@ func readIngestedSSTs(ctx context.Context, name string, s objstore.Storage) (*pb
 }
 
 func (m MigrationExt) loadFilesOfPrefix(ctx context.Context, prefix string) (out []string, err error) {
-	err = m.s.WalkDir(ctx, &objstore.WalkOption{SubDir: prefix}, func(path string, size int64) error {
+	err = m.s.WalkDir(ctx, &storeapi.WalkOption{SubDir: prefix}, func(path string, size int64) error {
 		out = append(out, path)
 		return nil
 	})
@@ -1498,7 +1499,7 @@ func (m MigrationExt) doTruncateLogs(
 // hookedStorage is a wrapper over the external storage,
 // which triggers the `BeforeDoWriteBack` hook when putting a metadata.
 type hookedStorage struct {
-	objstore.Storage
+	storeapi.Storage
 	metaSet *StreamMetadataSet
 }
 
@@ -1526,7 +1527,7 @@ func (h hookedStorage) DeleteFile(ctx context.Context, name string) error {
 	return h.Storage.DeleteFile(ctx, name)
 }
 
-func (ms *StreamMetadataSet) hook(s objstore.Storage) hookedStorage {
+func (ms *StreamMetadataSet) hook(s storeapi.Storage) hookedStorage {
 	hooked := hookedStorage{
 		Storage: s,
 		metaSet: ms,

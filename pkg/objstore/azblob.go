@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
 )
@@ -281,7 +282,7 @@ func getAuthorizerFromEnvironment() (clientID, tenantID, clientSecret string) {
 }
 
 // get azure service client from options and environment
-func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *Options) (ClientBuilder, error) {
+func getAzureServiceClientBuilder(options *backuppb.AzureBlobStorage, opts *storeapi.Options) (ClientBuilder, error) {
 	if len(options.Bucket) == 0 {
 		return nil, errors.New("bucket(container) cannot be empty to access azure blob storage")
 	}
@@ -412,7 +413,7 @@ type AzureBlobStorage struct {
 }
 
 // CopyFrom implements Copier.
-func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
+func (s *AzureBlobStorage) CopyFrom(ctx context.Context, e storeapi.Storage, spec storeapi.CopySpec) error {
 	es, ok := e.(*AzureBlobStorage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig,
@@ -490,7 +491,7 @@ func (*AzureBlobStorage) MarkStrongConsistency() {
 	// See https://github.com/MicrosoftDocs/azure-docs/issues/105331#issuecomment-1450252384
 }
 
-func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *Options) (*AzureBlobStorage, error) {
+func newAzureBlobStorage(ctx context.Context, options *backuppb.AzureBlobStorage, opts *storeapi.Options) (*AzureBlobStorage, error) {
 	clientBuilder, err := getAzureServiceClientBuilder(options, opts)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -638,7 +639,7 @@ func (s *AzureBlobStorage) DeleteFiles(ctx context.Context, names []string) erro
 }
 
 // Open implements the StorageReader interface.
-func (s *AzureBlobStorage) Open(ctx context.Context, name string, o *ReaderOption) (objectio.Reader, error) {
+func (s *AzureBlobStorage) Open(ctx context.Context, name string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	resp, err := client.GetProperties(ctx, nil)
 	if err != nil {
@@ -671,9 +672,9 @@ func (s *AzureBlobStorage) Open(ctx context.Context, name string, o *ReaderOptio
 }
 
 // WalkDir implements the StorageReader interface.
-func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error {
+func (s *AzureBlobStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
 	if opt == nil {
-		opt = &WalkOption{}
+		opt = &storeapi.WalkOption{}
 	}
 	prefix := path.Join(s.options.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
@@ -716,7 +717,7 @@ func (s *AzureBlobStorage) URI() string {
 const azblobChunkSize = 64 * 1024 * 1024
 
 // Create implements the StorageWriter interface.
-func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *WriterOption) (objectio.Writer, error) {
+func (s *AzureBlobStorage) Create(_ context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
 	client := s.containerClient.NewBlockBlobClient(s.withPrefix(name))
 	uploader := &azblobUploader{
 		blobClient: client,

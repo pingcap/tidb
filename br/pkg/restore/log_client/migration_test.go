@@ -26,6 +26,7 @@ import (
 	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -480,7 +481,7 @@ func asIfTS(ts uint64) efOP {
 	}
 }
 
-func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s objstore.Storage) string {
+func pef(t *testing.T, fb *backuppb.IngestedSSTs, sn int, s storeapi.Storage) string {
 	path := fmt.Sprintf("extbackupmeta_%08d", sn)
 	bs, err := fb.Marshal()
 	if err != nil {

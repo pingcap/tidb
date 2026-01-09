@@ -1,0 +1,13 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "storeapi",
+    srcs = ["storage.go"],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/storeapi",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/recording",
+        "@com_github_aws_aws_sdk_go_v2//aws/retry",
+    ],
+)
