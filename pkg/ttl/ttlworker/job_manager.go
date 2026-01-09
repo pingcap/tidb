@@ -565,17 +565,30 @@ func (m *JobManager) triggerTTLJob(requestID string, cmd *client.TriggerNewTTLJo
 }
 
 func (m *JobManager) reportMetrics(se session.Session) {
-	var runningJobs, cancellingJobs float64
+	var ttlRunningJobs, ttlCancellingJobs float64
+	var softRunningJobs, softCancellingJobs float64
 	for _, job := range m.runningJobs {
-		switch job.status {
-		case cache.JobStatusRunning:
-			runningJobs++
-		case cache.JobStatusCancelling:
-			cancellingJobs++
+		switch job.jobType {
+		case cache.TTLJobTypeTTL:
+			switch job.status {
+			case cache.JobStatusRunning:
+				ttlRunningJobs++
+			case cache.JobStatusCancelling:
+				ttlCancellingJobs++
+			}
+		case cache.TTLJobTypeSoftDelete:
+			switch job.status {
+			case cache.JobStatusRunning:
+				softRunningJobs++
+			case cache.JobStatusCancelling:
+				softCancellingJobs++
+			}
 		}
 	}
-	metrics.RunningJobsCnt.Set(runningJobs)
-	metrics.CancellingJobsCnt.Set(cancellingJobs)
+	metrics.JobStatus(metrics.JobStatusRunning, cache.TTLJobTypeTTL).Set(ttlRunningJobs)
+	metrics.JobStatus(metrics.JobStatusCancel, cache.TTLJobTypeTTL).Set(ttlCancellingJobs)
+	metrics.JobStatus(metrics.JobStatusRunning, cache.TTLJobTypeSoftDelete).Set(softRunningJobs)
+	metrics.JobStatus(metrics.JobStatusCancel, cache.TTLJobTypeSoftDelete).Set(softCancellingJobs)
 
 	if !m.isLeader() {
 		// only the leader can do collect delay metrics to reduce the performance overhead
@@ -607,7 +620,7 @@ func (m *JobManager) checkNotOwnJob() {
 			if st := m.softdeleteStatusCache.Tables[job.tableID]; st != nil {
 				statusOwnerID = st.CurrentJobOwnerID
 			}
-		default:
+		case cache.TTLJobTypeTTL:
 			if st := m.ttlStatusCache.Tables[job.tableID]; st != nil {
 				statusOwnerID = st.CurrentJobOwnerID
 			}
@@ -780,7 +793,7 @@ func (m *JobManager) localJobs() []*ttlJob {
 			if st := m.softdeleteStatusCache.Tables[job.tableID]; st != nil {
 				ownerID = st.CurrentJobOwnerID
 			}
-		default:
+		case cache.TTLJobTypeTTL:
 			if st := m.ttlStatusCache.Tables[job.tableID]; st != nil {
 				ownerID = st.CurrentJobOwnerID
 			}
@@ -802,7 +815,7 @@ func (m *JobManager) readyForLockHBTimeoutJobTablesByType(jobType cache.TTLJobTy
 	switch jobType {
 	case cache.TTLJobTypeSoftDelete:
 		tables = m.softdeleteStatusCache.Tables
-	default:
+	case cache.TTLJobTypeTTL:
 		tables = m.ttlStatusCache.Tables
 	}
 
@@ -848,8 +861,10 @@ func (m *JobManager) couldLockJobForCreateWithType(jobType cache.TTLJobType, tab
 	switch jobType {
 	case cache.TTLJobTypeSoftDelete:
 		interval, err = table.TableInfo.SoftdeleteInfo.GetJobInterval()
-	default:
+	case cache.TTLJobTypeTTL:
 		interval, err = table.TTLInfo.GetJobInterval()
+	default:
+		err = errors.Errorf("unknown job type %s", jobType)
 	}
 	if err != nil {
 		logutil.Logger(m.ctx).Warn(
@@ -1028,8 +1043,10 @@ func (m *JobManager) appendLockedJob(id string, se session.Session, createTime t
 	switch jobType {
 	case cache.TTLJobTypeSoftDelete:
 		err = m.updateSoftdeleteTableStatusCache(se)
-	default:
+	case cache.TTLJobTypeTTL:
 		err = m.updateTTLTableStatusCache(se)
+	default:
+		err = errors.Errorf("unknown job type %s", jobType)
 	}
 	if err != nil {
 		return nil, err
@@ -1410,11 +1427,13 @@ func (a *managerJobAdapter) canSubmitJobWithSession(tableID, physicalID int64, j
 		if tblInfo.SoftdeleteInfo == nil || !tblInfo.SoftdeleteInfo.JobEnable {
 			return false, nil
 		}
-	default:
+	case cache.TTLJobTypeTTL:
 		ttlInfo := tblInfo.TTLInfo
 		if ttlInfo == nil || !ttlInfo.Enable {
 			return false, nil
 		}
+	default:
+		return false, errors.Errorf("unknown job type %s", jobType)
 	}
 
 	if physicalID != tableID {

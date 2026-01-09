@@ -177,6 +177,8 @@ const (
 	// will create 52 physical tables.
 	// Note: DDL related tables are created separately, see DDLTableVersion.
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
+	// SecondNextGenBootTableVersion is the 2nd version of nextgen bootstrapping for tidb_softdelete_table_status.
+	SecondNextGenBootTableVersion NextGenBootTableVersion = 2
 )
 
 // DDLTableVersion is to display ddl related table versions

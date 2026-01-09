@@ -1026,7 +1026,7 @@ func TestJobMetrics(t *testing.T) {
 
 	m.ReportMetrics(se)
 	out := &dto.Metric{}
-	require.NoError(t, metrics.RunningJobsCnt.Write(out))
+	require.NoError(t, metrics.JobStatus(metrics.JobStatusRunning, cache.TTLJobTypeTTL).Write(out))
 	require.Equal(t, float64(1), out.GetGauge().GetValue())
 }
 

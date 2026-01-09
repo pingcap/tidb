@@ -24,13 +24,16 @@ import (
 )
 
 // TTLJobType represents the type of TTL job
-type TTLJobType string
+type TTLJobType = string
 
 const (
 	// TTLJobTypeTTL represents a normal TTL job
 	TTLJobTypeTTL TTLJobType = "ttl"
 	// TTLJobTypeSoftDelete represents a softdelete cleanup job
 	TTLJobTypeSoftDelete TTLJobType = "softdelete"
+	// TTLJobTypeRunawayGC represents a GC job for runaway system table.
+	// It is used by the SQL builder to pick the correct time column.
+	TTLJobTypeRunawayGC TTLJobType = "runaway_gc"
 )
 
 const selectFromTTLTask = `SELECT LOW_PRIORITY
