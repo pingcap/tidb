@@ -118,9 +118,12 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 			isGlobalSort = isGlobalSort || m.detectGlobalSort(statuses)
 			stats = m.processJobStatuses(ctx, statuses, jobMap, jobTotalSize, jobFinishedSize, finishedJobs, &firstError, isGlobalSort)
 
-			// Fast-fail: if any job failed, cancel all and return error immediately
-			if err := m.handleFailures(ctx, groupKey, statuses, stats, &firstError); err != nil {
-				return err
+			// Fast-fail: return error immediately if any job failed.
+			if stats.failedCnt > 0 {
+				if firstError == nil {
+					firstError = errors.Errorf("job group %s has %d failed jobs", groupKey, stats.failedCnt)
+				}
+				return firstError
 			}
 
 			// Check if all jobs finished
@@ -197,7 +200,7 @@ type jobProgressPhase struct {
 	steps []string
 }
 
-func (m *DefaultJobMonitor) detectGlobalSort(statuses []*importsdk.JobStatus) bool {
+func (*DefaultJobMonitor) detectGlobalSort(statuses []*importsdk.JobStatus) bool {
 	for _, status := range statuses {
 		switch status.Phase {
 		case "global-sorting", "resolving-conflicts":
@@ -433,35 +436,6 @@ func (m *DefaultJobMonitor) processJobStatuses(
 	}
 
 	return stats
-}
-
-func (m *DefaultJobMonitor) handleFailures(
-	ctx context.Context,
-	groupKey string,
-	statuses []*importsdk.JobStatus,
-	stats *groupStats,
-	firstError *error,
-) error {
-	if stats.failedCnt > 0 {
-		if *firstError == nil {
-			*firstError = errors.Errorf("job group %s has %d failed jobs", groupKey, stats.failedCnt)
-		}
-
-		m.logger.Error("detected failures in job group, cancelling remaining jobs", zap.String("groupKey", groupKey), zap.Int("failedCount", stats.failedCnt))
-
-		for _, status := range statuses {
-			// Only cancel jobs that are not completed (finished, failed, or cancelled)
-			if !status.IsCompleted() {
-				logger := m.logger.With(zap.Int64("jobID", status.JobID))
-				logger.Info("cancelling job")
-				if err := m.sdk.CancelJob(ctx, status.JobID); err != nil {
-					logger.Warn("failed to cancel job", zap.Error(err))
-				}
-			}
-		}
-		return *firstError
-	}
-	return nil
 }
 
 func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.JobStatus) {
