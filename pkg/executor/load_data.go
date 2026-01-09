@@ -135,9 +135,10 @@ func (e *LoadDataExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 }
 
 type planInfo struct {
-	ID          int
-	Columns     []*ast.ColumnName
-	GenColExprs []expression.Expression
+	ID                    int
+	Columns               []*ast.ColumnName
+	GenColExprs           []expression.Expression
+	ReplaceConflictIfExpr []expression.Expression
 }
 
 // LoadDataWorker does a LOAD DATA job.
@@ -186,9 +187,10 @@ func NewLoadDataWorker(
 		table:      tbl,
 		controller: controller,
 		planInfo: planInfo{
-			ID:          plan.ID(),
-			Columns:     plan.Columns,
-			GenColExprs: plan.GenCols.Exprs,
+			ID:                    plan.ID(),
+			Columns:               plan.Columns,
+			GenColExprs:           plan.GenCols.Exprs,
+			ReplaceConflictIfExpr: plan.ReplaceConflictIfExpr,
 		},
 	}
 	return loadDataWorker, nil
@@ -315,8 +317,11 @@ func initEncodeCommitWorkers(e *LoadDataWorker) (*encodeWorker, *commitWorker, e
 	}
 	enc.resetBatch()
 	com := &commitWorker{
-		InsertValues: insertValues,
-		controller:   e.controller,
+		InsertExec: &InsertExec{
+			InsertValues:          insertValues,
+			replaceConflictIfExpr: e.planInfo.ReplaceConflictIfExpr,
+		},
+		controller: e.controller,
 	}
 	return enc, com, nil
 }
@@ -581,7 +586,7 @@ func (w *encodeWorker) parserData2TableData(
 
 // commitWorker is a sub-worker of LoadDataWorker that dedicated to commit data.
 type commitWorker struct {
-	*InsertValues
+	*InsertExec
 	controller *importer.LoadDataController
 }
 
@@ -651,6 +656,17 @@ func (w *commitWorker) checkAndInsertOneBatch(ctx context.Context, rows [][]type
 		return err
 	}
 	w.Ctx().GetSessionVars().StmtCtx.AddRecordRows(cnt)
+
+	// For softdelete tables (replaceConflictIfExpr > 0)
+	// 'load data ... replace into' fallthrough
+	// 'load data ... ignore into' become 'insert on duplicate' with ignoreErr = true
+	// 'load data ... into' become 'insert on duplicate'
+	if len(w.replaceConflictIfExpr) > 0 && w.controller.OnDuplicate != ast.OnDuplicateKeyHandlingReplace {
+		if w.controller.OnDuplicate == ast.OnDuplicateKeyHandlingIgnore {
+			w.InsertExec.ignoreErr = true
+		}
+		return w.batchUpdateDupRows(ctx, rows)
+	}
 
 	switch w.controller.OnDuplicate {
 	case ast.OnDuplicateKeyHandlingReplace:

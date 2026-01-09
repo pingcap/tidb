@@ -1,0 +1,9 @@
+create table t (id int primary key, v int) active_active='on' softdelete retention 7 day;
+# active_active + cached table is disallowed
+-- error 8200
+alter table t cache;
+drop table t;
+
+# softdelete + cached table is supported
+create table t (id int primary key, v int) softdelete retention 7 day;
+alter table t cache;

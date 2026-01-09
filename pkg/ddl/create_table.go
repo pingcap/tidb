@@ -1010,7 +1010,7 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkSoftDeleteAndActiveActive(tbInfo); err != nil {
+	if err := checkSoftDeleteAndActiveActive(tbInfo, nil, ast.CIStr{}); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -1270,6 +1270,12 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 	// Check the referred table is a real table object.
 	if referTblInfo.IsSequence() || referTblInfo.IsView() {
 		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "BASE TABLE")
+	}
+	if referTblInfo.IsActiveActive {
+		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "supported, it is ACTIVE_ACTIVE TABLE")
+	}
+	if referTblInfo.SoftdeleteInfo != nil {
+		return nil, dbterror.ErrWrongObject.GenWithStackByArgs(ident.Schema, referTblInfo.Name, "supported, it is SOFTDELETE TABLE")
 	}
 	tblInfo := *referTblInfo
 	if err := setTemporaryType(&tblInfo, s); err != nil {

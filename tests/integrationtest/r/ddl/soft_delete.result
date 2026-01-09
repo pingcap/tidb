@@ -1,3 +1,4 @@
+set @@global.tidb_enable_global_index = 1;
 drop database if exists test_sd;
 create database test_sd softdelete = RETENTION 7 DAY;
 show create database test_sd;
@@ -54,6 +55,18 @@ t4	CREATE TABLE `t4` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 HOUR */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+drop table if exists t4_gi;
+create table t4_gi (id int primary key) /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
+alter table t4_gi add index i1(_tidb_softdelete_time) global;
+show create table t4_gi;
+Table	Create Table
+t4_gi	CREATE TABLE `t4_gi` (
+  `id` int NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+  /*T![softdelete] , KEY `i1` (`_tidb_softdelete_time`) GLOBAL */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+PARTITION BY HASH (`id`) PARTITIONS 4 /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+drop table if exists t4_gi;
 alter database test_sd softdelete = 'off';
 create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
 show create table t5;
@@ -75,6 +88,8 @@ t4	CREATE TABLE `t4` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+alter table t4 drop column _tidb_softdelete_time;
+Error 8200 (HY000): Unsupported can not drop internal columns
 alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
 show create table t4;
 Table	Create Table
@@ -84,6 +99,7 @@ t4	CREATE TABLE `t4` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='9h' */
 alter table t4 softdelete = 'OFF';
+alter table t4 drop column _tidb_softdelete_time;
 show create table t4;
 Table	Create Table
 t4	CREATE TABLE `t4` (
@@ -99,4 +115,24 @@ alter table t1 softdelete_job_enable = 'MAYBE';
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 46 near ""The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF' 
 create table t6 (id int) softdelete = retention 'invalid_duration' DAY;
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 66 near "'invalid_duration' DAY" 
+create global temporary table tmp_aa (id int) softdelete = retention 7 day on commit delete rows;
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
+create global temporary table tmp_aa like t3 on commit delete rows;
+Error 1347 (HY000): 'test_sd.t3' is not supported, it is SOFTDELETE TABLE
+create temporary table tmp_sd2 (id int) softdelete = retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
+create table parent_fk (id int primary key);
+create table child_fk (id int primary key, pid int);
+alter table child_fk add constraint fk_child foreign key(pid) references parent_fk(id);
+alter table parent_fk softdelete retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE is unspported on referenced foreign key table
+alter table child_fk softdelete retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE is unspported on table with foreign key
+create global temporary table tmp_sd3 (id int) on commit delete rows;
+alter table tmp_sd3 softdelete retention 7 day;
+Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
+create temporary table tmp_sd4 (id int);
+alter table tmp_sd4 softdelete retention 7 day;
+Error 8200 (HY000): TiDB doesn't support ALTER TABLE for local temporary table
 drop database test_sd;
+set @@global.tidb_enable_global_index = default;

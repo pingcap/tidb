@@ -3434,6 +3434,10 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if oldColName.L == newColName.L {
 		return nil
 	}
+
+	if model.IsInternalColumn(oldColName) {
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(oldColName.L)
+	}
 	if model.IsInternalColumn(newColName) {
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
@@ -3894,7 +3898,7 @@ func (e *executor) AlterTableSoftDeleteInfo(
 		return err
 	}
 	// Validate the soft delete configuration
-	err = checkSoftDeleteAndActiveActive(tblInfo)
+	err = checkSoftDeleteAndActiveActive(tblInfo, is, schema.Name)
 	if err != nil {
 		return err
 	}
@@ -4708,6 +4712,8 @@ func checkCreateGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexNa
 
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
+	const isUnique = true
+
 	if indexOption != nil && indexOption.PrimaryKeyTp == ast.PrimaryKeyTypeClustered {
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
 			"Please consider adding NONCLUSTERED primary key instead")
@@ -4743,7 +4749,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, isUnique)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4786,7 +4792,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
-			Unique:                  true,
+			Unique:                  isUnique,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
@@ -4873,6 +4879,7 @@ func checkTableTypeForColumnarIndex(tblInfo *model.TableInfo) error {
 
 func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, indexName ast.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	const isUnique = false
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -4924,7 +4931,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType)
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType, isUnique)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4945,6 +4952,7 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
+			Unique:                  isUnique,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
@@ -5052,7 +5060,7 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
-	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA)
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA, unique)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6520,6 +6528,14 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 		return errors.Trace(dbterror.ErrUnsupportedAlterCacheForSysTable)
 	} else if t.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache")
+	}
+
+	// Cached table uses transaction Scan API to get data, which does not support returnning _tidb_commit_ts.
+	// So if we allow query _tidb_commit_ts on cached table, it would always return NULL. That would look like a buggy
+	// behavior, so just disallow this combination to avoid it from happenning.
+	// Anyway, both feature's scenario are corner case and their combination are even rare.
+	if t.Meta().IsActiveActive {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Cached table can not work with active-active feature")
 	}
 
 	if t.Meta().Partition != nil {

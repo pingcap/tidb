@@ -1,0 +1,11 @@
+-- error 8200
+create temporary table t (id int) softdelete retention 7 day;
+
+-- error 8200
+create temporary table t (id int) active_active = 'on' softdelete retention 7 day;
+
+-- error 8200
+create global temporary table t (id int) softdelete retention 7 day on commit delete rows;
+
+-- error 8200
+create global temporary table t (id int) active_active = 'on' softdelete retention 7 day on commit delete rows;

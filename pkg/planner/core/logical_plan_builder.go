@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -5498,6 +5499,71 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	return b.buildUpdatePlan(ctx, p, oldSchemaLen, utlr.updatableTableList, update.List, update.IgnoreErr)
 }
 
+// buildRecoverValues builds an execution plan for RECOVER VALUES statement.
+// RECOVER VALUES FROM <table> WHERE <expr> is semantically equivalent to
+// UPDATE <table> SET _tidb_softdelete_time = NULL WHERE <expr>
+// but only works on tables with soft delete enabled.
+func (b *PlanBuilder) buildRecoverValues(ctx context.Context, recoverStmt *ast.RecoverValuesStmt) (base.Plan, error) {
+	// Get the table info to verify it's a soft delete table
+	dbName := recoverStmt.Table.Schema
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	tbl, err := b.is.TableByName(ctx, dbName, recoverStmt.Table.Name)
+	if err != nil {
+		return nil, err
+	}
+	tableInfo := tbl.Meta()
+
+	// RECOVER VALUES only works on soft delete tables
+	if tableInfo.SoftdeleteInfo == nil {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"RECOVER VALUES on table without soft delete enabled")
+	}
+
+	// Build an equivalent UPDATE statement ast to reuse the logic.
+	tableRef := &ast.TableRefsClause{
+		TableRefs: &ast.Join{
+			Left: &ast.TableSource{
+				Source: recoverStmt.Table,
+			},
+		},
+	}
+	assignment := &ast.Assignment{
+		Column: &ast.ColumnName{
+			Name: model.ExtraSoftDeleteTimeName,
+		},
+		Expr: ast.NewValueExpr(nil, "", ""),
+	}
+
+	// Append an extra _tidb_softdelete_time IS NOT NULL condition.
+	softDeleteNotNull := &ast.IsNullExpr{
+		Expr: &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{
+				Name: model.ExtraSoftDeleteTimeName,
+			},
+		},
+		Not: true,
+	}
+	var whereClause ast.ExprNode
+	if recoverStmt.Where != nil {
+		whereClause = &ast.BinaryOperationExpr{
+			Op: opcode.LogicAnd,
+			L:  softDeleteNotNull,
+			R:  recoverStmt.Where,
+		}
+	} else {
+		whereClause = softDeleteNotNull
+	}
+
+	updateStmt := &ast.UpdateStmt{
+		TableRefs: tableRef,
+		List:      []*ast.Assignment{assignment},
+		Where:     whereClause,
+	}
+	return b.buildUpdate(ctx, updateStmt)
+}
+
 // buildDMLSelectPlan builds the common select plan for DML statements (UPDATE, DELETE).
 // It handles WITH clause, builds the result set from TableRefs, WHERE clause, pessimistic lock,
 // ORDER BY, and LIMIT.
@@ -5533,6 +5599,21 @@ func (b *PlanBuilder) buildDMLSelectPlan(
 	p, err = b.buildResultSetNode(ctx, tableRefs, false)
 	if err != nil {
 		return nil, 0, err
+	}
+
+	// For UPDATE statements translated from RECOVER VALUES, we shouldn't apply the soft delete filter no matter
+	// whether @@tidb_translate_softdelete_sql is true or false. This is implemented by setting DisableSoftDeleteFilter
+	// to true in DataSource.
+	// Note that this flag only affects this DataSource, consider this case:
+	// RECOVER VALUES FROM t1 WHERE t1.a IN (SELECT t2.a FROM t2 WHERE t2.b > 0);
+	// In this case, t1 should have the soft delete filter disabled, but t2 should add the soft delete filter or not
+	// according to @@tidb_translate_softdelete_sql.
+	if b.ctx.GetSessionVars().StmtCtx.InRecoverValuesStmt {
+		ds, ok := p.(*logicalop.DataSource)
+		intest.Assert(ok, "expected DataSource in RECOVER VALUES plan")
+		if ok {
+			ds.DisableSoftDeleteFilter = true
+		}
 	}
 
 	oldSchemaLen = p.Schema().Len()

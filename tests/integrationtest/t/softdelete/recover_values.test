@@ -1,0 +1,116 @@
+# Test basic RECOVER VALUES with WHERE clause
+create table t1 (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t1 values (1, 'a'), (2, 'b'), (3, 'c');
+set tidb_translate_softdelete_sql = true;
+delete from t1 where id = 1;
+delete from t1 where id = 2;
+select id, name from t1 order by id;
+select count(*) from t1;
+recover values from t1 where id = 1;
+select id, name from t1 order by id;
+drop table t1;
+
+# Test RECOVER VALUES without WHERE clause (recovers all)
+create table t2 (id int primary key, val int) softdelete retention 7 day;
+insert into t2 values (1, 10), (2, 20), (3, 30);
+delete from t2;
+select count(*) from t2;
+recover values from t2;
+select id, val from t2 order by id;
+drop table t2;
+
+# Test RECOVER VALUES on non-softdelete table should error
+create table t3 (id int primary key, name varchar(50));
+insert into t3 values (1, 'a');
+-- error 1235
+recover values from t3 where id = 1;
+drop table t3;
+
+# Test RECOVER VALUES with complex WHERE clause
+create table t4 (id int primary key, category varchar(20), val int) softdelete retention 7 day;
+insert into t4 values (1, 'A', 100), (2, 'A', 200), (3, 'B', 150), (4, 'B', 250);
+delete from t4 where category = 'A';
+delete from t4 where val > 200;
+select id, category, val from t4 order by id;
+recover values from t4 where category = 'A';
+select id, category, val from t4 order by id;
+drop table t4;
+
+# Test RECOVER VALUES with subqueries in WHERE clause
+create table t5 (id int primary key, a int) softdelete retention 7 day;
+insert into t5 values (2, 20), (3, 30);
+delete from t5 where a < 25;
+select * from t5;
+create table t6 (id int primary key, b int) softdelete retention 7 day;
+insert into t6 values (11, 20), (22, 30);
+delete from t6;
+select * from t6;
+select min(a) from t5;
+# The semantic of the subquery should respect @@tidb_translate_softdelete_sql
+# By default, it's true, so it's `recover values from t6 where b = 30;`
+recover values from t6 where b = (select min(a) from t5);
+select * from t6;
+delete from t6;
+set tidb_translate_softdelete_sql = false;
+select min(a) from t5;
+# Now, the semantic of the subquery is false, so it's `recover values from t6 where b = 20;`
+recover values from t6 where b = (select min(a) from t5);
+set tidb_translate_softdelete_sql = true;
+select * from t6;
+drop table t5;
+drop table t6;
+
+# Test RECOVER VALUES privilege checking (should require UPDATE privilege like UPDATE statement)
+create table t7 (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t7 values (1, 'a'), (2, 'b'), (3, 'c');
+delete from t7;
+select id, name from t7 order by id;
+
+CREATE USER 'recover_no_priv'@'localhost';
+CREATE USER 'recover_select_only'@'localhost';
+CREATE USER 'recover_update_priv'@'localhost';
+CREATE USER 'recover_update_select'@'localhost';
+
+GRANT SELECT ON softdelete__recover_values.t7 TO 'recover_select_only'@'localhost';
+GRANT UPDATE ON softdelete__recover_values.t7 TO 'recover_update_priv'@'localhost';
+GRANT SELECT, UPDATE ON softdelete__recover_values.t7 TO 'recover_update_select'@'localhost';
+
+# User with no privileges should fail
+connect (recover_no_priv,localhost,recover_no_priv,,);
+connection recover_no_priv;
+-- error 1142
+recover values from softdelete__recover_values.t7 where id = 1;
+disconnect recover_no_priv;
+
+# User with only SELECT privilege should fail
+connect (recover_select_only,localhost,recover_select_only,,);
+connection recover_select_only;
+-- error 8121
+recover values from softdelete__recover_values.t7 where id = 1;
+-- error 8121
+recover values from softdelete__recover_values.t7;
+disconnect recover_select_only;
+
+# User with UPDATE privilege should fail
+connect (recover_update_priv,localhost,recover_update_priv,,);
+connection recover_update_priv;
+-- error 1142
+recover values from softdelete__recover_values.t7 where id = 1;
+-- error 1142
+recover values from softdelete__recover_values.t7;
+disconnect recover_update_priv;
+
+# User with UPDATE and SELECT privilege should succeed
+connect (recover_update_select,localhost,recover_update_select,,);
+connection recover_update_select;
+recover values from softdelete__recover_values.t7 where id = 1;
+select id, name from softdelete__recover_values.t7 order by id;
+recover values from softdelete__recover_values.t7;
+disconnect recover_update_select;
+
+connection default;
+select id, name from t7 order by id;
+drop table t7;
+DROP USER 'recover_no_priv'@'localhost';
+DROP USER 'recover_select_only'@'localhost';
+DROP USER 'recover_update_priv'@'localhost';
