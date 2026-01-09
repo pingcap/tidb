@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/resourcegroup"
@@ -755,6 +756,9 @@ func (e *executor) DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt
 			return nil
 		}
 		return infoschema.ErrDatabaseDropExists.GenWithStackByArgs(stmt.Name)
+	}
+	if isReservedSchemaObjInNextGen(old.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop '%s' database", old.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	err = checkDatabaseHasForeignKeyReferred(e.ctx, is, old.Name, fkCheck)
@@ -2372,6 +2376,16 @@ func (e *executor) AlterTablePartitioning(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	meta := t.Meta().Clone()
+<<<<<<< HEAD
+=======
+	if isReservedSchemaObjInNextGen(meta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Change system table '%s.%s' to partitioned table", schema.Name.L, meta.Name.L))
+	}
+	if t.Meta().Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ALTER TABLE PARTITIONING of a table with AFFINITY option")
+	}
+
+>>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))
 	piOld := meta.GetPartitionInfo()
 	var partNames []string
 	if piOld != nil {
@@ -3051,7 +3065,9 @@ func (e *executor) ExchangeTablePartition(ctx sessionctx.Context, ident ast.Iden
 	}
 
 	ntMeta := nt.Meta()
-
+	if isReservedSchemaObjInNextGen(ntMeta.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Exchange partition on system table '%s.%s'", ntSchema.Name.L, ntMeta.Name.L))
+	}
 	err = checkExchangePartition(ptMeta, ntMeta)
 	if err != nil {
 		return errors.Trace(err)
@@ -4134,7 +4150,7 @@ func (e *executor) dropTableObject(
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
 		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
-			return errors.Errorf("Drop tidb system table '%s.%s' is forbidden", tn.Schema.L, tn.Name.L)
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
 		case tableObject:
@@ -4244,6 +4260,9 @@ func (e *executor) TruncateTable(ctx sessionctx.Context, ti ast.Ident) error {
 	}
 	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
 		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Truncate Table")
+	}
+	if isReservedSchemaObjInNextGen(tblInfo.ID) {
+		return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Truncate system table '%s.%s'", schema.Name.L, tblInfo.Name.L))
 	}
 	fkCheck := ctx.GetSessionVars().ForeignKeyChecks
 	referredFK := checkTableHasForeignKeyReferred(e.infoCache.GetLatest(), ti.Schema.L, ti.Name.L, []ast.Ident{{Name: ti.Name, Schema: ti.Schema}}, fkCheck)
@@ -6997,3 +7016,25 @@ func getAnalyzeVersion(sctx sessionctx.Context) string {
 	}
 	return strconv.Itoa(vardef.DefTiDBAnalyzeVersion)
 }
+<<<<<<< HEAD
+=======
+
+// checkColumnReferencedByPartialCondition checks whether alter column is referenced by a partial index condition
+func checkColumnReferencedByPartialCondition(t *model.TableInfo, colName ast.CIStr) error {
+	for _, idx := range t.Indices {
+		_, ic := model.FindIndexColumnByName(idx.AffectColumn, colName.L)
+		if ic != nil {
+			return dbterror.ErrModifyColumnReferencedByPartialCondition.GenWithStackByArgs(colName.O, idx.Name.O)
+		}
+	}
+
+	return nil
+}
+
+func isReservedSchemaObjInNextGen(id int64) bool {
+	failpoint.Inject("skipCheckReservedSchemaObjInNextGen", func() {
+		failpoint.Return(false)
+	})
+	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+}
+>>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))

@@ -1611,6 +1611,19 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+<<<<<<< HEAD
+=======
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
+>>>>>>> 920ee6e0118 (ddl: forbid operations that might change system table id in nextgen (#65411))
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s

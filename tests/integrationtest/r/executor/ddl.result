@@ -441,7 +441,7 @@ drop table if exists drop_test;
 create table drop_test (a int);
 drop table drop_test;
 drop table mysql.gc_delete_range;
-Error 1105 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
+Error 8267 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
 drop table if exists t_v, t_v1, t_v2;
 drop view if exists v;
 create or replace view drop_test as select 1,2;
@@ -449,7 +449,7 @@ drop table drop_test;
 Error 1051 (42S02): Unknown table 'executor__ddl.drop_test'
 drop view if exists drop_test;
 drop view mysql.gc_delete_range;
-Error 1105 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
+Error 8267 (HY000): Drop tidb system table 'mysql.gc_delete_range' is forbidden
 drop view drop_test;
 Error 1051 (42S02): Unknown table 'executor__ddl.drop_test'
 create table t_v(a int);
