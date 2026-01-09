@@ -4246,6 +4246,10 @@ func (e *memtableRetriever) setDataFromSoftDeleteTableStats(ctx context.Context,
 		intest.Assert(softDeleteColID != 0, "softdelete column ID should be found")
 
 		if table.GetPartitionInfo() == nil {
+			// If there are any condition on the `PARTITION_NAME` in the extractor, this record should be ignored
+			if ex.HasPartitionPred() {
+				continue
+			}
 			// Non-partitioned table: emit one row with table info
 			totalRowCount, softDeletedRowCount, err := getSoftDeleteTableRowCounts(
 				ctx, sctx, statsHandle, table.ID, softDeleteColID)

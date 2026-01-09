@@ -6,6 +6,11 @@ analyze table t1 all columns;
 select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
 DB_NAME	TABLE_NAME	PARTITION_NAME	ESTIMATED_TOTAL_ROW_COUNT	ESTIMATED_SOFTDELETED_ROW_COUNT
 softdelete__stats_table	t1	NULL	5	0
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't1' and partition_name = 'p1';
+DB_NAME	TABLE_NAME	PARTITION_NAME	ESTIMATED_TOTAL_ROW_COUNT	ESTIMATED_SOFTDELETED_ROW_COUNT
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't1' and partition_name is null;
+DB_NAME	TABLE_NAME	PARTITION_NAME	ESTIMATED_TOTAL_ROW_COUNT	ESTIMATED_SOFTDELETED_ROW_COUNT
+softdelete__stats_table	t1	NULL	5	0
 delete from t1 where id <= 2;
 select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
 DB_NAME	TABLE_NAME	PARTITION_NAME	ESTIMATED_TOTAL_ROW_COUNT	ESTIMATED_SOFTDELETED_ROW_COUNT

@@ -631,6 +631,11 @@ func (e *InfoSchemaSoftDeleteTableStatsExtractor) HasPartition(name string) bool
 	return !e.filter(PartitionName, name)
 }
 
+// HasPartitionPred returns true if partition name is specified in predicates.
+func (e *InfoSchemaSoftDeleteTableStatsExtractor) HasPartitionPred() bool {
+	return len(e.ColPredicates[PartitionName]) > 0
+}
+
 // findTablesByID finds tables by table IDs and append them to table map.
 func findTablesByID(
 	is infoschema.InfoSchema,

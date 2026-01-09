@@ -6,6 +6,8 @@ insert into t1 values (1, 'aaa'), (2, 'bbb'), (3, 'ccc'), (4, 'ddd'), (5, 'eee')
 set global tidb_stats_cache_mem_quota = 1;
 analyze table t1 all columns;
 select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't1' and partition_name = 'p1';
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't1' and partition_name is null;
 delete from t1 where id <= 2;
 select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
 delete from t1 where id = 3;
