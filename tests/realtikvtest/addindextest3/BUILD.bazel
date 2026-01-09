@@ -11,7 +11,7 @@ go_test(
         "temp_index_test.go",
     ],
     flaky = True,
-    shard_count = 39,
+    shard_count = 42,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
