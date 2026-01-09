@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -1150,6 +1149,6 @@ func setupExternalStorage(namespace string) {
 	}
 	logutil.BgLogger().Info("initialize external storage", zap.String("path", path), zap.String("namespace", namespace))
 
-	err := external.CreateExternalStorage(path, namespace, &storage.ExternalStorageOptions{})
+	err := external.CreateExternalStorage(path, namespace, nil)
 	terror.MustNil(err)
 }
