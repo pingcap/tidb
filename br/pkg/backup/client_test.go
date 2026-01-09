@@ -61,7 +61,7 @@ func mockGetBackupClientCallBack(ctx context.Context, storeID uint64, reset bool
 	defer lock.Unlock()
 	connectedStore[storeID] += 1
 	// we don't need connect real tikv in unit test
-	// and we have already mock the backup response in `SendAsync`
+	// and we have already mock the backup response in `StartStoreBackup`
 	// so just return nil here
 	return nil, nil
 }
@@ -70,23 +70,14 @@ type mockBackupBackupSender struct {
 	backupResponses map[uint64][]*backup.ResponseAndStore
 }
 
-func (m *mockBackupBackupSender) SendAsync(
-	ctx context.Context,
-	round uint64,
-	storeID uint64,
-	limiter *backup.ResourceConcurrentLimiter,
-	request backuppb.BackupRequest,
-	concurrency uint,
-	cli backuppb.BackupClient,
-	respCh chan *backup.ResponseAndStore,
-	StateNotifier chan backup.BackupRetryPolicy,
-) {
+func (m *mockBackupBackupSender) StartStoreBackup(ctx context.Context, backupCtx *backup.BackupContext) (context.Context, context.CancelFunc, error) {
+	// Start the mock backup goroutine that sends responses
 	go func() {
 		defer func() {
-			close(respCh)
+			close(backupCtx.ResponseCh)
 		}()
 		lock.Lock()
-		resps := m.backupResponses[storeID]
+		resps := m.backupResponses[backupCtx.Store.GetId()]
 		lock.Unlock()
 		for len(resps) == 0 {
 			// store has no response
@@ -94,17 +85,20 @@ func (m *mockBackupBackupSender) SendAsync(
 			// let this goroutine never return.
 			time.Sleep(100 * time.Millisecond)
 			lock.Lock()
-			resps = m.backupResponses[storeID]
+			resps = m.backupResponses[backupCtx.Store.GetId()]
 			lock.Unlock()
 		}
 		for _, r := range resps {
 			select {
 			case <-ctx.Done():
 				return
-			case respCh <- r:
+			case backupCtx.ResponseCh <- r:
 			}
 		}
 	}()
+
+	ctx, cancel := context.WithCancel(ctx)
+	return ctx, cancel, nil
 }
 
 func createBackupSuite(t *testing.T) *testBackup {

@@ -32,16 +32,10 @@ type BackupRetryPolicy struct {
 }
 
 type BackupSender interface {
-	SendAsync(
+	StartStoreBackup(
 		ctx context.Context,
-		round uint64,
-		storeID uint64,
-		limiter *ResourceConcurrentLimiter,
-		request backuppb.BackupRequest,
-		concurrency uint,
-		cli backuppb.BackupClient,
-		respCh chan *ResponseAndStore,
-		StateNotifier chan BackupRetryPolicy)
+		bctx *BackupContext,
+	) (context.Context, context.CancelFunc, error)
 }
 
 type ResponseAndStore struct {
