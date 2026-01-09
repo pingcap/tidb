@@ -16,19 +16,19 @@ func TestCheckGCSafepoint(t *testing.T) {
 	ctx := context.Background()
 	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 2333+1)
+		err := utils.CheckGCSafePoint(ctx, pdClient, nil, 2333+1)
 		require.NoError(t, err)
 	}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 2333)
+		err := utils.CheckGCSafePoint(ctx, pdClient, nil, 2333)
 		require.Error(t, err)
 	}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 2333-1)
+		err := utils.CheckGCSafePoint(ctx, pdClient, nil, 2333-1)
 		require.Error(t, err)
 	}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 0)
+		err := utils.CheckGCSafePoint(ctx, pdClient, nil, 0)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "GC safepoint 2333 exceed TS 0")
 	}
