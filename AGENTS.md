@@ -47,10 +47,28 @@ This file provides guidance to agents when working with code in this repository.
 
 ## Building
 
+### Bazel bootstrap (`make bazel_prepare`)
+
+Run `make bazel_prepare` **before building** when:
+- You just cloned the repo / set up a new workspace
+- You changed Bazel-related files (for example: `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`)
+- You changed Go module deps used by the build (for example: `go.mod`, `go.sum`), such as **adding a new third-party dependency**
+- You added new unit tests (UT) or RealTiKV tests and updated Bazel test targets accordingly (for example: adding new `_test.go` files to a `go_test` rule `srcs`, adjusting `shard_count`, or creating/updating `BUILD.bazel` under `tests/realtikvtest/`), which may require refreshing Bazel deps/toolchain
+- You hit Bazel dependency/toolchain errors locally
+
+Recommended local build flow:
+
 ```bash
+# one-time (or when bazel deps/toolchain change)
 make bazel_prepare
-make 
+
+# build
+make
+
+# optional: regenerate generated code if needed
 make gogenerate
+
+# optional: keep Go modules tidy if go.mod/go.sum changed
 go mod tidy
 ```
 
