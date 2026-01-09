@@ -19,7 +19,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
@@ -63,7 +63,7 @@ func TestExternalStorage(t *testing.T) {
 
 	// Test WalkDir
 	var foundFile bool
-	err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+	err = s.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
 		if path == fileName {
 			foundFile = true
 			require.Equal(t, int64(len(fileContent)), size)
