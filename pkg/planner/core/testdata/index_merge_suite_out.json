@@ -22,8 +22,8 @@
         "SQL": "select * from vh",
         "Plan": [
           "IndexMerge 1.00 root partition:p0,p1,p2 type: intersection",
-          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, index:ia(a) range:[10,10], keep order:false",
+          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:id(d) range:[2,2], [5,5], keep order:false",
           "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1 keep order:false"
         ],
@@ -35,8 +35,8 @@
         "SQL": "select /*+ qb_name(v, v), use_index_merge(@v t1, ia, ibc, id) */ * from v",
         "Plan": [
           "IndexMerge 1.00 root partition:p0,p1,p2 type: intersection",
-          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, index:ia(a) range:[10,10], keep order:false",
+          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:id(d) range:[2,2], [5,5], keep order:false",
           "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1 keep order:false"
         ],
@@ -48,8 +48,8 @@
         "SQL": "select /*+ qb_name(v, v@sel_1), use_index_merge(@v t1, ia, ibc, id) */ * from v",
         "Plan": [
           "IndexMerge 1.00 root partition:p0,p1,p2 type: intersection",
-          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, index:ia(a) range:[10,10], keep order:false",
+          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:id(d) range:[2,2], [5,5], keep order:false",
           "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1 keep order:false"
         ],
@@ -61,8 +61,8 @@
         "SQL": "select /*+ qb_name(v, v@sel_1 .@sel_1), use_index_merge(@v t1, ia, ibc, id) */ * from v",
         "Plan": [
           "IndexMerge 1.00 root partition:p0,p1,p2 type: intersection",
-          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, index:ia(a) range:[10,10], keep order:false",
+          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:id(d) range:[2,2], [5,5], keep order:false",
           "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1 keep order:false"
         ],
@@ -74,8 +74,8 @@
         "SQL": "select /*+ qb_name(v, v1@sel_1 .@sel_1), use_index_merge(@v t1, ia, ibc, id) */ * from v1 where c < 30 and d in (2,5)",
         "Plan": [
           "IndexMerge 1.00 root partition:p0,p1,p2 type: intersection",
-          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 2.00 cop[tikv] table:t1, index:ia(a) range:[10,10], keep order:false",
+          "├─IndexRangeScan(Build) 2.60 cop[tikv] table:t1, index:ibc(b, c) range:[20 -inf,20 30), keep order:false",
           "├─IndexRangeScan(Build) 3.00 cop[tikv] table:t1, index:id(d) range:[2,2], [5,5], keep order:false",
           "└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t1 keep order:false"
         ],
@@ -194,8 +194,8 @@
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:ia(a) keep order:false",
           "  └─MaxOneRow(Probe) 3.00 root  ",
           "    └─IndexMerge 3.00 root partition:all type: intersection",
-          "      ├─IndexRangeScan(Build) 4.00 cop[tikv] table:t1, index:ibc(b, c) range: decided by [eq(test.t1.b, 20) eq(test.t1.c, test.t2.a)], keep order:false",
           "      ├─IndexRangeScan(Build) 6.00 cop[tikv] table:t1, index:ia(a) range:(10,+inf], keep order:false",
+          "      ├─IndexRangeScan(Build) 4.00 cop[tikv] table:t1, index:ibc(b, c) range: decided by [eq(test.t1.b, 20) eq(test.t1.c, test.t2.a)], keep order:false",
           "      └─TableRowIDScan(Probe) 3.00 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
@@ -213,9 +213,9 @@
           "  │ └─IndexFullScan 3.00 cop[tikv] table:t2, index:ia(a) keep order:false",
           "  └─MaxOneRow(Probe) 3.00 root  ",
           "    └─IndexMerge 3.60 root partition:all type: intersection",
+          "      ├─IndexRangeScan(Build) 6.00 cop[tikv] table:t1, index:ia(a) range:(10,+inf], keep order:false",
           "      ├─Selection(Build) 7.20 cop[tikv]  gt(test.t1.c, test.t2.a)",
           "      │ └─IndexRangeScan 9.00 cop[tikv] table:t1, index:ibc(b, c) range:[20,20], keep order:false",
-          "      ├─IndexRangeScan(Build) 6.00 cop[tikv] table:t1, index:ia(a) range:(10,+inf], keep order:false",
           "      └─TableRowIDScan(Probe) 3.60 cop[tikv] table:t1 keep order:false"
         ],
         "Result": [
