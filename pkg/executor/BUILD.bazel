@@ -370,6 +370,7 @@ go_test(
         "inspection_summary_test.go",
         "join_pkg_test.go",
         "main_test.go",
+        "memtable_reader_internal_test.go",
         "memtable_reader_test.go",
         "metrics_reader_test.go",
         "parallel_apply_test.go",
