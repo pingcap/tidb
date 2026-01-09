@@ -315,12 +315,17 @@ func buildMemTableReader(ctx context.Context, us *UnionScanExec, kvRanges []kv.K
 	}
 }
 
+type memBufferSnapshotIterer interface {
+	SnapshotIter(k, upperbound kv.Key) kv.Iterator
+	SnapshotIterReverse(k, lowerBound kv.Key) kv.Iterator
+}
+
 // txnMemBufferIter implements a kv.Iterator, it is an iterator that combines the membuffer data and snapshot data.
 type txnMemBufferIter struct {
 	sctx       sessionctx.Context
 	kvRanges   []kv.KeyRange
 	cacheTable kv.MemBuffer
-	txn        kv.Transaction
+	memBuf     memBufferSnapshotIterer
 	idx        int
 	curr       kv.Iterator
 	reverse    bool
@@ -334,7 +339,7 @@ func newTxnMemBufferIter(sctx sessionctx.Context, cacheTable kv.MemBuffer, kvRan
 	}
 	return &txnMemBufferIter{
 		sctx:       sctx,
-		txn:        txn,
+		memBuf:     txn.GetMemBuffer(),
 		kvRanges:   kvRanges,
 		cacheTable: cacheTable,
 		reverse:    reverse,
@@ -354,9 +359,9 @@ func (iter *txnMemBufferIter) Valid() bool {
 		rg := iter.kvRanges[iter.idx]
 		var memIter kv.Iterator
 		if !iter.reverse {
-			memIter = iter.txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+			memIter = iter.memBuf.SnapshotIter(rg.StartKey, rg.EndKey)
 		} else {
-			memIter = iter.txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
+			memIter = iter.memBuf.SnapshotIterReverse(rg.EndKey, rg.StartKey)
 		}
 		snapCacheIter, err := getSnapIter(iter.sctx, iter.cacheTable, rg, iter.reverse)
 		if err != nil {
@@ -595,13 +600,16 @@ func iterTxnMemBuffer(ctx sessionctx.Context, cacheTable kv.MemBuffer, kvRanges 
 	if err != nil {
 		return err
 	}
+	return iterMemBufferSnapshot(ctx, txn.GetMemBuffer(), cacheTable, kvRanges, reverse, fn)
+}
 
+func iterMemBufferSnapshot(ctx sessionctx.Context, memBuf memBufferSnapshotIterer, cacheTable kv.MemBuffer, kvRanges []kv.KeyRange, reverse bool, fn processKVFunc) error {
 	for _, rg := range kvRanges {
 		var memIter kv.Iterator
 		if !reverse {
-			memIter = txn.GetMemBuffer().SnapshotIter(rg.StartKey, rg.EndKey)
+			memIter = memBuf.SnapshotIter(rg.StartKey, rg.EndKey)
 		} else {
-			memIter = txn.GetMemBuffer().SnapshotIterReverse(rg.EndKey, rg.StartKey)
+			memIter = memBuf.SnapshotIterReverse(rg.EndKey, rg.StartKey)
 		}
 		snapCacheIter, err := getSnapIter(ctx, cacheTable, rg, reverse)
 		if err != nil {
