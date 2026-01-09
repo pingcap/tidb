@@ -2442,18 +2442,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 
-	// For global indexes V1+ on partitioned tables, we need to wrap the handle
-	// with the partition ID to create a PartitionHandle.
-	// This is critical for non-clustered tables after EXCHANGE PARTITION,
-	// where duplicate _tidb_rowid values exist across partitions.
-	// Legacy indexes (version 0) don't use PartitionHandle in the key.
-	hasGlobalIndexV1 := false
-	for _, index := range w.indexes {
-		if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-			hasGlobalIndexV1 = true
-			break
-		}
-	}
 
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
@@ -2470,12 +2458,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				return false, nil
 			}
 
-			actualHandle := handle
-			if hasGlobalIndexV1 {
-				// Wrap the handle with partition ID for global indexes V1+
-				actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
-			}
-
 			// Decode one row, generate records of this row.
 			err := w.updateRowDecoder(handle, rawRow)
 			if err != nil {
@@ -2485,6 +2467,15 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 			for _, index := range w.indexes {
 				if index.Meta().HasCondition() {
 					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
+				}
+				actualHandle := handle
+				// For global indexes V1+ on partitioned tables, we need to wrap the handle
+				// with the partition ID to create a PartitionHandle.
+				// This is critical for non-clustered tables after EXCHANGE PARTITION,
+				// where duplicate _tidb_rowid values exist across partitions.
+				// Legacy indexes (version 0) don't use PartitionHandle in the key.
+				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
 				}
 				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
 				if err1 != nil {
