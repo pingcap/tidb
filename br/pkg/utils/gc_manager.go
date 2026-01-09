@@ -84,6 +84,21 @@ func DeleteServiceSafePoint(
 	return mgr.DeleteServiceSafePoint(ctx, sp)
 }
 
+// CheckGCSafePoint checks whether the ts is older than GC safepoint.
+// Note: It ignores errors other than exceed GC safepoint.
+func CheckGCSafePoint(
+	ctx context.Context,
+	pdClient pd.Client,
+	storage kv.Storage,
+	ts uint64,
+) error {
+	mgr, err := NewGCSafePointManager(pdClient, storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return checkGCSafePointByManager(ctx, mgr, ts)
+}
+
 // The following functions use globalGCManager directly.
 // They do NOT support keyspace and are used by operator/advancer which don't have access to storage.
 
