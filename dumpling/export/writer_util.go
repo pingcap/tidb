@@ -123,7 +123,7 @@ func (b *writerPipe) ShouldSwitchStatement() bool {
 		(b.statementSizeLimit != UnspecifiedSize && b.currentStatementSize >= b.statementSizeLimit)
 }
 
-// WriteMeta writes MetaIR to a objstore.Writer
+// WriteMeta writes MetaIR to an objectio.Writer
 func WriteMeta(tctx *tcontext.Context, meta MetaIR, w objectio.Writer) error {
 	tctx.L().Debug("start dumping meta data", zap.String("target", meta.TargetName()))
 
