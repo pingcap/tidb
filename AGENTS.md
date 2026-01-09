@@ -117,6 +117,8 @@ make failpoint-enable && (
 )
 ```
 
+**Bazel note:** If you run tests via Bazel, use `make bazel-failpoint-enable` before `bazel test` / `make bazel_test`. You can still run `make failpoint-disable` afterward to restore the workspace (Bazel currently doesn't provide `bazel-failpoint-disable`).
+
 #### Unit Tests Specification
 
 The following points must be achieved:
@@ -166,18 +168,26 @@ tiup playground --mode tikv-slim &
 tiup playground --mode tikv-slim --tag realtikvtest &
 ```
 
-#### How to verify cluster is ready
+If `127.0.0.1:2379` is not available (for example: shared dev machine, port conflict, or multiple playgrounds on one host), you can change the PD address:
+- Use `--pd.port` to set PD port explicitly
+- Or use `--port-offset` to shift all default ports
 
-Check PD API - if it returns JSON, the cluster is ready:
+Examples:
 
 ```bash
-curl -f http://127.0.0.1:2379/pd/api/v1/version
+tiup playground --mode tikv-slim --pd.port 12379 &
+# or
+tiup playground --mode tikv-slim --port-offset 10000 &
 ```
 
-Wait until ready:
+#### (Optional) Verify cluster is ready
+
+Recommended to avoid flaky failures caused by PD/TiKV not ready yet:
 
 ```bash
-until curl -sf http://127.0.0.1:2379/pd/api/v1/version >/dev/null; do sleep 1; done
+PD_ADDR=127.0.0.1:2379
+curl -f "http://${PD_ADDR}/pd/api/v1/version"
+until curl -sf "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; do sleep 1; done
 ```
 
 #### 2. Enable Failpoint (if needed)
@@ -207,6 +217,13 @@ make failpoint-enable && (
 go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/...
 ```
 
+If you use a non-default PD address, pass it via `-args -tikv-path`:
+
+```bash
+go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/... -args \
+  -tikv-path "tikv://127.0.0.1:12379?disableGC=true"
+```
+
 **Note**: Do not add `-v` by default to avoid excessive log output. Only add `-v` when debugging.
 
 #### 4. Cleanup
@@ -224,7 +241,8 @@ tiup clean --all
 Verify stopped (should fail to connect):
 
 ```bash
-curl -f http://127.0.0.1:2379/pd/api/v1/version
+PD_ADDR=127.0.0.1:2379
+curl -f "http://${PD_ADDR}/pd/api/v1/version"
 ```
 
 #### Key Tips
