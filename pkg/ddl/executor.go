@@ -4096,12 +4096,30 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 	if tb.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Rename Index"))
 	}
-	duplicate, err := ValidateRenameIndex(spec.FromKey, spec.ToKey, tb.Meta())
+
+	// In multi-schema change, later specs should be validated based on the intermediate result
+	// of previous specs in the same ALTER TABLE statement (e.g. rename chains like i1->i, i2->i1).
+	// We keep a working TableInfo clone in StatementContext to simulate sequential changes.
+	tblInfoForValidate := tb.Meta()
+	mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo
+	if mci != nil {
+		if mci.WorkingTableInfo == nil {
+			mci.WorkingTableInfo = tb.Meta().Clone()
+		}
+		tblInfoForValidate = mci.WorkingTableInfo
+	}
+	duplicate, err := ValidateRenameIndex(spec.FromKey, spec.ToKey, tblInfoForValidate)
 	if duplicate {
 		return nil
 	}
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if mci != nil && mci.WorkingTableInfo != nil {
+		// Apply the rename to the working copy so subsequent validations see the new name.
+		if idx := mci.WorkingTableInfo.FindIndexByName(spec.FromKey.L); idx != nil {
+			idx.Name = spec.ToKey
+		}
 	}
 
 	job := &model.Job{

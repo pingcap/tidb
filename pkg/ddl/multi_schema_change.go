@@ -245,9 +245,12 @@ func fillMultiSchemaInfo(info *model.MultiSchemaInfo, job *JobWrapper) error {
 		}
 	case model.ActionRenameIndex:
 		args := job.JobArgs.(*model.ModifyIndexArgs)
-		from, to := args.GetRenameIndexes()
-		info.AddIndexes = append(info.AddIndexes, from)
-		info.DropIndexes = append(info.DropIndexes, to)
+		from, _ := args.GetRenameIndexes()
+		// For RENAME INDEX, we treat it as an "alter" operation on the source index name.
+		// The target name will be validated/checked separately to allow rename chains like:
+		//   rename i1->i, rename i2->i1
+		// which is supported by MySQL 8.0.
+		info.AlterIndexes = append(info.AlterIndexes, from)
 	case model.ActionModifyColumn:
 		args := job.JobArgs.(*model.ModifyColumnArgs)
 		newCol, oldColName, pos := args.Column, args.OldColumnName, args.Position
@@ -439,6 +442,13 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 		return err
 	}
 
+	// Keep the historical behavior: disallow mixing ADD/DROP INDEX with RENAME INDEX when
+	// the rename target conflicts with added/dropped index names. This avoids ambiguous
+	// semantics due to job merging/reordering in multi-schema change.
+	if err := checkRenameIndexTargetsConflictWithAddDrop(info); err != nil {
+		return err
+	}
+
 	err = checkVisibleColumnCnt(t, len(info.AddColumns), len(info.DropColumns))
 	if err != nil {
 		return err
@@ -450,6 +460,41 @@ func checkMultiSchemaInfo(info *model.MultiSchemaInfo, t table.Table) error {
 	}
 
 	return checkAddColumnTooManyColumns(len(t.Cols()) + len(info.AddColumns) - len(info.DropColumns))
+}
+
+func checkRenameIndexTargetsConflictWithAddDrop(info *model.MultiSchemaInfo) error {
+	if info == nil || len(info.SubJobs) == 0 {
+		return nil
+	}
+	// Only care about conflicts with ADD/DROP INDEX names to preserve existing restrictions.
+	add := make(map[string]struct{}, len(info.AddIndexes))
+	for _, n := range info.AddIndexes {
+		add[n.L] = struct{}{}
+	}
+	drop := make(map[string]struct{}, len(info.DropIndexes))
+	for _, n := range info.DropIndexes {
+		drop[n.L] = struct{}{}
+	}
+	if len(add) == 0 && len(drop) == 0 {
+		return nil
+	}
+	for _, sub := range info.SubJobs {
+		if sub == nil || sub.Type != model.ActionRenameIndex || sub.JobArgs == nil {
+			continue
+		}
+		args, ok := sub.JobArgs.(*model.ModifyIndexArgs)
+		if !ok {
+			continue
+		}
+		_, to := args.GetRenameIndexes()
+		if _, ok := add[to.L]; ok {
+			return dbterror.ErrOperateSameIndex.GenWithStackByArgs(to.L)
+		}
+		if _, ok := drop[to.L]; ok {
+			return dbterror.ErrOperateSameIndex.GenWithStackByArgs(to.L)
+		}
+	}
+	return nil
 }
 
 func appendMultiChangeWarningsToOwnerCtx(ctx sessionctx.Context, job *model.Job) {
