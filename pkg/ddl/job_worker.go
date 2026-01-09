@@ -444,7 +444,6 @@ func (w *worker) finishDDLJob(jobCtx *jobContext, job *model.Job) (err error) {
 		updateRawArgs = false
 	}
 	job.SeqNum = w.seqAllocator.Add(1)
-	ClearTempIndexOpsMetricsForJob(metaMut, job)
 	w.removeJobCtx(job)
 	failpoint.InjectCall("afterFinishDDLJob", job)
 	err = AddHistoryDDLJob(w.workCtx, w.sess, metaMut, job, updateRawArgs)
@@ -505,39 +504,6 @@ var DDLBackfillers = map[model.ActionType]string{
 	model.ActionModifyColumn:        "modify_column",
 	model.ActionDropIndex:           "drop_index",
 	model.ActionReorganizePartition: "reorganize_partition",
-}
-
-// ClearTempIndexOpsMetricsForJob clears the TempIndex merge metrics for a DDL job.
-// It is called after the job is finished (done/cancelled/rollback done).
-func ClearTempIndexOpsMetricsForJob(metaMut *meta.Mutator, job *model.Job) {
-	switch job.Type {
-	case model.ActionAddIndex, model.ActionModifyColumn:
-		// continue to clear metrics
-	case model.ActionMultiSchemaChange:
-		for i, sub := range job.MultiSchemaInfo.SubJobs {
-			proxyJob := sub.ToProxyJob(job, i)
-			ClearTempIndexOpsMetricsForJob(metaMut, &proxyJob)
-		}
-		return
-	default:
-		return
-	}
-
-	idsToClear := make(map[int64]struct{}, 4)
-	idsToClear[job.TableID] = struct{}{}
-
-	if tblInfo, err := GetTableInfoAndCancelFaultJob(
-		metaMut, job, job.SchemaID); err == nil {
-		if tblInfo.GetPartitionInfo() != nil {
-			for _, def := range tblInfo.Partition.Definitions {
-				idsToClear[def.ID] = struct{}{}
-			}
-		}
-	}
-
-	for physicalID := range idsToClear {
-		metrics.DDLClearTempIndexOps(physicalID)
-	}
 }
 
 func getDDLRequestSource(jobType model.ActionType) string {
