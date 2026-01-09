@@ -1373,7 +1373,8 @@ func (local *Backend) ImportEngine(
 	intest.Assert(len(splitKeys) > 0)
 	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
+	if !ticiWriteEnabled && kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
+		// TiCI-only writes do not ingest into TiKV, so skip side effects like forced splits.
 		tidblogutil.Logger(ctx).Info("force table split range",
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))
@@ -1385,7 +1386,8 @@ func (local *Backend) ImportEngine(
 		defer removeTableSplitRange()
 	}
 
-	if local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+	if !ticiWriteEnabled && local.PausePDSchedulerScope == config.PausePDSchedulerScopeTable {
+		// TiCI-only writes should not pause PD schedulers for TiKV ingest.
 		tidblogutil.Logger(ctx).Info("pause pd scheduler of table scope")
 		subCtx, cancel := context.WithCancel(ctx)
 		defer cancel()
@@ -1407,7 +1409,8 @@ func (local *Backend) ImportEngine(
 		}()
 	}
 
-	if local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+	if !ticiWriteEnabled && local.BackendConfig.RaftKV2SwitchModeDuration > 0 {
+		// TiCI-only writes bypass TiKV ingest, so avoid switching RaftKV2 import mode.
 		tidblogutil.Logger(ctx).Info("switch import mode of ranges",
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))

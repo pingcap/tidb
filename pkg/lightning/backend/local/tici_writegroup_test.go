@@ -16,6 +16,7 @@ package local
 
 import (
 	"context"
+	"slices"
 
 	sst "github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/tidb/pkg/tici"
@@ -25,6 +26,8 @@ type mockTiCIWriteGroup struct {
 	createCount          int
 	writePairsCount      int
 	finishPartitionCount int
+	lastLowerBound       []byte
+	lastUpperBound       []byte
 }
 
 func (m *mockTiCIWriteGroup) CreateFileWriter(_ context.Context) (*tici.FileWriter, error) {
@@ -45,8 +48,10 @@ func (*mockTiCIWriteGroup) CloseFileWriters(_ context.Context, _ *tici.FileWrite
 	return nil
 }
 
-func (m *mockTiCIWriteGroup) FinishPartitionUpload(_ context.Context, _ *tici.FileWriter, _, _ []byte) error {
+func (m *mockTiCIWriteGroup) FinishPartitionUpload(_ context.Context, _ *tici.FileWriter, lowerBound, upperBound []byte) error {
 	m.finishPartitionCount++
+	m.lastLowerBound = slices.Clone(lowerBound)
+	m.lastUpperBound = slices.Clone(upperBound)
 	return nil
 }
 

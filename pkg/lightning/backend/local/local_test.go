@@ -1144,6 +1144,44 @@ func TestLocalDoWriteTiCIOnly(t *testing.T) {
 	require.Zero(t, createCalled)
 }
 
+func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
+	ticiGroup := &mockTiCIWriteGroup{}
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
+		},
+		logger:              log.L(),
+		writeLimiter:        newStoreWriteLimiter(0),
+		importClientFactory: &mockImportClientFactory{},
+		tikvCodec:           keyspace.CodecV1,
+		ticiWriteGroup:      ticiGroup,
+	}
+	var err error
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	require.NoError(t, err)
+
+	job := &regionJob{
+		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
+		stage:            regionScanned,
+		ingestData:       mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("b"), []byte("b")}, {[]byte("c"), []byte("c")}, {[]byte("d"), []byte("d")}},
+		region:           dummyRegionInfo,
+		regionSplitSize:  int64(config.SplitRegionSize),
+		regionSplitKeys:  2,
+		ticiWriteEnabled: true,
+	}
+
+	res, err := local.doWrite(context.Background(), job)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, []byte("c"), res.remainingStartKey)
+	require.Equal(t, []byte("a"), ticiGroup.lastLowerBound)
+	require.Equal(t, []byte("b"), ticiGroup.lastUpperBound)
+	require.Less(t, bytes.Compare(ticiGroup.lastUpperBound, res.remainingStartKey), 0)
+}
+
 // mockIngestData must be ordered on the first element of each [2][]byte.
 // there cannot be duplicated items.
 type mockIngestData [][2][]byte

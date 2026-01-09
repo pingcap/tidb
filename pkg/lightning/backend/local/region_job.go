@@ -470,8 +470,10 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		defer iter.Close()
 
 		var remainingStartKey []byte
+		var lastWrittenKey []byte
 		for iter.First(); iter.Valid(); iter.Next() {
 			k, v := iter.Key(), iter.Value()
+			lastWrittenKey = slices.Clone(k)
 			kvSize := int64(len(k) + len(v))
 			if count < len(pairs) {
 				pairs[count].Key = k
@@ -520,7 +522,13 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		if err := ticiWriteGroup.CloseFileWriters(ctx, ticiFileWriter); err != nil {
 			return nil, errors.Annotate(err, "failed to close tici file writer")
 		}
-		if err := ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, lastKey); err != nil {
+		// Use the actual last written key to report the uploaded key-range so that
+		// TiCI does not observe overlapping or discontinuous ranges on partial writes.
+		upperBound := lastKey
+		if lastWrittenKey != nil {
+			upperBound = lastWrittenKey
+		}
+		if err := ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, upperBound); err != nil {
 			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")
 		}
 
