@@ -237,7 +237,7 @@ func (j *baseJoinProbe) SetChunkForProbe(chk *chunk.Chunk) (err error) {
 		}
 	}
 	if cap(j.serializedKeys) >= logicalRows {
-		clear(j.serializedKeys[:])
+		clear(j.serializedKeys)
 		j.serializedKeys = j.serializedKeys[:logicalRows]
 	} else {
 		j.serializedKeys = make([][]byte, logicalRows)
