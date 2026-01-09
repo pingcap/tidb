@@ -1,0 +1,6 @@
+create table t (id int primary key, v int) active_active='on' softdelete retention 7 day;
+alter table t cache;
+Error 8200 (HY000): Unsupported Cached table can not work with active-active feature
+drop table t;
+create table t (id int primary key, v int) softdelete retention 7 day;
+alter table t cache;
