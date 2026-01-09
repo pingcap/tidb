@@ -1,14 +1,13 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package utils_test
+package gc_test
 
 import (
 	"context"
-	"math"
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/stretchr/testify/require"
 	pd "github.com/tikv/pd/client"
 )
@@ -17,62 +16,21 @@ func TestCheckGCSafepoint(t *testing.T) {
 	ctx := context.Background()
 	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 2333+1)
+		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 2333+1)
 		require.NoError(t, err)
 	}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 2333)
+		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 2333)
 		require.Error(t, err)
 	}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 2333-1)
+		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 2333-1)
 		require.Error(t, err)
 	}
 	{
-		err := utils.CheckGCSafePoint(ctx, pdClient, 0)
+		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 0)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "GC safepoint 2333 exceed TS 0")
-	}
-}
-
-func TestCheckUpdateServiceSafepoint(t *testing.T) {
-	ctx := context.Background()
-	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
-	{
-		// nothing happened, because current safepoint is large than servicee safepoint.
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
-			"BR_SERVICE",
-			1,
-			1,
-		})
-		require.NoError(t, err)
-		curSafePoint, err := pdClient.UpdateGCSafePoint(ctx, 0)
-		require.NoError(t, err)
-		require.Equal(t, uint64(2333), curSafePoint)
-	}
-	{
-		// register br service safepoint
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
-			"BR_SERVICE",
-			1,
-			2334,
-		})
-		require.NoError(t, err)
-		curSafePoint, find := pdClient.GetServiceSafePoint("BR_SERVICE")
-		// update with new safepoint - 1.
-		require.Equal(t, uint64(2333), curSafePoint)
-		require.True(t, find)
-	}
-	{
-		// remove br service safepoint
-		err := utils.UpdateServiceSafePoint(ctx, pdClient, utils.BRServiceSafePoint{
-			"BR_SERVICE",
-			0,
-			math.MaxUint64,
-		})
-		require.NoError(t, err)
-		_, find := pdClient.GetServiceSafePoint("BR_SERVICE")
-		require.False(t, find)
 	}
 }
 
@@ -82,13 +40,6 @@ type mockSafePoint struct {
 	services            map[string]uint64
 	safepoint           uint64
 	minServiceSafepoint uint64
-}
-
-func (m *mockSafePoint) GetServiceSafePoint(serviceID string) (uint64, bool) {
-	m.Lock()
-	defer m.Unlock()
-	safepoint, ok := m.services[serviceID]
-	return safepoint, ok
 }
 
 func (m *mockSafePoint) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
@@ -120,15 +71,35 @@ func (m *mockSafePoint) UpdateGCSafePoint(ctx context.Context, safePoint uint64)
 	return m.safepoint, nil
 }
 
-func TestStartServiceSafePointKeeper(t *testing.T) {
+// mockGCManager implements gc.Manager for testing
+type mockGCManager struct {
+	pdClient *mockSafePoint
+}
+
+func (m *mockGCManager) GetGCSafePoint(ctx context.Context) (uint64, error) {
+	return m.pdClient.UpdateGCSafePoint(ctx, 0)
+}
+
+func (m *mockGCManager) SetServiceSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
+	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
+	return err
+}
+
+func (m *mockGCManager) DeleteServiceSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
+	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, 0, 0)
+	return err
+}
+
+func TestStartKeeperWithManager(t *testing.T) {
 	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
+	mgr := &mockGCManager{pdClient: pdClient}
 
 	cases := []struct {
-		sp utils.BRServiceSafePoint
+		sp gc.BRServiceSafePoint
 		ok bool
 	}{
 		{
-			utils.BRServiceSafePoint{
+			gc.BRServiceSafePoint{
 				ID:       "br",
 				TTL:      10,
 				BackupTS: 2333 + 1,
@@ -138,7 +109,7 @@ func TestStartServiceSafePointKeeper(t *testing.T) {
 
 		// Invalid TTL.
 		{
-			utils.BRServiceSafePoint{
+			gc.BRServiceSafePoint{
 				ID:       "br",
 				TTL:      0,
 				BackupTS: 2333 + 1,
@@ -147,7 +118,7 @@ func TestStartServiceSafePointKeeper(t *testing.T) {
 
 		// Invalid ID.
 		{
-			utils.BRServiceSafePoint{
+			gc.BRServiceSafePoint{
 				ID:       "",
 				TTL:      0,
 				BackupTS: 2333 + 1,
@@ -157,14 +128,14 @@ func TestStartServiceSafePointKeeper(t *testing.T) {
 
 		// BackupTS is too small.
 		{
-			utils.BRServiceSafePoint{
+			gc.BRServiceSafePoint{
 				ID:       "br",
 				TTL:      10,
 				BackupTS: 2333,
 			}, false,
 		},
 		{
-			utils.BRServiceSafePoint{
+			gc.BRServiceSafePoint{
 				ID:       "br",
 				TTL:      10,
 				BackupTS: 2333 - 1,
@@ -174,7 +145,7 @@ func TestStartServiceSafePointKeeper(t *testing.T) {
 	}
 	for i, cs := range cases {
 		ctx, cancel := context.WithCancel(context.Background())
-		err := utils.StartServiceSafePointKeeper(ctx, pdClient, cs.sp)
+		err := gc.StartKeeperWithManager(ctx, cs.sp, mgr)
 		if cs.ok {
 			require.NoErrorf(t, err, "case #%d, %v", i, cs)
 		} else {

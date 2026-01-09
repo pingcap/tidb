@@ -435,13 +435,13 @@ func (s *streamMgr) checkImportTaskRunning(ctx context.Context, etcdCLI *clientv
 
 // setGCSafePoint sets the server safe point to PD.
 func (s *streamMgr) setGCSafePoint(ctx context.Context, sp utils.BRServiceSafePoint) error {
-	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), sp.BackupTS)
+	err := utils.CheckGCSafePoint(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp.BackupTS)
 	if err != nil {
 		return errors.Annotatef(err,
 			"failed to check gc safePoint, ts %v", sp.BackupTS)
 	}
 
-	err = utils.UpdateServiceSafePoint(ctx, s.mgr.GetPDClient(), sp)
+	err = utils.SetServiceSafePoint(ctx, s.mgr.GetPDClient(), s.mgr.GetStorage(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -928,7 +928,7 @@ func RunStreamResume(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	err = utils.CheckGCSafePoint(ctx, streamMgr.mgr.GetPDClient(), globalCheckPointTS)
+	err = utils.CheckGCSafePoint(ctx, streamMgr.mgr.GetPDClient(), streamMgr.mgr.GetStorage(), globalCheckPointTS)
 	if err != nil {
 		return errors.Annotatef(err, "the global checkpoint ts: %v(%s) has been gc. ",
 			globalCheckPointTS, oracle.GetTimeFromTS(globalCheckPointTS))
