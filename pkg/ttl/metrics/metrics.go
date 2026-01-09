@@ -23,12 +23,12 @@ import (
 )
 
 const (
-	SQLTypeSelect = "select"
-	SQLTypeDelete = "delete"
+	SQLTypeSelect    = "select"
+	SQLTypeDelete    = "delete"
 	JobStatusRunning = "running"
-	JobStatusCancel = "cancelling"
-	TaskStatusScan = "scanning"
-	TaskStatusDel = "deleting"
+	JobStatusCancel  = "cancelling"
+	TaskStatusScan   = "scanning"
+	TaskStatusDel    = "deleting"
 )
 
 // Phases to trace
