@@ -23,13 +23,13 @@ import (
 // Buffer a compressed buffer.
 type Buffer struct {
 	*bytes.Buffer
-	compressWriter Writer
-	cap            int
+	writer Writer
+	cap    int
 }
 
 // Write implements objectio.interceptBuffer.
 func (b *Buffer) Write(p []byte) (int, error) {
-	written, err := b.compressWriter.Write(p)
+	written, err := b.writer.Write(p)
 	return written, errors.Trace(err)
 }
 
@@ -50,12 +50,12 @@ func (b *Buffer) Reset() {
 
 // Flush implements objectio.interceptBuffer.
 func (b *Buffer) Flush() error {
-	return b.compressWriter.Flush()
+	return b.writer.Flush()
 }
 
 // Close implements objectio.interceptBuffer.
 func (b *Buffer) Close() error {
-	return b.compressWriter.Close()
+	return b.writer.Close()
 }
 
 // Compressed implements objectio.interceptBuffer.
@@ -67,8 +67,8 @@ func (*Buffer) Compressed() bool {
 func NewBuffer(chunkSize int, compressType CompressType) *Buffer {
 	bf := bytes.NewBuffer(make([]byte, 0, chunkSize))
 	return &Buffer{
-		Buffer:         bf,
-		cap:            chunkSize,
-		compressWriter: NewWriter(compressType, bf),
+		Buffer: bf,
+		cap:    chunkSize,
+		writer: NewWriter(compressType, bf),
 	}
 }

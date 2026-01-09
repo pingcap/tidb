@@ -44,29 +44,29 @@ type interceptBuffer interface {
 
 func newInterceptBuffer(chunkSize int, compressType compressedio.CompressType) interceptBuffer {
 	if compressType == compressedio.NoCompression {
-		return newNoCompressionBuffer(chunkSize)
+		return newPlainBuffer(chunkSize)
 	}
 	return compressedio.NewBuffer(chunkSize, compressType)
 }
 
-type noCompressionBuffer struct {
+type plainBuffer struct {
 	*bytes.Buffer
 }
 
-func (*noCompressionBuffer) Flush() error {
+func (*plainBuffer) Flush() error {
 	return nil
 }
 
-func (*noCompressionBuffer) Close() error {
+func (*plainBuffer) Close() error {
 	return nil
 }
 
-func (*noCompressionBuffer) Compressed() bool {
+func (*plainBuffer) Compressed() bool {
 	return false
 }
 
-func newNoCompressionBuffer(chunkSize int) *noCompressionBuffer {
-	return &noCompressionBuffer{bytes.NewBuffer(make([]byte, 0, chunkSize))}
+func newPlainBuffer(chunkSize int) *plainBuffer {
+	return &plainBuffer{bytes.NewBuffer(make([]byte, 0, chunkSize))}
 }
 
 // BufferedWriter is a buffered writer
