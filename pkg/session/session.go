@@ -3211,10 +3211,9 @@ func (s *session) Close() {
 	if s.sessionVars.ConnectionID != 0 {
 		memory.RemovePoolFromGlobalMemArbitrator(s.sessionVars.ConnectionID)
 	}
-	// Detach session trackers to prevent memory leaks when the session
-	// is closed right after ANALYZE statements. ANALYZE attaches the session's
-	// MemTracker to GlobalAnalyzeMemoryTracker, and without detachment,
-	// the global tracker retains references to closed sessions.
+	// Detach session trackers as part of the session cleanup workflow.
+	// ANALYZE statements attach the session's MemTracker to GlobalAnalyzeMemoryTracker,
+	// and proper detachment ensures that closed sessions can be garbage collected.
 	if s.sessionVars.MemTracker != nil {
 		s.sessionVars.MemTracker.Detach()
 	}
