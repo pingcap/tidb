@@ -1086,7 +1086,12 @@ func TestS3ReaderResetRetry(t *testing.T) {
 	// ^ we just want some random bytes for testing, we don't care about its security.
 
 	mockReader := &failEvenReadReader{r: bytes.NewReader(someRandomBytes)}
-	s.expectedCalls(t, someRandomBytes, []int{0, 0, 20, 40, 60, 80}, func([]byte, int) io.ReadCloser { return io.NopCloser(mockReader) })
+	s.expectedCalls(
+		t,
+		someRandomBytes,
+		[]int{0, 0, 20, 40, 60, 80},
+		func([]byte, int) io.ReadCloser { return io.NopCloser(mockReader) },
+	)
 
 	reader, err := s.storage.Open(ctx, "random", nil)
 	require.NoError(t, err)
