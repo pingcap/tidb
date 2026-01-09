@@ -513,7 +513,7 @@ func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 		mu:                   &stmtCtxMu{},
 		stmtCache:            &stmtCache{},
 		StaleTSOProvider:     &staleTSOProvider{},
-		MatchSQLBindingCache: make(map[ast.StmtNode]any, 1),
+		MatchSQLBindingCache: nil,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)
