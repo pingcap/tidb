@@ -1,156 +1,133 @@
-// Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
+// Copyright 2025 PingCAP, Inc. Licensed under Apache-2.0.
 
 package gc_test
 
 import (
-	"context"
+	"regexp"
 	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"go.uber.org/zap/zaptest/observer"
 )
 
-func TestCheckGCSafepoint(t *testing.T) {
-	ctx := context.Background()
-	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
-	{
-		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 2333+1)
+func TestMakeSafePointID(t *testing.T) {
+	t.Run("Format", func(t *testing.T) {
+		id := gc.MakeSafePointID()
+
+		// Should match "br-{uuid}" pattern
+		// UUID format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+		pattern := `^br-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`
+		matched, err := regexp.MatchString(pattern, id)
 		require.NoError(t, err)
-	}
-	{
-		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 2333)
-		require.Error(t, err)
-	}
-	{
-		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 2333-1)
-		require.Error(t, err)
-	}
-	{
-		err := gc.CheckGCSafePoint(ctx, pdClient, nil, 0)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "GC safepoint 2333 exceed TS 0")
-	}
-}
+		require.True(t, matched, "ID %q should match pattern %q", id, pattern)
+	})
 
-type mockSafePoint struct {
-	sync.Mutex
-	pd.Client
-	services            map[string]uint64
-	safepoint           uint64
-	minServiceSafepoint uint64
-}
+	t.Run("Uniqueness", func(t *testing.T) {
+		ids := make(map[string]bool)
+		count := 100
 
-func (m *mockSafePoint) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
-	m.Lock()
-	defer m.Unlock()
-
-	if ttl <= 0 {
-		delete(m.services, serviceID)
-		return 0, nil
-	}
-
-	if m.safepoint > safePoint {
-		return m.safepoint, nil
-	}
-	if m.minServiceSafepoint == 0 || m.minServiceSafepoint > safePoint {
-		m.minServiceSafepoint = safePoint
-	}
-	m.services[serviceID] = safePoint
-	return m.minServiceSafepoint, nil
-}
-
-func (m *mockSafePoint) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
-	m.Lock()
-	defer m.Unlock()
-
-	if m.safepoint < safePoint && safePoint < m.minServiceSafepoint {
-		m.safepoint = safePoint
-	}
-	return m.safepoint, nil
-}
-
-// mockGCManager implements gc.Manager for testing
-type mockGCManager struct {
-	pdClient *mockSafePoint
-}
-
-func (m *mockGCManager) GetGCSafePoint(ctx context.Context) (uint64, error) {
-	return m.pdClient.UpdateGCSafePoint(ctx, 0)
-}
-
-func (m *mockGCManager) SetServiceSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
-	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
-	return err
-}
-
-func (m *mockGCManager) DeleteServiceSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
-	_, err := m.pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, 0, 0)
-	return err
-}
-
-func TestStartKeeperWithManager(t *testing.T) {
-	pdClient := &mockSafePoint{safepoint: 2333, services: make(map[string]uint64)}
-	mgr := &mockGCManager{pdClient: pdClient}
-
-	cases := []struct {
-		sp gc.BRServiceSafePoint
-		ok bool
-	}{
-		{
-			gc.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      10,
-				BackupTS: 2333 + 1,
-			},
-			true,
-		},
-
-		// Invalid TTL.
-		{
-			gc.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      0,
-				BackupTS: 2333 + 1,
-			}, false,
-		},
-
-		// Invalid ID.
-		{
-			gc.BRServiceSafePoint{
-				ID:       "",
-				TTL:      0,
-				BackupTS: 2333 + 1,
-			},
-			false,
-		},
-
-		// BackupTS is too small.
-		{
-			gc.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      10,
-				BackupTS: 2333,
-			}, false,
-		},
-		{
-			gc.BRServiceSafePoint{
-				ID:       "br",
-				TTL:      10,
-				BackupTS: 2333 - 1,
-			},
-			false,
-		},
-	}
-	for i, cs := range cases {
-		ctx, cancel := context.WithCancel(context.Background())
-		err := gc.StartKeeperWithManager(ctx, cs.sp, mgr)
-		if cs.ok {
-			require.NoErrorf(t, err, "case #%d, %v", i, cs)
-		} else {
-			require.Errorf(t, err, "case #%d, %v", i, cs)
+		for i := 0; i < count; i++ {
+			id := gc.MakeSafePointID()
+			require.False(t, ids[id], "duplicate ID generated: %s", id)
+			ids[id] = true
 		}
-		cancel()
-	}
+	})
+
+	t.Run("Concurrent_Uniqueness", func(t *testing.T) {
+		var mu sync.Mutex
+		ids := make(map[string]bool)
+		count := 100
+
+		var wg sync.WaitGroup
+		for i := 0; i < count; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				id := gc.MakeSafePointID()
+				mu.Lock()
+				defer mu.Unlock()
+				require.False(t, ids[id], "duplicate ID generated: %s", id)
+				ids[id] = true
+			}()
+		}
+		wg.Wait()
+	})
+}
+
+func TestBRServiceSafePoint_MarshalLogObject(t *testing.T) {
+	t.Run("NormalValues", func(t *testing.T) {
+		sp := gc.BRServiceSafePoint{
+			ID:       "br-test-id",
+			TTL:      300,
+			BackupTS: 1000,
+		}
+
+		core, logs := observer.New(zapcore.InfoLevel)
+		logger := zap.New(core)
+
+		logger.Info("test", zap.Object("safepoint", sp))
+
+		require.Equal(t, 1, logs.Len())
+		entry := logs.All()[0]
+
+		// Check the context fields
+		fields := entry.ContextMap()
+		spFields, ok := fields["safepoint"].(map[string]interface{})
+		require.True(t, ok, "safepoint field should be a map")
+
+		require.Equal(t, "br-test-id", spFields["ID"])
+		require.Equal(t, "5m0s", spFields["TTL"]) // 300 seconds = 5m0s
+		require.Equal(t, uint64(1000), spFields["BackupTS"])
+	})
+
+	t.Run("ZeroValues", func(t *testing.T) {
+		sp := gc.BRServiceSafePoint{
+			ID:       "",
+			TTL:      0,
+			BackupTS: 0,
+		}
+
+		core, logs := observer.New(zapcore.InfoLevel)
+		logger := zap.New(core)
+
+		// Should not panic
+		logger.Info("test", zap.Object("safepoint", sp))
+
+		require.Equal(t, 1, logs.Len())
+		entry := logs.All()[0]
+
+		fields := entry.ContextMap()
+		spFields, ok := fields["safepoint"].(map[string]interface{})
+		require.True(t, ok, "safepoint field should be a map")
+
+		require.Equal(t, "", spFields["ID"])
+		require.Equal(t, "0s", spFields["TTL"])
+		require.Equal(t, uint64(0), spFields["BackupTS"])
+	})
+
+	t.Run("LargeTTL", func(t *testing.T) {
+		sp := gc.BRServiceSafePoint{
+			ID:       "br-test",
+			TTL:      86400, // 24 hours
+			BackupTS: 1000,
+		}
+
+		core, logs := observer.New(zapcore.InfoLevel)
+		logger := zap.New(core)
+
+		logger.Info("test", zap.Object("safepoint", sp))
+
+		require.Equal(t, 1, logs.Len())
+		entry := logs.All()[0]
+
+		fields := entry.ContextMap()
+		spFields, ok := fields["safepoint"].(map[string]interface{})
+		require.True(t, ok)
+
+		require.Equal(t, "24h0m0s", spFields["TTL"])
+	})
 }
