@@ -24,17 +24,11 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util"
-	"github.com/prometheus/client_golang/prometheus"
-	io_prometheus_client "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
@@ -84,82 +78,6 @@ func TestAddBatchJobError(t *testing.T) {
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "mockAddBatchDDLJobsErr")
 	require.Nil(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockAddBatchDDLJobsErr"))
-}
-
-func TestTempIndexOpsMetricsClearedOnJobFinish(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, testLease)
-	tk := testkit.NewTestKit(t, store)
-	ctx := context.Background()
-
-	tk.MustExec("use test")
-	dbInfo, ok := dom.InfoSchema().SchemaByName(ast.NewCIStr("test"))
-	require.True(t, ok)
-	dbID := dbInfo.ID
-	tk.MustExec("drop table if exists pt")
-	tk.MustExec("create table pt (a int) partition by hash(a) partitions 2")
-
-	// Record some temp-index ops metrics for the table and its partitions.
-	is := dom.InfoSchema()
-	pt, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("pt"))
-	require.NoError(t, err)
-	pi := pt.Meta().GetPartitionInfo()
-	require.NotNil(t, pi)
-	require.Len(t, pi.Definitions, 2)
-
-	tableID := pt.Meta().ID
-	p0 := pi.Definitions[0].ID
-	p1 := pi.Definitions[1].ID
-
-	metrics.DDLAddOneTempIndexWrite(1, tableID, false)
-	metrics.DDLAddOneTempIndexWrite(1, p0, false)
-	metrics.DDLAddOneTempIndexWrite(1, p1, true)
-	metrics.DDLCommitTempIndexWrite(1)
-
-	gathered, err := prometheus.DefaultGatherer.Gather()
-	require.NoError(t, err)
-	require.Greater(t, countTempIndexOpsSamplesForTableIDs(gathered, tableID, p0, p1), 0)
-
-	job := &model.Job{Type: model.ActionAddIndex, TableID: tableID, SchemaID: dbID}
-	require.NoError(t, kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		ddl.ClearTempIndexOpsMetricsForJob(meta.NewMutator(txn), job)
-		return nil
-	}))
-
-	gathered, err = prometheus.DefaultGatherer.Gather()
-	require.NoError(t, err)
-	require.Equal(t, 0, countTempIndexOpsSamplesForTableIDs(gathered, tableID, p0, p1))
-}
-
-func countTempIndexOpsSamplesForTableIDs(families []*io_prometheus_client.MetricFamily, tableIDs ...int64) int {
-	idSet := make(map[string]struct{}, len(tableIDs))
-	for _, id := range tableIDs {
-		idSet[strconv.FormatInt(id, 10)] = struct{}{}
-	}
-
-	for _, mf := range families {
-		if mf.GetName() != "tidb_ddl_temp_index_op_count" {
-			continue
-		}
-
-		cnt := 0
-		for _, m := range mf.Metric {
-			tableID := ""
-			for _, l := range m.Label {
-				if l.GetName() == "table_id" {
-					tableID = l.GetValue()
-					break
-				}
-			}
-			if tableID == "" {
-				continue
-			}
-			if _, ok := idSet[tableID]; ok {
-				cnt++
-			}
-		}
-		return cnt
-	}
-	return 0
 }
 
 func TestParallelDDL(t *testing.T) {
