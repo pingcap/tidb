@@ -1826,10 +1826,14 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		}
 		if path.IsTablePath() {
 			// prefer tiflash, while current table path is tikv, skip it.
+			// Besides, if we are accessing the ExtraCommitTS column, we allow to choose TiKV path even if TiFlash path
+			// is explicitly preferred.
 			if ds.PreferStoreType&h.PreferTiFlash != 0 && path.StoreType == kv.TiKV && !accessCommitTSCol {
 				continue
 			}
 			// prefer tikv, while current table path is tiflash, skip it.
+			// Besides, if we are accessing the ExtraCommitTS column, we avoid choosing TiFlash path as if TiKV path
+			// is preferred.
 			if (ds.PreferStoreType&h.PreferTiKV != 0 || accessCommitTSCol) && path.StoreType == kv.TiFlash {
 				continue
 			}
