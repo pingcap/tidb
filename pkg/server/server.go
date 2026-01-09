@@ -908,6 +908,19 @@ func (s *Server) Kill(connectionID uint64, query bool, maxExecutionTime bool) {
 		// Mark the client connection status as WaitShutdown, when clientConn.Run detect
 		// this, it will end the dispatch loop and exit.
 		conn.setStatus(connStatusWaitShutdown)
+<<<<<<< HEAD
+=======
+		if conn.bufReadConn != nil {
+			// When attempting to 'kill connection' and TiDB is stuck in the network stack while writing packets,
+			// we can quickly exit the network stack and terminate the SQL execution by setting WriteDeadline.
+			if err := conn.bufReadConn.SetWriteDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting write deadline for kill.", zap.Error(err))
+			}
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
+		}
+>>>>>>> 579d0c569dd (server: fix `kill query` incorrectly killing idle connections (#65464))
 	}
 	killQuery(conn, maxExecutionTime)
 }
@@ -936,11 +949,15 @@ func killQuery(conn *clientConn, maxExecutionTime bool) {
 	if cancelFunc != nil {
 		cancelFunc()
 	}
+<<<<<<< HEAD
 	if conn.bufReadConn != nil {
 		if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
 			logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
 		}
 	}
+=======
+	sessVars.SQLKiller.FinishResultSet()
+>>>>>>> 579d0c569dd (server: fix `kill query` incorrectly killing idle connections (#65464))
 }
 
 // KillSysProcesses kill sys processes such as auto analyze.
@@ -966,7 +983,16 @@ func (s *Server) KillAllConnections() {
 		if err := conn.closeWithoutLock(); err != nil {
 			terror.Log(err)
 		}
+<<<<<<< HEAD
 		killQuery(conn, false)
+=======
+		if conn.bufReadConn != nil {
+			if err := conn.bufReadConn.SetReadDeadline(time.Now()); err != nil {
+				logutil.BgLogger().Warn("error setting read deadline for kill.", zap.Error(err))
+			}
+		}
+		killQuery(conn, false, false)
+>>>>>>> 579d0c569dd (server: fix `kill query` incorrectly killing idle connections (#65464))
 	}
 
 	s.KillSysProcesses()
