@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package objstore
+package s3store
 
 import (
 	"bytes"
@@ -49,8 +49,9 @@ var (
 )
 
 const (
-	// ks3 sdk does not expose context, we use hardcoded timeout for network request
-	ks3SDKProvider = "ks3-sdk"
+	// KS3SDKProvider ks3 sdk does not expose context, we use hardcoded timeout
+	// for network request
+	KS3SDKProvider = "ks3-sdk"
 )
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.

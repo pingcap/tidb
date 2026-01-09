@@ -24,14 +24,15 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
-	S3     S3BackendOptions     `json:"s3" toml:"s3"`
-	GCS    GCSBackendOptions    `json:"gcs" toml:"gcs"`
-	Azblob AzblobBackendOptions `json:"azblob" toml:"azblob"`
+	S3     s3store.S3BackendOptions `json:"s3" toml:"s3"`
+	GCS    GCSBackendOptions        `json:"gcs" toml:"gcs"`
+	Azblob AzblobBackendOptions     `json:"azblob" toml:"azblob"`
 }
 
 // ParseRawURL parse raw url to url object.
@@ -98,17 +99,17 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
-		var s3Options S3BackendOptions = S3BackendOptions{ForcePathStyle: true}
+		var s3Options s3store.S3BackendOptions = s3store.S3BackendOptions{ForcePathStyle: true}
 		if options != nil {
 			s3Options = options.S3
 		}
 		ExtractQueryParameters(u, &s3Options)
-		s3Options.setForcePathStyle(rawURL)
+		s3Options.SetForcePathStyle(rawURL)
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if u.Scheme == "ks3" {
-			s3.Provider = ks3SDKProvider
+			s3.Provider = s3store.KS3SDKProvider
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 

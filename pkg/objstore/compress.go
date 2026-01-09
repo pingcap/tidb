@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
@@ -55,7 +56,7 @@ func (w *withCompression) Create(ctx context.Context, name string, o *storeapi.W
 		writer = bw.GetWriter()
 	}
 	// the external storage will do access recording, so no need to pass it again.
-	compressedWriter := objectio.NewBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType, nil)
+	compressedWriter := objectio.NewBufferedWriter(writer, s3store.HardcodedChunkSize, w.compressType, nil)
 	return compressedWriter, nil
 }
 

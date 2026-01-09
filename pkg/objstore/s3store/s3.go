@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package objstore
+package s3store
 
 import (
 	"bytes"
@@ -62,7 +62,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var hardcodedS3ChunkSize = 5 * 1024 * 1024
+var HardcodedChunkSize = 5 * 1024 * 1024
 
 const (
 	// S3ExternalID is the key for the external ID used in S3 operations.
@@ -109,8 +109,8 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `Storage` interface.
 type S3Storage struct {
-	svc       S3API
-	options   *backuppb.S3
+	svc     S3API
+	options *backuppb.S3
 	accessRec *recording.AccessStats
 	// used to indicate that the S3 storage is not the official AWS S3, but a
 	// S3-compatible storage, such as minio/KS3/OSS.
@@ -151,8 +151,8 @@ func (rs *S3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec stor
 
 // S3Uploader does multi-part upload to s3.
 type S3Uploader struct {
-	svc           S3API
-	createOutput  *s3.CreateMultipartUploadOutput
+	svc          S3API
+	createOutput *s3.CreateMultipartUploadOutput
 	completeParts []types.CompletedPart
 }
 
@@ -257,8 +257,8 @@ func (options *S3BackendOptions) Apply(s3 *backuppb.S3) error {
 	return nil
 }
 
-// setForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
-func (options *S3BackendOptions) setForcePathStyle(rawURL string) {
+// SetForcePathStyle only set ForcePathStyle to False, which means use virtual-hosted-style path.
+func (options *S3BackendOptions) SetForcePathStyle(rawURL string) {
 	// In some cases, we need to set ForcePathStyle to false.
 	// Refer to: https://rclone.org/s3/#s3-force-path-style
 	if options.Provider == "alibaba" || options.Provider == "netease" || options.Provider == "tencent" ||
@@ -278,8 +278,8 @@ func useVirtualHostStyleForAWSS3(opts *S3BackendOptions, rawURL string) bool {
 	return opts.Provider == "aws" || strings.Contains(opts.Endpoint, domainAWS) || opts.RoleARN != ""
 }
 
-// defineS3Flags defines the command line flags for S3BackendOptions.
-func defineS3Flags(flags *pflag.FlagSet) {
+// DefineS3Flags defines the command line flags for S3BackendOptions.
+func DefineS3Flags(flags *pflag.FlagSet) {
 	// TODO: remove experimental tag if it's stable
 	flags.String(s3EndpointOption, "",
 		"(experimental) Set the S3 endpoint URL, please specify the http or https scheme explicitly")
@@ -296,8 +296,8 @@ func defineS3Flags(flags *pflag.FlagSet) {
 		"Command line options take precedence over profile settings")
 }
 
-// parseFromFlags parse S3BackendOptions from command line flags.
-func (options *S3BackendOptions) parseFromFlags(flags *pflag.FlagSet) error {
+// ParseFromFlags parse S3BackendOptions from command line flags.
+func (options *S3BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 	var err error
 	options.Endpoint, err = flags.GetString(s3EndpointOption)
 	if err != nil {
@@ -1384,7 +1384,7 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *storeapi.W
 		up := manager.NewUploader(rs.svc, func(u *manager.Uploader) {
 			u.PartSize = option.PartSize
 			u.Concurrency = option.Concurrency
-			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
+			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * HardcodedChunkSize)
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3.PutObjectInput{
