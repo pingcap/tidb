@@ -14,6 +14,7 @@ import (
 	reflect "reflect"
 
 	objstore "github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	gomock "go.uber.org/mock/gomock"
 )
 
@@ -58,10 +59,10 @@ func (mr *MockStorageMockRecorder) Close() *gomock.Call {
 }
 
 // Create mocks base method.
-func (m *MockStorage) Create(arg0 context.Context, arg1 string, arg2 *objstore.WriterOption) (objstore.FileWriter, error) {
+func (m *MockStorage) Create(arg0 context.Context, arg1 string, arg2 *objstore.WriterOption) (objectio.Writer, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Create", arg0, arg1, arg2)
-	ret0, _ := ret[0].(objstore.FileWriter)
+	ret0, _ := ret[0].(objectio.Writer)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }
@@ -116,10 +117,10 @@ func (mr *MockStorageMockRecorder) FileExists(arg0, arg1 any) *gomock.Call {
 }
 
 // Open mocks base method.
-func (m *MockStorage) Open(arg0 context.Context, arg1 string, arg2 *objstore.ReaderOption) (objstore.FileReader, error) {
+func (m *MockStorage) Open(arg0 context.Context, arg1 string, arg2 *objstore.ReaderOption) (objectio.Reader, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "Open", arg0, arg1, arg2)
-	ret0, _ := ret[0].(objstore.FileReader)
+	ret0, _ := ret[0].(objectio.Reader)
 	ret1, _ := ret[1].(error)
 	return ret0, ret1
 }

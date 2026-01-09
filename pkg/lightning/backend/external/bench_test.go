@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -61,7 +62,7 @@ func writePlainFile(s *writeTestSuite) {
 	_ = s.store.DeleteFile(ctx, filePath)
 	buf := make([]byte, s.memoryLimit)
 	offset := 0
-	flush := func(w objstore.FileWriter) {
+	flush := func(w objectio.Writer) {
 		n, err := w.Write(ctx, buf[:offset])
 		intest.AssertNoError(err)
 		intest.Assert(offset == n)

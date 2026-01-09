@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
@@ -79,7 +80,7 @@ type Collector struct {
 
 	fileSeq      int
 	currFileSize int64
-	writer       objstore.FileWriter
+	writer       objectio.Writer
 }
 
 // NewCollector creates a new conflicted KV info collector.

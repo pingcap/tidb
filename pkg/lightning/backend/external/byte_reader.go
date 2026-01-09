@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -46,7 +47,7 @@ var (
 // data to improve throughput.
 type byteReader struct {
 	ctx           context.Context
-	storageReader objstore.FileReader
+	storageReader objectio.Reader
 
 	// curBuf is either smallBuf or concurrentReader.largeBuf.
 	curBuf       [][]byte
@@ -78,7 +79,7 @@ func openStoreReaderAndSeek(
 	name string,
 	initFileOffset uint64,
 	prefetchSize int,
-) (objstore.FileReader, error) {
+) (objectio.Reader, error) {
 	storageReader, err := store.Open(ctx, name, &objstore.ReaderOption{
 		StartOffset:  aws.Int64(int64(initFileOffset)),
 		PrefetchSize: prefetchSize,
@@ -94,7 +95,7 @@ func openStoreReaderAndSeek(
 // concurrent reading mode.
 func newByteReader(
 	ctx context.Context,
-	storageReader objstore.FileReader,
+	storageReader objectio.Reader,
 	bufSize int,
 ) (r *byteReader, err error) {
 	defer func() {

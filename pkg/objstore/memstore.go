@@ -25,6 +25,7 @@ import (
 	"sync"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"go.uber.org/atomic"
 )
 
@@ -146,7 +147,7 @@ func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) 
 
 // Open opens a Reader by file path.
 // It implements the `Storage` interface
-func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (FileReader, error) {
+func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (objectio.Reader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -227,7 +228,7 @@ func (*MemStorage) URI() string {
 // Create creates a file and returning a writer to write data into.
 // When the writer is closed, the data is stored in the file.
 // It implements the `Storage` interface
-func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (FileWriter, error) {
+func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (objectio.Writer, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -312,7 +313,7 @@ type memFileWriter struct {
 }
 
 // Write writes the data into the mem storage file buffer.
-// It implements the `FileWriter` interface
+// It implements the `Writer` interface
 func (w *memFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	select {
 	case <-ctx.Done():

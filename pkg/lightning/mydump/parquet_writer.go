@@ -23,6 +23,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 )
 
 // ParquetColumn defines the properties of a column in a Parquet file.
@@ -38,7 +39,7 @@ type ParquetColumn struct {
 }
 
 type writeWrapper struct {
-	Writer objstore.FileWriter
+	Writer objectio.Writer
 }
 
 func (*writeWrapper) Seek(_ int64, _ int) (int64, error) {

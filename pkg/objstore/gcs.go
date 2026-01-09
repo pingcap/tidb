@@ -33,6 +33,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -267,7 +269,7 @@ func (s *GCSStorage) FileExists(ctx context.Context, name string) (bool, error) 
 }
 
 // Open a Reader by file path.
-func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (s *GCSStorage) Open(ctx context.Context, path string, o *ReaderOption) (objectio.Reader, error) {
 	object := s.objectName(path)
 	handle := s.GetBucketHandle().Object(object)
 
@@ -360,7 +362,7 @@ func (s *GCSStorage) URI() string {
 }
 
 // Create implements Storage interface.
-func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (FileWriter, error) {
+func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) (objectio.Writer, error) {
 	// NewGCSWriter requires real testing environment on Google Cloud.
 	mockGCS := intest.InTest && strings.Contains(s.gcs.GetEndpoint(), "127.0.0.1")
 	if wo == nil || wo.Concurrency <= 1 || mockGCS {
@@ -368,7 +370,7 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 		wc := s.GetBucketHandle().Object(object).NewWriter(ctx)
 		wc.StorageClass = s.gcs.StorageClass
 		wc.PredefinedACL = s.gcs.PredefinedAcl
-		return newFlushStorageWriter(wc, &emptyFlusher{}, wc, s.accessRec), nil
+		return newFlushStorageWriter(wc, &objectio.EmptyFlusher{}, wc, s.accessRec), nil
 	}
 	uri := s.objectName(name)
 	// 5MB is the minimum part size for GCS.
@@ -377,9 +379,9 @@ func (s *GCSStorage) Create(ctx context.Context, name string, wo *WriterOption) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	fw := newFlushStorageWriter(w, &emptyFlusher{}, w, s.accessRec)
+	fw := newFlushStorageWriter(w, &objectio.EmptyFlusher{}, w, s.accessRec)
 	// we already pass the accessRec to flushStorageWriter.
-	bw := newBufferedWriter(fw, int(partSize), NoCompression, nil)
+	bw := objectio.NewBufferedWriter(fw, int(partSize), compressedio.NoCompression, nil)
 	return bw, nil
 }
 

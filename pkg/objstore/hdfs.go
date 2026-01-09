@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 )
 
 // HDFSStorage represents HDFS storage.
@@ -120,7 +121,7 @@ func (*HDFSStorage) DeleteFiles(_ context.Context, _ []string) error {
 }
 
 // Open a Reader by file path. path is relative path to storage base path
-func (*HDFSStorage) Open(_ context.Context, _ string, _ *ReaderOption) (FileReader, error) {
+func (*HDFSStorage) Open(_ context.Context, _ string, _ *ReaderOption) (objectio.Reader, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
@@ -140,7 +141,7 @@ func (s *HDFSStorage) URI() string {
 }
 
 // Create opens a file writer by path. path is relative path to storage base path
-func (*HDFSStorage) Create(_ context.Context, _ string, _ *WriterOption) (FileWriter, error) {
+func (*HDFSStorage) Create(_ context.Context, _ string, _ *WriterOption) (objectio.Writer, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 

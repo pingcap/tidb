@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -177,7 +178,7 @@ type Engine struct {
 	recordedDupCnt  int
 	recordedDupSize int64
 	dupFile         string
-	dupWriter       objstore.FileWriter
+	dupWriter       objectio.Writer
 	dupKVStore      *KeyValueStore
 }
 
