@@ -192,6 +192,8 @@ type TableReaderExecutor struct {
 	// If dummy flag is set, this is not a real TableReader, it just provides the KV ranges for UnionScan.
 	// Used by the temporary table, cached table.
 	dummy bool
+
+	cacheHits [][]types.Datum
 }
 
 // Table implements the dataSourceExecutor interface.
@@ -328,9 +330,48 @@ func (e *TableReaderExecutor) Next(ctx context.Context, req *chunk.Chunk) error 
 		}
 		return tableName
 	}), e.ranges)
+
+	if len(e.cacheHits) > 0 {
+		startIndex := req.NumRows()
+		i := startIndex
+		for ; i < req.RequiredRows(); i++ {
+			row := e.cacheHits[i-startIndex]
+			for j, col := range e.Schema().Columns {
+				req.AppendDatum(j, &row[e.table.Meta().GetColumnByID(col.ID).Offset])
+			}
+		}
+		e.cacheHits = e.cacheHits[i-startIndex:]
+	}
+
+	// beforeNumRows := req.NumRows() // cached rows
 	if err := e.resultHandler.nextChunk(ctx, req); err != nil {
 		return err
 	}
+
+	// afterNumRows := req.NumRows()
+	// if beforeNumRows < afterNumRows {
+	// 	buf := make([]byte, 0, 64)
+	// 	schame := e.Schema()
+	// 	fields := make([]*types.FieldType, 0, len(schame.Columns))
+	// 	colIDs := make([]int64, 0, len(schame.Columns))
+	// 	for _, col := range schame.Columns {
+	// 		fields = append(fields, col.RetType)
+	// 		colIDs = append(colIDs, col.ID)
+	// 	}
+	// 	addRowValues := make([]types.Datum, 0, len(schame.Columns)*2)
+	// 	var encoder rowcodec.Encoder
+	// 	for i := beforeNumRows; i < afterNumRows; i++ {
+	// 		row := req.GetRow(i)
+	// 		// func EncodeRow(loc *time.Location, row []types.Datum, colIDs []int64, valBuf []byte, values []types.Datum, checksum rowcodec.Checksum, e *rowcodec.Encoder) ([]byte, error) {
+	// 		buf = buf[:0]
+	// 		addRowValues = addRowValues[:0]
+	// 		byteRow, err := tablecodec.EncodeRow(e.ectx.GetEvalCtx().Location(), row.GetDatumRow(fields), colIDs, buf, addRowValues, nil, &encoder)
+	// 		if err != nil {
+	// 			panic(err)
+	// 		}
+	// 		kvcache.GlobalKVCache.PutByHandle(e.table.ID(), row.GetHandle(), byteRow)
+	// 	}
+	// }
 
 	err := table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.ectx, req)
 	if err != nil {

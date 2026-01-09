@@ -4814,7 +4814,8 @@ func newClosestReadAdjuster(dctx *distsqlctx.DistSQLContext, req *kv.Request, ne
 	}
 }
 
-func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder) (*TableReaderExecutor, error) {
+func (builder *dataReaderBuilder) buildTableReaderBase(ctx context.Context, e *TableReaderExecutor, reqBuilderWithRange distsql.RequestBuilder, cacheHits [][]types.Datum) (*TableReaderExecutor, error) {
+	e.cacheHits = cacheHits
 	startTS, err := builder.getSnapshotTS()
 	if err != nil {
 		return nil, err
@@ -4853,6 +4854,50 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 		})
 	}
 	var b distsql.RequestBuilder
+
+	// var results [][]types.Datum
+	// if !e.keepOrder && e.ectx.ConnectionID() > 0 && false {
+	// 	keys := make([][]byte, 0, len(handles))
+	// 	for _, handle := range handles {
+	// 		var (
+	// 			key []byte
+	// 			tid int64
+	// 		)
+	// 		if partitionHandle, isPartitionHandle := handle.(*kv.PartitionHandle); isPartitionHandle {
+	// 			tid = partitionHandle.PartitionID
+	// 			handle = partitionHandle.Handle
+	// 		} else {
+	// 			tid = getPhysicalTableID(e.table)
+	// 		}
+	// 		switch h := handle.(type) {
+	// 		case kv.IntHandle:
+	// 			key = tablecodec.EncodeRowKey(tid, codec.EncodeInt(nil, h.IntValue()))
+	// 		case *kv.CommonHandle:
+	// 			key = tablecodec.EncodeRowKey(tid, h.Encoded())
+	// 		default:
+	// 			panic("unreachable")
+	// 		}
+	// 		keys = append(keys, key)
+	// 	}
+
+	// 	results = make([][]types.Datum, 0, len(keys))
+	// 	cacheMisses := make([][]byte, 0, len(keys))
+
+	// 	for i, key := range keys {
+	// 		cachedValue, ok := kvcache.GlobalKVCache.Get(key)
+	// 		if ok {
+	// 			datums, _, err := tables.DecodeRawRowData(e.ectx, e.table.Meta(), handles[i], e.table.Cols(), cachedValue)
+	// 			if err != nil {
+	// 				panic(err)
+	// 			}
+	// 			results = append(results, datums)
+	// 		} else {
+	// 			cacheMisses = append(cacheMisses, key)
+	// 		}
+	// 	}
+
+	// }
+
 	if len(handles) > 0 {
 		if _, ok := handles[0].(kv.PartitionHandle); ok {
 			b.SetPartitionsAndHandles(handles)
@@ -4862,13 +4907,13 @@ func (builder *dataReaderBuilder) buildTableReaderFromHandles(ctx context.Contex
 	} else {
 		b.SetKeyRanges(nil)
 	}
-	return builder.buildTableReaderBase(ctx, e, b)
+	return builder.buildTableReaderBase(ctx, e, b, nil)
 }
 
 func (builder *dataReaderBuilder) buildTableReaderFromKvRanges(ctx context.Context, e *TableReaderExecutor, ranges []kv.KeyRange) (exec.Executor, error) {
 	var b distsql.RequestBuilder
 	b.SetKeyRanges(ranges)
-	return builder.buildTableReaderBase(ctx, e, b)
+	return builder.buildTableReaderBase(ctx, e, b, nil)
 }
 
 func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Context, v *plannercore.PhysicalIndexReader,
