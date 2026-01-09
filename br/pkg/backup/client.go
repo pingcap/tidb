@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -487,7 +488,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	}
 
 	// check backup time do not exceed GCSafePoint
-	err = utils.CheckGCSafePoint(ctx, bc.mgr.GetPDClient(), bc.mgr.GetStorage(), backupTS)
+	err = gc.CheckGCSafePoint(ctx, bc.mgr.GetPDClient(), bc.mgr.GetStorage(), backupTS)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -508,13 +509,13 @@ func (bc *Client) GetSafePointID() string {
 		log.Info("reuse the checkpoint gc-safepoint service id", zap.String("service-id", bc.checkpointMeta.GCServiceId))
 		return bc.checkpointMeta.GCServiceId
 	}
-	return utils.MakeSafePointID()
+	return gc.MakeSafePointID()
 }
 
 // SetGCTTL set gcTTL for client.
 func (bc *Client) SetGCTTL(ttl int64) {
 	if ttl <= 0 {
-		ttl = utils.DefaultBRGCSafePointTTL
+		ttl = gc.DefaultBRGCSafePointTTL
 	}
 	bc.gcTTL = ttl
 }

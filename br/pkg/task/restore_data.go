@@ -13,6 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
@@ -88,15 +89,15 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 	}
 
 	// stop gc before restore tikv data
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: restoreTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+		TTL:      gc.DefaultBRGCSafePointTTL,
+		ID:       gc.MakeSafePointID(),
 	}
 
 	// TODO: since data restore does not have tidb up, it looks we can remove this keeper
 	// it requires to do more test, then remove this part of code.
-	err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
+	err = gc.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}

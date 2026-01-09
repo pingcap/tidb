@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -116,7 +117,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		" use for incremental backup, support TSO only")
 	flags.String(flagBackupTS, "", "the backup ts support TSO or datetime,"+
 		" e.g. '400036290571534337', '2018-05-11 01:42:23'")
-	flags.Int64(flagGCTTL, utils.DefaultBRGCSafePointTTL, "the TTL (in seconds) that PD holds for BR's GC safepoint")
+	flags.Int64(flagGCTTL, gc.DefaultBRGCSafePointTTL, "the TTL (in seconds) that PD holds for BR's GC safepoint")
 	flags.String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
@@ -331,7 +332,7 @@ func (cfg *BackupConfig) Adjust() {
 	}
 
 	if cfg.GCTTL == 0 {
-		cfg.GCTTL = utils.DefaultBRGCSafePointTTL
+		cfg.GCTTL = gc.DefaultBRGCSafePointTTL
 	}
 	// Use zstd as default
 	if cfg.CompressionType == backuppb.CompressionType_UNKNOWN {
@@ -482,8 +483,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	// if use checkpoint and gcTTL is the default value
 	// update gcttl to checkpoint's default gc ttl
-	if cfg.UseCheckpoint && cfg.GCTTL == utils.DefaultBRGCSafePointTTL {
-		cfg.GCTTL = utils.DefaultCheckpointGCSafePointTTL
+	if cfg.UseCheckpoint && cfg.GCTTL == gc.DefaultBRGCSafePointTTL {
+		cfg.GCTTL = gc.DefaultCheckpointGCSafePointTTL
 		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", cfg.GCTTL))
 	}
 	client.SetGCTTL(cfg.GCTTL)
@@ -494,7 +495,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	g.Record("BackupTS", backupTS)
 	safePointID := client.GetSafePointID()
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: backupTS,
 		TTL:      client.GetGCTTL(),
 		ID:       safePointID,
@@ -518,14 +519,14 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
 		// remove the gc-safe-point
-		if err := utils.DeleteServiceSafePoint(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp); err != nil {
+		if err := gc.DeleteServiceSafePoint(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp); err != nil {
 			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
+	err = gc.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -616,7 +617,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Error("LastBackupTS is larger or equal to current TS")
 			return errors.Annotate(berrors.ErrInvalidArgument, "LastBackupTS is larger or equal to current TS")
 		}
-		err = utils.CheckGCSafePoint(ctx, mgr.GetPDClient(), mgr.GetStorage(), cfg.LastBackupTS)
+		err = gc.CheckGCSafePoint(ctx, mgr.GetPDClient(), mgr.GetStorage(), cfg.LastBackupTS)
 		if err != nil {
 			log.Error("Check gc safepoint for last backup ts failed", zap.Error(err))
 			return errors.Trace(err)

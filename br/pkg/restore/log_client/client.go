@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	"github.com/pingcap/tidb/br/pkg/encryption"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
@@ -2008,10 +2009,10 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		return errors.Trace(err)
 	}
 	// set gc safepoint for checksum
-	sp := utils.BRServiceSafePoint{
+	sp := gc.BRServiceSafePoint{
 		BackupTS: startTS,
-		TTL:      utils.DefaultBRGCSafePointTTL,
-		ID:       utils.MakeSafePointID(),
+		TTL:      gc.DefaultBRGCSafePointTTL,
+		ID:       gc.MakeSafePointID(),
 	}
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	defer func() {
@@ -2019,14 +2020,14 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
 		// remove the gc-safe-point
-		if err := utils.DeleteServiceSafePoint(ctx, pdClient, rc.GetDomain().Store(), sp); err != nil {
+		if err := gc.DeleteServiceSafePoint(ctx, pdClient, rc.GetDomain().Store(), sp); err != nil {
 			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = utils.StartServiceSafePointKeeper(cctx, pdClient, rc.GetDomain().Store(), sp)
+	err = gc.StartServiceSafePointKeeper(cctx, pdClient, rc.GetDomain().Store(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
