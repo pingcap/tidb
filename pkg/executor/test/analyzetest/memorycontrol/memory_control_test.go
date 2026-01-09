@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -216,6 +217,8 @@ func TestMemQuotaAnalyze2(t *testing.T) {
 }
 
 func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
+	intest.Assert(statistics.MaxSampleValueLength > 32000)
+
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	oldChildTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
 	for _, tracker := range oldChildTrackers {
@@ -231,9 +234,10 @@ func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_analyze_version=2")
 	tk.MustExec("set @@tidb_build_sampling_stats_concurrency=1")
+	tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_mem_usage")
-	tk.MustExec("create table t_mem_usage(a text collate utf8mb4_general_ci)")
+	tk.MustExec("create table t_mem_usage(a varchar(32000) collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t_mem_usage values (repeat('a', 32000))")
 	for range 11 {
 		tk.MustExec("insert into t_mem_usage select a from t_mem_usage")
