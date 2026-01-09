@@ -310,10 +310,13 @@ type StatementContext struct {
 	DiskTracker  *disk.Tracker
 	// per statement resource group name
 	// hint /* +ResourceGroup(name) */ can change the statement group name
-	ResourceGroupName   string
-	RunawayChecker      resourcegroup.RunawayChecker
-	IsTiKV              atomic2.Bool
-	IsTiFlash           atomic2.Bool
+	ResourceGroupName string
+	RunawayChecker    resourcegroup.RunawayChecker
+	IsTiKV            atomic2.Bool
+	IsTiFlash         atomic2.Bool
+	// HasTiflash is used in the optimization, if we find tables in the query are without tiflash replications.
+	// we will not generate the mpp task for this query.
+	HasTiflash          bool
 	RuntimeStatsColl    *execdetails.RuntimeStatsColl
 	IndexUsageCollector *indexusage.StmtIndexUsageCollector
 	TableIDs            []int64

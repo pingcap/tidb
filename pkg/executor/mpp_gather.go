@@ -35,7 +35,7 @@ import (
 )
 
 func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader) bool {
-	if !ctx.GetSessionVars().IsMPPAllowed() {
+	if !ctx.GetSessionVars().StmtCtx.HasTiflash || !ctx.GetSessionVars().IsMPPAllowed() {
 		return false
 	}
 	_, ok := tr.GetTablePlan().(*physicalop.PhysicalExchangeSender)

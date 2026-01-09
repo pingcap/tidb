@@ -155,13 +155,13 @@
               }
             ],
             "Plan": [
-              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-              "├─IndexLookUp_47(Build) 99.90 root  ",
-              "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
-              "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
-              "└─IndexLookUp_36(Probe) 99.90 root  ",
-              "  ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
-              "  └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+              "HashJoin_23 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+              "├─IndexLookUp_46(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_44(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_45(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_35(Probe) 99.90 root  ",
+              "  ├─IndexRangeScan_33(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[1 -inf,1 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_34(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": null
@@ -175,13 +175,13 @@
               }
             ],
             "Plan": [
-              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-              "├─IndexLookUp_47(Build) 99.90 root  ",
-              "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
-              "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
-              "└─IndexLookUp_36(Probe) 99.90 root  ",
-              "  ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
-              "  └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+              "HashJoin_23 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+              "├─IndexLookUp_46(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_44(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_45(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_35(Probe) 99.90 root  ",
+              "  ├─IndexRangeScan_33(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[2 -inf,2 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_34(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "1",
             "Result": [
@@ -197,13 +197,13 @@
               }
             ],
             "Plan": [
-              "HashJoin_24 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
-              "├─IndexLookUp_47(Build) 99.90 root  ",
-              "│ ├─IndexRangeScan_45(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
-              "│ └─TableRowIDScan_46(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
-              "└─IndexLookUp_36(Probe) 99.90 root  ",
-              "  ├─IndexRangeScan_34(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
-              "  └─TableRowIDScan_35(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
+              "HashJoin_23 124.88 root  inner join, equal:[eq(test.t1.a, test.t2.a) eq(test.t1.b, test.t2.b)]",
+              "├─IndexLookUp_46(Build) 99.90 root  ",
+              "│ ├─IndexRangeScan_44(Build) 99.90 cop[tikv] table:t2, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
+              "│ └─TableRowIDScan_45(Probe) 99.90 cop[tikv] table:t2 keep order:false, stats:pseudo",
+              "└─IndexLookUp_35(Probe) 99.90 root  ",
+              "  ├─IndexRangeScan_33(Build) 99.90 cop[tikv] table:t1, index:b(b, a) range:[0 -inf,0 +inf], keep order:false, stats:pseudo",
+              "  └─TableRowIDScan_34(Probe) 99.90 cop[tikv] table:t1 keep order:false, stats:pseudo"
             ],
             "LastPlanUseCache": "0",
             "Result": null
@@ -1246,10 +1246,10 @@
         ],
         "Plan": [
           "Projection_4 8000.00 root  test.t.b, Column#5",
-          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
-          "  └─TableReader_14 8000.00 root  data:HashAgg_6",
+          "└─HashAgg_10 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
+          "  └─TableReader_11 8000.00 root  data:HashAgg_6",
           "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 1))->Column#6",
-          "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan_9 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
       },
@@ -1264,10 +1264,10 @@
         ],
         "Plan": [
           "Projection_4 8000.00 root  test.t.b, Column#5",
-          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
-          "  └─TableReader_14 8000.00 root  data:HashAgg_6",
+          "└─HashAgg_10 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
+          "  └─TableReader_11 8000.00 root  data:HashAgg_6",
           "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 5))->Column#6",
-          "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "      └─TableFullScan_9 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
       }
