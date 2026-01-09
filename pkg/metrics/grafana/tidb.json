@@ -16779,25 +16779,25 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum by (instance) (tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"single_write\"})",
+              "expr": "sum by (instance) (rate(tidb_ddl_temp_index_op_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"single_write\"}[1m]))",
               "legendFormat": "{{instance}}-single_write",
               "range": true,
               "refId": "A"
             },
             {
-              "expr": "sum by (instance) (tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"double_write\"})",
+              "expr": "sum by (instance) (rate(tidb_ddl_temp_index_op_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"double_write\"}[1m]))",
               "legendFormat": "{{instance}}-double_write",
               "range": true,
               "refId": "B"
             },
             {
-              "expr": "sum by (instance) (tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"merge\"})",
+              "expr": "sum by (instance) (rate(tidb_ddl_temp_index_op_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"merge\"}[1m]))",
               "legendFormat": "{{instance}}-merge",
               "range": true,
               "refId": "C"
             },
             {
-              "expr": "sum by (instance) (tidb_ddl_temp_index_op_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"scan\"})",
+              "expr": "sum by (instance) (rate(tidb_ddl_temp_index_op_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", type=\"scan\"}[1m]))",
               "legendFormat": "{{instance}}-scan",
               "range": true,
               "refId": "D"
