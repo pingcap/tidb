@@ -4829,6 +4829,13 @@ func (e *executor) createHybridIndex(ctx sessionctx.Context, ti ast.Ident, index
 	job := buildAddIndexJobWithoutTypeAndArgs(ctx, schema, t)
 	job.Version = model.GetJobVerInUse()
 	job.Type = model.ActionAddHybridIndex
+	job.AddSystemVars(vardef.TiDBEnableDDLAnalyze, getEnableDDLAnalyze(ctx))
+	job.AddSystemVars(vardef.TiDBAnalyzeVersion, getAnalyzeVersion(ctx))
+
+	err = initJobReorgMetaFromVariables(e.ctx, job, t, ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{

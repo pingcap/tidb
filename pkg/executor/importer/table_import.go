@@ -491,10 +491,23 @@ func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
 	return totalSize * indexCnt
 }
 
+func hasTiCIIndex(tblInfo *checkpoints.TidbTableInfo) bool {
+	if tblInfo == nil || tblInfo.Core == nil {
+		return false
+	}
+	for _, idx := range tblInfo.Core.Indices {
+		if idx.IsTiCIIndex() {
+			return true
+		}
+	}
+	return false
+}
+
 // OpenIndexEngine opens an index engine.
 func (ti *TableImporter) OpenIndexEngine(ctx context.Context, engineID int32) (*backend.OpenedEngine, error) {
 	idxEngineCfg := &backend.EngineConfig{
-		TableInfo: ti.tableInfo,
+		TableInfo:        ti.tableInfo,
+		TiCIWriteEnabled: hasTiCIIndex(ti.tableInfo),
 	}
 	idxCnt := len(ti.tableInfo.Core.Indices)
 	if !common.TableHasAutoRowID(ti.tableInfo.Core) {

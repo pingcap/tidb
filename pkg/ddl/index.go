@@ -951,6 +951,9 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 	if len(param.FullText) == 0 && len(param.Vector) == 0 && len(param.Inverted) == 0 {
 		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index PARAMETER must define at least one component")
 	}
+	if param.Sharding == nil {
+		return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index PARAMETER must define sharding_key")
+	}
 
 	indexColumns := make(map[string]*model.ColumnInfo, len(indexPartSpecifications))
 	for _, idxPart := range indexPartSpecifications {
@@ -1050,6 +1053,8 @@ func buildHybridInfoWithCheck(indexPartSpecifications []*ast.IndexPartSpecificat
 
 	var shardingSpec *hybridShardingSpec
 	if param.Sharding != nil {
+		// Keep the sharding spec separate so it can reuse the same column validation
+		// (index-only column restriction) as other components.
 		shardingSpec = param.Sharding
 	}
 
@@ -1157,6 +1162,8 @@ func buildHybridShardingSpec(spec *hybridShardingSpec, resolveColumn func(string
 	}
 	columns := make([]*model.IndexColumn, 0, len(spec.Columns))
 	for _, colName := range spec.Columns {
+		// resolveColumn enforces that sharding keys are part of the index definition
+		// (in addition to existing column existence checks).
 		colInfo, err := resolveColumn(colName)
 		if err != nil {
 			return nil, err
@@ -1695,7 +1702,7 @@ func onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver int64, err e
 	return ver, errors.Trace(err)
 }
 
-func onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.IsRollingback() {
 		ver, err = onDropIndex(jobCtx, job)
 		if err != nil {
@@ -1718,32 +1725,67 @@ func onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err err
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if len(args.IndexArgs) != 1 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index only supports one index per DDL job")
+	}
 
 	a := args.IndexArgs[0]
 	indexInfo, err := checkAndBuildIndexInfo(job, tblInfo, model.ColumnarIndexTypeHybrid, false, a)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
+	// The condition in the index option is not marshaled, so we need to set it here.
+	if len(a.ConditionString) > 0 {
+		indexInfo.ConditionExprString = a.ConditionString
+		// As we've updated the `ConditionExprString`, we need to rebuild the AffectColumn.
+		indexInfo.AffectColumn, err = buildAffectColumn(indexInfo, tblInfo)
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, errors.Trace(err)
+		}
+	}
+
+	if err := ensureHybridIndexReorgMeta(job); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
 
 	originalState := indexInfo.State
 	switch indexInfo.State {
 	case model.StateNone:
+		// Keep the hybrid add-index state machine aligned with onCreateIndex
+		// for fast-reorg setup.
+		err = initForReorgIndexes(w, job, []*model.IndexInfo{indexInfo})
+		if err != nil {
+			job.State = model.JobStateCancelled
+			return ver, err
+		}
+		moveAndUpdateHiddenColumnsToPublic(tblInfo, indexInfo)
 		indexInfo.State = model.StateDeleteOnly
-		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, originalState != model.StateDeleteOnly)
 		if err != nil {
 			return ver, err
 		}
 		job.SchemaState = model.StateDeleteOnly
 	case model.StateDeleteOnly:
 		indexInfo.State = model.StateWriteOnly
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateWriteOnly)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
 		job.SchemaState = model.StateWriteOnly
 	case model.StateWriteOnly:
 		indexInfo.State = model.StateWriteReorganization
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
+		_, err = checkPrimaryKeyNotNull(jobCtx, w, job, tblInfo, indexInfo)
+		if err != nil {
+			break
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StateWriteReorganization)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1759,45 +1801,87 @@ func onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err err
 			return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, dbterror.ErrCancelledDDLJob)
 		}
 
-		if job.SnapshotVer == 0 {
-			currVer, err := getValidCurrentVersion(jobCtx.store)
-			if err != nil {
-				return ver, errors.Trace(err)
-			}
-			err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName)
-			if err != nil {
-				if !isRetryableJobError(err, job.ErrorCount) {
-					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+		switch job.ReorgMeta.AnalyzeState {
+		case model.AnalyzeStateNone:
+			// TiCI add-index ingest needs the add-index scan snapshot TS
+			// wired into its WriteHeader (not ingestData.GetTS()),
+			// so job.SnapshotVer will be captured and propagated
+			// through dist-task metadata.
+			if !job.ReorgMeta.TiCIIndexCreated {
+				err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName)
+				if err != nil {
+					if !isRetryableJobError(err, job.ErrorCount) {
+						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+					}
+					return ver, errors.Trace(err)
 				}
+				job.ReorgMeta.TiCIIndexCreated = true
+			}
+
+			var done bool
+			done, ver, err = doReorgWorkForCreateIndex(w, jobCtx, job, tbl, []*model.IndexInfo{indexInfo})
+			if !done {
+				return ver, err
+			}
+
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateRunning:
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+			checkAndMarkNonRevertible(job)
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			taskID := strconv.FormatInt(job.ID, 10)
+			// FinishIndexUpload should run after the reorg ingest
+			// completes using the lightweight helper
+			// to finalize TiCI uploads here.
+			if err := tici.FinishIndexUpload(jobCtx.stepCtx, jobCtx.store, taskID); err != nil {
 				return ver, errors.Trace(err)
 			}
-			job.SnapshotVer = currVer.Ver
-			return ver, nil
-		}
 
-		indexInfo.State = model.StatePublic
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != indexInfo.State)
-		if err != nil {
-			return ver, errors.Trace(err)
-		}
+			AddIndexColumnFlag(tblInfo, indexInfo)
+			indexInfo.State = model.StatePublic
 
-		finishedArgs := &model.ModifyIndexArgs{
-			IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
-			PartitionIDs: getPartitionIDs(tblInfo),
-			OpType:       model.OpAddIndex,
-		}
-		job.FillFinishedArgs(finishedArgs)
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != model.StatePublic)
+			if err != nil {
+				return ver, errors.Trace(err)
+			}
 
-		job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
-		logutil.DDLLogger().Info("[ddl] run add hybrid index job done",
-			zap.Int64("ver", ver),
-			zap.String("charset", job.Charset),
-			zap.String("collation", job.Collate))
+			finishedArgs := &model.ModifyIndexArgs{
+				IndexArgs:    []*model.IndexArg{{IndexID: indexInfo.ID}},
+				PartitionIDs: getPartitionIDs(tblInfo),
+				OpType:       model.OpAddIndex,
+			}
+			job.FillFinishedArgs(finishedArgs)
+
+			job.FinishTableJob(model.JobStateDone, model.StatePublic, ver, tblInfo)
+			logutil.DDLLogger().Info("[ddl] run add hybrid index job done",
+				zap.Int64("ver", ver),
+				zap.String("charset", job.Charset),
+				zap.String("collation", job.Collate))
+		}
 	default:
 		err = dbterror.ErrInvalidDDLState.GenWithStackByArgs("index", indexInfo.State)
 	}
 
 	return ver, errors.Trace(err)
+}
+
+func ensureHybridIndexReorgMeta(job *model.Job) error {
+	if job.ReorgMeta == nil {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires distributed fast reorg ingest")
+	}
+	// Hybrid index requires DXF + fast reorg ingest only; reject other modes early.
+	if !job.ReorgMeta.IsDistReorg || !job.ReorgMeta.IsFastReorg {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires distributed fast reorg ingest")
+	}
+	reorgTp, err := pickBackfillType(job)
+	if err != nil {
+		return err
+	}
+	if reorgTp != model.ReorgTypeIngest {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires ingest backfill")
+	}
+	return nil
 }
 
 func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
@@ -2703,6 +2787,17 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
 }
 
+func shouldSkipTempIndexMerge(allIndexInfos []*model.IndexInfo) bool {
+	for _, indexInfo := range allIndexInfos {
+		if indexInfo.GetColumnarIndexType() == model.ColumnarIndexTypeHybrid {
+			// Hybrid (TiCI) indexes do not write to TiKV, so the transactional
+			// temp-index merge path must be skipped.
+			return true
+		}
+	}
+	return false
+}
+
 func doReorgWorkForCreateIndex(
 	w *worker,
 	jobCtx *jobContext,
@@ -2715,6 +2810,7 @@ func doReorgWorkForCreateIndex(
 	if err != nil {
 		return false, ver, err
 	}
+	skipTempIndexMerge := shouldSkipTempIndexMerge(allIndexInfos)
 	if !reorgTp.NeedMergeProcess() {
 		skipReorg := checkIfTableReorgWorkCanSkip(w.store, w.sess.Session(), tbl, job)
 		if skipReorg {
@@ -2752,6 +2848,13 @@ func doReorgWorkForCreateIndex(
 				zap.Int64("jobID", job.ID),
 				zap.String("table", tbl.Meta().Name.O))
 		}
+		if skipTempIndexMerge {
+			for _, indexInfo := range allIndexInfos {
+				indexInfo.BackfillState = model.BackfillStateInapplicable
+			}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+			return true, ver, errors.Trace(err)
+		}
 		for _, indexInfo := range allIndexInfos {
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
@@ -2759,6 +2862,13 @@ func doReorgWorkForCreateIndex(
 		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
+		if skipTempIndexMerge {
+			for _, indexInfo := range allIndexInfos {
+				indexInfo.BackfillState = model.BackfillStateInapplicable
+			}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+			return true, ver, errors.Trace(err)
+		}
 		failpoint.InjectCall("beforeBackfillMerge")
 		logutil.DDLLogger().Info("index backfill state ready to merge",
 			zap.Int64("job ID", job.ID),
@@ -2771,6 +2881,13 @@ func doReorgWorkForCreateIndex(
 		ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateMerging:
+		if skipTempIndexMerge {
+			for _, indexInfo := range allIndexInfos {
+				indexInfo.BackfillState = model.BackfillStateInapplicable
+			}
+			ver, err = updateVersionAndTableInfo(jobCtx, job, tbl.Meta(), true)
+			return true, ver, errors.Trace(err)
+		}
 		skipReorg := checkIfTempIndexReorgWorkCanSkip(w.store, w.sess.Session(), tbl, allIndexInfos, job)
 		if !skipReorg {
 			done, ver, err = runReorgJobAndHandleErr(w, jobCtx, job, tbl, allIndexInfos, true)
@@ -4046,7 +4163,10 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			CloudStorageURI: w.jobContext(job.ID, job.ReorgMeta).cloudStorageURI,
 			MergeTempIndex:  reorgInfo.mergingTmpIdx,
 			EstimateRowSize: rowSize,
-			Version:         BackfillTaskMetaVersion1,
+			// For hybrid add-index, this snapshot TS should be plumbed into TiCI
+			// WriteHeader so CDC can align with the initial scan snapshot.
+			ScanSnapshotTS: job.SnapshotVer,
+			Version:        BackfillTaskMetaVersion1,
 		}
 
 		metaData, err := json.Marshal(taskMeta)

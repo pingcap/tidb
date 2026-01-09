@@ -12,6 +12,7 @@ go_test(
     shard_count = 2,
     deps = [
         "//pkg/config",
+        "//pkg/ddl/ingest/testutil",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/store/mockstore",
