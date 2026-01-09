@@ -706,7 +706,7 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		jobTables := m.readyForLockHBTimeoutJobTablesByType(jobType, now)
 		for _, table := range jobTables {
 			logger := logutil.Logger(m.ctx).With(
-				zap.String("job_type", string(jobType)),
+				zap.String("jobType", jobType),
 				zap.Int64("tableID", table.TableID),
 			)
 			logger.Info("try lock heartbeat timeout job")
@@ -870,7 +870,7 @@ func (m *JobManager) couldLockJobForCreateWithType(jobType cache.TTLJobType, tab
 		logutil.Logger(m.ctx).Warn(
 			"illegal job interval",
 			zap.Error(err),
-			zap.String("job_type", string(jobType)),
+			zap.String("jobType", jobType),
 			zap.Int64("tableID", table.ID),
 			zap.String("table", table.FullName()),
 		)
@@ -900,7 +900,7 @@ func (m *JobManager) couldLockJobForExistJobWithType(jobType cache.TTLJobType, t
 		if hbTime.Add(hbTimeout).Before(now) {
 			logutil.Logger(m.ctx).Info("job heartbeat has stopped",
 				zap.String("jobID", tableStatus.CurrentJobID),
-				zap.String("job_type", string(jobType)),
+				zap.String("jobType", jobType),
 				zap.Int64("tableID", tableStatus.TableID),
 				zap.Time("hbTime", hbTime),
 				zap.Time("now", now),

@@ -94,7 +94,7 @@ func createJobHistorySQL(jobID string, jobType cache.TTLJobType, tbl *cache.Phys
 
 	return createJobHistoryRowTemplate, []any{
 		jobID,
-		string(jobType),
+		jobType,
 		tbl.ID,
 		tbl.TableInfo.ID,
 		tbl.Schema.O,
