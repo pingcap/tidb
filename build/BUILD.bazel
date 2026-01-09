@@ -165,6 +165,7 @@ nogo(
                "//build/linter/printexpression",
                "//build/linter/unconvert",
                "//build/linter/rowserrcheck",
+               "//build/linter/slicesdelete",
                "//build/linter/toomanytests",
            ] + staticcheck_analyzers(STATICHECK_ANALYZERS) +
            select({
