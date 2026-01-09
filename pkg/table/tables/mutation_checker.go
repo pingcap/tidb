@@ -270,13 +270,24 @@ func checkIndexKeys(
 		}
 
 		loc := tc.Location()
-		for i, v := range decodedIndexValues {
-			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
+		// Map decodedIndexValues index to IndexColumn, skipping virtual columns
+		valIdx := 0
+		for _, idxCol := range indexInfo.Columns {
+			if idxCol.Offset == -1 {
+				// Skip virtual partition ID column
+				continue
+			}
+			if valIdx >= len(decodedIndexValues) {
+				break
+			}
+			v := decodedIndexValues[valIdx]
+			fieldType := t.Columns[idxCol.Offset].FieldType.ArrayType()
 			datum, err := tablecodec.DecodeColumnValue(v, fieldType, loc)
 			if err != nil {
 				return errors.Trace(err)
 			}
 			indexData = append(indexData, datum)
+			valIdx++
 		}
 
 		// When it is in add index new backfill state.

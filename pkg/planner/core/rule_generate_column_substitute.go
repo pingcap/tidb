@@ -76,6 +76,10 @@ func collectGenerateColumn(lp base.LogicalPlan, exprToColumn ExprColumnMap) {
 			continue
 		}
 		for _, idxPart := range p.Index.Columns {
+			// Skip virtual partition ID column (Offset == -1) for global index V1+
+			if idxPart.Offset == -1 {
+				continue
+			}
 			colInfo := ds.TableInfo.Columns[idxPart.Offset]
 			if colInfo.IsGenerated() && !colInfo.GeneratedStored {
 				s := ds.Schema().Columns

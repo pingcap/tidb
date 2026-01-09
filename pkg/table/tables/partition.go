@@ -90,6 +90,16 @@ func (t *partitionedTable) GetPartitionedTable() table.PartitionedTable {
 	return t
 }
 
+// hasGlobalIndexV1Plus returns true if the table has any global index with version >= V1
+func (t *partitionedTable) hasGlobalIndexV1Plus() bool {
+	for _, idx := range t.Meta().Indices {
+		if idx.Global && idx.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+			return true
+		}
+	}
+	return false
+}
+
 // partitionedTable implements the table.PartitionedTable interface.
 // partitionedTable is a table, it contains many Partitions.
 type partitionedTable struct {
@@ -1952,15 +1962,28 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 		memBuffer.Release(sh)
 		return nil
 	}
+
+	// For global indexes V1+ on non-clustered partitioned tables, wrap handles in PartitionHandles
+	// so that partition ID can be encoded in the index key
+	needsPartitionHandle := !t.Meta().HasClusteredIndex() && t.hasGlobalIndexV1Plus()
+
 	if from == to && t.Meta().HasClusteredIndex() {
-		err = t.getPartition(to).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+		handleToUse := h
+		if needsPartitionHandle {
+			handleToUse = kv.NewPartitionHandle(t.getPartition(to).GetPhysicalID(), h)
+		}
+		err = t.getPartition(to).updateRecord(ctx, txn, handleToUse, currData, newData, touched, opt)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	} else if from != to {
 		// The old and new data locate in different partitions.
 		// Remove record from old partition
-		err = t.getPartition(from).RemoveRecord(ctx, txn, h, currData)
+		handleToUse := h
+		if needsPartitionHandle {
+			handleToUse = kv.NewPartitionHandle(t.getPartition(from).GetPhysicalID(), h)
+		}
+		err = t.getPartition(from).RemoveRecord(ctx, txn, handleToUse, currData)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -1978,14 +2001,22 @@ func partitionedTableUpdateRecord(ctx table.MutateContext, txn kv.Transaction, t
 				return err
 			}
 			if newRecordHandle == nil {
-				err = t.getPartition(to).updateRecord(ctx, txn, h, currData, newData, touched, opt)
+				handleToUse := h
+				if needsPartitionHandle {
+					handleToUse = kv.NewPartitionHandle(t.getPartition(to).GetPhysicalID(), h)
+				}
+				err = t.getPartition(to).updateRecord(ctx, txn, handleToUse, currData, newData, touched, opt)
 				if err != nil {
 					return err
 				}
 				memBuffer.Release(sh)
 				return nil
 			}
-			err = t.getPartition(from).RemoveRecord(ctx, txn, h, currData)
+			handleToUse := h
+			if needsPartitionHandle {
+				handleToUse = kv.NewPartitionHandle(t.getPartition(from).GetPhysicalID(), h)
+			}
+			err = t.getPartition(from).RemoveRecord(ctx, txn, handleToUse, currData)
 			if err != nil {
 				return err
 			}

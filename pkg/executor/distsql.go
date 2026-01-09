@@ -1620,13 +1620,24 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 			handle = kv.IntHandle(row.GetInt64(handleIdx[0]))
 		}
 	}
-	ok, err := e.needPartitionHandle(tp)
-	if err != nil {
-		return nil, err
-	}
-	if ok {
-		pid := row.GetInt64(row.Len() - 1)
+
+	// For global index V1+, partition ID is encoded as the last indexed column (virtual column).
+	// For legacy global indexes (V0), partition ID is in a separate extra output column.
+	if tp == getHandleFromIndex && e.index.Global && e.index.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		// The partition ID is at the last position in the indexed columns
+		pidColIdx := len(e.index.Columns) - 1
+		pid := row.GetInt64(pidColIdx)
 		handle = kv.NewPartitionHandle(pid, handle)
+	} else {
+		// Legacy path: check if we need partition handle from extra output column
+		ok, err := e.needPartitionHandle(tp)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			pid := row.GetInt64(row.Len() - 1)
+			handle = kv.NewPartitionHandle(pid, handle)
+		}
 	}
 	return
 }

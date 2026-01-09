@@ -66,7 +66,10 @@ const (
 
 	// CommonHandleFlag is the flag used to decode the common handle in an unique index value.
 	CommonHandleFlag byte = 127
-	// PartitionIDFlag is the flag used to decode the partition ID in global index value.
+	// PartitionIDFlag is the flag used to decode the partition ID.
+	// Used in both global index values and global index keys (for V1+ non-unique indexes).
+	// In keys: PartitionIDFlag + partition_id (8 bytes) + inner_handle_encoded (IntHandle)
+	// In values: PartitionIDFlag + partition_id (8 bytes)
 	PartitionIDFlag byte = 126
 	// IndexVersionFlag is the flag used to decode the index's version info.
 	IndexVersionFlag byte = 125
@@ -1038,6 +1041,8 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
+	// For global index V1+, partition ID is now encoded as a regular indexed column,
+	// not as part of the handle. So this function just decodes the inner handle.
 	remain, d, err := codec.DecodeOne(keySuffix)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -1224,15 +1229,37 @@ func GenIndexKey(loc *time.Location, tblInfo *model.TableInfo, idxInfo *model.In
 	if err != nil {
 		return nil, false, err
 	}
-	if !distinct && h != nil {
-		if h.IsInt() {
+
+	// For global index V1+, encode partition ID as the last indexed column (virtual column).
+	// This avoids introducing a new flag (PartitionIDFlag) that TiKV doesn't understand.
+	// Instead, we treat partition ID as a regular indexed column, and TiDB knows to
+	// interpret it as partition information when reconstructing PartitionHandles.
+	var innerHandle kv.Handle
+	if !distinct && h != nil && idxInfo.Global && idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+		ph, ok := h.(kv.PartitionHandle)
+		if !ok || tblInfo.HasClusteredIndex() {
+			return nil, false, errors.New("global index V1+ requires PartitionHandle on non-clustered table")
+		}
+		// Encode partition ID as a regular indexed column (int64)
+		key, err = codec.EncodeKey(loc, key, types.NewIntDatum(ph.PartitionID))
+		if err != nil {
+			return nil, false, err
+		}
+		// Use the inner handle for the actual handle encoding
+		innerHandle = ph.Handle
+	} else {
+		innerHandle = h
+	}
+
+	if !distinct && innerHandle != nil {
+		if innerHandle.IsInt() {
 			// We choose the efficient path here instead of calling `codec.EncodeKey`
 			// because the int handle must be an int64, and it must be comparable.
 			// This remains correct until codec.encodeSignedInt is changed.
 			key = append(key, codec.IntHandleFlag)
-			key = codec.EncodeInt(key, h.IntValue())
+			key = codec.EncodeInt(key, innerHandle.IntValue())
 		} else {
-			key = append(key, h.Encoded()...)
+			key = append(key, innerHandle.Encoded()...)
 		}
 	}
 	return
@@ -1574,6 +1601,10 @@ func TryGetCommonPkColumnRestoredIds(tbl *model.TableInfo) []int64 {
 		return pkColIDs
 	}
 	for _, idxCol := range pkIdx.Columns {
+		// Skip virtual partition ID column (Offset == -1), though it shouldn't appear in primary index
+		if idxCol.Offset == -1 {
+			continue
+		}
 		if types.NeedRestoredData(&tbl.Columns[idxCol.Offset].FieldType) {
 			pkColIDs = append(pkColIDs, tbl.Columns[idxCol.Offset].ID)
 		}
@@ -1606,21 +1637,28 @@ func GenIndexValueForClusteredIndexVersion1(loc *time.Location, tblInfo *model.T
 	if idxValNeedRestoredData || len(handleRestoredData) > 0 {
 		colIds := make([]int64, 0, len(idxInfo.Columns))
 		allRestoredData := make([]types.Datum, 0, len(handleRestoredData)+len(idxInfo.Columns))
-		for i, idxCol := range idxInfo.Columns {
+		valIdx := 0
+		for _, idxCol := range idxInfo.Columns {
+			// Skip virtual partition ID column (Offset == -1) for global index V1+
+			if idxCol.Offset == -1 {
+				continue
+			}
 			col := tblInfo.Columns[idxCol.Offset]
 			// If the column is the primary key's column,
 			// the restored data will be written later. Skip writing it here to avoid redundancy.
 			if mysql.HasPriKeyFlag(col.GetFlag()) {
+				valIdx++
 				continue
 			}
 			if model.ColumnNeedRestoredData(idxCol, tblInfo.Columns) {
 				colIds = append(colIds, col.ID)
 				if collate.IsBinCollation(model.GetIdxChangingFieldType(idxCol, col).GetCollate()) {
-					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[i].GetString()))))
+					allRestoredData = append(allRestoredData, types.NewUintDatum(uint64(stringutil.GetTailSpaceCount(indexedValues[valIdx].GetString()))))
 				} else {
-					allRestoredData = append(allRestoredData, indexedValues[i])
+					allRestoredData = append(allRestoredData, indexedValues[valIdx])
 				}
 			}
+			valIdx++
 		}
 
 		if len(handleRestoredData) > 0 {
@@ -1668,9 +1706,20 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 		newEncode = true
 	}
 	if idxValNeedRestoredData {
-		colIds := make([]int64, len(idxInfo.Columns))
-		for i, col := range idxInfo.Columns {
-			colIds[i] = tblInfo.Columns[col.Offset].ID
+		// Count non-virtual columns
+		nonVirtualCount := 0
+		for _, col := range idxInfo.Columns {
+			if col.Offset != -1 {
+				nonVirtualCount++
+			}
+		}
+		colIds := make([]int64, 0, nonVirtualCount)
+		for _, col := range idxInfo.Columns {
+			// Skip virtual partition ID column (Offset == -1) for global index V1+
+			if col.Offset == -1 {
+				continue
+			}
+			colIds = append(colIds, tblInfo.Columns[col.Offset].ID)
 		}
 		rd := rowcodec.Encoder{Enable: true}
 		// Encode row restored value.
@@ -1728,6 +1777,10 @@ func genIndexValueVersion0(loc *time.Location, tblInfo *model.TableInfo, idxInfo
 func TruncateIndexValues(tblInfo *model.TableInfo, idxInfo *model.IndexInfo, indexedValues []types.Datum) {
 	for i := range indexedValues {
 		idxCol := idxInfo.Columns[i]
+		// Skip virtual columns (like partition ID with Offset=-1)
+		if idxCol.Offset == -1 {
+			continue
+		}
 		tblCol := tblInfo.Columns[idxCol.Offset]
 		TruncateIndexValue(&indexedValues[i], idxCol, tblCol)
 	}

@@ -128,15 +128,22 @@ func (c *index) TableMeta() *model.TableInfo {
 
 func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) error {
 	var err error
-	for i, idxCol := range c.idxInfo.Columns {
-		tblCol := c.tblInfo.Columns[idxCol.Offset]
-		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
+	valIdx := 0
+	for _, idxCol := range c.idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
 			continue
 		}
-		indexedValues[i], err = table.CastColumnValueWithStrictMode(indexedValues[i], tblCol.ChangingFieldType)
+		tblCol := c.tblInfo.Columns[idxCol.Offset]
+		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
+			valIdx++
+			continue
+		}
+		indexedValues[valIdx], err = table.CastColumnValueWithStrictMode(indexedValues[valIdx], tblCol.ChangingFieldType)
 		if err != nil {
 			return err
 		}
+		valIdx++
 	}
 	return nil
 }
@@ -145,6 +152,7 @@ func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) erro
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
 func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
+	fullHandle := h
 	if c.idxInfo.Global {
 		idxTblID = c.tblInfo.ID
 		pi := c.tblInfo.GetPartitionInfo()
@@ -154,13 +162,31 @@ func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues
 				idxTblID = pi.NewTableID
 			}
 		}
+
+		// For global index V1+ on partitioned tables, the handle MUST be a PartitionHandle
+		// because we need the partition ID to encode in the index key
+		if c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 && pi != nil {
+			// If handle is not already a PartitionHandle, try to create one using phyTblID
+			if _, ok := fullHandle.(kv.PartitionHandle); !ok {
+				// For partition-level index objects, phyTblID is the partition ID
+				// For table-level index objects (global indexes), phyTblID is the main table ID
+				// In the latter case, we can't create a PartitionHandle without knowing which partition
+				if c.phyTblID != c.tblInfo.ID {
+					// This is a partition-level index object, use phyTblID as partition ID
+					fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
+				}
+				// If phyTblID == tblInfo.ID, this means we're using the main table's index object
+				// and the handle should already be a PartitionHandle from the caller
+				// If it's not, GenIndexKey will fail with an appropriate error
+			}
+		}
 	}
 
 	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
 		return
 	}
 
-	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
+	key, distinct, err = tablecodec.GenIndexKey(loc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, fullHandle, buf)
 	err = ec.HandleError(err)
 	return
 }
@@ -176,7 +202,19 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 		return nil, errors.Trace(err)
 	}
 
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
+	// For global indexes, if the handle is a PartitionHandle, extract the partition ID from it
+	// to ensure the partition ID is encoded in the index value.
+	// This is critical for non-clustered tables after EXCHANGE PARTITION,
+	// where duplicate _tidb_rowid values exist across partitions.
+	partitionID := c.phyTblID
+	innerHandle := h
+	if c.idxInfo.Global {
+		if ph, ok := h.(kv.PartitionHandle); ok {
+			partitionID = ph.PartitionID
+			innerHandle = ph.Handle
+		}
+	}
+	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, innerHandle, partitionID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
@@ -198,14 +236,26 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 	var buf []byte
 	for !jsonIsNull {
 		val := make([]types.Datum, 0, len(indexedValues))
-		for i, v := range indexedValues {
-			if !c.tblInfo.Columns[c.idxInfo.Columns[i].Offset].FieldType.IsArray() {
+		// Map indexedValues index to IndexColumn, skipping virtual columns
+		valIdx := 0
+		for _, idxCol := range c.idxInfo.Columns {
+			if idxCol.Offset == -1 {
+				// Skip virtual partition ID column
+				continue
+			}
+			if valIdx >= len(indexedValues) {
+				break
+			}
+			v := indexedValues[valIdx]
+			if !c.tblInfo.Columns[idxCol.Offset].FieldType.IsArray() {
 				val = append(val, v)
+				valIdx++
 			} else {
 				// if the datum type is not JSON, it must come from cleanup index.
 				if v.IsNull() || v.Kind() != types.KindMysqlJSON {
 					val = append(val, v)
 					jsonIsNull = true
+					valIdx++
 					continue
 				}
 				elemCount := v.GetMysqlJSON().GetElemCount()
@@ -225,6 +275,7 @@ func (c *index) getIndexedValue(indexedValues []types.Datum) [][]types.Datum {
 					val = append(val, types.NewDatum(binaryJSON.GetValue()))
 					break
 				}
+				valIdx++
 			}
 		}
 		vals = append(vals, val)
@@ -825,7 +876,15 @@ func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum,
 }
 
 func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
-	needLength := len(idxInfo.Columns)
+	// Count non-virtual columns (exclude partition ID column with Offset=-1)
+	nonVirtualColCount := 0
+	for _, ic := range idxInfo.Columns {
+		if ic.Offset != -1 {
+			nonVirtualColCount++
+		}
+	}
+
+	needLength := nonVirtualColCount
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
@@ -833,20 +892,33 @@ func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.In
 	// If the context has extra info, use the extra layout info to get index columns.
 	if len(opt) != 0 {
 		intest.Assert(len(opt) == len(idxInfo.Columns), "offsets length is not equal to index columns length, offset len: %d, index len: %d", len(opt), len(idxInfo.Columns))
-		for i, offset := range opt {
-			if offset < 0 || offset > len(r) {
+		valIdx := 0
+		for _, offset := range opt {
+			if offset == -1 {
+				// Skip virtual partition ID column
+				continue
+			}
+			if offset > len(r) {
 				return nil, table.ErrIndexOutBound.GenWithStackByArgs(idxInfo.Name, offset, r)
 			}
-			vals[i] = r[offset]
+			vals[valIdx] = r[offset]
+			valIdx++
 		}
 		return vals, nil
 	}
 	// Otherwise use the full column layout.
-	for i, ic := range idxInfo.Columns {
-		if ic.Offset < 0 || ic.Offset >= len(r) {
+	valIdx := 0
+	for _, ic := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+.
+		// The partition ID will be provided separately when encoding the index key.
+		if ic.Offset == -1 {
+			continue
+		}
+		if ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs(ic.Name, ic.Offset, r)
 		}
-		vals[i] = r[ic.Offset]
+		vals[valIdx] = r[ic.Offset]
+		valIdx++
 	}
 	return vals, nil
 }
@@ -854,6 +926,10 @@ func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.In
 // FindChangingCol finds the changing column in idxInfo.
 func FindChangingCol(cols []*table.Column, idxInfo *model.IndexInfo) *table.Column {
 	for _, ic := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if ic.Offset == -1 {
+			continue
+		}
 		if col := cols[ic.Offset]; col.ChangeStateInfo != nil {
 			return col
 		}
@@ -875,6 +951,10 @@ func IsIndexWritable(idx table.Index) bool {
 func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []rowcodec.ColInfo {
 	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
+			continue
+		}
 		col := tblInfo.Columns[idxCol.Offset]
 		ft := model.GetIdxChangingFieldType(idxCol, col).Clone()
 		colInfo = append(colInfo, rowcodec.ColInfo{
@@ -890,6 +970,12 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 func BuildFieldTypesForIndexColumns(idxInfo *model.IndexInfo, tblInfo *model.TableInfo) []*types.FieldType {
 	tps := make([]*types.FieldType, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
+			// For the virtual partition ID column, add an int64 field type
+			tps = append(tps, types.NewFieldType(mysql.TypeLonglong))
+			continue
+		}
 		col := tblInfo.Columns[idxCol.Offset]
 		tps = append(tps, rowcodec.FieldTypeFromModelColumn(col))
 	}

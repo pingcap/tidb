@@ -1022,6 +1022,10 @@ func (coll *HistColl) GenerateHistCollFromColumnInfo(tblInfo *model.TableInfo, c
 		}
 		ids := make([]int64, 0, len(idxInfo.Columns))
 		for _, idxCol := range idxInfo.Columns {
+			// Skip virtual partition ID column (Offset == -1) for global index V1+
+			if idxCol.Offset == -1 {
+				continue
+			}
 			uniqueID, ok := colInfoID2UniqueID[tblInfo.Columns[idxCol.Offset].ID]
 			if !ok {
 				break

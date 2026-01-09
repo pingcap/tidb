@@ -410,6 +410,26 @@ func BuildIndexInfo(
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
+		// Set global index version for new global indexes.
+		// Version 1 is only needed for non-clustered tables with non-unique global indexes
+		// to prevent collisions after EXCHANGE PARTITION due to duplicate _tidb_rowid values.
+		// Clustered tables and unique indexes don't have this issue and use version 0.
+		idxInfo.GlobalIndexVersion = 0
+		if indexOption.Global && !idxInfo.Unique && !tblInfo.HasClusteredIndex() {
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+				if valInt, ok := val.(int); ok {
+					idxInfo.GlobalIndexVersion = uint8(valInt)
+				}
+			})
+			// Add virtual partition ID column to the index so TiKV knows to decode it from the key.
+			// Use Offset=-1 to indicate this is a virtual column not present in the table.
+			idxInfo.Columns = append(idxInfo.Columns, &model.IndexColumn{
+				Name:   ast.NewCIStr("_tidb_pid"),
+				Offset: -1,
+				Length: types.UnspecifiedLength,
+			})
+		}
 
 		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
 		if err != nil {
@@ -750,6 +770,10 @@ func checkPrimaryKeyNotNull(jobCtx *jobContext, w *worker, job *model.Job,
 func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffset := make(map[int]struct{}, 0)
 	for _, col := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if col.Offset == -1 {
+			continue
+		}
 		if tblInfo.Columns[col.Offset].Hidden {
 			hiddenColOffset[col.Offset] = struct{}{}
 		}
@@ -766,6 +790,10 @@ func moveAndUpdateHiddenColumnsToPublic(tblInfo *model.TableInfo, idxInfo *model
 		}
 	}
 	for _, col := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if col.Offset == -1 {
+			continue
+		}
 		tblInfo.Columns[col.Offset].State = model.StatePublic
 		if _, needMove := hiddenColOffset[col.Offset]; needMove {
 			tblInfo.MoveColumnInfo(col.Offset, firstNonPublicPos)
@@ -2116,6 +2144,10 @@ func onDropIndex(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 func RemoveDependentHiddenColumns(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) {
 	hiddenColOffs := make([]int, 0)
 	for _, indexColumn := range idxInfo.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if indexColumn.Offset == -1 {
+			continue
+		}
 		col := tblInfo.Columns[indexColumn.Offset]
 		if col.Hidden {
 			hiddenColOffs = append(hiddenColOffs, col.Offset)
@@ -2376,6 +2408,16 @@ func (w *baseIndexWorker) getIndexRecord(idxInfo *model.IndexInfo, handle kv.Han
 	idxVal := make([]types.Datum, len(idxInfo.Columns))
 	var err error
 	for j, v := range idxInfo.Columns {
+		// Handle virtual partition ID column (Offset == -1) for global index V1+
+		if v.Offset == -1 {
+			// Extract partition ID from PartitionHandle
+			if ph, ok := handle.(kv.PartitionHandle); ok {
+				idxVal[j] = types.NewIntDatum(ph.PartitionID)
+			} else {
+				return nil, errors.New("global index V1+ requires PartitionHandle")
+			}
+			continue
+		}
 		col := cols[v.Offset]
 		idxColumnVal, ok := w.rowMap[col.ID]
 		if ok {
@@ -2444,6 +2486,24 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				return false, nil
 			}
 
+			// For global indexes V1+ on partitioned tables, we need to wrap the handle
+			// with the partition ID to create a PartitionHandle.
+			// This is critical for non-clustered tables after EXCHANGE PARTITION,
+			// where duplicate _tidb_rowid values exist across partitions.
+			// Legacy indexes (version 0) don't use PartitionHandle in the key.
+			actualHandle := handle
+			hasGlobalIndexV1 := false
+			for _, index := range w.indexes {
+				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					hasGlobalIndexV1 = true
+					break
+				}
+			}
+			if hasGlobalIndexV1 {
+				// Wrap the handle with partition ID for global indexes V1+
+				actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
+			}
+
 			// Decode one row, generate records of this row.
 			err := w.updateRowDecoder(handle, rawRow)
 			if err != nil {
@@ -2454,7 +2514,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				if index.Meta().HasCondition() {
 					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
 				}
-				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
+				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}

@@ -1791,9 +1791,13 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 }
 
 func getIndexColumnInfos(tblInfo *model.TableInfo, idx *model.IndexInfo) []*model.ColumnInfo {
-	ret := make([]*model.ColumnInfo, len(idx.Columns))
-	for i, idxCol := range idx.Columns {
-		ret[i] = tblInfo.Columns[idxCol.Offset]
+	ret := make([]*model.ColumnInfo, 0, len(idx.Columns))
+	for _, idxCol := range idx.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
+			continue
+		}
+		ret = append(ret, tblInfo.Columns[idxCol.Offset])
 	}
 	return ret
 }
@@ -1801,6 +1805,10 @@ func getIndexColumnInfos(tblInfo *model.TableInfo, idx *model.IndexInfo) []*mode
 func getIndexColsSchema(tblInfo *model.TableInfo, idx *model.IndexInfo, allColSchema *expression.Schema) *expression.Schema {
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(idx.Columns))...)
 	for _, idxCol := range idx.Columns {
+		// Skip virtual partition ID column (Offset == -1) for global index V1+
+		if idxCol.Offset == -1 {
+			continue
+		}
 		for i, colInfo := range tblInfo.Columns {
 			if colInfo.Name.L == idxCol.Name.L {
 				schema.Append(allColSchema.Columns[i])
