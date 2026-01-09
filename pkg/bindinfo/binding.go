@@ -162,7 +162,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 	var cache *BindingCacheItem
 	if item := sessionVars.StmtCtx.MatchSQLBindingCache; item != nil {
 		cache = item.(*BindingCacheItem)
-		// We only use this temp binding cache once.
+		// We only use this temp bindinfo cache once to avoid retaining it after drop prepare.
 		sessionVars.StmtCtx.MatchSQLBindingCache = nil
 		if !intest.InTest {
 			return cache.binding, cache.matched, cache.scope
