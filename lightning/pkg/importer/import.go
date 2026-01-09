@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/br/pkg/version/build"
@@ -56,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/driver"
@@ -224,7 +224,7 @@ type Controller struct {
 	closedEngineLimit *worker.Pool
 	addIndexLimit     *worker.Pool
 
-	store          storage.ExternalStorage
+	store          objstore.Storage
 	ownStore       bool
 	metaMgrBuilder metaMgrBuilder
 	errorMgr       *errormanager.ErrorManager
@@ -266,7 +266,7 @@ type ControllerParam struct {
 	// a pointer to status to report it to caller
 	Status *LightningStatus
 	// storage interface to read the dump data
-	DumpFileStorage storage.ExternalStorage
+	DumpFileStorage objstore.Storage
 	// true if DumpFileStorage is created by lightning. In some cases where lightning is a library, the framework may pass an DumpFileStorage
 	OwnExtStorage bool
 	// used by lightning server mode to pause tasks
@@ -274,7 +274,7 @@ type ControllerParam struct {
 	// DB is a connection pool to TiDB
 	DB *sql.DB
 	// storage interface to write file checkpoints
-	CheckpointStorage storage.ExternalStorage
+	CheckpointStorage objstore.Storage
 	// when CheckpointStorage is not nil, save file checkpoint to it with this name
 	CheckpointName string
 	// DupIndicator can expose the duplicate detection result to the caller
@@ -311,7 +311,7 @@ func NewImportControllerWithPauser(
 	}
 
 	var cpdb checkpoints.DB
-	// if CheckpointStorage is set, we should use given ExternalStorage to create checkpoints.
+	// if CheckpointStorage is set, we should use given Storage to create checkpoints.
 	if p.CheckpointStorage != nil {
 		cpdb, err = checkpoints.NewFileCheckpointsDBWithExstorageFileName(ctx, p.CheckpointStorage.URI(), p.CheckpointStorage, p.CheckpointName)
 		if err != nil {
@@ -540,6 +540,18 @@ func (rc *Controller) Close() {
 	if rc.pdCli != nil {
 		rc.pdCli.Close()
 	}
+}
+
+// Pause pauses the import process.
+func (rc *Controller) Pause(_ context.Context) error {
+	rc.pauser.Pause()
+	return nil
+}
+
+// Resume resumes the import process.
+func (rc *Controller) Resume(_ context.Context) error {
+	rc.pauser.Resume()
+	return nil
 }
 
 // Run starts the restore task.

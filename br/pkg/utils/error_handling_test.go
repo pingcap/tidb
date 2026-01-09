@@ -68,3 +68,20 @@ func TestHandleErrorMsg(t *testing.T) {
 	actualResult = HandleUnknownBackupError(msg, uuid, ec)
 	require.Equal(t, expectedResult, actualResult)
 }
+
+func TestHandleCredentialNotFoundError(t *testing.T) {
+	ec := NewErrorContext("test", 3)
+	uuid := uint64(789)
+	expectedReason := "Credential info not found on TiKV Node (store id: 789). workaround: please ensure the credential/access key is correctly configured for the storage."
+	expectedResult := ErrorHandlingResult{Strategy: StrategyGiveUp, Reason: expectedReason}
+
+	// Test Azure Blob credential not found error
+	azureMsg := "External storage error: credential info not found"
+	actualResult := HandleUnknownBackupError(azureMsg, uuid, ec)
+	require.Equal(t, expectedResult, actualResult)
+
+	// Test with different casing
+	azureMsgUpper := "External storage error: Credential Info Not Found"
+	actualResult = HandleUnknownBackupError(azureMsgUpper, uuid, ec)
+	require.Equal(t, expectedResult, actualResult)
+}

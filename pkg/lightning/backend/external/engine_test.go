@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -126,7 +126,7 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-func prepareKVFiles(t *testing.T, store storage.ExternalStorage, contents [][]KVPair) (dataFiles, statFiles []string) {
+func prepareKVFiles(t *testing.T, store objstore.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
 		var summary *WriterSummary
@@ -172,7 +172,7 @@ func TestEngineOnDup(t *testing.T) {
 		{Key: []byte{3}, Value: []byte("sds")},
 	}}
 
-	getEngineFn := func(store storage.ExternalStorage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
+	getEngineFn := func(store objstore.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
 		return NewExternalEngine(
 			ctx,
 			store, inDataFiles, inStatFiles,
@@ -192,7 +192,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate ignore", func(t *testing.T) {
 		onDup := engineapi.OnDuplicateKeyIgnore
-		store := storage.NewMemStorage()
+		store := objstore.NewMemStorage()
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
 		loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -204,7 +204,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate error", func(t *testing.T) {
 		onDup := engineapi.OnDuplicateKeyError
-		store := storage.NewMemStorage()
+		store := objstore.NewMemStorage()
 		dataFiles, statFiles := prepareKVFiles(t, store, contents)
 		extEngine := getEngineFn(store, onDup, dataFiles, statFiles)
 		loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -216,7 +216,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate record or remove, no duplicates", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-			store := storage.NewMemStorage()
+			store := objstore.NewMemStorage()
 			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
 				{Key: []byte{4}, Value: []byte("bbb")},
 				{Key: []byte{1}, Value: []byte("aa")},
@@ -252,7 +252,7 @@ func TestEngineOnDup(t *testing.T) {
 		}
 		for _, cont := range [][][]KVPair{contents, contents2} {
 			for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-				store := storage.NewMemStorage()
+				store := objstore.NewMemStorage()
 				dataFiles, statFiles := prepareKVFiles(t, store, cont)
 				extEngine := getEngineFn(store, od, dataFiles, statFiles)
 				loadDataCh := make(chan engineapi.DataAndRanges, 4)
@@ -289,7 +289,7 @@ func TestEngineOnDup(t *testing.T) {
 
 	t.Run("on duplicate record or remove, all duplicated", func(t *testing.T) {
 		for _, od := range []engineapi.OnDuplicateKey{engineapi.OnDuplicateKeyRecord, engineapi.OnDuplicateKeyRemove} {
-			store := storage.NewMemStorage()
+			store := objstore.NewMemStorage()
 			dfiles, sfiles := prepareKVFiles(t, store, [][]KVPair{{
 				{Key: []byte{1}, Value: []byte("aaa")},
 				{Key: []byte{1}, Value: []byte("aaa")},

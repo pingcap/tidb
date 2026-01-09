@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
@@ -31,6 +30,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -113,7 +113,7 @@ func (e *conflictResolutionStepExecutor) RunSubtask(ctx context.Context, subtask
 
 func (e *conflictResolutionStepExecutor) resolveConflictsOfKVGroup(
 	ctx context.Context,
-	objStore storage.ExternalStorage,
+	objStore objstore.Storage,
 	concurrency int,
 	kvGroup string,
 	ci *engineapi.ConflictInfo,

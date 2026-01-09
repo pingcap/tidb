@@ -99,195 +99,283 @@ func formatRanges(ranges *KeyRanges) zap.Field {
 	}))
 }
 
-func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, locs []*tikv.KeyLocation) /* valid */ bool {
-	if len(kvRanges) == 0 {
+// compareKeyRangeBoundary compares two key range boundaries where empty end keys mean +infinity.
+// Empty start keys are handled naturally by bytes.Compare (empty < any non-empty).
+// The isStart parameters indicate whether each key is a start boundary or end boundary (+inf when empty).
+// Returns -1 if a < b, 0 if a == b, 1 if a > b.
+func compareKeyRangeBoundary(a, b []byte, aIsStart, bIsStart bool) int {
+	if len(a) == 0 && !aIsStart {
+		if len(b) == 0 && !bIsStart {
+			return 0
+		}
+		return 1
+	} else if len(b) == 0 && !bIsStart {
+		return -1
+	}
+
+	return bytes.Compare(a, b)
+}
+
+// locContainsStartKey checks if loc contains key as a start key (key must be in [loc.Start, loc.End)).
+func locContainsStartKey(loc *tikv.KeyLocation, key []byte) bool {
+	if loc == nil {
+		return false
+	}
+	// key >= loc.StartKey
+	if compareKeyRangeBoundary(key, loc.StartKey, true, true) < 0 {
+		return false
+	}
+	// key < loc.EndKey (empty EndKey means +inf)
+	if len(loc.EndKey) == 0 {
 		return true
+	}
+	return bytes.Compare(key, loc.EndKey) < 0
+}
+
+// locCoversEndKey checks if loc covers the end key (end key can equal loc.EndKey).
+// The end key must be > loc.StartKey and <= loc.EndKey.
+func locCoversEndKey(loc *tikv.KeyLocation, endKey []byte) bool {
+	if loc == nil {
+		return false
+	}
+	if len(endKey) > 0 && len(loc.StartKey) > 0 {
+		if bytes.Compare(endKey, loc.StartKey) <= 0 {
+			return false
+		}
+	}
+	// Empty endKey means +inf, needs loc.EndKey to also be +inf
+	if len(endKey) == 0 {
+		return len(loc.EndKey) == 0
+	}
+	// endKey <= loc.EndKey (empty loc.EndKey means +inf, so always true)
+	if len(loc.EndKey) == 0 {
+		return true
+	}
+	return bytes.Compare(endKey, loc.EndKey) <= 0
+}
+
+// checkLocationsOrdered verifies that locations are ordered by StartKey and non-overlapping.
+// Returns true if valid.
+func checkLocationsOrdered(ctx context.Context, locs []*tikv.KeyLocation) bool {
+	valid := true
+	for i, loc := range locs {
+		if loc == nil {
+			logutil.Logger(ctx).Warn("[validateLocationCoverage] nil location",
+				zap.Int("index", i))
+			valid = false
+			continue
+		}
+		if i == 0 {
+			continue
+		}
+		prev := locs[i-1]
+		if prev == nil {
+			continue // already logged
+		}
+
+		// Check ordering: prev.StartKey < curr.StartKey
+		if compareKeyRangeBoundary(prev.StartKey, loc.StartKey, true, true) >= 0 {
+			logutil.Logger(ctx).Warn("[validateLocationCoverage] locations not ordered",
+				zap.Int("index", i),
+				zap.Uint64("prevRegionID", prev.Region.GetID()),
+				zap.Uint64("currRegionID", loc.Region.GetID()),
+				keyField("prevStart", prev.StartKey),
+				keyField("currStart", loc.StartKey))
+			valid = false
+		}
+
+		// Check non-overlapping: prev.EndKey <= curr.StartKey
+		if compareKeyRangeBoundary(prev.EndKey, loc.StartKey, false, true) > 0 {
+			logutil.Logger(ctx).Warn("[validateLocationCoverage] locations overlap",
+				zap.Int("index", i),
+				zap.Uint64("prevRegionID", prev.Region.GetID()),
+				zap.Uint64("currRegionID", loc.Region.GetID()),
+				keyField("prevEnd", prev.EndKey),
+				keyField("currStart", loc.StartKey))
+			valid = false
+		}
+	}
+	return valid
+}
+
+// checkRangesCovered verifies that all ranges are covered by the locations.
+// Returns (locUsed, valid) where locUsed tracks which locations were used.
+func checkRangesCovered(ctx context.Context, kvRanges []tikv.KeyRange, locs []*tikv.KeyLocation) ([]bool, bool) {
+	locUsed := make([]bool, len(locs))
+	valid := true
+	locIdx := 0
+
+	for rangeIdx, r := range kvRanges {
+		// Advance to the first location that might contain r.StartKey
+		for locIdx < len(locs) {
+			loc := locs[locIdx]
+			if loc == nil {
+				locIdx++
+				continue
+			}
+			// If loc.EndKey <= r.StartKey, this loc is entirely before the range
+			if len(loc.EndKey) > 0 && compareKeyRangeBoundary(loc.EndKey, r.StartKey, false, true) <= 0 {
+				locIdx++
+				continue
+			}
+			break
+		}
+
+		// Check if current location covers the range start
+		if locIdx >= len(locs) || !locContainsStartKey(locs[locIdx], r.StartKey) {
+			logutil.Logger(ctx).Warn("[validateLocationCoverage] range start not covered",
+				zap.Int("rangeIndex", rangeIdx),
+				keyField("rangeStart", r.StartKey),
+				keyField("rangeEnd", r.EndKey),
+				zap.Int("locIndex", locIdx),
+				zap.Int("totalLocs", len(locs)))
+			if locIdx < len(locs) && locs[locIdx] != nil {
+				logutil.Logger(ctx).Warn("[validateLocationCoverage] next location",
+					zap.Uint64("regionID", locs[locIdx].Region.GetID()),
+					keyField("locStart", locs[locIdx].StartKey),
+					keyField("locEnd", locs[locIdx].EndKey))
+			}
+			valid = false
+			continue
+		}
+
+		// Walk through locations until range end is covered
+		coverIdx := locIdx
+		locUsed[coverIdx] = true
+		for !locCoversEndKey(locs[coverIdx], r.EndKey) {
+			prevEnd := locs[coverIdx].EndKey
+			nextIdx := coverIdx + 1
+
+			// Skip nil locations
+			for nextIdx < len(locs) && locs[nextIdx] == nil {
+				nextIdx++
+			}
+
+			if nextIdx >= len(locs) {
+				logutil.Logger(ctx).Warn("[validateLocationCoverage] range end not covered (ran out of locations)",
+					zap.Int("rangeIndex", rangeIdx),
+					keyField("rangeStart", r.StartKey),
+					keyField("rangeEnd", r.EndKey),
+					zap.Int("lastLocIndex", coverIdx),
+					zap.Uint64("lastLocRegionID", locs[coverIdx].Region.GetID()),
+					keyField("lastLocEnd", locs[coverIdx].EndKey))
+				valid = false
+				break
+			}
+
+			// Check for gap: prevEnd must equal next.StartKey
+			if !bytes.Equal(prevEnd, locs[nextIdx].StartKey) {
+				logutil.Logger(ctx).Warn("[validateLocationCoverage] gap between locations",
+					zap.Int("rangeIndex", rangeIdx),
+					keyField("rangeStart", r.StartKey),
+					keyField("rangeEnd", r.EndKey),
+					zap.Int("prevLocIndex", coverIdx),
+					zap.Uint64("prevLocRegionID", locs[coverIdx].Region.GetID()),
+					keyField("prevLocEnd", prevEnd),
+					zap.Int("nextLocIndex", nextIdx),
+					zap.Uint64("nextLocRegionID", locs[nextIdx].Region.GetID()),
+					keyField("nextLocStart", locs[nextIdx].StartKey))
+				valid = false
+				break
+			}
+
+			coverIdx = nextIdx
+			locUsed[coverIdx] = true
+		}
+	}
+
+	return locUsed, valid
+}
+
+// checkNoUnusedLocations verifies that all locations cover at least one range.
+// Returns true if valid.
+func checkNoUnusedLocations(ctx context.Context, locs []*tikv.KeyLocation, locUsed []bool) bool {
+	valid := true
+	for i, used := range locUsed {
+		if !used && locs[i] != nil {
+			logutil.Logger(ctx).Warn("[validateLocationCoverage] location does not cover any range",
+				zap.Int("locIndex", i),
+				zap.Uint64("regionID", locs[i].Region.GetID()),
+				keyField("locStart", locs[i].StartKey),
+				keyField("locEnd", locs[i].EndKey))
+			valid = false
+		}
+	}
+	return valid
+}
+
+// dumpValidationState logs the full state of ranges and locations for debugging.
+func dumpValidationState(ctx context.Context, kvRanges []tikv.KeyRange, locs []*tikv.KeyLocation, locUsed []bool) {
+	logutil.Logger(ctx).Warn("[validateLocationCoverage] validation failed - dumping full state",
+		zap.Int("rangeCount", len(kvRanges)),
+		zap.Int("locationCount", len(locs)))
+
+	for i, r := range kvRanges {
+		logutil.Logger(ctx).Warn("[validateLocationCoverage] range",
+			zap.Int("index", i),
+			keyField("start", r.StartKey),
+			keyField("end", r.EndKey))
+	}
+
+	for i, loc := range locs {
+		if loc == nil {
+			logutil.Logger(ctx).Warn("[validateLocationCoverage] location (nil)",
+				zap.Int("index", i))
+		} else {
+			used := false
+			if i < len(locUsed) {
+				used = locUsed[i]
+			}
+			logutil.Logger(ctx).Warn("[validateLocationCoverage] location",
+				zap.Int("index", i),
+				zap.Uint64("regionID", loc.Region.GetID()),
+				zap.Uint64("regionVer", loc.Region.GetVer()),
+				keyField("start", loc.StartKey),
+				keyField("end", loc.EndKey),
+				zap.Bool("used", used))
+		}
+	}
+}
+
+// validateLocationCoverage checks three properties:
+//  1. Locations are ordered and non-overlapping
+//  2. The union of ranges is covered by the union of locations
+//  3. All locations cover some range (no extraneous locations)
+//
+// Returns true if all properties hold. Logs detailed diagnostics on failure.
+func validateLocationCoverage(ctx context.Context, kvRanges []tikv.KeyRange, locs []*tikv.KeyLocation) bool {
+	if len(kvRanges) == 0 {
+		return len(locs) == 0
+	}
+	if len(locs) == 0 {
+		logutil.Logger(ctx).Warn("[validateLocationCoverage] no locations but ranges exist",
+			zap.Int("rangeCount", len(kvRanges)))
+		return false
 	}
 
 	valid := true
 
-	// First, validate monotonicity of locations to catch PD corruption
-	// Continue checking all locations to report all errors
-	for i := 1; i < len(locs); i++ {
-		prev, curr := locs[i-1], locs[i]
-		if prev == nil || curr == nil {
-			continue // Skip nil check
-		}
-
-		// Check that locations are ordered (prev.StartKey <= curr.StartKey)
-		// Empty start key means beginning of key space (minimum)
-		if len(curr.StartKey) == 0 && len(prev.StartKey) > 0 {
-			// Current starts from beginning, but previous doesn't - wrong order!
-			logutil.BgLogger().Warn("BatchLocateKeyRanges locations not monotonic",
-				zap.Int("locationIndex", i),
-				zap.String("issue", "current location starts from beginning but appears after non-beginning location"),
-				keyField("prevStart", prev.StartKey),
-				keyField("currStart", curr.StartKey))
-			valid = false
-			continue // Continue checking other locations
-		}
-		if len(prev.StartKey) > 0 && len(curr.StartKey) > 0 && bytes.Compare(prev.StartKey, curr.StartKey) > 0 {
-			logutil.BgLogger().Warn("BatchLocateKeyRanges locations not monotonic",
-				zap.Int("locationIndex", i),
-				keyField("prevStart", prev.StartKey),
-				keyField("currStart", curr.StartKey))
-			valid = false
-			continue // Continue checking other locations
-		}
-
-		// Check for overlaps/gaps: prev.EndKey should be <= curr.StartKey
-		// Empty end key means infinity - there should be no next location
-		if len(prev.EndKey) == 0 {
-			logutil.BgLogger().Warn("BatchLocateKeyRanges location extends to infinity but is not last",
-				zap.Int("locationIndex", i-1),
-				zap.Int("totalLocations", len(locs)),
-				keyField("prevStart", prev.StartKey))
-			valid = false
-			continue // Continue checking other locations
-		}
-
-		// Both keys non-empty - check for overlap
-		if len(prev.EndKey) > 0 && len(curr.StartKey) > 0 && bytes.Compare(prev.EndKey, curr.StartKey) > 0 {
-			logutil.BgLogger().Warn("BatchLocateKeyRanges locations overlap",
-				zap.Int("locationIndex", i),
-				keyField("prevEnd", prev.EndKey),
-				keyField("currStart", curr.StartKey))
-			valid = false
-			// Continue checking other locations
-		}
-	}
-
-	// Check coverage even if monotonicity failed, to report all issues
-	rangeIdx := 0
-	locIdx := 0
-	// Track the first mismatch for better diagnostics
-	firstMismatchRangeIdx := -1
-	firstMismatchLocIdx := -1
-	firstMismatchReason := ""
-	var firstMismatchLoc *tikv.KeyLocation
-	var firstMismatchRange tikv.KeyRange
-	// Track if current range continues from previous location (partial coverage)
-	rangeContinuesFromPrevLoc := false
-	var prevLocEndKey []byte
-
-	for _, loc := range locs {
-		if loc == nil {
-			continue // Skip nil locations
-		}
-		if rangeIdx >= len(kvRanges) {
-			// All ranges processed - remaining locations are okay
-			break
-		}
-		currentRange := kvRanges[rangeIdx]
-
-		// Only validate start coverage if this is the first location for this range
-		if !rangeContinuesFromPrevLoc {
-			startCovered := false
-			if len(currentRange.StartKey) == 0 {
-				// Empty start key means beginning of key space
-				// Location must also start from beginning
-				startCovered = len(loc.StartKey) == 0
-			} else {
-				// Non-empty start key
-				startCovered = loc.Contains(currentRange.StartKey) || bytes.Equal(currentRange.StartKey, loc.StartKey)
-			}
-
-			if !startCovered && firstMismatchRangeIdx == -1 {
-				firstMismatchRangeIdx = rangeIdx
-				firstMismatchLocIdx = locIdx
-				firstMismatchReason = "location does not cover range start"
-				firstMismatchLoc = loc
-				firstMismatchRange = currentRange
-			}
-		} else {
-			// Range continues from previous location - verify no gap
-			if !bytes.Equal(prevLocEndKey, loc.StartKey) && firstMismatchRangeIdx == -1 {
-				firstMismatchRangeIdx = rangeIdx
-				firstMismatchLocIdx = locIdx
-				firstMismatchReason = "gap between locations"
-				firstMismatchLoc = loc
-				firstMismatchRange = currentRange
-			}
-		}
-
-		locIdx++
-
-		// Process all ranges that end within or at this location
-		rangeContinuesFromPrevLoc = false
-		for rangeIdx < len(kvRanges) {
-			r := kvRanges[rangeIdx]
-
-			// Check if this range's end is covered by this location
-			endCovered := false
-			if len(r.EndKey) == 0 {
-				// Empty end key means infinity - location must also extend to infinity
-				endCovered = len(loc.EndKey) == 0
-			} else if len(loc.EndKey) == 0 {
-				// Location extends to infinity, covers any finite end
-				endCovered = true
-			} else {
-				// Both are non-empty - check containment or boundary match
-				endCovered = loc.Contains(r.EndKey) || bytes.Equal(loc.EndKey, r.EndKey)
-			}
-
-			if !endCovered {
-				// This range extends beyond this location
-				// Should be covered by next location
-				rangeContinuesFromPrevLoc = true
-				prevLocEndKey = loc.EndKey
-				break
-			}
-
-			// Range fully covered, move to next range
-			rangeIdx++
-			rangeContinuesFromPrevLoc = false
-		}
-	}
-
-	// Check if all ranges were covered
-	if rangeIdx < len(kvRanges) && firstMismatchRangeIdx == -1 {
-		firstMismatchRangeIdx = rangeIdx
-		firstMismatchReason = "locations do not cover all ranges"
-		firstMismatchRange = kvRanges[rangeIdx]
-		// No specific location to blame, locIdx will be set to len(locs)
-		firstMismatchLocIdx = locIdx
-	}
-
-	// Log error if coverage mismatch detected with full context
-	if firstMismatchRangeIdx != -1 {
-		fields := []zap.Field{
-			zap.String("reason", firstMismatchReason),
-			zap.Int("requestedRangeCount", len(kvRanges)),
-			zap.Int("locationCount", len(locs)),
-			zap.Int("firstMismatchRangeIndex", firstMismatchRangeIdx),
-			zap.Int("firstMismatchLocationIndex", firstMismatchLocIdx),
-			keyField("mismatchRangeStart", firstMismatchRange.StartKey),
-			keyField("mismatchRangeEnd", firstMismatchRange.EndKey),
-		}
-
-		// Add location details if available
-		if firstMismatchLoc != nil {
-			fields = append(fields,
-				zap.Uint64("mismatchLocationRegionID", firstMismatchLoc.Region.GetID()),
-				keyField("mismatchLocationStart", firstMismatchLoc.StartKey),
-				keyField("mismatchLocationEnd", firstMismatchLoc.EndKey))
-		}
-
-		// Add gap details if this was a gap error
-		if firstMismatchReason == "gap between locations" && len(prevLocEndKey) > 0 {
-			fields = append(fields, keyField("prevLocationEnd", prevLocEndKey))
-		}
-
-		// Add remaining uncovered range info for missing coverage
-		if firstMismatchReason == "locations do not cover all ranges" {
-			fields = append(fields, zap.Int("remainingRangeCount", len(kvRanges)-rangeIdx))
-		}
-
-		logutil.BgLogger().Warn("BatchLocateKeyRanges coverage mismatch", fields...)
+	// Property 1: Locations are ordered and non-overlapping
+	if !checkLocationsOrdered(ctx, locs) {
 		valid = false
 	}
 
-	// Return false if either monotonicity check or coverage check failed
+	// Property 2: Union of ranges is covered by union of locations
+	// Also tracks which locations are used for Property 3
+	locUsed, covered := checkRangesCovered(ctx, kvRanges, locs)
+	if !covered {
+		valid = false
+	}
+
+	// Property 3: All locations cover some range
+	if !checkNoUnusedLocations(ctx, locs, locUsed) {
+		valid = false
+	}
+
+	if !valid {
+		dumpValidationState(ctx, kvRanges, locs, locUsed)
+	}
+
 	return valid
 }
 
@@ -424,15 +512,13 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 				zap.Strings("bucketKeys", bucketKeys),
 			)
 
-			logutil.Logger(ctx).Error("LocateBucket returned nil - invariant violated", fields...)
+			logutil.Logger(ctx).Warn("LocateBucket returned nil - falling back to unsplit ranges", fields...)
 
-			// Panic with informative message to get stack trace
-			// Don't continue with corrupt data
-			panic("LocateBucket returned nil: startKey outside location boundaries. " +
-				"This indicates either: (1) PD returned inconsistent metadata, " +
-				"(2) our range splitting logic has a bug, or " +
-				"(3) upstream LocationKeyRanges was constructed incorrectly. " +
-				"See error log above for full diagnostics.")
+			// Fallback: return original LocationKeyRanges without bucket splitting.
+			// This is safer than panicking - the request will still work, just without
+			// bucket-level parallelism. The root cause (stale bucket metadata or
+			// incorrect location assignment) should be investigated separately.
+			return []*LocationKeyRanges{l}
 		}
 
 		processedRangeCount++
