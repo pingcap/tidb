@@ -270,6 +270,7 @@ go_test(
         "job_scheduler_test.go",
         "job_scheduler_testkit_test.go",
         "job_submitter_test.go",
+        "job_worker_test.go",
         "main_test.go",
         "metabuild_test.go",
         "modify_column_test.go",
