@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/external",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//pkg/config",
+        "//pkg/objstore",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
@@ -22,7 +22,7 @@ go_test(
     embed = [":external"],
     flaky = True,
     deps = [
-        "//br/pkg/storage",
+        "//pkg/objstore",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
