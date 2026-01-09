@@ -560,7 +560,7 @@ func (l *Lightning) run(taskCtx context.Context, taskCfg *config.Config, o *opti
 	return errors.Trace(err)
 }
 
-func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (*mydump.MDLoader, storage.ExternalStorage, error) {
+func (l *Lightning) initDataSource(ctx context.Context, taskCfg *config.Config, o *options) (*mydump.MDLoader, objstore.Storage, error) {
 	s := o.dumpFileStorage
 	if s == nil {
 		u, err := objstore.ParseBackend(taskCfg.Mydumper.SourceDir, nil)
