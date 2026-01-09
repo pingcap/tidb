@@ -137,7 +137,6 @@ func (l *LogRestoreManager) Close(ctx context.Context) {
 // including concurrency management, checkpoint handling, and file importing(splitting) for efficient log processing.
 type SstRestoreManager struct {
 	restorer         restore.SstRestorer
-	workerPool       *tidbutil.WorkerPool
 	checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
 }
 
@@ -150,41 +149,6 @@ func (s *SstRestoreManager) Close(ctx context.Context) {
 	if s.checkpointRunner != nil {
 		s.checkpointRunner.WaitForFinish(ctx, true)
 	}
-}
-
-func NewSstRestoreManager(
-	ctx context.Context,
-	metaClient split.SplitClient,
-	snapFileImporter *snapclient.SnapFileImporter,
-	concurrencyPerStore uint,
-	storeCount uint,
-	sstCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
-) (*SstRestoreManager, error) {
-	var checkpointRunner *checkpoint.CheckpointRunner[checkpoint.RestoreKeyType, checkpoint.RestoreValueType]
-	// This poolSize is similar to full restore, as both workflows are comparable.
-	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
-	poolSize := concurrencyPerStore * 32 * storeCount
-	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
-	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
-
-	s := &SstRestoreManager{
-		workerPool: tidbutil.NewWorkerPool(poolSize, "log manager worker pool"),
-	}
-	if sstCheckpointMetaManager != nil {
-		var err error
-		checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	}
-	if snapFileImporter.GetMergeSst() {
-		log.Info("create batch sst restorer to restore SST files")
-		s.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, metaClient, sstWorkerPool, checkpointRunner)
-	} else {
-		log.Info("create simple sst restorer to restore SST files")
-		s.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, checkpointRunner)
-	}
-	return s, nil
 }
 
 type LogClient struct {
@@ -200,6 +164,7 @@ type LogClient struct {
 	dom           *domain.Domain
 	tlsConf       *tls.Config
 	keepaliveConf keepalive.ClientParameters
+	rateLimit     uint64
 
 	rawKVClient *rawkv.RawKVBatchClient
 	storage     objstore.Storage
@@ -422,6 +387,10 @@ func (rc *LogClient) SetRawKVBatchClient(
 	return nil
 }
 
+func (rc *LogClient) SetRateLimit(rateLimit uint64) {
+	rc.rateLimit = rateLimit
+}
+
 func (rc *LogClient) SetCrypter(crypter *backuppb.CipherInfo) {
 	rc.cipher = crypter
 }
@@ -555,6 +524,12 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	// This poolSize is similar to full restore, as both workflows are comparable.
+	// The poolSize should be greater than concurrencyPerStore multiplied by the number of stores.
+	poolSize := concurrencyPerStore * 32 * uint(len(stores))
+	log.Info("sst restore worker pool", zap.Uint("size", poolSize))
+	sstWorkerPool := tidbutil.NewWorkerPool(poolSize, "sst file")
+
 	var createCallBacks []func(*snapclient.SnapFileImporter) error
 	var closeCallBacks []func(*snapclient.SnapFileImporter) error
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
@@ -563,6 +538,11 @@ func (rc *LogClient) InitClients(
 	createCallBacks = append(createCallBacks, func(importer *snapclient.SnapFileImporter) error {
 		return importer.CheckBatchDownloadSupport(ctx, stores)
 	})
+	if rc.rateLimit != 0 {
+		createCallBack, closeCallBack := snapclient.SetSpeedLimitCallbacks(ctx, stores, sstWorkerPool, rc.rateLimit)
+		createCallBacks = append(createCallBacks, createCallBack)
+		closeCallBacks = append(closeCallBacks, closeCallBack)
+	}
 
 	opt := snapclient.NewSnapFileImporterOptions(
 		rc.cipher, metaClient, importCli, backend,
@@ -573,15 +553,23 @@ func (rc *LogClient) InitClients(
 	if err != nil {
 		return errors.Trace(err)
 	}
-	rc.sstRestoreManager, err = NewSstRestoreManager(
-		ctx,
-		metaClient,
-		snapFileImporter,
-		concurrencyPerStore,
-		uint(len(stores)),
-		sstCheckpointMetaManager,
-	)
-	return errors.Trace(err)
+	sstRestoreManager := &SstRestoreManager{}
+	if sstCheckpointMetaManager != nil {
+		var err error
+		sstRestoreManager.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, sstCheckpointMetaManager)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
+	if snapFileImporter.GetMergeSst() {
+		log.Info("create batch sst restorer to restore SST files")
+		sstRestoreManager.restorer = restore.NewBatchSstRestorer(ctx, snapFileImporter, metaClient, sstWorkerPool, sstRestoreManager.checkpointRunner)
+	} else {
+		log.Info("create simple sst restorer to restore SST files")
+		sstRestoreManager.restorer = restore.NewSimpleSstRestorer(ctx, snapFileImporter, sstWorkerPool, sstRestoreManager.checkpointRunner)
+	}
+	rc.sstRestoreManager = sstRestoreManager
+	return nil
 }
 
 func (rc *LogClient) InitCheckpointMetadataForCompactedSstRestore(
