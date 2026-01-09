@@ -22,6 +22,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// common consts
 const (
 	SQLTypeSelect    = "select"
 	SQLTypeDelete    = "delete"
@@ -95,6 +96,7 @@ func InitMetricsVars() {
 	deleteWorkerPhases = initWorkerPhases("delete_worker")
 }
 
+// QueryDuration will get the ttl query duration counter.
 func QueryDuration(typ string, jobType string, ok bool) prometheus.Observer {
 	res := metrics.LblError
 	if ok {
@@ -104,6 +106,7 @@ func QueryDuration(typ string, jobType string, ok bool) prometheus.Observer {
 		prometheus.Labels{metrics.LblSQLType: typ, metrics.LblJobType: jobType, metrics.LblResult: res})
 }
 
+// ExpiredRows will get the ttl expired rows counter.
 func ExpiredRows(typ string, jobType string, ok bool) prometheus.Counter {
 	res := metrics.LblError
 	if ok {
@@ -113,10 +116,12 @@ func ExpiredRows(typ string, jobType string, ok bool) prometheus.Counter {
 		prometheus.Labels{metrics.LblSQLType: typ, metrics.LblJobType: jobType, metrics.LblResult: res})
 }
 
+// JobStatus will get the job status gauge.
 func JobStatus(typ string, jobType string) prometheus.Gauge {
 	return metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: typ, metrics.LblJobType: jobType})
 }
 
+// TaskStatus will get the task status gauge.
 func TaskStatus(typ string, jobType string) prometheus.Gauge {
 	return metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: typ, metrics.LblJobType: jobType})
 }

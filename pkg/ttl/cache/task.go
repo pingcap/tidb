@@ -143,7 +143,7 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 
 	task := &TTLTask{
 		JobID:   row.GetString(0),
-		JobType: TTLJobType(row.GetString(1)),
+		JobType: row.GetString(1),
 		TableID: row.GetInt64(2),
 		ScanID:  row.GetInt64(3),
 	}
