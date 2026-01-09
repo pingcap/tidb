@@ -330,7 +330,7 @@ type StatementContext struct {
 	BindSQL string
 
 	// MatchSQLBindingCache is to cache the bindinfo to avoid getting bindinfo from bind cache again.
-	MatchSQLBindingCache map[ast.StmtNode]any
+	MatchSQLBindingCache any
 
 	// ExecRetryCount records the number of retries for executing the statement.
 	// It is set after ExecStmt execution and currently only used in the Slow Log phase
