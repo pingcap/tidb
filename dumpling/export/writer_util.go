@@ -559,7 +559,7 @@ type InterceptFileWriter struct {
 	err         error
 }
 
-// Write implements objstore.Writer. It check whether writer has written something and init a file at first time
+// Write implements objectio.Writer. It checks whether writer has written something and init a file at first time
 func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	w.Do(func() { w.err = w.initRoutine() })
 	if len(p) > 0 {
