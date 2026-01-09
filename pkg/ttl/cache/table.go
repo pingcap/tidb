@@ -114,6 +114,8 @@ type PhysicalTable struct {
 	TTLTimeColumn *model.ColumnInfo
 	// SoftDeleteTimeColumn is the time column used for softdelete jobs.
 	SoftDeleteTimeColumn *model.ColumnInfo
+	// RunawayGCTimeColumn is the time column used for runaway GC jobs.
+	RunawayGCTimeColumn *model.ColumnInfo
 }
 
 // NewBasePhysicalTable create a new PhysicalTable.
@@ -206,6 +208,31 @@ func NewPhysicalTable(
 	return pt, nil
 }
 
+// NewPhysicalTableWithTimeColumnForJob creates a PhysicalTable with a custom time column for a specific job type.
+// It is used for non-TTL/softdelete system tables which still need to reuse TTL SQL builder.
+func NewPhysicalTableWithTimeColumnForJob(
+	schema ast.CIStr,
+	tbl *model.TableInfo,
+	partition ast.CIStr,
+	jobType TTLJobType,
+	timeColumn *model.ColumnInfo,
+) (*PhysicalTable, error) {
+	if timeColumn == nil {
+		return nil, errors.New("time column is nil")
+	}
+	pt, err := NewBasePhysicalTable(schema, tbl, partition)
+	if err != nil {
+		return nil, err
+	}
+	switch jobType {
+	case TTLJobTypeRunawayGC:
+		pt.RunawayGCTimeColumn = timeColumn
+		return pt, nil
+	default:
+		return nil, errors.New("unsupported job type for custom time column")
+	}
+}
+
 // TimeColumnForJob returns the time column for the given job type.
 func (t *PhysicalTable) TimeColumnForJob(jobType TTLJobType) (*model.ColumnInfo, error) {
 	switch jobType {
@@ -219,6 +246,11 @@ func (t *PhysicalTable) TimeColumnForJob(jobType TTLJobType) (*model.ColumnInfo,
 			return nil, errors.New("ttl time column is nil")
 		}
 		return t.TTLTimeColumn, nil
+	case TTLJobTypeRunawayGC:
+		if t.RunawayGCTimeColumn == nil {
+			return nil, errors.New("runaway gc time column is nil")
+		}
+		return t.RunawayGCTimeColumn, nil
 	default:
 		return nil, errors.New("can not fetch time column, unknown job type")
 	}

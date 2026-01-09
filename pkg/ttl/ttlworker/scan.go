@@ -49,18 +49,18 @@ type ttlStatistics struct {
 	ErrorRows   atomic.Uint64
 }
 
-func (s *ttlStatistics) IncTotalRows(cnt int) {
-	metrics.ScannedExpiredRows.Add(float64(cnt))
+func (s *ttlStatistics) IncTotalRows(jobType string, cnt int) {
+	metrics.ExpiredRows(metrics.SQLTypeSelect, jobType, true).Add(float64(cnt))
 	s.TotalRows.Add(uint64(cnt))
 }
 
-func (s *ttlStatistics) IncSuccessRows(cnt int) {
-	metrics.DeleteSuccessExpiredRows.Add(float64(cnt))
+func (s *ttlStatistics) IncSuccessRows(jobType string, cnt int) {
+	metrics.ExpiredRows(metrics.SQLTypeDelete, jobType, true).Add(float64(cnt))
 	s.SuccessRows.Add(uint64(cnt))
 }
 
-func (s *ttlStatistics) IncErrorRows(cnt int) {
-	metrics.DeleteErrorExpiredRows.Add(float64(cnt))
+func (s *ttlStatistics) IncErrorRows(jobType string, cnt int) {
+	metrics.ExpiredRows(metrics.SQLTypeDelete, jobType, false).Add(float64(cnt))
 	s.ErrorRows.Add(uint64(cnt))
 }
 
@@ -250,7 +250,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		rows, retryable, sqlErr := sess.ExecuteSQLWithCheck(ctx, sql)
 		selectInterval := time.Since(sqlStart)
 		if sqlErr != nil {
-			metrics.SelectErrorDuration.Observe(selectInterval.Seconds())
+			metrics.QueryDuration(metrics.SQLTypeSelect, t.JobType, false).Observe(selectInterval.Seconds())
 			needRetry := retryable && retryTimes < scanTaskExecuteSQLMaxRetry && ctx.Err() == nil && t.ctx.Err() == nil
 			logutil.BgLogger().Warn("execute query for ttl scan task failed",
 				zap.String("SQL", sql),
@@ -275,7 +275,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 			continue
 		}
 
-		metrics.SelectSuccessDuration.Observe(selectInterval.Seconds())
+		metrics.QueryDuration(metrics.SQLTypeSelect, t.JobType, true).Observe(selectInterval.Seconds())
 		retrySQL = ""
 		retryTimes = 0
 		lastResult = t.getDatumRows(rows, t.tbl.KeyColumnTypes)
@@ -298,7 +298,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 		case <-ctx.Done():
 			return ctx.Err()
 		case delCh <- delTask:
-			t.statistics.IncTotalRows(len(lastResult))
+			t.statistics.IncTotalRows(delTask.jobType, len(lastResult))
 		}
 		tracer.EnterPhase(metrics.PhaseOther)
 	}

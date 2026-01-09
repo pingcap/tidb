@@ -1203,14 +1203,16 @@ type versionedBootstrapSchema struct {
 }
 
 const (
-	// 53 is the number of system tables as we do this change.
+	// 52 is the number of system tables as we do this change.
 	// as tablesInSystemDatabase is shared with classic kernel, it's simple to
 	// use a slice to hold all system tables in classic kernel. but in nextgen,
 	// we need to make those tables versioned, as we don't create system tables
 	// through DDL, we need this version to avoid create tables again.
 	// if we add more system tables later, we should increase the version, and
 	// add another versionedBootstrapSchema entry.
-	tableCountInFirstVerOnNextGen = 53
+	tableCountInFirstVerOnNextGen = 52
+	// added tidb_softdelete_table_status
+	tableCountInSecondVerOnNextGen = 53
 )
 
 // used in nextgen, to create system tables directly through meta kv, without
@@ -1218,6 +1220,10 @@ const (
 var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[:tableCountInFirstVerOnNextGen]},
+		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+	}},
+	{ver: meta.SecondNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[tableCountInFirstVerOnNextGen:tableCountInSecondVerOnNextGen]},
 		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
 	}},
 }
