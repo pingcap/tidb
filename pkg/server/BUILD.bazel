@@ -15,6 +15,7 @@ go_library(
         "mock_conn.go",
         "rpc_server.go",
         "server.go",
+        "server_noflightsql.go",
         "standby.go",
         "stat.go",
         "user_connections.go",
