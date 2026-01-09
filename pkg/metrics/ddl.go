@@ -125,8 +125,8 @@ var (
 	DDLOwner          = "owner"
 	DDLCounter        *prometheus.CounterVec
 
-	BackfillTotalCounter  *prometheus.CounterVec
-	BackfillProgressGauge *prometheus.GaugeVec
+	backfillTotalCounter  *prometheus.CounterVec
+	backfillProgressGauge *prometheus.GaugeVec
 	DDLJobTableDuration   *prometheus.HistogramVec
 	DDLRunningJobCount    *prometheus.GaugeVec
 	AddIndexScanRate      *prometheus.HistogramVec
@@ -204,7 +204,7 @@ func InitDDLMetrics() {
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	BackfillTotalCounter = metricscommon.NewCounterVec(
+	backfillTotalCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -212,7 +212,7 @@ func InitDDLMetrics() {
 			Help:      "Speed of add index",
 		}, []string{LblType})
 
-	BackfillProgressGauge = metricscommon.NewGaugeVec(
+	backfillProgressGauge = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -320,14 +320,14 @@ func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) stri
 func GetBackfillTotalByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
 	typeLabel := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
 	backfillMetricsRegistry.register(tableID, typeLabel)
-	return BackfillTotalCounter.WithLabelValues(typeLabel)
+	return backfillTotalCounter.WithLabelValues(typeLabel)
 }
 
 // GetBackfillProgressByTableID returns the Gauge for the given table ID and type label.
 func GetBackfillProgressByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
 	typeLabel := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
 	backfillMetricsRegistry.register(tableID, typeLabel)
-	return BackfillProgressGauge.WithLabelValues(typeLabel)
+	return backfillProgressGauge.WithLabelValues(typeLabel)
 }
 
 // DDLClearBackfillMetrics deletes all backfill-related metric series registered
@@ -335,8 +335,8 @@ func GetBackfillProgressByTableID(tableID int64, label, schemaName, tableName, o
 func DDLClearBackfillMetrics(tableID int64) {
 	labels := backfillMetricsRegistry.clear(tableID)
 	for _, typeLabel := range labels {
-		BackfillProgressGauge.DeleteLabelValues(typeLabel)
-		BackfillTotalCounter.DeleteLabelValues(typeLabel)
+		backfillProgressGauge.DeleteLabelValues(typeLabel)
+		backfillTotalCounter.DeleteLabelValues(typeLabel)
 	}
 }
 
