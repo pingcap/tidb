@@ -46,7 +46,7 @@ func TestPublishToTableStore(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	t.Cleanup(func() {
-		tk.MustExec("TRUNCATE mysql." + metadef.NotifierTableName)
+		tk.MustExec("delete from mysql." + metadef.NotifierTableName)
 	})
 
 	ctx := context.Background()
