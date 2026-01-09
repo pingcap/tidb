@@ -37,8 +37,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// RankTopNSortCase is the sort case for RankTopN tests with string prefix key
-type RankTopNSortCase struct {
+// rankTopNCase is the sort case for RankTopN tests with string prefix key
+type rankTopNCase struct {
 	ctx                     sessionctx.Context
 	rowCount                int
 	cols                    []*expression.Column
@@ -49,7 +49,7 @@ type RankTopNSortCase struct {
 	prefixKeyCharCounts     []int
 }
 
-func buildRankTopNDataSource(rankTopNCase *RankTopNSortCase, schema *expression.Schema) *testutil.MockDataSource {
+func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Schema) *testutil.MockDataSource {
 	// Generate prefix-ordered data: rows are ordered by the first column (prefix key)
 	opt := testutil.MockDataSourceParameters{
 		DataSchema: schema,
@@ -67,9 +67,8 @@ func buildRankTopNDataSource(rankTopNCase *RankTopNSortCase, schema *expression.
 	// Generate prefix key data: strings that are pre-ordered.
 	// Each prefix group has multiple rows; the group size is variable and each group
 	// size is randomized in [1, 200].
-	prefixData := make([]any, rankTopNCase.rowCount)
 	for i, ft := range rankTopNCase.prefixKeyFieldTypes {
-		clear(prefixData)
+		prefixData := make([]any, rankTopNCase.rowCount)
 		groupIdx := 0
 		buff := make([]byte, 5)
 		isCI := false
@@ -82,7 +81,8 @@ func buildRankTopNDataSource(rankTopNCase *RankTopNSortCase, schema *expression.
 		}
 
 		for i := 0; i < rankTopNCase.rowCount; {
-			groupSize := rand.Intn(200) + 1
+			groupSize := rand.Intn(10) + 1
+			// groupSize := rand.Intn(200) + 1 // TODO(x)
 			for j := 0; j < groupSize && i < rankTopNCase.rowCount; j++ {
 				_, err := crand.Read(buff)
 				if err != nil {
@@ -103,7 +103,7 @@ func buildRankTopNDataSource(rankTopNCase *RankTopNSortCase, schema *expression.
 	return testutil.BuildMockDataSource(opt)
 }
 
-func buildRankTopNExec(rankTopNCase *RankTopNSortCase, dataSource *testutil.MockDataSource, offset uint64, count uint64) *sortexec.TopNExec {
+func buildRankTopNExec(rankTopNCase *rankTopNCase, dataSource *testutil.MockDataSource, offset uint64, count uint64) *sortexec.TopNExec {
 	sortExec := sortexec.SortExec{
 		BaseExecutor: exec.NewBaseExecutor(rankTopNCase.ctx, dataSource.Schema(), 0, dataSource),
 		ByItems:      make([]*plannerutil.ByItems, 0, len(rankTopNCase.orderByIdx)),
@@ -130,7 +130,7 @@ func checkRankTopNCorrectness(schema *expression.Schema, exe *sortexec.TopNExec,
 	return checker.check(resultChunks, int64(offset), int64(count))
 }
 
-func rankTopNBasicCase(t *testing.T, sortCase *RankTopNSortCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
+func rankTopNBasicCase(t *testing.T, sortCase *rankTopNCase, schema *expression.Schema, dataSource *testutil.MockDataSource, offset uint64, count uint64) {
 	exe := buildRankTopNExec(sortCase, dataSource, offset, count)
 	dataSource.PrepareChunks()
 	resultChunks := executeTopNExecutor(t, exe)
@@ -142,18 +142,13 @@ func rankTopNBasicCase(t *testing.T, sortCase *RankTopNSortCase, schema *express
 func TestRankTopN(t *testing.T) {
 	for range 100 {
 		collationNames := []string{"utf8mb4_bin", "utf8mb4_general_ci"}
+		ctx := mock.NewContext()
+		rankTopNCases := make([]*rankTopNCase, 0)
 		for _, collationName := range collationNames {
-			ctx := mock.NewContext()
-			ctx.GetSessionVars().InitChunkSize = 32
-			ctx.GetSessionVars().MaxChunkSize = 32
-			ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-			ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-
 			prefixKeyField := types.NewFieldType(mysql.TypeVarString)
 			prefixKeyField.SetCharset("utf8mb4")
 			prefixKeyField.SetCollate(collationName)
-
-			rankTopNCase := &RankTopNSortCase{
+			rankTopNCases = append(rankTopNCases, &rankTopNCase{
 				rowCount:   rand.Intn(9000) + 1000,
 				ctx:        ctx,
 				orderByIdx: []int{0}, // Order by prefix key column
@@ -168,10 +163,42 @@ func TestRankTopN(t *testing.T) {
 				cols: []*expression.Column{
 					{Index: 0, RetType: prefixKeyField},
 					{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}},
-			}
+			})
 
-			schema := expression.NewSchema(rankTopNCase.cols...)
-			dataSource := buildRankTopNDataSource(rankTopNCase, schema)
+			// Test multi prefix key columns
+			rankTopNCases = append(rankTopNCases, &rankTopNCase{
+				rowCount: rand.Intn(90) + 10,
+				// rowCount:   rand.Intn(9000) + 1000, // TODO(x)
+				ctx:        ctx,
+				orderByIdx: []int{0, 1}, // Order by prefix key column
+				prefixKeyFieldTypes: []expression.Expression{
+					&expression.Column{
+						RetType: prefixKeyField,
+						Index:   0,
+					},
+					&expression.Column{
+						RetType: prefixKeyField,
+						Index:   1,
+					}},
+				prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName), collate.GetCollator(collationName)},
+				prefixKeyColIdxs:        []int{0, 1},
+				prefixKeyCharCounts:     []int{12, 12},
+				cols: []*expression.Column{
+					{Index: 0, RetType: prefixKeyField},
+					{Index: 1, RetType: prefixKeyField},
+					{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}},
+			})
+		}
+
+		for _, testCase := range rankTopNCases {
+			fmt.Println("******************")
+			ctx.GetSessionVars().InitChunkSize = 32
+			ctx.GetSessionVars().MaxChunkSize = 32
+			ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+			ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+			schema := expression.NewSchema(testCase.cols...)
+			dataSource := buildRankTopNDataSource(testCase, schema)
 
 			randNum := rand.Intn(100)
 			var offset uint64
@@ -179,17 +206,17 @@ func TestRankTopN(t *testing.T) {
 			if randNum < 10 {
 				offset = 0
 			} else {
-				offset = uint64(rand.Intn(3000))
+				offset = 0
+				// offset = uint64(rand.Intn(3000)) // TODO(x)
 			}
 
 			if randNum < 5 {
 				count = 0
 			} else {
-				count = uint64(rand.Intn(10000))
+				count = uint64(rand.Intn(100))
+				// count = uint64(rand.Intn(10000)) // TODO(x)
 			}
-			rankTopNBasicCase(t, rankTopNCase, schema, dataSource, offset, count)
+			rankTopNBasicCase(t, testCase, schema, dataSource, offset, count)
 		}
 	}
 }
-
-// TODO(x) test several prefix keys

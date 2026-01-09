@@ -17,6 +17,7 @@ package sortexec
 import (
 	"container/heap"
 	"context"
+	"fmt"
 	"math/rand"
 	"slices"
 	"sync"
@@ -631,10 +632,13 @@ func (e *TopNExec) executeRankTopN() {
 	// have received all chunks now.
 	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
 
+	output := "------ rankTonpNResult ------"
 	rowCount := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < int(e.chkHeap.totalLimit) && e.chkHeap.idx < rowCount; e.chkHeap.idx++ {
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
+		output = fmt.Sprintf("%s\n%s", output, e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx]).ToString(e.RetFieldTypes()))
 	}
+	fmt.Println(output)
 }
 
 // Return true when spill is triggered
