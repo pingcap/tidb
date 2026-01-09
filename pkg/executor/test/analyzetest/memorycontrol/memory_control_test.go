@@ -214,3 +214,31 @@ func TestMemQuotaAnalyze2(t *testing.T) {
 	tk.MustExec("set global tidb_mem_quota_analyze=128;")
 	tk.MustExecToErr("analyze table tbl_2;")
 }
+
+func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	oldChildTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
+	for _, tracker := range oldChildTrackers {
+		tracker.Detach()
+	}
+	defer func() {
+		for _, tracker := range oldChildTrackers {
+			tracker.AttachTo(executor.GlobalAnalyzeMemoryTracker)
+		}
+	}()
+	executor.GlobalAnalyzeMemoryTracker.ReplaceBytesUsed(0)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_analyze_version=2")
+	tk.MustExec("set @@tidb_build_sampling_stats_concurrency=1")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_mem_usage")
+	tk.MustExec("create table t_mem_usage(a text collate utf8mb4_general_ci)")
+	tk.MustExec("insert into t_mem_usage values (repeat('a', 32000))")
+	for range 11 {
+		tk.MustExec("insert into t_mem_usage select a from t_mem_usage")
+	}
+	tk.MustExec("insert into t_mem_usage select a from t_mem_usage limit 952")
+
+	tk.MustExec("analyze table t_mem_usage with 1.0 samplerate;")
+}
