@@ -26,9 +26,44 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+type backfillMetricRegistry struct {
+	mu      sync.Mutex
+	byTblID map[int64]map[string]struct{}
+}
+
+func (r *backfillMetricRegistry) register(tableID int64, typeLabel string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	set, ok := r.byTblID[tableID]
+	if !ok {
+		set = make(map[string]struct{}, 8)
+		r.byTblID[tableID] = set
+	}
+	set[typeLabel] = struct{}{}
+}
+
+func (r *backfillMetricRegistry) clear(tableID int64) []string {
+	r.mu.Lock()
+	labels, ok := r.byTblID[tableID]
+	if ok {
+		delete(r.byTblID, tableID)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(labels))
+	for l := range labels {
+		out = append(out, l)
+	}
+	return out
+}
+
 var (
 	mu                   sync.Mutex
 	registeredJobMetrics = make(map[int64]*metric.Common, 64)
+
+	backfillMetricsRegistry = &backfillMetricRegistry{byTblID: make(map[int64]map[string]struct{}, 64)}
 )
 
 // Metrics for the DDL package.
@@ -281,14 +316,28 @@ func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) stri
 	return stringBuilder.String()
 }
 
-// GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
-	return BackfillTotalCounter.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+// GetBackfillTotalByTableID returns the Counter for the given table ID and type label.
+func GetBackfillTotalByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
+	typeLabel := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
+	backfillMetricsRegistry.register(tableID, typeLabel)
+	return BackfillTotalCounter.WithLabelValues(typeLabel)
 }
 
-// GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
-	return BackfillProgressGauge.WithLabelValues(generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName))
+// GetBackfillProgressByTableID returns the Gauge for the given table ID and type label.
+func GetBackfillProgressByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
+	typeLabel := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
+	backfillMetricsRegistry.register(tableID, typeLabel)
+	return BackfillProgressGauge.WithLabelValues(typeLabel)
+}
+
+// DDLClearBackfillMetrics deletes all backfill-related metric series registered
+// for the given physical table.
+func DDLClearBackfillMetrics(tableID int64) {
+	labels := backfillMetricsRegistry.clear(tableID)
+	for _, typeLabel := range labels {
+		BackfillProgressGauge.DeleteLabelValues(typeLabel)
+		BackfillTotalCounter.DeleteLabelValues(typeLabel)
+	}
 }
 
 // RegisterLightningCommonMetricsForDDL returns the registered common metrics.

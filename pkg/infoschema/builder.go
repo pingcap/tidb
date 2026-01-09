@@ -847,6 +847,13 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 	}
 
 	allIndexPublic := true
+	allColumnPublic := true
+	for _, col := range tblInfo.Columns {
+		if col.State != model.StatePublic {
+			allColumnPublic = false
+			break
+		}
+	}
 	for _, idx := range tblInfo.Indices {
 		if idx.State != model.StatePublic {
 			allIndexPublic = false
@@ -855,6 +862,14 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 	}
 	if allIndexPublic {
 		metrics.DDLResetTempIndexWrite(tblInfo.ID)
+	}
+	if allIndexPublic && allColumnPublic {
+		metrics.DDLClearBackfillMetrics(tblInfo.ID)
+		if tblInfo.Partition != nil {
+			for _, def := range tblInfo.Partition.Definitions {
+				metrics.DDLClearBackfillMetrics(def.ID)
+			}
+		}
 	}
 
 	if !b.enableV2 {
