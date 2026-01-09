@@ -169,6 +169,10 @@ func (b *MockExecutorBuilder) Build(p base.Plan) exec.Executor {
 }
 
 func (b *executorBuilder) build(p base.Plan) exec.Executor {
+	if phyWrapper, ok := p.(*plannercore.PhysicalSimpleWrapper); ok {
+		return b.build(phyWrapper.Inner)
+	}
+
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -250,8 +254,6 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
-	case *plannercore.PhysicalSimpleWrapper:
-		return b.buildSimple(&v.Inner)
 	case *plannercore.Set:
 		return b.buildSet(v)
 	case *plannercore.SetConfig:

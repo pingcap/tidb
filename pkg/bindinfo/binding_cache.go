@@ -58,6 +58,16 @@ type bindingCacheUpdater struct {
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
+	numLoadBindings := 0
+	defer func(begin time.Time) {
+		if fullLoad {
+			bindingLogger().Info("fully load bindings",
+				zap.Int("numLoadBindings", numLoadBindings),
+				zap.Duration("duration", time.Since(begin)),
+				zap.Error(err))
+		}
+	}(time.Now())
+
 	lastUpdateTime := u.lastUpdateTime.Load().(types.Time)
 	var timeCondition string
 	if fullLoad || lastUpdateTime.IsZero() { // avoid "update_time>'0000-00-00 00:00:00'", which is invalid
@@ -85,6 +95,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 	if err != nil {
 		return err
 	}
+	numLoadBindings = len(bindings)
 
 	for _, binding := range bindings {
 		// Update lastUpdateTime to the newest one.

@@ -288,8 +288,10 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpReloadBindings is used to reload plan binding.
+	// OpReloadBindings is used to reload plan binding in this node.
 	OpReloadBindings
+	// OpReloadClusterBindings is used to reload plan binding in the entire cluster.
+	OpReloadClusterBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
 	// OpSQLBindDropByDigest is used to drop SQL binds by digest
@@ -351,12 +353,12 @@ func (s *Simple) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+// PhysicalSimpleWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
 type PhysicalSimpleWrapper struct {
 	physicalop.BasePhysicalPlan
-	Inner Simple
+	Inner base.Plan
 }
 
 // MemoryUsage return the memory usage of PhysicalSimpleWrapper
@@ -365,7 +367,7 @@ func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	sum = p.BasePhysicalPlan.MemoryUsage()
 	return
 }
 

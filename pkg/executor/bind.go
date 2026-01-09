@@ -36,7 +36,7 @@ type SQLBindExec struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
+func (e *SQLBindExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	req.Reset()
 	switch e.sqlBindOp {
 	case plannercore.OpSQLBindCreate:
@@ -49,6 +49,8 @@ func (e *SQLBindExec) Next(_ context.Context, req *chunk.Chunk) error {
 		return e.flushBindings()
 	case plannercore.OpReloadBindings:
 		return e.reloadBindings()
+	case plannercore.OpReloadClusterBindings:
+		return e.reloadClusterBindings(ctx)
 	case plannercore.OpSetBindingStatus:
 		return e.setBindingStatus()
 	case plannercore.OpSetBindingStatusByDigest:
@@ -159,4 +161,8 @@ func (e *SQLBindExec) flushBindings() error {
 
 func (e *SQLBindExec) reloadBindings() error {
 	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(true)
+}
+
+func (e *SQLBindExec) reloadClusterBindings(ctx context.Context) error {
+	return broadcast(ctx, e.Ctx(), "ADMIN RELOAD BINDINGS")
 }

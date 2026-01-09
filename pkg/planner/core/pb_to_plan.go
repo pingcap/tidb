@@ -285,7 +285,7 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	simple := &Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
@@ -297,7 +297,14 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	if admin, ok := stmt.(*ast.AdminStmt); ok {
+		if admin.Tp == ast.AdminReloadBindings {
+			reload := &SQLBindPlan{SQLBindOp: OpReloadBindings}
+			return &PhysicalSimpleWrapper{Inner: reload}, nil
+		}
+	}
+
+	simple := &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
 
