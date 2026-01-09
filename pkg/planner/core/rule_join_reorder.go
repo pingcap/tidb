@@ -45,6 +45,18 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		joinTypes         []*joinTypeWithExtMsg
 		hasOuterJoin      bool
 	)
+
+	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
+	// to otherConds and continue extracting the join group from the child.
+	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderSel {
+		child := selection.Children()[0]
+		if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {
+			childResult := extractJoinGroup(child)
+			childResult.otherConds = append(childResult.otherConds, selection.Conditions...)
+			return childResult
+		}
+	}
+
 	join, isJoin := p.(*logicalop.LogicalJoin)
 	if isJoin && join.PreferJoinOrder {
 		// When there is a leading hint, the hint may not take effect for other reasons.
@@ -244,94 +256,96 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 	var err error
 
-	result := extractJoinGroup(p)
-	curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
-	if len(curJoinGroup) > 1 {
-		for i := range curJoinGroup {
-			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
-			if err != nil {
-				return nil, err
-			}
-		}
-		originalSchema := p.Schema()
-
-		// Not support outer join reorder when using the DP algorithm
-		allInnerJoin := true
-		for _, joinType := range joinTypes {
-			if joinType.JoinType != base.InnerJoin {
-				allInnerJoin = false
-				break
-			}
-		}
-
-		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx:                ctx,
-			basicJoinGroupInfo: result.basicJoinGroupInfo,
-		}
-
-		joinGroupNum := len(curJoinGroup)
-		useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
-
-		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
-		if hasDiffLeadingHint {
-			ctx.GetSessionVars().StmtCtx.SetHintWarning(
-				"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
-		}
-
-		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
-			if useGreedy {
-				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
-				if !ok {
-					ctx.GetSessionVars().StmtCtx.SetHintWarning(
-						"leading hint is inapplicable, check if the leading hint table is valid")
-				} else {
-					curJoinGroup = leftJoinGroup
+	if _, ok := p.(*logicalop.LogicalJoin); ok {
+		result := extractJoinGroup(p)
+		curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
+		if len(curJoinGroup) > 1 {
+			for i := range curJoinGroup {
+				curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
+				if err != nil {
+					return nil, err
 				}
-			} else {
-				ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
 			}
-		}
+			originalSchema := p.Schema()
 
-		if useGreedy {
-			groupSolver := &joinReorderGreedySolver{
-				allInnerJoin:                   allInnerJoin,
-				baseSingleGroupJoinOrderSolver: baseGroupSolver,
-			}
-			p, err = groupSolver.solve(curJoinGroup)
-		} else {
-			dpSolver := &joinReorderDPSolver{
-				baseSingleGroupJoinOrderSolver: baseGroupSolver,
-			}
-			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup)
-		}
-		if err != nil {
-			return nil, err
-		}
-		schemaChanged := false
-		if len(p.Schema().Columns) != len(originalSchema.Columns) {
-			schemaChanged = true
-		} else {
-			for i, col := range p.Schema().Columns {
-				if !col.EqualColumn(originalSchema.Columns[i]) {
-					schemaChanged = true
+			// Not support outer join reorder when using the DP algorithm
+			allInnerJoin := true
+			for _, joinType := range joinTypes {
+				if joinType.JoinType != base.InnerJoin {
+					allInnerJoin = false
 					break
 				}
 			}
+
+			baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+				ctx:                ctx,
+				basicJoinGroupInfo: result.basicJoinGroupInfo,
+			}
+
+			joinGroupNum := len(curJoinGroup)
+			useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
+
+			leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
+			if hasDiffLeadingHint {
+				ctx.GetSessionVars().StmtCtx.SetHintWarning(
+					"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
+			}
+
+			if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
+				if useGreedy {
+					ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+					if !ok {
+						ctx.GetSessionVars().StmtCtx.SetHintWarning(
+							"leading hint is inapplicable, check if the leading hint table is valid")
+					} else {
+						curJoinGroup = leftJoinGroup
+					}
+				} else {
+					ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable for the DP join reorder algorithm")
+				}
+			}
+
+			if useGreedy {
+				groupSolver := &joinReorderGreedySolver{
+					allInnerJoin:                   allInnerJoin,
+					baseSingleGroupJoinOrderSolver: baseGroupSolver,
+				}
+				p, err = groupSolver.solve(curJoinGroup)
+			} else {
+				dpSolver := &joinReorderDPSolver{
+					baseSingleGroupJoinOrderSolver: baseGroupSolver,
+				}
+				dpSolver.newJoin = dpSolver.newJoinWithEdges
+				p, err = dpSolver.solve(curJoinGroup)
+			}
+			if err != nil {
+				return nil, err
+			}
+			schemaChanged := false
+			if len(p.Schema().Columns) != len(originalSchema.Columns) {
+				schemaChanged = true
+			} else {
+				for i, col := range p.Schema().Columns {
+					if !col.EqualColumn(originalSchema.Columns[i]) {
+						schemaChanged = true
+						break
+					}
+				}
+			}
+			if schemaChanged {
+				proj := logicalop.LogicalProjection{
+					Exprs: expression.Column2Exprs(originalSchema.Columns),
+				}.Init(p.SCtx(), p.QueryBlockOffset())
+				// Clone the schema here, because the schema may be changed by column pruning rules.
+				proj.SetSchema(originalSchema.Clone())
+				proj.SetChildren(p)
+				p = proj
+			}
+			return p, nil
 		}
-		if schemaChanged {
-			proj := logicalop.LogicalProjection{
-				Exprs: expression.Column2Exprs(originalSchema.Columns),
-			}.Init(p.SCtx(), p.QueryBlockOffset())
-			// Clone the schema here, because the schema may be changed by column pruning rules.
-			proj.SetSchema(originalSchema.Clone())
-			proj.SetChildren(p)
-			p = proj
+		if len(curJoinGroup) == 1 && joinOrderHintInfo != nil {
+			ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
 		}
-		return p, nil
-	}
-	if len(curJoinGroup) == 1 && joinOrderHintInfo != nil {
-		ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
 	}
 	newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 	for _, child := range p.Children() {
