@@ -76,7 +76,7 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "bucket2", s3.Bucket)
 	require.Equal(t, "prefix", s3.Prefix)
 	require.Equal(t, "https://s3.example.com", s3.Endpoint)
-	require.Equal(t, s3store.ks3SDKProvider, s3.Provider)
+	require.Equal(t, s3store.KS3SDKProvider, s3.Provider)
 	require.False(t, s3.ForcePathStyle)
 
 	// nolint:lll

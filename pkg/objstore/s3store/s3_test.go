@@ -584,7 +584,7 @@ func TestReadNoError(t *testing.T) {
 
 // TestFileExistsNoError ensures the FileExists API issues a HeadObject request
 // and reports a file exists.
-func TestFileExistsAndDeleteFile(t *testing.T) {
+func TestFileExistsNoError(t *testing.T) {
 	s := createS3Suite(t)
 	ctx := context.Background()
 
@@ -594,13 +594,26 @@ func TestFileExistsAndDeleteFile(t *testing.T) {
 			require.Equal(t, "bucket", aws.ToString(input.Bucket))
 			require.Equal(t, "prefix/file", aws.ToString(input.Key))
 			return &s3.HeadObjectOutput{}, nil
-		}).Times(2)
+		})
 
 	exists, err := s.storage.FileExists(ctx, "file")
 	require.NoError(t, err)
 	require.True(t, exists)
+}
 
-	err = s.storage.DeleteFile(ctx, "file")
+func TestDeleteFileNoError(t *testing.T) {
+	s := createS3Suite(t)
+	ctx := context.Background()
+
+	s.s3.EXPECT().
+		DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectInput, error) {
+			require.Equal(t, "bucket", aws.ToString(input.Bucket))
+			require.Equal(t, "prefix/file", aws.ToString(input.Key))
+			return &s3.DeleteObjectInput{}, nil
+		})
+
+	err := s.storage.DeleteFile(ctx, "file")
 	require.NoError(t, err)
 }
 
@@ -1546,7 +1559,7 @@ func TestRetryError(t *testing.T) {
 	defer server.Close()
 	t.Log(server.URL)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/replace-error-to-connection-reset-by-peer", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3store/replace-error-to-connection-reset-by-peer", "return(true)")
 
 	ctx := context.Background()
 	s, err := NewS3Storage(ctx, &backuppb.S3{
@@ -1575,7 +1588,7 @@ func TestS3ReadFileRetryable(t *testing.T) {
 		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/read-s3-body-failed", "2*return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3store/read-s3-body-failed", "2*return(true)")
 	_, err := s.storage.ReadFile(ctx, "file")
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), errMsg))
