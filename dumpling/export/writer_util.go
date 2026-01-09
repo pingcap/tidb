@@ -634,7 +634,7 @@ func (f FileFormat) Extension() string {
 	}
 }
 
-// WriteInsert writes TableDataIR to a objstore.Writer in sql/csv type
+// WriteInsert writes TableDataIR to a objectio.Writer in sql/csv type
 func (f FileFormat) WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,
