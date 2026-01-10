@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/importsdk/mock"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/atomic"
 	"go.uber.org/mock/gomock"
 )
 
@@ -136,16 +137,36 @@ func TestImporterRun(t *testing.T) {
 			},
 			wantErr: context.Canceled,
 		},
+		{
+			name: "cancel with keep jobs",
+			setup: func() {
+				mockCPMgr.EXPECT().Initialize(gomock.Any()).Return(nil)
+				mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil)
+
+				mockSDK.EXPECT().CreateSchemasAndTables(gomock.Any()).Return(nil)
+				mockSDK.EXPECT().GetTableMetas(gomock.Any()).Return(tables, nil)
+				mockCPMgr.EXPECT().GetCheckpoints(gomock.Any()).Return(nil, nil) // Precheck
+
+				// Simulate context cancellation during SubmitAndWait
+				mockOrchestrator.EXPECT().SubmitAndWait(gomock.Any(), tables).Return(context.Canceled)
+				// Expect Cancel NOT to be called
+			},
+			wantErr: context.Canceled,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			tt.setup()
-			importer, err := importinto.NewImporter(context.Background(), cfg, nil,
+			opts := []importinto.ImporterOption{
 				importinto.WithBackendSDK(mockSDK),
 				importinto.WithCheckpointManager(mockCPMgr),
 				importinto.WithOrchestrator(mockOrchestrator),
-			)
+			}
+			if tt.name == "cancel with keep jobs" {
+				opts = append(opts, importinto.WithKeepJobsOnContextCancel(atomic.NewBool(true)))
+			}
+			importer, err := importinto.NewImporter(context.Background(), cfg, nil, opts...)
 			require.NoError(t, err)
 
 			err = importer.Run(context.Background())

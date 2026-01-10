@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
 
@@ -33,8 +34,21 @@ const (
 	cancelTimeout = time.Minute
 )
 
+// ProgressUpdater is an interface for updating the progress of the import process.
+type ProgressUpdater interface {
+	UpdateTotalSize(size int64)
+	UpdateFinishedSize(size int64)
+}
+
 // ImporterOption is a function that configures the Importer.
 type ImporterOption func(*Importer)
+
+// WithProgressUpdater sets the ProgressUpdater for the Importer.
+func WithProgressUpdater(pu ProgressUpdater) ImporterOption {
+	return func(i *Importer) {
+		i.progressUpdater = pu
+	}
+}
 
 // WithCheckpointManager sets the CheckpointManager for the Importer.
 func WithCheckpointManager(cpMgr CheckpointManager) ImporterOption {
@@ -57,15 +71,24 @@ func WithOrchestrator(orchestrator JobOrchestrator) ImporterOption {
 	}
 }
 
+// WithKeepJobsOnContextCancel sets a *bool to indicate whether to keep jobs running on context cancel.
+func WithKeepJobsOnContextCancel(b *atomic.Bool) ImporterOption {
+	return func(i *Importer) {
+		i.keepJobsOnContextCancel = b
+	}
+}
+
 // Importer is the implementation of LightningImporter for the 'import into' backend.
 type Importer struct {
-	cfg          *config.Config
-	db           *sql.DB
-	sdk          importsdk.SDK
-	logger       log.Logger
-	cpMgr        CheckpointManager
-	orchestrator JobOrchestrator
-	groupKey     string
+	cfg                     *config.Config
+	db                      *sql.DB
+	sdk                     importsdk.SDK
+	logger                  log.Logger
+	cpMgr                   CheckpointManager
+	orchestrator            JobOrchestrator
+	groupKey                string
+	progressUpdater         ProgressUpdater
+	keepJobsOnContextCancel *atomic.Bool
 }
 
 // NewImporter creates a new Importer.
@@ -138,6 +161,7 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 		PollInterval:      DefaultPollInterval,
 		LogInterval:       i.cfg.Cron.LogProgress.Duration,
 		Logger:            i.logger.With(zap.String("component", "orchestrator")),
+		ProgressUpdater:   i.progressUpdater,
 	})
 }
 
@@ -145,6 +169,11 @@ func (i *Importer) buildOrchestrator() JobOrchestrator {
 func (i *Importer) Run(ctx context.Context) error {
 	err := i.runOnce(ctx)
 	if common.IsContextCanceledError(err) {
+		if i.keepJobsOnContextCancel != nil && i.keepJobsOnContextCancel.Load() {
+			i.logger.Info("context canceled, skipping job cancellation")
+			return err
+		}
+
 		i.logger.Info("context canceled, cancelling import jobs...")
 		cancelCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
 		defer cancel()

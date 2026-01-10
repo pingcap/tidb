@@ -25,19 +25,27 @@ import (
 )
 
 type options struct {
-	dumpFileStorage   objstore.Storage
-	checkpointStorage objstore.Storage
-	checkpointName    string
-	promFactory       promutil.Factory
-	promRegistry      promutil.Registry
-	logger            log.Logger
-	dupIndicator      *atomic.Bool
+	dumpFileStorage         objstore.Storage
+	checkpointStorage       objstore.Storage
+	checkpointName          string
+	promFactory             promutil.Factory
+	promRegistry            promutil.Registry
+	logger                  log.Logger
+	dupIndicator            *atomic.Bool
+	keepJobsOnContextCancel *atomic.Bool
 	// only used in tests
 	db *sql.DB
 }
 
 // Option is a function that configures a lightning task.
 type Option func(*options)
+
+// WithKeepJobsOnContextCancel sets a *bool to indicate whether to keep jobs running on context cancel.
+func WithKeepJobsOnContextCancel(b *atomic.Bool) Option {
+	return func(o *options) {
+		o.keepJobsOnContextCancel = b
+	}
+}
 
 // WithDumpFileStorage sets the external storage to a lightning task.
 // Typically, the external storage is set when lightning is integrated with dataflow engine by DM.

@@ -55,6 +55,8 @@ type DefaultJobOrchestrator struct {
 	activeJobs []*ImportJob
 }
 
+const cancelledByUserMessage = "cancelled by user"
+
 // OrchestratorConfig configures the job orchestrator.
 type OrchestratorConfig struct {
 	Submitter         JobSubmitter
@@ -65,6 +67,7 @@ type OrchestratorConfig struct {
 	PollInterval      time.Duration
 	LogInterval       time.Duration
 	Logger            log.Logger
+	ProgressUpdater   ProgressUpdater
 }
 
 // NewJobOrchestrator creates a new job orchestrator.
@@ -84,7 +87,7 @@ func NewJobOrchestrator(cfg OrchestratorConfig) JobOrchestrator {
 
 	monitor := cfg.Monitor
 	if monitor == nil {
-		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, logInterval, cfg.Logger)
+		monitor = NewJobMonitor(cfg.SDK, cfg.CheckpointMgr, pollInterval, logInterval, cfg.Logger, cfg.ProgressUpdater)
 	}
 
 	return &DefaultJobOrchestrator{
@@ -120,44 +123,149 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 	})
 
 	// Phase 2: Wait for all jobs to complete (delegated to monitor)
-	return o.monitor.WaitForJobs(ctx, jobs)
+	err = o.monitor.WaitForJobs(ctx, jobs)
+	if err != nil && !common.IsContextCanceledError(err) {
+		o.logger.Warn("job monitoring failed, cancelling remaining jobs", zap.Error(err))
+		cancelCtx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
+		defer cancel()
+		if cancelErr := o.Cancel(cancelCtx); cancelErr != nil {
+			o.logger.Warn("failed to cancel jobs after monitor error", zap.Error(cancelErr))
+		}
+	}
+	return err
 }
 
 // Cancel cancels all active jobs.
 func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
-	jobs := o.activeJobs
-
-	if len(jobs) == 0 {
+	groupKey := ""
+	if len(o.activeJobs) > 0 {
+		groupKey = o.activeJobs[0].GroupKey
+	}
+	if groupKey == "" && o.submitter != nil {
+		groupKey = o.submitter.GetGroupKey()
+	}
+	if groupKey == "" {
+		o.logger.Warn("no group key found, skip cancelling jobs")
 		return nil
 	}
 
-	o.logger.Info("cancelling all active jobs", zap.Int("count", len(jobs)))
-
-	// Get current status of all jobs in the group to avoid cancelling finished jobs
-	groupKey := jobs[0].GroupKey
-	statuses, err := o.sdk.GetJobsByGroup(ctx, groupKey)
-	if err != nil {
-		o.logger.Warn("failed to get group jobs status, will try to cancel all jobs", zap.Error(err))
+	statuses, statusErr := o.sdk.GetJobsByGroup(ctx, groupKey)
+	if statusErr != nil {
+		o.logger.Warn("failed to get group jobs status, will try best effort cancellation", zap.Error(statusErr), zap.String("groupKey", groupKey))
 	}
 
-	finishedMap := make(map[int64]bool)
-	for _, s := range statuses {
-		if s.IsCompleted() {
-			finishedMap[s.JobID] = true
+	statusByID := make(map[int64]*importsdk.JobStatus, len(statuses))
+	for _, st := range statuses {
+		statusByID[st.JobID] = st
+	}
+
+	jobIDsToCancel := make(map[int64]struct{})
+	if statusErr == nil {
+		for _, st := range statuses {
+			if !st.IsCompleted() {
+				jobIDsToCancel[st.JobID] = struct{}{}
+			}
 		}
 	}
-
-	var firstErr error
-	for _, job := range jobs {
-		if finishedMap[job.JobID] {
+	for _, job := range o.activeJobs {
+		if job == nil || job.JobID <= 0 {
 			continue
 		}
-		if err := o.sdk.CancelJob(ctx, job.JobID); err != nil {
-			o.logger.Warn("failed to cancel job", zap.Int64("jobID", job.JobID), zap.Error(err))
+		if st, ok := statusByID[job.JobID]; ok && st.IsCompleted() {
+			continue
+		}
+		jobIDsToCancel[job.JobID] = struct{}{}
+	}
+
+	var cps []*TableCheckpoint
+	if len(o.activeJobs) == 0 {
+		var err error
+		cps, err = o.cpMgr.GetCheckpoints(ctx)
+		if err != nil {
+			o.logger.Warn("failed to get checkpoints for cancellation", zap.Error(err), zap.String("groupKey", groupKey))
+		} else {
+			for _, cp := range cps {
+				if cp.GroupKey != groupKey || cp.JobID <= 0 || cp.Status != CheckpointStatusRunning {
+					continue
+				}
+				if st, ok := statusByID[cp.JobID]; ok && st.IsCompleted() {
+					continue
+				}
+				jobIDsToCancel[cp.JobID] = struct{}{}
+			}
+		}
+	}
+
+	o.logger.Info("cancelling import jobs", zap.String("groupKey", groupKey), zap.Int("count", len(jobIDsToCancel)))
+
+	var firstErr error
+	cancelSucceeded := make(map[int64]struct{})
+	for jobID := range jobIDsToCancel {
+		if err := o.sdk.CancelJob(ctx, jobID); err != nil {
+			o.logger.Warn("failed to cancel job", zap.Int64("jobID", jobID), zap.Error(err))
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		cancelSucceeded[jobID] = struct{}{}
+	}
+
+	updateCheckpoint := func(tableName string, jobID int64) {
+		st := statusByID[jobID]
+		var (
+			cpStatus  CheckpointStatus
+			cpMessage string
+			shouldUpd bool
+		)
+		switch {
+		case st != nil && st.IsFinished():
+			cpStatus = CheckpointStatusFinished
+			cpMessage = ""
+			shouldUpd = true
+		case st != nil && st.IsFailed():
+			cpStatus = CheckpointStatusFailed
+			cpMessage = st.ResultMessage
+			shouldUpd = true
+		case st != nil && st.IsCancelled():
+			cpStatus = CheckpointStatusFailed
+			cpMessage = cancelledByUserMessage
+			shouldUpd = true
+		default:
+			if _, ok := cancelSucceeded[jobID]; ok {
+				cpStatus = CheckpointStatusFailed
+				cpMessage = cancelledByUserMessage
+				shouldUpd = true
+			}
+		}
+		if !shouldUpd {
+			return
+		}
+		if err := o.cpMgr.Update(ctx, &TableCheckpoint{
+			TableName: tableName,
+			JobID:     jobID,
+			Status:    cpStatus,
+			Message:   cpMessage,
+			GroupKey:  groupKey,
+		}); err != nil {
+			o.logger.Warn("failed to update checkpoint", zap.String("table", tableName), zap.Int64("jobID", jobID), zap.Error(err))
 			if firstErr == nil {
 				firstErr = err
 			}
 		}
+	}
+
+	for _, job := range o.activeJobs {
+		if job == nil || job.TableMeta == nil || job.JobID <= 0 {
+			continue
+		}
+		updateCheckpoint(common.UniqueTable(job.TableMeta.Database, job.TableMeta.Table), job.JobID)
+	}
+	for _, cp := range cps {
+		if cp.GroupKey != groupKey || cp.JobID <= 0 || cp.Status != CheckpointStatusRunning {
+			continue
+		}
+		updateCheckpoint(cp.TableName, cp.JobID)
 	}
 	return firstErr
 }

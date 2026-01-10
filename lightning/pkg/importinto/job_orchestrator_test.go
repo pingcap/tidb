@@ -24,6 +24,7 @@ import (
 	mockimport "github.com/pingcap/tidb/lightning/pkg/importinto/mock"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	sdkmock "github.com/pingcap/tidb/pkg/importsdk/mock"
+	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -127,6 +128,18 @@ func TestJobOrchestratorSubmitAndWait(t *testing.T) {
 				}, nil)
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).Return(nil)
 				mockMonitor.EXPECT().WaitForJobs(gomock.Any(), gomock.Any()).Return(errors.New("monitor error"))
+				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+					{JobID: 1, Status: "running"},
+				}, nil)
+				mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(nil)
+				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
+					require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
+					require.Equal(t, int64(1), cp.JobID)
+					require.Equal(t, importinto.CheckpointStatusFailed, cp.Status)
+					require.Equal(t, "cancelled by user", cp.Message)
+					require.Equal(t, "group1", cp.GroupKey)
+					return nil
+				})
 			},
 			wantErr: true,
 		},
@@ -219,7 +232,74 @@ func TestJobOrchestratorCancel(t *testing.T) {
 
 	// Expect CancelJob only for job 2
 	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(2)).Return(nil)
+	expectedCps := map[string]struct {
+		jobID   int64
+		status  importinto.CheckpointStatus
+		message string
+	}{
+		common.UniqueTable("db", "t1"): {jobID: 1, status: importinto.CheckpointStatusFinished},
+		common.UniqueTable("db", "t2"): {jobID: 2, status: importinto.CheckpointStatusFailed, message: "cancelled by user"},
+	}
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
+		exp, ok := expectedCps[cp.TableName]
+		require.True(t, ok)
+		require.Equal(t, exp.jobID, cp.JobID)
+		require.Equal(t, exp.status, cp.Status)
+		require.Equal(t, exp.message, cp.Message)
+		require.Equal(t, "group1", cp.GroupKey)
+		delete(expectedCps, cp.TableName)
+		return nil
+	}).Times(2)
 
 	err = orchestrator.Cancel(context.Background())
 	require.NoError(t, err)
+}
+
+func TestJobOrchestratorCancelWithoutActiveJobs(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSubmitter := mockimport.NewMockJobSubmitter(ctrl)
+	mockCpMgr := mockimport.NewMockCheckpointManager(ctrl)
+	mockMonitor := mockimport.NewMockJobMonitor(ctrl)
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+
+	orchestrator := importinto.NewJobOrchestrator(importinto.OrchestratorConfig{
+		Submitter:     mockSubmitter,
+		CheckpointMgr: mockCpMgr,
+		SDK:           mockSDK,
+		Monitor:       mockMonitor,
+		Logger:        log.L(),
+	})
+
+	mockSubmitter.EXPECT().GetGroupKey().Return("group1")
+	mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "group1").Return([]*importsdk.JobStatus{
+		{JobID: 1, Status: "running"},
+		{JobID: 2, Status: "pending"},
+	}, nil)
+	mockCpMgr.EXPECT().GetCheckpoints(gomock.Any()).Return([]*importinto.TableCheckpoint{
+		{TableName: common.UniqueTable("db", "t1"), JobID: 1, Status: importinto.CheckpointStatusRunning, GroupKey: "group1"},
+		{TableName: common.UniqueTable("db", "t2"), JobID: 2, Status: importinto.CheckpointStatusRunning, GroupKey: "group1"},
+	}, nil)
+	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(1)).Return(nil)
+	mockSDK.EXPECT().CancelJob(gomock.Any(), int64(2)).Return(nil)
+
+	expectedCps := map[string]struct {
+		jobID int64
+	}{
+		common.UniqueTable("db", "t1"): {jobID: 1},
+		common.UniqueTable("db", "t2"): {jobID: 2},
+	}
+	mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
+		exp, ok := expectedCps[cp.TableName]
+		require.True(t, ok)
+		require.Equal(t, exp.jobID, cp.JobID)
+		require.Equal(t, importinto.CheckpointStatusFailed, cp.Status)
+		require.Equal(t, "cancelled by user", cp.Message)
+		require.Equal(t, "group1", cp.GroupKey)
+		delete(expectedCps, cp.TableName)
+		return nil
+	}).Times(2)
+
+	require.NoError(t, orchestrator.Cancel(context.Background()))
 }
