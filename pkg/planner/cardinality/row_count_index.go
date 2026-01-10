@@ -359,7 +359,7 @@ func estimateRowCountWithUniformDistribution(
 		if notNullCount <= 0 {
 			notNullCount = totalRowCount - float64(histogram.NullCount)
 		}
-		avgRowEstimate = outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
+		avgRowEstimate = outOfRangeFullNDV(histNDV, totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
 	} else { // Branch 2: some NDV's are in histograms
 		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
 		avgRowEstimate = notNullCount / histNDV
