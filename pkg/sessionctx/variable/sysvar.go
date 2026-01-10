@@ -327,7 +327,7 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBOptIndexPruneThreshold, Value: strconv.Itoa(vardef.DefTiDBOptIndexPruneThreshold), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
-		s.OptIndexPruneThreshold = tidbOptIntAllowNegativeOne(val, vardef.DefTiDBOptIndexPruneThreshold)
+		s.OptIndexPruneThreshold = TidbOptInt(val, vardef.DefTiDBOptIndexPruneThreshold)
 		return nil
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableOuterJoinReorder, Value: BoolToOnOff(vardef.DefTiDBEnableOuterJoinReorder), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {

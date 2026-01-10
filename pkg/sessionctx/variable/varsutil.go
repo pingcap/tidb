@@ -248,19 +248,6 @@ func TidbOptInt(opt string, defaultVal int) int {
 	return val
 }
 
-// tidbOptIntAllowNegativeOne converts a string to an int, allowing -1 as a special value
-func tidbOptIntAllowNegativeOne(opt string, defaultVal int) int {
-	val, err := strconv.Atoi(opt)
-	if err != nil {
-		return defaultVal
-	}
-	// Allow -1 as a special "disabled" value, otherwise must be non-negative
-	if val < -1 {
-		return defaultVal
-	}
-	return val
-}
-
 // TidbOptInt64 converts a string to an int64
 func TidbOptInt64(opt string, defaultVal int64) int64 {
 	val, err := strconv.ParseInt(opt, 10, 64)
