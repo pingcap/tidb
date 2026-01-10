@@ -1,0 +1,152 @@
+drop table if exists t1, t2, t3, t4, t5;
+create table t1(id int not null primary key, name varchar(100));
+create table t2(id int not null primary key, name varchar(100));
+create table t3(id int not null primary key, name varchar(100));
+create table t4(id int not null primary key, name varchar(100));
+create table t5(id int not null primary key, name varchar(100));
+set @@tidb_opt_join_reorder_sel = 0;
+explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t3.id, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t2.name
+└─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t1.id)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Selection(Probe)	root		or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
+    └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t4.id
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+      └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t3.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+        └─TableReader(Probe)	root		data:TableFullScan
+          └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+explain format = 'plan_tree' select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t3.id, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t2.name
+└─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t1.id)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Selection(Probe)	root		or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
+    └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t4.id
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+      └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t3.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+        └─TableReader(Probe)	root		data:TableFullScan
+          └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+set @@tidb_opt_join_reorder_sel = 1;
+explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t3.id, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t2.name
+└─Selection	root		or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
+  └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t4.id
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+    └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t3.id
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+      └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t2.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+        └─TableReader(Probe)	root		data:TableFullScan
+          └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+explain format = 'plan_tree' select /*+ leading(t3, t4, t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t3.id, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t2.name
+└─MergeJoin	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t2.id
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+  └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t1.id
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+    └─Selection(Probe)	root		or(like(planner__core__join_reorder2.t3.name, "test3", 92), like(planner__core__join_reorder2.t4.name, "test4", 92))
+      └─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__join_reorder2.t3.id, right key:planner__core__join_reorder2.t4.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+        └─TableReader(Probe)	root		data:TableFullScan
+          └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+set @@tidb_opt_join_reorder_sel = 0;
+explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
+(select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub
+inner join t4 on sub.id=t4.id;
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t2.name, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name
+└─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t1.id)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─Selection(Probe)	root		or(like(planner__core__join_reorder2.t2.name, "test2", 92), like(planner__core__join_reorder2.t3.name, "test3", 92))
+    └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t2.id, right key:planner__core__join_reorder2.t3.id
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+      └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t2.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+        └─TableReader(Probe)	root		data:TableFullScan
+          └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+set @@tidb_opt_join_reorder_sel = 1;
+explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
+(select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub
+inner join t4 on sub.id=t4.id;
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t2.name, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name
+└─Selection	root		or(like(planner__core__join_reorder2.t2.name, "test2", 92), like(planner__core__join_reorder2.t3.name, "test3", 92))
+  └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t2.id, right key:planner__core__join_reorder2.t3.id
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+    └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t2.id
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+      └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t4.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+        └─TableReader(Probe)	root		data:TableFullScan
+          └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+set @@tidb_opt_join_reorder_sel = 0;
+explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from
+(select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from
+(select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1
+inner join t4 on sub1.id=t4.id
+) sub2
+inner join t5 on sub2.id=t5.id;
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t2.name, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t5.id, planner__core__join_reorder2.t5.name
+└─HashJoin	root		inner join, equal:[eq(planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t5.id)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t5	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t1.id)]
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+    └─Selection(Probe)	root		or(like(planner__core__join_reorder2.t2.name, "test2", 92), like(planner__core__join_reorder2.t3.name, "test3", 92))
+      └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t2.id, right key:planner__core__join_reorder2.t3.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+        └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t2.id
+          ├─TableReader(Build)	root		data:TableFullScan
+          │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+          └─TableReader(Probe)	root		data:TableFullScan
+            └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+set @@tidb_opt_join_reorder_sel = 1;
+explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from
+(select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from
+(select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1
+inner join t4 on sub1.id=t4.id
+) sub2
+inner join t5 on sub2.id=t5.id;
+id	task	access object	operator info
+Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t2.name, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t5.id, planner__core__join_reorder2.t5.name
+└─Selection	root		or(like(planner__core__join_reorder2.t2.name, "test2", 92), like(planner__core__join_reorder2.t3.name, "test3", 92))
+  └─MergeJoin	root		left outer join, left side:MergeJoin, left key:planner__core__join_reorder2.t2.id, right key:planner__core__join_reorder2.t3.id
+    ├─TableReader(Build)	root		data:TableFullScan
+    │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
+    └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t2.id
+      ├─TableReader(Build)	root		data:TableFullScan
+      │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
+      └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t4.id
+        ├─TableReader(Build)	root		data:TableFullScan
+        │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
+        └─MergeJoin(Probe)	root		inner join, left key:planner__core__join_reorder2.t1.id, right key:planner__core__join_reorder2.t5.id
+          ├─TableReader(Build)	root		data:TableFullScan
+          │ └─TableFullScan	cop[tikv]	table:t5	keep order:true, stats:pseudo
+          └─TableReader(Probe)	root		data:TableFullScan
+            └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
