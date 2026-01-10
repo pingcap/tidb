@@ -12,6 +12,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/objstore",
+        "//pkg/objstore/s3store",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/vardef",

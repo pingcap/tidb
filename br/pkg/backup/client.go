@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -395,7 +396,7 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage    objstore.Storage
+	storage    storeapi.Storage
 	backend    *backuppb.StorageBackend
 	apiVersion kvrpcpb.APIVersion
 
@@ -529,7 +530,7 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 }
 
 // GetStorage gets storage for this backup.
-func (bc *Client) GetStorage() objstore.Storage {
+func (bc *Client) GetStorage() storeapi.Storage {
 	return bc.storage
 }
 
@@ -537,7 +538,7 @@ func (bc *Client) GetStorage() objstore.Storage {
 func (bc *Client) SetStorageAndCheckNotInUse(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *objstore.Options,
+	opts *storeapi.Options,
 ) error {
 	err := bc.SetStorage(ctx, backend, opts)
 	if err != nil {
@@ -656,7 +657,7 @@ func (bc *Client) getProgressRange(r rtree.KeyRange, sharedFreeListG *btree.Free
 func (bc *Client) SetStorage(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *objstore.Options,
+	opts *storeapi.Options,
 ) error {
 	var err error
 
@@ -701,13 +702,13 @@ func (bc *Client) BuildBackupRangeAndSchema(
 // CheckBackupStorageIsLocked checks whether backups is locked.
 // which means we found other backup progress already write
 // some data files into the same backup directory or cloud prefix.
-func CheckBackupStorageIsLocked(ctx context.Context, s objstore.Storage) error {
+func CheckBackupStorageIsLocked(ctx context.Context, s storeapi.Storage) error {
 	exist, err := s.FileExists(ctx, metautil.LockFile)
 	if err != nil {
 		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
 	}
 	if exist {
-		err = s.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
+		err = s.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 			// should return error to break the walkDir when found lock file and other .sst files.
 			if strings.HasSuffix(path, ".sst") {
 				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+

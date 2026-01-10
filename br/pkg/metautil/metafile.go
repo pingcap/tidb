@@ -24,7 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/statistics/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
@@ -100,7 +100,7 @@ func DecryptFullBackupMetaIfNeeded(metaData []byte, cipherInfo *backuppb.CipherI
 // Notice: the function `output` should be thread safe.
 func walkLeafMetaFile(
 	ctx context.Context,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	file *backuppb.MetaFile,
 	cipher *backuppb.CipherInfo,
 	output func(*backuppb.MetaFile)) error {
@@ -163,7 +163,7 @@ type Table struct {
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
 type MetaReader struct {
-	storage    objstore.Storage
+	storage    storeapi.Storage
 	backupMeta *backuppb.BackupMeta
 	cipher     *backuppb.CipherInfo
 }
@@ -171,7 +171,7 @@ type MetaReader struct {
 // NewMetaReader creates MetaReader.
 func NewMetaReader(
 	backupMeta *backuppb.BackupMeta,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo) *MetaReader {
 	return &MetaReader{
 		storage:    storage,
@@ -644,7 +644,7 @@ func (f *sizedMetaFile) append(file any, op AppendOp) bool {
 
 // MetaWriter represents wraps a writer, and the MetaWriter should be compatible with old version of backupmeta.
 type MetaWriter struct {
-	storage           objstore.Storage
+	storage           storeapi.Storage
 	metafileSizeLimit int
 	// a flag to control whether we generate v1 or v2 meta.
 	useV2Meta  bool
@@ -679,7 +679,7 @@ type MetaWriter struct {
 
 // NewMetaWriter creates MetaWriter.
 func NewMetaWriter(
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	metafileSizeLimit int,
 	useV2Meta bool,
 	metaFileName string,

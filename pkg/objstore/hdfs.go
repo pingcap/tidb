@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 // HDFSStorage represents HDFS storage.
@@ -121,7 +122,7 @@ func (*HDFSStorage) DeleteFiles(_ context.Context, _ []string) error {
 }
 
 // Open a Reader by file path. path is relative path to storage base path
-func (*HDFSStorage) Open(_ context.Context, _ string, _ *ReaderOption) (objectio.Reader, error) {
+func (*HDFSStorage) Open(_ context.Context, _ string, _ *storeapi.ReaderOption) (objectio.Reader, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
@@ -131,7 +132,7 @@ func (*HDFSStorage) Open(_ context.Context, _ string, _ *ReaderOption) (objectio
 // The argument `path` is the file path that can be used in `Open`
 // function; the argument `size` is the size in byte of the file determined
 // by path.
-func (*HDFSStorage) WalkDir(_ context.Context, _ *WalkOption, _ func(path string, size int64) error) error {
+func (*HDFSStorage) WalkDir(_ context.Context, _ *storeapi.WalkOption, _ func(path string, size int64) error) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 
@@ -141,7 +142,7 @@ func (s *HDFSStorage) URI() string {
 }
 
 // Create opens a file writer by path. path is relative path to storage base path
-func (*HDFSStorage) Create(_ context.Context, _ string, _ *WriterOption) (objectio.Writer, error) {
+func (*HDFSStorage) Create(_ context.Context, _ string, _ *storeapi.WriterOption) (objectio.Writer, error) {
 	return nil, errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
 }
 

@@ -9,6 +9,7 @@ go_library(
         "//br/pkg/gluetidb/mock",
         "//br/pkg/mock",
         "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "@com_github_stretchr_testify//require",
     ],
 )

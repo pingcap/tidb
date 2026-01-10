@@ -66,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
@@ -202,7 +203,7 @@ type LogClient struct {
 	keepaliveConf keepalive.ClientParameters
 
 	rawKVClient *rawkv.RawKVBatchClient
-	storage     objstore.Storage
+	storage     storeapi.Storage
 
 	// unsafeSession is not thread-safe.
 	// Currently, it is only utilized in some initialization and post-handle functions.
@@ -431,7 +432,7 @@ func (rc *LogClient) SetUpstreamClusterID(upstreamClusterID uint64) {
 	rc.upstreamClusterID = upstreamClusterID
 }
 
-func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *objstore.Options) error {
+func (rc *LogClient) SetStorage(ctx context.Context, backend *backuppb.StorageBackend, opts *storeapi.Options) error {
 	var err error
 	rc.storage, err = objstore.New(ctx, backend, opts)
 	if err != nil {
@@ -1002,7 +1003,7 @@ func (rc *LogClient) RestoreKVFiles(
 
 type FullBackupStorageConfig struct {
 	Backend *backuppb.StorageBackend
-	Opts    *objstore.Options
+	Opts    *storeapi.Options
 }
 
 type GetIDMapConfig struct {

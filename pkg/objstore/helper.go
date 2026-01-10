@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
@@ -44,12 +45,12 @@ func ValidateCloudStorageURI(ctx context.Context, uri string) error {
 			DisableKeepAlives: true,
 		},
 	}
-	storage, err := New(ctx, b, &Options{
+	storage, err := New(ctx, b, &storeapi.Options{
 		HTTPClient: &httpCli,
-		CheckPermissions: []Permission{
-			ListObjects,
-			GetObject,
-			AccessBuckets,
+		CheckPermissions: []storeapi.Permission{
+			storeapi.ListObjects,
+			storeapi.GetObject,
+			storeapi.AccessBuckets,
 		},
 	})
 	if err != nil {
@@ -71,7 +72,7 @@ func GetActiveUploadWorkerCount() int64 {
 // UnmarshalDir iterates over a prefix, then "unmarshal" the content of each file it met with the unmarshal function.
 // Returning an iterator that yields the unmarshaled content.
 // The "unmarshal" function should put the result of unmarshalling to the `target` argument.
-func UnmarshalDir[T any](ctx context.Context, walkOpt *WalkOption, s Storage, unmarshal func(target *T, name string, content []byte) error) iter.TryNextor[*T] {
+func UnmarshalDir[T any](ctx context.Context, walkOpt *storeapi.WalkOption, s storeapi.Storage, unmarshal func(target *T, name string, content []byte) error) iter.TryNextor[*T] {
 	ch := make(chan *T)
 	errCh := make(chan error, 1)
 	reader := func() {

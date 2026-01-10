@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -126,7 +127,7 @@ func TestMemoryIngestData(t *testing.T) {
 	testGetFirstAndLastKey(t, data, []byte("key6"), []byte("key9"), nil, nil)
 }
 
-func prepareKVFiles(t *testing.T, store objstore.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
+func prepareKVFiles(t *testing.T, store storeapi.Storage, contents [][]KVPair) (dataFiles, statFiles []string) {
 	ctx := context.Background()
 	for i, c := range contents {
 		var summary *WriterSummary
@@ -172,7 +173,7 @@ func TestEngineOnDup(t *testing.T) {
 		{Key: []byte{3}, Value: []byte("sds")},
 	}}
 
-	getEngineFn := func(store objstore.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
+	getEngineFn := func(store storeapi.Storage, onDup engineapi.OnDuplicateKey, inDataFiles, inStatFiles []string) *Engine {
 		return NewExternalEngine(
 			ctx,
 			store, inDataFiles, inStatFiles,

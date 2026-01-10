@@ -11,6 +11,7 @@ go_library(
         "//pkg/lightning/mydump",
         "//pkg/meta/model",
         "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/util/dbterror",
         "//pkg/util/filter",

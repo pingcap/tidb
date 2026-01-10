@@ -21,7 +21,7 @@ import (
 	"github.com/Masterminds/semver"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	corev1 "k8s.io/api/core/v1"
 )
 
@@ -129,7 +129,7 @@ func (c *EBSBasedBRMeta) ConfigFromFile(path string) error {
 	return nil
 }
 
-func NewMetaFromStorage(ctx context.Context, s objstore.Storage) (*EBSBasedBRMeta, error) {
+func NewMetaFromStorage(ctx context.Context, s storeapi.Storage) (*EBSBasedBRMeta, error) {
 	metaInfo := &EBSBasedBRMeta{}
 	metaBytes, err := s.ReadFile(ctx, metautil.MetaFile)
 	if err != nil {

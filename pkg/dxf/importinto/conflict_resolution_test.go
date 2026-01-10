@@ -30,7 +30,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/table"
@@ -42,7 +42,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func writeConflictKVFile(t *testing.T, kvGroup string, objStore objstore.Storage, kvs []*external.KVPair) *engineapi.ConflictInfo {
+func writeConflictKVFile(t *testing.T, kvGroup string, objStore storeapi.Storage, kvs []*external.KVPair) *engineapi.ConflictInfo {
 	t.Helper()
 	ctx := context.Background()
 	var summary *external.WriterSummary

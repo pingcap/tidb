@@ -14,7 +14,7 @@ go_library(
         "//pkg/lightning/metric",
         "//pkg/lightning/mydump",
         "//pkg/meta/model",
-        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/util/logutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",

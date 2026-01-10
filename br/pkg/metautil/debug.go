@@ -25,7 +25,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"golang.org/x/sync/errgroup"
 )
@@ -38,7 +38,7 @@ const (
 // DecodeStatsFile decodes the stats file to json format, it is called by br debug
 func DecodeStatsFile(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 	schemas []*backuppb.Schema,
 ) error {
@@ -79,7 +79,7 @@ func DecodeStatsFile(
 // DecodeMetaFile decodes the meta file to json format, it is called by br debug
 func DecodeMetaFile(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 	metaIndex *backuppb.MetaFile,
 ) error {

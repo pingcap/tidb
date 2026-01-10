@@ -23,7 +23,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -78,7 +78,7 @@ type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	SaveCheckpointIngestIndexRepairSQLs(context.Context, *CheckpointIngestIndexRepairSQLs) error
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
 
-	TryGetStorage() objstore.Storage
+	TryGetStorage() storeapi.Storage
 }
 
 type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {
@@ -273,19 +273,19 @@ func (manager *TableMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	return runner, nil
 }
 
-func (manager *TableMetaManager[K, SV, LV, M]) TryGetStorage() objstore.Storage {
+func (manager *TableMetaManager[K, SV, LV, M]) TryGetStorage() storeapi.Storage {
 	return nil
 }
 
 type StorageMetaManager[K KeyType, SV, LV ValueType, M any] struct {
-	storage   objstore.Storage
+	storage   storeapi.Storage
 	cipher    *backuppb.CipherInfo
 	clusterID string
 	taskName  string
 }
 
 func NewSnapshotStorageMetaManager(
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
@@ -302,7 +302,7 @@ func NewSnapshotStorageMetaManager(
 }
 
 func NewLogStorageMetaManager(
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	cipher *backuppb.CipherInfo,
 	clusterID uint64,
 	prefix string,
@@ -426,6 +426,6 @@ func (manager *StorageMetaManager[K, SV, LV, M]) StartCheckpointRunner(
 	return runner, nil
 }
 
-func (manager *StorageMetaManager[K, SV, LV, M]) TryGetStorage() objstore.Storage {
+func (manager *StorageMetaManager[K, SV, LV, M]) TryGetStorage() storeapi.Storage {
 	return manager.storage
 }

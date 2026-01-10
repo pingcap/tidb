@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -57,7 +57,7 @@ type byteReader struct {
 
 	concurrentReader struct {
 		largeBufferPool *membuf.Buffer
-		store           objstore.Storage
+		store           storeapi.Storage
 		filename        string
 		concurrency     int
 		bufSizePerConc  int
@@ -75,12 +75,12 @@ type byteReader struct {
 
 func openStoreReaderAndSeek(
 	ctx context.Context,
-	store objstore.Storage,
+	store storeapi.Storage,
 	name string,
 	initFileOffset uint64,
 	prefetchSize int,
 ) (objectio.Reader, error) {
-	storageReader, err := store.Open(ctx, name, &objstore.ReaderOption{
+	storageReader, err := store.Open(ctx, name, &storeapi.ReaderOption{
 		StartOffset:  aws.Int64(int64(initFileOffset)),
 		PrefetchSize: prefetchSize,
 	})
@@ -116,7 +116,7 @@ func newByteReader(
 }
 
 func (r *byteReader) enableConcurrentRead(
-	store objstore.Storage,
+	store storeapi.Storage,
 	filename string,
 	concurrency int,
 	bufSizePerConc int,

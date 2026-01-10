@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 type noopStorage struct{}
@@ -48,12 +49,12 @@ func (*noopStorage) FileExists(_ context.Context, _ string) (bool, error) {
 }
 
 // Open a Reader by file path.
-func (*noopStorage) Open(_ context.Context, _ string, _ *ReaderOption) (objectio.Reader, error) {
+func (*noopStorage) Open(_ context.Context, _ string, _ *storeapi.ReaderOption) (objectio.Reader, error) {
 	return noopReader{}, nil
 }
 
 // WalkDir traverse all the files in a dir.
-func (*noopStorage) WalkDir(_ context.Context, _ *WalkOption, _ func(string, int64) error) error {
+func (*noopStorage) WalkDir(_ context.Context, _ *storeapi.WalkOption, _ func(string, int64) error) error {
 	return nil
 }
 
@@ -62,7 +63,7 @@ func (*noopStorage) URI() string {
 }
 
 // Create implements Storage interface.
-func (*noopStorage) Create(_ context.Context, _ string, _ *WriterOption) (objectio.Writer, error) {
+func (*noopStorage) Create(_ context.Context, _ string, _ *storeapi.WriterOption) (objectio.Writer, error) {
 	return &NoopWriter{}, nil
 }
 

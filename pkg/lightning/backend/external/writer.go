@@ -37,8 +37,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -283,7 +283,7 @@ func (b *WriterBuilder) SetOnDup(onDup engineapi.OnDuplicateKey) *WriterBuilder 
 // Build builds a new Writer. The files writer will create are under the prefix
 // of "{prefix}/{writerID}".
 func (b *WriterBuilder) Build(
-	store objstore.Storage,
+	store storeapi.Storage,
 	prefix string,
 	writerID string,
 ) *Writer {
@@ -322,7 +322,7 @@ func (b *WriterBuilder) Build(
 // BuildOneFile builds a new one file Writer. The writer will create only one
 // file under the prefix of "{prefix}/{writerID}".
 func (b *WriterBuilder) BuildOneFile(
-	store objstore.Storage,
+	store storeapi.Storage,
 	prefix string,
 	writerID string,
 ) *OneFileWriter {
@@ -425,7 +425,7 @@ func GetMaxOverlappingTotal(stats []MultipleFilesStat) int64 {
 
 // Writer is used to write data into external storage.
 type Writer struct {
-	store          objstore.Storage
+	store          storeapi.Storage
 	writerID       string
 	groupOffset    int
 	currentSeq     int
@@ -816,7 +816,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 	err error,
 ) {
 	dataPath := filepath.Join(w.getPartitionedPrefix(), strconv.Itoa(w.currentSeq))
-	dataWriter, err := w.store.Create(ctx, dataPath, &objstore.WriterOption{
+	dataWriter, err := w.store.Create(ctx, dataPath, &storeapi.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
 	})
@@ -824,7 +824,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 		return "", "", nil, nil, err
 	}
 	statPath := filepath.Join(w.getPartitionedPrefix()+statSuffix, strconv.Itoa(w.currentSeq))
-	statsWriter, err := w.store.Create(ctx, statPath, &objstore.WriterOption{
+	statsWriter, err := w.store.Create(ctx, statPath, &storeapi.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize,
 	})
@@ -837,7 +837,7 @@ func (w *Writer) createStorageWriter(ctx context.Context) (
 
 func (w *Writer) createDupWriter(ctx context.Context) (string, objectio.Writer, error) {
 	path := filepath.Join(w.getPartitionedPrefix()+dupSuffix, strconv.Itoa(w.currentSeq))
-	writer, err := w.store.Create(ctx, path, &objstore.WriterOption{
+	writer, err := w.store.Create(ctx, path, &storeapi.WriterOption{
 		Concurrency: 20,
 		PartSize:    MinUploadPartSize})
 	return path, writer, err

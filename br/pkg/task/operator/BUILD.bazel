@@ -32,6 +32,7 @@ go_library(
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/util",
         "//pkg/util/chunk",

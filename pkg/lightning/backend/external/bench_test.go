@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/size"
@@ -43,7 +44,7 @@ import (
 var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
 
 type writeTestSuite struct {
-	store              objstore.Storage
+	store              storeapi.Storage
 	source             kvSource
 	memoryLimit        int
 	beforeCreateWriter func()
@@ -91,7 +92,7 @@ func writePlainFile(s *writeTestSuite) {
 	}
 }
 
-func cleanOldFiles(ctx context.Context, store objstore.Storage, subDir string) {
+func cleanOldFiles(ctx context.Context, store storeapi.Storage, subDir string) {
 	filenames, err := GetAllFileNames(ctx, store, subDir)
 	intest.AssertNoError(err)
 	err = store.DeleteFiles(ctx, filenames)
@@ -194,7 +195,7 @@ func TestCompareWriter(t *testing.T) {
 		afterWriterClose:   afterClose,
 	}
 
-	stores := map[string]objstore.Storage{
+	stores := map[string]storeapi.Storage{
 		"external store": externalStore,
 		"memory store":   objstore.NewMemStorage(),
 	}
@@ -239,7 +240,7 @@ func TestCompareWriter(t *testing.T) {
 }
 
 type readTestSuite struct {
-	store              objstore.Storage
+	store              storeapi.Storage
 	subDir             string
 	totalKVCnt         int
 	concurrency        int
@@ -288,7 +289,7 @@ func readFileSequential(t *testing.T, s *readTestSuite) {
 }
 
 func getKVAndStatFilesByScan(ctx context.Context,
-	store objstore.Storage,
+	store storeapi.Storage,
 	nonPartitionedDir string,
 ) ([]string, []string, error) {
 	names, err := GetAllFileNames(ctx, store, nonPartitionedDir)
@@ -471,7 +472,7 @@ func TestReadMergeIterWithoutCheckHotspot(t *testing.T) {
 
 func testCompareReaderWithContent(
 	t *testing.T,
-	createFn func(store objstore.Storage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
+	createFn func(store storeapi.Storage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
 	fn func(t *testing.T, suite *readTestSuite),
 ) {
 	store := openTestingStorage(t)
@@ -495,7 +496,7 @@ func testCompareReaderWithContent(
 }
 
 type mergeTestSuite struct {
-	store            objstore.Storage
+	store            storeapi.Storage
 	subDir           string
 	totalKVCnt       int
 	concurrency      int
@@ -607,7 +608,7 @@ func newMergeStep(t *testing.T, s *mergeTestSuite) {
 func testCompareMergeWithContent(
 	t *testing.T,
 	concurrency int,
-	createFn func(store objstore.Storage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
+	createFn func(store storeapi.Storage, fileSize int, fileCount int, objectPrefix string) (int, kv.Key, kv.Key),
 	fn func(t *testing.T, suite *mergeTestSuite),
 	p *profiler,
 ) {

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	regexprrouter "github.com/pingcap/tidb/pkg/util/regexpr-router"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -62,7 +63,7 @@ func NewMDDatabaseMeta(charSet string) *MDDatabaseMeta {
 }
 
 // GetSchema gets the schema SQL for a source database.
-func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store objstore.Storage) string {
+func (m *MDDatabaseMeta) GetSchema(ctx context.Context, store storeapi.Storage) string {
 	if m.SchemaFile.FileMeta.Path != "" {
 		schema, err := ExportStatement(ctx, store, m.SchemaFile, m.charSet)
 		if err != nil {
@@ -127,7 +128,7 @@ func NewMDTableMeta(charSet string) *MDTableMeta {
 }
 
 // GetSchema gets the table-creating SQL for a source table.
-func (m *MDTableMeta) GetSchema(ctx context.Context, store objstore.Storage) (string, error) {
+func (m *MDTableMeta) GetSchema(ctx context.Context, store storeapi.Storage) (string, error) {
 	schemaFilePath := m.SchemaFile.FileMeta.Path
 	if len(schemaFilePath) <= 0 {
 		return "", errors.Errorf("schema file is missing for the table '%s.%s'", m.DB, m.Name)
@@ -255,7 +256,7 @@ func NewLoaderCfg(cfg *config.Config) LoaderConfig {
 
 // MDLoader is for 'Mydumper File Loader', which loads the files in the data source and generates a set of metadata.
 type MDLoader struct {
-	store      objstore.Storage
+	store      storeapi.Storage
 	dbs        []*MDDatabaseMeta
 	filter     filter.Filter
 	router     *regexprrouter.RouteTable
@@ -295,7 +296,7 @@ func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOptio
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
-	s, err := objstore.New(ctx, u, &objstore.Options{})
+	s, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
 		return nil, common.NormalizeError(err)
 	}
@@ -305,7 +306,7 @@ func NewLoader(ctx context.Context, cfg LoaderConfig, opts ...MDLoaderSetupOptio
 
 // NewLoaderWithStore constructs a MyDumper loader with the provided external storage that scanns the data source and constructs a set of metadatas.
 func NewLoaderWithStore(ctx context.Context, cfg LoaderConfig,
-	store objstore.Storage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
+	store storeapi.Storage, opts ...MDLoaderSetupOption) (*MDLoader, error) {
 	var r *regexprrouter.RouteTable
 	var err error
 
@@ -579,7 +580,7 @@ type FileIterator interface {
 }
 
 type allFileIterator struct {
-	store        objstore.Storage
+	store        storeapi.Storage
 	maxScanFiles int
 }
 
@@ -588,7 +589,7 @@ func (iter *allFileIterator) IterateFiles(ctx context.Context, hdl FileHandler) 
 	// meaning the file and chunk orders will be the same everytime it is called
 	// (as long as the source is immutable).
 	totalScannedFileCount := 0
-	err := iter.store.WalkDir(ctx, &objstore.WalkOption{}, func(path string, size int64) error {
+	err := iter.store.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 		totalScannedFileCount++
 		if iter.maxScanFiles > 0 && totalScannedFileCount > iter.maxScanFiles {
 			return common.ErrTooManySourceFiles
@@ -832,7 +833,7 @@ func (l *MDLoader) GetDatabases() []*MDDatabaseMeta {
 }
 
 // GetStore gets the external storage used by the loader.
-func (l *MDLoader) GetStore() objstore.Storage {
+func (l *MDLoader) GetStore() storeapi.Storage {
 	return l.store
 }
 
@@ -855,7 +856,7 @@ func (l *MDLoader) GetAllFiles() map[string]FileInfo {
 func calculateFileBytes(ctx context.Context,
 	dataFile string,
 	compressType compressedio.CompressType,
-	store objstore.Storage,
+	store storeapi.Storage,
 	offset int64) (tot int, pos int64, err error) {
 	bytes := make([]byte, sampleCompressedFileSize)
 	reader, err := store.Open(ctx, dataFile, nil)
@@ -906,7 +907,7 @@ func calculateFileBytes(ctx context.Context,
 // EstimateRealSizeForFile estimate the real size for the file.
 // If the file is not compressed, the real size is the same as the file size.
 // If the file is compressed, the real size is the estimated uncompressed size.
-func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store objstore.Storage) int64 {
+func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store storeapi.Storage) int64 {
 	if fileMeta.Compression == CompressionNone {
 		return fileMeta.FileSize
 	}
@@ -923,7 +924,7 @@ func EstimateRealSizeForFile(ctx context.Context, fileMeta SourceFileMeta, store
 }
 
 // SampleFileCompressRatio samples the compress ratio of the compressed file. Exported for test.
-func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store objstore.Storage) (float64, error) {
+func SampleFileCompressRatio(ctx context.Context, fileMeta SourceFileMeta, store storeapi.Storage) (float64, error) {
 	failpoint.Inject("SampleFileCompressPercentage", func(val failpoint.Value) {
 		switch v := val.(type) {
 		case string:

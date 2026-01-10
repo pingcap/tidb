@@ -44,8 +44,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	_ "github.com/pingcap/tidb/pkg/planner/core" // to setup expression.EvalAstExpr. Otherwise we cannot parse the default value
@@ -267,7 +267,7 @@ func (g *TargetInfoGetterImpl) GetEmptyRegionsInfo(ctx context.Context) (*pdhttp
 type PreImportInfoGetterImpl struct {
 	cfg              *config.Config
 	getPreInfoCfg    *ropts.GetPreInfoConfig
-	srcStorage       objstore.Storage
+	srcStorage       storeapi.Storage
 	ioWorkers        *worker.Pool
 	encBuilder       encode.EncodingBuilder
 	targetInfoGetter TargetInfoGetter
@@ -285,7 +285,7 @@ type PreImportInfoGetterImpl struct {
 func NewPreImportInfoGetter(
 	cfg *config.Config,
 	dbMetas []*mydump.MDDatabaseMeta,
-	srcStorage objstore.Storage,
+	srcStorage storeapi.Storage,
 	targetInfoGetter TargetInfoGetter,
 	ioWorkers *worker.Pool,
 	encBuilder encode.EncodingBuilder,

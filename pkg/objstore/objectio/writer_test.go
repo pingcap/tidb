@@ -27,10 +27,11 @@ import (
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
-func getStore(t *testing.T, uri string, changeStoreFn func(s objstore.Storage) objstore.Storage) objstore.Storage {
+func getStore(t *testing.T, uri string, changeStoreFn func(s storeapi.Storage) storeapi.Storage) storeapi.Storage {
 	t.Helper()
 	backend, err := objstore.ParseBackend(uri, nil)
 	require.NoError(t, err)
@@ -40,7 +41,7 @@ func getStore(t *testing.T, uri string, changeStoreFn func(s objstore.Storage) o
 	return changeStoreFn(storage)
 }
 
-func writeFile(t *testing.T, storage objstore.Storage, fileName string, lines []string) {
+func writeFile(t *testing.T, storage storeapi.Storage, fileName string, lines []string) {
 	t.Helper()
 	ctx := context.Background()
 	writer, err := storage.Create(ctx, fileName, nil)
@@ -64,7 +65,7 @@ func TestExternalFileWriter(t *testing.T) {
 	}
 	testFn := func(test *testcase, t *testing.T) {
 		t.Log(test.name)
-		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s objstore.Storage) objstore.Storage {
+		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s storeapi.Storage) storeapi.Storage {
 			return s
 		})
 		fileName := strings.ReplaceAll(test.name, " ", "-") + ".txt"
@@ -129,7 +130,7 @@ func TestCompressReaderWriter(t *testing.T) {
 		t.Log(test.name)
 		suffix := test.compressType.FileSuffix()
 		fileName := strings.ReplaceAll(test.name, " ", "-") + suffix
-		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s objstore.Storage) objstore.Storage {
+		storage := getStore(t, "local://"+filepath.ToSlash(dir), func(s storeapi.Storage) storeapi.Storage {
 			return objstore.WithCompression(s, test.compressType, compressedio.DecompressConfig{})
 		})
 		writeFile(t, storage, fileName, test.content)

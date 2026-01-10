@@ -27,8 +27,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"go.uber.org/zap"
@@ -71,7 +71,7 @@ func (r *CollectResult) Merge(other *CollectResult) {
 // Collector collects info about conflicted rows.
 type Collector struct {
 	logger         *zap.Logger
-	store          objstore.Storage
+	store          storeapi.Storage
 	filenamePrefix string
 	kvGroup        string
 	handler        Handler
@@ -87,7 +87,7 @@ type Collector struct {
 func NewCollector(
 	targetTbl table.Table,
 	logger *zap.Logger,
-	objStore objstore.Storage,
+	objStore storeapi.Storage,
 	store tidbkv.Storage,
 	filenamePrefix string,
 	kvGroup string,
@@ -170,7 +170,7 @@ func (c *Collector) switchFile(ctx context.Context) error {
 	filename := getRowFileName(c.filenamePrefix, c.fileSeq)
 	c.logger.Info("switch conflict row file", zap.String("filename", filename),
 		zap.String("lastFileSize", units.BytesSize(float64(c.currFileSize))))
-	writer, err := c.store.Create(ctx, filename, &objstore.WriterOption{
+	writer, err := c.store.Create(ctx, filename, &storeapi.WriterOption{
 		Concurrency: 20,
 		PartSize:    external.MinUploadPartSize,
 	})

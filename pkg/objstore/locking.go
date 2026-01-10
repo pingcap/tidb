@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
@@ -60,7 +61,7 @@ type conditionalPut struct {
 type VerifyWriteContext struct {
 	context.Context
 	Target  string
-	Storage Storage
+	Storage storeapi.Storage
 	TxnID   uuid.UUID
 }
 
@@ -77,8 +78,8 @@ func (cx *VerifyWriteContext) IntentFileName() string {
 // In each phase, before writing, it will verify whether the storage is suitable for writing, that is:
 // - There shouldn't be any other intention files.
 // - Verify() returns no error. (If there is one.)
-func (w conditionalPut) CommitTo(ctx context.Context, s Storage) (uuid.UUID, error) {
-	if _, ok := s.(StrongConsistency); !ok {
+func (w conditionalPut) CommitTo(ctx context.Context, s storeapi.Storage) (uuid.UUID, error) {
+	if _, ok := s.(storeapi.StrongConsistency); !ok {
 		log.Warn("The external storage implementation doesn't provide a strong consistency guarantee. "+
 			"Please avoid concurrently accessing it if possible.",
 			zap.String("type", fmt.Sprintf("%T", s)))
@@ -128,7 +129,7 @@ func (cx VerifyWriteContext) assertNoOtherOfPrefixExpect(pfx string, expect stri
 	fileName := path.Base(pfx)
 	dirName := path.Dir(pfx)
 
-	return cx.Storage.WalkDir(cx, &WalkOption{
+	return cx.Storage.WalkDir(cx, &storeapi.WalkOption{
 		SubDir:    dirName,
 		ObjPrefix: fileName,
 		// We'd better read a deleted intention...
@@ -187,7 +188,7 @@ func MakeLockMeta(hint string) LockMeta {
 	return meta
 }
 
-func getLockMeta(ctx context.Context, storage Storage, path string) (LockMeta, error) {
+func getLockMeta(ctx context.Context, storage storeapi.Storage, path string) (LockMeta, error) {
 	file, err := storage.ReadFile(ctx, path)
 	if err != nil {
 		return LockMeta{}, errors.Annotatef(err, "failed to read existed lock file %s", path)
@@ -204,7 +205,7 @@ func getLockMeta(ctx context.Context, storage Storage, path string) (LockMeta, e
 // RemoteLock is the remote lock.
 type RemoteLock struct {
 	txnID   uuid.UUID
-	storage Storage
+	storage storeapi.Storage
 	path    string
 }
 
@@ -213,7 +214,7 @@ func (l *RemoteLock) String() string {
 	return fmt.Sprintf("{path=%s,uuid=%s,storage_uri=%s}", l.path, l.txnID, l.storage.URI())
 }
 
-func tryFetchRemoteLockInfo(ctx context.Context, storage Storage, path string) error {
+func tryFetchRemoteLockInfo(ctx context.Context, storage storeapi.Storage, path string) error {
 	meta, err := getLockMeta(ctx, storage, path)
 	if err != nil {
 		return err
@@ -226,7 +227,7 @@ func tryFetchRemoteLockInfo(ctx context.Context, storage Storage, path string) e
 // Will return a `ErrLocked` if there is another process already creates the lock file.
 // This isn't a strict lock like flock in linux: that means, the lock might be forced removed by
 // manually deleting the "lock file" in external storage.
-func TryLockRemote(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemote(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error) {
 	writer := conditionalPut{
 		Target: path,
 		Content: func(txnID uuid.UUID) []byte {
@@ -305,7 +306,7 @@ func newReadLockName(path string) string {
 }
 
 // Locker is a locker.
-type Locker = func(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error)
+type Locker = func(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error)
 
 const (
 	// lockRetryTimes specifies the maximum number of times to retry acquiring a lock.
@@ -314,7 +315,7 @@ const (
 )
 
 // LockWithRetry lock with retry.
-func LockWithRetry(ctx context.Context, locker Locker, storage Storage, path, hint string) (
+func LockWithRetry(ctx context.Context, locker Locker, storage storeapi.Storage, path, hint string) (
 	lock RemoteLock, err error) {
 	const JitterMs = 5000
 
@@ -349,7 +350,7 @@ func LockWithRetry(ctx context.Context, locker Locker, storage Storage, path, hi
 }
 
 // TryLockRemoteWrite try lock.
-func TryLockRemoteWrite(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemoteWrite(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error) {
 	target := writeLockName(path)
 	writer := conditionalPut{
 		Target: target,
@@ -381,7 +382,7 @@ func TryLockRemoteWrite(ctx context.Context, storage Storage, path, hint string)
 }
 
 // TryLockRemoteRead try lock.
-func TryLockRemoteRead(ctx context.Context, storage Storage, path, hint string) (lock RemoteLock, err error) {
+func TryLockRemoteRead(ctx context.Context, storage storeapi.Storage, path, hint string) (lock RemoteLock, err error) {
 	target := newReadLockName(path)
 	writeLock := writeLockName(path)
 	writer := conditionalPut{

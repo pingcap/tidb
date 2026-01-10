@@ -62,6 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -169,7 +170,7 @@ func DefaultStreamConfig(flagsDef func(*pflag.FlagSet)) StreamConfig {
 	return cfg
 }
 
-func (cfg *StreamConfig) makeStorage(ctx context.Context) (objstore.Storage, error) {
+func (cfg *StreamConfig) makeStorage(ctx context.Context) (storeapi.Storage, error) {
 	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -364,7 +365,7 @@ func NewStreamMgr(ctx context.Context, cfg *StreamConfig, g glue.Glue, isStreamS
 			return nil, errors.Trace(err)
 		}
 
-		opts := objstore.Options{
+		opts := storeapi.Options{
 			NoCredentials:            cfg.NoCreds,
 			SendCredentials:          cfg.SendCreds,
 			CheckS3ObjectLockOptions: true,
@@ -1882,12 +1883,12 @@ func rangeFilterFromIngestRecorder(recorder *ingestrec.IngestRecorder, rewriteRu
 	return errors.Trace(err)
 }
 
-func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) objstore.Options {
+func getExternalStorageOptions(cfg *Config, u *backuppb.StorageBackend) storeapi.Options {
 	var httpClient *http.Client
 	if u.GetGcs() == nil {
 		httpClient = objstore.GetDefaultHTTPClient(cfg.MetadataDownloadBatchSize)
 	}
-	return objstore.Options{
+	return storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 		HTTPClient:      httpClient,
@@ -1930,7 +1931,7 @@ func getLogInfo(
 
 func getLogInfoFromStorage(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 ) (backupLogInfo, error) {
 	// logStartTS: Get log start ts from backupmeta file.
 	metaData, err := s.ReadFile(ctx, metautil.MetaFile)
@@ -1970,9 +1971,9 @@ func getLogInfoFromStorage(
 	}, nil
 }
 
-func getGlobalCheckpointFromStorage(ctx context.Context, s objstore.Storage) (uint64, error) {
+func getGlobalCheckpointFromStorage(ctx context.Context, s storeapi.Storage) (uint64, error) {
 	var globalCheckPointTS uint64 = 0
-	opt := objstore.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
+	opt := storeapi.WalkOption{SubDir: stream.GetStreamBackupGlobalCheckpointPrefix()}
 	err := s.WalkDir(ctx, &opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".ts") {
 			return nil

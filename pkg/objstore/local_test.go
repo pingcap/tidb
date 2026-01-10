@@ -25,6 +25,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -95,7 +96,7 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 
 	i := 0
 	names := []string{name1, name2}
-	err = store.WalkDir(context.TODO(), &WalkOption{}, func(path string, size int64) error {
+	err = store.WalkDir(context.TODO(), &storeapi.WalkOption{}, func(path string, size int64) error {
 		require.Equal(t, names[i], path)
 		require.Equal(t, int64(len(data)), size)
 		i++
@@ -107,7 +108,7 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 
 	names = []string{name2}
 	i = 0
-	err = store.WalkDir(context.TODO(), &WalkOption{ObjPrefix: "test.warehouse.1"}, func(path string, size int64) error {
+	err = store.WalkDir(context.TODO(), &storeapi.WalkOption{ObjPrefix: "test.warehouse.1"}, func(path string, size int64) error {
 		require.Equal(t, names[i], path)
 		require.Equal(t, int64(len(data)), size)
 		i++
@@ -122,7 +123,7 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 	require.False(t, exists)
 
 	// test walk nonexistent directory
-	err = store.WalkDir(context.TODO(), &WalkOption{SubDir: "123/456"}, func(path string, size int64) error {
+	err = store.WalkDir(context.TODO(), &storeapi.WalkOption{SubDir: "123/456"}, func(path string, size int64) error {
 		return errors.New("find file")
 	})
 	require.NoError(t, err)
@@ -134,7 +135,7 @@ func TestWalkDirWithSoftLinkFile(t *testing.T) {
 	require.True(t, exists)
 
 	// test walk existent directory
-	err = store.WalkDir(context.TODO(), &WalkOption{SubDir: "123/456"}, func(path string, size int64) error {
+	err = store.WalkDir(context.TODO(), &storeapi.WalkOption{SubDir: "123/456"}, func(path string, size int64) error {
 		if path == "123/456/789.txt" {
 			return nil
 		}
@@ -155,7 +156,7 @@ func TestWalkDirSkipSubDir(t *testing.T) {
 	require.NoError(t, err)
 	names := []string{"sub/test2.txt", "test1.txt"}
 	i := 0
-	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{}, func(path string, size int64) error {
+	require.NoError(t, store.WalkDir(context.Background(), &storeapi.WalkOption{}, func(path string, size int64) error {
 		require.Equal(t, names[i], path)
 		i++
 		return nil
@@ -163,7 +164,7 @@ func TestWalkDirSkipSubDir(t *testing.T) {
 
 	names = []string{"test1.txt"}
 	i = 0
-	require.NoError(t, store.WalkDir(context.Background(), &WalkOption{SkipSubDir: true}, func(path string, size int64) error {
+	require.NoError(t, store.WalkDir(context.Background(), &storeapi.WalkOption{SkipSubDir: true}, func(path string, size int64) error {
 		require.Equal(t, names[i], path)
 		i++
 		return nil
@@ -211,7 +212,7 @@ func TestLocalFileReadRange(t *testing.T) {
 
 	// [2, 6]
 	start, end := int64(2), int64(6)
-	r, err := store.Open(ctx, name, &ReaderOption{
+	r, err := store.Open(ctx, name, &storeapi.ReaderOption{
 		StartOffset: &start,
 		EndOffset:   &end,
 	})
@@ -225,7 +226,7 @@ func TestLocalFileReadRange(t *testing.T) {
 
 	// [5, ...)
 	start = 5
-	r, err = store.Open(ctx, name, &ReaderOption{
+	r, err = store.Open(ctx, name, &storeapi.ReaderOption{
 		StartOffset: &start,
 	})
 	require.NoError(t, err)
@@ -233,7 +234,7 @@ func TestLocalFileReadRange(t *testing.T) {
 
 	// [..., 5)
 	end = 5
-	r, err = store.Open(ctx, name, &ReaderOption{
+	r, err = store.Open(ctx, name, &storeapi.ReaderOption{
 		EndOffset: &end,
 	})
 	require.NoError(t, err)
@@ -242,7 +243,7 @@ func TestLocalFileReadRange(t *testing.T) {
 	// test read into smaller buffer
 	smallBuf := make([]byte, 2)
 	start, end = int64(2), int64(6)
-	r, err = store.Open(ctx, name, &ReaderOption{
+	r, err = store.Open(ctx, name, &storeapi.ReaderOption{
 		StartOffset: &start,
 		EndOffset:   &end,
 	})

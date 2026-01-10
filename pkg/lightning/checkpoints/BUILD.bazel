@@ -18,6 +18,7 @@ go_library(
         "//pkg/lightning/verification",
         "//pkg/meta/model",
         "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/util/logutil",
         "@com_github_joho_sqltocsv//:sqltocsv",
         "@com_github_pingcap_errors//:errors",

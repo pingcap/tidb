@@ -24,10 +24,11 @@ import (
 	"github.com/pingcap/failpoint"
 	backup "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
-func createMockStorage(t *testing.T) (objstore.Storage, string) {
+func createMockStorage(t *testing.T) (storeapi.Storage, string) {
 	tempdir := t.TempDir()
 	storage, err := objstore.New(context.Background(), &backup.StorageBackend{
 		Backend: &backup.StorageBackend_Local{

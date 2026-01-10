@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -141,9 +142,9 @@ type pitrCollector struct {
 	// Immutable state.
 
 	// taskStorage is the log backup storage.
-	taskStorage objstore.Storage
+	taskStorage storeapi.Storage
 	// restoreStorage is where the running restoration from.
-	restoreStorage objstore.Storage
+	restoreStorage storeapi.Storage
 	// name is a human-friendly identity to this restoration.
 	// When restart from a checkpoint, a new name will be generated.
 	name string
@@ -317,11 +318,11 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	f = util.ProtoV1Clone(f)
 	out := c.sstPath(f.Name)
 
-	copier, ok := c.taskStorage.(objstore.Copier)
+	copier, ok := c.taskStorage.(storeapi.Copier)
 	if !ok {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "storage %T does not support copying", c.taskStorage)
 	}
-	spec := objstore.CopySpec{
+	spec := storeapi.CopySpec{
 		From: f.GetName(),
 		To:   out,
 	}

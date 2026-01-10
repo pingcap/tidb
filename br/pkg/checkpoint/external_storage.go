@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -69,7 +69,7 @@ func getCheckpointIngestIndexPathByName(taskName string) string {
 
 type externalCheckpointStorage struct {
 	flushPath
-	storage objstore.Storage
+	storage storeapi.Storage
 
 	lockId uint64
 	timer  GlobalTimer
@@ -77,7 +77,7 @@ type externalCheckpointStorage struct {
 
 func newExternalCheckpointStorage(
 	ctx context.Context,
-	s objstore.Storage,
+	s storeapi.Storage,
 	timer GlobalTimer,
 	flushPath flushPath,
 ) (*externalCheckpointStorage, error) {

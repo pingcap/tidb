@@ -32,6 +32,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/sync/errgroup"
@@ -64,9 +65,9 @@ func prepareGCSStore(t *testing.T, bucketName string, accessRec *recording.Acces
 		PredefinedAcl:   "private",
 		CredentialsBlob: "Fake Credentials",
 	}
-	stg, err := NewGCSStorage(ctx, gcs, &Options{
+	stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 		SendCredentials:  false,
-		CheckPermissions: []Permission{AccessBuckets},
+		CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
 		AccessRecording:  accessRec,
 	})
@@ -131,7 +132,7 @@ func TestGCS(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, exist)
 
-	checkWalkDir := func(stg *GCSStorage, opt *WalkOption) {
+	checkWalkDir := func(stg *GCSStorage, opt *storeapi.WalkOption) {
 		var totalSize int64 = 0
 		err = stg.WalkDir(ctx, opt, func(name string, size int64) error {
 			totalSize += size
@@ -157,13 +158,13 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := NewGCSStorage(ctx, gcs, &Options{
+		stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
-		checkWalkDir(stg, &WalkOption{SubDir: "b/"})
+		checkWalkDir(stg, &storeapi.WalkOption{SubDir: "b/"})
 	}
 
 	// test prefix without slash in new bucket without sub dir opt
@@ -175,9 +176,9 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := NewGCSStorage(ctx, gcs, &Options{
+		stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
@@ -192,13 +193,13 @@ func TestGCS(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "Fake Credentials",
 		}
-		stg, err := NewGCSStorage(ctx, gcs, &Options{
+		stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
-		checkWalkDir(stg, &WalkOption{SubDir: "b/"})
+		checkWalkDir(stg, &storeapi.WalkOption{SubDir: "b/"})
 	}
 
 	// test 1003 files
@@ -319,9 +320,9 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		_, err := NewGCSStorage(ctx, gcs, &Options{
+		_, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  true,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
@@ -336,9 +337,9 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		_, err := NewGCSStorage(ctx, gcs, &Options{
+		_, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
@@ -367,9 +368,9 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		_, err = NewGCSStorage(ctx, gcs, &Options{
+		_, err = NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  true,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
@@ -398,9 +399,9 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		s, err := NewGCSStorage(ctx, gcs, &Options{
+		s, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
@@ -417,9 +418,9 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "",
 		}
-		_, err := NewGCSStorage(ctx, gcs, &Options{
+		_, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  true,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.Error(t, err)
@@ -433,9 +434,9 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: `{"type": "service_account"}`,
 		}
-		_, err := NewGCSStorage(ctx, gcs, &Options{
+		_, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 		})
 		require.NoError(t, err)
 	}
@@ -448,9 +449,9 @@ func TestNewGCSStorage(t *testing.T) {
 			PredefinedAcl:   "private",
 			CredentialsBlob: "FakeCredentials",
 		}
-		s, err := NewGCSStorage(ctx, gcs, &Options{
+		s, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 			SendCredentials:  false,
-			CheckPermissions: []Permission{AccessBuckets},
+			CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 			HTTPClient:       server.HTTPClient(),
 		})
 		require.NoError(t, err)
@@ -479,9 +480,9 @@ func createGCSStore(t *testing.T) *GCSStorage {
 		PredefinedAcl:   "private",
 		CredentialsBlob: "Fake Credentials",
 	}
-	stg, err := NewGCSStorage(ctx, gcs, &Options{
+	stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{
 		SendCredentials:  false,
-		CheckPermissions: []Permission{AccessBuckets},
+		CheckPermissions: []storeapi.Permission{storeapi.AccessBuckets},
 		HTTPClient:       server.HTTPClient(),
 	})
 	require.NoError(t, err)
@@ -501,7 +502,7 @@ func TestReadRange(t *testing.T) {
 
 	start := int64(2)
 	end := int64(5)
-	r, err := stg.Open(ctx, filename, &ReaderOption{
+	r, err := stg.Open(ctx, filename, &storeapi.ReaderOption{
 		StartOffset: &start,
 		EndOffset:   &end,
 	})
@@ -515,7 +516,7 @@ func TestReadRange(t *testing.T) {
 
 var testingStorageURI = flag.String("testing-storage-uri", "", "the URI of the storage used for testing")
 
-func openTestingStorage(t *testing.T) Storage {
+func openTestingStorage(t *testing.T) storeapi.Storage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
@@ -536,7 +537,7 @@ func TestMultiPartUpload(t *testing.T) {
 	// just get some random content, use any seed is enough
 	data := make([]byte, 100*1024*1024)
 	rand.Read(data)
-	w, err := s.Create(ctx, filename, &WriterOption{Concurrency: 10})
+	w, err := s.Create(ctx, filename, &storeapi.WriterOption{Concurrency: 10})
 	require.NoError(t, err)
 	_, err = w.Write(ctx, data)
 	require.NoError(t, err)
@@ -643,7 +644,7 @@ func TestCtxUsage(t *testing.T) {
 	"credential_source":{"url":"%s"}
 }`, httpSvr.URL),
 	}
-	stg, err := NewGCSStorage(ctx, gcs, &Options{})
+	stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{})
 	require.NoError(t, err)
 
 	_, err = stg.FileExists(ctx, "key")

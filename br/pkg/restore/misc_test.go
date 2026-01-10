@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/stretchr/testify/require"
@@ -186,7 +187,7 @@ func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
 }
 
 func writeBlocklistFile(
-	ctx context.Context, t *testing.T, s objstore.Storage,
+	ctx context.Context, t *testing.T, s storeapi.Storage,
 	restoreCommitTs, restoreStartTs, rewriteTs uint64, tableIds, dbIds []int64,
 ) {
 	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, restoreStartTs, rewriteTs, tableIds, dbIds)
@@ -254,9 +255,9 @@ func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
 	require.Contains(t, err.Error(), "table_100")
 }
 
-func filesCount(ctx context.Context, s objstore.Storage) int {
+func filesCount(ctx context.Context, s storeapi.Storage) int {
 	count := 0
-	s.WalkDir(ctx, &objstore.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
+	s.WalkDir(ctx, &storeapi.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
 		count += 1
 		return nil
 	})

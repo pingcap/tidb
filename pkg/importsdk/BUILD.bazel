@@ -20,6 +20,7 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
         "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/parser/mysql",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",

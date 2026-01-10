@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -38,7 +39,7 @@ type trackOpenMemStorage struct {
 	opened atomic.Int32
 }
 
-func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *objstore.ReaderOption) (objectio.Reader, error) {
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storeapi.ReaderOption) (objectio.Reader, error) {
 	s.opened.Inc()
 	r, err := s.MemStorage.Open(ctx, path, nil)
 	if err != nil {
@@ -651,7 +652,7 @@ type slowOpenStorage struct {
 func (s *slowOpenStorage) Open(
 	ctx context.Context,
 	filePath string,
-	o *objstore.ReaderOption,
+	o *storeapi.ReaderOption,
 ) (objectio.Reader, error) {
 	time.Sleep(s.sleep)
 	s.openCnt.Inc()

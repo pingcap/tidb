@@ -40,7 +40,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -152,7 +152,7 @@ func NewAddIndexIngestPipeline(
 func NewWriteIndexToExternalStoragePipeline(
 	ctx *workerpool.Context,
 	store kv.Storage,
-	extStore objstore.Storage,
+	extStore storeapi.Storage,
 	sessPool opSessPool,
 	taskID, subtaskID int64,
 	tbl table.PhysicalTable,
@@ -626,7 +626,7 @@ func NewWriteExternalStoreOperator(
 	subtaskID int64,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
-	store objstore.Storage,
+	store storeapi.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnWriterCloseFunc,

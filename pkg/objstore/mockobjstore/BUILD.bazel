@@ -6,8 +6,8 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/objstore/mockobjstore",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/objstore",
         "//pkg/objstore/objectio",
+        "//pkg/objstore/storeapi",
         "@org_uber_go_mock//gomock",
     ],
 )

@@ -33,8 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -131,7 +131,7 @@ func (b *memKVsAndBuffers) build(ctx context.Context) {
 
 // Engine stored sorted key/value pairs in an external storage.
 type Engine struct {
-	storage           objstore.Storage
+	storage           storeapi.Storage
 	dataFiles         []string
 	statsFiles        []string
 	startKey          []byte
@@ -191,7 +191,7 @@ const (
 // NewExternalEngine creates an (external) engine.
 func NewExternalEngine(
 	ctx context.Context,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	dataFiles []string,
 	statsFiles []string,
 	startKey []byte,
@@ -249,7 +249,7 @@ func NewExternalEngine(
 
 func getFilesReadConcurrency(
 	ctx context.Context,
-	storage objstore.Storage,
+	storage storeapi.Storage,
 	statsFiles []string,
 	startKey, endKey []byte,
 ) ([]uint64, []uint64, error) {
@@ -582,7 +582,7 @@ func (e *Engine) lazyInitDupWriter(ctx context.Context) error {
 		return nil
 	}
 	dupFile := filepath.Join(e.filePrefix, "dup")
-	dupWriter, err := e.storage.Create(ctx, dupFile, &objstore.WriterOption{
+	dupWriter, err := e.storage.Create(ctx, dupFile, &storeapi.WriterOption{
 		// TODO might need to tune concurrency.
 		// max 150GiB duplicates can be saved, it should be enough, as we split
 		// subtask into 100G each.

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spkg/bom"
@@ -85,7 +86,7 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 }
 
 // ExportStatement exports the SQL statement in the schema file.
-func ExportStatement(ctx context.Context, store objstore.Storage,
+func ExportStatement(ctx context.Context, store storeapi.Storage,
 	sqlFile FileInfo, characterSet string) ([]byte, error) {
 	if sqlFile.FileMeta.Compression != CompressionNone {
 		compressType, err := ToStorageCompressType(sqlFile.FileMeta.Compression)

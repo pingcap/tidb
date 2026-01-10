@@ -23,12 +23,12 @@ import (
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
 
-func ReadBackupMetaData(ctx context.Context, s objstore.Storage) (uint64, int, error) {
+func ReadBackupMetaData(ctx context.Context, s storeapi.Storage) (uint64, int, error) {
 	metaInfo, err := config.NewMetaFromStorage(ctx, s)
 	if err != nil {
 		return 0, 0, errors.Trace(err)

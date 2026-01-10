@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/backoff"
@@ -372,9 +373,9 @@ func GetScheduleTuneFactors(ctx context.Context, keyspace string) (*schstatus.Tu
 
 // NewObjStoreWithRecording creates an object storage for global sort with
 // request recording.
-func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.AccessStats, objstore.Storage, error) {
+func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.AccessStats, storeapi.Storage, error) {
 	rec := &recording.AccessStats{}
-	store, err := newObjStore(ctx, uri, &objstore.Options{
+	store, err := newObjStore(ctx, uri, &storeapi.Options{
 		AccessRecording: rec,
 	})
 	if err != nil {
@@ -384,11 +385,11 @@ func NewObjStoreWithRecording(ctx context.Context, uri string) (*recording.Acces
 }
 
 // NewObjStore creates an object storage for global sort.
-func NewObjStore(ctx context.Context, uri string) (objstore.Storage, error) {
+func NewObjStore(ctx context.Context, uri string) (storeapi.Storage, error) {
 	return newObjStore(ctx, uri, nil)
 }
 
-func newObjStore(ctx context.Context, uri string, opts *objstore.Options) (objstore.Storage, error) {
+func newObjStore(ctx context.Context, uri string, opts *storeapi.Options) (storeapi.Storage, error) {
 	storeBackend, err := objstore.ParseBackend(uri, nil)
 	if err != nil {
 		return nil, err

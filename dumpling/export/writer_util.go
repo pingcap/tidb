@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -446,7 +447,7 @@ func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error 
 	return errors.Trace(err)
 }
 
-func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
+func buildFileWriter(tctx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
 	fileName += compressType.FileSuffix()
 	fullPath := s.URI() + "/" + fileName
 	writer, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(tctx, fileName, nil)
@@ -474,7 +475,7 @@ func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(pCtx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(context.Context) error) {
+func buildInterceptFileWriter(pCtx *tcontext.Context, s storeapi.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(context.Context) error) {
 	fileName += compressType.FileSuffix()
 	var writer objectio.Writer
 	fullPath := s.URI() + "/" + fileName

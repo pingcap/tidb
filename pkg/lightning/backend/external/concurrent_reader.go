@@ -20,6 +20,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -29,7 +30,7 @@ type concurrentFileReader struct {
 	concurrency    int
 	readBufferSize int
 
-	storage objstore.Storage
+	storage storeapi.Storage
 	name    string
 
 	offset   int64
@@ -39,7 +40,7 @@ type concurrentFileReader struct {
 // newConcurrentFileReader creates a new concurrentFileReader.
 func newConcurrentFileReader(
 	ctx context.Context,
-	st objstore.Storage,
+	st storeapi.Storage,
 	name string,
 	offset int64,
 	fileSize int64,

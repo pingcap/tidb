@@ -36,8 +36,8 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -62,7 +62,7 @@ func newChunkProcessor(
 	cfg *config.Config,
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
-	store objstore.Storage,
+	store storeapi.Storage,
 	tableInfo *model.TableInfo,
 ) (*chunkProcessor, error) {
 	parser, err := openParser(ctx, cfg, chunk, ioWorkers, store, tableInfo)
@@ -81,7 +81,7 @@ func openParser(
 	cfg *config.Config,
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
-	store objstore.Storage,
+	store storeapi.Storage,
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
