@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	utilparser "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pkg/errors"
 	"go.uber.org/zap"
@@ -159,17 +160,21 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 		return
 	}
 	var cache *BindingCacheItem
-	if item := sessionVars.StmtCtx.MatchSQLBindingCache; item != nil {
-		cache = item.(*BindingCacheItem)
+	if item := sessionVars.StmtCtx.MatchSQLBindingCacheKey; item != nil && item == stmtNode {
 		// We only use this temp bindinfo cache once to avoid retaining it after drop prepare.
-		sessionVars.StmtCtx.MatchSQLBindingCache = nil
-		return cache.binding, cache.matched, cache.scope
+		cache = sessionVars.StmtCtx.MatchSQLBindingCache.(*BindingCacheItem)
+		intest.Assert(sessionVars.StmtCtx.MatchSQLBindingCache != nil)
+		if !intest.InTest {
+			return cache.binding, cache.matched, cache.scope
+		}
 	}
 	_, noDBDigest := NormalizeStmtForBinding(stmtNode, "", true)
 	tableNames := CollectTableNames(stmtNode)
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
+		assertMatchSQLBinding(cache, true, binding, metrics.ScopeGlobal)
+		sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
 		sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
 			binding: binding,
 			matched: matched,
@@ -186,16 +191,34 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 			// After hitting the cache, update the usage time of the bind.
 			binding.UpdateLastUsedAt()
 		}
+		assertMatchSQLBinding(cache, true, binding, metrics.ScopeGlobal)
+		sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
 		sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
 			binding: binding,
 			matched: matched,
 			scope:   metrics.ScopeGlobal}
 		return binding, matched, metrics.ScopeGlobal
 	}
+	assertMatchSQLBinding(cache, false, nil, "")
+	sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
 	sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
 		binding: nil,
 		matched: false}
 	return
+}
+
+func assertMatchSQLBinding(cache *BindingCacheItem, hit bool, binding *Binding, scope string) {
+	intest.AssertFunc(func() bool {
+		if cache == nil {
+			return true
+		}
+		if hit {
+			return cache.matched &&
+				cache.binding == binding &&
+				cache.scope == scope
+		}
+		return cache == nil || !cache.matched
+	})
 }
 
 // BindingCacheItem is to cache the bindinfo to avoid getting bindinfo from bind cache again.

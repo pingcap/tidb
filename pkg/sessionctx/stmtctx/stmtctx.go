@@ -329,6 +329,7 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
+	MatchSQLBindingCacheKey any
 	// MatchSQLBindingCache is to cache the bindinfo to avoid getting bindinfo from bind cache again.
 	MatchSQLBindingCache any
 
