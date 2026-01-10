@@ -938,7 +938,11 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 	}
 
 	// Insert new entries into indices.
-	h, err := t.addIndices(sctx, recordID, r, txn, opt.GetCreateIdxOpt())
+	recordHandle := recordID
+	if t.Meta().Partition != nil {
+		recordHandle = kv.NewPartitionHandle(t.physicalTableID, recordHandle)
+	}
+	h, err := t.addIndices(sctx, recordHandle, r, txn, opt.GetCreateIdxOpt())
 	if err != nil {
 		return h, err
 	}

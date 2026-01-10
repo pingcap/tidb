@@ -410,6 +410,19 @@ func BuildIndexInfo(
 			idxInfo.Tp = indexOption.Tp
 		}
 		idxInfo.Global = indexOption.Global
+		// Set global index version for new global indexes.
+		// Version 1 is only needed for non-clustered tables with non-unique global indexes
+		// to prevent collisions after EXCHANGE PARTITION due to duplicate _tidb_rowid values.
+		// Clustered tables and unique indexes don't have this issue and use version 0.
+		idxInfo.GlobalIndexVersion = 0
+		if indexOption.Global && !idxInfo.Unique && !tblInfo.HasClusteredIndex() {
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
+				if valInt, ok := val.(int); ok {
+					idxInfo.GlobalIndexVersion = uint8(valInt)
+				}
+			})
+		}
 
 		conditionString, err := CheckAndBuildIndexConditionString(tblInfo, indexOption.Condition)
 		if err != nil {
@@ -2429,6 +2442,7 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 
+
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
@@ -2454,7 +2468,16 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 				if index.Meta().HasCondition() {
 					return false, dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("add partial index without fast reorg")
 				}
-				idxRecord, err1 := w.getIndexRecord(index.Meta(), handle, recordKey)
+				actualHandle := handle
+				// For global indexes V1+ on partitioned tables, we need to wrap the handle
+				// with the partition ID to create a PartitionHandle.
+				// This is critical for non-clustered tables after EXCHANGE PARTITION,
+				// where duplicate _tidb_rowid values exist across partitions.
+				// Legacy indexes (version 0) don't use PartitionHandle in the key.
+				if index.Meta().Global && index.Meta().GlobalIndexVersion >= model.GlobalIndexVersionV1 {
+					actualHandle = kv.NewPartitionHandle(taskRange.physicalTable.GetPhysicalID(), handle)
+				}
+				idxRecord, err1 := w.getIndexRecord(index.Meta(), actualHandle, recordKey)
 				if err1 != nil {
 					return false, errors.Trace(err1)
 				}
