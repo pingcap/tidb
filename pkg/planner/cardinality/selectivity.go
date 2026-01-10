@@ -539,14 +539,14 @@ const valueAwareRowAddedThreshold = 0.5
 // IsLastBucketEndValueUnderrepresented detects when the last value (upper bound) of the last bucket
 // has a suspiciously low count that may be stale due to concentrated writes after ANALYZE.
 func IsLastBucketEndValueUnderrepresented(sctx planctx.PlanContext, hg *statistics.Histogram, val types.Datum,
-	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64) bool {
+	histCnt float64, histNDV float64, realtimeRowCount, modifyCount int64, topNCount uint64) bool {
 	if modifyCount <= 0 || len(hg.Buckets) == 0 || histNDV <= 0 {
 		return false
 	}
 
 	// This represents data changes since ANALYZE - we use absolute difference as a proxy for
 	// activity level since we cannot distinguish between inserts, deletes, and updates
-	newRowsAdded := hg.AbsRowCountDifference(realtimeRowCount)
+	newRowsAdded, _ := hg.AbsRowCountDifference(realtimeRowCount, topNCount)
 
 	// Calculate average count per distinct value
 	avgValueCount := hg.NotNullCount() / histNDV

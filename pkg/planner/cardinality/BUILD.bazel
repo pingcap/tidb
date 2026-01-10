@@ -57,7 +57,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":cardinality"],
     flaky = True,
-    shard_count = 43,
+    shard_count = 47,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -83,6 +83,7 @@ go_test(
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
+        "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testdata",
         "//pkg/testkit/testmain",
