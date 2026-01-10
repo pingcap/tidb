@@ -27,6 +27,10 @@ type globalMetadata struct {
 	storage objstore.Storage
 }
 
+func (t *tableMeta) ChunkKey() string {
+	return t.DatabaseName() + "." + t.TableName()
+}
+
 const (
 	metadataPath       = "metadata"
 	metadataTimeLayout = time.DateTime
