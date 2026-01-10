@@ -851,8 +851,9 @@ func (is *infoschemaV2) searchTableItemByID(tableID int64) (*tableItem, bool) {
 }
 
 // TableByID implements the InfoSchema interface.
-// As opposed to TableByName, TableByID will not refill cache when schema cache miss,
-// unless the caller changes the behavior by passing a context use WithRefillOption.
+// As opposed to TableByName, TableByID will not refill cache when schema cache
+// miss and whether the available schema cache size is enough or not, unless the caller changes
+// the behavior by passing a context use WithRefillOption.
 func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Table, ok bool) {
 	if !tableIDIsValid(id) {
 		return
@@ -873,9 +874,9 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return nil, false
 	}
 
-	refill := false
+	forceRefill := false
 	if opt := ctx.Value(refillOptionKey); opt != nil {
-		refill = opt.(bool)
+		forceRefill = opt.(bool)
 	}
 
 	// get cache with item key
@@ -891,8 +892,10 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 		return nil, false
 	}
 
-	if refill {
+	if forceRefill {
 		is.tableCache.Set(key, ret)
+	} else {
+		is.refillIfNoEvict(key, ret)
 	}
 	return ret, true
 }
@@ -904,36 +907,53 @@ func (is *infoschemaV2) TableItemByID(tableID int64) (TableItem, bool) {
 	if !ok {
 		return TableItem{}, false
 	}
-	return TableItem{DBName: itm.dbName, TableName: itm.tableName}, true
+	return TableItem{DBName: itm.dbName, TableName: itm.tableName, TableID: itm.tableID}, true
 }
 
 // TableItem is exported from tableItem.
 type TableItem struct {
 	DBName    ast.CIStr
 	TableName ast.CIStr
+	TableID   int64
 }
 
 // IterateAllTableItems is used for special performance optimization.
 // Used by executor/infoschema_reader.go to handle reading from INFORMATION_SCHEMA.TABLES.
 // If visit return false, stop the iterate process.
+// NOTE: the output order is reversed by (dbName, tableName).
 func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 	maxv, ok := is.byName.Load().Max()
 	if !ok {
 		return
 	}
+	is.iterateAllTableItemsInternal(maxv, visit, nil)
+}
+
+// IterateAllTableItemsByDB is used for special performance optimization.
+// If visit return false, stop the iterate process.
+// NOTE: the output order is reversed by (dbName, tableName).
+func (is *infoschemaV2) IterateAllTableItemsByDB(dbName ast.CIStr, visit func(TableItem) bool) {
+	first := &tableItem{dbName: dbName, tableName: ast.NewCIStr(strings.Repeat(string([]byte{0xff}), 64)), schemaVersion: math.MaxInt64}
+	is.iterateAllTableItemsInternal(first, visit, &dbName)
+}
+
+func (is *infoschemaV2) iterateAllTableItemsInternal(first *tableItem, visit func(TableItem) bool, targetDB *ast.CIStr) {
 	var pivot *tableItem
-	is.byName.Load().DescendLessOrEqual(maxv, func(item *tableItem) bool {
+	is.byName.Load().DescendLessOrEqual(first, func(item *tableItem) bool {
+		if targetDB != nil && item.dbName.L != targetDB.L {
+			return false
+		}
 		if item.schemaVersion > is.schemaMetaVersion {
 			// skip MVCC version, those items are not visible to the queried schema version
 			return true
 		}
-		if pivot != nil && pivot.dbName == item.dbName && pivot.tableName == item.tableName {
+		if pivot != nil && pivot.dbName.L == item.dbName.L && pivot.tableName.L == item.tableName.L {
 			// skip MVCC version, this db.table has been visited already
 			return true
 		}
 		pivot = item
 		if !item.tomb {
-			return visit(TableItem{DBName: item.dbName, TableName: item.tableName})
+			return visit(TableItem{DBName: item.dbName, TableName: item.tableName, TableID: item.tableID})
 		}
 		return true
 	})
@@ -941,27 +961,37 @@ func (is *infoschemaV2) IterateAllTableItems(visit func(TableItem) bool) {
 
 // TableIsCached checks whether the table is cached.
 func (is *infoschemaV2) TableIsCached(id int64) (ok bool) {
+	return is.tableFromCache(id) != nil
+}
+
+// tableFromCache returns the table from cache if it exists, otherwise returns nil.
+// It does not trigger a reload from storage.
+func (is *infoschemaV2) tableFromCache(id int64) table.Table {
 	if !tableIDIsValid(id) {
-		return false
+		return nil
 	}
 
 	itm, ok := is.searchTableItemByID(id)
 	if !ok {
-		return false
+		return nil
 	}
 
 	if autoid.IsMemSchemaID(id) {
 		if raw, exist := is.Data.specials.Load(itm.dbName.L); exist {
 			schTbls := raw.(*schemaTables)
-			_, ok = schTbls.tables[itm.tableName.L]
-			return ok
+			if tbl, ok := schTbls.tables[itm.tableName.L]; ok {
+				return tbl
+			}
 		}
-		return false
+		return nil
 	}
 
 	key := tableCacheKey{itm.tableID, itm.schemaVersion}
 	tbl, found := is.tableCache.Get(key)
-	return found && tbl != nil
+	if found && tbl != nil {
+		return tbl
+	}
+	return nil
 }
 
 // IsSpecialDB tells whether the database is a special database.
@@ -1041,12 +1071,14 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 		return nil, errors.Trace(err)
 	}
 
-	refill := true
+	forceRefill := true
 	if opt := ctx.Value(refillOptionKey); opt != nil {
-		refill = opt.(bool)
+		forceRefill = opt.(bool)
 	}
-	if refill {
+	if forceRefill {
 		is.tableCache.Set(oldKey, ret)
+	} else {
+		is.refillIfNoEvict(oldKey, ret)
 	}
 
 	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
@@ -1097,6 +1129,33 @@ func (is *infoschemaV2) SchemaTableInfos(ctx context.Context, schema ast.CIStr) 
 	}
 
 	is.keepAlive()
+
+	// Fast path: all tables are in cache. Optimize for the few tables' scenario.
+	// We check cache and collect tables in a single pass to avoid redundant lookups.
+	if is.tableCache.Under70PercentUsage() {
+		db, ok := is.SchemaByName(schema)
+		if ok && db != nil {
+			tables := make([]*model.TableInfo, 0)
+			allInCache := true
+			is.IterateAllTableItemsByDB(db.Name, func(t TableItem) bool {
+				tbl := is.tableFromCache(t.TableID)
+				if tbl == nil {
+					allInCache = false
+					return false
+				}
+				tables = append(tables, tbl.Meta())
+				return true
+			})
+			if allInCache {
+				// Sort by ID to keep the order consistent with fetching from storage.
+				sort.Slice(tables, func(i, j int) bool {
+					return tables[i].ID < tables[j].ID
+				})
+				return tables, nil
+			}
+		}
+	}
+
 retry:
 	dbInfo, ok := is.SchemaByName(schema)
 	if !ok {
@@ -1781,8 +1840,18 @@ type refillOption struct{}
 var refillOptionKey refillOption
 
 // WithRefillOption controls the infoschema v2 cache refill operation.
-// By default, TableByID does not refill schema cache, and TableByName does.
+// By default, TableByID does not refill schema cache if the current size is greater
+// than 70% of the capacity, and TableByName does.
 // The behavior can be changed by providing the context.Context.
-func WithRefillOption(ctx context.Context, refill bool) context.Context {
-	return context.WithValue(ctx, refillOptionKey, refill)
+func WithRefillOption(ctx context.Context, evict bool) context.Context {
+	return context.WithValue(ctx, refillOptionKey, evict)
+}
+
+// refillIfNoEvict refills the table cache only if the current size is less
+// than 70% of the capacity. We want to cache as many tables as possible, but
+// we also want to avoid evicting useful cached tables by some list operations.
+func (is *infoschemaV2) refillIfNoEvict(key tableCacheKey, value table.Table) {
+	if is.tableCache.Under70PercentUsage() {
+		is.tableCache.Set(key, value)
+	}
 }
