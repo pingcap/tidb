@@ -112,6 +112,9 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	if len(tasks) == 0 {
 		return nil
 	}
+	defer func() {
+		finalizeAnalyzeJobsOnError(statsHandle, tasks, err)
+	}()
 	tableAndPartitionIDs := make([]int64, 0, len(tasks))
 	for _, task := range tasks {
 		tableID := getTableIDFromTask(task)
@@ -208,6 +211,37 @@ TASKLOOP:
 		sessionVars.StmtCtx.AppendWarning(err)
 	}
 	return statsHandle.Update(ctx, infoSchema, tableAndPartitionIDs...)
+}
+
+func finalizeAnalyzeJobsOnError(statsHandle *handle.Handle, tasks []*analyzeTask, analyzeErr error) {
+	if analyzeErr == nil {
+		return
+	}
+	// If the analyze process is aborted (e.g. killed) before the result handler finishes,
+	// some jobs might be left in `pending`/`running` state. Finalize them here so the
+	// job status in `mysql.analyze_jobs` is always consistent with the query outcome.
+	finishedJobIDs := make(map[uint64]struct{}, len(tasks))
+	for _, task := range tasks {
+		job := task.job
+		if job == nil || job.ID == nil {
+			continue
+		}
+		jobID := *job.ID
+		if _, ok := finishedJobIDs[jobID]; ok {
+			continue
+		}
+		// If the job is already finished (either success or failure), do nothing.
+		if !job.EndTime.IsZero() {
+			finishedJobIDs[jobID] = struct{}{}
+			continue
+		}
+		// Ensure start_time is set even if the job is killed before it starts running.
+		if job.StartTime.IsZero() {
+			statsHandle.StartAnalyzeJob(job)
+		}
+		statsHandle.FinishAnalyzeJob(job, analyzeErr, statistics.TableAnalysisJob)
+		finishedJobIDs[jobID] = struct{}{}
+	}
 }
 
 func (e *AnalyzeExec) waitFinish(ctx context.Context, g *errgroup.Group, resultsCh chan *statistics.AnalyzeResults) error {
