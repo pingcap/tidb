@@ -1095,15 +1095,12 @@ Sort_5	3333.33	2146348.14	root		planner__core__casetest__integration.t.f
 └─TableReader_10	3333.33	160128.74	root		data:TableRangeScan_9
   └─TableRangeScan_9	3333.33	923531.15	cop[tikv]	table:t	range:(1,+inf], keep order:false, stats:pseudo
 Level	Code	Message
-Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.f asc}], TaskTp: rootTask}
 Note	1105	[t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select * from t where f > 1;
 id	estRows	estCost	task	access object	operator info
 TableReader_8	3333.33	501239.13	root		data:Selection_7
 └─Selection_7	3333.33	6040186.91	cop[tikv]		gt(planner__core__casetest__integration.t.f, 1)
   └─TableFullScan_6	10000.00	5541186.91	cop[tikv]	table:t	keep order:false, stats:pseudo
-Level	Code	Message
-Note	1105	[t,f,f_g] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 explain format = 'verbose' select f from t where f > 1;
 id	estRows	estCost	task	access object	operator info
 IndexReader_7	3333.33	50257.78	root		index:IndexRangeScan_6
@@ -1134,7 +1131,6 @@ IndexLookUp_17	10.00	215519.24	root
 │ └─IndexFullScan_14	10000.00	2442000.00	cop[tikv]	table:t, index:c_d_e(c, d, e)	keep order:true, stats:pseudo
 └─TableRowIDScan_15(Probe)	10.00	2770.59	cop[tikv]	table:t	keep order:false, stats:pseudo
 Level	Code	Message
-Note	1105	[t,c_d_e] remain after pruning paths for t given Prop{SortItems: [{planner__core__casetest__integration.t.c asc} {planner__core__casetest__integration.t.e asc}], TaskTp: rootTask}
 Note	1105	[t] remain after pruning paths for t given Prop{SortItems: [], TaskTp: rootTask}
 set @@tidb_enable_chunk_rpc = default;
 set tidb_cost_model_version=2;
