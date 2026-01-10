@@ -73,11 +73,14 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	// If totalPathCount <= threshold, we should keep all indexes with score > 0
 	// Which means only prune with score ==0
 	// Only prune with score > 0 when we have more index paths than the threshold
+	// threshold = -1: disable pruning (handled by caller)
+	// threshold = 0: aggressive pruning, keep at least defaultMaxIndexes
+	// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
 	var maxToKeep int
-	if totalPathCount > threshold && threshold > 0 {
+	if totalPathCount > threshold && threshold >= 0 {
 		maxToKeep = max(threshold, defaultMaxIndexes) // Avoid being too aggressive when threshold is small
 	} else {
-		// When not pruning (len(paths) < threshold), set maxToKeep to keep all indexes with score > 0
+		// When not pruning (len(paths) <= threshold), set maxToKeep to keep all indexes with score > 0
 		maxToKeep = totalPathCount
 	}
 
@@ -237,14 +240,16 @@ func buildOrderingKey(columnIDs []int64) string {
 	}
 	// Create a simple string representation of the column ID sequence
 	// Using a format like "1,2,3" for columns with IDs 1, 2, 3
-	key := ""
+	var builder strings.Builder
+	// Pre-allocate capacity: estimate ~4 bytes per ID (for small IDs) + commas
+	builder.Grow(len(columnIDs) * 5)
 	for i, id := range columnIDs {
 		if i > 0 {
-			key += ","
+			builder.WriteString(",")
 		}
-		key += fmt.Sprintf("%d", id)
+		builder.WriteString(fmt.Sprintf("%d", id))
 	}
-	return key
+	return builder.String()
 }
 
 // scoreIndexPath calculates coverage metrics for a single index path.
@@ -285,13 +290,11 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 // buildFinalResult sorts and selects the top indexes to keep, combining table paths,
 // multi-value indexes, index merge indexes, and preferred indexes.
 type scoredIndex struct {
-	info                indexWithScore
-	score               int
-	columns             int
-	hasConsecutiveWhere bool
-	hasConsecutiveJoin  bool
-	isSingleScan        bool
-	totalConsecutive    int
+	info             indexWithScore
+	score            int
+	columns          int
+	isSingleScan     bool
+	totalConsecutive int
 }
 
 func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredIndex {

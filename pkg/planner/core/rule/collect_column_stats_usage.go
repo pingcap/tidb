@@ -62,7 +62,6 @@ type columnStatsUsageCollector struct {
 	operatorNum uint64
 
 	// interestingColsByDS tracks all columns of interest for index pruning (WHERE + JOIN + ORDERING)
-	// This is a unified collection that simplifies the code by using a single map instead of three separate ones
 	interestingColsByDS map[*logicalop.DataSource][]*expression.Column
 	// Temporary storage for deduplication
 	colSet map[int64]struct{}
@@ -212,10 +211,12 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
-// collectInterestingColumnsForDataSource collects all interesting columns (WHERE + JOIN + ORDERING) for a DataSource.
-// This unified collection simplifies the code by using a single map instead of three separate ones.
+// collectInterestingColumnsForDataSource collects all interesting columns (WHERE + JOIN + ORDERING + GROUP BY) for a DataSource.
 func (c *columnStatsUsageCollector) collectInterestingColumnsForDataSource(ds *logicalop.DataSource, accumulatedJoinCols []*expression.Column, accumulatedOrderingCols []*expression.Column) {
-	c.colSet = make(map[int64]struct{})
+	// Clear the map for reuse instead of allocating a new one
+	for k := range c.colSet {
+		delete(c.colSet, k)
+	}
 	var allCols []*expression.Column
 
 	// Collect WHERE columns from local filter predicates
@@ -269,7 +270,7 @@ func (c *columnStatsUsageCollector) collectInterestingColumnsForDataSource(ds *l
 // collectFromPlan will dive into the tree to collect base column stats usage, in this process
 // we also make the use of the dive process down to passing the parent operator's column groups
 // requirement to notify the underlying datasource to maintain the possible group ndv.
-// accumulatedJoinCols and accumulatedOrderingCols are propagated down the tree for index pruning.
+// accumulatedJoinCols and accumulatedOrderingCols (which includes GROUP BY columns) are propagated down the tree for index pruning.
 func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expression.Column, lp base.LogicalPlan, accumulatedJoinCols []*expression.Column, accumulatedOrderingCols []*expression.Column) {
 	// derive the new current op's new asked column groups accordingly.
 	curColGroups := lp.ExtractColGroups(askedColGroups)
@@ -309,6 +310,8 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Col)...)
 			}
 		case *logicalop.LogicalAggregation:
+			// GROUP BY columns benefit from indexes (similar to ordering)
+			currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(x.GroupByItems, nil)...)
 			// MIN/MAX aggregates can benefit from ordered indexes
 			for _, aggFunc := range x.AggFuncs {
 				if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax {
