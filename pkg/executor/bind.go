@@ -164,5 +164,6 @@ func (e *SQLBindExec) reloadBindings() error {
 }
 
 func (e *SQLBindExec) reloadClusterBindings(ctx context.Context) error {
+	// broadcast the reload bindings command to the entire cluster, including the current node itself.
 	return broadcast(ctx, e.Ctx(), "ADMIN RELOAD BINDINGS")
 }
