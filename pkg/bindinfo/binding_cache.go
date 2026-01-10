@@ -66,7 +66,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 	numLoadBindings := 0
 	defer func(begin time.Time) {
 		if numLoadBindings > 0 {
-			bindingLogger().Info("load bindings", zap.Int("numLoadedBindings", numLoadBindings),
+			bindingLogger().Info("load bindings", zap.Int("numLoadedBindings", numLoadBindings), zap.Bool("fullLoad", fullLoad),
 				zap.Int64("cacheSize", u.GetMemCapacity()), zap.Duration("duration", time.Since(begin)), zap.Error(err))
 		}
 	}(time.Now())
