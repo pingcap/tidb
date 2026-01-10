@@ -58,11 +58,19 @@ type bindingCacheUpdater struct {
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
-	numLoadBindings := 0
+	cacheSizeChange := false
+	if u.GetMemCapacity() != vardef.MemQuotaBindingCache.Load() {
+		cacheSizeChange = true
+		u.SetMemCapacity(vardef.MemQuotaBindingCache.Load())
+	}
+
+	hasNewBinding := false
 	defer func(begin time.Time) {
-		if fullLoad {
-			bindingLogger().Info("load bindings", zap.Int("numLoadedBindings", numLoadBindings),
-				zap.Int64("cacheSize", u.GetMemCapacity()), zap.Duration("duration", time.Since(begin)), zap.Error(err))
+		if fullLoad || cacheSizeChange || hasNewBinding {
+			bindingLogger().Info("load bindings", zap.Bool("fullLoad", fullLoad),
+				zap.Bool("cacheSizeChange", cacheSizeChange), zap.Bool("hasNewBinding", hasNewBinding),
+				zap.Int64("cacheCapacity", u.GetMemCapacity()), zap.Int64("cacheUsage", u.GetMemUsage()),
+				zap.Int64("cachedBindingNum", int64(u.Size())), zap.Duration("duration", time.Since(begin)), zap.Error(err))
 		}
 	}(time.Now())
 
@@ -93,13 +101,13 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 	if err != nil {
 		return err
 	}
-	numLoadBindings = len(bindings)
 
 	for _, binding := range bindings {
 		// Update lastUpdateTime to the newest one.
 		// Even if this one is an invalid bind.
 		if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
 			lastUpdateTime = binding.UpdateTime
+			hasNewBinding = true
 		}
 
 		oldBinding := u.GetBinding(binding.SQLDigest)
