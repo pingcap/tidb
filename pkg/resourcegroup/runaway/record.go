@@ -214,7 +214,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
-// hasDeletedExpiredRows just test mark for delete expired rows once.
+// hasDeletedExpiredRows is only used in test.
 var hasDeletedExpiredRows = atomic.Bool{}
 
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
@@ -239,10 +239,10 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		if val.(bool) {
 			failpoint.Return()
 		}
+		if hasDeletedExpiredRows.Load() {
+			return
+		}
 	})
-	if hasDeletedExpiredRows.Load() {
-		return
-	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
@@ -256,12 +256,12 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), col)
+	tb, err := cache.NewPhysicalTableWithTimeColumnForJob(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), cache.TTLJobTypeRunawayGC, col)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
-	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
+	generator, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeRunawayGC, tb, expiredTime, nil, nil)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -295,7 +295,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				endIndex = len(leftRows)
 			}
 			delBatch := leftRows[startIndex:endIndex]
-			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
+			sql, err := sqlbuilder.BuildDeleteSQL(tb, cache.TTLJobTypeRunawayGC, delBatch, expiredTime)
 			if err != nil {
 				logutil.BgLogger().Error(
 					"build delete SQL failed when deleting system table",

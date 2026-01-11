@@ -380,7 +380,7 @@ func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql s
 	require.True(t, ok)
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
 	require.NoError(t, err)
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""), true, false)
 	require.NoError(t, err)
 	return ttlTbl
 }

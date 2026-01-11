@@ -209,15 +209,17 @@ func TestResizeWorkers(t *testing.T) {
 		ttlScanTask: &ttlScanTask{
 			tbl: tbl,
 			TTLTask: &cache.TTLTask{
-				JobID:  "test-job-id",
-				ScanID: 1,
+				JobType: cache.TTLJobTypeTTL,
+				JobID:   "test-job-id",
+				ScanID:  1,
 			},
 		},
 	})
 
 	task := &ttlScanTask{tbl: tbl, TTLTask: &cache.TTLTask{
-		JobID:  "test-job-id",
-		ScanID: 1,
+		JobType: cache.TTLJobTypeTTL,
+		JobID:   "test-job-id",
+		ScanID:  1,
 	}}
 	scanWorker2.curTaskResult = task.result(nil)
 	assert.NoError(t, m.resizeScanWorkers(1))
@@ -231,8 +233,9 @@ func TestTaskFinishedCondition(t *testing.T) {
 		ttlScanTask: &ttlScanTask{
 			tbl: tbl,
 			TTLTask: &cache.TTLTask{
-				JobID:  "test-job-id",
-				ScanID: 1,
+				JobType: cache.TTLJobTypeTTL,
+				JobID:   "test-job-id",
+				ScanID:  1,
 			},
 			statistics: &ttlStatistics{},
 		},

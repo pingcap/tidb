@@ -51,7 +51,7 @@ go_test(
     ],
     embed = [":cache"],
     flaky = True,
-    shard_count = 20,
+    shard_count = 21,
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
