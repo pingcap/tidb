@@ -38,7 +38,6 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -50,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -948,8 +948,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 		restoreStartTs := cfg.RestoreStartTS
 		if restoreStartTs == 0 {
-			log.Warn("restoreStartTS is not set, skip building blocklist")
-			return
+			log.Warn("restoreStartTS is not set, the blocklist will block from 0 to restoreCommitTs")
 		}
 		// Convert map to slice for function call
 		tableIdsSlice := make([]int64, 0, len(downstreamTableIds))
@@ -961,7 +960,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
-		logTaskStorage, err := storage.Create(c, logTaskBackend, false)
+		logTaskStorage, err := objstore.Create(c, logTaskBackend, false)
 		if err != nil {
 			restoreErr = err
 			return
@@ -1128,7 +1127,7 @@ func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, erro
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
-	logRestoreStorage      storage.ExternalStorage
+	logRestoreStorage      objstore.Storage
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
 }
@@ -1519,11 +1518,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.piTRTaskInfo != nil {
 			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
 		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, cpEnabledAndExists)
+		sets, restoreSchedulersConfigFromCheckpoint, newRestoreStartTS, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, cfg.RestoreStartTS, logRestoredTS, hash, cpEnabledAndExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("try to reuse restore start timestamp for blocklist",
+			zap.Uint64("new restore start ts", newRestoreStartTS),
+			zap.Uint64("old restore start ts", cfg.RestoreStartTS),
+		)
+		cfg.RestoreStartTS = newRestoreStartTS
 		if restoreSchedulersConfigFromCheckpoint != nil {
 			// The last range rule will be dropped when the last restore quits.
 			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID

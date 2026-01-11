@@ -559,12 +559,12 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/storage Manager > pkg/dxf/framework/mock/storage_manager_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ingestor/ingestcli Client,WriteClient > pkg/ingestor/ingestcli/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/importsdk FileScanner,JobManager,SQLGenerator,SDK > pkg/importsdk/mock/sdk_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/lightning/pkg/importinto CheckpointManager > lightning/pkg/importinto/mock/import_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/lightning/pkg/importinto CheckpointManager,JobSubmitter,JobMonitor,JobOrchestrator > lightning/pkg/importinto/mock/import_mock.go
 
 .PHONY: gen_mock
 gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
-	tools/bin/mockgen -package mockstorage github.com/pingcap/tidb/br/pkg/storage ExternalStorage > br/pkg/mock/storage/storage.go
+	tools/bin/mockgen -package mockobjstore github.com/pingcap/tidb/pkg/objstore Storage > pkg/objstore/mockobjstore/objstore_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl/systable Manager > pkg/ddl/mock/systable_manager_mock.go
 

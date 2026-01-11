@@ -76,8 +76,6 @@ go_library(
         ":ddl_friend",
     ],
     deps = [
-        "//br/pkg/storage",
-        "//br/pkg/storage/recording",
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/ddl/copr",
@@ -127,6 +125,8 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
+        "//pkg/objstore/recording",
         "//pkg/owner",
         "//pkg/parser",
         "//pkg/parser/ast",

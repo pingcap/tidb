@@ -19,6 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/kvproto/pkg/metapb"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -108,6 +110,31 @@ func TestValidateLocationCoverage(t *testing.T) {
 			wantValid: true,
 		},
 		{
+			name: "multiple ranges, multiple locations - disjoint ranges don't require covering gaps",
+			ranges: []tikv.KeyRange{
+				kr("b", "d"),
+				kr("f", "h"),
+			},
+			locs: []*tikv.KeyLocation{
+				kl("a", "d", 1),
+				kl("f", "i", 2),
+			},
+			wantValid: true,
+		},
+		{
+			name: "multiple ranges, multiple locations - overlapping ranges don't require monotonic loc scan",
+			ranges: []tikv.KeyRange{
+				kr("a", "z"),
+				kr("b", "c"),
+			},
+			locs: []*tikv.KeyLocation{
+				kl("a", "m", 1),
+				kl("m", "t", 2),
+				kl("t", "z", 3),
+			},
+			wantValid: true,
+		},
+		{
 			name:      "empty start key - location also empty",
 			ranges:    []tikv.KeyRange{kr("", "m")},
 			locs:      []*tikv.KeyLocation{kl("", "m", 1)},
@@ -159,6 +186,30 @@ func TestValidateLocationCoverage(t *testing.T) {
 			wantValid: false, // Invalid - gap in coverage
 		},
 		{
+			name: "discrete ranges with gap between locations - valid",
+			ranges: []tikv.KeyRange{
+				kr("a", "b"), // First range
+				kr("c", "d"), // Second range - discrete, not contiguous
+			},
+			locs: []*tikv.KeyLocation{
+				kl("a", "b", 1), // Covers first range
+				kl("c", "d", 2), // Covers second range - gap between locations is OK
+			},
+			wantValid: true, // Valid - each discrete range is fully covered
+		},
+		{
+			name: "discrete ranges in larger locations with gap - valid",
+			ranges: []tikv.KeyRange{
+				kr("a", "b"),
+				kr("x", "z"),
+			},
+			locs: []*tikv.KeyLocation{
+				kl("a", "m", 1), // Covers first range
+				kl("t", "z", 2), // Covers second range - large gap is OK for discrete ranges
+			},
+			wantValid: true,
+		},
+		{
 			name: "missing range coverage",
 			ranges: []tikv.KeyRange{
 				kr("a", "m"),
@@ -170,9 +221,15 @@ func TestValidateLocationCoverage(t *testing.T) {
 
 		// Edge cases
 		{
-			name:      "empty ranges",
+			name:      "empty ranges with locations",
 			ranges:    []tikv.KeyRange{},
 			locs:      []*tikv.KeyLocation{kl("a", "z", 1)},
+			wantValid: false, // Invalid - locations exist but no ranges to cover
+		},
+		{
+			name:      "empty ranges without locations",
+			ranges:    []tikv.KeyRange{},
+			locs:      []*tikv.KeyLocation{},
 			wantValid: true,
 		},
 		{
@@ -180,12 +237,6 @@ func TestValidateLocationCoverage(t *testing.T) {
 			ranges:    []tikv.KeyRange{kr("a", "z")},
 			locs:      []*tikv.KeyLocation{},
 			wantValid: false,
-		},
-		{
-			name:      "both empty",
-			ranges:    []tikv.KeyRange{},
-			locs:      []*tikv.KeyLocation{},
-			wantValid: true,
 		},
 		{
 			name: "exact boundary match",
@@ -226,14 +277,36 @@ func TestValidateLocationCoverage(t *testing.T) {
 			wantValid: false,
 		},
 		{
-			name:   "location extends to infinity but not last",
+			name:   "location extends to infinity and overlaps next - invalid",
 			ranges: []tikv.KeyRange{kr("a", "z")},
 			locs: []*tikv.KeyLocation{
 				kl("a", "", 1),  // Extends to infinity
-				kl("m", "z", 2), // But there's another location after!
+				kl("m", "z", 2), // Overlaps with previous (prev.EndKey=+inf > "m")
 			},
-			wantValid: false,
+			wantValid: false, // Invalid - locations overlap
 		},
+
+		// Unused location violations (Property 3)
+		{
+			name:   "extra location not covering any range",
+			ranges: []tikv.KeyRange{kr("a", "b")},
+			locs: []*tikv.KeyLocation{
+				kl("a", "b", 1), // Covers the range
+				kl("x", "z", 2), // Doesn't cover any range
+			},
+			wantValid: false, // Invalid - second location is unused
+		},
+		{
+			name:   "middle location not covering any range",
+			ranges: []tikv.KeyRange{kr("a", "c")},
+			locs: []*tikv.KeyLocation{
+				kl("a", "b", 1), // Covers part of range
+				kl("b", "c", 2), // Covers rest of range
+				kl("x", "z", 3), // Doesn't cover any range
+			},
+			wantValid: false, // Invalid - third location is unused
+		},
+
 		{
 			name:   "current location starts from beginning after non-beginning",
 			ranges: []tikv.KeyRange{kr("a", "z")},
@@ -333,4 +406,43 @@ func TestPanicInSplitKeyRangesByBuckets(t *testing.T) {
 	require.Equal(t, "failpoint triggered panic in bucket splitting", panicValue)
 
 	t.Logf("Test completed successfully - panic was caught, diagnostics logged, and re-panicked as expected")
+}
+
+// TestLocateBucketNilFallback tests that when LocateBucket returns nil
+// (range outside location boundaries), splitKeyRangesByBuckets returns
+// unsplit ranges instead of panicking.
+func TestLocateBucketNilFallback(t *testing.T) {
+	ctx := context.Background()
+
+	// Create a location covering [a, m)
+	loc := &tikv.KeyLocation{
+		Region:   tikv.NewRegionVerID(1, 0, 0),
+		StartKey: []byte("a"),
+		EndKey:   []byte("m"),
+		Buckets: &metapb.Buckets{
+			Keys:    [][]byte{[]byte("a"), []byte("f"), []byte("m")},
+			Version: 1,
+		},
+	}
+
+	// Create ranges where the first one is OUTSIDE the location (starts at "x")
+	// This simulates the bug scenario where ranges don't match locations
+	outsideRanges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("x"), EndKey: []byte("z")}, // Outside [a, m)
+	})
+
+	// Create LocationKeyRanges with mismatched ranges
+	lkr := &LocationKeyRanges{
+		Location: loc,
+		Ranges:   outsideRanges,
+	}
+
+	// Call splitKeyRangesByBuckets - should NOT panic, should return unsplit ranges
+	result := lkr.splitKeyRangesByBuckets(ctx)
+
+	// Verify we got the fallback behavior: unsplit original LocationKeyRanges
+	require.Len(t, result, 1, "Expected 1 unsplit LocationKeyRanges")
+	require.Equal(t, lkr, result[0], "Expected original LocationKeyRanges to be returned")
+
+	t.Log("LocateBucket nil fallback working correctly - returned unsplit ranges instead of panicking")
 }

@@ -21,7 +21,6 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/pdutil",
-        "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//br/pkg/utils",
         "//br/pkg/version",
@@ -53,6 +52,8 @@ go_library(
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
+        "//pkg/objstore",
+        "//pkg/objstore/compressedio",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
@@ -125,7 +126,6 @@ go_test(
     shard_count = 50,
     deps = [
         "//br/pkg/mock",
-        "//br/pkg/storage",
         "//br/pkg/streamhelper",
         "//br/pkg/version/build",
         "//lightning/pkg/importer/mock",
@@ -155,6 +155,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/meta/metabuild",
         "//pkg/meta/model",
+        "//pkg/objstore",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",

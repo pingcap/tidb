@@ -13,10 +13,12 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
 	"github.com/pingcap/tidb/dumpling/log"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -41,11 +43,11 @@ type writerPipe struct {
 	fileSizeLimit      uint64
 	statementSizeLimit uint64
 
-	w storage.ExternalFileWriter
+	w objectio.Writer
 }
 
 func newWriterPipe(
-	w storage.ExternalFileWriter,
+	w objectio.Writer,
 	fileSizeLimit,
 	statementSizeLimit uint64,
 	metrics *metrics,
@@ -121,8 +123,8 @@ func (b *writerPipe) ShouldSwitchStatement() bool {
 		(b.statementSizeLimit != UnspecifiedSize && b.currentStatementSize >= b.statementSizeLimit)
 }
 
-// WriteMeta writes MetaIR to a storage.ExternalFileWriter
-func WriteMeta(tctx *tcontext.Context, meta MetaIR, w storage.ExternalFileWriter) error {
+// WriteMeta writes MetaIR to an objectio.Writer
+func WriteMeta(tctx *tcontext.Context, meta MetaIR, w objectio.Writer) error {
 	tctx.L().Debug("start dumping meta data", zap.String("target", meta.TargetName()))
 
 	specCmtIter := meta.SpecialComments()
@@ -140,13 +142,13 @@ func WriteMeta(tctx *tcontext.Context, meta MetaIR, w storage.ExternalFileWriter
 	return nil
 }
 
-// WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql type
+// WriteInsert writes TableDataIR to an objectio.Writer in SQL type
 func WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,
 	meta TableMeta,
 	tblIR TableDataIR,
-	w storage.ExternalFileWriter,
+	w objectio.Writer,
 	metrics *metrics,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
@@ -288,13 +290,13 @@ func WriteInsert(
 	return counter, wp.Error()
 }
 
-// WriteInsertInCsv writes TableDataIR to a storage.ExternalFileWriter in csv type
+// WriteInsertInCsv writes TableDataIR to objectio.Writer in csv type
 func WriteInsertInCsv(
 	pCtx *tcontext.Context,
 	cfg *Config,
 	meta TableMeta,
 	tblIR TableDataIR,
-	w storage.ExternalFileWriter,
+	w objectio.Writer,
 	metrics *metrics,
 ) (n uint64, err error) {
 	fileRowIter := tblIR.Rows()
@@ -417,7 +419,7 @@ func WriteInsertInCsv(
 	return counter, wp.Error()
 }
 
-func write(tctx *tcontext.Context, writer storage.ExternalFileWriter, str string) error {
+func write(tctx *tcontext.Context, writer objectio.Writer, str string) error {
 	_, err := writer.Write(tctx, []byte(str))
 	if err != nil {
 		// str might be very long, only output the first 200 chars
@@ -429,7 +431,7 @@ func write(tctx *tcontext.Context, writer storage.ExternalFileWriter, str string
 	return errors.Trace(err)
 }
 
-func writeBytes(tctx *tcontext.Context, writer storage.ExternalFileWriter, p []byte) error {
+func writeBytes(tctx *tcontext.Context, writer objectio.Writer, p []byte) error {
 	_, err := writer.Write(tctx, p)
 	if err != nil {
 		// str might be very long, only output the first 200 chars
@@ -444,10 +446,10 @@ func writeBytes(tctx *tcontext.Context, writer storage.ExternalFileWriter, p []b
 	return errors.Trace(err)
 }
 
-func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(ctx context.Context) error, error) {
-	fileName += compressFileSuffix(compressType)
+func buildFileWriter(tctx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(ctx context.Context) error, error) {
+	fileName += compressType.FileSuffix()
 	fullPath := s.URI() + "/" + fileName
-	writer, err := storage.WithCompression(s, compressType, storage.DecompressConfig{}).Create(tctx, fileName, nil)
+	writer, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(tctx, fileName, nil)
 	if err != nil {
 		tctx.L().Warn("fail to open file",
 			zap.String("path", fullPath),
@@ -472,15 +474,15 @@ func buildFileWriter(tctx *tcontext.Context, s storage.ExternalStorage, fileName
 	return writer, tearDownRoutine, nil
 }
 
-func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage, fileName string, compressType storage.CompressType) (storage.ExternalFileWriter, func(context.Context) error) {
-	fileName += compressFileSuffix(compressType)
-	var writer storage.ExternalFileWriter
+func buildInterceptFileWriter(pCtx *tcontext.Context, s objstore.Storage, fileName string, compressType compressedio.CompressType) (objectio.Writer, func(context.Context) error) {
+	fileName += compressType.FileSuffix()
+	var writer objectio.Writer
 	fullPath := s.URI() + "/" + fileName
 	fileWriter := &InterceptFileWriter{}
 	initRoutine := func() error {
 		// use separated context pCtx here to make sure context used in ExternalFile won't be canceled before close,
 		// which will cause a context canceled error when closing gcs's Writer
-		w, err := storage.WithCompression(s, compressType, storage.DecompressConfig{}).Create(pCtx, fileName, nil)
+		w, err := objstore.WithCompression(s, compressType, compressedio.DecompressConfig{}).Create(pCtx, fileName, nil)
 		if err != nil {
 			pCtx.L().Warn("fail to open file",
 				zap.String("path", fullPath),
@@ -489,7 +491,7 @@ func buildInterceptFileWriter(pCtx *tcontext.Context, s storage.ExternalStorage,
 		}
 		writer = w
 		pCtx.L().Debug("opened file", zap.String("path", fullPath))
-		fileWriter.ExternalFileWriter = writer
+		fileWriter.Writer = writer
 		return nil
 	}
 	fileWriter.initRoutine = initRoutine
@@ -549,7 +551,7 @@ func newWriterError(err error) error {
 // InterceptFileWriter is an interceptor of os.File,
 // tracking whether a StringWriter has written something.
 type InterceptFileWriter struct {
-	storage.ExternalFileWriter
+	objectio.Writer
 	sync.Once
 	SomethingIsWritten bool
 
@@ -557,7 +559,7 @@ type InterceptFileWriter struct {
 	err         error
 }
 
-// Write implements storage.ExternalFileWriter.Write. It check whether writer has written something and init a file at first time
+// Write implements objectio.Writer. It checks whether writer has written something and init a file at first time
 func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) {
 	w.Do(func() { w.err = w.initRoutine() })
 	if len(p) > 0 {
@@ -566,13 +568,13 @@ func (w *InterceptFileWriter) Write(ctx context.Context, p []byte) (int, error) 
 	if w.err != nil {
 		return 0, errors.Annotate(w.err, "open file error")
 	}
-	n, err := w.ExternalFileWriter.Write(ctx, p)
+	n, err := w.Writer.Write(ctx, p)
 	return n, newWriterError(err)
 }
 
 // Close closes the InterceptFileWriter
 func (w *InterceptFileWriter) Close(ctx context.Context) error {
-	return w.ExternalFileWriter.Close(ctx)
+	return w.Writer.Close(ctx)
 }
 
 func wrapBackTicks(identifier string) string {
@@ -584,21 +586,6 @@ func wrapBackTicks(identifier string) string {
 
 func wrapStringWith(str string, wrapper string) string {
 	return fmt.Sprintf("%s%s%s", wrapper, str, wrapper)
-}
-
-func compressFileSuffix(compressType storage.CompressType) string {
-	switch compressType {
-	case storage.NoCompression:
-		return ""
-	case storage.Gzip:
-		return ".gz"
-	case storage.Snappy:
-		return ".snappy"
-	case storage.Zstd:
-		return ".zst"
-	default:
-		return ""
-	}
 }
 
 // FileFormat is the format that output to file. Currently we support SQL text and CSV file format.
@@ -647,13 +634,13 @@ func (f FileFormat) Extension() string {
 	}
 }
 
-// WriteInsert writes TableDataIR to a storage.ExternalFileWriter in sql/csv type
+// WriteInsert writes TableDataIR to a objectio.Writer in sql/csv type
 func (f FileFormat) WriteInsert(
 	pCtx *tcontext.Context,
 	cfg *Config,
 	meta TableMeta,
 	tblIR TableDataIR,
-	w storage.ExternalFileWriter,
+	w objectio.Writer,
 	metrics *metrics,
 ) (uint64, error) {
 	switch f {
