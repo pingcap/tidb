@@ -49,6 +49,8 @@ type byteReader struct {
 	ctx           context.Context
 	storageReader objectio.Reader
 
+	tempBuf []byte
+
 	// curBuf is either smallBuf or concurrentReader.largeBuf.
 	curBuf       [][]byte
 	curBufIdx    int // invariant: 0 <= curBufIdx < len(curBuf) when curBuf contains unread data
@@ -211,8 +213,8 @@ func (r *byteReader) switchToConcurrentReader() error {
 }
 
 // readNBytes reads the next n bytes from the reader and returns a buffer slice
-// containing those bytes. The content of returned slice may be changed after
-// next call.
+// containing those bytes. The content of returned slice may point to internal
+// buffer. So callers should copy it if they needs to keep for a longer time.
 func (r *byteReader) readNBytes(n int) ([]byte, error) {
 	if n <= 0 {
 		return nil, errors.Errorf("illegal n (%d) when reading from external storage", n)
@@ -221,17 +223,16 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 		return nil, errors.Errorf("read %d bytes from external storage, exceed max limit %d", n, size.GB)
 	}
 
-	readLen, bs := r.next(n)
-	if readLen == n && len(bs) == 1 {
-		return bs[0], nil
+	s := r.next(n)
+	if len(s) == n {
+		return s, nil
 	}
 	// need to flatten bs
 	auxBuf := make([]byte, n)
-	for _, b := range bs {
-		copy(auxBuf[len(auxBuf)-n:], b)
-		n -= len(b)
-	}
-	hasRead := readLen > 0
+	copy(auxBuf[len(auxBuf)-n:], s)
+	n -= len(s)
+
+	hasRead := len(s) > 0
 	for n > 0 {
 		err := r.reload()
 		if err != nil {
@@ -241,24 +242,21 @@ func (r *byteReader) readNBytes(n int) ([]byte, error) {
 			}
 			return nil, errors.Trace(err)
 		}
-		readLen, bs = r.next(n)
-		hasRead = hasRead || readLen > 0
-		for _, b := range bs {
-			copy(auxBuf[len(auxBuf)-n:], b)
-			n -= len(b)
-		}
+		s = r.next(n)
+		hasRead = hasRead || len(s) > 0
+		copy(auxBuf[len(auxBuf)-n:], s)
+		n -= len(s)
 	}
 	return auxBuf, nil
 }
 
-func (r *byteReader) next(n int) (int, [][]byte) {
+func (r *byteReader) next(n int) []byte {
 	retCnt := 0
-	// TODO(lance6716): heap escape performance?
-	ret := make([][]byte, 0, len(r.curBuf)-r.curBufIdx+1)
+	r.tempBuf = r.tempBuf[:0]
 	for r.curBufIdx < len(r.curBuf) && n > 0 {
 		cur := r.curBuf[r.curBufIdx]
 		if r.curBufOffset+n <= len(cur) {
-			ret = append(ret, cur[r.curBufOffset:r.curBufOffset+n])
+			r.tempBuf = append(r.tempBuf, cur[r.curBufOffset:r.curBufOffset+n]...)
 			retCnt += n
 			r.curBufOffset += n
 			if r.curBufOffset == len(cur) {
@@ -267,14 +265,14 @@ func (r *byteReader) next(n int) (int, [][]byte) {
 			}
 			break
 		}
-		ret = append(ret, cur[r.curBufOffset:])
+		r.tempBuf = append(r.tempBuf, cur[r.curBufOffset:]...)
 		retCnt += len(cur) - r.curBufOffset
 		n -= len(cur) - r.curBufOffset
 		r.curBufIdx++
 		r.curBufOffset = 0
 	}
 
-	return retCnt, ret
+	return r.tempBuf[:retCnt]
 }
 
 func (r *byteReader) reload() error {
