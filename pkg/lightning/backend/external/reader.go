@@ -41,6 +41,28 @@ func readAllData(
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
 ) (err error) {
+	readRanges, err := getReadRangesFromProps(ctx, [][]byte{startKey, endKey}, statsFiles, store)
+	if err != nil {
+		return err
+	}
+	return readAllDataInternal(
+		ctx, store, dataFiles, statsFiles,
+		startKey, endKey,
+		readRanges[0][0],
+		readRanges[1][1],
+		smallBlockBufPool, largeBlockBufPool, output)
+}
+
+func readAllDataInternal(
+	ctx context.Context,
+	store objstore.Storage,
+	dataFiles, statsFiles []string,
+	startKey, endKey []byte,
+	startOffsets, endOffsets []uint64,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
 	task.Info("arguments",
 		zap.Int("data-file-count", len(dataFiles)),
@@ -64,17 +86,6 @@ func readAllData(
 		task.End(zap.ErrorLevel, err)
 	}()
 
-	concurrences, startOffsets, err := getFilesReadConcurrency(
-		ctx,
-		store,
-		statsFiles,
-		startKey,
-		endKey,
-	)
-	if err != nil {
-		return err
-	}
-
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
 	readConn = min(readConn, len(dataFiles))
@@ -95,6 +106,13 @@ func readAllData(
 					if !ok {
 						return nil
 					}
+
+					bufSize := uint64(ConcurrentReaderBufferSizePerConc)
+					concurrency := (endOffsets[fileIdx] - startOffsets[fileIdx] + bufSize - 1) / bufSize
+					if concurrency < uint64(readAllDataConcThreshold) {
+						concurrency = 1
+					}
+
 					err2 := readOneFile(
 						egCtx,
 						store,
@@ -102,7 +120,7 @@ func readAllData(
 						startKey,
 						endKey,
 						startOffsets[fileIdx],
-						concurrences[fileIdx],
+						concurrency,
 						smallBlockBuf,
 						largeBlockBuf,
 						output,
