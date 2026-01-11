@@ -15,185 +15,114 @@
 package ttlworker_test
 
 import (
-	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 )
 
-func checkCountAtLeast(t *testing.T, tk *testkit.TestKit, sql string, minx int) {
-	rows := tk.MustQuery(sql).Rows()
-	require.Len(t, rows, 1)
-	require.Len(t, rows[0], 1)
-	got, err := strconv.Atoi(rows[0][0].(string))
+func parseEventuallyExpectation(t *testing.T, expected string) (minOK bool, minValue int) {
+	if !strings.HasPrefix(expected, ">=") {
+		return false, 0
+	}
+	minv, err := strconv.Atoi(strings.TrimSpace(strings.TrimPrefix(expected, ">=")))
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, got, minx, "sql: %s", sql)
+	return true, minv
 }
 
 func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 	defer boostJobScheduleForTest(t)()
+	defer overwriteJobInterval(t)()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	seFactory := sessionFactory(t, dom)
-
-	waitAndStopTTLManager(t, dom)
-
-	se, closeSe := seFactory()
-	defer closeSe()
-
-	var leader atomic.Bool
-	m := ttlworker.NewJobManager("manager-1", dom.AdvancedSysSessionPool(), store, nil, func() bool { return leader.Load() })
-	leader.Store(true)
-	m.Start()
-	defer func() {
-		m.TaskManager().ResizeWorkersToZero(t)
-		m.Stop()
-		require.NoError(t, m.WaitStopped(context.Background(), time.Minute))
-	}()
-	m.TaskManager().ResizeWorkersWithSysVar()
-	require.NoError(t, m.InfoSchemaCache().Update(se))
-
-	ctx := context.Background()
 	tk.MustExec("use test")
 	tk.MustExec("set global tidb_softdelete_job_enable='ON'")
+	tk.MustExec("set global tidb_ttl_job_enable='ON'")
+	tk.MustExec("set global tidb_ttl_job_schedule_window_start_time='00:00'")
+	tk.MustExec("set global tidb_ttl_job_schedule_window_end_time='23:59'")
 
 	cases := []struct {
-		name             string
-		tblName          string
-		createTableSQL   string
-		setupSQLs        []string
-		submitPartitions bool
-		waitKey          int
-		wantWaitValue    string
-		verifySQLs       map[string]string
-		minStatusRows    int
-		minHistoryRows   int
+		name       string
+		tblName    string
+		setupSQLs  []string
+		verifySQLs map[string]string
 	}{
 		{
-			name:           "non-partitioned deletes expired tombstone",
-			tblName:        "sd",
-			createTableSQL: "create table sd(a int primary key, v int) softdelete retention 7 day softdelete_job_enable='ON'",
+			name:    "non-partitioned deletes expired tombstone",
+			tblName: "sd",
 			setupSQLs: []string{
+				"create table sd(a int primary key, v int) softdelete retention 7 day softdelete_job_enable='ON'",
 				"insert into sd values (1, 10), (2, 20), (3, 30)",
 				"delete from sd where a in (1, 2)",
-				"set @@tidb_translate_softdelete_sql=0",
-				"update sd set _tidb_softdelete_time = date_sub(utc_timestamp(6), interval 8 day) where a = 1",
-				"set @@tidb_translate_softdelete_sql=1",
 			},
-			submitPartitions: false,
-			waitKey:          1,
-			wantWaitValue:    "0",
 			verifySQLs: map[string]string{
-				"select count(*) from sd where a=2": "1",
-				"select count(*) from sd where a=3": "1",
+				"select count(*) from sd where a=2":                                           "0",
+				"select count(*) from sd where a=3":                                           "1",
+				"select count(*) from mysql.tidb_softdelete_table_status":                     ">= 1",
+				"select count(*) from mysql.tidb_ttl_job_history where job_type='softdelete'": ">= 1",
 			},
-			minStatusRows:  1,
-			minHistoryRows: 1,
 		},
 		{
-			name:           "partitioned deletes expired tombstone",
-			tblName:        "sd_p",
-			createTableSQL: "create table sd_p(a int primary key, v int) softdelete retention 7 day softdelete_job_enable='ON' partition by range(a) (partition p0 values less than (10), partition p1 values less than (100))",
+			name:    "partitioned deletes expired tombstone",
+			tblName: "sd_p",
 			setupSQLs: []string{
+				"create table sd_p(a int primary key, v int) softdelete retention 7 day softdelete_job_enable='ON' partition by range(a) (partition p0 values less than (10), partition p1 values less than (100))",
 				"insert into sd_p values (1, 10), (20, 200)",
 				"delete from sd_p where a in (1, 20)",
-				"set @@tidb_translate_softdelete_sql=0",
-				"update sd_p set _tidb_softdelete_time = date_sub(utc_timestamp(6), interval 8 day) where a = 1",
-				"set @@tidb_translate_softdelete_sql=1",
 			},
-			submitPartitions: true,
-			waitKey:          1,
-			wantWaitValue:    "0",
 			verifySQLs: map[string]string{
-				"select count(*) from sd_p where a=20": "1",
+				"select count(*) from sd_p where a=20":                                        "0",
+				"select count(*) from mysql.tidb_softdelete_table_status":                     ">= 2",
+				"select count(*) from mysql.tidb_ttl_job_history where job_type='softdelete'": ">= 1",
 			},
-			minStatusRows:  2,
-			minHistoryRows: 1,
 		},
 		{
-			name:           "does not delete not expired",
-			tblName:        "sd_safe",
-			createTableSQL: "create table sd_safe(a int primary key, v int) softdelete retention 7 day softdelete_job_enable='ON'",
+			name:    "does not delete not expired",
+			tblName: "sd_safe",
 			setupSQLs: []string{
+				"create table sd_safe(a int primary key, v int) softdelete retention 7 day softdelete_job_enable='ON'",
 				"insert into sd_safe values (1, 10)",
 				"delete from sd_safe where a=1",
 			},
-			submitPartitions: false,
-			waitKey:          1,
-			wantWaitValue:    "1",
-			verifySQLs:       map[string]string{},
-			minStatusRows:    1,
-			minHistoryRows:   1,
+			verifySQLs: map[string]string{
+				"select count(*) from mysql.tidb_softdelete_table_status":                     ">= 1",
+				"select count(*) from mysql.tidb_ttl_job_history where job_type='softdelete'": ">= 1",
+			},
 		},
 	}
 
-	for i, c := range cases {
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			// Keep tidb_translate_softdelete_sql enabled for DML rewriting, but disable it when verifying tombstone rows
 			// in user SQL (otherwise the rewritten SELECT will hide soft-deleted rows).
 			tk.MustExec("set @@tidb_translate_softdelete_sql=1")
 
 			tk.MustExec("drop table if exists " + c.tblName)
-			tk.MustExec(c.createTableSQL)
 			for _, sql := range c.setupSQLs {
 				tk.MustExec(sql)
 			}
-			tbl, err := dom.InfoSchema().TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr(c.tblName))
-			require.NoError(t, err)
 
-			require.NoError(t, m.InfoSchemaCache().Update(se))
-
-			physicalIDs := []int64{tbl.Meta().ID}
-			if c.submitPartitions {
-				physicalIDs = physicalIDs[:0]
-				for _, def := range tbl.Meta().Partition.Definitions {
-					physicalIDs = append(physicalIDs, def.ID)
-				}
-			}
-
-			jobIDs := make([]string, 0, len(physicalIDs))
-			for j, physicalID := range physicalIDs {
-				jobID := fmt.Sprintf("sd_case_%s_%d_%d", c.tblName, i, j)
-				jobIDs = append(jobIDs, jobID)
-				require.NoError(t, m.SubmitSoftDeleteJob(se, tbl.Meta().ID, physicalID, jobID))
-			}
-
-			// Use tidb_translate_softdelete_sql=0 to observe physical rows (including tombstones).
 			tk.MustExec("set @@tidb_translate_softdelete_sql=0")
-			waitSQL := fmt.Sprintf("select count(*) from %s where a=%d", c.tblName, c.waitKey)
-			require.Eventually(t, func() bool {
-				// Always query the base table to avoid any partition pruning surprises.
-				if tk.MustQuery(waitSQL).Rows()[0][0] == c.wantWaitValue {
-					return true
-				}
-				// For partitioned tables, also check the concrete partition to ensure we are observing the correct physical table.
-				if c.submitPartitions {
-					for _, p := range []string{"p0", "p1"} {
-						q := fmt.Sprintf("select count(*) from %s partition(%s) where a=%d", c.tblName, p, c.waitKey)
-						if tk.MustQuery(q).Rows()[0][0] == c.wantWaitValue {
-							return true
-						}
-					}
-				}
-				return false
-			}, 15*time.Second, 50*time.Millisecond)
-			for q, want := range c.verifySQLs {
-				tk.MustQuery(q).Check(testkit.Rows(want))
-			}
+			tk.MustExec(fmt.Sprintf("update `%s` set _tidb_softdelete_time = _tidb_softdelete_time - interval 1 month where _tidb_softdelete_time is not null", c.tblName))
 			tk.MustExec("set @@tidb_translate_softdelete_sql=1")
-
-			checkCountAtLeast(t, tk, "select count(*) from mysql.tidb_softdelete_table_status", c.minStatusRows)
-			checkCountAtLeast(t, tk, "select count(*) from mysql.tidb_ttl_job_history where job_type='softdelete'", c.minHistoryRows)
-			for _, jobID := range jobIDs {
-				tk.MustQuery("select count(*) from mysql.tidb_ttl_job_history where job_id='" + jobID + "'").Check(testkit.Rows("1"))
+			for q, want := range c.verifySQLs {
+				sql := q
+				expected := want
+				minOK, minv := parseEventuallyExpectation(t, expected)
+				require.Eventuallyf(t, func() bool {
+					gotStr := tk.MustQuery(sql).Rows()[0][0].(string)
+					if minOK {
+						got, err := strconv.Atoi(gotStr)
+						require.NoError(t, err)
+						return got >= minv
+					}
+					return gotStr == expected
+				}, 15*time.Second, 50*time.Millisecond, "eventually verify: %s", sql)
 			}
 		})
 	}

@@ -1520,6 +1520,10 @@ func (s *SoftdeleteInfo) GetRetention() (time.Duration, error) {
 // GetJobInterval parses the job interval and returns it
 // If job interval is empty, returns DefaultSoftDeleteJobInterval for compatibility
 func (s *SoftdeleteInfo) GetJobInterval() (time.Duration, error) {
+	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) (time.Duration, error) {
+		return time.Duration(val.(int)), nil
+	})
+
 	if len(s.JobInterval) == 0 {
 		return duration.ParseDuration(DefaultSoftDeleteJobInterval)
 	}
