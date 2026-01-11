@@ -1251,6 +1251,12 @@ func (local *Backend) generateJobForRange(
 
 	startKey := codec.EncodeBytes([]byte{}, pairStart)
 	endKey := codec.EncodeBytes([]byte{}, nextKey(pairEnd))
+	for _, rangeKey := range sortedJobRanges {
+		tidblogutil.Logger(ctx).Info("key range",
+			logutil.Key("startKey", rangeKey.Start),
+			logutil.Key("endKey", rangeKey.End),
+		)
+	}
 	regions, err := split.PaginateScanRegion(ctx, local.splitCli, startKey, endKey, scanRegionLimit)
 	if err != nil {
 		tidblogutil.Logger(ctx).Error("scan region failed",
@@ -1258,6 +1264,12 @@ func (local *Backend) generateJobForRange(
 			logutil.Key("startKey", startKey),
 			logutil.Key("endKey", endKey))
 		return nil, err
+	}
+	for _, region := range regions {
+		tidblogutil.Logger(ctx).Info("region",
+			logutil.Key("startKey", region.Region.GetStartKey()),
+			logutil.Key("endKey", region.Region.GetEndKey()),
+		)
 	}
 
 	jobs := newRegionJobs(regions, data, sortedJobRanges, regionSplitSize, regionSplitKeys, local.metrics)
@@ -1268,6 +1280,12 @@ func (local *Backend) generateJobForRange(
 		zap.String("startKeyOfFirstRegion", hex.EncodeToString(regions[0].Region.GetStartKey())),
 		zap.String("endKeyOfLastRegion", hex.EncodeToString(regions[len(regions)-1].Region.GetEndKey())),
 	)
+	for _, job := range jobs {
+		tidblogutil.Logger(ctx).Info("job",
+			logutil.Key("startKey", job.keyRange.Start),
+			logutil.Key("endKey", job.keyRange.End),
+		)
+	}
 	return jobs, nil
 }
 
