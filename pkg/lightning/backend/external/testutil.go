@@ -88,19 +88,25 @@ func testReadAndCompare(
 
 		// check kvs sorted
 		sorty.MaxGor = uint64(8)
-		sorty.Sort(len(loaded.kvs), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.kvs[i].Key, loaded.kvs[k].Key) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.kvs[r], loaded.kvs[s] = loaded.kvs[s], loaded.kvs[r]
+		for i := range loaded.kvs {
+			bucket := loaded.kvs[i]
+			sorty.Sort(len(bucket), func(a, b, r, s int) bool {
+				if bytes.Compare(bucket[a].Key, bucket[b].Key) < 0 {
+					if r != s {
+						bucket[r], bucket[s] = bucket[s], bucket[r]
+					}
+					return true
 				}
-				return true
+				return false
+			})
+			loaded.kvs[i] = bucket
+		}
+		for _, bucket := range loaded.kvs {
+			for _, kv := range bucket {
+				require.EqualValues(t, kvs[kvIdx].Key, kv.Key)
+				require.EqualValues(t, kvs[kvIdx].Val, kv.Value)
+				kvIdx++
 			}
-			return false
-		})
-		for _, kv := range loaded.kvs {
-			require.EqualValues(t, kvs[kvIdx].Key, kv.Key)
-			require.EqualValues(t, kvs[kvIdx].Val, kv.Value)
-			kvIdx++
 		}
 		curStart = curEnd.Clone()
 

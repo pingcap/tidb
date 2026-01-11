@@ -141,22 +141,30 @@ func MergeOverlappingFilesV2(
 		readTime := time.Since(now)
 		now = time.Now()
 		sorty.MaxGor = uint64(concurrency)
-		sorty.Sort(len(loaded.kvs), func(i, k, r, s int) bool {
-			if bytes.Compare(loaded.kvs[i].Key, loaded.kvs[k].Key) < 0 { // strict comparator like < or >
-				if r != s {
-					loaded.kvs[r], loaded.kvs[s] = loaded.kvs[s], loaded.kvs[r]
+		for i := range loaded.kvs {
+			bucket := loaded.kvs[i]
+			sorty.Sort(len(bucket), func(a, b, r, s int) bool {
+				if bytes.Compare(bucket[a].Key, bucket[b].Key) < 0 {
+					if r != s {
+						bucket[r], bucket[s] = bucket[s], bucket[r]
+					}
+					return true
 				}
-				return true
-			}
-			return false
-		})
+				return false
+			})
+			loaded.kvs[i] = bucket
+		}
 		sortTime := time.Since(now)
 		now = time.Now()
-		for _, kv := range loaded.kvs {
-			err1 = writer.WriteRow(ctx, kv.Key, kv.Value)
-			if err1 != nil {
-				logutil.Logger(ctx).Warn("write one row to writer failed", zap.Error(err1))
-				return
+		keyLen := 0
+		for _, bucket := range loaded.kvs {
+			for _, kv := range bucket {
+				err1 = writer.WriteRow(ctx, kv.Key, kv.Value)
+				if err1 != nil {
+					logutil.Logger(ctx).Warn("write one row to writer failed", zap.Error(err1))
+					return
+				}
+				keyLen++
 			}
 		}
 		writeTime := time.Since(now)
@@ -164,7 +172,7 @@ func MergeOverlappingFilesV2(
 			zap.Duration("read time", readTime),
 			zap.Duration("sort time", sortTime),
 			zap.Duration("write time", writeTime),
-			zap.Int("key len", len(loaded.kvs)))
+			zap.Int("key len", keyLen))
 
 		curStart = curEnd.Clone()
 		loaded.kvs = nil

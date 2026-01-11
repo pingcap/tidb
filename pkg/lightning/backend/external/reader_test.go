@@ -132,7 +132,7 @@ func TestReadLargeFile(t *testing.T) {
 	w.InitPartSizeAndLogger(ctx, int64(5*size.MB))
 
 	val := make([]byte, 10000)
-	for i := range 10000 {
+	for i := 0; i < 10000; i++ {
 		key := fmt.Appendf(nil, "key%06d", i)
 		require.NoError(t, w.WriteRow(ctx, key, val))
 	}
@@ -159,8 +159,8 @@ func TestReadLargeFile(t *testing.T) {
 	err := readAllData(ctx, memStore, datas, stats, startKey, endKey, smallBlockBufPool, largeBlockBufPool, output)
 	require.NoError(t, err)
 	output.build(ctx)
-	require.Equal(t, startKey, output.kvs[0].Key)
-	require.Equal(t, maxKey, output.kvs[len(output.kvs)-1].Key)
+	require.Equal(t, startKey, output.kvs[0][0].Key)
+	require.Equal(t, maxKey, output.kvs[0][len(output.kvs[0])-1].Key)
 }
 
 func TestReadKVFilesAsync(t *testing.T) {
