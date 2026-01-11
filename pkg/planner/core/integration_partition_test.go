@@ -266,5 +266,8 @@ func BenchmarkPartitionRangeColumns(b *testing.B) {
 func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkPartitionRangeColumns,
+		BenchmarkPlanCacheBindingMatch,
+		BenchmarkPlanCacheInsert,
+		BenchmarkNonPreparedPlanCacheDML,
 	)
 }
