@@ -43,7 +43,7 @@ func NewTTLTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) (*TTLTime
 		attr:      infoschemacontext.TTLAttribute,
 		hookClass: ttlTimerHookClass,
 		shouldSyncTable: func(tblInfo *model.TableInfo) bool {
-			return tblInfo.TTLInfo != nil && tblInfo.TTLInfo.Enable
+			return tblInfo.TTLInfo != nil
 		},
 		getEnable: func(tblInfo *model.TableInfo) bool {
 			return tblInfo.TTLInfo.Enable

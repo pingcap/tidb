@@ -771,7 +771,7 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		if err != nil {
 			logger.Warn("fail to find all tasks for job. Summarize nothing for cancel job", zap.String("jobID", job.id), zap.Error(err))
 		}
-		summary, err := summarizeTaskResultWithError(allTasks, errors.Errorf("%s table has been removed or softdelete on this table has been stopped", job.jobType))
+		summary, err := summarizeTaskResultWithError(allTasks, errors.Errorf("%s table has been removed or %s on this table has been stopped", strings.ToUpper(job.jobType), strings.ToUpper(job.jobType)))
 		if err != nil {
 			logger.Warn("fail to summarize job", zap.Error(err))
 		}

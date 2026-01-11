@@ -214,7 +214,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
-// hasDeletedExpiredRows just test mark for delete expired rows once.
+// hasDeletedExpiredRows is only used in test.
 var hasDeletedExpiredRows = atomic.Bool{}
 
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
@@ -239,10 +239,10 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		if val.(bool) {
 			failpoint.Return()
 		}
+		if hasDeletedExpiredRows.Load() {
+			return
+		}
 	})
-	if hasDeletedExpiredRows.Load() {
-		return
-	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
