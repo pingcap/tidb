@@ -202,6 +202,9 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 				return nil
 			},
 		}
+		// SoftDelete cleanup job needs to read/delete tombstones. If SoftDeleteRewrite is enabled,
+		// SELECT may hide tombstones and DELETE may be rewritten to UPDATE (soft-delete) again.
+		se.GetSessionVars().SoftDeleteRewrite = false
 	case cache.TTLJobTypeTTL:
 		cfg = ttlWorkConfig{
 			jobType:   jobType,
@@ -234,7 +237,9 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 				return nil
 			},
 		}
-		se.GetSessionVars().SoftDeleteRewrite = false
+		// TTL job should respect soft delete rewrite: for softdelete-enabled tables, DELETE will be
+		// rewritten to UPDATE (create tombstones) and SELECT will ignore tombstones.
+		se.GetSessionVars().SoftDeleteRewrite = true
 	default:
 		return nil, errors.Errorf("unknown job type: %s", jobType)
 	}

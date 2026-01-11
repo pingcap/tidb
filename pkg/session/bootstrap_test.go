@@ -2899,12 +2899,18 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.Len(t, versionedBootstrapSchemas[1].databases[0].Tables, 1)
 
 	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
+	allDBIDs := make(map[int64]string)
 	var allTableCount int
 	for _, vbs := range versionedBootstrapSchemas {
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
-			allIDs = append(allIDs, db.ID)
+			if prevName, ok := allDBIDs[db.ID]; ok {
+				require.Equal(t, prevName, db.Name, "versionedBootstrapSchemas should not map one DB ID to different names")
+			} else {
+				allDBIDs[db.ID] = db.Name
+				allIDs = append(allIDs, db.ID)
+			}
 
 			testTableBasicInfoSlice(t, db.Tables)
 			allTableCount += len(db.Tables)

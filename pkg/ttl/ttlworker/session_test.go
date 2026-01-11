@@ -322,13 +322,13 @@ func TestNewTableSessionDisablesSoftDeleteRewriteForTTL(t *testing.T) {
 	s.sessionVars.SoftDeleteRewrite = true
 	_, err := newTableSession(s, tbl, expire, cache.TTLJobTypeTTL)
 	require.NoError(t, err)
-	require.False(t, s.sessionVars.SoftDeleteRewrite)
+	require.True(t, s.sessionVars.SoftDeleteRewrite)
 
 	s2 := newMockSession(t, tbl)
 	s2.sessionVars.SoftDeleteRewrite = true
 	_, err = newTableSession(s2, tbl, expire, cache.TTLJobTypeSoftDelete)
 	require.NoError(t, err)
-	require.True(t, s2.sessionVars.SoftDeleteRewrite)
+	require.False(t, s2.sessionVars.SoftDeleteRewrite)
 }
 
 func TestValidateTTLWork(t *testing.T) {
