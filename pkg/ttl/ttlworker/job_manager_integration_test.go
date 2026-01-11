@@ -711,7 +711,7 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 			require.NoError(t, m.InfoSchemaCache().Update(se))
 			require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 			m.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
-			tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or the TTL on this table has been stopped"))
+			tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or TTL on this table has been stopped"))
 
 			// resume the table
 			tk.MustExec(rb.resume)

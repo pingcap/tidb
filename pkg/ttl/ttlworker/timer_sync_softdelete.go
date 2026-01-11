@@ -21,7 +21,6 @@ import (
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/session/syssession"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
@@ -44,10 +43,10 @@ func NewSoftDeleteTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) (*
 		attr:      infoschemacontext.SoftDeleteAttribute,
 		hookClass: softdeleteTimerHookClass,
 		shouldSyncTable: func(tblInfo *model.TableInfo) bool {
-			return tblInfo.SoftdeleteInfo != nil && tblInfo.SoftdeleteInfo.JobEnable
+			return tblInfo.SoftdeleteInfo != nil
 		},
 		getEnable: func(tblInfo *model.TableInfo) bool {
-			return vardef.SoftDeleteJobEnable.Load() && tblInfo.SoftdeleteInfo.JobEnable
+			return tblInfo.SoftdeleteInfo.JobEnable
 		},
 		getSchedPolicy: func(tblInfo *model.TableInfo) (timerapi.SchedPolicyType, string) {
 			interval := tblInfo.SoftdeleteInfo.JobInterval

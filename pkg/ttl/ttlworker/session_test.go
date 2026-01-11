@@ -314,6 +314,23 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.Equal(t, 4, s.resetTimeZoneCalls)
 }
 
+func TestNewTableSessionDisablesSoftDeleteRewriteForTTL(t *testing.T) {
+	tbl := newMockTTLTbl(t, "t1")
+	expire := time.UnixMilli(0).In(time.UTC)
+
+	s := newMockSession(t, tbl)
+	s.sessionVars.SoftDeleteRewrite = true
+	_, err := newTableSession(s, tbl, expire, cache.TTLJobTypeTTL)
+	require.NoError(t, err)
+	require.False(t, s.sessionVars.SoftDeleteRewrite)
+
+	s2 := newMockSession(t, tbl)
+	s2.sessionVars.SoftDeleteRewrite = true
+	_, err = newTableSession(s2, tbl, expire, cache.TTLJobTypeSoftDelete)
+	require.NoError(t, err)
+	require.True(t, s2.sessionVars.SoftDeleteRewrite)
+}
+
 func TestValidateTTLWork(t *testing.T) {
 	ctx := context.TODO()
 	tbl := newMockTTLTbl(t, "t1")

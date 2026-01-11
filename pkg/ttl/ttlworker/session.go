@@ -234,6 +234,7 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 				return nil
 			},
 		}
+		se.GetSessionVars().SoftDeleteRewrite = false
 	default:
 		return nil, errors.Errorf("unknown job type: %s", jobType)
 	}

@@ -702,7 +702,10 @@ func TestLocalJobs(t *testing.T) {
 	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
-	m.runningJobs = []*ttlJob{{tableID: tbl1.ID, id: "1"}, {tableID: tbl2.ID, id: "2"}}
+	m.runningJobs = []*ttlJob{
+		{tableID: tbl1.ID, id: "1", jobType: cache.TTLJobTypeTTL},
+		{tableID: tbl2.ID, id: "2", jobType: cache.TTLJobTypeTTL},
+	}
 	m.ttlStatusCache.Tables = map[int64]*cache.TableStatus{
 		tbl1.ID: {
 			CurrentJobOwnerID: m.id,
@@ -711,8 +714,8 @@ func TestLocalJobs(t *testing.T) {
 			CurrentJobOwnerID: "another-id",
 		},
 	}
-	assert.Len(t, m.localJobs(), 1)
-	assert.Equal(t, m.localJobs()[0].id, "1")
+	require.Len(t, m.localJobs(), 1)
+	require.Equal(t, m.localJobs()[0].id, "1")
 }
 
 func TestSplitCnt(t *testing.T) {
