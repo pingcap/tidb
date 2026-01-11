@@ -173,7 +173,7 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 
 	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
 	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
-		assertMatchSQLBinding(cache, true, binding, metrics.ScopeGlobal)
+		assertMatchSQLBinding(cache, true, binding, metrics.ScopeSession)
 		sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
 		sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
 			binding: binding,
