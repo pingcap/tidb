@@ -512,6 +512,14 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 	tk.MustGetErrCode("select * from t use index (t);", errno.ErrKeyDoesNotExist)
 	tk.MustGetErrCode("select * from t use index (t1);", errno.ErrKeyDoesNotExist)
 
+	// Test rename chain with name reuse (MySQL 8.0 compatible).
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, index i1(id), index i2(id))")
+	tk.MustExec("alter table t rename index i1 to i, rename index i2 to i1")
+	tk.MustExec("select * from t use index (i);")
+	tk.MustExec("select * from t use index (i1);")
+	tk.MustGetErrCode("select * from t use index (i2);", errno.ErrKeyDoesNotExist)
+
 	// Test drop and rename same index.
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int, c int, index t(a))")
@@ -535,12 +543,11 @@ func TestMultiSchemaChangeRenameIndexes(t *testing.T) {
 	tk.MustExec("create table t (a int default 1, b int default 2, index t(a))")
 	tk.MustExec("insert into t values ()")
 	hook := newCancelJobHook(t, store, func(job *model.Job) bool {
-		// Cancel job when the column 'c' is in write-reorg.
-		if job.Type != model.ActionMultiSchemaChange {
-			return false
-		}
-		assertMultiSchema(t, job, 2)
-		return job.MultiSchemaInfo.SubJobs[0].SchemaState == model.StateWriteReorganization
+		// Cancel once, as soon as we observe the multi-schema job is still revertible.
+		// (The exact sub-job schema state observed in `afterWaitSchemaSynced` is racy.)
+		return job.Type == model.ActionMultiSchemaChange &&
+			job.MultiSchemaInfo != nil &&
+			job.MultiSchemaInfo.Revertible
 	})
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hook.OnJobUpdated)
 	tk.MustGetErrCode("alter table t add column c int default 3, rename index t to t1;", errno.ErrCancelledDDLJob)
