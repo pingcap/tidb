@@ -2442,7 +2442,6 @@ func (w *baseIndexWorker) fetchRowColVals(txn kv.Transaction, taskRange reorgBac
 	w.idxRecords = w.idxRecords[:0]
 	startTime := time.Now()
 
-
 	// taskDone means that the reorged handle is out of taskRange.endHandle.
 	taskDone := false
 	oprStartTime := startTime
