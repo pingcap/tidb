@@ -41,6 +41,30 @@ func readAllData(
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
 ) (err error) {
+	readRanges, err := getReadRangesFromProps(ctx, [][]byte{startKey, endKey}, statsFiles, store)
+	if err != nil {
+		return err
+	}
+	return readAllDataInternal(
+		ctx, store, dataFiles, statsFiles,
+		startKey, endKey,
+		[][]byte{startKey, endKey},
+		readRanges[0][0],
+		readRanges[1][1],
+		smallBlockBufPool, largeBlockBufPool, output)
+}
+
+func readAllDataInternal(
+	ctx context.Context,
+	store objstore.Storage,
+	dataFiles, statsFiles []string,
+	startKey, endKey []byte,
+	jobKeys [][]byte,
+	startOffsets, endOffsets []uint64,
+	smallBlockBufPool *membuf.Pool,
+	largeBlockBufPool *membuf.Pool,
+	output *memKVsAndBuffers,
+) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
 	task.Info("arguments",
 		zap.Int("data-file-count", len(dataFiles)),
@@ -51,6 +75,7 @@ func readAllData(
 	defer func() {
 		if err != nil {
 			output.kvsPerFile = nil
+			output.kvs = nil
 			for _, b := range output.memKVBuffers {
 				b.Destroy()
 			}
@@ -63,17 +88,6 @@ func readAllData(
 		}
 		task.End(zap.ErrorLevel, err)
 	}()
-
-	concurrences, startOffsets, err := getFilesReadConcurrency(
-		ctx,
-		store,
-		statsFiles,
-		startKey,
-		endKey,
-	)
-	if err != nil {
-		return err
-	}
 
 	eg, egCtx := util.NewErrorGroupWithRecoverWithCtx(ctx)
 	readConn := 1000
@@ -95,14 +109,20 @@ func readAllData(
 					if !ok {
 						return nil
 					}
+
+					bufSize := uint64(ConcurrentReaderBufferSizePerConc)
+					concurrency := (endOffsets[fileIdx] - startOffsets[fileIdx] + bufSize - 1) / bufSize
+					if concurrency < uint64(readAllDataConcThreshold) {
+						concurrency = 1
+					}
+
 					err2 := readOneFile(
 						egCtx,
 						store,
 						dataFiles[fileIdx],
-						startKey,
-						endKey,
+						jobKeys,
 						startOffsets[fileIdx],
-						concurrences[fileIdx],
+						concurrency,
 						smallBlockBuf,
 						largeBlockBuf,
 						output,
@@ -130,7 +150,7 @@ func readOneFile(
 	ctx context.Context,
 	storage objstore.Storage,
 	dataFile string,
-	startKey, endKey []byte,
+	jobKeys [][]byte,
 	startOffset uint64,
 	concurrency uint64,
 	smallBlockBuf *membuf.Buffer,
@@ -162,9 +182,17 @@ func readOneFile(
 		}
 	}
 
-	kvs := make([]KVPair, 0, 1024)
+	rangeCnt := len(jobKeys) - 1
+	fileBuckets := make([][]KVPair, rangeCnt)
+	for i := range rangeCnt {
+		fileBuckets[i] = make([]KVPair, 0, 256)
+	}
 	size := 0
 	droppedSize := 0
+
+	startKey := jobKeys[0]
+	endKey := jobKeys[len(jobKeys)-1]
+	bucketIdx := 0
 
 	for {
 		k, v, err := rd.NextKV()
@@ -181,17 +209,17 @@ func readOneFile(
 		if bytes.Compare(k, endKey) >= 0 {
 			break
 		}
+		for bucketIdx+1 < len(jobKeys) && bytes.Compare(k, jobKeys[bucketIdx+1]) >= 0 {
+			bucketIdx++
+		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		kvs = append(kvs, KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
+		fileBuckets[bucketIdx] = append(fileBuckets[bucketIdx],
+			KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
-	output.mu.Lock()
-	output.kvsPerFile = append(output.kvsPerFile, kvs)
-	output.size += size
-	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
-	output.mu.Unlock()
+	output.AppendFileBuckets(fileBuckets, size, droppedSize)
 	return nil
 }
 

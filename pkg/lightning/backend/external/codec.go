@@ -31,6 +31,10 @@ type rangeProperty struct {
 	keys     uint64
 }
 
+func (r *rangeProperty) getEndOffset() uint64 {
+	return r.offset + r.size + 2*lengthBytes*r.keys
+}
+
 // decodeMultiProps is only used for test.
 func decodeMultiProps(data []byte) []*rangeProperty {
 	var ret []*rangeProperty

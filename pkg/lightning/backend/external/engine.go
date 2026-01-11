@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -93,38 +92,58 @@ func getEngineMemoryLimit(memCapacity int64) int {
 }
 
 type memKVsAndBuffers struct {
-	mu  sync.Mutex
-	kvs []KVPair
+	mu sync.Mutex
+	// kvs stores loaded KVs grouped by ranges. kvs[i] contains KVs in
+	// [jobKeys[i], jobKeys[i+1]).
+	kvs [][]KVPair
 	// memKVBuffers contains two types of buffer, first half are used for small block
 	// buffer, second half are used for large one.
 	memKVBuffers []*membuf.Buffer
 	size         int
 	droppedSize  int
 
-	// temporary fields to store KVs to reduce slice allocations.
-	kvsPerFile         [][]KVPair
-	droppedSizePerFile []int
+	// kvsPerFile stores KVs grouped by ranges for each file, to reduce slice
+	// allocations.
+	kvsPerFile [][][]KVPair
+}
+
+func (b *memKVsAndBuffers) AppendFileBuckets(fileBuckets [][]KVPair, fileSize int, droppedSize int) {
+	b.mu.Lock()
+	b.kvsPerFile = append(b.kvsPerFile, fileBuckets)
+	b.size += fileSize
+	b.droppedSize += droppedSize
+	b.mu.Unlock()
 }
 
 func (b *memKVsAndBuffers) build(ctx context.Context) {
+	if len(b.kvsPerFile) == 0 {
+		logutil.Logger(ctx).Info("building memKVsAndBuffers",
+			zap.Int("sumKVCnt", 0),
+			zap.Int("droppedSize", b.droppedSize))
+		b.kvs = nil
+		return
+	}
+
+	rangeCnt := len(b.kvsPerFile[0])
 	sumKVCnt := 0
-	for _, keys := range b.kvsPerFile {
-		sumKVCnt += len(keys)
+	for _, perRange := range b.kvsPerFile {
+		for i := range rangeCnt {
+			sumKVCnt += len(perRange[i])
+		}
 	}
-	b.droppedSize = 0
-	for _, size := range b.droppedSizePerFile {
-		b.droppedSize += size
-	}
-	b.droppedSizePerFile = nil
 
 	logutil.Logger(ctx).Info("building memKVsAndBuffers",
 		zap.Int("sumKVCnt", sumKVCnt),
 		zap.Int("droppedSize", b.droppedSize))
 
-	b.kvs = make([]KVPair, 0, sumKVCnt)
-	for i := range b.kvsPerFile {
-		b.kvs = append(b.kvs, b.kvsPerFile[i]...)
-		b.kvsPerFile[i] = nil
+	b.kvs = make([][]KVPair, rangeCnt)
+	for fileIdx := range b.kvsPerFile {
+		perRange := b.kvsPerFile[fileIdx]
+		for i := range rangeCnt {
+			b.kvs[i] = append(b.kvs[i], perRange[i]...)
+			perRange[i] = nil
+		}
+		b.kvsPerFile[fileIdx] = nil
 	}
 	b.kvsPerFile = nil
 }
@@ -247,53 +266,10 @@ func NewExternalEngine(
 	}
 }
 
-func getFilesReadConcurrency(
-	ctx context.Context,
-	storage objstore.Storage,
-	statsFiles []string,
-	startKey, endKey []byte,
-) ([]uint64, []uint64, error) {
-	result := make([]uint64, len(statsFiles))
-	offsets, err := seekPropsOffsets(ctx, []kv.Key{startKey, endKey}, statsFiles, storage)
-	if err != nil {
-		return nil, nil, err
-	}
-	startOffs, endOffs := offsets[0], offsets[1]
-	totalFileSize := uint64(0)
-	for i := range statsFiles {
-		size := endOffs[i] - startOffs[i]
-		totalFileSize += size
-		expectedConc := size / uint64(ConcurrentReaderBufferSizePerConc)
-		// let the stat internals cover the [startKey, endKey) since seekPropsOffsets
-		// always return an offset that is less than or equal to the key.
-		expectedConc += 1
-		// readAllData will enable concurrent read and use large buffer if result[i] > 1
-		// when expectedConc < readAllDataConcThreshold, we don't use concurrent read to
-		// reduce overhead
-		if expectedConc >= readAllDataConcThreshold {
-			result[i] = expectedConc
-		} else {
-			result[i] = 1
-		}
-		// only log for files with expected concurrency > 1, to avoid too many logs
-		if expectedConc > 1 {
-			logutil.Logger(ctx).Info("found hotspot file in getFilesReadConcurrency",
-				zap.String("filename", statsFiles[i]),
-				zap.Uint64("startOffset", startOffs[i]),
-				zap.Uint64("endOffset", endOffs[i]),
-				zap.Uint64("expectedConc", expectedConc),
-				zap.Uint64("concurrency", result[i]),
-			)
-		}
-	}
-	// Note: this is the file size of the range group, KV size is smaller, as we
-	// need additional 8*2 for each KV.
-	logutil.Logger(ctx).Info("estimated file size of this range group",
-		zap.String("totalSize", units.BytesSize(float64(totalFileSize))))
-	return result, startOffs, nil
-}
-
-func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh chan<- engineapi.DataAndRanges) error {
+func (e *Engine) loadRangeBatchData(
+	ctx context.Context, jobKeys [][]byte,
+	startOffsets, endOffsets []uint64,
+	outCh chan<- engineapi.DataAndRanges) error {
 	readAndSortRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read_and_sort")
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_and_sort")
 	readRateHist := metrics.GlobalSortReadFromCloudStorageRate.WithLabelValues("read")
@@ -321,13 +297,16 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	endKey := jobKeys[len(jobKeys)-1]
 	readStart := time.Now()
 	// read all data in range [startKey, endKey)
-	err := readAllData(
+	err := readAllDataInternal(
 		ctx,
 		e.storage,
 		e.dataFiles,
 		e.statsFiles,
 		startKey,
 		endKey,
+		jobKeys,
+		startOffsets,
+		endOffsets,
 		e.smallBlockBufPool,
 		e.largeBlockBufPool,
 		&e.memKVsAndBuffers,
@@ -345,28 +324,43 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	oldSortyGor := sorty.MaxGor
 	sorty.MaxGor = uint64(e.workerConcurrency.Load() * 2)
 	var dupKey, dupVal atomic.Pointer[[]byte]
-	sorty.Sort(len(e.memKVsAndBuffers.kvs), func(i, k, r, s int) bool {
-		cmp := bytes.Compare(e.memKVsAndBuffers.kvs[i].Key, e.memKVsAndBuffers.kvs[k].Key)
-		if cmp < 0 { // strict comparator like < or >
-			if r != s {
-				e.memKVsAndBuffers.kvs[r], e.memKVsAndBuffers.kvs[s] = e.memKVsAndBuffers.kvs[s], e.memKVsAndBuffers.kvs[r]
+
+	for rangeIdx := range e.memKVsAndBuffers.kvs {
+		bucket := e.memKVsAndBuffers.kvs[rangeIdx]
+		sorty.Sort(len(bucket), func(i, k, r, s int) bool {
+			cmp := bytes.Compare(bucket[i].Key, bucket[k].Key)
+			if cmp < 0 {
+				if r != s {
+					bucket[r], bucket[s] = bucket[s], bucket[r]
+				}
+				return true
 			}
-			return true
-		}
-		if cmp == 0 && i != k {
-			if dupKey.Load() == nil {
-				key := slices.Clone(e.memKVsAndBuffers.kvs[i].Key)
-				dupKey.Store(&key)
-				value := slices.Clone(e.memKVsAndBuffers.kvs[i].Value)
-				dupVal.Store(&value)
+			if cmp == 0 && i != k {
+				if dupKey.Load() == nil {
+					key := slices.Clone(bucket[i].Key)
+					dupKey.Store(&key)
+					value := slices.Clone(bucket[i].Value)
+					dupVal.Store(&value)
+				}
 			}
-		}
-		return false
-	})
+			return false
+		})
+		e.memKVsAndBuffers.kvs[rangeIdx] = bucket
+	}
+
 	sorty.MaxGor = oldSortyGor
 	sortDur := time.Since(sortStart)
 	sortSecond := sortDur.Seconds()
 	sortDurHist.Observe(sortSecond)
+
+	sumKVCnt := 0
+	for i := range e.memKVsAndBuffers.kvs {
+		sumKVCnt += len(e.memKVsAndBuffers.kvs[i])
+	}
+	sortedKVs := make([]KVPair, 0, sumKVCnt)
+	for i := range e.memKVsAndBuffers.kvs {
+		sortedKVs = append(sortedKVs, e.memKVsAndBuffers.kvs[i]...)
+	}
 
 	// we shouldn't handle duplicates for OnDuplicateKeyIgnore, it's the semantic
 	// of OnDuplicateKeyError, but to make keep compatible with the old code, we
@@ -392,7 +386,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		dupCount              int
 		deduplicateDur        time.Duration
 	)
-	deduplicatedKVs = e.memKVsAndBuffers.kvs
+	deduplicatedKVs = sortedKVs
 	dupFound := dupKey.Load() != nil
 	if dupFound {
 		start := time.Now()
@@ -417,7 +411,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 		zap.Duration("readDur", readDur),
 		zap.Duration("sortDur", sortDur),
 		zap.Int("droppedSize", e.memKVsAndBuffers.droppedSize),
-		zap.Int("loadedKVs", len(e.memKVsAndBuffers.kvs)),
+		zap.Int("loadedKVs", len(deduplicatedKVs)),
 		zap.String("loadedSize", units.HumanSize(float64(e.memKVsAndBuffers.size))),
 		zap.Stringer("onDup", e.onDup),
 		zap.Int("dupCount", dupCount),
@@ -439,6 +433,7 @@ func (e *Engine) loadRangeBatchData(ctx context.Context, jobKeys [][]byte, outCh
 	e.memKVsAndBuffers.kvs = nil
 	e.memKVsAndBuffers.memKVBuffers = nil
 	e.memKVsAndBuffers.size = 0
+	e.memKVsAndBuffers.droppedSize = 0
 
 	ranges := make([]engineapi.Range, 0, len(jobKeys)-1)
 	prev := slices.Clone(jobKeys[0])
@@ -558,11 +553,18 @@ func (e *Engine) LoadIngestData(
 	currBatchSize := int(e.workerConcurrency.Load())
 	logutil.Logger(ctx).Info("load ingest data", zap.Int("current batchSize", currBatchSize))
 
+	readRangesPerKey, err := getReadRangesFromProps(ctx, e.jobKeys, e.statsFiles, e.storage)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	for start := 0; start < len(e.jobKeys)-1; {
 		currBatchSize = e.handleConcurrencyChange(ctx, currBatchSize)
 		// want to generate N ranges, so we need N+1 keys
 		end := min(1+start+currBatchSize, len(e.jobKeys))
-		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], outCh)
+		startOffsets := readRangesPerKey[start][0]
+		endOffsets := readRangesPerKey[end-1][1]
+		err = e.loadRangeBatchData(ctx, e.jobKeys[start:end], startOffsets, endOffsets, outCh)
 		if err != nil {
 			return err
 		}

@@ -83,13 +83,10 @@ func TestByteReader(t *testing.T) {
 	// Test basic next() usage.
 	br, err := newByteReader(context.Background(), newRsc(), 3)
 	require.NoError(t, err)
-	n, bs := br.next(1)
-	require.Equal(t, 1, n)
-	require.Equal(t, [][]byte{{'a'}}, bs)
-	n, bs = br.next(2)
-	require.Equal(t, 2, n)
-	require.Equal(t, [][]byte{{'b', 'c'}}, bs)
-	require.NoError(t, br.Close())
+	s := br.next(1)
+	require.Equal(t, []byte{'a'}, s)
+	s = br.next(2)
+	require.Equal(t, []byte{'b', 'c'}, s)
 
 	// Test basic readNBytes() usage.
 	br, err = newByteReader(context.Background(), newRsc(), 3)
