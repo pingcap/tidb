@@ -17,6 +17,7 @@ go_test(
     race = "on",
     shard_count = 26,
     deps = [
+        "//br/pkg/gc",
         "//br/pkg/glue",
         "//br/pkg/gluetidb",
         "//br/pkg/logutil",

@@ -24,6 +24,7 @@ go_library(
         "//br/pkg/conn/util",
         "//br/pkg/encryption",
         "//br/pkg/errors",
+        "//br/pkg/gc",
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/metautil",

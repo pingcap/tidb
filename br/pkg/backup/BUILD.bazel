@@ -16,6 +16,7 @@ go_library(
         "//br/pkg/conn",
         "//br/pkg/conn/util",
         "//br/pkg/errors",
+        "//br/pkg/gc",
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/metautil",
@@ -72,6 +73,7 @@ go_test(
     shard_count = 18,
     deps = [
         "//br/pkg/conn",
+        "//br/pkg/gc",
         "//br/pkg/gluetidb/mock",
         "//br/pkg/metautil",
         "//br/pkg/mock",
