@@ -351,8 +351,7 @@ func (w *objStoreRegionJobWorker) write(ctx context.Context, job *regionJob) (*t
 		if err = ticiWriteGroup.WriteHeader(ctx, ticiFileWriter, ticiHeaderCommitTS); err != nil {
 			return nil, errors.Annotate(err, "failed to write header to tici file writer")
 		}
-	}
-	if ticiWriteGroup != nil {
+
 		pairs := make([]*sst.Pair, 0, defaultKVBatchCount)
 		size := int64(0)
 		totalCount := int64(0)
