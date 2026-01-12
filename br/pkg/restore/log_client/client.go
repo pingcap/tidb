@@ -70,6 +70,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/config"
+	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
 	pdhttp "github.com/tikv/pd/client/http"
@@ -2014,10 +2015,13 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		TTL:      gc.DefaultBRGCSafePointTTL,
 		ID:       gc.MakeSafePointID(),
 	}
-	gcMgr, err := gc.NewManager(pdClient, rc.GetDomain().Store())
-	if err != nil {
-		return errors.Trace(err)
+	// Extract keyspaceID from domain storage
+	store := rc.GetDomain().Store()
+	keyspaceID := uint32(tikv.NullspaceID)
+	if store != nil {
+		keyspaceID = uint32(store.GetCodec().GetKeyspaceID())
 	}
+	gcMgr := gc.NewManager(pdClient, keyspaceID)
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	defer func() {
 		log.Info("start to remove gc-safepoint keeper")
