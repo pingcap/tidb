@@ -454,9 +454,8 @@ func (p *PhysicalIndexScan) InitSchemaForTiKVIndex(idxExprCols []*expression.Col
 // Unlike the normal TiKV index, the indexed columns in TiCI index may not store its original data.
 // Currently, TiCI can return primary key and all its indexes columns.
 // There's no fixed row layout for TiCI index like the normal TiKV index.
-// But TiCI needs the deduplication on columns.
-// We build the layout like [primary key columns..., deduplicated index columns...].
-// So it makes it easier for TiCI to only return the pk for the double read case.
+// But there's a restriction that TiCI needs the deduplication on columns.
+// So we build the layout like [primary key columns..., deduplicated index columns...].
 func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols []*expression.Column) {
 	intest.Assert(!p.Index.Global && !p.Index.MVIndex)
 	handleLen := 1

@@ -644,7 +644,7 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 		} else if table.Meta().IsCommonHandle {
 			ticiShardType = distsql.TiCIShardCommonHandle
 		} else {
-			ticiShardType = distsql.TiCIShardIntPK
+			ticiShardType = distsql.TiCIShardIntHandle
 		}
 	}
 	for _, physicalID := range physicalIDs {

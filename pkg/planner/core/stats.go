@@ -133,25 +133,26 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	// Cleanup the unused TiCI indexes.
 	// They are not suitable for normal read.
 	ds.CleanUnusedTiCIIndexes()
-	var clusteredIndexForTiCI *model.IndexInfo
+	var commonHandleInfoForTiCI *model.IndexInfo
 	firstTiCIIndex := true
+	// TiCI needs pk info to build its special row layout.
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
-			clusteredIndexForTiCI = path.Index
+			commonHandleInfoForTiCI = path.Index
 			continue
 		}
 		if path.Index.IsTiCIIndex() && firstTiCIIndex {
 			firstTiCIIndex = false
-			if clusteredIndexForTiCI == nil && ds.TableInfo.IsCommonHandle {
+			if commonHandleInfoForTiCI == nil && ds.TableInfo.IsCommonHandle {
 				for _, index := range ds.TableInfo.Indices {
 					if index.Primary {
-						clusteredIndexForTiCI = index
+						commonHandleInfoForTiCI = index
 						break
 					}
 				}
 			}
 		}
-		err := fillIndexPath(ds, path, ds.PushedDownConds, clusteredIndexForTiCI)
+		err := fillIndexPath(ds, path, ds.PushedDownConds, commonHandleInfoForTiCI)
 		if err != nil {
 			return nil, false, err
 		}

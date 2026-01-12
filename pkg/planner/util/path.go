@@ -38,8 +38,10 @@ type AccessPath struct {
 	// The FullIdxCols and IdxCols meaning slightly changes:
 	// For normal row indexes, FullIdxCols are all the index columns, IdxCols are the index columns that can be used
 	// for access conditions(Here the access condition is stricted to the one to pruning shards/regions).
-	// For TiCI indexes, FullIdxCols are all the columns that TiCI index can return, including pk columns and indexed
-	// columns. IdxCols are the indexed columns that can be used for access conditions. When there's no sharding column,
+	// For TiCI indexes, FullIdxCols are all the columns that TiCI index can return, but pk columns are not included.
+	// Because TiCi's index lib can not return one column multiple times. So to avoid some of pk columns are used in TiCI index.
+	// We deal with the pk columns separately in current codebase.
+	// IdxCols are the indexed columns that can be used for access conditions. When there's no sharding column,
 	// IdxCols used for shard pruning is primary key columns.
 	// For TiFlash Columnar indexes, they are attached to the tiflash storage, currently it don't need to distinguish them.
 	// And for TiCI indexes, the columns used for shard pruning can be different from the columns used for the ordering property,
