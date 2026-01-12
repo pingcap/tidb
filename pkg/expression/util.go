@@ -892,6 +892,7 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.NullEQ: opcode.NullEQ,
 }
 
+// CompareOpMap records all comparison operators.
 var CompareOpMap = map[string]struct{}{
 	ast.LT:     {},
 	ast.GE:     {},

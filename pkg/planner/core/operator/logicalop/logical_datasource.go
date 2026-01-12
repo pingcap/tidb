@@ -704,9 +704,10 @@ func (ds *DataSource) AppendTableCol(col *expression.Column) {
 	ds.TblColsByID[col.ID] = col
 }
 
+// CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
 func (ds *DataSource) CheckPartialIndexes() {
-	var columnNames types.NameSlice = nil
-	var removedPaths map[int64]struct{} = nil
+	var columnNames types.NameSlice
+	var removedPaths map[int64]struct{}
 	partialIndexUsedHint, hasPartialIndex := false, false
 	for _, path := range ds.PossibleAccessPaths {
 		if path.Index == nil || path.Index.ConditionExprString == "" {

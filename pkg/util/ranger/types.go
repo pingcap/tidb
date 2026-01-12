@@ -267,6 +267,7 @@ func (ran *Range) Encode(ec errctx.Context, loc *time.Location, lowBuffer, highB
 	return lowBuffer, highBuffer, nil
 }
 
+// Equal checks if two ranges are equal.
 func (ran *Range) Equal(other *Range) bool {
 	if ran == other {
 		return true

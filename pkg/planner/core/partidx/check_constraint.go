@@ -11,6 +11,7 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+
 package partidx
 
 import (
@@ -22,13 +23,14 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
+// PreCondChecker is used to check whether the filters can meet the constraints from the predefined predicates in partial index's meta.
 type PreCondChecker struct {
 }
 
 // CheckConstraints checks whether the filters can meet the constraints from the predefined predicates in index meta.
-// If the prePredicates has comparision filters like =, >, <, >=, <=, IN, IS NULL, IS NOT NULL on single column, we can try our best to match them.
+// If the prePredicates has comparison filters like =, >, <, >=, <=, IN, IS NULL, IS NOT NULL on single column, we can try our best to match them.
 // If the prePredicates has other filters like `sin(a) > 0`, we can only try to match them exactly.
-// TODO: now we only support the comparision filters on single column.
+// TODO: now we only support the comparison filters on single column.
 func CheckConstraints(sctx planctx.PlanContext, prePredicates []expression.Expression, filters []expression.Expression) bool {
 	if len(prePredicates) == 0 {
 		return true
