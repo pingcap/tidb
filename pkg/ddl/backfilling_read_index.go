@@ -445,7 +445,9 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		}
 		idxNames.WriteString(idx.Name.O)
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, tbl.Meta().ID, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+	rowCntCollector := newDistTaskRowCntCollector(
+		r.summary, sm.PhysicalTableID, r.job.SchemaName,
+		tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewWriteIndexToExternalStoragePipeline(
 		wctx,
 		r.store,
