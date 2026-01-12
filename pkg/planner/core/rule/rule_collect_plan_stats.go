@@ -226,8 +226,15 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 	if threshold < 0 {
 		return
 	}
+	// If we have only one path, we don't need to prune indexes.
 	if len(ds.AllPossibleAccessPaths) <= 1 {
 		return
+	}
+	// If threshold = 0, we should only prune indexes with score == 0.
+	// Set threshold to the original number of paths as the logic
+	// will keep all indexes (up to the threshold) with score > 0.
+	if threshold == 0 {
+		threshold = len(ds.AllPossibleAccessPaths)
 	}
 
 	// Prune indexes
@@ -242,6 +249,13 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 	tableKeptIndexes := make(map[int64]struct{})
 	for _, path := range prunedPaths {
 		if !path.IsTablePath() && path.Index != nil {
+			tableKeptIndexes[path.Index.ID] = struct{}{}
+		}
+		// Also keep common-handle primary index from table paths
+		// Table paths for common-handle tables store the primary index in path.Index
+		// TODO: Consider later pruning the common-handle primary index when
+		// fillIndexPath is called - when more information is available.
+		if path.IsTablePath() && path.IsCommonHandlePath && path.Index != nil {
 			tableKeptIndexes[path.Index.ID] = struct{}{}
 		}
 	}
