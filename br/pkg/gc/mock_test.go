@@ -12,7 +12,6 @@ import (
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/tidb/br/pkg/gc"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
 	unistoretikv "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
@@ -25,26 +24,6 @@ import (
 // ============================================================================
 // Mock implementations
 // ============================================================================
-
-// mockCodec implements tikv.Codec interface (partial for testing)
-type mockCodec struct {
-	tikv.Codec
-	keyspaceID tikv.KeyspaceID
-}
-
-func (m *mockCodec) GetKeyspaceID() tikv.KeyspaceID {
-	return m.keyspaceID
-}
-
-// mockStorage implements kv.Storage interface (partial)
-type mockStorage struct {
-	kv.Storage
-	codec *mockCodec
-}
-
-func (m *mockStorage) GetCodec() tikv.Codec {
-	return m.codec
-}
 
 // createTestDB creates a BadgerDB instance for testing
 func createTestDB(t *testing.T) (*badger.DB, string, string, error) {
@@ -59,35 +38,26 @@ func createTestDB(t *testing.T) (*badger.DB, string, string, error) {
 	return db, dbPath, logPath, err
 }
 
-// pdClientAdapter adapts MockPD to pd.Client interface for testing.
-// This is a minimal adapter without call tracking - tests should use
-// state verification via GetGCStatesClient().GetGCState() instead.
-//
-// Note: Only implements the 3 methods needed for GC tests:
-//   - UpdateServiceGCSafePoint
-//   - UpdateGCSafePoint
-//   - GetGCStatesClient
-// Other pd.Client methods will panic if called (via nil embedding).
-type pdClientAdapter struct {
+type mockPDClient struct {
 	pd.Client
 	mockPD *unistoretikv.MockPD
 }
 
-func (p *pdClientAdapter) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+func (p *mockPDClient) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
 	return p.mockPD.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
 }
 
-func (p *pdClientAdapter) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+func (p *mockPDClient) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
 	return p.mockPD.UpdateGCSafePoint(ctx, safePoint)
 }
 
-func (p *pdClientAdapter) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
+func (p *mockPDClient) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
 	return p.mockPD.GetGCStatesClient(keyspaceID)
 }
 
 // newTestMockPD creates a fully configured MockPD wrapped in a pd.Client adapter.
 // Cleanup is automatically handled via t.Cleanup().
-func newTestMockPD(t *testing.T) *pdClientAdapter {
+func newTestMockPD(t *testing.T) *mockPDClient {
 	db, dbPath, logPath, err := createTestDB(t)
 	require.NoError(t, err)
 
@@ -122,7 +92,7 @@ func newTestMockPD(t *testing.T) *pdClientAdapter {
 		}
 	})
 
-	return &pdClientAdapter{mockPD: mockPD}
+	return &mockPDClient{mockPD: mockPD}
 }
 
 // ============================================================================
@@ -153,21 +123,20 @@ func requireNoBarrier(t *testing.T, state pdgc.GCState, barrierID string) {
 	require.Nil(t, barrier, "barrier %q should not exist", barrierID)
 }
 
+// getState returns the GC state for the specified keyspace.
+// Use tikv.NullspaceID for global mode.
+func getState(t *testing.T, ctx context.Context, mockPD *mockPDClient, keyspaceID tikv.KeyspaceID) pdgc.GCState {
+	state, err := mockPD.GetGCStatesClient(uint32(keyspaceID)).GetGCState(ctx)
+	require.NoError(t, err)
+	return state
+}
+
 // ============================================================================
 // Simple Mock Manager for Keeper Tests
 // ============================================================================
 
 // mockManager implements gc.Manager interface for keeper tests.
 // This is a lightweight mock that doesn't depend on MockPD.
-//
-// Call Tracking (REQUIRED for keeper tests):
-//   - setSafePointCalls: Tracks periodic refresh calls in keeper loop
-//   - deleteCalls: Tracks deletion calls
-//
-// Design Note:
-//   Keeper tests MUST use call counts to verify periodic behavior
-//   (e.g., "does the keeper refresh every N seconds?").
-//   This is different from manager tests which use state verification.
 type mockManager struct {
 	mu                sync.Mutex
 	gcSafePoint       uint64
