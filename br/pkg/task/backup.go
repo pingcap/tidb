@@ -515,21 +515,21 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Info("skip removing gc-safepoint keeper for next retry", zap.String("gc-id", sp.ID))
 			return
 		}
-			log.Info("start to remove gc-safepoint keeper")
-			// close the gc safe point keeper at first
-			gcSafePointKeeperCancel()
-			// remove the gc-safe-point
-			if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
-				log.Warn("failed to remove service safe point, backup may fail if gc triggered",
-					zap.Error(err),
-				)
-			}
-			log.Info("finish removing gc-safepoint keeper")
-		}()
-		err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
-		if err != nil {
-			return errors.Trace(err)
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// remove the gc-safe-point
+		if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
+			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
 		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
+	err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if cfg.RemoveSchedulers {
 		log.Debug("removing some PD schedulers")
@@ -617,11 +617,11 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Error("LastBackupTS is larger or equal to current TS")
 			return errors.Annotate(berrors.ErrInvalidArgument, "LastBackupTS is larger or equal to current TS")
 		}
-			err = gc.CheckGCSafePoint(ctx, mgr.GetGCManager(), cfg.LastBackupTS)
-			if err != nil {
-				log.Error("Check gc safepoint for last backup ts failed", zap.Error(err))
-				return errors.Trace(err)
-			}
+		err = gc.CheckGCSafePoint(ctx, mgr.GetGCManager(), cfg.LastBackupTS)
+		if err != nil {
+			log.Error("Check gc safepoint for last backup ts failed", zap.Error(err))
+			return errors.Trace(err)
+		}
 
 		metawriter.StartWriteMetasAsync(ctx, metautil.AppendDDL)
 		err = backup.WriteBackupDDLJobs(metawriter, g, mgr.GetStorage(), cfg.LastBackupTS, backupTS, needDomain)

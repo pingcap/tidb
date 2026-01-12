@@ -1561,25 +1561,25 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	g.Record("BackupTS", backupMeta.EndVersion)
 	g.Record("RestoreTS", restoreTS)
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
-		defer func() {
-			log.Info("start to remove gc-safepoint keeper")
-			// close the gc safe point keeper at first
-			gcSafePointKeeperCancel()
-			// remove the gc-safe-point
-			if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
-				log.Warn("failed to remove service safe point, backup may fail if gc triggered",
-					zap.Error(err),
-				)
-			}
-			log.Info("finish removing gc-safepoint keeper")
-		}()
+	defer func() {
+		log.Info("start to remove gc-safepoint keeper")
+		// close the gc safe point keeper at first
+		gcSafePointKeeperCancel()
+		// remove the gc-safe-point
+		if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
+			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
+				zap.Error(err),
+			)
+		}
+		log.Info("finish removing gc-safepoint keeper")
+	}()
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-		err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	ddlJobs := FilterDDLJobs(client.GetDDLJobs(), tables)
 	ddlJobs = FilterDDLJobByRules(ddlJobs, DDLJobBlockListRule)
