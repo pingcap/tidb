@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -73,7 +74,7 @@ func TestByteReader(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("abcde"))
 	require.NoError(t, err)
 
-	newRsc := func() objstore.FileReader {
+	newRsc := func() objectio.Reader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
@@ -170,7 +171,7 @@ func TestUnexpectedEOF(t *testing.T) {
 	err := st.WriteFile(context.Background(), "testfile", []byte("0123456789"))
 	require.NoError(t, err)
 
-	newRsc := func() objstore.FileReader {
+	newRsc := func() objectio.Reader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc
@@ -199,7 +200,7 @@ func TestEmptyContent(t *testing.T) {
 	err = st.WriteFile(context.Background(), "testfile", []byte(""))
 	require.NoError(t, err)
 
-	newRsc := func() objstore.FileReader {
+	newRsc := func() objectio.Reader {
 		rsc, err := st.Open(context.Background(), "testfile", nil)
 		require.NoError(t, err)
 		return rsc

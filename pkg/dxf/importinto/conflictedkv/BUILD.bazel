@@ -21,6 +21,7 @@ go_library(
         "//pkg/lightning/verification",
         "//pkg/meta/model",
         "//pkg/objstore",
+        "//pkg/objstore/objectio",
         "//pkg/table",
         "//pkg/table/tables",
         "//pkg/tablecodec",

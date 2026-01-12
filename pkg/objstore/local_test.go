@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/stretchr/testify/require"
 )
 
@@ -199,7 +200,7 @@ func TestLocalFileReadRange(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, w.Close(ctx))
 
-	checkContent := func(r FileReader, expected string) {
+	checkContent := func(r objectio.Reader, expected string) {
 		buf := make([]byte, 10)
 		n, _ := r.Read(buf)
 		require.Equal(t, expected, string(buf[:n]))

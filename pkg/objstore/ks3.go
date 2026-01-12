@@ -35,6 +35,8 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -445,7 +447,7 @@ func (rs *KS3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (objectio.Reader, error) {
 	start := int64(0)
 	end := int64(0)
 	prefetchSize := 0
@@ -678,7 +680,7 @@ func (r *ks3ObjectReader) GetFileSize() (int64, error) {
 }
 
 // createUploader create multi upload request.
-func (rs *KS3Storage) createUploader(ctx context.Context, name string) (FileWriter, error) {
+func (rs *KS3Storage) createUploader(ctx context.Context, name string) (objectio.Writer, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -708,8 +710,8 @@ func (rs *KS3Storage) createUploader(ctx context.Context, name string) (FileWrit
 }
 
 // Create creates multi upload request.
-func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOption) (FileWriter, error) {
-	var uploader FileWriter
+func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOption) (objectio.Writer, error) {
+	var uploader objectio.Writer
 	var err error
 	if option == nil || option.Concurrency <= 1 {
 		uploader, err = rs.createUploader(ctx, name)
@@ -747,7 +749,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
+	uploaderWriter := objectio.NewBufferedWriter(uploader, bufSize, compressedio.NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 

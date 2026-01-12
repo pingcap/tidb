@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -134,7 +135,7 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
-	CompressType             objstore.CompressType
+	CompressType             compressedio.CompressType
 
 	Host     string
 	Port     int
@@ -586,7 +587,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.CompressType, err = ParseCompressType(compressType)
+	conf.CompressType, err = compressedio.ParseCompressType(compressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -669,22 +670,6 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 		dbTables[dbName] = append(dbTables[dbName], &TableInfo{tbName, avgRowLength, TableTypeBase})
 	}
 	return dbTables, nil
-}
-
-// ParseCompressType parses compressType string to storage.CompressType
-func ParseCompressType(compressType string) (objstore.CompressType, error) {
-	switch compressType {
-	case "", "no-compression":
-		return objstore.NoCompression, nil
-	case "gzip", "gz":
-		return objstore.Gzip, nil
-	case "snappy":
-		return objstore.Snappy, nil
-	case "zstd", "zst":
-		return objstore.Zstd, nil
-	default:
-		return objstore.NoCompression, errors.Errorf("unknown compress type %s", compressType)
-	}
 }
 
 // ParseOutputDialect parses output dialect string to Dialect

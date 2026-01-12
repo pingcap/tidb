@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -495,19 +496,19 @@ func (s *writerFirstCloseFailStorage) Create(
 	ctx context.Context,
 	path string,
 	option *objstore.WriterOption,
-) (objstore.FileWriter, error) {
+) (objectio.Writer, error) {
 	w, err := s.Storage.Create(ctx, path, option)
 	if err != nil {
 		return nil, err
 	}
 	if strings.Contains(path, statSuffix) {
-		return &firstCloseFailWriter{FileWriter: w, shouldFail: &s.shouldFail}, nil
+		return &firstCloseFailWriter{Writer: w, shouldFail: &s.shouldFail}, nil
 	}
 	return w, nil
 }
 
 type firstCloseFailWriter struct {
-	objstore.FileWriter
+	objectio.Writer
 	shouldFail *bool
 }
 
@@ -516,7 +517,7 @@ func (w *firstCloseFailWriter) Close(ctx context.Context) error {
 		*w.shouldFail = false
 		return fmt.Errorf("first close fail")
 	}
-	return w.FileWriter.Close(ctx)
+	return w.Writer.Close(ctx)
 }
 
 func TestFlushKVsRetry(t *testing.T) {
