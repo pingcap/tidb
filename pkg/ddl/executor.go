@@ -4713,14 +4713,21 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 }
 
 func checkTableTypeForFulltextIndex(tblInfo *model.TableInfo) error {
-	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
-		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Fulltext Index")
-	}
-	if tblInfo.TempTableType != model.TempTableNone {
-		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("fulltext index")
+	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
+		return err
 	}
 	if tblInfo.GetPartitionInfo() != nil {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs("unsupported partition table")
+	}
+	return nil
+}
+
+func checkTableTypeForHybridIndex(tblInfo *model.TableInfo) error {
+	if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		return dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Hybrid Index")
+	}
+	if tblInfo.TempTableType != model.TempTableNone {
+		return dbterror.ErrOptOnTemporaryTable.FastGenByArgs("hybrid index")
 	}
 	return nil
 }
@@ -4794,7 +4801,7 @@ func (e *executor) createHybridIndex(ctx sessionctx.Context, ti ast.Ident, index
 	}
 
 	tblInfo := t.Meta()
-	if err := checkTableTypeForFulltextIndex(tblInfo); err != nil {
+	if err := checkTableTypeForHybridIndex(tblInfo); err != nil {
 		return errors.Trace(err)
 	}
 

@@ -1154,6 +1154,29 @@ LOOP:
 	tk.MustExec("drop table test_drop_index")
 }
 
+func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists th")
+	tk.MustExec("create table th(a int, v varchar(20))")
+
+	param := `'{"inverted":[{"columns":["a"]}]}'`
+	tk.MustExec("create hybrid index h_idx on th(a) parameter " + param)
+	tk.MustExec("drop index h_idx on th")
+
+	tk.MustExec("alter table th add hybrid index h_idx(a) parameter " + param)
+	tk.MustExec("alter table th drop index h_idx")
+
+	tk.MustExec("drop table if exists th2")
+	tk.MustExec("create table th2(a int, hybrid index h_idx(a) parameter " + param + ")")
+	tk.MustExec("drop table th2")
+}
+
 func TestAnonymousIndex(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
 
@@ -1496,6 +1519,44 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 	// a columnar index with invisible
 	tk.MustContainErrMsg("create table t(a int, b int, c int, columnar index idx(b) using inverted INVISIBLE)",
 		"[ddl:8200]INVISIBLE can not be used in INVERTED INDEX")
+}
+
+func TestHybridIndexOnPartitionedTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+
+	tk.MustExec("drop table if exists pt_create, pt_alter;")
+	tk.MustExec(`create table pt_create(a int, b text, v vector(3))
+partition by range (a) (
+        partition p0 values less than (10),
+        partition p1 values less than (20)
+);`)
+	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}]}'`)
+	tbl := external.GetTableByName(t, tk, "test", "pt_create")
+	idx := tbl.Meta().FindIndexByName("idx_hybrid")
+	require.NotNil(t, idx)
+	require.Equal(t, ast.IndexTypeHybrid, idx.Tp)
+	require.NotNil(t, idx.HybridInfo)
+	require.Len(t, idx.HybridInfo.FullText, 1)
+	require.Len(t, idx.HybridInfo.Vector, 1)
+
+	tk.MustExec(`create table pt_alter(a int, b text, v vector(3))
+partition by range (a) (
+        partition p0 values less than (5),
+        partition p1 values less than (15)
+);`)
+	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}]}'`)
+	tbl = external.GetTableByName(t, tk, "test", "pt_alter")
+	idx = tbl.Meta().FindIndexByName("idx_hybrid_alter")
+	require.NotNil(t, idx)
+	require.Equal(t, ast.IndexTypeHybrid, idx.Tp)
+	require.NotNil(t, idx.HybridInfo)
+	require.Len(t, idx.HybridInfo.FullText, 1)
+	require.Len(t, idx.HybridInfo.Vector, 1)
 }
 
 func TestAddVectorIndexSimple(t *testing.T) {
