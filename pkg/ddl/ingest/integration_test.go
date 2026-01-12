@@ -385,7 +385,7 @@ func TestAddIndexDuplicateMessage(t *testing.T) {
 
 	var errDML error
 	var once sync.Once
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/afterMockWriterWriteRow", func() {
 		once.Do(func() {
 			_, errDML = tk1.Exec("insert into t values (2, 1, 2);")
 		})
@@ -404,6 +404,11 @@ func TestMultiSchemaAddIndexMerge(t *testing.T) {
 	tk.MustExec("use test")
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
+
+	oldMockExecAfterWriteRow := ingest.MockExecAfterWriteRow
+	t.Cleanup(func() {
+		ingest.MockExecAfterWriteRow = oldMockExecAfterWriteRow
+	})
 
 	for _, createTableSQL := range []string{
 		"create table t (a int, b int);",
@@ -442,7 +447,7 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 	tk.MustExec("set global tidb_enable_dist_task = off;")
 
 	injected := false
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob", func(job *model.Job, done bool) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunIngestReorgJob", func(job *model.Job, done bool) {
 		if done && !injected {
 			tk2 := testkit.NewTestKit(t, store)
 			tk2.MustExec("use test")
@@ -455,7 +460,7 @@ func TestAddIndexIngestJobWriteConflict(t *testing.T) {
 		}
 	})
 	rowCnt := atomic.Int32{}
-	failpoint.EnableCall("github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/onMockWriterWriteRow", func() {
 		rowCnt.Add(1)
 	})
 	tk.MustExec("alter table t add index idx(b);")
@@ -773,6 +778,8 @@ func TestCheckpointPhysicalIDValidation(t *testing.T) {
 	for _, row := range partitionRows {
 		var pidStr string
 		switch v := row[0].(type) {
+		case int64:
+			pidStr = strconv.FormatInt(v, 10)
 		case string:
 			pidStr = v
 		case []byte:

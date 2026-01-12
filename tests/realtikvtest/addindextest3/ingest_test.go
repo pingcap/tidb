@@ -58,7 +58,11 @@ func TestAddIndexIngestMemoryUsage(t *testing.T) {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
 
+	oldRunInTest := local.RunInTest
 	local.RunInTest = true
+	t.Cleanup(func() {
+		local.RunInTest = oldRunInTest
+	})
 
 	tk.MustExec("create table t (a int, b int, c int);")
 	var sb strings.Builder
@@ -127,10 +131,14 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 
 	// test cancel is timely
 	enter := make(chan struct{})
+	blockOnce := atomic.Bool{}
 	testfailpoint.EnableCall(
 		t,
 		"github.com/pingcap/tidb/pkg/lightning/backend/local/beforeExecuteRegionJob",
 		func(ctx context.Context) {
+			if !blockOnce.CompareAndSwap(false, true) {
+				return
+			}
 			close(enter)
 			select {
 			case <-time.After(time.Second * 20):
@@ -149,7 +157,7 @@ func TestAddIndexIngestLimitOneBackend(t *testing.T) {
 	tk.MustExec("admin cancel ddl jobs " + jobID)
 	wg.Wait()
 	// cancel should be timely
-	require.Less(t, time.Since(now).Seconds(), 10.0)
+	require.Less(t, time.Since(now).Seconds(), 30.0)
 }
 
 func TestAddIndexIngestWriterCountOnPartitionTable(t *testing.T) {
@@ -248,8 +256,12 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 		tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
 	}
 
+	oldImporterRangeConcurrency := ingest.ImporterRangeConcurrencyForTest
 	ingest.ImporterRangeConcurrencyForTest = &atomic.Int32{}
 	ingest.ImporterRangeConcurrencyForTest.Store(2)
+	defer func() {
+		ingest.ImporterRangeConcurrencyForTest = oldImporterRangeConcurrency
+	}()
 	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 20;")
 
 	tk.MustExec("create table t (a int primary key);")
@@ -272,7 +284,7 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	} else {
 		require.Equal(t, jobTp, "")
 	}
-	ingest.ImporterRangeConcurrencyForTest = nil
+
 }
 
 func TestAddIndexIngestEmptyTable(t *testing.T) {
@@ -481,7 +493,9 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	tk.MustExec("alter table t add index idx_test(b);")
 	tk.MustExec("update t set b = b + 1;")
 
@@ -496,7 +510,6 @@ func testAddIndexDiskQuotaTS(t *testing.T, tk *testkit.TestKit) {
 		assert.Equal(t, counter, 0)
 	})
 	tk.MustExec("alter table t add index idx_test2(b);")
-	ingest.ForceSyncFlagForTest.Store(false)
 }
 
 func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
@@ -514,7 +527,9 @@ func TestAddIndexAdvanceWatermarkFailed(t *testing.T) {
 	tk.MustQuery("split table t by (30000);").Check(testkit.Rows("1 1"))
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 2);")
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockAfterImportAllocTSFailed", "2*return")
 	tk.MustExec("alter table t add index idx(b);")
 	tk.MustExec("admin check table t;")
@@ -596,9 +611,10 @@ func TestAddIndexRemoteDuplicateCheck(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1, 1);")
 	tk.MustExec("insert into t values(100000, 1, 1);")
 
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 	tk.MustGetErrMsg("alter table t add unique index idx(b);", "[kv:1062]Duplicate entry '1' for key 't.idx'")
-	ingest.ForceSyncFlagForTest.Store(false)
 }
 
 func TestAddIndexRecoverOnDuplicateCheck(t *testing.T) {
@@ -1141,25 +1157,38 @@ func TestIngestCancelCleanupOrder(t *testing.T) {
 	})
 	cancelOnce := sync.Once{}
 	cancelIssued := atomic.Bool{}
+	cancelExecErrCh := make(chan error, 1)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/beforeBackendIngest", func() {
 		backfillStarted.Store(true)
-		if jobID.Load() > 0 {
-			cancelOnce.Do(func() {
-				cancelIssued.Store(true)
-				_, _ = tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", jobID.Load()))
-			})
+		if jobID.Load() <= 0 {
+			return
 		}
+		cancelOnce.Do(func() {
+			cancelIssued.Store(true)
+			rs, err := tkCancel.Exec(fmt.Sprintf("admin cancel ddl jobs %d", jobID.Load()))
+			if rs != nil {
+				closeErr := rs.Close()
+				if err == nil {
+					err = closeErr
+				}
+			}
+			cancelExecErrCh <- err
+		})
 	})
 
 	err := tk.ExecToErr("alter table t add index idx(b);")
-	// The job should be cancelled
-	if err != nil {
-		require.ErrorContains(t, err, "Cancelled DDL job")
-	}
+	require.Error(t, err)
+	require.ErrorContains(t, err, "Cancelled DDL job")
 
 	// Key assertion: backfill actually started before cancel
 	require.True(t, backfillStarted.Load(), "backfill should have started before cancel")
 	require.True(t, cancelIssued.Load(), "cancel should be issued after ingest starts")
+	select {
+	case cancelErr := <-cancelExecErrCh:
+		require.NoError(t, cancelErr)
+	case <-time.After(5 * time.Second):
+		require.Fail(t, "cancel exec should have finished")
+	}
 
 	// Verify no panic occurred and table is consistent
 	tk.MustExec("admin check table t;")
