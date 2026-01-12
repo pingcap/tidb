@@ -870,9 +870,9 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	}))
-	defer s.Close()
+	t.Cleanup(s.Close)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(cancel)
 	// Set to noop
 	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
 	err := mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, noopURI)
