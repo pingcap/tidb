@@ -169,7 +169,7 @@ func (b *MockExecutorBuilder) Build(p base.Plan) exec.Executor {
 }
 
 func (b *executorBuilder) build(p base.Plan) exec.Executor {
-	if phyWrapper, ok := p.(*plannercore.PhysicalSimpleWrapper); ok {
+	if phyWrapper, ok := p.(*plannercore.PhysicalPlanWrapper); ok {
 		p = phyWrapper.Inner
 	}
 
