@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -146,7 +147,7 @@ func TestMemStoreWalkDir(t *testing.T) {
 		})
 		return nil
 	}
-	require.Nil(t, store.WalkDir(ctx, &WalkOption{}, iterFn))
+	require.Nil(t, store.WalkDir(ctx, &storeapi.WalkOption{}, iterFn))
 	require.Equal(t, len(allTestFiles), len(iterFileInfos))
 	for _, info := range iterFileInfos {
 		expectContent, ok := allTestFiles[info.Name]
@@ -159,7 +160,7 @@ func TestMemStoreWalkDir(t *testing.T) {
 	expectFiles := make(map[string][]byte)
 	expectFiles["/aaa/hello.txt"] = allTestFiles["/aaa/hello.txt"]
 	expectFiles["/aaa/world.txt"] = allTestFiles["/aaa/world.txt"]
-	require.Nil(t, store.WalkDir(ctx, &WalkOption{
+	require.Nil(t, store.WalkDir(ctx, &storeapi.WalkOption{
 		SubDir: "/aaa",
 	}, iterFn))
 	require.Equal(t, len(expectFiles), len(iterFileInfos))
@@ -175,7 +176,7 @@ func TestMemStoreWalkDir(t *testing.T) {
 	expectFiles["/hello.txt"] = allTestFiles["/hello.txt"]
 	expectFiles["/hello2.txt"] = allTestFiles["/hello2.txt"]
 	expectFiles["/aaa/hello.txt"] = allTestFiles["/aaa/hello.txt"]
-	require.Nil(t, store.WalkDir(ctx, &WalkOption{
+	require.Nil(t, store.WalkDir(ctx, &storeapi.WalkOption{
 		ObjPrefix: "hello",
 	}, iterFn))
 	require.Equal(t, len(expectFiles), len(iterFileInfos))

@@ -30,7 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -123,7 +123,7 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	ExtStore  objstore.Storage
+	ExtStore  storeapi.Storage
 	DataFiles []string
 	StatFiles []string
 	StartKey  []byte

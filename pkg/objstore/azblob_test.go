@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
 )
 
@@ -498,11 +499,11 @@ func TestCopyObject(t *testing.T) {
 
 	ctx := context.Background()
 
-	w, err := strg1.Create(ctx, "test.bin", &WriterOption{})
+	w, err := strg1.Create(ctx, "test.bin", &storeapi.WriterOption{})
 	require.NoError(t, err)
 	_, err = io.CopyN(wr{w, ctx}, rand.Reader, 300*1024*1024)
 	require.NoError(t, err)
-	require.NoError(t, strg2.CopyFrom(ctx, strg1, CopySpec{
+	require.NoError(t, strg2.CopyFrom(ctx, strg1, storeapi.CopySpec{
 		From: "test.bin",
 		To:   "somewhere/test.bin",
 	}))

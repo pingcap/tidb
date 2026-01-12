@@ -26,7 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -96,7 +96,7 @@ type MergeOperator struct {
 // NewMergeOperator creates a new MergeOperator instance.
 func NewMergeOperator(
 	ctx *workerpool.Context,
-	store objstore.Storage,
+	store storeapi.Storage,
 	partSize int64,
 	newFilePrefix string,
 	blockSize int,
@@ -145,7 +145,7 @@ func (*MergeOperator) String() string {
 type mergeWorker struct {
 	ctx context.Context
 
-	store         objstore.Storage
+	store         storeapi.Storage
 	partSize      int64
 	newFilePrefix string
 	blockSize     int
@@ -265,7 +265,7 @@ func splitDataFiles(paths []string, concurrency int) [][]string {
 func mergeOverlappingFilesInternal(
 	ctx context.Context,
 	paths []string,
-	store objstore.Storage,
+	store storeapi.Storage,
 	partSize int64,
 	newFilePrefix string,
 	writerID string,

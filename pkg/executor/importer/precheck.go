@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/store"
@@ -149,11 +150,11 @@ func (e *LoadDataController) checkGlobalSortStorePrivilege(ctx context.Context) 
 		return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("unsupported cloud storage uri scheme: " + cloudStorageURL.Scheme)
 	}
 
-	opt := &objstore.Options{
-		CheckPermissions: []objstore.Permission{
-			objstore.GetObject,
-			objstore.ListObjects,
-			objstore.PutAndDeleteObject,
+	opt := &storeapi.Options{
+		CheckPermissions: []storeapi.Permission{
+			storeapi.GetObject,
+			storeapi.ListObjects,
+			storeapi.PutAndDeleteObject,
 		},
 	}
 	if intest.InTest {
