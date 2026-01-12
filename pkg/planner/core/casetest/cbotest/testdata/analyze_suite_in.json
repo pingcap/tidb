@@ -281,5 +281,12 @@
       "explain format = 'cost_trace' \nSELECT\n  /*+ QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;",
       "explain format = 'cost_trace' \nSELECT\n  /*+ limit_to_cop(), QB_NAME(`listObjectsWithPrefix_FilterByCreated_Since_Securable`) */\n  path,\n  updated_ms,\n  size,\n  etag,\n  seq,\n  last_seen_ms\nFROM\n  objects FORCE INDEX(idx_metastore_securable_seq)\nWHERE\n  metastore_uuid = 0x3CBCC26CA7E740A48DD164D74757DEE2\n  AND securable_id = 2238365063123291\n  AND (\n    seq > 17299834\n    AND TRUE\n  )\nORDER BY\n  seq\nLIMIT\n  5001;"
     ]
+  },
+  {
+    "name": "TestIndexJoinPreferIndexCoversMoreJoinKeyCols",
+    "cases": [
+      "explain format ='brief' SELECT \n  mp.col1,\n  mp.col2,\n  mp.col3,\n  mp.col4,\n  mp.col5,\n  mp.col6\nFROM\n  mp\n  LEFT JOIN ab ON ab.col1 = mp.col2\n  AND ab.col2 = mp.col6\nWHERE\n  mp.col5 = 'PKR'\n  AND mp.col3 = 1\n  AND mp.col6 IN ('1685', '2239')\n  AND mp.col4 >= 1764788400\n  AND mp.col4 <= 1767466799\n  AND ab.col3 IN ('cj9dkqw7', 'del_cj9dkqw7')\nORDER BY\n  mp.col4 DESC\nLIMIT\n  100;",
+      "explain format ='brief' SELECT \n  mp.col1,\n  mp.col2,\n  mp.col3,\n  mp.col4,\n  mp.col5,\n  mp.col6\nFROM\n  mp\n  LEFT JOIN ab ON ab.col1 = mp.col2\n  AND ab.col2 = mp.col6\nWHERE\n  mp.col5 = 'PKR'\n  AND mp.col3 = 1\n  AND mp.col6 IN ('1685', '2239')\n  AND mp.col4 >= 1764788400\n  AND mp.col4 <= 1767466799\n  AND ab.col3 IN ('cj9dkqw7', 'del_cj9dkqw7')\nORDER BY\n  mp.col4 DESC\nLIMIT\n  100;"
+    ]
   }
 ]

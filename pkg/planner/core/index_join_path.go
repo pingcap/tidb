@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"math"
 	"strings"
 
@@ -306,7 +307,39 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 	} else if cmpResult == -1 {
 		return false
 	}
-	// cmpResult == 0, go on to use NDV to compare.
+	// indexJoinCoverNumResult: in the index join case, if you can tell from index A is better than B by normal rules
+	// like accessResult, eqOrInResult, then do it. But if two indexes is not comparable, we can take one more condition
+	// into consideration here: if A's access col cover more index join keys, it has high potential to be better.
+	//     for example: index(id, mem, scode, ctime) vs index(uname, scode, ntime)
+	//                         ^   ^     ^                       ^     ^
+	// static EQ predicates <--+---+     +-----------------------+-----+-----> dynamic join join EQ predicates.
+	// since they two covers different index columns group, it's un-comparable and hard to see which one is better. Instead
+	// of returning "no winner" and return cmpResult == 0 and letting ndv division outside to make the decision, we could
+	// be a little more bias to index join keys here. (heuristic)
+	if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix65531, false) {
+		if current.idxOff2KeyOff != nil && best.idxOff2KeyOff != nil {
+			curCover, bestCover := 0, 0
+			for _, off := range current.idxOff2KeyOff {
+				if off != -1 {
+					curCover++
+				}
+			}
+			for _, off := range best.idxOff2KeyOff {
+				if off != -1 {
+					bestCover++
+				}
+			}
+			if curCover > bestCover {
+				// current covers more index join keys.
+				return true
+			}
+			if curCover < bestCover {
+				// best covers more index join keys.
+				return false
+			}
+			// cover num is the same, back to NDV est.
+		}
+	}
 
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.

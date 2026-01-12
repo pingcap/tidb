@@ -612,5 +612,35 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestIndexJoinPreferIndexCoversMoreJoinKeyCols",
+    "Cases": [
+      {
+        "SQL": "explain format ='brief' SELECT \n  mp.col1,\n  mp.col2,\n  mp.col3,\n  mp.col4,\n  mp.col5,\n  mp.col6\nFROM\n  mp\n  LEFT JOIN ab ON ab.col1 = mp.col2\n  AND ab.col2 = mp.col6\nWHERE\n  mp.col5 = 'PKR'\n  AND mp.col3 = 1\n  AND mp.col6 IN ('1685', '2239')\n  AND mp.col4 >= 1764788400\n  AND mp.col4 <= 1767466799\n  AND ab.col3 IN ('cj9dkqw7', 'del_cj9dkqw7')\nORDER BY\n  mp.col4 DESC\nLIMIT\n  100;",
+        "Plan": [
+          "TopN 84.77 root  test.mp.col4:desc, offset:0, count:100",
+          "└─IndexHashJoin 84.77 root  inner join, inner:IndexLookUp, outer key:test.ab.col2, inner key:test.mp.col6, equal cond:eq(test.ab.col1, test.mp.col2), eq(test.ab.col2, test.mp.col6)",
+          "  ├─Batch_Point_Get(Build) 4.00 root table:ab, index:idx_1(col3, col2) keep order:false, desc:false",
+          "  └─IndexLookUp(Probe) 84.77 root  ",
+          "    ├─Selection(Build) 84.77 cop[tikv]  in(test.mp.col6, \"1685\", \"2239\")",
+          "    │ └─IndexRangeScan 84.77 cop[tikv] table:mp, index:idx_2(col3, col5, col6, col4) range: decided by [eq(test.mp.col6, test.ab.col2) eq(test.mp.col3, 1) eq(test.mp.col5, PKR) ge(test.mp.col4, 1764788400) le(test.mp.col4, 1767466799)], keep order:false",
+          "    └─TableRowIDScan(Probe) 84.77 cop[tikv] table:mp keep order:false"
+        ]
+      },
+      {
+        "SQL": "explain format ='brief' SELECT \n  mp.col1,\n  mp.col2,\n  mp.col3,\n  mp.col4,\n  mp.col5,\n  mp.col6\nFROM\n  mp\n  LEFT JOIN ab ON ab.col1 = mp.col2\n  AND ab.col2 = mp.col6\nWHERE\n  mp.col5 = 'PKR'\n  AND mp.col3 = 1\n  AND mp.col6 IN ('1685', '2239')\n  AND mp.col4 >= 1764788400\n  AND mp.col4 <= 1767466799\n  AND ab.col3 IN ('cj9dkqw7', 'del_cj9dkqw7')\nORDER BY\n  mp.col4 DESC\nLIMIT\n  100;",
+        "Plan": [
+          "TopN 84.77 root  test.mp.col4:desc, offset:0, count:100",
+          "└─IndexHashJoin 84.77 root  inner join, inner:IndexLookUp, outer key:test.ab.col1, test.ab.col2, inner key:test.mp.col2, test.mp.col6, equal cond:eq(test.ab.col1, test.mp.col2), eq(test.ab.col2, test.mp.col6)",
+          "  ├─Batch_Point_Get(Build) 4.00 root table:ab, index:idx_1(col3, col2) keep order:false, desc:false",
+          "  └─IndexLookUp(Probe) 84.77 root  ",
+          "    ├─Selection(Build) 382.27 cop[tikv]  in(test.mp.col6, \"1685\", \"2239\")",
+          "    │ └─IndexRangeScan 382.27 cop[tikv] table:mp, index:idx_1(col2, col6, col7) range: decided by [eq(test.mp.col2, test.ab.col1) eq(test.mp.col6, test.ab.col2)], keep order:false",
+          "    └─Selection(Probe) 84.77 cop[tikv]  eq(test.mp.col3, 1), eq(test.mp.col5, \"PKR\"), ge(test.mp.col4, 1764788400), le(test.mp.col4, 1767466799)",
+          "      └─TableRowIDScan 382.27 cop[tikv] table:mp keep order:false"
+        ]
+      }
+    ]
   }
 ]
