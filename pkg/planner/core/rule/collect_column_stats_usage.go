@@ -284,19 +284,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		switch x := lp.(type) {
 		case *logicalop.LogicalJoin:
 			// Extract join columns from EqualConditions and OtherConditions
-			for _, cond := range x.EqualConditions {
-				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
-			}
-			for _, cond := range x.OtherConditions {
-				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
-			}
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
 		case *logicalop.LogicalApply:
-			for _, cond := range x.EqualConditions {
-				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
-			}
-			for _, cond := range x.OtherConditions {
-				currentJoinCols = append(currentJoinCols, expression.ExtractColumns(cond)...)
-			}
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
 		case *logicalop.LogicalSort:
 			for _, item := range x.ByItems {
 				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Expr)...)
@@ -307,7 +299,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			}
 		case *logicalop.LogicalWindow:
 			for _, item := range x.OrderBy {
-				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Col)...)
+				currentOrderingCols = append(currentOrderingCols, item.Col)
 			}
 		case *logicalop.LogicalAggregation:
 			// GROUP BY columns benefit from indexes (similar to ordering)

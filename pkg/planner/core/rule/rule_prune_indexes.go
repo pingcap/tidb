@@ -35,14 +35,12 @@ const (
 type indexWithScore struct {
 	path                 *util.AccessPath
 	interestingCount     int     // Total number of interesting columns covered
-	consecutiveCount     int     // Consecutive interesting columns from start of index
 	consecutiveColumnIDs []int64 // IDs of consecutive columns (for detecting different orderings)
 }
 
-// columnRequirements holds the column maps and totals needed for index pruning.
+// columnRequirements holds the column maps needed for index pruning.
 type columnRequirements struct {
 	interestingColIDs map[int64]struct{}
-	totalColumns      int
 }
 
 // ShouldPreferIndexMerge returns true if index merge should be preferred, either due to hints or fix control.
@@ -167,22 +165,22 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		// If index merge is preferred (via general hints without index names, or fix control),
 		// keep indexes that have any coverage. Note: When specific indexes are mentioned in hints,
 		// those are handled above. Here we handle general IndexMerge hints (no specific index names)
-		// or fix control. We still apply some filtering (consecutiveCount > 0 OR other coverage)
+		// or fix control. We still apply some filtering (len(consecutiveColumnIDs) > 0 OR other coverage)
 		// to avoid keeping completely useless indexes, but we're more lenient than normal pruning.
 		if preferMerge && !hasSpecifiedIndexes {
 			// When IndexMerge is preferred without specific index names, keep any index with coverage
-			if idxScore.consecutiveCount > 0 || path.IsSingleScan || idxScore.interestingCount > 0 {
+			if len(idxScore.consecutiveColumnIDs) > 0 || path.IsSingleScan || idxScore.interestingCount > 0 {
 				preferredIndexes = append(preferredIndexes, idxScore)
 				continue
 			}
 		}
 
 		// Add to preferred indexes if it has any coverage or is a covering scan
-		shouldAdd := idxScore.consecutiveCount > 0 || path.IsSingleScan || idxScore.interestingCount > 0
+		shouldAdd := len(idxScore.consecutiveColumnIDs) > 0 || path.IsSingleScan || idxScore.interestingCount > 0
 		if shouldAdd {
 			// Check if this index has a different consecutive ordering than we've seen
 			orderingKey := buildOrderingKey(idxScore.consecutiveColumnIDs)
-			if idxScore.consecutiveCount > 0 {
+			if len(idxScore.consecutiveColumnIDs) > 0 {
 				if _, seen := consecutiveOrderings[orderingKey]; !seen {
 					// This is a new ordering, keep it
 					preferredIndexes = append(preferredIndexes, idxScore)
@@ -217,7 +215,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	return result
 }
 
-// buildColumnRequirements builds column ID maps for efficient lookup and calculates totals.
+// buildColumnRequirements builds column ID maps for efficient lookup.
 func buildColumnRequirements(interestingColumns []*expression.Column) columnRequirements {
 	req := columnRequirements{
 		interestingColIDs: make(map[int64]struct{}, len(interestingColumns)),
@@ -226,7 +224,6 @@ func buildColumnRequirements(interestingColumns []*expression.Column) columnRequ
 	// Build interesting column IDs
 	for _, col := range interestingColumns {
 		req.interestingColIDs[col.ID] = struct{}{}
-		req.totalColumns++
 	}
 
 	return req
@@ -270,15 +267,14 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 		if _, found := req.interestingColIDs[idxColID]; found {
 			score.interestingCount++
 			// Track consecutive columns from the start of the index
-			if i == score.consecutiveCount {
-				score.consecutiveCount++
+			if i == len(score.consecutiveColumnIDs) {
 				score.consecutiveColumnIDs = append(score.consecutiveColumnIDs, idxColID)
 			}
 		} else {
 			// Once we hit a non-interesting column, stop tracking consecutive columns
 			// (we only care about consecutive matches from the start)
 			// If we've already started tracking consecutive columns and hit a non-interesting one, break
-			if score.consecutiveCount > 0 && i >= score.consecutiveCount {
+			if len(score.consecutiveColumnIDs) > 0 && i >= len(score.consecutiveColumnIDs) {
 				break
 			}
 		}
@@ -303,7 +299,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	}
 	scored := make([]scoredIndex, 0, len(indexes))
 	for _, candidate := range indexes {
-		score := calculateScoreFromCoverage(candidate, req.totalColumns, candidate.path.IsSingleScan)
+		score := calculateScoreFromCoverage(candidate, len(req.interestingColIDs), candidate.path.IsSingleScan)
 		// Skip indexes with score == 0 as they don't provide any value
 		if score == 0 {
 			continue
@@ -314,7 +310,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 			score:            score,
 			columns:          cols,
 			isSingleScan:     candidate.path.IsSingleScan,
-			totalConsecutive: candidate.consecutiveCount,
+			totalConsecutive: len(candidate.consecutiveColumnIDs),
 		})
 	}
 	slices.SortFunc(scored, func(a, b scoredIndex) int {
@@ -418,7 +414,7 @@ func calculateScoreFromCoverage(info indexWithScore, totalColumns int, isSingleS
 	// Consecutive columns are much more valuable than scattered matches
 	// Index on (a,b,c,d) with interesting columns a, b, c can use first 3 columns
 	// But with interesting columns a, d, can only use first 1 column
-	score += info.consecutiveCount * 10
+	score += len(info.consecutiveColumnIDs) * 10
 
 	// Bonus if the index is covering all interesting columns
 	if info.interestingCount == totalColumns {
