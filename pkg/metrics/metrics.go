@@ -48,6 +48,7 @@ const (
 	LabelAnalyze    = "analyze"
 	LabelWorkerPool = "worker-pool"
 	LabelStats      = "stats"
+	LblJobType      = "job_type"
 
 	LabelBatchRecvLoop = "batch-recv-loop"
 	LabelBatchSendLoop = "batch-send-loop"

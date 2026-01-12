@@ -51,7 +51,7 @@ func InitTTLMetrics() {
 			Name:      "ttl_query_duration",
 			Help:      "Bucketed histogram of processing time (s) of handled TTL queries.",
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 20), // 10ms ~ 1.45hour
-		}, []string{LblSQLType, LblResult})
+		}, []string{LblSQLType, LblJobType, LblResult})
 
 	TTLProcessedExpiredRowsCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
@@ -59,7 +59,7 @@ func InitTTLMetrics() {
 			Subsystem: "server",
 			Name:      "ttl_processed_expired_rows",
 			Help:      "The count of expired rows processed in TTL jobs",
-		}, []string{LblSQLType, LblResult})
+		}, []string{LblSQLType, LblJobType, LblResult})
 
 	TTLJobStatus = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -67,7 +67,7 @@ func InitTTLMetrics() {
 			Subsystem: "server",
 			Name:      "ttl_job_status",
 			Help:      "The jobs count in the specified status",
-		}, []string{LblType})
+		}, []string{LblType, LblJobType})
 
 	TTLTaskStatus = metricscommon.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -75,7 +75,7 @@ func InitTTLMetrics() {
 			Subsystem: "server",
 			Name:      "ttl_task_status",
 			Help:      "The tasks count in the specified status",
-		}, []string{LblType})
+		}, []string{LblType, LblJobType})
 
 	TTLPhaseTime = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{

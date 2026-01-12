@@ -472,6 +472,12 @@ const (
 	// version253
 	// Add last_used_date to mysql.bind_info
 	version253 = 253
+
+	// version254
+	// Add tidb_softdelete_table_status system table and evolve TTL tables schema to support softdelete jobs.
+	// - Add job_type to mysql.tidb_ttl_task.
+	// - Add job_type to mysql.tidb_ttl_job_history.
+	version254 = 254
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -485,7 +491,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version253
+var currentBootstrapVersion int64 = version254
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -663,6 +669,7 @@ var (
 		{version: version251, fn: upgradeToVer251},
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
+		{version: version254, fn: upgradeToVer254},
 	}
 )
 
@@ -2036,4 +2043,14 @@ func upgradeToVer252(s sessionapi.Session, _ int64) {
 
 func upgradeToVer253(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_date DATE DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer254(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, CreateTiDBSoftDeleteTableStatusTable)
+
+	// mysql.tidb_ttl_task is introduced in version131, but schema may vary for upgraded clusters.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS job_type varchar(32) NOT NULL DEFAULT 'ttl' AFTER job_id", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD INDEX idx_job_type (job_type)", dbterror.ErrDupKeyName)
+	// mysql.tidb_ttl_job_history is introduced in version131.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_job_history ADD COLUMN IF NOT EXISTS job_type varchar(32) NOT NULL DEFAULT 'ttl' AFTER job_id", infoschema.ErrColumnExists)
 }

@@ -1,5 +1,4 @@
 // Copyright 2022 PingCAP, Inc.
-//
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
@@ -23,6 +22,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
+// common consts
+const (
+	SQLTypeSelect    = "select"
+	SQLTypeDelete    = "delete"
+	JobStatusRunning = "running"
+	JobStatusCancel  = "cancelling"
+	TaskStatusScan   = "scanning"
+	TaskStatusDel    = "deleting"
+)
+
 // Phases to trace
 var (
 	PhaseIdle      = "idle"
@@ -38,21 +47,6 @@ var (
 
 // TTL metrics
 var (
-	SelectSuccessDuration prometheus.Observer
-	SelectErrorDuration   prometheus.Observer
-	DeleteSuccessDuration prometheus.Observer
-	DeleteErrorDuration   prometheus.Observer
-
-	ScannedExpiredRows       prometheus.Counter
-	DeleteSuccessExpiredRows prometheus.Counter
-	DeleteErrorExpiredRows   prometheus.Counter
-
-	RunningJobsCnt    prometheus.Gauge
-	CancellingJobsCnt prometheus.Gauge
-
-	ScanningTaskCnt prometheus.Gauge
-	DeletingTaskCnt prometheus.Gauge
-
 	WaterMarkScheduleDelayNames = []struct {
 		Name  string
 		Delay time.Duration
@@ -98,30 +92,38 @@ func init() {
 
 // InitMetricsVars init ttl metrics vars vars.
 func InitMetricsVars() {
-	SelectSuccessDuration = metrics.TTLQueryDuration.With(
-		prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
-	SelectErrorDuration = metrics.TTLQueryDuration.With(
-		prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblError})
-	DeleteSuccessDuration = metrics.TTLQueryDuration.With(
-		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
-	DeleteErrorDuration = metrics.TTLQueryDuration.With(
-		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
-
-	ScannedExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(
-		prometheus.Labels{metrics.LblSQLType: "select", metrics.LblResult: metrics.LblOK})
-	DeleteSuccessExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(
-		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblOK})
-	DeleteErrorExpiredRows = metrics.TTLProcessedExpiredRowsCounter.With(
-		prometheus.Labels{metrics.LblSQLType: "delete", metrics.LblResult: metrics.LblError})
-
-	RunningJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "running"})
-	CancellingJobsCnt = metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: "cancelling"})
-
-	ScanningTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "scanning"})
-	DeletingTaskCnt = metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: "deleting"})
-
 	scanWorkerPhases = initWorkerPhases("scan_worker")
 	deleteWorkerPhases = initWorkerPhases("delete_worker")
+}
+
+// QueryDuration will get the ttl query duration counter.
+func QueryDuration(typ string, jobType string, ok bool) prometheus.Observer {
+	res := metrics.LblError
+	if ok {
+		res = metrics.LblOK
+	}
+	return metrics.TTLQueryDuration.With(
+		prometheus.Labels{metrics.LblSQLType: typ, metrics.LblJobType: jobType, metrics.LblResult: res})
+}
+
+// ExpiredRows will get the ttl expired rows counter.
+func ExpiredRows(typ string, jobType string, ok bool) prometheus.Counter {
+	res := metrics.LblError
+	if ok {
+		res = metrics.LblOK
+	}
+	return metrics.TTLProcessedExpiredRowsCounter.With(
+		prometheus.Labels{metrics.LblSQLType: typ, metrics.LblJobType: jobType, metrics.LblResult: res})
+}
+
+// JobStatus will get the job status gauge.
+func JobStatus(typ string, jobType string) prometheus.Gauge {
+	return metrics.TTLJobStatus.With(prometheus.Labels{metrics.LblType: typ, metrics.LblJobType: jobType})
+}
+
+// TaskStatus will get the task status gauge.
+func TaskStatus(typ string, jobType string) prometheus.Gauge {
+	return metrics.TTLTaskStatus.With(prometheus.Labels{metrics.LblType: typ, metrics.LblJobType: jobType})
 }
 
 func initWorkerPhases(workerType string) map[string]prometheus.Counter {
