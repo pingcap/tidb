@@ -223,3 +223,40 @@ func TestStartKeeperWithManager(t *testing.T) {
 		})
 	})
 }
+
+func TestCheckGCSafePoint(t *testing.T) {
+	t.Run("TS_GreaterThan_SafePoint", func(t *testing.T) {
+		mgr := newMockManager()
+		mgr.gcSafePoint = 100
+
+		err := gc.CheckGCSafePoint(context.Background(), mgr, 200)
+		require.NoError(t, err)
+	})
+
+	t.Run("TS_Equals_SafePoint", func(t *testing.T) {
+		mgr := newMockManager()
+		mgr.gcSafePoint = 100
+
+		err := gc.CheckGCSafePoint(context.Background(), mgr, 100)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "exceed")
+	})
+
+	t.Run("TS_LessThan_SafePoint", func(t *testing.T) {
+		mgr := newMockManager()
+		mgr.gcSafePoint = 100
+
+		err := gc.CheckGCSafePoint(context.Background(), mgr, 50)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "exceed")
+	})
+
+	t.Run("GetGCSafePoint_Error_Ignored", func(t *testing.T) {
+		mgr := newMockManager()
+		mgr.gcSafePointErr = context.DeadlineExceeded
+
+		// Error should be ignored, return nil
+		err := gc.CheckGCSafePoint(context.Background(), mgr, 100)
+		require.NoError(t, err)
+	})
+}
