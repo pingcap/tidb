@@ -1100,8 +1100,9 @@ func TestIngestGCSafepointBlocking(t *testing.T) {
 	})
 
 	// Force sync mode to ensure we go through the checkpoint/TS path
+	oldForceSyncFlag := ingest.ForceSyncFlagForTest.Load()
 	ingest.ForceSyncFlagForTest.Store(true)
-	defer ingest.ForceSyncFlagForTest.Store(false)
+	defer ingest.ForceSyncFlagForTest.Store(oldForceSyncFlag)
 
 	tk.MustExec("alter table t add index idx(b);")
 
