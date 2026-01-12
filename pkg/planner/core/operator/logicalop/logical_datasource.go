@@ -735,6 +735,7 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	if ds.HasForceHints && !ds.PossibleAccessPaths[0].Forced {
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
+	ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("TiCI Index currently doesn't accept plan cache.")
 
 	err := ds.preparePKRangesForTiCI(ds.PossibleAccessPaths[0], ds.PushedDownConds)
 	if err != nil {
