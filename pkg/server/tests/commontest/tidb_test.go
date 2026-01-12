@@ -3723,15 +3723,13 @@ func TestAuditPluginRetrying(t *testing.T) {
 			resetTestResults()
 			var wg sync.WaitGroup
 			errCh := make(chan error, concurrency)
-			wg.Add(concurrency)
 			for range concurrency {
-				go func() {
-					defer wg.Done()
+				wg.Go(func() {
 					_, err := db.ExecContext(context.Background(), updateSQL)
 					if err != nil {
 						errCh <- err
 					}
-				}()
+				})
 			}
 			wg.Wait()
 			close(errCh)
@@ -3780,9 +3778,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 		resetTestResults()
 		var wg sync.WaitGroup
 		// Transaction 1
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			conn := connect()
 			defer conn.Close()
 
@@ -3794,11 +3790,9 @@ func TestAuditPluginRetrying(t *testing.T) {
 			require.NoError(t, err)
 			_, err = conn.ExecContext(context.Background(), "COMMIT")
 			require.NoError(t, err)
-		}()
+		})
 		// Transaction 2
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-step1T1Started
 			conn := connect()
 			defer conn.Close()
@@ -3811,7 +3805,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			require.NoError(t, err)
 
 			close(step2T2Committed)
-		}()
+		})
 		wg.Wait()
 
 		testResults := getTestResults()
