@@ -6,14 +6,14 @@ go_test(
     srcs = [
         "main_test.go",
         "memory_control_test.go",
-	    ],
-	    flaky = True,
-	    race = "on",
-	    shard_count = 7,
-	    deps = [
-	        "//pkg/config",
-	        "//pkg/executor",
-	        "//pkg/session/sessmgr",
+    ],
+    flaky = True,
+    race = "on",
+    shard_count = 7,
+    deps = [
+        "//pkg/config",
+        "//pkg/executor",
+        "//pkg/session/sessmgr",
         "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
