@@ -151,7 +151,7 @@ If you modify the test set `t/planner/core/binary_plan.test`, then the `TestName
 
 RealTiKV tests are located in the `/tests/realtikvtest` directory. These tests run against a real TiKV cluster (not mocktikv/unistore).
 
-#### When to use realtikvtest
+#### When to use the RealTiKV Tests
 
 - Tests that require real TiKV / TiUP Playground / TiKV real environment
 - Tests located under `tests/realtikvtest/` directory tree
@@ -171,6 +171,8 @@ tiup playground --mode tikv-slim &
 ```bash
 tiup playground --mode tikv-slim --tag realtikvtest &
 ```
+
+**Note:** Using `--tag` will keep the data dir after exit. Remember to remove `${HOME}/.tiup/data/<tag>` in the cleanup step.
 
 If `127.0.0.1:2379` is not available (for example: shared dev machine, port conflict, or multiple playgrounds on one host), you can change the PD address:
 - Use `--pd.port` to set PD port explicitly
