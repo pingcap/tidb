@@ -231,10 +231,12 @@ func NewMgr(
 		}
 	}
 
-	gcManager, err := gc.NewManager(controller.GetPDClient(), storage)
-	if err != nil {
-		return nil, errors.Trace(err)
+	// Extract keyspaceID from storage
+	keyspaceID := uint32(tikv.NullspaceID)
+	if storage != nil {
+		keyspaceID = uint32(storage.GetCodec().GetKeyspaceID())
 	}
+	gcManager := gc.NewManager(controller.GetPDClient(), keyspaceID)
 
 	mgr := &Mgr{
 		PdController: controller,
