@@ -134,6 +134,8 @@ var defaultQueryQuota = bytesLimits{
 // MemUsageTop1Tracker record the use memory top1 session's tracker for kill.
 var MemUsageTop1Tracker atomic.Pointer[Tracker]
 
+var mockDebugInject func()
+
 // InitTracker initializes a memory tracker.
 //  1. "label" is the label used in the usage string.
 //  2. "bytesLimit <= 0" means no limit.
@@ -351,7 +353,7 @@ func (t *Tracker) Detach() {
 	if t == nil {
 		return
 	}
-	t.detachMemArbitrator()
+	t.DetachMemArbitrator()
 	parent := t.getParent()
 	if parent == nil {
 		return
@@ -371,9 +373,7 @@ func (t *Tracker) Detach() {
 		parent.Killer.Reset()
 	}
 	parent.remove(t)
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.setParent(nil)
+	t.setParent(nil) //atomic operator
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
@@ -945,6 +945,13 @@ var MetricsTypes = map[int][]string{
 	LabelForGlobalAnalyzeMemory: {"analyze", "inuse", "released"},
 }
 
+const (
+	memArbitratorStateSmallBudget   int32 = iota // using small budget
+	memArbitratorStateIntoBigBudget              // initializing big budget from small budget
+	memArbitratorStateBigBudget                  // using big budget
+	memArbitratorStateDown                       // down
+)
+
 type memArbitrator struct {
 	*MemArbitrator
 	ctx    *ArbitrationContext
@@ -966,7 +973,8 @@ type memArbitrator struct {
 	uid         uint64
 	digestID    uint64 // identify the digest profile of root-pool / SQL
 	reserveSize int64
-	finished    atomic.Bool
+	isInternal  bool
+	state       atomic.Int32 // states: the current state of memArbitrator
 
 	AwaitAlloc struct {
 		TotalDur   atomic.Int64 // total time spent waiting for memory allocation in nanoseconds
@@ -1103,12 +1111,25 @@ func (m *memArbitrator) initBigBudget() {
 		panic(err)
 	}
 
-	if !root.Restart(m.ctx) {
-		panic(fmt.Errorf("failed to init root pool with uid %d", m.uid))
+	if m.isInternal {
+		globalArbitrator.metrics.pools.internalSession.Add(1)
 	}
 
-	globalArbitrator.metrics.smallPool.Add(-1)
-	globalArbitrator.metrics.bigPool.into.Add(1)
+	if !root.Restart(m.ctx) || !m.state.CompareAndSwap(memArbitratorStateSmallBudget, memArbitratorStateIntoBigBudget) {
+		panic("failed to init mem pool")
+	}
+
+	{
+		globalArbitrator.metrics.pools.small.Add(-1)
+		globalArbitrator.metrics.pools.intoBig.Add(1)
+	}
+
+	if intest.InTest {
+		if mockDebugInject != nil {
+			mockDebugInject()
+		}
+	}
+
 	m.bigBudget().Pool = root.entry.pool
 
 	if m.reserveSize > 0 {
@@ -1129,8 +1150,17 @@ func (m *memArbitrator) initBigBudget() {
 	}
 
 	m.budget.useBig.Store(true)
-	globalArbitrator.metrics.bigPool.into.Add(-1)
-	globalArbitrator.metrics.bigPool.Add(1)
+
+	if intest.InTest {
+		if mockDebugInject != nil {
+			mockDebugInject()
+		}
+	}
+
+	if m.state.CompareAndSwap(memArbitratorStateIntoBigBudget, memArbitratorStateBigBudget) {
+		globalArbitrator.metrics.pools.intoBig.Add(-1)
+		globalArbitrator.metrics.pools.big.Add(1)
+	}
 }
 
 func (m *memArbitrator) reserveBigBudget(newCap int64) {
@@ -1162,33 +1192,43 @@ func (m *memArbitrator) reserveBigBudget(newCap int64) {
 }
 
 func (t *Tracker) resetMemArbitrator() {
-	m := t.MemArbitrator
-	if m == nil {
-		return
-	}
 	t.MemArbitrator = nil
-
-	if m.smallBudgetUsed() != 0 {
-		m.cleanSmallBudget()
-	}
-	if m.useBigBudget() {
-		m.bigBudget().Clear()
-		m.ResetRootPoolByID(m.uid, 0, false)
-	}
 }
 
-func (t *Tracker) detachMemArbitrator() bool {
+// DetachMemArbitrator detaches the mem arbitrator from the tracker and cleans up related resources.
+func (t *Tracker) DetachMemArbitrator() bool {
 	m := t.MemArbitrator
 	if m == nil {
 		return false
 	}
 
-	if m.finished.Swap(true) {
+	if m.smallBudgetUsed() != 0 {
+		m.cleanSmallBudget()
+	}
+
+	if m.state.Load() == memArbitratorStateDown {
 		return false
 	}
 
-	if m.smallBudgetUsed() != 0 {
-		m.cleanSmallBudget()
+	switch m.state.Swap(memArbitratorStateDown) {
+	case memArbitratorStateSmallBudget:
+		globalArbitrator.metrics.pools.small.Add(-1)
+	case memArbitratorStateIntoBigBudget:
+		{
+			m.budget.useBig.Lock() // wait for initBigBudget to finish
+
+			globalArbitrator.metrics.pools.intoBig.Add(-1)
+
+			m.budget.useBig.Unlock()
+		}
+	case memArbitratorStateBigBudget:
+		globalArbitrator.metrics.pools.big.Add(-1)
+	default:
+		return false
+	}
+
+	if m.isInternal {
+		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
 	killed := false
@@ -1202,13 +1242,15 @@ func (t *Tracker) detachMemArbitrator() bool {
 	}
 
 	if m.useBigBudget() {
-		m.bigBudget().Clear()
+		m.bigBudget().Stop()
 		m.ResetRootPoolByID(m.uid, maxConsumed, !killed)
-		globalArbitrator.metrics.bigPool.Add(-1)
-	} else {
-		globalArbitrator.metrics.smallPool.Add(-1)
 	}
 	return true
+}
+
+// InitMemArbitratorForTest is a simplified version of InitMemArbitrator for test usage.
+func (t *Tracker) InitMemArbitratorForTest() bool {
+	return t.InitMemArbitrator(GlobalMemArbitrator(), 0, nil, "", ArbitrationPriorityMedium, false, 0, false)
 }
 
 // InitMemArbitrator attaches (not thread-safe) to the mem arbitrator and initializes the context
@@ -1219,6 +1261,7 @@ func (t *Tracker) detachMemArbitrator() bool {
 // "memPriority" is the memory priority for arbitration.
 // "waitAverse" represents the wait averse property.
 // "explicitReserveSize" is the explicit mem quota size to be reserved.
+// "isInternal" indicates whether the tracker is for internal session.
 func (t *Tracker) InitMemArbitrator(
 	g *MemArbitrator,
 	memQuotaQuery int64,
@@ -1227,6 +1270,7 @@ func (t *Tracker) InitMemArbitrator(
 	memPriority ArbitrationPriority,
 	waitAverse bool,
 	explicitReserveSize int64,
+	isInternal bool,
 ) bool {
 	if g == nil || t == nil || t.MemArbitrator != nil {
 		return false
@@ -1265,10 +1309,14 @@ func (t *Tracker) InitMemArbitrator(
 		digestID:      digestID,
 		reserveSize:   explicitReserveSize,
 		ctx:           ctx,
+		isInternal:    isInternal,
 	}
 	t.MemArbitrator = m
 
-	globalArbitrator.metrics.smallPool.Add(1)
+	globalArbitrator.metrics.pools.small.Add(1)
+	if m.isInternal {
+		globalArbitrator.metrics.pools.internal.Add(1)
+	}
 
 	if explicitReserveSize > 0 || prevMaxMem > g.poolAllocStats.SmallPoolLimit {
 		m.initBigBudget()
@@ -1286,7 +1334,11 @@ type trackerArbitrateHelper struct {
 }
 
 func (h *trackerArbitrateHelper) Finish() {
-	h.tracker.detachMemArbitrator()
+	t := h.tracker
+	t.DetachMemArbitrator()
+	if t.MemArbitrator.isInternal {
+		globalArbitrator.metrics.pools.internalSession.Add(-1)
+	}
 }
 
 func (h *trackerArbitrateHelper) Stop(reason ArbitratorStopReason) bool {

@@ -33,12 +33,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/expression"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
@@ -47,6 +46,8 @@ import (
 	litlog "github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -385,10 +386,10 @@ type LoadDataController struct {
 	InsertColumns []*table.Column
 
 	logger    *zap.Logger
-	dataStore storage.ExternalStorage
+	dataStore objstore.Storage
 	dataFiles []*mydump.SourceFileMeta
 	// globalSortStore is used to store sorted data when using global sort.
-	globalSortStore storage.ExternalStorage
+	globalSortStore objstore.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -879,7 +880,7 @@ func (p *Plan) initOptions(ctx context.Context, seCtx sessionctx.Context, option
 		// set cloud storage uri to empty string to force uses local sort when
 		// the global variable is set.
 		if v != "" {
-			b, err := storage.ParseBackend(v, nil)
+			b, err := objstore.ParseBackend(v, nil)
 			if err != nil {
 				return exeerrors.ErrInvalidOptionVal.FastGenByArgs(opt.Name)
 			}
@@ -1150,13 +1151,13 @@ func (e *LoadDataController) GenerateCSVConfig() *config.CSVConfig {
 
 // InitDataStore initializes the data store.
 func (e *LoadDataController) InitDataStore(ctx context.Context) error {
-	u, err2 := storage.ParseRawURL(e.Path)
+	u, err2 := objstore.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			err2.Error())
 	}
 
-	if storage.IsLocal(u) {
+	if objstore.IsLocal(u) {
 		u.Path = filepath.Dir(e.Path)
 	} else {
 		u.Path = ""
@@ -1188,8 +1189,8 @@ func (e *LoadDataController) Close() {
 }
 
 // GetSortStore gets the sort store.
-func GetSortStore(ctx context.Context, url string) (storage.ExternalStorage, error) {
-	u, err := storage.ParseRawURL(url)
+func GetSortStore(ctx context.Context, url string) (objstore.Storage, error) {
+	u, err := objstore.ParseRawURL(url)
 	target := "cloud storage"
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, err.Error())
@@ -1197,13 +1198,13 @@ func GetSortStore(ctx context.Context, url string) (storage.ExternalStorage, err
 	return initExternalStore(ctx, u, target)
 }
 
-func initExternalStore(ctx context.Context, u *url.URL, target string) (storage.ExternalStorage, error) {
-	b, err2 := storage.ParseBackendFromURL(u, nil)
+func initExternalStore(ctx context.Context, u *url.URL, target string) (objstore.Storage, error) {
+	b, err2 := objstore.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
 	}
 
-	s, err := storage.NewWithDefaultOpt(ctx, b)
+	s, err := objstore.NewWithDefaultOpt(ctx, b)
 	if err != nil {
 		return nil, exeerrors.ErrLoadDataCantAccess.GenWithStackByArgs(target, errors.GetErrStackMsg(err))
 	}
@@ -1215,7 +1216,7 @@ func estimateCompressionRatio(
 	filePath string,
 	fileSize int64,
 	tp mydump.SourceType,
-	store storage.ExternalStorage,
+	store objstore.Storage,
 ) (float64, error) {
 	if tp != mydump.SourceTypeParquet {
 		return 1.0, nil
@@ -1283,7 +1284,7 @@ func getHarmonicMean(rs []float64) float64 {
 func (r *compressionEstimator) estimate(
 	ctx context.Context,
 	fileMeta mydump.SourceFileMeta,
-	store storage.ExternalStorage,
+	store objstore.Storage,
 ) float64 {
 	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
 	if compressTp == mydump.CompressionNone {
@@ -1327,14 +1328,14 @@ func (r *compressionEstimator) estimate(
 // InitDataFiles initializes the data store and files.
 // it will call InitDataStore internally.
 func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
-	u, err2 := storage.ParseRawURL(e.Path)
+	u, err2 := objstore.ParseRawURL(e.Path)
 	if err2 != nil {
 		return exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			err2.Error())
 	}
 
 	var fileNameKey string
-	if storage.IsLocal(u) {
+	if objstore.IsLocal(u) {
 		// LOAD DATA don't support server file.
 		if !e.InImportInto {
 			return exeerrors.ErrLoadDataFromServerDisk.GenWithStackByArgs(e.Path)
@@ -1417,7 +1418,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		totalSize = size
 	} else {
 		var commonPrefix string
-		if !storage.IsLocal(u) {
+		if !objstore.IsLocal(u) {
 			// for local directory, we're walking the parent directory,
 			// so we don't have a common prefix as cloud storage do.
 			commonPrefix = fileNameKey[:idx]
@@ -1428,7 +1429,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 
 		allFiles := make([]mydump.RawFile, 0, 16)
-		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+		if err := s.WalkDir(ctx, &objstore.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				return nil
@@ -1517,7 +1518,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		}
 	}
 	cal := scheduler.NewRCCalc(totalSize, targetNodeCPUCnt, indexSizeRatio, factors)
-	e.ThreadCnt = cal.CalcConcurrency()
+	e.ThreadCnt = cal.CalcRequiredSlots()
 	e.MaxNodeCnt = cal.CalcMaxNodeCountForImportInto()
 	e.DistSQLScanConcurrency = scheduler.CalcDistSQLConcurrency(e.ThreadCnt, e.MaxNodeCnt, targetNodeCPUCnt)
 	e.logger.Info("auto calculate resource related params",
@@ -1583,7 +1584,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, storage.DecompressConfig{})
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, compressedio.DecompressConfig{})
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the INFILE path is correct")
 				}
@@ -1823,13 +1824,13 @@ func GetTargetNodeCPUCnt(ctx context.Context, sourceType DataSourceType, path st
 		return cpu.GetCPUCount(), nil
 	}
 
-	u, err2 := storage.ParseRawURL(path)
+	u, err2 := objstore.ParseRawURL(path)
 	if err2 != nil {
 		return 0, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(plannercore.ImportIntoDataSource,
 			err2.Error())
 	}
 
-	serverDiskImport := storage.IsLocal(u)
+	serverDiskImport := objstore.IsLocal(u)
 	if serverDiskImport || !vardef.EnableDistTask.Load() {
 		return cpu.GetCPUCount(), nil
 	}

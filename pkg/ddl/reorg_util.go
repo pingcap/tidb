@@ -24,8 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	dxfhandle "github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
+	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -112,7 +112,7 @@ func initJobReorgMetaFromVariables(ctx context.Context, job *model.Job, tbl tabl
 			return err
 		}
 		calc := scheduler.NewRCCalcForAddIndex(tableSizeInBytes, cpuNum, factors)
-		autoConc = calc.CalcConcurrency()
+		autoConc = calc.CalcRequiredSlots()
 		autoMaxNode = calc.CalcMaxNodeCountForAddIndex()
 		factorField = zap.Float64("amplifyFactor", factors.AmplifyFactor)
 	}

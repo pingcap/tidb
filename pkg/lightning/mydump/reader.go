@@ -23,8 +23,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spkg/bom"
@@ -84,14 +85,14 @@ func decodeCharacterSet(data []byte, characterSet string) ([]byte, error) {
 }
 
 // ExportStatement exports the SQL statement in the schema file.
-func ExportStatement(ctx context.Context, store storage.ExternalStorage,
+func ExportStatement(ctx context.Context, store objstore.Storage,
 	sqlFile FileInfo, characterSet string) ([]byte, error) {
 	if sqlFile.FileMeta.Compression != CompressionNone {
 		compressType, err := ToStorageCompressType(sqlFile.FileMeta.Compression)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		store = storage.WithCompression(store, compressType, storage.DecompressConfig{
+		store = objstore.WithCompression(store, compressType, compressedio.DecompressConfig{
 			ZStdDecodeConcurrency: 1,
 		})
 	}

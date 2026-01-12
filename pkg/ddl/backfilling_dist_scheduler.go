@@ -27,20 +27,20 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -143,7 +143,7 @@ func (sch *LitBackfillScheduler) OnNextSubtasksBatch(
 	switch nextStep {
 	case proto.BackfillStepReadIndex:
 		// TODO(tangenta): use available disk during adding index.
-		availableDisk := sch.nodeRes.GetTaskDiskResource(task.Concurrency, vardef.DDLDiskQuota.Load())
+		availableDisk := sch.nodeRes.GetTaskDiskResource(&task.TaskBase, vardef.DDLDiskQuota.Load())
 		logger.Info("available local disk space resource", zap.String("size", units.BytesSize(float64(availableDisk))))
 		return generateReadIndexPlan(ctx, sch.d, store, tbl, job, sch.GlobalSort, nodeCnt, logger)
 	case proto.BackfillStepMergeSort:
@@ -673,8 +673,9 @@ func generateMergeSortPlan(
 	}
 
 	allSkip := true
+	concurrency := task.GetRuntimeSlots()
 	for _, multiStats := range multiStatsGroup {
-		if !skipMergeSort(multiStats, task.Concurrency) {
+		if !skipMergeSort(multiStats, concurrency) {
 			allSkip = false
 			break
 		}
@@ -702,7 +703,7 @@ func generateMergeSortPlan(
 		if i < len(eleIDs) {
 			eleID = []int64{eleIDs[i]}
 		}
-		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, task.Concurrency)
+		dataFilesGroup, err := external.DivideMergeSortDataFiles(dataFiles, nodeCnt, concurrency)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -744,11 +745,11 @@ func getRangeSplitter(
 	multiFileStat []external.MultipleFilesStat,
 	logger *zap.Logger,
 ) (*external.RangeSplitter, error) {
-	backend, err := storage.ParseBackend(cloudStorageURI, nil)
+	backend, err := objstore.ParseBackend(cloudStorageURI, nil)
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	extStore, err := objstore.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
@@ -788,7 +789,7 @@ func getRangeSplitter(
 
 func forEachBackfillSubtaskMeta(
 	ctx context.Context,
-	extStore storage.ExternalStorage,
+	extStore objstore.Storage,
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,

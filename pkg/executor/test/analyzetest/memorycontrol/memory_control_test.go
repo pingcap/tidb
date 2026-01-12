@@ -237,7 +237,7 @@ func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_mem_usage")
-	tk.MustExec("create table t_mem_usage(a varchar(32000) collate utf8mb4_general_ci)")
+	tk.MustExec("create table t_mem_usage(a text collate utf8mb4_general_ci)")
 	tk.MustExec("insert into t_mem_usage values (repeat('a', 32000))")
 	for range 11 {
 		tk.MustExec("insert into t_mem_usage select a from t_mem_usage")
@@ -245,4 +245,23 @@ func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
 	tk.MustExec("insert into t_mem_usage select a from t_mem_usage limit 952")
 
 	tk.MustExec("analyze table t_mem_usage with 1.0 samplerate;")
+}
+
+func TestAnalyzeSessionMemTrackerDetachOnClose(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	err := tk.ExecToErr("analyze table test.not_exists with 1 topn")
+	require.Error(t, err)
+
+	vars := tk.Session().GetSessionVars()
+	// Clear any residue from the analyze statement to make the delta deterministic.
+	vars.MemTracker.ReplaceBytesUsed(0)
+	base := executor.GlobalAnalyzeMemoryTracker.BytesConsumed()
+	vars.MemTracker.Consume(1024)
+	require.Equal(t, base+1024, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
+
+	tk.Session().Close()
+	require.Equal(t, base, executor.GlobalAnalyzeMemoryTracker.BytesConsumed())
 }
