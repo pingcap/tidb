@@ -867,7 +867,10 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	// Default empty
 	require.Len(t, cloudStorageURI.Value, 0)
-
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	defer s.Close()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	// Set to noop
@@ -882,11 +885,6 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	// Set to s3, should fail
 	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "s3://blackhole")
 	require.Error(t, err, "unreachable storage URI")
-
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer s.Close()
 
 	// Set to s3, should return uri without variable
 	s3URI := "s3://tiflow-test/?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
