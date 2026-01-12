@@ -61,6 +61,7 @@ type ClientMgr interface {
 	ResetBackupClient(ctx context.Context, storeID uint64) (backuppb.BackupClient, error)
 	GetPDClient() pd.Client
 	GetStorage() kv.Storage
+	GetGCManager() gc.Manager
 	GetLockResolver() *txnlock.LockResolver
 	Close()
 }
@@ -488,7 +489,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	}
 
 	// check backup time do not exceed GCSafePoint
-	err = gc.CheckGCSafePoint(ctx, bc.mgr.GetPDClient(), bc.mgr.GetStorage(), backupTS)
+	err = gc.CheckGCSafePointWithManager(ctx, bc.mgr.GetGCManager(), backupTS)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

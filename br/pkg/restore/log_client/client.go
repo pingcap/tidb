@@ -2014,20 +2014,24 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		TTL:      gc.DefaultBRGCSafePointTTL,
 		ID:       gc.MakeSafePointID(),
 	}
+	gcMgr, err := gc.NewManager(pdClient, rc.GetDomain().Store())
+	if err != nil {
+		return errors.Trace(err)
+	}
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)
 	defer func() {
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
 		// remove the gc-safe-point
-		if err := gc.DeleteServiceSafePoint(ctx, pdClient, rc.GetDomain().Store(), sp); err != nil {
+		if err := gcMgr.DeleteServiceSafePoint(ctx, sp); err != nil {
 			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = gc.StartServiceSafePointKeeper(cctx, pdClient, rc.GetDomain().Store(), sp)
+	err = gc.StartKeeperWithManager(cctx, sp, gcMgr)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -68,6 +68,12 @@ func CheckGCSafePoint(
 	return checkSafePointByManager(ctx, mgr, ts)
 }
 
+// CheckGCSafePointWithManager checks whether ts is older than GC safepoint using the provided Manager.
+// Note: It ignores errors other than exceed GC safepoint, same as CheckGCSafePoint.
+func CheckGCSafePointWithManager(ctx context.Context, mgr Manager, ts uint64) error {
+	return checkSafePointByManager(ctx, mgr, ts)
+}
+
 // The following functions use globalManager directly.
 // They do NOT support keyspace and are used by operator/advancer which don't have access to storage.
 

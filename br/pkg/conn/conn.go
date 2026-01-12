@@ -23,6 +23,7 @@ import (
 	kvconfig "github.com/pingcap/tidb/br/pkg/config"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -75,6 +76,7 @@ type Mgr struct {
 	storage     kv.Storage   // Used to access SQL related interfaces.
 	tikvStore   tikv.Storage // Used to access TiKV specific interfaces.
 	ownsStorage bool
+	gcManager   gc.Manager
 
 	*utils.StoreManager
 }
@@ -229,12 +231,18 @@ func NewMgr(
 		}
 	}
 
+	gcManager, err := gc.NewManager(controller.GetPDClient(), storage)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
 	mgr := &Mgr{
 		PdController: controller,
 		storage:      storage,
 		tikvStore:    tikvStorage,
 		dom:          dom,
 		ownsStorage:  g.OwnsStorage(),
+		gcManager:    gcManager,
 		StoreManager: utils.NewStoreManager(controller.GetPDClient(), keepalive, tlsConf),
 	}
 	return mgr, nil
@@ -264,6 +272,10 @@ func (mgr *Mgr) GetLogBackupClient(ctx context.Context, storeID uint64) (logback
 // GetStorage returns a kv storage.
 func (mgr *Mgr) GetStorage() kv.Storage {
 	return mgr.storage
+}
+
+func (mgr *Mgr) GetGCManager() gc.Manager {
+	return mgr.gcManager
 }
 
 // GetTLSConfig returns the tls config.

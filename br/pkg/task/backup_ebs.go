@@ -185,17 +185,17 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	if !cfg.SkipPauseGCAndScheduler {
-		sp := gc.BRServiceSafePoint{
-			BackupTS: resolvedTs,
-			TTL:      gc.DefaultBRGCSafePointTTL,
-			ID:       gc.MakeSafePointID(),
+			sp := gc.BRServiceSafePoint{
+				BackupTS: resolvedTs,
+				TTL:      gc.DefaultBRGCSafePointTTL,
+				ID:       gc.MakeSafePointID(),
+			}
+			log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
+			err = gc.StartKeeperWithManager(ctx, sp, mgr.GetGCManager())
+			if err != nil {
+				return errors.Trace(err)
+			}
 		}
-		log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-		err = gc.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), mgr.GetStorage(), sp)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
 
 	// Step.1.3 backup the key info to recover cluster. e.g. PD alloc_id/cluster_id
 	clusterVersion, err := mgr.GetClusterVersion(ctx)
