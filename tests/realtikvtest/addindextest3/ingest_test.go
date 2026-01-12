@@ -284,7 +284,6 @@ func TestAddIndexIngestAdjustBackfillWorkerCountFail(t *testing.T) {
 	} else {
 		require.Equal(t, jobTp, "")
 	}
-
 }
 
 func TestAddIndexIngestEmptyTable(t *testing.T) {
