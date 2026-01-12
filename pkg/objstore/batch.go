@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/multierr"
 )
 
@@ -92,7 +93,7 @@ func SaveJSONEffectsToTmp(es []Effect) (string, error) {
 //
 // You may use `Commit()` to execute all suspended effects.
 type Batched struct {
-	Storage
+	storeapi.Storage
 	effectsMu sync.Mutex
 	// It will be one of:
 	// EffPut, EffDeleteFiles, EffDeleteFile, EffRename
@@ -100,7 +101,7 @@ type Batched struct {
 }
 
 // Batch wraps an external storage instance to a batched version.
-func Batch(s Storage) *Batched {
+func Batch(s storeapi.Storage) *Batched {
 	return &Batched{Storage: s}
 }
 
@@ -153,7 +154,7 @@ func (d *Batched) Rename(ctx context.Context, oldName, newName string) error {
 }
 
 // Create implements the Storage interface.
-func (d *Batched) Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error) {
+func (d *Batched) Create(ctx context.Context, path string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	return nil, errors.Annotatef(berrors.ErrStorageUnknown, "ExternalStorage.Create isn't allowed in batch mode for now.")
 }
 

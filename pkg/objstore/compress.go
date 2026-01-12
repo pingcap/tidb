@@ -24,16 +24,18 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 type withCompression struct {
-	Storage
+	storeapi.Storage
 	compressType  compressedio.CompressType
 	decompressCfg compressedio.DecompressConfig
 }
 
 // WithCompression returns an Storage with compress option
-func WithCompression(inner Storage, compressionType compressedio.CompressType, cfg compressedio.DecompressConfig) Storage {
+func WithCompression(inner storeapi.Storage, compressionType compressedio.CompressType, cfg compressedio.DecompressConfig) storeapi.Storage {
 	if compressionType == compressedio.NoCompression {
 		return inner
 	}
@@ -44,7 +46,7 @@ func WithCompression(inner Storage, compressionType compressedio.CompressType, c
 	}
 }
 
-func (w *withCompression) Create(ctx context.Context, name string, o *WriterOption) (objectio.Writer, error) {
+func (w *withCompression) Create(ctx context.Context, name string, o *storeapi.WriterOption) (objectio.Writer, error) {
 	writer, err := w.Storage.Create(ctx, name, o)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -54,11 +56,11 @@ func (w *withCompression) Create(ctx context.Context, name string, o *WriterOpti
 		writer = bw.GetWriter()
 	}
 	// the external storage will do access recording, so no need to pass it again.
-	compressedWriter := objectio.NewBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType, nil)
+	compressedWriter := objectio.NewBufferedWriter(writer, s3store.HardcodedChunkSize, w.compressType, nil)
 	return compressedWriter, nil
 }
 
-func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption) (objectio.Reader, error) {
+func (w *withCompression) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	fileReader, err := w.Storage.Open(ctx, path, o)
 	if err != nil {
 		return nil, errors.Trace(err)

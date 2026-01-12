@@ -28,6 +28,7 @@ go_library(
         "//pkg/lightning/mydump",
         "//pkg/lightning/tikv",
         "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/planner/core",
         "//pkg/util",
         "//pkg/util/logutil",

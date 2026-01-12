@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -4802,7 +4803,7 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// when SEM enabled, we need set it.
 		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3(u) {
 			values := u.Query()
-			values.Set(objstore.S3ExternalID, config.GetGlobalKeyspaceName())
+			values.Set(s3store.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
 			ld.Path = u.String()
 		}
@@ -6445,7 +6446,7 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	for k := range values {
 		lowerK := strings.ToLower(k)
-		if lowerK == objstore.S3ExternalID {
+		if lowerK == s3store.S3ExternalID {
 			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
 		}
 	}

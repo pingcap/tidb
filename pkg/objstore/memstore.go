@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/atomic"
 )
 
@@ -147,7 +148,7 @@ func (s *MemStorage) FileExists(ctx context.Context, name string) (bool, error) 
 
 // Open opens a Reader by file path.
 // It implements the `Storage` interface
-func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption) (objectio.Reader, error) {
+func (s *MemStorage) Open(ctx context.Context, filePath string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -176,7 +177,7 @@ func (s *MemStorage) Open(ctx context.Context, filePath string, o *ReaderOption)
 
 // WalkDir traverse all the files in a dir.
 // It implements the `Storage` interface
-func (s *MemStorage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (s *MemStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
 	allFileNames := func() []string {
 		fileNames := []string{}
 		s.rwm.RLock()
@@ -228,7 +229,7 @@ func (*MemStorage) URI() string {
 // Create creates a file and returning a writer to write data into.
 // When the writer is closed, the data is stored in the file.
 // It implements the `Storage` interface
-func (s *MemStorage) Create(ctx context.Context, name string, _ *WriterOption) (objectio.Writer, error) {
+func (s *MemStorage) Create(ctx context.Context, name string, _ *storeapi.WriterOption) (objectio.Writer, error) {
 	select {
 	case <-ctx.Done():
 		return nil, ctx.Err()

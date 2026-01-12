@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/cobra"
@@ -841,7 +842,7 @@ func GetStorage(
 	ctx context.Context,
 	storageName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, objstore.Storage, error) {
+) (*backuppb.StorageBackend, storeapi.Storage, error) {
 	u, err := objstore.ParseBackend(storageName, &cfg.BackendOptions)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -853,8 +854,8 @@ func GetStorage(
 	return u, s, nil
 }
 
-func storageOpts(cfg *Config) *objstore.Options {
-	return &objstore.Options{
+func storageOpts(cfg *Config) *storeapi.Options {
+	return &storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
@@ -865,7 +866,7 @@ func ReadBackupMeta(
 	ctx context.Context,
 	fileName string,
 	cfg *Config,
-) (*backuppb.StorageBackend, objstore.Storage, *backuppb.BackupMeta, error) {
+) (*backuppb.StorageBackend, storeapi.Storage, *backuppb.BackupMeta, error) {
 	u, s, err := GetStorage(ctx, cfg.Storage, cfg)
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)
