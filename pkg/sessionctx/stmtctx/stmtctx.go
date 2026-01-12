@@ -671,6 +671,9 @@ const (
 	StmtSafeTSCacheKey
 	// StmtExternalTSCacheKey is a variable for externalTS calculation/cache of one stmt.
 	StmtExternalTSCacheKey
+	// StmtMultiSchemaWorkingTableInfoCacheKey caches a TableInfo clone used to simulate
+	// intermediate schema results when building multi-schema change jobs (e.g. chained RENAME INDEX).
+	StmtMultiSchemaWorkingTableInfoCacheKey
 )
 
 // GetOrStoreStmtCache gets the cached value of the given key if it exists, otherwise stores the value.

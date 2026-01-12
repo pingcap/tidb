@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	rg "github.com/pingcap/tidb/pkg/resourcegroup"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -4107,14 +4108,19 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 
 	// In multi-schema change, later specs should be validated based on the intermediate result
 	// of previous specs in the same ALTER TABLE statement (e.g. rename chains like i1->i, i2->i1).
-	// We keep a working TableInfo clone in StatementContext to simulate sequential changes.
+	// We keep a working TableInfo clone in StatementContext stmtCache to simulate sequential changes.
 	tblInfoForValidate := tb.Meta()
 	mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo
 	if mci != nil {
-		if mci.WorkingTableInfo == nil {
-			mci.WorkingTableInfo = tb.Meta().Clone()
+		v := ctx.GetSessionVars().StmtCtx.GetOrStoreStmtCache(
+			stmtctx.StmtMultiSchemaWorkingTableInfoCacheKey,
+			tb.Meta().Clone(),
+		)
+		working, ok := v.(*model.TableInfo)
+		if !ok || working == nil {
+			return errors.New("unexpected value type in stmt cache for multi-schema working table info")
 		}
-		tblInfoForValidate = mci.WorkingTableInfo
+		tblInfoForValidate = working
 	}
 	duplicate, err := ValidateRenameIndex(spec.FromKey, spec.ToKey, tblInfoForValidate)
 	if duplicate {
@@ -4123,9 +4129,17 @@ func (e *executor) RenameIndex(ctx sessionctx.Context, ident ast.Ident, spec *as
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if mci != nil && mci.WorkingTableInfo != nil {
+	if mci != nil {
 		// Apply the rename to the working copy so subsequent validations see the new name.
-		if idx := mci.WorkingTableInfo.FindIndexByName(spec.FromKey.L); idx != nil {
+		v := ctx.GetSessionVars().StmtCtx.GetOrStoreStmtCache(
+			stmtctx.StmtMultiSchemaWorkingTableInfoCacheKey,
+			tb.Meta().Clone(),
+		)
+		working, ok := v.(*model.TableInfo)
+		if !ok || working == nil {
+			return errors.New("unexpected value type in stmt cache for multi-schema working table info")
+		}
+		if idx := working.FindIndexByName(spec.FromKey.L); idx != nil {
 			idx.Name = spec.ToKey
 		}
 	}

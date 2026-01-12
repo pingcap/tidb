@@ -1024,11 +1024,6 @@ type MultiSchemaInfo struct {
 	// SkipVersion is used to control whether generating a new schema version for a sub-job.
 	SkipVersion bool `json:"-"`
 
-	// WorkingTableInfo is only used during DDL job building (collection stage) to simulate
-	// sequential schema changes (e.g. multiple RENAME INDEX in one ALTER TABLE).
-	// It is not persisted.
-	WorkingTableInfo *TableInfo `json:"-"`
-
 	AddColumns    []ast.CIStr `json:"-"`
 	DropColumns   []ast.CIStr `json:"-"`
 	ModifyColumns []ast.CIStr `json:"-"`
