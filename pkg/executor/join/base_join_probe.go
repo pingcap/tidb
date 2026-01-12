@@ -678,22 +678,76 @@ func (j *baseJoinProbe) appendProbeRowToChunkInternal(chk *chunk.Chunk, probeChk
 	if len(used) == 0 || len(j.offsetAndLengthArray) == 0 {
 		return
 	}
+
+	totalTimes := 0
+	preAllocMemForCol := func(srcCol *chunk.Column, dstCol *chunk.Column) {
+		dataMemTotalLenDelta := int64(0)
+
+		if totalTimes == 0 {
+			for _, offsetAndLength := range j.offsetAndLengthArray {
+				totalTimes += offsetAndLength.length
+			}
+		}
+
+		offsetTotalLenDelta := int64(0)
+		nullBitmapTotalLenDelta := dstCol.CalculateLenDeltaForAppendCellNTimesForNullBitMap(totalTimes)
+		if dstCol.IsFixed() {
+			dataMemTotalLenDelta = dstCol.CalculateLenDeltaForAppendCellNTimesForFixedElem(srcCol, totalTimes)
+		} else {
+			for _, offsetAndLength := range j.offsetAndLengthArray {
+				dataMemTotalLenDelta += dstCol.CalculateLenDeltaForAppendCellNTimesForVarElem(srcCol, offsetAndLength.offset, offsetAndLength.length)
+			}
+			offsetTotalLenDelta = int64(totalTimes)
+		}
+
+		dstCol.Reserve(nullBitmapTotalLenDelta, dataMemTotalLenDelta, offsetTotalLenDelta)
+	}
+
 	if forOtherCondition {
 		usedColumnMap := make(map[int]struct{})
 		for _, colIndex := range used {
 			if _, ok := usedColumnMap[colIndex]; !ok {
 				srcCol := probeChk.Column(colIndex)
 				dstCol := chk.Column(colIndex + collOffset)
+
+				preAllocMemForCol(srcCol, dstCol)
+
+				nullBitmapCapBefore := 0
+				offsetCapBefore := 0
+				dataCapBefore := 0
+				if intest.InTest {
+					nullBitmapCapBefore = dstCol.GetNullBitmapCap()
+					offsetCapBefore = dstCol.GetOffsetCap()
+					dataCapBefore = dstCol.GetDataCap()
+				}
+
 				for _, offsetAndLength := range j.offsetAndLengthArray {
 					dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 				}
 				usedColumnMap[colIndex] = struct{}{}
+
+				if intest.InTest {
+					if nullBitmapCapBefore != dstCol.GetNullBitmapCap() {
+						panic("Don't reserve enough memory")
+					}
+
+					if offsetCapBefore != dstCol.GetOffsetCap() {
+						panic("Don't reserve enough memory")
+					}
+
+					if dataCapBefore != dstCol.GetDataCap() {
+						panic("Don't reserve enough memory")
+					}
+				}
 			}
 		}
 	} else {
 		for index, colIndex := range used {
 			srcCol := probeChk.Column(colIndex)
 			dstCol := chk.Column(index + collOffset)
+
+			preAllocMemForCol(srcCol, dstCol)
+
 			for _, offsetAndLength := range j.offsetAndLengthArray {
 				dstCol.AppendCellNTimes(srcCol, offsetAndLength.offset, offsetAndLength.length)
 			}

@@ -1793,7 +1793,7 @@ func (rc *Controller) cleanCheckpoints(ctx context.Context) error {
 	case config.CheckpointRename:
 		err = rc.checkpointsDB.MoveCheckpoints(ctx, rc.cfg.TaskID)
 	case config.CheckpointRemove:
-		err = rc.checkpointsDB.RemoveCheckpoint(ctx, "all")
+		err = rc.checkpointsDB.RemoveCheckpoint(ctx, common.AllTables)
 	}
 	task.End(zap.ErrorLevel, err)
 	if err != nil {

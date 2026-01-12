@@ -74,7 +74,7 @@ function find_available_port() {
             echo "Error: No available ports found below 65536." >&2
             exit 1
         fi
-        if ! lsof -i :"$port" &> /dev/null; then
+        if ! lsof -nP -i :"$port" &> /dev/null; then
             echo $port
             return 0
         fi
@@ -118,7 +118,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@0d83955ea569706e5296cd3e2f54efb7f1206d0b
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@12f37562a884a2d680d5ca619df80c8d0a080aff
     mv src mysql_tester
 }
 

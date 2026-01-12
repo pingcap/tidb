@@ -11,7 +11,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config/kerneltype",
-        "//pkg/disttask/framework/schstatus",
+        "//pkg/dxf/framework/schstatus",
         "//pkg/errno",
         "//pkg/kv",
         "//pkg/meta/metadef",
@@ -47,7 +47,7 @@ go_test(
     deps = [
         "//pkg/config/kerneltype",
         "//pkg/ddl",
-        "//pkg/disttask/framework/schstatus",
+        "//pkg/dxf/framework/schstatus",
         "//pkg/infoschema/context",
         "//pkg/kv",
         "//pkg/meta/metadef",

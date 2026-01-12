@@ -305,13 +305,10 @@ c	sum(a)
 explain format="plan_tree" select max(a.a) from t a left join t b on a.a = b.a;
 id	task	access object	operator info
 StreamAgg	root		funcs:max(planner__cascades__integration.t.a)->Column#5
-└─IndexJoin	root		left outer join, inner:TableReader, left side:Limit, outer key:planner__cascades__integration.t.a, inner key:planner__cascades__integration.t.a, equal cond:eq(planner__cascades__integration.t.a, planner__cascades__integration.t.a)
-  ├─Limit(Build)	root		offset:0, count:1
-  │ └─TableReader	root		data:Limit
-  │   └─Limit	cop[tikv]		offset:0, count:1
-  │     └─TableFullScan	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
-  └─TableReader(Probe)	root		data:TableRangeScan
-    └─TableRangeScan	cop[tikv]	table:b	range: decided by [planner__cascades__integration.t.a], keep order:false, stats:pseudo
+└─Limit	root		offset:0, count:1
+  └─TableReader	root		data:Limit
+    └─Limit	cop[tikv]		offset:0, count:1
+      └─TableFullScan	cop[tikv]	table:a	keep order:true, desc, stats:pseudo
 select max(a.a) from t a left join t b on a.a = b.a;
 max(a.a)
 4

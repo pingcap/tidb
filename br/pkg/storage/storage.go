@@ -7,7 +7,7 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go/aws/request"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -201,7 +201,7 @@ type ExternalStorageOptions struct {
 
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
-	S3Retryer request.Retryer
+	S3Retryer retry.Standard
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
@@ -309,7 +309,17 @@ func ReadDataInRange(
 	start int64,
 	p []byte,
 ) (n int, err error) {
+	// Sanity check: reject obviously invalid offsets
+	if start < 0 {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"invalid negative start offset: %d", start)
+	}
 	end := start + int64(len(p))
+	// Detect overflow: if end wrapped around to negative, overflow occurred
+	if end < start {
+		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
+			"range calculation overflow: start=%d, len=%d", start, len(p))
+	}
 	rd, err := storage.Open(ctx, name, &ReaderOption{
 		StartOffset: &start,
 		EndOffset:   &end,

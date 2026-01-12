@@ -414,8 +414,9 @@ func (p *LogicalJoin) BuildKeyInfo(selfSchema *expression.Schema, childSchema []
 		leftCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		rightCols := make([]*expression.Column, 0, len(p.EqualConditions))
 		for _, expr := range p.EqualConditions {
-			leftCols = append(leftCols, expr.GetArgs()[0].(*expression.Column))
-			rightCols = append(rightCols, expr.GetArgs()[1].(*expression.Column))
+			l, r := expression.ExtractColumnsFromColOpCol(expr)
+			leftCols = append(leftCols, l)
+			rightCols = append(rightCols, r)
 		}
 		checkColumnsMatchPKOrUK := func(cols []*expression.Column, pkOrUK []expression.KeyInfo) bool {
 			if len(pkOrUK) == 0 {
@@ -996,8 +997,9 @@ func (p *LogicalJoin) ExtractFDForOuterJoin(equivFromApply [][]intset.FastIntSet
 // means whether there is a `NullEQ` of a join key.
 func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, isNullEQ []bool, hasNullEQ bool) {
 	for _, expr := range p.EqualConditions {
-		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, l)
+		rightKeys = append(rightKeys, r)
 		isNullEQ = append(isNullEQ, expr.FuncName.L == ast.NullEQ)
 		hasNullEQ = hasNullEQ || expr.FuncName.L == ast.NullEQ
 	}
@@ -1007,8 +1009,9 @@ func (p *LogicalJoin) GetJoinKeys() (leftKeys, rightKeys []*expression.Column, i
 // GetNAJoinKeys extracts join keys(columns) from NAEqualCondition.
 func (p *LogicalJoin) GetNAJoinKeys() (leftKeys, rightKeys []*expression.Column) {
 	for _, expr := range p.NAEQConditions {
-		leftKeys = append(leftKeys, expr.GetArgs()[0].(*expression.Column))
-		rightKeys = append(rightKeys, expr.GetArgs()[1].(*expression.Column))
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, l)
+		rightKeys = append(rightKeys, r)
 	}
 	return
 }
@@ -1019,8 +1022,9 @@ func (p *LogicalJoin) GetPotentialPartitionKeys() (leftKeys, rightKeys []*proper
 	for _, expr := range p.EqualConditions {
 		_, coll := expr.CharsetAndCollation()
 		collateID := property.GetCollateIDByNameForPartition(coll)
-		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[0].(*expression.Column), CollateID: collateID})
-		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: expr.GetArgs()[1].(*expression.Column), CollateID: collateID})
+		l, r := expression.ExtractColumnsFromColOpCol(expr)
+		leftKeys = append(leftKeys, &property.MPPPartitionColumn{Col: l, CollateID: collateID})
+		rightKeys = append(rightKeys, &property.MPPPartitionColumn{Col: r, CollateID: collateID})
 	}
 	return
 }
@@ -1106,13 +1110,10 @@ func (p *LogicalJoin) ColumnSubstituteAll(schema *expression.Schema, exprs []exp
 			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
 		}
-
-		_, lhsIsCol := newCond.GetArgs()[0].(*expression.Column)
-		_, rhsIsCol := newCond.GetArgs()[1].(*expression.Column)
-
+		_, _, ok := expression.IsColOpCol(newCond)
 		// If the columns used in the new filter are not all expression.Column,
 		// we can not use it as join's equal condition.
-		if !(lhsIsCol && rhsIsCol) {
+		if !ok {
 			p.OtherConditions = append(p.OtherConditions, newCond)
 			p.EqualConditions = slices.Delete(p.EqualConditions, i, i+1)
 			continue
@@ -1441,9 +1442,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 		}
 		binop, ok := expr.(*expression.ScalarFunction)
 		if ok && len(binop.GetArgs()) == 2 {
-			arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-			arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-			if lOK && rOK {
+			arg0, arg1, ok := expression.IsColOpCol(binop)
+			if ok {
 				leftCol := leftSchema.RetrieveColumn(arg0)
 				rightCol := rightSchema.RetrieveColumn(arg1)
 				if leftCol == nil || rightCol == nil {
@@ -2108,9 +2108,8 @@ func deriveNotNullExpr(ctx base.PlanContext, expr expression.Expression, schema 
 	if !ok || len(binop.GetArgs()) != 2 {
 		return nil
 	}
-	arg0, lOK := binop.GetArgs()[0].(*expression.Column)
-	arg1, rOK := binop.GetArgs()[1].(*expression.Column)
-	if !lOK || !rOK {
+	arg0, arg1, ok := expression.IsColOpCol(binop)
+	if !ok {
 		return nil
 	}
 	childCol := schema.RetrieveColumn(arg0)

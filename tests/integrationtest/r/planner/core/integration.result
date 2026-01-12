@@ -3596,9 +3596,9 @@ Projection	root		planner__core__integration.t1.a
           └─TableFullScan	cop[tikv]	table:two	keep order:false, stats:pseudo
 explain format='plan_tree' select rank() over (partition by table_name) from information_schema.tables;
 id	task	access object	operator info
-Projection	root		Column#28->Column#29
+Projection	root		Column#29->Column#30
 └─Shuffle	root		execution info: concurrency:5, data sources:[MemTableScan]
-  └─Window	root		rank()->Column#28 over(partition by Column#3)
+  └─Window	root		rank()->Column#29 over(partition by Column#3)
     └─Sort	root		Column#3
       └─ShuffleReceiver	root		
         └─MemTableScan	root	table:TABLES	
@@ -3953,7 +3953,7 @@ create table t(a int, b int);
 set session tidb_isolation_read_engines='tiflash,tidb';
 create view v0 (a, avg_b) as select a, avg(b) from t group by a;
 select * from v0;
-Error 1815 (HY000): Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'.
+Error 1815 (HY000): Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'. Please check tiflash replica.
 set session tidb_isolation_read_engines='tikv,tiflash,tidb';
 select * from v0;
 a	avg_b

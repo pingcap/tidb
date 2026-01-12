@@ -317,10 +317,6 @@ func checkMaxExecutionTimeExceeded(sctx sessionctx.Context) error {
 		return nil
 	}
 
-	if !sessVars.StmtCtx.InSelectStmt {
-		return nil
-	}
-
 	maxExecTimeMS := sessVars.GetMaxExecutionTime()
 	if maxExecTimeMS == 0 {
 		return nil
@@ -350,9 +346,10 @@ func newLockCtx(sctx sessionctx.Context, lockWaitTime int64, numKeys int) (*tikv
 	lockCtx.LockExpired = &seVars.TxnCtx.LockExpire
 
 	// Set max_execution_time deadline for SELECT statements
-	if seVars.StmtCtx.InSelectStmt && seVars.GetMaxExecutionTime() > 0 {
+	maxExectionTime := seVars.GetMaxExecutionTime()
+	if maxExectionTime > 0 {
 		if processInfo := sctx.ShowProcess(); processInfo != nil {
-			maxExecTimeMs := time.Duration(seVars.GetMaxExecutionTime()) * time.Millisecond
+			maxExecTimeMs := time.Duration(maxExectionTime) * time.Millisecond
 			lockCtx.MaxExecutionDeadline = processInfo.Time.Add(maxExecTimeMs)
 		}
 	}
@@ -962,10 +959,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.TableStats)
 	}
-	if sc.MDLRelatedTableIDs == nil {
-		sc.MDLRelatedTableIDs = make(map[int64]struct{})
+	if sc.RelatedTableIDs == nil {
+		sc.RelatedTableIDs = make(map[int64]struct{})
 	} else {
-		clear(sc.MDLRelatedTableIDs)
+		clear(sc.RelatedTableIDs)
 	}
 	if sc.TblInfo2UnionScan == nil {
 		sc.TblInfo2UnionScan = make(map[*model.TableInfo]bool)
@@ -973,9 +970,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		clear(sc.TblInfo2UnionScan)
 	}
 	sc.IsStaleness = false
-	sc.EnableOptimizeTrace = false
-	sc.OptimizeTracer = nil
-	sc.OptimizerCETrace = nil
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false
 	sc.ResourceGroupName = vars.ResourceGroupName

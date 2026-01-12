@@ -1088,6 +1088,10 @@ func TestMemArbitratorSwitchMode(t *testing.T) {
 }
 
 func TestMemArbitrator(t *testing.T) {
+	defer func() {
+		mockNow = nil
+	}()
+
 	testState = t
 
 	type MockHeap [4]int64 // alloc, heapInuse, totalAlloc, others
@@ -1103,7 +1107,7 @@ func TestMemArbitrator(t *testing.T) {
 	require.Equal(t, m.WorkMode(), ArbitratorModeStandard)
 	debugTime := time.Time{}
 
-	m.debug.now = func() time.Time {
+	mockNow = func() time.Time {
 		return debugTime
 	}
 
@@ -2237,9 +2241,9 @@ func TestMemArbitrator(t *testing.T) {
 		}
 
 		{ // mock set oom check start
-			m.heapController.memRisk.startTime.nano.Store(time.Now().UnixNano())
+			m.heapController.memRisk.startTime.unixMilli.Store(time.Now().UnixMilli())
 			require.False(t, m.executeTick(defMax))
-			m.heapController.memRisk.startTime.nano.Store(0)
+			m.heapController.memRisk.startTime.unixMilli.Store(0)
 		}
 
 		type mockTimeline struct {
@@ -2542,8 +2546,8 @@ func TestMemArbitrator(t *testing.T) {
 			kill2++
 		}
 		m.refreshRuntimeMemStats()
-		debugNow := time.Unix(0, 1024)
-		m.debug.now = func() time.Time {
+		debugNow := now()
+		mockNow = func() time.Time {
 			return debugNow
 		}
 		require.True(t, m.runOneRound() == -2)
@@ -2565,6 +2569,10 @@ func TestMemArbitrator(t *testing.T) {
 }
 
 func TestBasicUtils(t *testing.T) {
+	defer func() {
+		mockNow = nil
+	}()
+
 	testState = t
 
 	{
@@ -2668,9 +2676,9 @@ func TestBasicUtils(t *testing.T) {
 
 		m := MemArbitrator{}
 		tm := time.Now()
-		require.True(t, m.debug.now == nil)
+		require.True(t, mockNow == nil)
 		require.True(t, !m.innerTime().IsZero())
-		m.debug.now = func() time.Time {
+		mockNow = func() time.Time {
 			return tm
 		}
 		require.True(t, m.innerTime().Equal(tm))
@@ -2712,8 +2720,7 @@ func TestBench(t *testing.T) {
 		ch1 := make(chan struct{})
 		var wg sync.WaitGroup
 		for i := 0; i < N; i += 1 {
-			wg.Add(1)
-			go func() {
+			wg.Go(func() {
 				<-ch1
 
 				root, err := m.EmplaceRootPool(uint64(i))
@@ -2762,8 +2769,7 @@ func TestBench(t *testing.T) {
 					}
 				}
 				m.ResetRootPoolByID(uint64(i), b.Used.Load(), true)
-				wg.Done()
-			}()
+			})
 		}
 		close(ch1)
 		wg.Wait()
@@ -2789,8 +2795,7 @@ func TestBench(t *testing.T) {
 		ch1 := make(chan struct{})
 		var wg sync.WaitGroup
 		for i := 0; i < N; i += 1 {
-			wg.Add(1)
-			go func() {
+			wg.Go(func() {
 				<-ch1
 
 				root, err := m.EmplaceRootPool(uint64(i))
@@ -2853,8 +2858,7 @@ func TestBench(t *testing.T) {
 					}
 				}
 				m.ResetRootPoolByID(uint64(i), b.Used.Load(), true)
-				wg.Done()
-			}()
+			})
 		}
 		close(ch1)
 		wg.Wait()

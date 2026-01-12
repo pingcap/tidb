@@ -37,6 +37,7 @@ go_library(
         "//pkg/util/logutil",
         "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_tikv_client_go_v2//oracle",
         "@org_uber_go_zap//:zap",
     ],
@@ -62,7 +63,6 @@ go_test(
     flaky = True,
     shard_count = 50,
     deps = [
-        "//pkg/ddl/notifier",
         "//pkg/domain",
         "//pkg/domain/infosync",
         "//pkg/meta/model",
@@ -70,6 +70,7 @@ go_test(
         "//pkg/session",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
+        "//pkg/sessionctx/vardef",
         "//pkg/statistics",
         "//pkg/statistics/handle/ddl/testutil",
         "//pkg/statistics/handle/types",
