@@ -231,7 +231,7 @@ func (b *rowTableBuilder) ResetBuffer(chk *chunk.Chunk) {
 		}
 	}
 	if cap(b.serializedKeyVectorBuffer) >= logicalRows {
-		clear(b.serializedKeyVectorBuffer[:])
+		clear(b.serializedKeyVectorBuffer)
 		b.serializedKeyVectorBuffer = b.serializedKeyVectorBuffer[:logicalRows]
 	} else {
 		b.serializedKeyVectorBuffer = make([][]byte, logicalRows)
