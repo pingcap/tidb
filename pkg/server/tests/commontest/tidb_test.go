@@ -3663,6 +3663,24 @@ func TestAuditPluginRetrying(t *testing.T) {
 		retrying bool
 	}
 	testResults := make([]normalTest, 0)
+	var testResultsMu sync.Mutex
+	resetTestResults := func() {
+		testResultsMu.Lock()
+		testResults = testResults[:0]
+		testResultsMu.Unlock()
+	}
+	getTestResults := func() []normalTest {
+		testResultsMu.Lock()
+		res := slices.Clone(testResults)
+		testResultsMu.Unlock()
+		return res
+	}
+	getTestResultsLen := func() int {
+		testResultsMu.Lock()
+		l := len(testResults)
+		testResultsMu.Unlock()
+		return l
+	}
 
 	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 		// Only consider the Completed event
@@ -3675,7 +3693,9 @@ func TestAuditPluginRetrying(t *testing.T) {
 			audit.retrying = retrying.(bool)
 		}
 		audit.sql = sctx.StmtCtx.OriginalSQL
+		testResultsMu.Lock()
 		testResults = append(testResults, audit)
+		testResultsMu.Unlock()
 	}
 	plugin.LoadPluginForTest(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
@@ -3694,24 +3714,35 @@ func TestAuditPluginRetrying(t *testing.T) {
 
 		// a big enough concurrency to trigger retries
 		concurrency := 500
+		db.SetMaxOpenConns(concurrency)
+		db.SetMaxIdleConns(concurrency)
+		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
 		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
 		// enough, it might need more times to trigger the retry.
 		require.Eventually(t, func() bool {
-			testResults = testResults[:0]
+			resetTestResults()
 			var wg sync.WaitGroup
+			errCh := make(chan error, concurrency)
+			wg.Add(concurrency)
 			for range concurrency {
-				conn, err := db.Conn(context.Background())
-				require.NoError(t, err)
-				wg.Go(func() {
-					_, err := conn.QueryContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
-					require.NoError(t, err)
-				})
+				go func() {
+					defer wg.Done()
+					_, err := db.ExecContext(context.Background(), updateSQL)
+					if err != nil {
+						errCh <- err
+					}
+				}()
 			}
 			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				require.NoError(t, err)
+			}
 
-			return len(testResults) > concurrency
+			return getTestResultsLen() > concurrency
 		}, time.Second*10, time.Millisecond*100)
 
+		testResults := getTestResults()
 		nonRetryingCount := 0
 		for _, res := range testResults {
 			if !res.retrying {
@@ -3746,14 +3777,16 @@ func TestAuditPluginRetrying(t *testing.T) {
 			return conn
 		}
 
-		testResults = testResults[:0]
+		resetTestResults()
 		var wg sync.WaitGroup
 		// Transaction 1
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			conn := connect()
 			defer conn.Close()
 
-			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
 			require.NoError(t, err)
 			close(step1T1Started)
 			<-step2T2Committed
@@ -3761,14 +3794,16 @@ func TestAuditPluginRetrying(t *testing.T) {
 			require.NoError(t, err)
 			_, err = conn.ExecContext(context.Background(), "COMMIT")
 			require.NoError(t, err)
-		})
+		}()
 		// Transaction 2
-		wg.Go(func() {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
 			<-step1T1Started
 			conn := connect()
 			defer conn.Close()
 
-			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
 			require.NoError(t, err)
 			_, err = conn.ExecContext(context.Background(), "UPDATE retry_test SET val = val + 20 WHERE id = 1")
 			require.NoError(t, err)
@@ -3776,9 +3811,10 @@ func TestAuditPluginRetrying(t *testing.T) {
 			require.NoError(t, err)
 
 			close(step2T2Committed)
-		})
+		}()
 		wg.Wait()
 
+		testResults := getTestResults()
 		retryingCount := 0
 		nonRetryingCount := 0
 		for _, res := range testResults {
@@ -3811,7 +3847,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		db := dbt.GetDB()
 
-		testResults = testResults[:0]
+		resetTestResults()
 		runExplicitTransactionRetry(db, true)
 	})
 }
