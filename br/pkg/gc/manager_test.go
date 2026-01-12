@@ -141,7 +141,7 @@ func TestGlobalManager(t *testing.T) {
 			BackupTS: 1000,
 		}
 
-		err = mgr.SetServiceSafePoint(ctx, sp)
+		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 		require.Equal(t, 1, pdClient.getUpdateServiceCalls())
 	})
@@ -163,7 +163,7 @@ func TestGlobalManager(t *testing.T) {
 		}
 
 		// First set the safe point
-		err = mgr.SetServiceSafePoint(ctx, sp)
+		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 		require.Equal(t, 1, pdClient.getUpdateServiceCalls())
 
@@ -203,8 +203,8 @@ func TestKeyspaceManager(t *testing.T) {
 		t.Cleanup(pdClient.Cleanup)
 
 		storage := newMockStorage(keyspaceID)
-		mgr, err := gc.NewManager(pdClient, storage)
-		require.NoError(t, err)
+		ksID := storage.GetCodec().GetKeyspaceID()
+		mgr := gc.NewManager(pdClient, ksID)
 
 		ctx := context.Background()
 		sp := gc.BRServiceSafePoint{
@@ -213,7 +213,7 @@ func TestKeyspaceManager(t *testing.T) {
 			BackupTS: 1000,
 		}
 
-		err = mgr.SetServiceSafePoint(ctx, sp)
+		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
 		// Verify SetGCBarrier was called
@@ -234,8 +234,8 @@ func TestKeyspaceManager(t *testing.T) {
 		t.Cleanup(pdClient.Cleanup)
 
 		storage := newMockStorage(keyspaceID)
-		mgr, err := gc.NewManager(pdClient, storage)
-		require.NoError(t, err)
+		ksID := storage.GetCodec().GetKeyspaceID()
+		mgr := gc.NewManager(pdClient, ksID)
 
 		ctx := context.Background()
 
@@ -245,7 +245,7 @@ func TestKeyspaceManager(t *testing.T) {
 			TTL:      300,
 			BackupTS: 1000,
 		}
-		err = mgr.SetServiceSafePoint(ctx, sp)
+		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
 		gcClient := pdClient.getGCStatesClientTracking(keyspaceID)
@@ -269,8 +269,8 @@ func TestKeyspaceManager(t *testing.T) {
 		t.Cleanup(pdClient.Cleanup)
 
 		storage := newMockStorage(keyspaceID)
-		mgr, err := gc.NewManager(pdClient, storage)
-		require.NoError(t, err)
+		ksID := storage.GetCodec().GetKeyspaceID()
+		mgr := gc.NewManager(pdClient, ksID)
 
 		ctx := context.Background()
 
@@ -280,7 +280,7 @@ func TestKeyspaceManager(t *testing.T) {
 			TTL:      300,
 			BackupTS: 1000,
 		}
-		err = mgr.SetServiceSafePoint(ctx, sp)
+		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
 		// Verify barrier exists
@@ -308,8 +308,8 @@ func TestKeyspaceManager(t *testing.T) {
 		t.Cleanup(pdClient.Cleanup)
 
 		storage := newMockStorage(keyspaceID)
-		mgr, err := gc.NewManager(pdClient, storage)
-		require.NoError(t, err)
+		ksID := storage.GetCodec().GetKeyspaceID()
+		mgr := gc.NewManager(pdClient, ksID)
 
 		ctx := context.Background()
 
@@ -327,8 +327,8 @@ func TestKeyspaceManager(t *testing.T) {
 		t.Cleanup(pdClient.Cleanup)
 
 		storage := newMockStorage(keyspaceID)
-		mgr, err := gc.NewManager(pdClient, storage)
-		require.NoError(t, err)
+		ksID := storage.GetCodec().GetKeyspaceID()
+		mgr := gc.NewManager(pdClient, ksID)
 
 		ctx := context.Background()
 
@@ -339,7 +339,7 @@ func TestKeyspaceManager(t *testing.T) {
 			TTL:      300,
 			BackupTS: 2000,
 		}
-		err = mgr.SetServiceSafePoint(ctx, sp1)
+		err := mgr.SetServiceSafePoint(ctx, sp1)
 		require.NoError(t, err)
 
 		// Now try to set a barrier behind the txnSafePoint
