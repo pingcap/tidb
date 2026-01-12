@@ -1591,7 +1591,7 @@ func (do *Domain) globalBindHandleWorkerLoop(owner owner.Manager) {
 				return
 			case <-bindWorkerTicker.C:
 				bindHandle := do.BindingHandle()
-				err := bindHandle.LoadFromStorageToCache(false)
+				err := bindHandle.LoadFromStorageToCache(false, false)
 				if err != nil {
 					logutil.BgLogger().Error("update bindinfo failed", zap.Error(err))
 				}

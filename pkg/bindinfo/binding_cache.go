@@ -37,7 +37,7 @@ type BindingCacheUpdater interface {
 	BindingCache
 
 	// LoadFromStorageToCache loads global bindings from storage to the memory cache.
-	LoadFromStorageToCache(fullLoad bool) (err error)
+	LoadFromStorageToCache(fullLoad, fromRemote bool) (err error)
 
 	// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
 	UpdateBindingUsageInfoToStorage() error
@@ -57,7 +57,7 @@ type bindingCacheUpdater struct {
 }
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
-func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
+func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) (err error) {
 	cacheSizeChange := false
 	latestCacheSize := vardef.MemQuotaBindingCache.Load()
 	if u.GetMemCapacity() != latestCacheSize {
@@ -68,7 +68,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 	hasNewBinding := false
 	defer func(begin time.Time) {
 		if fullLoad || cacheSizeChange || hasNewBinding {
-			bindingLogger().Info("load bindings", zap.Bool("fullLoad", fullLoad),
+			bindingLogger().Info("load bindings", zap.Bool("fullLoad", fullLoad), zap.Bool("fromRemote", fromRemote),
 				zap.Bool("cacheSizeChange", cacheSizeChange), zap.Bool("hasNewBinding", hasNewBinding),
 				zap.Int64("cacheCapacity", u.GetMemCapacity()), zap.Int64("cacheUsage", u.GetMemUsage()),
 				zap.Int64("cachedBindingNum", int64(u.Size())), zap.Duration("duration", time.Since(begin)), zap.Error(err))

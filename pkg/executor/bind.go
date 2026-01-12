@@ -157,11 +157,11 @@ func (e *SQLBindExec) createSQLBind() error {
 }
 
 func (e *SQLBindExec) flushBindings() error {
-	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(false)
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(false, false)
 }
 
 func (e *SQLBindExec) reloadBindings() error {
-	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(true)
+	return domain.GetDomain(e.Ctx()).BindingHandle().LoadFromStorageToCache(true, e.isFromRemote)
 }
 
 func (e *SQLBindExec) reloadClusterBindings(ctx context.Context) error {
