@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
+	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
 	testddlutil "github.com/pingcap/tidb/pkg/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
@@ -1156,16 +1157,17 @@ LOOP:
 
 func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
 	store := testkit.CreateMockStoreWithSchemaLease(t, indexModifyLease, mockstore.WithDDLChecker())
-
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
 	tk.MustExec("create table th(a int, v varchar(20))")
 
-	param := `'{"inverted":[{"columns":["a"]}]}'`
+	param := `'{"inverted":{"columns":["a"]}, "sharding_key":{"columns":["a"]}}'`
 	tk.MustExec("create hybrid index h_idx on th(a) parameter " + param)
 	tk.MustExec("drop index h_idx on th")
 
@@ -1523,11 +1525,13 @@ func TestCreateTableWithColumnarIndex(t *testing.T) {
 
 func TestHybridIndexOnPartitionedTable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	tk.MustExec("drop table if exists pt_create, pt_alter;")
 	tk.MustExec(`create table pt_create(a int, b text, v vector(3))
@@ -1535,7 +1539,7 @@ partition by range (a) (
         partition p0 values less than (10),
         partition p1 values less than (20)
 );`)
-	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}]}'`)
+	tk.MustExec(`create columnar index idx_hybrid on pt_create(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}], "sharding_key":{"columns":["b"]}}'`)
 	tbl := external.GetTableByName(t, tk, "test", "pt_create")
 	idx := tbl.Meta().FindIndexByName("idx_hybrid")
 	require.NotNil(t, idx)
@@ -1549,7 +1553,7 @@ partition by range (a) (
         partition p0 values less than (5),
         partition p1 values less than (15)
 );`)
-	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}]}'`)
+	tk.MustExec(`alter table pt_alter add columnar index idx_hybrid_alter(b, v) using hybrid parameter '{"fulltext":[{"columns":["b"]}],"vector":[{"columns":["v"]}], "sharding_key":{"columns":["b"]}}'`)
 	tbl = external.GetTableByName(t, tk, "test", "pt_alter")
 	idx = tbl.Meta().FindIndexByName("idx_hybrid_alter")
 	require.NotNil(t, idx)
@@ -2048,8 +2052,10 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 
 func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(col1 int, col2 text, col3 int, col4 int)")
@@ -2057,11 +2063,18 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 
 	tk.MustContainErrMsg(`create hybrid index idx_bad on t(col1, col2, col4) parameter '{
 		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
 		"sharding_key": {"columns": ["col3"]}
 	}'`, "column 'col3' referenced in HYBRID index PARAMETER must appear in index definition")
 
+	tk.MustContainErrMsg(`create hybrid index idx_missing_sharding on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]}
+	}'`, "HYBRID index PARAMETER must define sharding_key")
+
 	tk.MustExec(`create hybrid index idx_ok on t(col1, col2, col4) parameter '{
 		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
 		"sharding_key": {"columns": ["col1", "col4"]}
 	}'`)
 
@@ -2074,4 +2087,26 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	require.Len(t, idx.HybridInfo.Sharding.Columns, 2)
 	require.Equal(t, "col1", idx.HybridInfo.Sharding.Columns[0].Name.O)
 	require.Equal(t, "col4", idx.HybridInfo.Sharding.Columns[1].Name.O)
+}
+
+func TestHybridIndexCreateTiCIOnce(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
+	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1")
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1")
+	tk.MustExec("use test")
+
+	tk.MustExec("create table t(col1 int, col2 text, col3 int, col4 int)")
+	tk.MustExec("insert into t values (1, 'a', 2, 3)")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+
+	tk.MustExec(`create hybrid index idx_ok on t(col1, col2, col4) parameter '{
+		"inverted": {"columns": ["col2"]},
+		"sort": {"columns": ["col1"]},
+		"sharding_key": {"columns": ["col1", "col4"]}
+	}'`)
 }

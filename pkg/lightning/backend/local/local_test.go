@@ -69,6 +69,8 @@ import (
 	"github.com/tikv/pd/client/clients/router"
 	"github.com/tikv/pd/client/http"
 	"github.com/tikv/pd/client/opt"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/encoding"
@@ -1099,6 +1101,88 @@ func TestLocalWriteAndIngestPairsFailFast(t *testing.T) {
 	require.Len(t, toCh, 0)
 }
 
+func TestLocalDoWriteTiCIOnly(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
+	createCalled := 0
+	factory := &mockImportClientFactory{
+		stores: []*metapb.Store{{Id: 1}},
+		createClientFn: func(_ *metapb.Store) sst.ImportSSTClient {
+			createCalled++
+			return nil
+		},
+	}
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
+		},
+		logger:              log.L(),
+		writeLimiter:        newStoreWriteLimiter(0),
+		importClientFactory: factory,
+		tikvCodec:           keyspace.CodecV1,
+		ticiWriteGroup:      &mockTiCIWriteGroup{},
+	}
+	var err error
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	require.NoError(t, err)
+
+	job := &regionJob{
+		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
+		stage:            regionScanned,
+		ingestData:       mockIngestData{{[]byte("a"), []byte("a")}},
+		region:           dummyRegionInfo,
+		regionSplitSize:  int64(config.SplitRegionSize),
+		regionSplitKeys:  100,
+		ticiWriteEnabled: true,
+	}
+
+	res, err := local.doWrite(context.Background(), job)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.True(t, res.skipIngest)
+	require.Zero(t, createCalled)
+}
+
+func TestLocalDoWriteTiCIPartialRange(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("skip this test on next-gen kernel")
+	}
+	ticiGroup := &mockTiCIWriteGroup{}
+	local := &Backend{
+		BackendConfig: BackendConfig{
+			LocalStoreDir: path.Join(t.TempDir(), "sorted-kv"),
+		},
+		logger:              log.L(),
+		writeLimiter:        newStoreWriteLimiter(0),
+		importClientFactory: &mockImportClientFactory{},
+		tikvCodec:           keyspace.CodecV1,
+		ticiWriteGroup:      ticiGroup,
+	}
+	var err error
+	local.engineMgr, err = newEngineManager(local.BackendConfig, local, local.logger)
+	require.NoError(t, err)
+
+	job := &regionJob{
+		keyRange:         engineapi.Range{Start: []byte("a"), End: []byte("z")},
+		stage:            regionScanned,
+		ingestData:       mockIngestData{{[]byte("a"), []byte("a")}, {[]byte("b"), []byte("b")}, {[]byte("c"), []byte("c")}, {[]byte("d"), []byte("d")}},
+		region:           dummyRegionInfo,
+		regionSplitSize:  int64(config.SplitRegionSize),
+		regionSplitKeys:  2,
+		ticiWriteEnabled: true,
+	}
+
+	res, err := local.doWrite(context.Background(), job)
+	require.NoError(t, err)
+	require.NotNil(t, res)
+	require.Equal(t, []byte("c"), res.remainingStartKey)
+	expectedLowerBound := codec.EncodeBytes([]byte{}, []byte("a"))
+	require.Equal(t, expectedLowerBound, ticiGroup.lastLowerBound)
+	require.Equal(t, []byte("b"), ticiGroup.lastUpperBound)
+	require.Less(t, bytes.Compare(ticiGroup.lastUpperBound, res.remainingStartKey), 0)
+}
+
 // mockIngestData must be ordered on the first element of each [2][]byte.
 // there cannot be duplicated items.
 type mockIngestData [][2][]byte
@@ -1748,6 +1832,8 @@ func TestSplitRangeAgain4BigRegion(t *testing.T) {
 		f,
 		10*units.GB,
 		1<<30,
+		false,
+		0,
 		jobCh,
 		&jobWg,
 	)
@@ -1819,6 +1905,8 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		extEngine,
 		10*units.GB,
 		1<<30,
+		false,
+		0,
 		jobCh,
 		&jobWg,
 	)
@@ -1989,7 +2077,7 @@ func TestDoImport(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2017,7 +2105,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange")
 
 	// test second call to generateJobForRange (needRescan) meet error
@@ -2066,7 +2154,7 @@ func TestDoImport(t *testing.T) {
 			err: errors.New("meet error when generateJobForRange again"),
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
 	require.ErrorContains(t, err, "meet error when generateJobForRange again")
 
 	// test write meet unretryable error
@@ -2117,7 +2205,7 @@ func TestDoImport(t *testing.T) {
 			},
 		},
 	}
-	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
 	require.ErrorContains(t, err, "fatal error")
 }
 
@@ -2205,7 +2293,7 @@ func TestRegionJobResetRetryCounter(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
 	require.NoError(t, err)
 	for _, v := range fakeRegionJobs {
 		for _, job := range v.jobs {
@@ -2263,7 +2351,7 @@ func TestCtxCancelIsIgnored(t *testing.T) {
 		},
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2295,7 +2383,7 @@ func TestWorkerFailedWhenGeneratingJobs(t *testing.T) {
 		),
 	}
 	e := &Engine{regionSplitKeysCache: initRegionKeys}
-	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err := l.doImport(ctx, e, initRegionKeys, int64(config.SplitRegionSize), int64(config.SplitRegionKeys), false, 0)
 	require.ErrorContains(t, err, "the remaining storage capacity of TiKV")
 }
 
@@ -2358,13 +2446,13 @@ func TestExternalEngine(t *testing.T) {
 		MemCapacity:   8 * units.GiB,
 	}
 	engineUUID := uuid.New()
-	engineID := int32(common.IndexEngineID) // dummy engine ID, marked as an index engine
 	hook := &recordScanRegionsHook{}
 	local := &Backend{
 		BackendConfig: BackendConfig{
 			WorkerConcurrency: 2,
 			LocalStoreDir:     path.Join(t.TempDir(), "sorted-kv"),
 		},
+		logger: log.L(),
 		splitCli: initTestSplitClient([][]byte{
 			keys[0], keys[50], endKey,
 		}, hook),
@@ -2391,7 +2479,7 @@ func TestExternalEngine(t *testing.T) {
 			engineUUID,
 		)
 		require.NoError(t, err2)
-		err2 = local.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+		err2 = local.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 		require.NoError(t, err2)
 		close(done)
 	}()
@@ -2563,4 +2651,24 @@ func TestTotalMemoryConsume(t *testing.T) {
 	err = b.CloseEngine(ctx, &backend.EngineConfig{}, engineID)
 	require.NoError(t, err)
 	b.CloseEngineMgr()
+}
+
+func TestMarkTiCIWriteEngineLogs(t *testing.T) {
+	core, recorded := observer.New(zap.InfoLevel)
+	logger := zap.New(core)
+	backend := &Backend{
+		logger: log.Wrap(logger),
+	}
+	engineUUID := uuid.New()
+
+	backend.markTiCIWriteEngine(engineUUID, true)
+	backend.markTiCIWriteEngine(engineUUID, false)
+
+	entries := recorded.FilterMessage("mark tici write engine").All()
+	require.Len(t, entries, 2)
+	fields := entries[0].ContextMap()
+	require.Equal(t, engineUUID.String(), fields["engine-uuid"])
+	require.Equal(t, true, fields["tici-write-enabled"])
+	fields = entries[1].ContextMap()
+	require.Equal(t, false, fields["tici-write-enabled"])
 }

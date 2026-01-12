@@ -276,10 +276,10 @@ func rollingbackAddFullTextIndex(jobCtx *jobContext, job *model.Job) (ver int64,
 	return
 }
 
-func rollingbackAddHybridIndex(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+func rollingbackAddHybridIndex(w *worker, jobCtx *jobContext, job *model.Job) (ver int64, err error) {
 	if job.SchemaState == model.StateWriteReorganization {
 		jobCtx.logger.Info("run the cancelling DDL job", zap.String("job", job.String()))
-		ver, err = onCreateHybridIndex(jobCtx, job)
+		ver, err = w.onCreateHybridIndex(jobCtx, job)
 	} else {
 		ver, err = convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 	}
@@ -641,7 +641,7 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 	case model.ActionAddFullTextIndex:
 		ver, err = rollingbackAddFullTextIndex(jobCtx, job)
 	case model.ActionAddHybridIndex:
-		ver, err = rollingbackAddHybridIndex(jobCtx, job)
+		ver, err = rollingbackAddHybridIndex(w, jobCtx, job)
 	case model.ActionAddColumnarIndex:
 		ver, err = rollingbackAddColumanrIndex(w, jobCtx, job)
 	case model.ActionAddTablePartition:

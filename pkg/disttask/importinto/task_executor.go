@@ -584,15 +584,11 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	}()
 
 	_, engineUUID := backend.MakeUUID("", subtask.ID)
-
-	// We specify engineID as a tag so that the callee can determine
-	// whether the call is from a data engine or an index engine.
-	var engineID int32
-	if sm.KVGroup == dataKVGroup {
-		engineID = int32(common.DataEngineID)
-	} else {
-		engineID = int32(common.IndexEngineID)
+	var plan *importer.Plan
+	if e.tableImporter != nil {
+		plan = e.tableImporter.Plan
 	}
+	ticiWriteEnabled := decideTiCIWriteEnabled(e.logger, e.taskID, subtask.ID, sm.KVGroup, plan)
 
 	localBackend := e.tableImporter.Backend()
 	// compatible with old version task meta
@@ -609,6 +605,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	localBackend.SetCollector(collector)
 
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
+		TiCIWriteEnabled: ticiWriteEnabled,
 		External: &backend.ExternalEngineConfig{
 			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,
@@ -627,7 +624,7 @@ func (e *writeAndIngestStepExecutor) RunSubtask(ctx context.Context, subtask *pr
 	if err != nil {
 		return err
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -641,6 +638,45 @@ func (e *writeAndIngestStepExecutor) RealtimeSummary() *execute.SubtaskSummary {
 
 func (e *writeAndIngestStepExecutor) ResetSummary() {
 	e.summary.Reset()
+}
+
+func decideTiCIWriteEnabled(logger *zap.Logger, taskID int64, subtaskID int64, kvGroup string, plan *importer.Plan) bool {
+	baseLogger := logger.With(
+		zap.Int64("task-id", taskID),
+		zap.Int64("subtask-id", subtaskID),
+		zap.String("kv-group", kvGroup),
+	)
+	if kvGroup == dataKVGroup {
+		baseLogger.Info("TiCI write disabled for data kv group")
+		return false
+	}
+	if plan == nil || plan.TableInfo == nil {
+		baseLogger.Info("TiCI write disabled due to missing plan or table info")
+		return false
+	}
+	indexID, err := strconv.ParseInt(kvGroup, 10, 64)
+	if err != nil {
+		baseLogger.With(zap.Error(err)).Info("TiCI write disabled due to invalid kv group index id")
+		return false
+	}
+	indexInfo := plan.TableInfo.FindIndexByID(indexID)
+	if indexInfo == nil {
+		baseLogger.With(
+			zap.Int64("index-id", indexID),
+			zap.String("schema-name", plan.DBName),
+			zap.String("table-name", plan.TableInfo.Name.O),
+		).Info("TiCI write disabled because index is not found")
+		return false
+	}
+	enabled := indexInfo.IsTiCIIndex()
+	baseLogger.With(
+		zap.Int64("index-id", indexID),
+		zap.String("schema-name", plan.DBName),
+		zap.String("table-name", plan.TableInfo.Name.O),
+		zap.String("index-name", indexInfo.Name.O),
+		zap.Bool("tici-write-enabled", enabled),
+	).Info("TiCI write decision for index engine")
+	return enabled
 }
 
 func (e *writeAndIngestStepExecutor) onFinished(ctx context.Context, subtask *proto.Subtask) error {

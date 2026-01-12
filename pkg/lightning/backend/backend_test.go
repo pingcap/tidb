@@ -72,7 +72,7 @@ func TestOpenCloseImportCleanUpEngine(t *testing.T) {
 		Return(nil).
 		After(openCall)
 	importCall := s.mockBackend.EXPECT().
-		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, engineUUID, gomock.Any(), gomock.Any()).
 		Return(nil).
 		After(closeCall)
 	s.mockBackend.EXPECT().
@@ -276,7 +276,7 @@ func TestImportFailedNoRetry(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(context.Canceled, "fake unrecoverable import error"))
 
 	closedEngine, err := s.engineMgr.UnsafeCloseEngine(ctx, nil, "`db`.`table`", 1)
@@ -294,7 +294,7 @@ func TestImportFailedWithRetry(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(errors.Annotate(driver.ErrBadConn, "fake recoverable import error")).
 		MinTimes(2)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
@@ -314,10 +314,10 @@ func TestImportFailedRecovered(t *testing.T) {
 
 	s.mockBackend.EXPECT().CloseEngine(ctx, nil, gomock.Any()).Return(nil)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(gmysql.ErrInvalidConn)
 	s.mockBackend.EXPECT().
-		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).
+		ImportEngine(ctx, gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil)
 	s.mockBackend.EXPECT().RetryImportDelay().Return(time.Duration(0)).AnyTimes()
 

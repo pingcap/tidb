@@ -16,6 +16,7 @@ package ddl
 
 import (
 	"context"
+	"strconv"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -88,6 +89,15 @@ func (e *cloudImportExecutor) Init(ctx context.Context) error {
 	}
 	e.backend = bd
 	e.backendCtx = bCtx
+	for _, idx := range e.indexes {
+		if idx.IsTiCIIndex() {
+			taskID := strconv.FormatInt(e.job.ID, 10)
+			if err := bd.InitTiCIWriterGroup(ctx, e.ptbl.Meta(), e.job.SchemaName, taskID); err != nil {
+				return err
+			}
+			break
+		}
+	}
 	return nil
 }
 
@@ -124,7 +134,11 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	}
 
 	_, engineUUID := backend.MakeUUID(e.ptbl.Meta().Name.L, idxID)
-	engineID := int32(common.IndexEngineID)
+
+	ticiHeaderCommitTS := uint64(0)
+	if currentIdx != nil && currentIdx.GetColumnarIndexType() == model.ColumnarIndexTypeHybrid {
+		ticiHeaderCommitTS = sm.ScanSnapshotTS
+	}
 
 	all := external.SortedKVMeta{}
 	for _, g := range sm.MetaGroups {
@@ -137,6 +151,8 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 		jobKeys = sm.RangeSplitKeys
 	}
 	err = localBackend.CloseEngine(ctx, &backend.EngineConfig{
+		TiCIWriteEnabled:   currentIdx != nil && currentIdx.IsTiCIIndex(),
+		TiCIHeaderCommitTS: ticiHeaderCommitTS,
 		External: &backend.ExternalEngineConfig{
 			ExtStore:      objStore,
 			DataFiles:     sm.DataFiles,
@@ -156,7 +172,7 @@ func (e *cloudImportExecutor) RunSubtask(ctx context.Context, subtask *proto.Sub
 	if err != nil {
 		return err
 	}
-	err = localBackend.ImportEngine(ctx, engineUUID, engineID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
+	err = localBackend.ImportEngine(ctx, engineUUID, int64(config.SplitRegionSize), int64(config.SplitRegionKeys))
 	failpoint.Inject("mockCloudImportRunSubtaskError", func(_ failpoint.Value) {
 		err = context.DeadlineExceeded
 	})
