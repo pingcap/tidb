@@ -101,9 +101,6 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		}
 	}
 
-	// Track consecutive column orderings to ensure we keep indexes with different orderings
-	consecutiveOrderings := make(map[string]struct{})
-
 	// Categorize each index path
 	for _, path := range paths {
 		if path.IsTablePath() {
@@ -176,25 +173,10 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		}
 
 		// Add to preferred indexes if it has any coverage or is a covering scan
-		shouldAdd := len(idxScore.consecutiveColumnIDs) > 0 || path.IsSingleScan || idxScore.interestingCount > 0
-		if shouldAdd {
-			// Check if this index has a different consecutive ordering than we've seen
-			orderingKey := buildOrderingKey(idxScore.consecutiveColumnIDs)
-			if len(idxScore.consecutiveColumnIDs) > 0 {
-				if _, seen := consecutiveOrderings[orderingKey]; !seen {
-					// This is a new ordering, keep it
-					preferredIndexes = append(preferredIndexes, idxScore)
-					consecutiveOrderings[orderingKey] = struct{}{}
-				} else {
-					// We've seen this ordering, but add if it is single scan
-					if path.IsSingleScan {
-						preferredIndexes = append(preferredIndexes, idxScore)
-					}
-				}
-			} else {
-				// No consecutive columns, but still add if it has coverage
-				preferredIndexes = append(preferredIndexes, idxScore)
-			}
+		// We'll handle ordering diversity in buildFinalResult to ensure we keep
+		// different orderings even if they have lower scores
+		if path.IsSingleScan || idxScore.interestingCount > 0 {
+			preferredIndexes = append(preferredIndexes, idxScore)
 		}
 	}
 
@@ -310,18 +292,23 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 		})
 	}
 	slices.SortFunc(scored, func(a, b scoredIndex) int {
+		// Tie-breaker: prefer indexes with higher score
 		if a.score != b.score {
 			return b.score - a.score
 		}
+		// Tie-breaker: prefer indexes with more consecutive columns
 		if a.totalConsecutive != b.totalConsecutive {
 			return b.totalConsecutive - a.totalConsecutive
 		}
+		// Tie-breaker: prefer indexes with single-scan
 		if a.isSingleScan != b.isSingleScan {
 			if a.isSingleScan {
 				return -1
 			}
 			return 1
 		}
+		// Tie-breaker: prefer indexes with fewer columns if
+		// they have only 1 consecutive column.
 		if a.totalConsecutive == 1 && a.columns != b.columns {
 			return a.columns - b.columns
 		}
@@ -369,33 +356,127 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	}
 
 	preferredScored := scoreAndSort(preferredIndexes, req)
+	phase1Limit := maxToKeep / 2
+	selectionState := newIndexSelectionState(phase1Limit, maxToKeep)
 
-	remaining := maxToKeep
-	hasNonZeroScore := false
+	result = selectIndexes(preferredScored, added, req, selectionState, result)
 
-	if len(preferredScored) > 0 && remaining > 0 {
-		for _, entry := range preferredScored {
-			path := entry.info.path
-			if _, ok := added[path]; ok {
-				continue
-			}
-			if remaining == 0 {
-				break
-			}
-			// If we have at least 1 index with score > 0, don't append any with score == 0
-			if hasNonZeroScore && entry.score == 0 {
-				continue
-			}
+	return result
+}
+
+// indexSelectionState tracks state during two-phase index selection
+type indexSelectionState struct {
+	phase1Limit              int
+	remaining                int
+	hasNonZeroScore          bool
+	phase1Count              int
+	seenConsecutiveColumnIDs map[int64]struct{}
+	seenOrderingKeys         map[string]struct{}
+}
+
+func newIndexSelectionState(phase1Limit, maxToKeep int) *indexSelectionState {
+	return &indexSelectionState{
+		phase1Limit:              phase1Limit,
+		remaining:                maxToKeep,
+		seenConsecutiveColumnIDs: make(map[int64]struct{}),
+		seenOrderingKeys:         make(map[string]struct{}),
+	}
+}
+
+// selectIndexes performs two-phase selection of indexes
+func selectIndexes(preferredScored []scoredIndex, added map[*util.AccessPath]struct{}, req columnRequirements, state *indexSelectionState, result []*util.AccessPath) []*util.AccessPath {
+	for _, entry := range preferredScored {
+		path := entry.info.path
+		if _, ok := added[path]; ok {
+			continue
+		}
+		if state.remaining == 0 {
+			break
+		}
+		if state.hasNonZeroScore && entry.score == 0 {
+			continue
+		}
+
+		shouldAdd := shouldAddIndex(entry, path, req, state)
+		if shouldAdd {
 			result = append(result, path)
 			added[path] = struct{}{}
 			if entry.score > 0 {
-				hasNonZeroScore = true
+				state.hasNonZeroScore = true
 			}
-			remaining--
+			state.remaining--
 		}
 	}
-
 	return result
+}
+
+// shouldAddIndex determines if an index should be added based on phase and diversity rules
+func shouldAddIndex(entry scoredIndex, path *util.AccessPath, req columnRequirements, state *indexSelectionState) bool {
+	if state.phase1Count < state.phase1Limit {
+		// Phase 1: Keep top threshold/2 based solely on score
+		state.phase1Count++
+		recordConsecutiveColumns(entry.info.consecutiveColumnIDs, state)
+		return true
+	}
+
+	// Phase 2: Apply diversity rules
+	hasConsecutive := len(entry.info.consecutiveColumnIDs) > 0
+	if hasConsecutive {
+		return shouldAddIndexWithConsecutive(entry.info.consecutiveColumnIDs, state)
+	}
+
+	return shouldAddIndexWithoutConsecutive(entry, path, req, state)
+}
+
+// recordConsecutiveColumns tracks consecutive column IDs and ordering keys
+func recordConsecutiveColumns(consecutiveColumnIDs []int64, state *indexSelectionState) {
+	for _, colID := range consecutiveColumnIDs {
+		state.seenConsecutiveColumnIDs[colID] = struct{}{}
+	}
+	if len(consecutiveColumnIDs) > 0 {
+		orderingKey := buildOrderingKey(consecutiveColumnIDs)
+		state.seenOrderingKeys[orderingKey] = struct{}{}
+	}
+}
+
+// shouldAddIndexWithConsecutive checks if an index with consecutive columns should be added in phase 2
+func shouldAddIndexWithConsecutive(consecutiveColumnIDs []int64, state *indexSelectionState) bool {
+	orderingKey := buildOrderingKey(consecutiveColumnIDs)
+	if _, seen := state.seenOrderingKeys[orderingKey]; seen {
+		return false
+	}
+	state.seenOrderingKeys[orderingKey] = struct{}{}
+	recordConsecutiveColumns(consecutiveColumnIDs, state)
+	return true
+}
+
+// shouldAddIndexWithoutConsecutive checks if an index without consecutive columns should be added in phase 2
+func shouldAddIndexWithoutConsecutive(entry scoredIndex, path *util.AccessPath, req columnRequirements, state *indexSelectionState) bool {
+	if entry.info.interestingCount != 1 {
+		return true
+	}
+
+	// For single-column indexes, check if the column is already covered by a consecutive column
+	singleColID := findSingleInterestingColumn(path, req)
+	if singleColID < 0 {
+		return true
+	}
+
+	// Don't add if the column is already in a consecutive column, unless it's a single scan
+	_, covered := state.seenConsecutiveColumnIDs[singleColID]
+	return !covered || path.IsSingleScan
+}
+
+// findSingleInterestingColumn finds the single interesting column ID in an index
+func findSingleInterestingColumn(path *util.AccessPath, req columnRequirements) int64 {
+	for _, idxCol := range path.FullIdxCols {
+		if idxCol != nil {
+			if _, found := req.interestingColIDs[idxCol.ID]; found {
+				return idxCol.ID
+			}
+		}
+	}
+	return -1
 }
 
 // calculateScoreFromCoverage calculates a ranking score using already-computed coverage information.
