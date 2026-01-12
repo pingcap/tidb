@@ -232,9 +232,9 @@ func NewMgr(
 	}
 
 	// Extract keyspaceID from storage
-	keyspaceID := uint32(tikv.NullspaceID)
+	keyspaceID := tikv.NullspaceID
 	if storage != nil {
-		keyspaceID = uint32(storage.GetCodec().GetKeyspaceID())
+		keyspaceID = storage.GetCodec().GetKeyspaceID()
 	}
 	gcManager := gc.NewManager(controller.GetPDClient(), keyspaceID)
 

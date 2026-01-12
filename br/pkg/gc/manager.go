@@ -5,8 +5,8 @@ package gc
 import (
 	"context"
 
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	tikv "github.com/tikv/client-go/v2/tikv"
 )
 
 // Manager abstracts GC operations, supporting both global and keyspace-level GC.
@@ -24,8 +24,8 @@ type Manager interface {
 
 // NewManager creates a GC Manager.
 // Pass keyspaceID = tikv.NullspaceID for global mode, or actual keyspaceID for keyspace mode.
-func NewManager(pdClient pd.Client, keyspaceID uint32) Manager {
-	if keyspaceID == uint32(tikv.NullspaceID) {
+func NewManager(pdClient pd.Client, keyspaceID tikv.KeyspaceID) Manager {
+	if keyspaceID == tikv.NullspaceID {
 		return newGlobalManager(pdClient)
 	}
 	return newKeyspaceManager(pdClient, keyspaceID)

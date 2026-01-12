@@ -8,6 +8,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/zap"
@@ -17,7 +18,7 @@ import (
 // It uses the new pd.Client.GetGCStatesClient(keyspaceID).SetGCBarrier API.
 type keyspaceManager struct {
 	pdClient   pd.Client
-	keyspaceID uint32
+	keyspaceID tikv.KeyspaceID
 	gcClient   gc.GCStatesClient
 }
 
@@ -25,10 +26,10 @@ type keyspaceManager struct {
 var _ Manager = (*keyspaceManager)(nil)
 
 // newKeyspaceManager creates a new keyspaceManager instance.
-func newKeyspaceManager(pdClient pd.Client, keyspaceID uint32) *keyspaceManager {
+func newKeyspaceManager(pdClient pd.Client, keyspaceID tikv.KeyspaceID) *keyspaceManager {
 	// Get keyspace-specific GC states client
 	// KeyspaceID is bound to this client, all operations will automatically target this keyspace
-	gcClient := pdClient.GetGCStatesClient(keyspaceID)
+	gcClient := pdClient.GetGCStatesClient(uint32(keyspaceID))
 
 	return &keyspaceManager{
 		pdClient:   pdClient,
@@ -50,7 +51,7 @@ func (m *keyspaceManager) GetGCSafePoint(ctx context.Context) (uint64, error) {
 // If sp.TTL <= 0, it calls DeleteGCBarrier to remove the barrier (same as unified manager behavior).
 func (m *keyspaceManager) SetServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error {
 	log.Debug("set keyspace GC barrier",
-		zap.Uint32("keyspaceID", m.keyspaceID),
+		zap.Uint32("keyspaceID", uint32(m.keyspaceID)),
 		zap.Object("safePoint", sp))
 
 	// Handle deletion case (TTL <= 0), same as unified manager behavior
@@ -69,7 +70,7 @@ func (m *keyspaceManager) SetServiceSafePoint(ctx context.Context, sp BRServiceS
 	}
 
 	log.Debug("set keyspace GC barrier succeeded",
-		zap.Uint32("keyspaceID", m.keyspaceID),
+		zap.Uint32("keyspaceID", uint32(m.keyspaceID)),
 		zap.String("barrierID", barrierInfo.BarrierID),
 		zap.Uint64("barrierTS", barrierInfo.BarrierTS),
 		zap.Duration("TTL", barrierInfo.TTL))
@@ -84,7 +85,7 @@ func (m *keyspaceManager) DeleteServiceSafePoint(ctx context.Context, sp BRServi
 		return errors.Trace(err)
 	}
 	log.Debug("deleted keyspace GC barrier",
-		zap.Uint32("keyspaceID", m.keyspaceID),
+		zap.Uint32("keyspaceID", uint32(m.keyspaceID)),
 		zap.String("barrierID", sp.ID))
 	return nil
 }

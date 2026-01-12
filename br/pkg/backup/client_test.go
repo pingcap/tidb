@@ -32,6 +32,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
+	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
 	"go.opencensus.io/stats/view"
 )
@@ -117,8 +118,7 @@ func createBackupSuite(t *testing.T) *testBackup {
 	s.mockCluster = mockCluster
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
-	gcMgr, err := gc.NewManager(s.mockPDClient, nil)
-	require.NoError(t, err)
+	gcMgr := gc.NewManager(s.mockPDClient, tikv.NullspaceID)
 	mockMgr.SetGcManager(gcMgr)
 	mockMgr.SetPDClient(s.mockPDClient)
 	s.backupClient = backup.NewBackupClient(s.ctx, mockMgr)

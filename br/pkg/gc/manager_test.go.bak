@@ -73,7 +73,6 @@ func TestNewManager(t *testing.T) {
 
 		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
 		require.NotNil(t, mgr)
-		require.NotNil(t, mgr)
 
 		// Verify it's a globalManager by calling SetServiceSafePoint
 		// and checking that UpdateServiceGCSafePoint is called
@@ -131,8 +130,8 @@ func TestGlobalManager(t *testing.T) {
 		pdClient := newMockPDClientWithGCStates(t)
 		t.Cleanup(pdClient.Cleanup)
 
-		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
-		require.NotNil(t, mgr)
+		mgr, err := gc.NewManager(pdClient, nil)
+		require.NoError(t, err)
 
 		ctx := context.Background()
 		sp := gc.BRServiceSafePoint{
@@ -152,8 +151,8 @@ func TestGlobalManager(t *testing.T) {
 		pdClient := newMockPDClientWithGCStates(t)
 		t.Cleanup(pdClient.Cleanup)
 
-		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
-		require.NotNil(t, mgr)
+		mgr, err := gc.NewManager(pdClient, nil)
+		require.NoError(t, err)
 
 		ctx := context.Background()
 		sp := gc.BRServiceSafePoint{
@@ -180,8 +179,8 @@ func TestGlobalManager(t *testing.T) {
 		pdClient := newMockPDClientWithGCStates(t)
 		t.Cleanup(pdClient.Cleanup)
 
-		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
-		require.NotNil(t, mgr)
+		mgr, err := gc.NewManager(pdClient, nil)
+		require.NoError(t, err)
 
 		ctx := context.Background()
 

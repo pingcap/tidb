@@ -2017,9 +2017,9 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 	}
 	// Extract keyspaceID from domain storage
 	store := rc.GetDomain().Store()
-	keyspaceID := uint32(tikv.NullspaceID)
+	keyspaceID := tikv.NullspaceID
 	if store != nil {
-		keyspaceID = uint32(store.GetCodec().GetKeyspaceID())
+		keyspaceID = store.GetCodec().GetKeyspaceID()
 	}
 	gcMgr := gc.NewManager(pdClient, keyspaceID)
 	cctx, gcSafePointKeeperCancel := context.WithCancel(ctx)

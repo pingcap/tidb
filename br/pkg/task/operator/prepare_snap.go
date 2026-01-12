@@ -219,6 +219,9 @@ func pauseAdminAndWaitApply(cx *AdaptEnvForSnapshotBackupContext, afterConnectio
 }
 
 func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error) {
+	// Create GC manager once for global mode (using NullspaceID)
+	mgr := gc.NewManager(cx.pdMgr.GetPDClient(), tikv.NullspaceID)
+
 	// Note: should we remove the service safepoint as soon as this exits?
 	sp := gc.BRServiceSafePoint{
 		ID:       spID,
@@ -233,7 +236,7 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error
 		logutil.CL(cx).Info("No service safepoint provided, using the minimal resolved TS.", zap.Uint64("min-resolved-ts", rts))
 		sp.BackupTS = rts
 	}
-	err = gc.StartServiceSafePointKeeperGlobal(cx, cx.pdMgr.GetPDClient(), sp)
+	err = gc.StartServiceSafePointKeeper(cx, sp, mgr)
 	if err != nil {
 		return err
 	}
@@ -243,7 +246,7 @@ func pauseGCKeeper(cx *AdaptEnvForSnapshotBackupContext, spID string) (err error
 			ID:  sp.ID,
 			TTL: 0,
 		}
-		return gc.UpdateServiceSafePointGlobal(ctx, cx.pdMgr.GetPDClient(), cancelSP)
+		return mgr.SetServiceSafePoint(ctx, cancelSP)
 	})
 	// Note: in fact we can directly return here.
 	// But the name `keeper` implies once the function exits,
