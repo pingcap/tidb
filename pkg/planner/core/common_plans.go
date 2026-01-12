@@ -353,16 +353,16 @@ func (s *Simple) MemoryUsage() (sum int64) {
 	return
 }
 
-// PhysicalSimpleWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
+// PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
-type PhysicalSimpleWrapper struct {
+type PhysicalPlanWrapper struct {
 	physicalop.BasePhysicalPlan
 	Inner base.Plan
 }
 
 // MemoryUsage return the memory usage of PhysicalSimpleWrapper
-func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+func (p *PhysicalPlanWrapper) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}

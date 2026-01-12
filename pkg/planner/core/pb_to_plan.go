@@ -286,7 +286,7 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		Query:        e.Kill.Query,
 	}
 	simple := &Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+	return &PhysicalPlanWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
@@ -305,11 +305,11 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 		}
 		if admin.Tp == ast.AdminReloadBindings {
 			reload := &SQLBindPlan{SQLBindOp: OpReloadBindings}
-			return &PhysicalSimpleWrapper{Inner: reload}, nil
+			return &PhysicalPlanWrapper{Inner: reload}, nil
 		}
 	}
 	simple := &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+	return &PhysicalPlanWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, base.PhysicalPlan) {
