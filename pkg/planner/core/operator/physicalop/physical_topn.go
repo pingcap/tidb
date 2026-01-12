@@ -264,6 +264,13 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
+
+	// Generate additional candidate plans for partial order optimization using prefix index.
+	if canUsePartialOrder4TopN(lt) {
+		topNWithPartialOrderProperty := getPhysTopNWithPartialOrderProperty(lt, prop)
+		ret = append(ret, topNWithPartialOrderProperty...)
+	}
+
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
 	if mppAllowed {
@@ -304,4 +311,87 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		ret = append(ret, topN)
 	}
 	return ret
+}
+
+// canUsePartialOrder4TopN checks if the TopN's child tree satisfies the conditions
+// for partial order optimization.
+// Supported patterns:
+// 1. TopN -> DataSource
+// 2. TopN -> Selection -> DataSource
+//
+// In fact, as long as the new physical property `partial order by` can be passed down layer by layer to the datasource,
+// it could support *more query patterns* that select partial indexes as candidate paths.
+//
+// However, since there is currently no requirement for such complex query patterns,
+// and this new physical property does not implement its layer-by-layer passing logic,
+// the scope of the query pattern is currently limited by this function.
+// TODO:
+// Support more query patterns; replace function judgment with a method that
+// passes physical properties layer by layer and then judges them.
+func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
+	if !lt.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN {
+		return false
+	}
+	// Must have ORDER BY columns
+	if len(lt.ByItems) == 0 {
+		return false
+	}
+
+	child := lt.Children()[0]
+
+	// Pattern 1: TopN -> DataSource
+	if _, ok := child.(*logicalop.DataSource); ok {
+		return true
+	}
+
+	// Pattern 2: TopN -> Selection -> DataSource
+	if sel, ok := child.(*logicalop.LogicalSelection); ok {
+		if len(sel.Children()) == 1 {
+			if _, ok := sel.Children()[0].(*logicalop.DataSource); ok {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// getPhysTopNWithPartialOrderProperty generates PhysicalTopN plans with partial order property t
+// that use partial order optimization with prefix index.
+func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	// Convert ByItems to SortItems for PartialOrderInfo
+	sortItems := make([]*property.SortItem, 0, len(lt.ByItems))
+	for _, byItem := range lt.ByItems {
+		col, ok := byItem.Expr.(*expression.Column)
+		if !ok {
+			// ORDER BY must be simple column references for partial order optimization
+			return nil
+		}
+		sortItems = append(sortItems, &property.SortItem{
+			Col:  col,
+			Desc: byItem.Desc,
+		})
+	}
+
+	// Create PhysicalProperty with PartialOrderInfo
+	// Use CopMultiReadTaskType for IndexLookUp
+	partialOrderProp := &property.PhysicalProperty{
+		TaskTp:      property.CopMultiReadTaskType,
+		ExpectedCnt: math.MaxFloat64,
+		PartialOrderInfo: &property.PartialOrderInfo{
+			ByItems: sortItems,
+		},
+		CTEProducerStatus: prop.CTEProducerStatus,
+		NoCopPushDown:     prop.NoCopPushDown,
+	}
+
+	topN := PhysicalTopN{
+		ByItems:     lt.ByItems,
+		PartitionBy: lt.PartitionBy,
+		Count:       lt.Count,
+		Offset:      lt.Offset,
+	}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), partialOrderProp)
+	topN.SetSchema(lt.Schema())
+
+	return []base.PhysicalPlan{topN}
 }

@@ -313,6 +313,19 @@ type PhysicalProperty struct {
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
 	NoCopPushDown bool
+
+	// PartialOrderInfo is used for TopN's partial order optimization.
+	// When this field is not nil, it indicates that prefix index can be used
+	// to provide partial order for TopN.
+	PartialOrderInfo *PartialOrderInfo
+}
+
+// PartialOrderInfo records information needed for partial order optimization.
+// When PhysicalProperty.PartialOrderInfo is not nil, it indicates that
+// prefix index can be used to provide partial order.
+type PartialOrderInfo struct {
+	// ByItems are the ORDER BY columns from TopN
+	ByItems []*SortItem
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -567,6 +580,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		CTEProducerStatus:     p.CTEProducerStatus,
 		NoCopPushDown:         p.NoCopPushDown,
+		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}
