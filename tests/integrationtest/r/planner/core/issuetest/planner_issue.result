@@ -1429,3 +1429,54 @@ insert into t1 value(1,1);
 insert into t2 value(1,1);
 delete t1, t2 from t1, t2 where t1.a = t2.a;
 drop table t1, t2;
+set @old_db := database();
+drop database if exists lock_db1;
+drop database if exists lock_db2;
+create database lock_db1;
+create database lock_db2;
+use lock_db1;
+create table t(id int primary key, v int);
+insert into t values (1, 100), (2, 200);
+select ue1_0.id from t ue1_0 where ue1_0.id=1 for update of t;
+Error 1109 (42S02): Unknown table 't' in locking clause
+select ue1_0.id from t ue1_0 where ue1_0.id=1 for update of ue1_0;
+id
+1
+select ue1_0.id from t ue1_0 for update of t;
+Error 1109 (42S02): Unknown table 't' in locking clause
+select ue1_0.id from t ue1_0 for update of ue1_0;
+id
+1
+2
+select ue1_0.id from t ue1_0 where ue1_0.v=100 for update of non_exist_table;
+Error 1109 (42S02): Unknown table 'non_exist_table' in locking clause
+use lock_db2;
+create table t(id int primary key, v int);
+insert into t values (1, 300);
+select id from lock_db1.t where id = 1 for update of lock_db1.t;
+id
+1
+select id from lock_db1.t where id = 1 for update of t;
+id
+1
+select id from t for update of t;
+id
+1
+select id from t for update of lock_db2.t;
+id
+1
+select id from t for update of lock_db1.t;
+Error 1109 (42S02): Unknown table 'lock_db1.t' in locking clause
+select lock_db1.t.id, lock_db2.t.id from lock_db1.t, lock_db2.t where lock_db1.t.id = 1 and lock_db2.t.id = 1 for update of t;
+id	id
+1	1
+with cte_t as (select * from t) select * from cte_t for update of cte_t;
+id	v
+1	300
+drop database if exists lock_db1;
+drop database if exists lock_db2;
+set @old_db = ifnull(@old_db, 'test');
+set @stmt = concat('use ', @old_db);
+prepare _ldbstmt from @stmt;
+execute _ldbstmt;
+deallocate prepare _ldbstmt;
