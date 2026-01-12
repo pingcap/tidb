@@ -3,10 +3,25 @@
 package gc
 
 import (
+	"context"
+
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/kv"
 	pd "github.com/tikv/pd/client"
 )
+
+// Manager abstracts GC operations, supporting both global and keyspace-level GC.
+type Manager interface {
+	// GetGCSafePoint returns the current GC safe point.
+	GetGCSafePoint(ctx context.Context) (uint64, error)
+
+	// SetServiceSafePoint sets the service safe point with TTL.
+	// If TTL <= 0, it removes the service safe point.
+	SetServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error
+
+	// DeleteServiceSafePoint removes the service safe point.
+	DeleteServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error
+}
 
 // NewManager creates a GC Manager based on the storage configuration.
 // If keyspace is configured, it returns a keyspace-aware manager.
@@ -26,4 +41,18 @@ func NewManager(pdClient pd.Client, storage kv.Storage) (Manager, error) {
 	keyspaceID := uint32(codec.GetKeyspaceID())
 
 	return newKeyspaceManager(pdClient, keyspaceID)
+}
+
+// UpdateServiceSafePointGlobal updates the service safe point using globalManager.
+// NOTE: This does NOT support keyspace. Use SetServiceSafePoint with storage for keyspace support.
+func UpdateServiceSafePointGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
+	mgr := newGlobalManager(pdClient)
+	return mgr.SetServiceSafePoint(ctx, sp)
+}
+
+// StartServiceSafePointKeeperGlobal starts a keeper using globalManager.
+// NOTE: This does NOT support keyspace. Use StartServiceSafePointKeeper with storage for keyspace support.
+func StartServiceSafePointKeeperGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
+	mgr := newGlobalManager(pdClient)
+	return StartServiceSafePointKeeper(ctx, sp, mgr)
 }
