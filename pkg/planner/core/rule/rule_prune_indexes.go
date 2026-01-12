@@ -72,7 +72,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	// Which means only prune with score ==0
 	// Only prune with score > 0 when we have more index paths than the threshold
 	// threshold = -1: disable pruning (handled by caller)
-	// threshold = 0: aggressive pruning, keep at least defaultMaxIndexes
+	// threshold = 0: only prune indexes with no interesting columns (score == 0)
 	// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
 	var maxToKeep int
 	if totalPathCount > threshold && threshold >= 0 {
@@ -186,9 +186,8 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 					preferredIndexes = append(preferredIndexes, idxScore)
 					consecutiveOrderings[orderingKey] = struct{}{}
 				} else {
-					// We've seen this ordering before, but still consider the index
-					// if it has good coverage or is a covering scan
-					if idxScore.interestingCount > 0 || path.IsSingleScan {
+					// We've seen this ordering, but add if it is single scan
+					if path.IsSingleScan {
 						preferredIndexes = append(preferredIndexes, idxScore)
 					}
 				}
@@ -270,14 +269,11 @@ func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScor
 			if i == len(score.consecutiveColumnIDs) {
 				score.consecutiveColumnIDs = append(score.consecutiveColumnIDs, idxColID)
 			}
-		} else {
-			// Once we hit a non-interesting column, stop tracking consecutive columns
-			// (we only care about consecutive matches from the start)
-			// If we've already started tracking consecutive columns and hit a non-interesting one, break
-			if len(score.consecutiveColumnIDs) > 0 && i >= len(score.consecutiveColumnIDs) {
-				break
-			}
 		}
+		// Note: We continue checking all columns to count all interesting columns,
+		// even if they're not consecutive from the start. The consecutive tracking
+		// will naturally stop once we hit a non-interesting column, since the condition
+		// `i == len(score.consecutiveColumnIDs)` will no longer be true.
 	}
 
 	return score
