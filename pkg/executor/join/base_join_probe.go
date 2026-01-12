@@ -16,6 +16,7 @@ package join
 
 import (
 	"bytes"
+	"fmt"
 	"hash"
 	"hash/fnv"
 	"unsafe"
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/serialization"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 )
@@ -435,6 +437,14 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 
 	j.preAllocForSetRestoredChunkForProbe(logicalRows, hashValueCol, serializedKeysCol)
 
+	var serializedKeyVectorBufferCapsForTest []int
+	if intest.InTest {
+		serializedKeyVectorBufferCapsForTest = make([]int, len(j.serializedKeys))
+		for i := range j.serializedKeys {
+			serializedKeyVectorBufferCapsForTest[i] = cap(j.serializedKeys[i])
+		}
+	}
+
 	// rehash all rows
 	for _, idx := range j.usedRows {
 		newHashVal := j.matchedRowsHashValue[idx]
@@ -460,6 +470,14 @@ func (j *baseJoinProbe) SetRestoredChunkForProbe(chk *chunk.Chunk) error {
 			j.hashValues[partIndex] = append(j.hashValues[partIndex], posAndHashValue{hashValue: newHashVal, pos: idx})
 			j.serializedKeys[idx] = append(j.serializedKeys[idx], serializedKeysBytes...)
 			j.matchedRowsHeaders[idx] = j.ctx.hashTableContext.lookup(int(partIndex), newHashVal)
+		}
+	}
+
+	if intest.InTest {
+		for i := range j.serializedKeys {
+			if serializedKeyVectorBufferCapsForTest[i] < cap(j.serializedKeys[i]) {
+				panic(fmt.Sprintf("Before: %d, After: %d", serializedKeyVectorBufferCapsForTest[i], cap(j.serializedKeys[i])))
+			}
 		}
 	}
 
