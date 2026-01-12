@@ -303,7 +303,11 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 			return &PhysicalSimpleWrapper{Inner: reload}, nil
 		}
 	}
-
+	// AdminReloadClusterBindings should never be broadcast - it broadcasts AdminReloadBindings instead.
+	// If we receive it here, it indicates a bug in the broadcast logic.
+	if admin.Tp == ast.AdminReloadClusterBindings {
+		return nil, errors.Errorf("unexpected AdminReloadClusterBindings in broadcast query; this statement should not be broadcast directly")
+	}
 	simple := &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	return &PhysicalSimpleWrapper{Inner: simple}, nil
 }
