@@ -59,9 +59,10 @@ type bindingCacheUpdater struct {
 // LoadFromStorageToCache loads bindings from the storage into the cache.
 func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
 	cacheSizeChange := false
-	if u.GetMemCapacity() != vardef.MemQuotaBindingCache.Load() {
+	latestCacheSize := vardef.MemQuotaBindingCache.Load()
+	if u.GetMemCapacity() != latestCacheSize {
 		cacheSizeChange = true
-		u.SetMemCapacity(vardef.MemQuotaBindingCache.Load())
+		u.SetMemCapacity(latestCacheSize)
 	}
 
 	hasNewBinding := false
