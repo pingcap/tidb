@@ -97,7 +97,7 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	// TODO: since data restore does not have tidb up, it looks we can remove this keeper
 	// it requires to do more test, then remove this part of code.
-	err = gc.StartKeeperWithManager(ctx, sp, mgr.GetGCManager())
+	err = gc.StartServiceSafePointKeeper(ctx, sp, mgr.GetGCManager())
 	if err != nil {
 		return errors.Trace(err)
 	}

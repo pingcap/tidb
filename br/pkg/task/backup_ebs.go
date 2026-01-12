@@ -191,7 +191,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 				ID:       gc.MakeSafePointID(),
 			}
 			log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-			err = gc.StartKeeperWithManager(ctx, sp, mgr.GetGCManager())
+			err = gc.StartServiceSafePointKeeper(ctx, sp, mgr.GetGCManager())
 			if err != nil {
 				return errors.Trace(err)
 			}

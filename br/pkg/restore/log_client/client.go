@@ -2031,7 +2031,7 @@ func (rc *LogClient) FailpointDoChecksumForLogRestore(
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = gc.StartKeeperWithManager(cctx, sp, gcMgr)
+	err = gc.StartServiceSafePointKeeper(cctx, sp, gcMgr)
 	if err != nil {
 		return errors.Trace(err)
 	}

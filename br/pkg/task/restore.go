@@ -1576,7 +1576,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	// restore checksum will check safe point with its start ts, see details at
 	// https://github.com/pingcap/tidb/blob/180c02127105bed73712050594da6ead4d70a85f/store/tikv/kv.go#L186-L190
 	// so, we should keep the safe point unchangeable. to avoid GC life time is shorter than transaction duration.
-		err = gc.StartKeeperWithManager(cctx, sp, mgr.GetGCManager())
+		err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
 		if err != nil {
 			return errors.Trace(err)
 		}

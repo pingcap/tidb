@@ -25,7 +25,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      10,
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.NoError(t, err)
 
 			// Verify initial SetServiceSafePoint was called
@@ -42,7 +42,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      10,
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "invalid")
 		})
@@ -57,7 +57,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      0,
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "invalid")
 		})
@@ -72,7 +72,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      -1,
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "invalid")
 		})
@@ -87,7 +87,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      10,
 				BackupTS: 500, // BackupTS is behind GC safe point
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "exceed")
 		})
@@ -102,7 +102,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      10,
 				BackupTS: 1000, // BackupTS equals GC safe point
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.Error(t, err)
 			require.Contains(t, err.Error(), "exceed")
 		})
@@ -121,7 +121,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      10,
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.NoError(t, err)
 
 			// SetServiceSafePoint should be called once immediately
@@ -139,7 +139,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      10,
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.Error(t, err)
 			require.ErrorIs(t, err, context.DeadlineExceeded)
 		})
@@ -161,7 +161,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      6,
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.NoError(t, err)
 
 			// Initial call
@@ -185,7 +185,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				TTL:      300, // Long TTL = 100s interval
 				BackupTS: 1000,
 			}
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.NoError(t, err)
 
 			initialCalls := mgr.getSetSafePointCalls()
@@ -218,7 +218,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 			}
 			// Should NOT return error because GetGCSafePoint error is ignored
 			// in CheckGCSafePoint (returns nil on error)
-			err := gc.StartKeeperWithManager(ctx, sp, mgr)
+			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
 			require.NoError(t, err)
 		})
 	})

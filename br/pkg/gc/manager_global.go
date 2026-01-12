@@ -69,5 +69,5 @@ func UpdateServiceSafePointGlobal(ctx context.Context, pdClient pd.Client, sp BR
 // NOTE: This does NOT support keyspace. Use StartServiceSafePointKeeper with storage for keyspace support.
 func StartServiceSafePointKeeperGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
 	mgr := newGlobalManager(pdClient)
-	return StartKeeperWithManager(ctx, sp, mgr)
+	return StartServiceSafePointKeeper(ctx, sp, mgr)
 }

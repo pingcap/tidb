@@ -526,7 +526,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			}
 			log.Info("finish removing gc-safepoint keeper")
 		}()
-		err = gc.StartKeeperWithManager(cctx, sp, mgr.GetGCManager())
+		err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
 		if err != nil {
 			return errors.Trace(err)
 		}

@@ -26,10 +26,10 @@ func CheckGCSafePoint(ctx context.Context, mgr Manager, ts uint64) error {
 	return nil
 }
 
-// StartKeeperWithManager starts a goroutine to periodically update the service safe point.
+// StartServiceSafePointKeeper starts a goroutine to periodically update the service safe point.
 // It uses the provided Manager to set the safe point.
 // The keeper will run until the context is canceled.
-func StartKeeperWithManager(
+func StartServiceSafePointKeeper(
 	ctx context.Context,
 	sp BRServiceSafePoint,
 	mgr Manager,
