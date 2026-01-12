@@ -25,7 +25,7 @@ type keyspaceManager struct {
 var _ Manager = (*keyspaceManager)(nil)
 
 // newKeyspaceManager creates a new keyspaceManager instance.
-func newKeyspaceManager(pdClient pd.Client, keyspaceID uint32) (*keyspaceManager, error) {
+func newKeyspaceManager(pdClient pd.Client, keyspaceID uint32) *keyspaceManager {
 	// Get keyspace-specific GC states client
 	// KeyspaceID is bound to this client, all operations will automatically target this keyspace
 	gcClient := pdClient.GetGCStatesClient(keyspaceID)
@@ -34,7 +34,7 @@ func newKeyspaceManager(pdClient pd.Client, keyspaceID uint32) (*keyspaceManager
 		pdClient:   pdClient,
 		keyspaceID: keyspaceID,
 		gcClient:   gcClient,
-	}, nil
+	}
 }
 
 // GetGCSafePoint returns the current GC safe point for this keyspace.

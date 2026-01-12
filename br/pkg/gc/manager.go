@@ -5,9 +5,8 @@ package gc
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
 	pd "github.com/tikv/pd/client"
+	tikv "github.com/tikv/client-go/v2/tikv"
 )
 
 // Manager abstracts GC operations, supporting both global and keyspace-level GC.
@@ -23,23 +22,12 @@ type Manager interface {
 	DeleteServiceSafePoint(ctx context.Context, sp BRServiceSafePoint) error
 }
 
-// NewManager creates a GC Manager based on the storage configuration.
-// If keyspace is configured, it returns a keyspace-aware manager.
-// Otherwise, it returns a global manager.
-func NewManager(pdClient pd.Client, storage kv.Storage) (Manager, error) {
-	keyspaceName := config.GetGlobalKeyspaceName()
-
-	if keyspaceName == "" {
-		return newGlobalManager(pdClient), nil
+// NewManager creates a GC Manager.
+// Pass keyspaceID = tikv.NullspaceID for global mode, or actual keyspaceID for keyspace mode.
+func NewManager(pdClient pd.Client, keyspaceID uint32) Manager {
+	if keyspaceID == uint32(tikv.NullspaceID) {
+		return newGlobalManager(pdClient)
 	}
-
-	if storage == nil {
-		panic("storage is required for keyspace mode")
-	}
-
-	codec := storage.GetCodec()
-	keyspaceID := uint32(codec.GetKeyspaceID())
-
 	return newKeyspaceManager(pdClient, keyspaceID)
 }
 
