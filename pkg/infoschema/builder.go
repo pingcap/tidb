@@ -846,20 +846,14 @@ func applyCreateTable(b *Builder, m meta.Reader, dbInfo *model.DBInfo, tableID i
 		return nil, errors.Trace(err)
 	}
 
-	allIndexPublic := true
-	allColumnPublic := true
-	for _, col := range tblInfo.Columns {
-		if col.State != model.StatePublic {
-			allColumnPublic = false
-			break
-		}
-	}
-	for _, idx := range tblInfo.Indices {
-		if idx.State != model.StatePublic {
-			allIndexPublic = false
-			break
-		}
-	}
+	allColumnPublic := !slices.ContainsFunc(tblInfo.Columns,
+		func(col *model.ColumnInfo) bool {
+			return col.State != model.StatePublic
+		})
+	allIndexPublic := !slices.ContainsFunc(tblInfo.Indices,
+		func(idx *model.IndexInfo) bool {
+			return idx.State != model.StatePublic
+		})
 	if allIndexPublic {
 		metrics.DDLResetTempIndexWrite(tblInfo.ID)
 	}
