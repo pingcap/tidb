@@ -1553,7 +1553,7 @@ func (do *Domain) BindingHandle() bindinfo.BindingHandle {
 // be called only once in BootstrapSession.
 func (do *Domain) InitBindingHandle() error {
 	do.bindHandle.Store(bindinfo.NewBindingHandle(do.sysSessionPool))
-	err := do.BindingHandle().LoadFromStorageToCache(true)
+	err := do.BindingHandle().LoadFromStorageToCache(true, false)
 	if err != nil || bindinfo.Lease == 0 {
 		return err
 	}
