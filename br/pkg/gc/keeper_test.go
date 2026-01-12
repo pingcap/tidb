@@ -217,7 +217,7 @@ func TestStartKeeperWithManager(t *testing.T) {
 				BackupTS: 1000,
 			}
 			// Should NOT return error because GetGCSafePoint error is ignored
-			// in checkSafePointByManager (returns nil on error)
+			// in CheckGCSafePoint (returns nil on error)
 			err := gc.StartKeeperWithManager(ctx, sp, mgr)
 			require.NoError(t, err)
 		})

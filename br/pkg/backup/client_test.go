@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	gluemock "github.com/pingcap/tidb/br/pkg/gluetidb/mock"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/mock"
@@ -116,6 +117,9 @@ func createBackupSuite(t *testing.T) *testBackup {
 	s.mockCluster = mockCluster
 	s.ctx, s.cancel = context.WithCancel(context.Background())
 	mockMgr := &conn.Mgr{PdController: &pdutil.PdController{}}
+	gcMgr, err := gc.NewManager(s.mockPDClient, nil)
+	require.NoError(t, err)
+	mockMgr.SetGcManager(gcMgr)
 	mockMgr.SetPDClient(s.mockPDClient)
 	s.backupClient = backup.NewBackupClient(s.ctx, mockMgr)
 

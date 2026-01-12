@@ -12,8 +12,9 @@ import (
 	"go.uber.org/zap"
 )
 
-// checkSafePointByManager checks whether the ts is older than GC safepoint using Manager.
-func checkSafePointByManager(ctx context.Context, mgr Manager, ts uint64) error {
+// CheckGCSafePoint checks whether the ts is older than GC safepoint using Manager.
+// Note: It ignores errors other than exceed GC safepoint.
+func CheckGCSafePoint(ctx context.Context, mgr Manager, ts uint64) error {
 	safePoint, err := mgr.GetGCSafePoint(ctx)
 	if err != nil {
 		log.Warn("fail to get GC safe point", zap.Error(err))
@@ -36,7 +37,7 @@ func StartKeeperWithManager(
 	if sp.ID == "" || sp.TTL <= 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid service safe point %v", sp)
 	}
-	if err := checkSafePointByManager(ctx, mgr, sp.BackupTS); err != nil {
+	if err := CheckGCSafePoint(ctx, mgr, sp.BackupTS); err != nil {
 		return errors.Trace(err)
 	}
 	// Set service safe point immediately to cover the gap between starting
@@ -64,7 +65,7 @@ func StartKeeperWithManager(
 					)
 				}
 			case <-checkTick.C:
-				if err := checkSafePointByManager(ctx, mgr, sp.BackupTS); err != nil {
+				if err := CheckGCSafePoint(ctx, mgr, sp.BackupTS); err != nil {
 					log.Panic("cannot pass gc safe point check, aborting",
 						zap.Error(err),
 						zap.Object("safePoint", sp),

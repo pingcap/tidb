@@ -278,6 +278,11 @@ func (mgr *Mgr) GetGCManager() gc.Manager {
 	return mgr.gcManager
 }
 
+// SetGcManager sets the gc manager (for testing purposes).
+func (mgr *Mgr) SetGcManager(gcMgr gc.Manager) {
+	mgr.gcManager = gcMgr
+}
+
 // GetTLSConfig returns the tls config.
 func (mgr *Mgr) GetTLSConfig() *tls.Config {
 	return mgr.StoreManager.TLSConfig()

@@ -489,7 +489,7 @@ func (bc *Client) GetTS(ctx context.Context, duration time.Duration, ts uint64) 
 	}
 
 	// check backup time do not exceed GCSafePoint
-	err = gc.CheckGCSafePointWithManager(ctx, bc.mgr.GetGCManager(), backupTS)
+	err = gc.CheckGCSafePoint(ctx, bc.mgr.GetGCManager(), backupTS)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

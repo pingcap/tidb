@@ -617,7 +617,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Error("LastBackupTS is larger or equal to current TS")
 			return errors.Annotate(berrors.ErrInvalidArgument, "LastBackupTS is larger or equal to current TS")
 		}
-			err = gc.CheckGCSafePointWithManager(ctx, mgr.GetGCManager(), cfg.LastBackupTS)
+			err = gc.CheckGCSafePoint(ctx, mgr.GetGCManager(), cfg.LastBackupTS)
 			if err != nil {
 				log.Error("Check gc safepoint for last backup ts failed", zap.Error(err))
 				return errors.Trace(err)
