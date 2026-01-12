@@ -297,19 +297,20 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if admin, ok := stmt.(*ast.AdminStmt); ok {
-		// AdminReloadClusterBindings should never be broadcast - it broadcasts AdminReloadBindings instead.
-		// If we receive it here, it indicates a bug in the broadcast logic.
-		if admin.Tp == ast.AdminReloadClusterBindings {
-			return nil, errors.Errorf("unexpected AdminReloadClusterBindings in broadcast query; this statement should not be broadcast directly")
+
+	var innerPlan base.Plan
+	switch x := stmt.(type) {
+	case *ast.AdminStmt:
+		if x.Tp == ast.AdminReloadBindings {
+			innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
 		}
-		if admin.Tp == ast.AdminReloadBindings {
-			reload := &SQLBindPlan{SQLBindOp: OpReloadBindings}
-			return &PhysicalPlanWrapper{Inner: reload}, nil
-		}
+	case *ast.RefreshStatsStmt:
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	}
-	simple := &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalPlanWrapper{Inner: simple}, nil
+	if innerPlan == nil {
+		errors.Errorf("unexpected statement %s in broadcast query", *e.BroadcastQuery.Query)
+	}
+	return &PhysicalPlanWrapper{Inner: innerPlan}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, base.PhysicalPlan) {

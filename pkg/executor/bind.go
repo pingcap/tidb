@@ -30,9 +30,10 @@ import (
 type SQLBindExec struct {
 	exec.BaseExecutor
 
-	isGlobal  bool
-	sqlBindOp plannercore.SQLBindOpType
-	details   []*plannercore.SQLBindOpDetail
+	isGlobal     bool
+	sqlBindOp    plannercore.SQLBindOpType
+	details      []*plannercore.SQLBindOpDetail
+	isFromRemote bool
 }
 
 // Next implements the Executor Next interface.

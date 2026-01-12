@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -306,9 +305,10 @@ const (
 type SQLBindPlan struct {
 	physicalop.SimpleSchemaProducer
 
-	IsGlobal  bool
-	SQLBindOp SQLBindOpType
-	Details   []*SQLBindOpDetail
+	IsGlobal     bool
+	SQLBindOp    SQLBindOpType
+	Details      []*SQLBindOpDetail
+	IsFromRemote bool
 }
 
 // SQLBindOpDetail represents the detail of an operation on a single binding.
@@ -343,16 +343,6 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
-// MemoryUsage return the memory usage of Simple
-func (s *Simple) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = s.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
-	return
-}
-
 // PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
@@ -367,7 +357,9 @@ func (p *PhysicalPlanWrapper) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage()
+	// base.Plan doesn't have MemoryUsage method, so we just use a fixed size.
+	planMem := int64(256)
+	sum = p.BasePhysicalPlan.MemoryUsage() + planMem
 	return
 }
 
