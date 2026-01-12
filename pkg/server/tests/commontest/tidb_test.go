@@ -3681,6 +3681,11 @@ func TestAuditPluginRetrying(t *testing.T) {
 		testResultsMu.Unlock()
 		return l
 	}
+	appendTestResult := func(res normalTest) {
+		testResultsMu.Lock()
+		testResults = append(testResults, res)
+		testResultsMu.Unlock()
+	}
 
 	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 		// Only consider the Completed event
@@ -3693,9 +3698,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			audit.retrying = retrying.(bool)
 		}
 		audit.sql = sctx.StmtCtx.OriginalSQL
-		testResultsMu.Lock()
-		testResults = append(testResults, audit)
-		testResultsMu.Unlock()
+		appendTestResult(audit)
 	}
 	plugin.LoadPluginForTest(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
