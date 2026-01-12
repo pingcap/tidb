@@ -302,8 +302,8 @@ func newBindCache() BindingCache {
 		},
 		Metrics:            true,
 		IgnoreInternalCost: true,
-		OnEvict: func(item *ristretto.Item) {
-			binding := item.Value.(*Binding)
+		OnExit: func(val interface{}) {
+			binding := val.(*Binding)
 			bindingLogger().Warn("binding cache memory limit reached, evict binding",
 				zap.String("sqlDigest", binding.SQLDigest), zap.String("bindSQL", binding.BindSQL))
 		},

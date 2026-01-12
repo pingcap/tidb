@@ -350,6 +350,9 @@ func (e *ShowExec) fetchShowBind() error {
 		return cmpResult > 0
 	})
 	for _, hint := range bindings {
+		if hint == nil {
+			continue
+		}
 		stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
 		if err != nil {
 			return err
