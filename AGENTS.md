@@ -96,13 +96,17 @@ popd
 Before running unit tests, check if the target package uses failpoint:
 
 ```bash
-grep -R -n "failpoint.Enable" pkg/<package_name>
-grep -R -n "testfailpoint.Enable" pkg/<package_name>
+grep -R -n "failpoint\\." pkg/<package_name>
+grep -R -n "testfailpoint\\." pkg/<package_name>
+# Optional (Bazel): if BUILD.bazel exists, check failpoint dependency.
+test -f pkg/<package_name>/BUILD.bazel && grep -n "@com_github_pingcap_failpoint//:failpoint" pkg/<package_name>/BUILD.bazel
 ```
 
 **Rules:**
 - If grep returns matches → `make failpoint-enable` is required
 - If grep returns nothing → do NOT enable failpoint (unnecessary overhead)
+
+**Note:** `--tags=intest` is a separate build tag and does not enable failpoints. Enable/disable failpoints via `make failpoint-enable` / `make failpoint-disable` (or `make bazel-failpoint-enable` for Bazel).
 
 **Ensure failpoint is always disabled** (use this pattern):
 
@@ -190,32 +194,13 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 until curl -sf "http://${PD_ADDR}/pd/api/v1/version" >/dev/null; do sleep 1; done
 ```
 
-#### 2. Enable Failpoint (if needed)
-
-If target test uses `failpoint` / `testfailpoint`, enable failpoint before running tests.
-
-**How to check if needed**:
-```bash
-grep -R -n "failpoint.Enable" tests/realtikvtest/<dir>
-grep -R -n "testfailpoint.Enable" tests/realtikvtest/<dir>
-```
-
-If needed, use this pattern to ensure failpoint is always disabled:
-
-```bash
-make failpoint-enable && (
-  go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/...;
-  rc=$?;
-  make failpoint-disable;
-  exit $rc
-)
-```
-
-#### 3. Run Tests
+#### 2. Run Tests
 
 ```bash
 go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/...
 ```
+
+If target test uses failpoints, enable them first (see the **When to enable failpoint** section above), and ensure they are disabled afterward.
 
 If you use a non-default PD address, pass it via `-args -tikv-path`:
 
@@ -226,7 +211,7 @@ go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/... -args \
 
 **Note**: Do not add `-v` by default to avoid excessive log output. Only add `-v` when debugging.
 
-#### 4. Cleanup
+#### 3. Cleanup
 
 **Required**: If you started TiUP Playground, you must clean up after tests.
 
@@ -234,7 +219,11 @@ go test -run <TestName> --tags=intest ./tests/realtikvtest/<dir>/... -args \
 # 1) Stop playground (will also stop pd/tikv)
 pkill -f "tiup playground" || true
 
-# 2) (Optional) Clean component data directories
+# 2) If you used `--tag <tag>`, remove its data dir (TiUP will not auto-clean it)
+#    Example: rm -rf "${HOME}/.tiup/data/realtikvtest"
+rm -rf "${HOME}/.tiup/data/<tag>"
+
+# 3) (Optional) Clean component data directories
 tiup clean --all
 ```
 
