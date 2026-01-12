@@ -365,6 +365,8 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		}
 	}
 
+	input := "---------- TopN Input ----------"
+
 	needMoreChunks := true
 	for (uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit) || needMoreChunks {
 		srcChk := exec.TryNewCacheChunk(e.Children(0))
@@ -374,6 +376,11 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		}
 		if srcChk.NumRows() == 0 {
 			break
+		}
+
+		rowNum := srcChk.NumRows()
+		for i := 0; i < rowNum; i++ {
+			input = fmt.Sprintf("%s\n%s", input, srcChk.GetRow(i).ToString(e.RetFieldTypes()))
 		}
 
 		endIdx := e.findEndIdx(srcChk)
@@ -392,6 +399,8 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 
 		injectTopNRandomFail(1)
 	}
+
+	fmt.Println(input) // TODO(x) remove debug info
 
 	e.chkHeap.initPtrs()
 	return nil
@@ -632,13 +641,19 @@ func (e *TopNExec) executeRankTopN() {
 	// have received all chunks now.
 	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
 
-	output := "------ rankTonpNResult ------"
+	output := "------ rankTopNCollect ------"
+	for _, ptr := range e.chkHeap.rowPtrs {
+		output = fmt.Sprintf("%s\n%s", output, e.chkHeap.rowChunks.GetRow(ptr).ToString(e.RetFieldTypes()))
+	}
+	fmt.Println(output)
+
+	output = "------ rankTopNResult ------"
 	rowCount := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < int(e.chkHeap.totalLimit) && e.chkHeap.idx < rowCount; e.chkHeap.idx++ {
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
 		output = fmt.Sprintf("%s\n%s", output, e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx]).ToString(e.RetFieldTypes()))
 	}
-	fmt.Println(output)
+	fmt.Println(output) // TODO(x) remove debug info
 }
 
 // Return true when spill is triggered

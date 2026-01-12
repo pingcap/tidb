@@ -16,6 +16,7 @@ package sortexec
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -783,6 +784,7 @@ func (e *SortExec) initCompareFuncs(ctx expression.EvalContext) error {
 			return errors.Errorf("Sort executor not supports type %s", types.TypeStr(keyType.GetType()))
 		}
 	}
+	fmt.Printf("xzxdebug len(e.keyCmpFuncs)2: %d\n", len(e.keyCmpFuncs))
 	return nil
 }
 
@@ -867,6 +869,7 @@ func (e *SortExec) GetSortPartitionListLenForTest() int {
 func (e *SortExec) GetSortMetaForTest() (keyColumns []int, keyCmpFuncs []chunk.CompareFunc, byItemsDesc []bool) {
 	keyColumns = e.keyColumns
 	keyCmpFuncs = e.keyCmpFuncs
+	fmt.Printf("xzxdebug: len(e.keyCmpFuncs)1: %d\n", len(e.keyCmpFuncs))
 	byItemsDesc = make([]bool, len(e.ByItems))
 	for i, byItem := range e.ByItems {
 		byItemsDesc[i] = byItem.Desc
