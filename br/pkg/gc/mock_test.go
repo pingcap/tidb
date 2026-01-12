@@ -18,6 +18,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
 	"github.com/stretchr/testify/require"
 	tikv "github.com/tikv/client-go/v2/tikv"
+	pd "github.com/tikv/pd/client"
 	pdgc "github.com/tikv/pd/client/clients/gc"
 )
 
@@ -58,9 +59,35 @@ func createTestDB(t *testing.T) (*badger.DB, string, string, error) {
 	return db, dbPath, logPath, err
 }
 
-// newTestMockPD creates a fully configured MockPD for testing.
+// pdClientAdapter adapts MockPD to pd.Client interface for testing.
+// This is a minimal adapter without call tracking - tests should use
+// state verification via GetGCStatesClient().GetGCState() instead.
+//
+// Note: Only implements the 3 methods needed for GC tests:
+//   - UpdateServiceGCSafePoint
+//   - UpdateGCSafePoint
+//   - GetGCStatesClient
+// Other pd.Client methods will panic if called (via nil embedding).
+type pdClientAdapter struct {
+	pd.Client
+	mockPD *unistoretikv.MockPD
+}
+
+func (p *pdClientAdapter) UpdateServiceGCSafePoint(ctx context.Context, serviceID string, ttl int64, safePoint uint64) (uint64, error) {
+	return p.mockPD.UpdateServiceGCSafePoint(ctx, serviceID, ttl, safePoint)
+}
+
+func (p *pdClientAdapter) UpdateGCSafePoint(ctx context.Context, safePoint uint64) (uint64, error) {
+	return p.mockPD.UpdateGCSafePoint(ctx, safePoint)
+}
+
+func (p *pdClientAdapter) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient {
+	return p.mockPD.GetGCStatesClient(keyspaceID)
+}
+
+// newTestMockPD creates a fully configured MockPD wrapped in a pd.Client adapter.
 // Cleanup is automatically handled via t.Cleanup().
-func newTestMockPD(t *testing.T) *unistoretikv.MockPD {
+func newTestMockPD(t *testing.T) *pdClientAdapter {
 	db, dbPath, logPath, err := createTestDB(t)
 	require.NoError(t, err)
 
@@ -95,7 +122,7 @@ func newTestMockPD(t *testing.T) *unistoretikv.MockPD {
 		}
 	})
 
-	return mockPD
+	return &pdClientAdapter{mockPD: mockPD}
 }
 
 // ============================================================================

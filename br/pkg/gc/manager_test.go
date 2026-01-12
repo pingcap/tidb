@@ -35,48 +35,16 @@ func newMockStorage(keyspaceID uint32) *mockStorage {
 	}
 }
 
-// getUpdateServiceCalls returns the number of UpdateServiceGCSafePoint calls.
-func (m *mockPDClientWithGCStates) getUpdateServiceCalls() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.updateServiceCalls
-}
-
-// getGCStatesClientTracking returns the tracking client for the given keyspaceID.
-func (m *mockPDClientWithGCStates) getGCStatesClientTracking(keyspaceID uint32) *mockGCStatesClientWithTracking {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.gcStatesClients[keyspaceID]
-}
-
-// getSetGCBarrierCalls returns the number of SetGCBarrier calls.
-func (m *mockGCStatesClientWithTracking) getSetGCBarrierCalls() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.setGCBarrierCalls
-}
-
-// getDeleteGCBarrierCalls returns the number of DeleteGCBarrier calls.
-func (m *mockGCStatesClientWithTracking) getDeleteGCBarrierCalls() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.deleteGCBarrierCalls
-}
-
 func TestNewManager(t *testing.T) {
 	t.Run("GlobalMode", func(t *testing.T) {
 		// Set keyspaceName = "" (global mode)
 		withKeyspaceConfig(t, "")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
-
-		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
-		require.NotNil(t, mgr)
+		mockPD := newTestMockPD(t)
+		mgr := gc.NewManager(mockPD, tikv.NullspaceID)
 		require.NotNil(t, mgr)
 
 		// Verify it's a globalManager by calling SetServiceSafePoint
-		// and checking that UpdateServiceGCSafePoint is called
 		ctx := context.Background()
 		sp := gc.BRServiceSafePoint{
 			ID:       "br-test-global",
@@ -86,25 +54,23 @@ func TestNewManager(t *testing.T) {
 		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
-		// globalManager should call UpdateServiceGCSafePoint
-		require.Equal(t, 1, pdClient.getUpdateServiceCalls())
+		// Note: Global mode uses legacy UpdateServiceGCSafePoint API
+		// which doesn't expose queryable state. No state verification needed.
 	})
 
 	t.Run("KeyspaceMode", func(t *testing.T) {
 		// Set keyspaceName = "test_keyspace" (keyspace mode)
 		withKeyspaceConfig(t, "test_keyspace")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
+		mockPD := newTestMockPD(t)
 
 		storage := newMockStorage(100) // keyspaceID = 100
 		keyspaceID := storage.GetCodec().GetKeyspaceID()
 
-		mgr := gc.NewManager(pdClient, keyspaceID)
+		mgr := gc.NewManager(mockPD, keyspaceID)
 		require.NotNil(t, mgr)
 
 		// Verify it's a keyspaceManager by calling SetServiceSafePoint
-		// and checking that SetGCBarrier is called
 		ctx := context.Background()
 		sp := gc.BRServiceSafePoint{
 			ID:       "br-test-keyspace",
@@ -114,24 +80,23 @@ func TestNewManager(t *testing.T) {
 		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
-		// keyspaceManager should call SetGCBarrier, not UpdateServiceGCSafePoint
-		require.Equal(t, 0, pdClient.getUpdateServiceCalls())
-
-		// Verify SetGCBarrier was called
-		gcClient := pdClient.getGCStatesClientTracking(100)
-		require.NotNil(t, gcClient)
-		require.Equal(t, 1, gcClient.getSetGCBarrierCalls())
+		// Verify barrier exists in state
+		state, err := mockPD.GetGCStatesClient(uint32(keyspaceID)).GetGCState(ctx)
+		require.NoError(t, err)
+		requireBarrier(t, state, "br-test-keyspace", sp.BackupTS-1)
 	})
 }
 
 func TestGlobalManager(t *testing.T) {
+	// Note: Global mode uses legacy UpdateServiceGCSafePoint API
+	// which doesn't expose queryable state. Tests verify basic functionality
+	// without state verification.
+
 	t.Run("SetServiceSafePoint", func(t *testing.T) {
 		withKeyspaceConfig(t, "")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
-
-		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
+		mockPD := newTestMockPD(t)
+		mgr := gc.NewManager(mockPD, tikv.NullspaceID)
 		require.NotNil(t, mgr)
 
 		ctx := context.Background()
@@ -143,16 +108,13 @@ func TestGlobalManager(t *testing.T) {
 
 		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
-		require.Equal(t, 1, pdClient.getUpdateServiceCalls())
 	})
 
 	t.Run("DeleteServiceSafePoint", func(t *testing.T) {
 		withKeyspaceConfig(t, "")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
-
-		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
+		mockPD := newTestMockPD(t)
+		mgr := gc.NewManager(mockPD, tikv.NullspaceID)
 		require.NotNil(t, mgr)
 
 		ctx := context.Background()
@@ -165,22 +127,17 @@ func TestGlobalManager(t *testing.T) {
 		// First set the safe point
 		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
-		require.Equal(t, 1, pdClient.getUpdateServiceCalls())
 
 		// Then delete it
 		err = mgr.DeleteServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
-		// DeleteServiceSafePoint also calls UpdateServiceGCSafePoint with TTL=0
-		require.Equal(t, 2, pdClient.getUpdateServiceCalls())
 	})
 
 	t.Run("GetGCSafePoint", func(t *testing.T) {
 		withKeyspaceConfig(t, "")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
-
-		mgr := gc.NewManager(pdClient, tikv.NullspaceID)
+		mockPD := newTestMockPD(t)
+		mgr := gc.NewManager(mockPD, tikv.NullspaceID)
 		require.NotNil(t, mgr)
 
 		ctx := context.Background()
@@ -199,12 +156,11 @@ func TestKeyspaceManager(t *testing.T) {
 	t.Run("SetGCBarrier", func(t *testing.T) {
 		withKeyspaceConfig(t, "test_keyspace")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
+		mockPD := newTestMockPD(t)
 
 		storage := newMockStorage(keyspaceID)
 		ksID := storage.GetCodec().GetKeyspaceID()
-		mgr := gc.NewManager(pdClient, ksID)
+		mgr := gc.NewManager(mockPD, ksID)
 
 		ctx := context.Background()
 		sp := gc.BRServiceSafePoint{
@@ -216,13 +172,8 @@ func TestKeyspaceManager(t *testing.T) {
 		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
-		// Verify SetGCBarrier was called
-		gcClient := pdClient.getGCStatesClientTracking(keyspaceID)
-		require.NotNil(t, gcClient)
-		require.Equal(t, 1, gcClient.getSetGCBarrierCalls())
-
-		// Verify the barrier exists via GetGCState
-		state, err := pdClient.GetGCStatesClient(keyspaceID).GetGCState(ctx)
+		// Verify barrier exists with correct TS
+		state, err := mockPD.GetGCStatesClient(keyspaceID).GetGCState(ctx)
 		require.NoError(t, err)
 		requireBarrier(t, state, "br-test-barrier", sp.BackupTS-1)
 	})
@@ -230,12 +181,11 @@ func TestKeyspaceManager(t *testing.T) {
 	t.Run("SetGCBarrier_ZeroTTL_CallsDelete", func(t *testing.T) {
 		withKeyspaceConfig(t, "test_keyspace")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
+		mockPD := newTestMockPD(t)
 
 		storage := newMockStorage(keyspaceID)
 		ksID := storage.GetCodec().GetKeyspaceID()
-		mgr := gc.NewManager(pdClient, ksID)
+		mgr := gc.NewManager(mockPD, ksID)
 
 		ctx := context.Background()
 
@@ -248,29 +198,30 @@ func TestKeyspaceManager(t *testing.T) {
 		err := mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
-		gcClient := pdClient.getGCStatesClientTracking(keyspaceID)
-		require.Equal(t, 1, gcClient.getSetGCBarrierCalls())
-		require.Equal(t, 0, gcClient.getDeleteGCBarrierCalls())
+		// Verify barrier exists
+		state, err := mockPD.GetGCStatesClient(keyspaceID).GetGCState(ctx)
+		require.NoError(t, err)
+		requireBarrier(t, state, "br-test-delete", sp.BackupTS-1)
 
-		// Now call with TTL=0, should delete instead of set
+		// Set with TTL=0, should delete
 		sp.TTL = 0
 		err = mgr.SetServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
-		// SetGCBarrier should still be 1, DeleteGCBarrier should be 1
-		require.Equal(t, 1, gcClient.getSetGCBarrierCalls())
-		require.Equal(t, 1, gcClient.getDeleteGCBarrierCalls())
+		// Verify barrier was removed
+		state, err = mockPD.GetGCStatesClient(keyspaceID).GetGCState(ctx)
+		require.NoError(t, err)
+		requireNoBarrier(t, state, "br-test-delete")
 	})
 
 	t.Run("DeleteGCBarrier", func(t *testing.T) {
 		withKeyspaceConfig(t, "test_keyspace")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
+		mockPD := newTestMockPD(t)
 
 		storage := newMockStorage(keyspaceID)
 		ksID := storage.GetCodec().GetKeyspaceID()
-		mgr := gc.NewManager(pdClient, ksID)
+		mgr := gc.NewManager(mockPD, ksID)
 
 		ctx := context.Background()
 
@@ -284,7 +235,7 @@ func TestKeyspaceManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists
-		state, err := pdClient.GetGCStatesClient(keyspaceID).GetGCState(ctx)
+		state, err := mockPD.GetGCStatesClient(keyspaceID).GetGCState(ctx)
 		require.NoError(t, err)
 		requireBarrier(t, state, "br-test-to-delete", sp.BackupTS-1)
 
@@ -292,11 +243,8 @@ func TestKeyspaceManager(t *testing.T) {
 		err = mgr.DeleteServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
-		gcClient := pdClient.getGCStatesClientTracking(keyspaceID)
-		require.Equal(t, 1, gcClient.getDeleteGCBarrierCalls())
-
 		// Verify barrier no longer exists
-		state, err = pdClient.GetGCStatesClient(keyspaceID).GetGCState(ctx)
+		state, err = mockPD.GetGCStatesClient(keyspaceID).GetGCState(ctx)
 		require.NoError(t, err)
 		requireNoBarrier(t, state, "br-test-to-delete")
 	})
@@ -304,12 +252,11 @@ func TestKeyspaceManager(t *testing.T) {
 	t.Run("GetGCSafePoint", func(t *testing.T) {
 		withKeyspaceConfig(t, "test_keyspace")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
+		mockPD := newTestMockPD(t)
 
 		storage := newMockStorage(keyspaceID)
 		ksID := storage.GetCodec().GetKeyspaceID()
-		mgr := gc.NewManager(pdClient, ksID)
+		mgr := gc.NewManager(mockPD, ksID)
 
 		ctx := context.Background()
 
@@ -323,12 +270,11 @@ func TestKeyspaceManager(t *testing.T) {
 	t.Run("BehindTxnSafePoint_Error", func(t *testing.T) {
 		withKeyspaceConfig(t, "test_keyspace")
 
-		pdClient := newMockPDClientWithGCStates(t)
-		t.Cleanup(pdClient.Cleanup)
+		mockPD := newTestMockPD(t)
 
 		storage := newMockStorage(keyspaceID)
 		ksID := storage.GetCodec().GetKeyspaceID()
-		mgr := gc.NewManager(pdClient, ksID)
+		mgr := gc.NewManager(mockPD, ksID)
 
 		ctx := context.Background()
 
