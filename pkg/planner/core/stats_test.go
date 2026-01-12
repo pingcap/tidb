@@ -18,15 +18,20 @@ import (
 	"context"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -132,6 +137,27 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 		}
 	})
 
+	t.Run("threshold_hint", func(t *testing.T) {
+		// First get threshold_100 result for comparison
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=100")
+		dsh100 := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1 where a = 1 and f = 1")
+		counth100 := len(dsh100.AllPossibleAccessPaths)
+
+		// Next we will hint the threshold to 10
+		dsh10 := getDataSourceFromQuery(t, dom, tk.Session(), "select /*+ SET_VAR(tidb_opt_index_prune_threshold=10) */ * from t1 where a = 1 and f = 1")
+		// With threshold 10, we expect more aggressive pruning than threshold 20
+		require.Less(t, len(dsh10.AllPossibleAccessPaths), counth100, "hint threshold_10 should have fewer paths than threshold_100")
+		require.Less(t, len(dsh10.AllPossibleAccessPaths), expectedFull, "hint threshold_10 should have fewer paths than baseline (-1)")
+		t.Logf("hint_10: %d paths (threshold_100: %d, baseline: %d)", len(dsh10.AllPossibleAccessPaths), counth100, expectedFull)
+		// Verify all paths are valid
+		for _, path := range dsh10.AllPossibleAccessPaths {
+			require.NotNil(t, path)
+			if !path.IsTablePath() {
+				require.NotNil(t, path.Index)
+			}
+		}
+	})
+
 	t.Run("no_interesting_columns", func(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
 		dsNoInteresting := getDataSourceFromQuery(t, dom, tk.Session(), "select * from t1")
@@ -221,7 +247,49 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Sess
 	// Ensure InRestrictedSQL is false BEFORE building the plan so the flag is set correctly
 	se.GetSessionVars().InRestrictedSQL = false
 
-	// Log the threshold at the start
+	// Extract and apply SET_VAR hints BEFORE building the plan
+	// This mimics what optimizeNoCache does in pkg/planner/optimize.go
+	tableHints := hint.ExtractTableHintsFromStmtNode(stmt, se.GetSessionVars().StmtCtx)
+	setVarHintChecker := func(varName, hint string) (ok bool, warning error) {
+		sysVar := variable.GetSysVar(varName)
+		if sysVar == nil {
+			return false, plannererrors.ErrUnresolvedHintName.FastGenByArgs(varName, hint)
+		}
+		if !sysVar.IsHintUpdatableVerified {
+			warning = plannererrors.ErrNotHintUpdatable.FastGenByArgs(varName)
+		}
+		return true, warning
+	}
+	hypoIndexChecker := func(db, tbl, col ast.CIStr) (colOffset int, err error) {
+		tblInfo, err := dom.InfoSchema().TableByName(ctx, db, tbl)
+		if err != nil {
+			return 0, err
+		}
+		for i, tblCol := range tblInfo.Cols() {
+			if tblCol.Name.L == col.L {
+				return i, nil
+			}
+		}
+		return 0, errors.NewNoStackErrorf("can't find column %v in table %v.%v", col, db, tbl)
+	}
+	originStmtHints, _, warns := hint.ParseStmtHints(tableHints,
+		setVarHintChecker, hypoIndexChecker,
+		se.GetSessionVars().CurrentDB, byte(kv.ReplicaReadFollower))
+	se.GetSessionVars().StmtCtx.StmtHints = originStmtHints
+	for _, warn := range warns {
+		se.GetSessionVars().StmtCtx.AppendWarning(warn)
+	}
+
+	// Apply SET_VAR hints to session variables
+	for name, val := range se.GetSessionVars().StmtCtx.StmtHints.SetVars {
+		oldV, err := se.GetSessionVars().SetSystemVarWithOldStateAsRet(name, val)
+		if err != nil {
+			se.GetSessionVars().StmtCtx.AppendWarning(err)
+		}
+		se.GetSessionVars().StmtCtx.AddSetVarHintRestore(name, oldV)
+	}
+
+	// Log the threshold after applying hints
 	threshold := se.GetSessionVars().OptIndexPruneThreshold
 	t.Logf("Query: %s, Threshold: %d", sql, threshold)
 
