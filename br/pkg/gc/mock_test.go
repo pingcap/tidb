@@ -55,6 +55,10 @@ func (p *mockPDClient) GetGCStatesClient(keyspaceID uint32) pdgc.GCStatesClient 
 	return p.mockPD.GetGCStatesClient(keyspaceID)
 }
 
+func (p *mockPDClient) GetGCInternalController(keyspaceID uint32) pdgc.InternalController {
+	return p.mockPD.GetGCInternalController(keyspaceID)
+}
+
 // newTestMockPD creates a fully configured MockPD wrapped in a pd.Client adapter.
 // Cleanup is automatically handled via t.Cleanup().
 func newTestMockPD(t *testing.T) *mockPDClient {
@@ -132,49 +136,76 @@ func getState(t *testing.T, ctx context.Context, mockPD *mockPDClient, keyspaceI
 }
 
 // ============================================================================
-// Simple Mock Manager for Keeper Tests
+// Mock Manager Wrapper for Keeper Tests
 // ============================================================================
 
-// mockManager implements gc.Manager interface for keeper tests.
-// This is a lightweight mock that doesn't depend on MockPD.
+// mockManager wraps a real gc.Manager (backed by mockPD) with:
+// - Call counting for verification
+// - Error injection for negative testing
+// This provides realistic PD interaction while maintaining test control.
 type mockManager struct {
+	gc.Manager
+	mockPD *mockPDClient
+
 	mu                sync.Mutex
-	gcSafePoint       uint64
-	gcSafePointErr    error
-	setSafePointErr   error
 	setSafePointCalls int
-	deleteCalls       int
+
+	// Error injection
+	setSafePointErr error
+	gcSafePointErr  error
 }
 
-func newMockManager() *mockManager {
-	return &mockManager{}
+func newMockManagerWrapper(t *testing.T, keyspaceID tikv.KeyspaceID) *mockManager {
+	mockPD := newTestMockPD(t)
+	mgr := gc.NewManager(mockPD, keyspaceID)
+	return &mockManager{
+		Manager: mgr,
+		mockPD:  mockPD,
+	}
 }
 
 func (m *mockManager) GetGCSafePoint(ctx context.Context) (uint64, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.gcSafePointErr != nil {
-		return 0, m.gcSafePointErr
+	err := m.gcSafePointErr
+	m.mu.Unlock()
+	if err != nil {
+		return 0, err
 	}
-	return m.gcSafePoint, nil
+	return m.Manager.GetGCSafePoint(ctx)
 }
 
 func (m *mockManager) SetServiceSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 	m.setSafePointCalls++
-	return m.setSafePointErr
+	err := m.setSafePointErr
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	return m.Manager.SetServiceSafePoint(ctx, sp)
 }
 
 func (m *mockManager) DeleteServiceSafePoint(ctx context.Context, sp gc.BRServiceSafePoint) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.deleteCalls++
-	return nil
+	return m.Manager.DeleteServiceSafePoint(ctx, sp)
 }
 
 func (m *mockManager) getSetSafePointCalls() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.setSafePointCalls
+}
+
+// setGCSafePoint sets the GC safe point in mockPD for testing.
+// This first advances txn safe point, then advances GC safe point.
+func (m *mockManager) setGCSafePoint(ctx context.Context, keyspaceID tikv.KeyspaceID, ts uint64) error {
+	ctl := m.mockPD.GetGCInternalController(uint32(keyspaceID))
+	// First advance txn safe point (GC safe point cannot exceed txn safe point)
+	if _, err := ctl.AdvanceTxnSafePoint(ctx, ts); err != nil {
+		return err
+	}
+	// Then advance GC safe point
+	if _, err := ctl.AdvanceGCSafePoint(ctx, ts); err != nil {
+		return err
+	}
+	return nil
 }
