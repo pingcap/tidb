@@ -73,7 +73,13 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 	for i, ft := range rankTopNCase.prefixKeyFieldTypes {
 		prefixData := make([]any, rankTopNCase.rowCount)
 		groupIdx := 0
-		buff := make([]byte, 5)
+		var bufLen int
+		if rankTopNCase.prefixKeyCharCounts[i] == -1 {
+			bufLen = 0
+		} else {
+			bufLen = 5
+		}
+		buf := make([]byte, bufLen)
 		isCI := false
 		switch ft.GetType(nil).GetCollate() {
 		case "utf8mb4_bin":
@@ -84,17 +90,17 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 		}
 
 		for i := 0; i < rankTopNCase.rowCount; {
-			groupSize := rand.Intn(10) + 1
-			// groupSize := rand.Intn(200) + 1 // TODO(x)
+			// groupSize := rand.Intn(10) + 1  // TODO(x)
+			groupSize := rand.Intn(200) + 1
 			for j := 0; j < groupSize && i < rankTopNCase.rowCount; j++ {
-				_, err := crand.Read(buff)
+				_, err := crand.Read(buf)
 				if err != nil {
 					panic("rand.Read returns error")
 				}
 				if isCI && rand.Intn(10) < 5 {
-					prefixData[i] = fmt.Sprintf("PREFIX_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buff))
+					prefixData[i] = fmt.Sprintf("PREFIX_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buf))
 				} else {
-					prefixData[i] = fmt.Sprintf("prefix_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buff))
+					prefixData[i] = fmt.Sprintf("prefix_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buf))
 				}
 				outputs[i] = fmt.Sprintf("%s, %s", outputs[i], prefixData[i])
 				i++
@@ -105,10 +111,10 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 	}
 
 	// TODO(x) remove debug info
-	fmt.Println("---------- Origin Data ----------")
-	for _, output := range outputs {
-		fmt.Println(output)
-	}
+	// fmt.Println("---------- Origin Data ----------")
+	// for _, output := range outputs {
+	// 	fmt.Println(output)
+	// }
 
 	return testutil.BuildMockDataSource(opt)
 }
@@ -123,7 +129,7 @@ func buildRankTopNExec(rankTopNCase *rankTopNCase, dataSource *testutil.MockData
 	for _, idx := range rankTopNCase.orderByIdx {
 		sortExec.ByItems = append(sortExec.ByItems, &plannerutil.ByItems{Expr: rankTopNCase.cols[idx]})
 	}
-	fmt.Printf("xzxdebug len(sortExec.ByItems): %d\n", len(sortExec.ByItems)) // TODO(x) remove debug info
+	// fmt.Printf("xzxdebug len(sortExec.ByItems): %d\n", len(sortExec.ByItems)) // TODO(x) remove debug info
 
 	topNexec := &sortexec.TopNExec{
 		SortExec:    sortExec,
@@ -151,85 +157,76 @@ func rankTopNBasicCase(t *testing.T, sortCase *rankTopNCase, schema *expression.
 }
 
 func TestRankTopN(t *testing.T) {
-	for range 100 {
-		// collationNames := []string{"utf8mb4_bin", "utf8mb4_general_ci"} // TODO(x)
-		collationNames := []string{"utf8mb4_bin"}
-		ctx := mock.NewContext()
-		rankTopNCases := make([]*rankTopNCase, 0)
-		for _, collationName := range collationNames {
-			prefixKeyField := types.NewFieldType(mysql.TypeVarString)
-			prefixKeyField.SetCharset("utf8mb4")
-			prefixKeyField.SetCollate(collationName)
-			// rankTopNCases = append(rankTopNCases, &rankTopNCase{
-			// 	rowCount: rand.Intn(50) + 10,
-			// 	// rowCount:   rand.Intn(9000) + 1000, // TODO(x)
-			// 	ctx:        ctx,
-			// 	orderByIdx: []int{0}, // Order by prefix key column
-			// 	prefixKeyFieldTypes: []expression.Expression{
-			// 		&expression.Column{
-			// 			RetType: prefixKeyField,
-			// 			Index:   0,
-			// 		}},
-			// 	prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName)},
-			// 	prefixKeyColIdxs:        []int{0},
-			// 	prefixKeyCharCounts:     []int{12},
-			// 	cols: []*expression.Column{
-			// 		{Index: 0, RetType: prefixKeyField},
-			// 		{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}},
-			// })
+	collationNames := []string{"utf8mb4_bin", "utf8mb4_general_ci"}
+	ctx := mock.NewContext()
+	rankTopNCases := make([]*rankTopNCase, 0)
+	for _, collationName := range collationNames {
+		prefixKeyField := types.NewFieldType(mysql.TypeVarString)
+		prefixKeyField.SetCharset("utf8mb4")
+		prefixKeyField.SetCollate(collationName)
+		rankTopNCases = append(rankTopNCases, &rankTopNCase{
+			rowCount:   rand.Intn(9000) + 1000,
+			ctx:        ctx,
+			orderByIdx: []int{0}, // Order by prefix key column
+			prefixKeyFieldTypes: []expression.Expression{
+				&expression.Column{
+					RetType: prefixKeyField,
+					Index:   0,
+				}},
+			prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName)},
+			prefixKeyColIdxs:        []int{0},
+			prefixKeyCharCounts:     []int{12},
+			cols: []*expression.Column{
+				{Index: 0, RetType: prefixKeyField},
+				{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		})
 
-			// Test multi prefix key columns
-			rankTopNCases = append(rankTopNCases, &rankTopNCase{
-				rowCount: rand.Intn(50) + 10,
-				// rowCount:   rand.Intn(9000) + 1000, // TODO(x)
-				ctx:        ctx,
-				orderByIdx: []int{0, 1}, // Order by prefix key column
-				prefixKeyFieldTypes: []expression.Expression{
-					&expression.Column{
-						RetType: prefixKeyField,
-						Index:   0,
-					},
-					&expression.Column{
-						RetType: prefixKeyField,
-						Index:   1,
-					}},
-				prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName), collate.GetCollator(collationName)},
-				prefixKeyColIdxs:        []int{0, 1},
-				prefixKeyCharCounts:     []int{12, 12},
-				cols: []*expression.Column{
-					{Index: 0, RetType: prefixKeyField},
-					{Index: 1, RetType: prefixKeyField},
-					{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}},
-			})
+		rankTopNCases = append(rankTopNCases, &rankTopNCase{
+			rowCount:   rand.Intn(9000) + 1000,
+			ctx:        ctx,
+			orderByIdx: []int{0, 1}, // Order by prefix key column
+			prefixKeyFieldTypes: []expression.Expression{
+				&expression.Column{
+					RetType: prefixKeyField,
+					Index:   0,
+				},
+				&expression.Column{
+					RetType: prefixKeyField,
+					Index:   1,
+				}},
+			prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName)},
+			prefixKeyColIdxs:        []int{0, 1},
+			prefixKeyCharCounts:     []int{-1, 12},
+			cols: []*expression.Column{
+				{Index: 0, RetType: prefixKeyField},
+				{Index: 1, RetType: prefixKeyField},
+				{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		})
+	}
+
+	for _, testCase := range rankTopNCases {
+		ctx.GetSessionVars().InitChunkSize = 32
+		ctx.GetSessionVars().MaxChunkSize = 32
+		ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
+		ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
+
+		schema := expression.NewSchema(testCase.cols...)
+		dataSource := buildRankTopNDataSource(testCase, schema)
+
+		randNum := rand.Intn(100)
+		var offset uint64
+		var count uint64
+		if randNum < 10 {
+			offset = 0
+		} else {
+			offset = uint64(rand.Intn(3000))
 		}
 
-		for i, testCase := range rankTopNCases {
-			fmt.Printf("****************** %d\n", i) // TODO(x) remove debug info
-			ctx.GetSessionVars().InitChunkSize = 32
-			ctx.GetSessionVars().MaxChunkSize = 32
-			ctx.GetSessionVars().StmtCtx.MemTracker = memory.NewTracker(memory.LabelForSQLText, -1)
-			ctx.GetSessionVars().StmtCtx.MemTracker.AttachTo(ctx.GetSessionVars().MemTracker)
-
-			schema := expression.NewSchema(testCase.cols...)
-			dataSource := buildRankTopNDataSource(testCase, schema)
-
-			randNum := rand.Intn(100)
-			var offset uint64
-			var count uint64
-			if randNum < 10 {
-				offset = 0
-			} else {
-				offset = 0
-				// offset = uint64(rand.Intn(3000)) // TODO(x)
-			}
-
-			if randNum < 5 {
-				count = 0
-			} else {
-				count = uint64(rand.Intn(10))
-				// count = uint64(rand.Intn(10000)) // TODO(x)
-			}
-			rankTopNBasicCase(t, testCase, schema, dataSource, offset, count)
+		if randNum < 5 {
+			count = 0
+		} else {
+			count = uint64(rand.Intn(10000))
 		}
+		rankTopNBasicCase(t, testCase, schema, dataSource, offset, count)
 	}
 }

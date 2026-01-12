@@ -17,7 +17,6 @@ package sortexec
 import (
 	"container/heap"
 	"context"
-	"fmt"
 	"math/rand"
 	"slices"
 	"sync"
@@ -365,7 +364,7 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		}
 	}
 
-	input := "---------- TopN Input ----------"
+	// input := "---------- TopN Input ----------" // TODO(x)
 
 	needMoreChunks := true
 	for (uint64(e.chkHeap.rowChunks.Len()) < e.chkHeap.totalLimit) || needMoreChunks {
@@ -378,10 +377,11 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 			break
 		}
 
-		rowNum := srcChk.NumRows()
-		for i := 0; i < rowNum; i++ {
-			input = fmt.Sprintf("%s\n%s", input, srcChk.GetRow(i).ToString(e.RetFieldTypes()))
-		}
+		// TODO(x)
+		// rowNum := srcChk.NumRows()
+		// for i := 0; i < rowNum; i++ {
+		// 	input = fmt.Sprintf("%s\n%s", input, srcChk.GetRow(i).ToString(e.RetFieldTypes()))
+		// }
 
 		endIdx := e.findEndIdx(srcChk)
 
@@ -400,7 +400,7 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		injectTopNRandomFail(1)
 	}
 
-	fmt.Println(input) // TODO(x) remove debug info
+	// fmt.Println(input) // TODO(x) remove debug info
 
 	e.chkHeap.initPtrs()
 	return nil
@@ -410,7 +410,12 @@ func (e *TopNExec) getPrefixKeys(row chunk.Row) []string {
 	prefixKeys := make([]string, 0, e.prefixKeyCount)
 	for i := range e.prefixKeyFieldCollators {
 		key := row.GetString(e.prefixKeyColIdxs[i])
-		prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, e.prefixKeyCharCounts[i]))))
+		prefixKeyCharCount := e.prefixKeyCharCounts[i]
+		if prefixKeyCharCount == -1 {
+			prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutableKey(key))))
+		} else {
+			prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, prefixKeyCharCount))))
+		}
 	}
 	return prefixKeys
 }
@@ -641,19 +646,19 @@ func (e *TopNExec) executeRankTopN() {
 	// have received all chunks now.
 	slices.SortFunc(e.chkHeap.rowPtrs, e.chkHeap.keyColumnsCompare)
 
-	output := "------ rankTopNCollect ------"
-	for _, ptr := range e.chkHeap.rowPtrs {
-		output = fmt.Sprintf("%s\n%s", output, e.chkHeap.rowChunks.GetRow(ptr).ToString(e.RetFieldTypes()))
-	}
-	fmt.Println(output)
+	// output := "------ rankTopNCollect ------"
+	// for _, ptr := range e.chkHeap.rowPtrs {
+	// 	output = fmt.Sprintf("%s\n%s", output, e.chkHeap.rowChunks.GetRow(ptr).ToString(e.RetFieldTypes()))
+	// }
+	// fmt.Println(output)
 
-	output = "------ rankTopNResult ------"
+	// output = "------ rankTopNResult ------"
 	rowCount := len(e.chkHeap.rowPtrs)
 	for ; e.chkHeap.idx < int(e.chkHeap.totalLimit) && e.chkHeap.idx < rowCount; e.chkHeap.idx++ {
 		e.resultChannel <- rowWithError{row: e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx])}
-		output = fmt.Sprintf("%s\n%s", output, e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx]).ToString(e.RetFieldTypes()))
+		// output = fmt.Sprintf("%s\n%s", output, e.chkHeap.rowChunks.GetRow(e.chkHeap.rowPtrs[e.chkHeap.idx]).ToString(e.RetFieldTypes()))
 	}
-	fmt.Println(output) // TODO(x) remove debug info
+	// fmt.Println(output) // TODO(x) remove debug info
 }
 
 // Return true when spill is triggered
