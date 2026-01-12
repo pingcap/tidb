@@ -110,12 +110,19 @@ func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 			tk.MustExec("set @@tidb_translate_softdelete_sql=0")
 			tk.MustExec(fmt.Sprintf("update `%s` set _tidb_softdelete_time = _tidb_softdelete_time - interval 1 month where _tidb_softdelete_time is not null", c.tblName))
 			tk.MustExec("set @@tidb_translate_softdelete_sql=1")
+
+			// testify's Eventually runs the condition function in a separate goroutine.
+			// Don't share the same session/TestKit with other statements in this test.
+			verifyTK := testkit.NewTestKit(t, store)
+			verifyTK.MustExec("use test")
+			verifyTK.MustExec("set @@tidb_translate_softdelete_sql=1")
+
 			for q, want := range c.verifySQLs {
 				sql := q
 				expected := want
 				minOK, minv := parseEventuallyExpectation(t, expected)
 				require.Eventuallyf(t, func() bool {
-					gotStr := tk.MustQuery(sql).Rows()[0][0].(string)
+					gotStr := verifyTK.MustQuery(sql).Rows()[0][0].(string)
 					if minOK {
 						got, err := strconv.Atoi(gotStr)
 						require.NoError(t, err)

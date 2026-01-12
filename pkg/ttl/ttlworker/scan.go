@@ -123,6 +123,7 @@ func (t *ttlScanTask) getDatumRows(rows []chunk.Row, fieldTypes []*types.FieldTy
 func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
 	return l.With(
 		zap.String("jobID", t.JobID),
+		zap.String("jobType", t.JobType),
 		zap.Int64("scanID", t.ScanID),
 		zap.Int64("tableID", t.TableID),
 		zap.String("table", t.tbl.FullName()),

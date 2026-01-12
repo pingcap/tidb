@@ -22313,9 +22313,9 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_ttl_query_duration_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type, result)",
+              "expr": "sum(rate(tidb_server_ttl_query_duration_count{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (job_type, sql_type, result)",
               "interval": "",
-              "legendFormat": "{{sql_type}} {{result}}",
+              "legendFormat": "{{job_type}} {{sql_type}} {{result}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
@@ -22509,9 +22509,9 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type, result)",
+              "expr": "sum(rate(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (job_type, sql_type, result)",
               "interval": "",
-              "legendFormat": "{{sql_type}} {{result}}",
+              "legendFormat": "{{job_type}} {{sql_type}} {{result}}",
               "queryType": "randomWalk",
               "refId": "A"
             }
@@ -22806,34 +22806,34 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.50, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (job_type, le))",
               "interval": "",
-              "legendFormat": "50",
+              "legendFormat": "{{job_type}} 50",
               "queryType": "randomWalk",
               "refId": "A"
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (job_type, le))",
               "hide": false,
               "interval": "",
-              "legendFormat": "80",
+              "legendFormat": "{{job_type}} 80",
               "refId": "B"
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (le))\n",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (job_type, le))\n",
               "hide": false,
               "interval": "",
-              "legendFormat": "90",
+              "legendFormat": "{{job_type}} 90",
               "refId": "C"
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"select\", result=\"ok\"}[1m])) by (job_type, le))",
               "hide": false,
               "interval": "",
-              "legendFormat": "99",
+              "legendFormat": "{{job_type}} 99",
               "refId": "D"
             }
           ],
@@ -22927,34 +22927,34 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.50, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.50, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (job_type, le))",
               "interval": "",
-              "legendFormat": "50",
+              "legendFormat": "{{job_type}} 50",
               "queryType": "randomWalk",
               "refId": "A"
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.80, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (job_type, le))",
               "hide": false,
               "interval": "",
-              "legendFormat": "80",
+              "legendFormat": "{{job_type}} 80",
               "refId": "B"
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.90, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (job_type, le))",
               "hide": false,
               "interval": "",
-              "legendFormat": "90",
+              "legendFormat": "{{job_type}} 90",
               "refId": "C"
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.99, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1m])) by (job_type, le))",
               "hide": false,
               "interval": "",
-              "legendFormat": "99",
+              "legendFormat": "{{job_type}} 99",
               "refId": "D"
             }
           ],
@@ -23317,17 +23317,17 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (type)",
+              "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (job_type, type)",
               "hide": false,
               "interval": "",
-              "legendFormat": "ALL {{ type }}",
+              "legendFormat": "{{job_type}} all {{ type }}",
               "refId": "A"
             },
             {
               "exemplar": true,
-              "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type, instance)",
+              "expr": "sum(tidb_server_ttl_job_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (job_type, type, instance)",
               "interval": "",
-              "legendFormat": "{{ instance }} {{ type }}",
+              "legendFormat": "{{job_type}} {{ instance }} {{ type }}",
               "queryType": "randomWalk",
               "refId": "B"
             }
@@ -23427,18 +23427,18 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_server_ttl_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (type)",
+              "expr": "sum(tidb_server_ttl_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\"}) by (job_type, type)",
               "hide": false,
               "interval": "",
-              "legendFormat": "ALL {{ type }}",
+              "legendFormat": "{{job_type}} all {{ type }}",
               "queryType": "randomWalk",
               "refId": "A"
             },
             {
               "exemplar": true,
-              "expr": "sum(tidb_server_ttl_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (type, instance)",
+              "expr": "sum(tidb_server_ttl_task_status{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) by (job_type, type, instance)",
               "interval": "",
-              "legendFormat": "{{ instance }} {{ type }}",
+              "legendFormat": "{{job_type}} {{ instance }} {{ type }}",
               "queryType": "randomWalk",
               "refId": "B"
             }
@@ -23654,7 +23654,7 @@
               {
                 "matcher": {
                   "id": "byRegexp",
-                  "options": "/^delete/"
+                  "options": "/delete/"
                 },
                 "properties": [
                   {
@@ -23700,12 +23700,21 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[${__to:date:H}h${__to:date:m}m]))",
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", job_type=\"softdelete\", result=\"ok\"}[${__to:date:H}h${__to:date:m}m]))",
               "hide": false,
               "interval": "",
-              "legendFormat": "delete current day",
+              "legendFormat": "softdelete delete current day",
               "queryType": "randomWalk",
               "refId": "B"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", job_type=\"ttl\", result=\"ok\"}[${__to:date:H}h${__to:date:m}m]))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "ttl delete current day",
+              "queryType": "randomWalk",
+              "refId": "C"
             },
             {
               "exemplar": true,
@@ -23713,15 +23722,23 @@
               "hide": false,
               "interval": "",
               "legendFormat": "insert last day",
-              "refId": "C"
+              "refId": "D"
             },
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1d] offset ${__to:date:H}h${__to:date:m}m))",
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", job_type=\"softdelete\", result=\"ok\"}[1d] offset ${__to:date:H}h${__to:date:m}m))",
               "hide": false,
               "interval": "",
-              "legendFormat": "delete last day",
-              "refId": "D"
+              "legendFormat": "softdelete delete last day",
+              "refId": "E"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", job_type=\"ttl\", result=\"ok\"}[1d] offset ${__to:date:H}h${__to:date:m}m))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "ttl delete last day",
+              "refId": "F"
             },
             {
               "exemplar": true,
@@ -23729,15 +23746,23 @@
               "hide": false,
               "interval": "",
               "legendFormat": "insert 2 days ago",
-              "refId": "E"
+              "refId": "G"
             },
             {
               "exemplar": true,
-              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", result=\"ok\"}[1d] offset 1d${__to:date:H}h${__to:date:m}m))",
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", job_type=\"softdelete\", result=\"ok\"}[1d] offset 1d${__to:date:H}h${__to:date:m}m))",
               "hide": false,
               "interval": "",
-              "legendFormat": "delete 2 days ago",
-              "refId": "F"
+              "legendFormat": "softdelete delete 2 days ago",
+              "refId": "H"
+            },
+            {
+              "exemplar": true,
+              "expr": "sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type=\"delete\", job_type=\"ttl\", result=\"ok\"}[1d] offset 1d${__to:date:H}h${__to:date:m}m))",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "ttl delete 2 days ago",
+              "refId": "I"
             }
           ],
           "timeFrom": null,
