@@ -392,7 +392,9 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 			zap.Int64s("index IDs", indexIDs))
 		return nil, err
 	}
-	rowCntCollector := newDistTaskRowCntCollector(r.summary, r.job.ID, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
+	rowCntCollector := newDistTaskRowCntCollector(
+		r.summary, sm.PhysicalTableID, r.job.SchemaName,
+		tbl.Meta().Name.O, idxNames.String(), r.GetMeterRecorder())
 	return NewAddIndexIngestPipeline(
 		wctx,
 		r.store,
