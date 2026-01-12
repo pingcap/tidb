@@ -132,6 +132,15 @@ func requireNoBarrier(t *testing.T, state pdgc.GCState, barrierID string) {
 
 // mockManager implements gc.Manager interface for keeper tests.
 // This is a lightweight mock that doesn't depend on MockPD.
+//
+// Call Tracking (REQUIRED for keeper tests):
+//   - setSafePointCalls: Tracks periodic refresh calls in keeper loop
+//   - deleteCalls: Tracks deletion calls
+//
+// Design Note:
+//   Keeper tests MUST use call counts to verify periodic behavior
+//   (e.g., "does the keeper refresh every N seconds?").
+//   This is different from manager tests which use state verification.
 type mockManager struct {
 	mu                sync.Mutex
 	gcSafePoint       uint64
