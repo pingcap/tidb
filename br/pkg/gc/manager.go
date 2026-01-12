@@ -30,17 +30,3 @@ func NewManager(pdClient pd.Client, keyspaceID uint32) Manager {
 	}
 	return newKeyspaceManager(pdClient, keyspaceID)
 }
-
-// UpdateServiceSafePointGlobal updates the service safe point using globalManager.
-// NOTE: This does NOT support keyspace. Use SetServiceSafePoint with storage for keyspace support.
-func UpdateServiceSafePointGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
-	mgr := newGlobalManager(pdClient)
-	return mgr.SetServiceSafePoint(ctx, sp)
-}
-
-// StartServiceSafePointKeeperGlobal starts a keeper using globalManager.
-// NOTE: This does NOT support keyspace. Use StartServiceSafePointKeeper with storage for keyspace support.
-func StartServiceSafePointKeeperGlobal(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
-	mgr := newGlobalManager(pdClient)
-	return StartServiceSafePointKeeper(ctx, sp, mgr)
-}
