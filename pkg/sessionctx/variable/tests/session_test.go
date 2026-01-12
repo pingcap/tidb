@@ -917,4 +917,5 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	require.NoError(t, err1)
 	require.Len(t, val, 0)
 	cancel()
+	<-ctx.Done()
 }
