@@ -153,9 +153,31 @@ func (c *s3Client) PutObject(ctx context.Context, name string, data []byte) erro
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
-	input := buildPutObjectInput(c.options, name, data)
+	input := c.buildPutObjectInput(c.options, name, data)
 	_, err := c.svc.PutObject(ctx, input)
 	return errors.Trace(err)
+}
+
+func (c *s3Client) buildPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
+	key := c.Prefix.ObjectKey(file)
+	input := &s3.PutObjectInput{
+		Body:   bytes.NewReader(data),
+		Bucket: aws.String(options.Bucket),
+		Key:    aws.String(key),
+	}
+	if options.Acl != "" {
+		input.ACL = types.ObjectCannedACL(options.Acl)
+	}
+	if options.Sse != "" {
+		input.ServerSideEncryption = types.ServerSideEncryption(options.Sse)
+	}
+	if options.SseKmsKeyId != "" {
+		input.SSEKMSKeyId = aws.String(options.SseKmsKeyId)
+	}
+	if options.StorageClass != "" {
+		input.StorageClass = types.StorageClass(options.StorageClass)
+	}
+	return input
 }
 
 func (c *s3Client) DeleteObject(ctx context.Context, name string) error {
@@ -327,27 +349,6 @@ func withContentMD5(o *s3.Options) {
 		_, _ = stack.Finalize.Remove("addInputChecksumTrailer")
 		return smithyhttp.AddContentChecksumMiddleware(stack)
 	})
-}
-
-func buildPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
-	input := &s3.PutObjectInput{
-		Body:   bytes.NewReader(data),
-		Bucket: aws.String(options.Bucket),
-		Key:    aws.String(options.Prefix + file),
-	}
-	if options.Acl != "" {
-		input.ACL = types.ObjectCannedACL(options.Acl)
-	}
-	if options.Sse != "" {
-		input.ServerSideEncryption = types.ServerSideEncryption(options.Sse)
-	}
-	if options.SseKmsKeyId != "" {
-		input.SSEKMSKeyId = aws.String(options.SseKmsKeyId)
-	}
-	if options.StorageClass != "" {
-		input.StorageClass = types.StorageClass(options.StorageClass)
-	}
-	return input
 }
 
 // multipartWriter does multi-part upload to s3.

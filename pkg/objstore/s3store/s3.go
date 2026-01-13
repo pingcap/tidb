@@ -92,10 +92,11 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `Storage` interface.
 type S3Storage struct {
-	svc       S3API
-	s3Cli     *s3Client
-	options   *backuppb.S3
-	accessRec *recording.AccessStats
+	svc          S3API
+	s3Cli        s3like.PrefixClient
+	bucketPrefix storeapi.BucketPrefix
+	options      *backuppb.S3
+	accessRec    *recording.AccessStats
 }
 
 // MarkStrongConsistency implements the Storage interface.
@@ -109,14 +110,14 @@ func (rs *S3Storage) GetOptions() *backuppb.S3 {
 }
 
 // CopyFrom implements the Storage interface.
-func (rs *S3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec storeapi.CopySpec) error {
-	s, ok := e.(*S3Storage)
+func (rs *S3Storage) CopyFrom(ctx context.Context, inStore storeapi.Storage, spec storeapi.CopySpec) error {
+	srcStore, ok := inStore.(*S3Storage)
 	if !ok {
-		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", inStore)
 	}
 
 	return rs.s3Cli.CopyObject(ctx, &s3like.CopyInput{
-		FromLoc: storeapi.NewBucketPrefix(s.options.Bucket, s.options.Prefix),
+		FromLoc: srcStore.bucketPrefix,
 		FromKey: spec.From,
 		ToKey:   spec.To,
 	})
@@ -276,15 +277,17 @@ func (options *S3BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
 func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
+	bucketPrefix := storeapi.NewBucketPrefix(options.Bucket, options.Prefix)
 	return &S3Storage{
 		svc: svc,
 		s3Cli: &s3Client{
 			svc:          svc,
-			BucketPrefix: storeapi.NewBucketPrefix(options.Bucket, options.Prefix),
+			BucketPrefix: bucketPrefix,
 			options:      options,
 		},
-		options:   options,
-		accessRec: accessRec,
+		bucketPrefix: bucketPrefix,
+		options:      options,
+		accessRec:    accessRec,
 	}
 }
 
@@ -551,14 +554,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	}
 	log.Info("succeed to get bucket region from s3", zap.String("bucket region", detectedRegion))
 
-	// Ensure prefix ends with "/"
-	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
-		qs.Prefix += "/"
-	}
-
+	qs.Prefix = storeapi.NewPrefix(qs.Prefix).String()
+	bucketPrefix := storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix)
 	s3Cli := &s3Client{
 		svc:          client,
-		BucketPrefix: storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix),
+		BucketPrefix: bucketPrefix,
 		options:      &qs,
 		s3Compatible: !officialS3,
 	}
@@ -569,10 +569,11 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 
 	// Create final S3Storage instance
 	s3Storage := &S3Storage{
-		svc:       client,
-		s3Cli:     s3Cli,
-		options:   &qs,
-		accessRec: opts.AccessRecording,
+		svc:          client,
+		s3Cli:        s3Cli,
+		bucketPrefix: bucketPrefix,
+		options:      &qs,
+		accessRec:    opts.AccessRecording,
 	}
 
 	// Check object lock status if requested
@@ -654,7 +655,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		if err != nil {
 			return nil, errors.Annotatef(err,
 				"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
-				rs.options.Bucket, rs.options.Prefix+file)
+				rs.options.Bucket, rs.bucketPrefix.ObjectKey(file))
 		}
 		data, readErr = io.ReadAll(result.Body)
 		// close the body of response since data has been already read out
@@ -668,7 +669,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		if readErr != nil {
 			if s3like.IsDeadlineExceedError(readErr) || isCancelError(readErr) {
 				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
-					rs.options.Bucket, rs.options.Prefix+file, retryCnt)
+					rs.options.Bucket, rs.bucketPrefix.ObjectKey(file), retryCnt)
 			}
 			metrics.RetryableErrorCount.WithLabelValues(readErr.Error()).Inc()
 			continue
@@ -677,7 +678,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 	}
 	// retry too much, should be failed
 	return nil, errors.Annotatef(readErr, "failed to read body from get object result (retry too much), file info: input.bucket='%s', input.key='%s'",
-		rs.options.Bucket, rs.options.Prefix+file)
+		rs.options.Bucket, rs.bucketPrefix.ObjectKey(file))
 }
 
 // DeleteFile delete the file in s3 storage
@@ -726,17 +727,20 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 		maxKeys = int(opt.ListCount)
 	}
 
-	var marker *string
+	var (
+		marker    *string
+		cliPrefix = rs.bucketPrefix.PrefixStr()
+	)
 	for {
 		res, err := rs.s3Cli.ListObjects(ctx, prefix, marker, maxKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
 		for _, r := range res.Objects {
-			// when walk on specify directory, the result include storage.Prefix,
+			// when walk on specify directory, the result include client prefix,
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
-			trimmedKey := strings.TrimPrefix(r.Key, rs.options.Prefix)
+			trimmedKey := strings.TrimPrefix(r.Key, cliPrefix)
 			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
 			trimmedKey = strings.TrimPrefix(trimmedKey, "/")
 			itemSize := r.Size
@@ -761,7 +765,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 
 // URI returns s3://<base>/<prefix>.
 func (rs *S3Storage) URI() string {
-	return "s3://" + rs.options.Bucket + "/" + rs.options.Prefix
+	return "s3://" + rs.options.Bucket + "/" + rs.bucketPrefix.PrefixStr()
 }
 
 // Open a Reader by file path.

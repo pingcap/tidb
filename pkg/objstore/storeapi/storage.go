@@ -255,6 +255,16 @@ func NewBucketPrefix(bucket, prefix string) BucketPrefix {
 	}
 }
 
+// ObjectKey returns the object key by joining the name to the Prefix.
+func (bp *BucketPrefix) ObjectKey(name string) string {
+	return bp.Prefix.ObjectKey(name)
+}
+
+// PrefixStr returns the Prefix as a string.
+func (bp *BucketPrefix) PrefixStr() string {
+	return bp.Prefix.String()
+}
+
 // GetHTTPRange returns the HTTP Range header value for the given start and end
 // offsets.
 // if startOffset = 0, `full` is true and `rangeVal` is nil.
