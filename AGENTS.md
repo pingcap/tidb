@@ -45,6 +45,11 @@ This file provides guidance to agents when working with code in this repository.
 - `/pkg/util/` - Utilities.
 - `/cmd/tidb-server/` - Main entry for TiDB service.
 
+### Source Files
+
+- When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
+- If the package is built by Bazel and there is a `BUILD.bazel` in the same directory, update the relevant `go_library` / `go_test` `srcs` lists to include the new file.
+
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
