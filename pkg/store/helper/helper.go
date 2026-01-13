@@ -523,7 +523,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
+		logutil.BgLogger().Warn("decode region key failed", zap.String("key", hex.EncodeToString(key)), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return
