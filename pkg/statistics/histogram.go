@@ -1117,7 +1117,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// can all reduce the addedRows estimate. This code does not consider these factors.
 	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, topNCount)
 	// If addedRows is too small, it may be caused by a delay in updates to modifyCount.
-	// ModifyCount == 0 is a known issue - where large tables can have a larde time
+	// ModifyCount == 0 is a known issue - where large tables can have a large time
 	// delay before the first update to ModifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
 	onePercentChange := float64(realtimeRowCount) / outOfRangeBetweenRate
