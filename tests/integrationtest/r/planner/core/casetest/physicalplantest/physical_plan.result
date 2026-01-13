@@ -519,7 +519,6 @@ CTE_0	root		Recursive CTE
 show warnings;
 Level	Code	Message
 Warning	1815	Recursive CTE cte2 can not be inlined by merge() or tidb_opt_force_inline_cte.
-Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='plan_tree' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte2	data:CTE_2
@@ -575,7 +574,6 @@ CTE_0	root		Recursive CTE
     └─CTETable	root		Scan on CTE_0
 show warnings;
 Level	Code	Message
-Warning	1105	Scalar function 'cast'(signature: CastIntAsInt, return type: int) is not supported to push down to tiflash now.
 explain format='plan_tree' with cte1 as (with recursive cte2(c1) as (select 1 union select c1 + 1 c1 from cte2 where c1 < 100) select * from cte2) select * from cte1; -- recursive 'cte2' inside non-recursive 'cte1';
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte2	data:CTE_2
@@ -1453,8 +1451,6 @@ a	a
 2	NULL
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -1468,8 +1464,6 @@ a	a
 2	NULL
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ t1.a, t2.a from t1 left join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -1496,8 +1490,6 @@ a	a
 NULL	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t2) */ t1.a, t2.a from t1 right join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -1537,8 +1529,6 @@ a	a
 NULL	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_build(t2) */ t1.a, t2.a from t1 straight_join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a) eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b)]
@@ -1647,9 +1637,7 @@ a	b
 1	1
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -1662,8 +1650,6 @@ a	b
 1	1
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -1712,9 +1698,7 @@ a	b
 1	1
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.a in (select t2.a from t2 where t1.b = t2.b);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -1727,8 +1711,6 @@ a	b
 1	1
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1), set_var(tidb_hash_join_version=legacy) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -1741,9 +1723,7 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -1756,8 +1736,6 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -1806,9 +1784,7 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=optimized) */ * from t1 where t1.a not in (select t2.a from t2 where t1.b = t2.b);
 id	task	access object	operator info
 HashJoin	root		anti semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.b) eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -1821,8 +1797,6 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1) */ sum(t1.a in (select a from t2)) from t1;
 id	task	access object	operator info
 HashAgg	root		funcs:sum(Column)->Column
@@ -1837,9 +1811,7 @@ sum(t1.a in (select a from t2))
 2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ sum(t1.a in (select a from t2)) from t1;
 id	task	access object	operator info
@@ -1887,9 +1859,7 @@ sum(t1.a in (select a from t2))
 2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1) */ sum(t1.a not in (select a from t2)) from t1;
 id	task	access object	operator info
@@ -1905,9 +1875,7 @@ sum(t1.a not in (select a from t2))
 0
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ sum(t1.a not in (select a from t2)) from t1;
 id	task	access object	operator info
@@ -1955,9 +1923,7 @@ sum(t1.a not in (select a from t2))
 0
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t2, t2) */ t1.a, t2.a from t1 join t2 on t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
@@ -2496,9 +2462,7 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' SELECT /*+ hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=optimized) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -2512,8 +2476,6 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' SELECT /*+ hash_join_probe(t1) */ * FROM t1 WHERE EXISTS (SELECT /*+ SEMI_JOIN_REWRITE() */ 1 FROM t2 WHERE t2.a = t1.a);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -2557,9 +2519,7 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' SELECT /*+ hash_join_build(t1), set_var(tidb_hash_join_version=optimized) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -2573,8 +2533,6 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' SELECT /*+ hash_join_build(t2@sel_2), set_var(tidb_hash_join_version=legacy) */ * FROM t1 WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.a = t1.a);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -2788,9 +2746,7 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' SELECT /*+ USE_TOJA(false) hash_join_build(t1), set_var(tidb_hash_join_version=optimized) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -2804,8 +2760,6 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' SELECT /*+ USE_TOJA(false) hash_join_probe(t1), set_var(tidb_hash_join_version=legacy) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -2873,9 +2827,7 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 Warning	1815	The HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for semi join with hash join version 1. Please remove these hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' SELECT /*+ USE_TOJA(false) hash_join_probe(t2@sel_2), set_var(tidb_hash_join_version=optimized) */ t1.a, t1.b FROM t1 WHERE t1.a in (SELECT t2.a FROM t2);
 id	task	access object	operator info
 HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
@@ -2889,8 +2841,6 @@ a	b
 2	2
 show warnings;
 Level	Code	Message
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
-Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 set tidb_cost_model_version=DEFAULT;
 set tidb_cost_model_version=2;
 drop table if exists t1, t2, t3;
@@ -3982,7 +3932,6 @@ show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to storage layer now.
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to tiflash now.
-Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to tiflash now.
 explain format = 'plan_tree' select /*+ use_index(t, kj) */ * from t where (1 member of (j) and a=1 ) limit 1;
 id	task	access object	operator info
 Limit	root		offset:0, count:1
@@ -4019,16 +3968,15 @@ show warnings;
 Level	Code	Message
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to storage layer now.
 Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to tiflash now.
-Warning	1105	Scalar function 'json_overlaps'(signature: Unspecified, return type: bigint) is not supported to push down to tiflash now.
 set tidb_cost_model_version=DEFAULT;
 explain select /*+ USE_INDEX_MERGE(t3, aid_c1, aid_c2) */ * from t3 where (aid = 1 and c1='aaa') or (aid = 1 and c2='bbb') limit 1;
 id	estRows	task	access object	operator info
-IndexMerge_22	1.00	root		type: union, limit embedded(offset:0, count:1)
-├─Limit_20(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_13	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
-├─Limit_21(Build)	0.01	cop[tikv]		offset:0, count:1
-│ └─IndexRangeScan_14	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
-└─TableRowIDScan_15(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
+IndexMerge_20	1.00	root		type: union, limit embedded(offset:0, count:1)
+├─Limit_18(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_11	0.01	cop[tikv]	table:t3, index:aid_c1(aid, c1)	range:[1 "aaa",1 "aaa"], keep order:false, stats:pseudo
+├─Limit_19(Build)	0.01	cop[tikv]		offset:0, count:1
+│ └─IndexRangeScan_12	0.01	cop[tikv]	table:t3, index:aid_c2(aid, c2)	range:[1 "bbb",1 "bbb"], keep order:false, stats:pseudo
+└─TableRowIDScan_13(Probe)	1.00	cop[tikv]	table:t3	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 CREATE TABLE `tbl_43` (

@@ -4375,7 +4375,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	tableInfo := tbl.Meta()
 	sessionVars.StmtCtx.HasTiflash = sessionVars.StmtCtx.HasTiflash || b.ctx.GetSessionVars().IsMPPAllowed() &&
-		tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 && tableInfo.TiFlashReplica.Available
+		((tableInfo.TiFlashReplica != nil && tableInfo.TiFlashReplica.Count > 0 && tableInfo.TiFlashReplica.Available) ||
+			logicalop.UsedHypoTiFlashReplicas(b.ctx.GetSessionVars(), dbName, tableInfo))
 
 	if b.isCreateView && tableInfo.TempTableType == model.TempTableLocal {
 		return nil, plannererrors.ErrViewSelectTemporaryTable.GenWithStackByArgs(tn.Name)
