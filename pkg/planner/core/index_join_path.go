@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/collate"
@@ -93,7 +92,7 @@ type indexJoinPathResult struct {
 	chosenRemained []expression.Expression // remaining expressions after accessing this index
 	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
 	usedColsLen    int                     // the number of columns used on this index, `t1.a=t2.a and t1.b=t2.b` can use 2 columns of index t1(a, b, c)
-	usedColsNDV    float64                 // the estimated NDV of the used columns on this index, the NDV of `t1(a, b)`
+	eqUsedColsNDV  float64                 // the estimated NDV of the EQ used columns on this index, the NDV of `t1(a, b)`, a,b are in EQ constraint.
 	idxOff2KeyOff  []int
 	lastColManager *physicalop.ColWithCmpFuncManager
 }
@@ -213,7 +212,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		}
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, false, lastColPos)
 		return ret, false, nil
 	}
 	lastPossibleCol := path.IdxCols[lastColPos]
@@ -252,17 +251,19 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 		// update accesses and remained by colAccesses and colRemained.
 		remained = append(remained, colRemained...)
+		lastColIsRange := false
 		if tempRangeRes.nextColInRange {
 			if path.IdxColLens[lastColPos] != types.UnspecifiedLength {
 				remained = append(remained, colAccesses...)
 			}
 			accesses = append(accesses, colAccesses...)
 			lastColPos = lastColPos + 1
+			lastColIsRange = true
 		} else {
 			remained = append(remained, colAccesses...)
 		}
 		mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColPos)
+		ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, nil, lastColIsRange, lastColPos)
 		return ret, false, nil
 	}
 	tempRangeRes := indexJoinPathBuildTmpRange(sctx, buildTmp, matchedKeyCnt, notKeyEqAndIn, nil, true, rangeMaxSize)
@@ -272,9 +273,11 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 	lastColPos, accesses, remained = indexJoinPathUpdateTmpRange(sctx, buildTmp, tempRangeRes, accesses, remained)
 
 	remained = append(remained, rangeFilterCandidates...)
+	lastColIsRange := false
 	if tempRangeRes.extraColInRange {
 		accesses = append(accesses, lastColAccess...)
 		lastColPos = lastColPos + 1
+		lastColIsRange = true
 	} else {
 		if tempRangeRes.keyCntInRange <= 0 {
 			return nil, false, nil
@@ -282,7 +285,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 		lastColManager = nil
 	}
 	mutableRange := indexJoinPathNewMutableRange(sctx, indexJoinInfo, accesses, tempRangeRes.ranges, path)
-	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColPos)
+	ret := indexJoinPathConstructResult(sctx, indexJoinInfo, buildTmp, mutableRange, path, accesses, remained, lastColManager, lastColIsRange, lastColPos)
 	return ret, false, nil
 }
 
@@ -316,41 +319,65 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 	// since they two covers different index columns group, it's un-comparable and hard to see which one is better. Instead
 	// of returning "no winner" and return cmpResult == 0 and letting ndv division outside to make the decision, we could
 	// be a little more bias to index join keys here. (heuristic)
-	if fixcontrol.GetBoolWithDefault(ds.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix65531, false) {
-		if current.idxOff2KeyOff != nil && best.idxOff2KeyOff != nil {
-			curCover, bestCover := 0, 0
-			for _, off := range current.idxOff2KeyOff {
-				if off != -1 {
-					curCover++
-				}
+	indexJoinKeyCoverDiff := 0
+	if current.idxOff2KeyOff != nil && best.idxOff2KeyOff != nil {
+		curCover, bestCover := 0, 0
+		for _, off := range current.idxOff2KeyOff {
+			if off != -1 {
+				curCover++
 			}
-			for _, off := range best.idxOff2KeyOff {
-				if off != -1 {
-					bestCover++
-				}
-			}
-			if curCover > bestCover {
-				// current covers more index join keys.
-				return true
-			}
-			if curCover < bestCover {
-				// best covers more index join keys.
-				return false
-			}
-			// cover num is the same, back to NDV est.
 		}
+		for _, off := range best.idxOff2KeyOff {
+			if off != -1 {
+				bestCover++
+			}
+		}
+		indexJoinKeyCoverDiff = curCover - bestCover
 	}
+	// 1: only care for the eq condition related group ndv, it's more accurate than range condition appended.
+	// 2: when eqUsedColsNDV is in the same level, consider more about usedColsLen and indexJoinKeyCoverDiff.
+	if !isNDVClose(current.eqUsedColsNDV, best.eqUsedColsNDV) {
+		return current.eqUsedColsNDV > best.eqUsedColsNDV // if two NDV are NOT close, return the bigger, meaning the smaller of EQ rows. (the better)
+	}
+	if current.usedColsLen != best.usedColsLen { // if two NDV are quite close, and usedColsLen are different, return the longer one.
+		return current.usedColsLen > best.usedColsLen
+	}
+	if indexJoinKeyCoverDiff != 0 { // if two NDV are quite close, and indexJoinKeyCoverDiff do exist. return the one covers more.
+		return indexJoinKeyCoverDiff > 0
+	}
+	return current.eqUsedColsNDV > best.eqUsedColsNDV // if two NDV are quite close, no other things need to care about, return bigger NDV one.
+}
 
-	// We choose the index by the NDV of the used columns, the larger the better.
-	// If NDVs are same, we choose index which uses more columns.
-	// Note that these 2 heuristic rules are too simple to cover all cases,
-	// since the NDV of outer join keys are not considered, and the detached access conditions
-	// may contain expressions like `t1.a > t2.a`. It's pretty hard to evaluate the join selectivity
-	// of these non-column-equal conditions, so I prefer to keep these heuristic rules simple at least for now.
-	if current.usedColsNDV < best.usedColsNDV || (current.usedColsNDV == best.usedColsNDV && current.usedColsLen <= best.usedColsLen) {
-		return false
+/*
+		tie = 0.8
+		 | Pair       | Max     | log10(Max) | Tolerance | Ratio (min/max) | Is Close? |
+		 |------------|---------|------------|-----------|-----------------|-----------|
+		 | (1, 2)     | 2       | 0.3010     | 0.6157    | 0.5             | Yes       |
+		 | (100, 200) | 200     | 2.3010     | 0.242     | 0.5             | No        |
+		 | (1000,2000)| 2000    | 3.3010     | 0.186     | 0.5             | No        |
+		 | (1e6,2e6)  | 2e6     | 6.3010     | 0.1096    | 0.5             | No        |
+
+		tie = 1.7
+		 | Pair       | Max     | log10(Max) | Tolerance | Ratio (min/max) | Is Close? |
+		 |------------|---------|------------|-----------|-----------------|-----------|
+		 | (1, 2)     | 2       | 0.3010     | 0.6157    | 0.5             | Yes       |
+		 | (100, 200) | 200     | 2.3010     | 0.522     | 0.5             | Yes       |
+		 | (1000,2000)| 2000    | 3.3010     | 0.186     | 0.5             | No        |
+		 | (1e6,2e6)  | 2e6     | 6.3010     | 0.1096    | 0.5             | No        |
+
+	  - 100 vs 500：max=500，tol≈0.46，diffRatio=0.8 → false   （need tie=2.3 to be true）
+	  - 1000 vs 5000：max=5000，tol≈0.36，diffRatio=0.8 → false （need tie=2.7 to be true）
+*/
+func isNDVClose(lhs, rhs float64) bool {
+	if lhs == 0 || rhs == 0 {
+		return lhs == rhs
 	}
-	return true
+	maxVal := math.Max(lhs, rhs)
+	// Shrink tolerance as NDV grows: small NDVs can differ more and still be treated close,
+	// large NDVs need a tighter relative gap.
+	adaptiveTolerance := 1.7 / (1 + math.Log10(maxVal))
+	diffRatio := math.Abs(lhs-rhs) / maxVal
+	return diffRatio <= adaptiveTolerance
 }
 
 // indexJoinPathConstructResult constructs the index join path result.
@@ -362,6 +389,7 @@ func indexJoinPathConstructResult(
 	path *util.AccessPath, accesses,
 	remained []expression.Expression,
 	lastColManager *physicalop.ColWithCmpFuncManager,
+	lastColIsRange bool,
 	usedColsLen int) *indexJoinPathResult {
 	var innerNDV float64
 	if stats := indexJoinInfo.innerTableStats; stats != nil && stats.StatsVersion != statistics.PseudoVersion {
@@ -369,8 +397,12 @@ func indexJoinPathConstructResult(
 		// AFTER APPLYING ALL FILTERS (DataSource.stats). Because here we'll use the NDV to measure how many
 		// rows we need to scan in double-read, and these filters will be applied after the scanning, so we need to
 		// ignore these filters to avoid underestimation. See #63869.
+		eqUsedColsLen := usedColsLen
+		if lastColIsRange {
+			eqUsedColsLen--
+		}
 		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(
-			sctx, path.IdxCols[:usedColsLen], indexJoinInfo.innerSchema, stats)
+			sctx, path.IdxCols[:usedColsLen-1], indexJoinInfo.innerSchema, stats)
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
@@ -378,7 +410,7 @@ func indexJoinPathConstructResult(
 		chosenPath:     path,
 		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
-		usedColsNDV:    innerNDV,
+		eqUsedColsNDV:  innerNDV,
 		chosenRanges:   ranges,
 		chosenAccess:   accesses,
 		chosenRemained: remained,

@@ -758,11 +758,6 @@ func TestIndexJoinPreferIndexCoversMoreJoinKeyCols(t *testing.T) {
 		analyzeSuiteData := GetAnalyzeSuiteData()
 		analyzeSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, tt := range input {
-			// first time is off.
-			if i != 0 {
-				// second time is on.
-				testKit.MustExec("set session tidb_opt_fix_control = '65531:ON';")
-			}
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
 				output[i].Plan = testdata.ConvertRowsToStrings(testKit.MustQuery(tt).Rows())
