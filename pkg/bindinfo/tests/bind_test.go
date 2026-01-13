@@ -555,7 +555,7 @@ func TestDropBindBySQLDigest(t *testing.T) {
 		utilCleanBindingEnv(tk)
 		sql := "create global binding for " + c.origin + " using " + c.hint
 		tk.MustExec(sql)
-		h.LoadFromStorageToCache(true, flase)
+		h.LoadFromStorageToCache(true, false)
 		res := tk.MustQuery(`show global bindings`).Rows()
 
 		require.Equalf(t, 1, len(res), "sql: %s", sql)
