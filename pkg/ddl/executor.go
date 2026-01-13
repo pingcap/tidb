@@ -6801,16 +6801,22 @@ func (e *executor) doDDLJob2(ctx sessionctx.Context, job *model.Job, args model.
 // When fast create is enabled, we might merge multiple jobs into one, so do not
 // depend on job.ID, use JobID from jobSubmitResult.
 func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (resErr error) {
+	var traceID []byte
 	if traceCtx := ctx.GetTraceCtx(); traceCtx != nil {
 		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
 		defer r.End()
+		if v := tracing.GetTraceBuf(traceCtx); v != nil {
+			if traceBuf, ok := v.(*traceevent.TraceBuf); ok {
+				traceID = traceBuf.TraceID
+			}
+		}
 	}
 
 	job := jobW.Job
 	job.TraceInfo = &tracing.TraceInfo{
 		ConnectionID: ctx.GetSessionVars().ConnectionID,
 		SessionAlias: ctx.GetSessionVars().SessionAlias,
-		TraceID:      traceevent.TraceIDFromContext(ctx.GetTraceCtx()),
+		TraceID:      traceID,
 	}
 	if mci := ctx.GetSessionVars().StmtCtx.MultiSchemaInfo; mci != nil {
 		// In multiple schema change, we don't run the job.

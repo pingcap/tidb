@@ -46,7 +46,7 @@ func TestTraceControlExtractor(t *testing.T) {
 	// Test with keep=false
 	t.Run("KeepFalse", func(t *testing.T) {
 		tr := NewTrace()
-		ctx := tracing.WithFlightRecorder(context.Background(), tr)
+		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
 		oldCategories := tracing.GetEnabledCategories()
@@ -65,7 +65,7 @@ func TestTraceControlExtractor(t *testing.T) {
 		tr := NewTrace()
 		// This sets keep=true
 		tr.bits = GetFlightRecorder().truthTable[0]
-		ctx := tracing.WithFlightRecorder(context.Background(), tr)
+		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
 		oldCategories := tracing.GetEnabledCategories()
@@ -82,7 +82,7 @@ func TestTraceControlExtractor(t *testing.T) {
 	// Test category mapping: TiKVRequest
 	t.Run("CategoryTiKVRequest", func(t *testing.T) {
 		tr := NewTrace()
-		ctx := tracing.WithFlightRecorder(context.Background(), tr)
+		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
 		oldCategories := tracing.GetEnabledCategories()
@@ -99,7 +99,7 @@ func TestTraceControlExtractor(t *testing.T) {
 	// Test category mapping: TiKVWriteDetails
 	t.Run("CategoryTiKVWriteDetails", func(t *testing.T) {
 		tr := NewTrace()
-		ctx := tracing.WithFlightRecorder(context.Background(), tr)
+		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
 		oldCategories := tracing.GetEnabledCategories()
@@ -116,7 +116,7 @@ func TestTraceControlExtractor(t *testing.T) {
 	// Test category mapping: TiKVReadDetails
 	t.Run("CategoryTiKVReadDetails", func(t *testing.T) {
 		tr := NewTrace()
-		ctx := tracing.WithFlightRecorder(context.Background(), tr)
+		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
 		oldCategories := tracing.GetEnabledCategories()
@@ -135,7 +135,7 @@ func TestTraceControlExtractor(t *testing.T) {
 		tr := NewTrace()
 		// Set keep=true
 		tr.bits = GetFlightRecorder().truthTable[0]
-		ctx := tracing.WithFlightRecorder(context.Background(), tr)
+		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
 		oldCategories := tracing.GetEnabledCategories()
@@ -154,7 +154,7 @@ func TestTraceControlExtractor(t *testing.T) {
 	// Test concurrent access (should not race)
 	t.Run("ConcurrentAccess", func(t *testing.T) {
 		tr := NewTrace()
-		ctx := tracing.WithFlightRecorder(context.Background(), tr)
+		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
 		oldCategories := tracing.GetEnabledCategories()

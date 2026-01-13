@@ -156,7 +156,7 @@ func (n *DDLNotifier) start() {
 	ctx := kv.WithInternalSourceType(n.ctx, kv.InternalDDLNotifier)
 	ctx = logutil.WithCategory(ctx, "ddl-notifier")
 	trace := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, trace)
+	ctx = traceevent.WithTraceBuf(ctx, trace)
 	ticker := time.NewTicker(n.pollInterval)
 	defer ticker.Stop()
 	for {

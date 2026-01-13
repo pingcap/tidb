@@ -17,7 +17,6 @@ package traceevent
 import (
 	"context"
 	"fmt"
-	"math/rand/v2"
 	"slices"
 	"strings"
 	"sync"
@@ -28,12 +27,34 @@ import (
 	"go.uber.org/zap"
 )
 
-// Trace implements Sink interface
-type Trace struct {
-	mu     sync.RWMutex
-	events []Event
-	bits   uint64
-	rand32 uint32
+// TraceBuf is the buffer for trace events.
+// The buffer might be discard or dump.
+type TraceBuf struct {
+	mu      sync.RWMutex
+	events  []Event
+	bits    uint64
+	TraceID []byte
+}
+
+var _ tracing.TraceBuf = (*TraceBuf)(nil)
+
+// WithTraceBuf creates a context with the given TraceBuf.
+func WithTraceBuf(ctx context.Context, trace *TraceBuf) context.Context {
+	return tracing.WithTraceBuf(ctx, trace)
+}
+
+func getTraceBuf(ctx context.Context) *TraceBuf {
+	val := tracing.GetTraceBuf(ctx)
+	if val == nil {
+		// For background job and internal session, it might be missing?
+		return nil
+	}
+	traceBuf, ok := val.(*TraceBuf)
+	if !ok {
+		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
+		return nil
+	}
+	return traceBuf
 }
 
 var globalHTTPFlightRecorder atomic.Pointer[HTTPFlightRecorder]
@@ -348,14 +369,13 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	if flightRecorder == nil {
 		return
 	}
-	// Sink should always be set, and it should be a Trace object
-	// TODO: For background job and internal session, it might be missing?
-	sink := tracing.GetSink(ctx)
-	if sink == nil {
-		return
-	}
-	trace, ok := sink.(*Trace)
-	if !ok {
+	traceBuf := getTraceBuf(ctx)
+	// val := tracing.GetSink(ctx)
+	if traceBuf == nil {
+		// 	return
+		// }
+		// trace, ok := val.(*TraceBuf)
+		// if !ok {
 		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
 		return
 	}
@@ -365,7 +385,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	}
 	conf := flightRecorder.compiledDumpTriggerConfig.configRef[idx]
 	if check(conf) {
-		trace.markBits(idx)
+		traceBuf.markBits(idx)
 	}
 }
 
@@ -461,6 +481,7 @@ func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, e
 		zap.Stringer("category", categories),
 		zap.Any("mapping", compiled.nameMapping),
 		zap.Uint64s("truthTable", ret.truthTable))
+
 	globalHTTPFlightRecorder.Store(ret)
 	return ret, nil
 }
@@ -515,20 +536,18 @@ func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 }
 
 // NewTrace creates a new Trace.
-func NewTrace() *Trace {
-	return &Trace{
-		rand32: rand.Uint32(),
-	}
+func NewTrace() *TraceBuf {
+	return &TraceBuf{}
 }
 
 // Record implements the FlightRecorder interface.
-func (r *Trace) Record(_ context.Context, event Event) {
+func (r *TraceBuf) Record(_ context.Context, event Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.events = append(r.events, event)
 }
 
-func (r *Trace) markBits(idx int) {
+func (r *TraceBuf) markBits(idx int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.bits |= 1 << idx
@@ -547,7 +566,7 @@ func (r *HTTPFlightRecorder) CheckSampling(conf *DumpTriggerConfig) bool {
 }
 
 // DiscardOrFlush will flush or discard the trace.
-func (r *Trace) DiscardOrFlush(ctx context.Context) {
+func (r *TraceBuf) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
 		var shouldFlush bool
@@ -568,7 +587,6 @@ func (r *Trace) DiscardOrFlush(ctx context.Context) {
 			sink.collect(ctx, eventsToFlush)
 		}
 	}
-	newRand := rand.Uint32()
 	// Write phase: use Lock for cleanup
 	r.mu.Lock()
 	r.bits = 0
@@ -578,6 +596,6 @@ func (r *Trace) DiscardOrFlush(ctx context.Context) {
 	} else {
 		r.events = r.events[:0]
 	}
-	r.rand32 = newRand
+	r.TraceID = nil
 	r.mu.Unlock()
 }

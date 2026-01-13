@@ -68,13 +68,8 @@ func handleTraceControlExtractor(ctx context.Context) trace.TraceControlFlags {
 		flags = flags.With(trace.FlagTiKVCategoryReadDetails)
 	}
 
-	// Extract Trace object from context
-	sink := tracing.GetSink(ctx)
-	if sink == nil {
-		return flags
-	}
-	t, ok := sink.(*Trace)
-	if !ok {
+	t := getTraceBuf(ctx)
+	if t == nil {
 		return flags
 	}
 

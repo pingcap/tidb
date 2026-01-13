@@ -226,7 +226,7 @@ func TestFlightRecorder(t *testing.T) {
 
 	ctx := context.Background()
 	sink := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, sink)
+	ctx = tracing.WithTraceBuf(ctx, sink)
 
 	// Basic check to see if flight recorder can dump events
 	{
@@ -353,7 +353,7 @@ func TestTiDBTraceEventVariable(t *testing.T) {
 
 	ctx := context.Background()
 	sink := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, sink)
+	ctx = tracing.WithTraceBuf(ctx, sink)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExecWithContext(ctx, `set @@global.tidb_trace_event = json_object('enabled_categories', json_array('*'), 'dump_trigger', json_object('type', 'sampling', 'sampling', 1))`)

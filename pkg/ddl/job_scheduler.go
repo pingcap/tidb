@@ -311,7 +311,7 @@ func (s *jobScheduler) schedule() error {
 	s.mustReloadSchemas()
 
 	trace := traceevent.NewTrace()
-	ctx := tracing.WithFlightRecorder(s.schCtx, trace)
+	ctx := traceevent.WithTraceBuf(s.schCtx, trace)
 
 	for {
 		if err := s.schCtx.Err(); err != nil {
@@ -565,11 +565,12 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
+func (s *jobScheduler) getJobRunCtx(trace *traceevent.TraceBuf, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
-	newCtx := tracing.WithFlightRecorder(s.schCtx, trace)
+	newCtx := traceevent.WithTraceBuf(s.schCtx, trace)
 	if len(traceInfo.TraceID) > 0 {
-		newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
+		trace.TraceID = traceInfo.TraceID
+		// newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}
 	return &jobContext{
 		ctx:                  newCtx,

@@ -124,7 +124,7 @@ func (nm *NodeManager) refreshNodesLoop(ctx context.Context, taskMgr TaskManager
 	ticker := time.NewTicker(nodesCheckInterval)
 	defer ticker.Stop()
 	trace := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, trace)
+	ctx = tracing.WithTraceBuf(ctx, trace)
 	for {
 		select {
 		case <-ctx.Done():

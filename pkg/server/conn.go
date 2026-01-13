@@ -1081,7 +1081,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 
 	var traceInfo *tracing.TraceInfo
 	trace := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, trace)
+	ctx = traceevent.WithTraceBuf(ctx, trace)
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting

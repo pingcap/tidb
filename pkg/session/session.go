@@ -1848,9 +1848,9 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
-	if sink := tracing.GetSink(ctx); sink == nil {
+	if sink := tracing.GetTraceBuf(ctx); sink == nil {
 		trace := traceevent.NewTrace()
-		ctx = tracing.WithFlightRecorder(ctx, trace)
+		ctx = traceevent.WithTraceBuf(ctx, trace)
 		defer trace.DiscardOrFlush(ctx)
 
 		// A developer debugging event so we can see what trace is missing!
