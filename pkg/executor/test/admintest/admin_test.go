@@ -2442,3 +2442,36 @@ func TestAdminCheckTableWithEnumAndPointGet(t *testing.T) {
 	tk.MustExec("admin check table admin_test")
 	tk.MustExec("admin check index admin_test uk_code")
 }
+
+func TestFastCheckTableConcurrent(t *testing.T) {
+	// This test verifies that concurrent execution of admin check table works correctly.
+	// Note: The data race in ExecDetails (fixed by using ContextWithInitializedExecDetails
+	// in getCheckSum) cannot be detected in unit tests because mocktikv doesn't trigger
+	// the network traffic writes to ExecDetails that happen in real TiKV environments.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_concurrent")
+	tk.MustExec("create table t_concurrent (id int primary key, val int, key idx_val(val))")
+
+	// Insert enough data to trigger parallel execution in checkIndexWorker
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t_concurrent values (%d, %d)", i, i*10))
+	}
+
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+
+	// Run multiple admin check table concurrently
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			tkConcurrent := testkit.NewTestKit(t, store)
+			tkConcurrent.MustExec("use test")
+			tkConcurrent.MustExec("set tidb_enable_fast_table_check = 1")
+			tkConcurrent.MustExec("admin check table t_concurrent")
+		}()
+	}
+	wg.Wait()
+}
