@@ -24,10 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
-var (
-	ErrNoSuchBucket = goerrors.New("no such bucket")
-)
-
 // GetResp is the response of GetObject.
 type GetResp struct {
 	Body          io.ReadCloser

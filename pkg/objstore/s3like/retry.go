@@ -57,12 +57,14 @@ var (
 	_ ossretry.Retryer = (*Retryer)(nil)
 )
 
+// NewRetryer creates a new Retryer wrapping the given inner StandardRetryer.
 func NewRetryer(inner StandardRetryer) *Retryer {
 	return &Retryer{
 		standardRetryer: inner,
 	}
 }
 
+// IsErrorRetryable implements the aws.Retryer interface.
 func (tr *Retryer) IsErrorRetryable(err error) bool {
 	var isRetryable bool
 	defer func() {
@@ -106,10 +108,12 @@ func (tr *Retryer) IsErrorRetryable(err error) bool {
 	return isRetryable
 }
 
+// MaxAttempts implements the aws.Retryer interface.
 func (tr *Retryer) MaxAttempts() int {
 	return tr.standardRetryer.MaxAttempts()
 }
 
+// RetryDelay implements the aws.Retryer interface.
 func (tr *Retryer) RetryDelay(attempt int, err error) (time.Duration, error) {
 	delay, retryErr := tr.standardRetryer.RetryDelay(attempt, err)
 	if retryErr != nil {
@@ -127,14 +131,17 @@ func (tr *Retryer) RetryDelay(attempt int, err error) (time.Duration, error) {
 	return delay, nil
 }
 
+// GetRetryToken implements the aws.Retryer interface.
 func (tr *Retryer) GetRetryToken(ctx context.Context, opErr error) (releaseToken func(error) error, err error) {
 	return tr.standardRetryer.GetRetryToken(ctx, opErr)
 }
 
+// GetInitialToken implements the aws.Retryer interface.
 func (tr *Retryer) GetInitialToken() (releaseToken func(error) error) {
 	return tr.standardRetryer.GetInitialToken()
 }
 
+// IsDeadlineExceedError checks whether the error is a context deadline exceeded error.
 func IsDeadlineExceedError(err error) bool {
 	// TODO find a better way.
 	// Known challenges:
@@ -157,6 +164,7 @@ func isConnectionRefusedError(err error) bool {
 	return strings.Contains(err.Error(), "connection refused")
 }
 
+// IsHTTP2ConnAborted checks whether the error is caused by HTTP/2 connection aborted.
 func IsHTTP2ConnAborted(err error) bool {
 	patterns := []string{
 		"http2: client connection force closed via ClientConn.Close",

@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "s3like",
+    srcs = [
+        "interface.go",
+        "retry.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/s3like",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//br/pkg/logutil",
+        "//pkg/metrics",
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/storeapi",
+        "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss/retry",
+        "@com_github_aws_aws_sdk_go_v2//aws",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)

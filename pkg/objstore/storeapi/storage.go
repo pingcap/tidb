@@ -253,12 +253,12 @@ func NewBucketPrefix(bucket, prefix string) BucketPrefix {
 	}
 }
 
-// GetHttpRange returns the HTTP Range header value for the given start and end
+// GetHTTPRange returns the HTTP Range header value for the given start and end
 // offsets.
 // if startOffset = 0, `full` is true and `rangeVal` is nil.
 // If a partial object is requested, `full` is false and `rangeVal` contains the
 // Range header value.
-func GetHttpRange(startOffset, endOffset int64) (full bool, rangeVal *string) {
+func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal *string) {
 	// If we just open part of the object, we set `Range` in the request.
 	// If we meant to open the whole object, not just a part of it,
 	// we do not pass the range in the request,
