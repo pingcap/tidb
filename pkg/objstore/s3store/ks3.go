@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package objstore
+package s3store
 
 import (
 	"bytes"
@@ -35,19 +35,23 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
 )
 
 var (
-	_ Copier = &KS3Storage{}
+	_ storeapi.Copier = &KS3Storage{}
 )
 
 const (
-	// ks3 sdk does not expose context, we use hardcoded timeout for network request
-	ks3SDKProvider = "ks3-sdk"
+	// KS3SDKProvider ks3 sdk does not expose context, we use hardcoded timeout
+	// for network request
+	KS3SDKProvider = "ks3-sdk"
 )
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
@@ -61,7 +65,7 @@ type KS3Storage struct {
 func NewKS3Storage(
 	ctx context.Context,
 	backend *backuppb.S3,
-	opts *Options,
+	opts *storeapi.Options,
 ) (obj *KS3Storage, errRet error) {
 	qs := *backend
 	awsConfig := aws.DefaultConfig
@@ -133,11 +137,11 @@ func NewKS3Storage(
 	}, nil
 }
 
-var permissionCheckFnKS3 = map[Permission]func(context.Context, *s3.S3, *backuppb.S3) error{
-	AccessBuckets:      s3BucketExistenceCheckKS3,
-	ListObjects:        listObjectsCheckKS3,
-	GetObject:          getObjectCheckKS3,
-	PutAndDeleteObject: putAndDeleteObjectCheckKS3,
+var permissionCheckFnKS3 = map[storeapi.Permission]func(context.Context, *s3.S3, *backuppb.S3) error{
+	storeapi.AccessBuckets:      s3BucketExistenceCheckKS3,
+	storeapi.ListObjects:        listObjectsCheckKS3,
+	storeapi.GetObject:          getObjectCheckKS3,
+	storeapi.PutAndDeleteObject: putAndDeleteObjectCheckKS3,
 }
 
 func s3BucketExistenceCheckKS3(_ context.Context, svc *s3.S3, qs *backuppb.S3) error {
@@ -383,9 +387,9 @@ func (rs *KS3Storage) FileExists(ctx context.Context, file string) (bool, error)
 // The first argument is the file path that can be used in `Open`
 // function; the second argument is the size in byte of the file determined
 // by path.
-func (rs *KS3Storage) WalkDir(ctx context.Context, opt *WalkOption, fn func(string, int64) error) error {
+func (rs *KS3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(string, int64) error) error {
 	if opt == nil {
-		opt = &WalkOption{}
+		opt = &storeapi.WalkOption{}
 	}
 	prefix := path.Join(rs.options.Prefix, opt.SubDir)
 	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
@@ -445,7 +449,7 @@ func (rs *KS3Storage) URI() string {
 }
 
 // Open a Reader by file path.
-func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (rs *KS3Storage) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	start := int64(0)
 	end := int64(0)
 	prefetchSize := 0
@@ -678,7 +682,7 @@ func (r *ks3ObjectReader) GetFileSize() (int64, error) {
 }
 
 // createUploader create multi upload request.
-func (rs *KS3Storage) createUploader(ctx context.Context, name string) (FileWriter, error) {
+func (rs *KS3Storage) createUploader(ctx context.Context, name string) (objectio.Writer, error) {
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + name),
@@ -708,8 +712,8 @@ func (rs *KS3Storage) createUploader(ctx context.Context, name string) (FileWrit
 }
 
 // Create creates multi upload request.
-func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOption) (FileWriter, error) {
-	var uploader FileWriter
+func (rs *KS3Storage) Create(ctx context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
+	var uploader objectio.Writer
 	var err error
 	if option == nil || option.Concurrency <= 1 {
 		uploader, err = rs.createUploader(ctx, name)
@@ -747,7 +751,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *WriterOpt
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := newBufferedWriter(uploader, bufSize, NoCompression, rs.accessRec)
+	uploaderWriter := objectio.NewBufferedWriter(uploader, bufSize, compressedio.NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 
@@ -776,7 +780,7 @@ func maybeObjectAlreadyExists(err awserr.Error) bool {
 }
 
 // CopyFrom implements Copier.
-func (rs *KS3Storage) CopyFrom(ctx context.Context, e Storage, spec CopySpec) error {
+func (rs *KS3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec storeapi.CopySpec) error {
 	s, ok := e.(*KS3Storage)
 	if !ok {
 		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)

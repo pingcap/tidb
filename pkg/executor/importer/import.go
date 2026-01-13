@@ -47,6 +47,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -385,10 +387,10 @@ type LoadDataController struct {
 	InsertColumns []*table.Column
 
 	logger    *zap.Logger
-	dataStore objstore.Storage
+	dataStore storeapi.Storage
 	dataFiles []*mydump.SourceFileMeta
 	// globalSortStore is used to store sorted data when using global sort.
-	globalSortStore objstore.Storage
+	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -1188,7 +1190,7 @@ func (e *LoadDataController) Close() {
 }
 
 // GetSortStore gets the sort store.
-func GetSortStore(ctx context.Context, url string) (objstore.Storage, error) {
+func GetSortStore(ctx context.Context, url string) (storeapi.Storage, error) {
 	u, err := objstore.ParseRawURL(url)
 	target := "cloud storage"
 	if err != nil {
@@ -1197,7 +1199,7 @@ func GetSortStore(ctx context.Context, url string) (objstore.Storage, error) {
 	return initExternalStore(ctx, u, target)
 }
 
-func initExternalStore(ctx context.Context, u *url.URL, target string) (objstore.Storage, error) {
+func initExternalStore(ctx context.Context, u *url.URL, target string) (storeapi.Storage, error) {
 	b, err2 := objstore.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
@@ -1215,7 +1217,7 @@ func estimateCompressionRatio(
 	filePath string,
 	fileSize int64,
 	tp mydump.SourceType,
-	store objstore.Storage,
+	store storeapi.Storage,
 ) (float64, error) {
 	if tp != mydump.SourceTypeParquet {
 		return 1.0, nil
@@ -1283,7 +1285,7 @@ func getHarmonicMean(rs []float64) float64 {
 func (r *compressionEstimator) estimate(
 	ctx context.Context,
 	fileMeta mydump.SourceFileMeta,
-	store objstore.Storage,
+	store storeapi.Storage,
 ) float64 {
 	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
 	if compressTp == mydump.CompressionNone {
@@ -1428,7 +1430,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 
 		allFiles := make([]mydump.RawFile, 0, 16)
-		if err := s.WalkDir(ctx, &objstore.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+		if err := s.WalkDir(ctx, &storeapi.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				return nil
@@ -1583,7 +1585,7 @@ func (e *LoadDataController) GetLoadDataReaderInfos() []LoadDataReaderInfo {
 		f := e.dataFiles[i]
 		result = append(result, LoadDataReaderInfo{
 			Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, objstore.DecompressConfig{})
+				fileReader, err2 := mydump.OpenReader(ctx, f, e.dataStore, compressedio.DecompressConfig{})
 				if err2 != nil {
 					return nil, exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(errors.GetErrStackMsg(err2), "Please check the INFILE path is correct")
 				}

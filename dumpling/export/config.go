@@ -21,6 +21,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/promutil"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
@@ -134,7 +136,7 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
-	CompressType             objstore.CompressType
+	CompressType             compressedio.CompressType
 
 	Host     string
 	Port     int
@@ -184,7 +186,7 @@ type Config struct {
 	Labels        prometheus.Labels `json:"-"`
 	PromFactory   promutil.Factory  `json:"-"`
 	PromRegistry  promutil.Registry `json:"-"`
-	ExtStorage    objstore.Storage  `json:"-"`
+	ExtStorage    storeapi.Storage  `json:"-"`
 	MinTLSVersion uint16            `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
@@ -586,7 +588,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.CompressType, err = ParseCompressType(compressType)
+	conf.CompressType, err = compressedio.ParseCompressType(compressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -671,22 +673,6 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	return dbTables, nil
 }
 
-// ParseCompressType parses compressType string to storage.CompressType
-func ParseCompressType(compressType string) (objstore.CompressType, error) {
-	switch compressType {
-	case "", "no-compression":
-		return objstore.NoCompression, nil
-	case "gzip", "gz":
-		return objstore.Gzip, nil
-	case "snappy":
-		return objstore.Snappy, nil
-	case "zstd", "zst":
-		return objstore.Zstd, nil
-	default:
-		return objstore.NoCompression, errors.Errorf("unknown compress type %s", compressType)
-	}
-}
-
 // ParseOutputDialect parses output dialect string to Dialect
 func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	switch outputDialect {
@@ -703,7 +689,7 @@ func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
 	}
 }
 
-func (conf *Config) createExternalStorage(ctx context.Context) (objstore.Storage, error) {
+func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
 	}
@@ -713,7 +699,7 @@ func (conf *Config) createExternalStorage(ctx context.Context) (objstore.Storage
 	}
 
 	// TODO: support setting httpClient with certification later
-	return objstore.New(ctx, b, &objstore.Options{})
+	return objstore.New(ctx, b, &storeapi.Options{})
 }
 
 const (

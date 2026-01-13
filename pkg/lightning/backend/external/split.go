@@ -21,7 +21,7 @@ import (
 	"math"
 	"slices"
 
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"go.uber.org/zap"
@@ -122,7 +122,7 @@ type RangeSplitter struct {
 func NewRangeSplitter(
 	ctx context.Context,
 	multiFileStat []MultipleFilesStat,
-	externalStorage objstore.Storage,
+	externalStorage storeapi.Storage,
 	rangesGroupSize, rangesGroupKeyCnt int64,
 	rangeJobSize, rangeJobKeyCnt int64,
 	regionSplitSize, regionSplitKeyCnt int64,

@@ -41,6 +41,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -789,7 +790,7 @@ func getRangeSplitter(
 
 func forEachBackfillSubtaskMeta(
 	ctx context.Context,
-	extStore objstore.Storage,
+	extStore storeapi.Storage,
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,
