@@ -21,7 +21,6 @@ package collate
 import (
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -155,6 +154,6 @@ func (uc *unicodeCICollator) Pattern() WildcardPattern {
 
 // ImmutablePrefixKey implements Collator interface
 func (uc *unicodeCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	strSlice := hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
-	return  uc.ImmutableKey(string(hack.String(strSlice)))
+	prefixStr := str[:stringutil.GetCharsByteCount(str, prefixCharCount)]
+	return uc.ImmutableKey(uc.impl.Preprocess(prefixStr))
 }

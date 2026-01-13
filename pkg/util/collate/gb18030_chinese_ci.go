@@ -19,7 +19,6 @@ import (
 	"encoding/binary"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
@@ -92,8 +91,8 @@ func (*gb18030ChineseCICollator) Pattern() WildcardPattern {
 
 // ImmutablePrefixKey implements Collator interface
 func (g *gb18030ChineseCICollator) ImmutablePrefixKey(str string, prefixCharCount int) []byte {
-	strSlice := hack.Slice(str)[:stringutil.GetCharsByteCount(str, prefixCharCount)]
-	return g.ImmutableKey(string(hack.String(strSlice)))
+	truncatedStr := truncateTailingSpace(str)
+	return g.ImmutableKey(truncatedStr[:stringutil.GetCharsByteCount(truncatedStr, prefixCharCount)])
 }
 
 type gb18030ChineseCIPattern struct {

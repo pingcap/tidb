@@ -75,7 +75,7 @@ type Collator interface {
 	//   input string: 12345
 	//   prefixCharCount: 3
 	//   only "123" will be converted and returned
-	ImmutablePrefixKey(str string, prefixCharCount int) []byte // TODO(x) add ut for all implementations
+	ImmutablePrefixKey(str string, prefixCharCount int) []byte
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

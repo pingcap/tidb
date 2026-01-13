@@ -98,9 +98,9 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 					panic("rand.Read returns error")
 				}
 				if isCI && rand.Intn(10) < 5 {
-					prefixData[i] = fmt.Sprintf("PREFIX_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buf))
+					prefixData[i] = fmt.Sprintf("PREFIX前缀_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buf))
 				} else {
-					prefixData[i] = fmt.Sprintf("prefix_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buf))
+					prefixData[i] = fmt.Sprintf("prefix前缀_%05d_%s", groupIdx, base64.RawURLEncoding.EncodeToString(buf))
 				}
 				outputs[i] = fmt.Sprintf("%s, %s", outputs[i], prefixData[i])
 				i++
@@ -175,32 +175,10 @@ func TestRankTopN(t *testing.T) {
 				}},
 			prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName)},
 			prefixKeyColIdxs:        []int{0},
-			prefixKeyCharCounts:     []int{12},
+			prefixKeyCharCounts:     []int{14},
 			cols: []*expression.Column{
 				{Index: 0, RetType: prefixKeyField},
 				{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}},
-		})
-
-		rankTopNCases = append(rankTopNCases, &rankTopNCase{
-			rowCount:   rand.Intn(9000) + 1000,
-			ctx:        ctx,
-			orderByIdx: []int{0, 1}, // Order by prefix key column
-			prefixKeyFieldTypes: []expression.Expression{
-				&expression.Column{
-					RetType: prefixKeyField,
-					Index:   0,
-				},
-				&expression.Column{
-					RetType: prefixKeyField,
-					Index:   1,
-				}},
-			prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName)},
-			prefixKeyColIdxs:        []int{0, 1},
-			prefixKeyCharCounts:     []int{-1, 12},
-			cols: []*expression.Column{
-				{Index: 0, RetType: prefixKeyField},
-				{Index: 1, RetType: prefixKeyField},
-				{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		})
 	}
 

@@ -410,12 +410,8 @@ func (e *TopNExec) getPrefixKeys(row chunk.Row) []string {
 	prefixKeys := make([]string, 0, e.prefixKeyCount)
 	for i := range e.prefixKeyFieldCollators {
 		key := row.GetString(e.prefixKeyColIdxs[i])
-		prefixKeyCharCount := e.prefixKeyCharCounts[i]
-		if prefixKeyCharCount == -1 {
-			prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutableKey(key))))
-		} else {
-			prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, prefixKeyCharCount))))
-		}
+		prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, e.prefixKeyCharCounts[i]))))
+
 	}
 	return prefixKeys
 }
@@ -427,7 +423,6 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) int {
 	totalLimit := int(e.chkHeap.totalLimit)
 
 	if savedRowCount+rowCnt <= totalLimit {
-		// TODO(x) test fast path in ut and endless
 		// Fast path
 		e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
 		return rowCnt
