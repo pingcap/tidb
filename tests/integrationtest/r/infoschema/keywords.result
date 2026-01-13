@@ -1,0 +1,12 @@
+SELECT * FROM information_schema.keywords WHERE WORD='ADD';
+WORD	RESERVED
+ADD	1
+SELECT * FROM information_schema.keywords WHERE WORD='ADD' AND RESERVED=1;
+WORD	RESERVED
+ADD	1
+SELECT COUNT(*) FROM information_schema.keywords WHERE WORD='ADD';
+COUNT(*)
+1
+SELECT COUNT(*) FROM information_schema.keywords WHERE WORD='MONITOR';
+COUNT(*)
+0
