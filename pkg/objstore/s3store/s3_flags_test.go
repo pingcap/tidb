@@ -21,6 +21,7 @@ import (
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -384,7 +385,7 @@ func TestS3ProfileAvoidAutoNewCred(t *testing.T) {
 }
 
 func TestS3TidbRetryerNeverExhaustTokens(t *testing.T) {
-	retryer := newTidbRetryer()
+	retryer := s3like.NewRetryer()
 	ctx := context.Background()
 	// default retry.NewStandard only have 500 tokens
 	opErr := &net.DNSError{IsTimeout: true}
@@ -395,7 +396,7 @@ func TestS3TidbRetryerNeverExhaustTokens(t *testing.T) {
 }
 
 func TestS3TiDBRetryer(t *testing.T) {
-	retryer := newTidbRetryer()
+	retryer := s3like.NewRetryer()
 	// S3 will run for retryer.MaxAttempts() attempts, so will have MaxAttempts - 1
 	// retries and delay between retries
 	var totalDelay time.Duration
