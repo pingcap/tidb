@@ -300,7 +300,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					if c.TopN != nil {
 						topNCount = c.TopN.TotalCount()
 					}
-					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, histNDV, topNCount))
+					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV, topNCount))
 				} else {
 					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
@@ -308,10 +308,10 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 					if idx.TopN != nil {
 						topNCount = idx.TopN.TotalCount()
 					}
-					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, histNDV, topNCount))
+					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV, topNCount))
 				}
 			} else {
-				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, histNDV, 0))
+				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV, 0))
 			}
 		}
 

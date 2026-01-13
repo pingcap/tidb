@@ -227,7 +227,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 					histNDV -= int64(c.TopN.Num())
 				}
 			}
-			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, histNDV, topNCount))
+			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV, topNCount))
 			cnt.Add(count)
 		}
 

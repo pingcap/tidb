@@ -1065,20 +1065,13 @@ func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float6
 
 // calculateTimeAdjustmentRight calculates the time decay adjustment percentage
 // when the predicate is entirely on the right side of the histogram envelope.
+// Since "time decay" typically occurs on the right side of the histogram,
+// we only need to calculate the adjustment for the right side.
 func calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth float64) float64 {
 	adjRight := histR + predWidth
 	adjRight = math.Min(adjRight, boundR)
 	histWidthSq := math.Pow(histWidth, 2)
 	return (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2)) / histWidthSq
-}
-
-// calculateTimeAdjustmentLeft calculates the time decay adjustment percentage
-// when the predicate is entirely on the left side of the histogram envelope.
-func calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth float64) float64 {
-	adjLeft := histL - predWidth
-	adjLeft = math.Max(adjLeft, boundL)
-	histWidthSq := math.Pow(histWidth, 2)
-	return (math.Pow(histL-boundL, 2) - math.Pow(adjLeft-boundL, 2)) / histWidthSq
 }
 
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
@@ -1106,7 +1099,7 @@ func calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth float64) fl
 func (hg *Histogram) OutOfRangeRowCount(
 	sctx planctx.PlanContext,
 	lDatum, rDatum *types.Datum,
-	realtimeRowCount, histNDV int64,
+	realtimeRowCount, modifyCount, histNDV int64,
 	topNCount uint64,
 ) (result RowEstimate) {
 	if hg.Len() == 0 {
@@ -1124,9 +1117,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// can all reduce the addedRows estimate. This code does not consider these factors.
 	addedRows, isNegative := hg.AbsRowCountDifference(realtimeRowCount, topNCount)
 	// If addedRows is too small, it may be caused by a delay in updates to modifyCount.
+	// ModifyCount == 0 is a known issue - where large tables can have a larde time
+	// delay before the first update to ModifyCount.
 	// Assume a minimum worst case of 1% of the total row count.
 	onePercentChange := float64(realtimeRowCount) / outOfRangeBetweenRate
-	maxAddedRows := max(addedRows, onePercentChange)
+	maxAddedRows := addedRows
+	if modifyCount == 0 || addedRows == 0 {
+		maxAddedRows = max(addedRows, onePercentChange)
+	}
 	// If the realtime row count has decreased, it means there have been
 	// more deletes than inserts. We need to adjust the added rows downward.
 	if isNegative {
@@ -1224,7 +1222,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 	}
 
-	var leftPercent, rightPercent, timeAdjLeft, timeAdjRight, estRows float64
+	var leftPercent, rightPercent, timeAdjRight, estRows float64
 
 	// Step 7: Calculate the percentage on the left/right that we are searching.
 	// Only attempt to calculate the ranges if the histogram is valid
@@ -1258,16 +1256,14 @@ func (hg *Histogram) OutOfRangeRowCount(
 		*/
 		// Time decay is limited to datetime datatype, since it's the most
 		// likely to be affected by time decay.
+		// It also only considers the right side of the histogram envelope.
+		// Since time decay is most likely to occur on the right side.
 		if lDatum.Kind() == types.KindMysqlTime {
 			// Calculate percentage assuming time decay is not present.
 			if l > histR {
 				// Predicate entirely on the right side of the histogram envelope.
 				entirelyOutOfRange = true
 				timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
-			} else if r < histL {
-				// Predicate entirely on the left side of the histogram envelope.
-				entirelyOutOfRange = true
-				timeAdjLeft = calculateTimeAdjustmentLeft(histL, boundL, predWidth, histWidth)
 			}
 		}
 	}
@@ -1276,7 +1272,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// totalPercent is used for the average estimate (estRows) - never updated for entirelyOutOfRange
 	// maxTotalPercent is used for the maximum estimate (maxAddedRows) - updated for entirelyOutOfRange
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
+	maxTotalPercent := min(rightPercent, 1.0)
 
 	// Calculate estRows using totalPercent (average)
 	if totalPercent > 0 {
@@ -1292,7 +1288,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if entirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// For max estimate, use the sum (not average) to account for worst case
-		maxTotalPercent = min(max(maxTotalPercent, timeAdjLeft+timeAdjRight), 1.0)
+		maxTotalPercent = min(max(maxTotalPercent, timeAdjRight), 1.0)
 	}
 
 	if maxTotalPercent > 0 {
