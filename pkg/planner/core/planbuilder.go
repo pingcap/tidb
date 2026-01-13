@@ -1654,21 +1654,21 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		p.SetSchemaAndNames(buildShowSlowSchema())
 		ret = p
 	case ast.AdminReloadExprPushdownBlacklist:
-		return &ReloadExprPushdownBlacklist{}, nil
+		ret = &ReloadExprPushdownBlacklist{}
 	case ast.AdminReloadOptRuleBlacklist:
-		return &ReloadOptRuleBlacklist{}, nil
+		ret = &ReloadOptRuleBlacklist{}
 	case ast.AdminPluginEnable:
-		return &AdminPlugins{Action: Enable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Enable, Plugins: as.Plugins}
 	case ast.AdminPluginDisable:
-		return &AdminPlugins{Action: Disable, Plugins: as.Plugins}, nil
+		ret = &AdminPlugins{Action: Disable, Plugins: as.Plugins}
 	case ast.AdminFlushBindings:
-		return &SQLBindPlan{SQLBindOp: OpFlushBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpFlushBindings}
 	case ast.AdminCaptureBindings:
 		return nil, errors.Errorf("Auto Capture is not supported")
 	case ast.AdminEvolveBindings:
 		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
-		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+		ret = &SQLBindPlan{SQLBindOp: OpReloadBindings}
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminFlushPlanCache:
@@ -3797,6 +3797,9 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	case *ast.AlterInstanceStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
+	case *ast.AlterRangeStmt:
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SuperPriv, "", "", "", err)
 	case *ast.RenameUserStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.CreateUserPriv, "", "", "", err)
@@ -3931,6 +3934,8 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 			return nil, err
 		}
 		b.ctx.GetSessionVars().StmtCtx.AppendNote(err)
+	case *ast.DropStatsStmt:
+		b.requireInsertAndSelectPriv(raw.Tables)
 	}
 	return p, nil
 }
@@ -5086,6 +5091,15 @@ func (b *PlanBuilder) buildSplitRegion(node *ast.SplitRegionStmt) (base.Plan, er
 	if node.SplitSyntaxOpt != nil && node.SplitSyntaxOpt.HasPartition && tnW.TableInfo.Partition == nil {
 		return nil, plannererrors.ErrPartitionClauseOnNonpartitioned
 	}
+
+	// Check ALTER privilege for SPLIT TABLE operations
+	user := b.ctx.GetSessionVars().User
+	var err error
+	if user != nil {
+		err = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, node.Table.Name.L)
+	}
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, node.Table.Schema.L, node.Table.Name.L, "", err)
+
 	if len(node.IndexName.L) != 0 {
 		return b.buildSplitIndexRegion(node)
 	}
