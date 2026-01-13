@@ -324,7 +324,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 }
 
 func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, needPruning bool, req columnRequirements) []*util.AccessPath {
-	result := make([]*util.AccessPath, 0, defaultMaxIndexes)
+	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexMergeIndexPaths)+len(preferredIndexes))
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
 	result = append(result, tablePaths...)
