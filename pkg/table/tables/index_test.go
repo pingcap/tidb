@@ -87,7 +87,7 @@ func TestMultiColumnCommonHandle(t *testing.T) {
 		require.NoError(t, err)
 		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		val, err := txn.Get(context.Background(), key)
+		val, err := kv.GetValue(context.Background(), txn, key)
 		require.NoError(t, err)
 		colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
 		colInfo = append(colInfo, rowcodec.ColInfo{
@@ -150,7 +150,7 @@ func TestSingleColumnCommonHandle(t *testing.T) {
 		require.NoError(t, err)
 		_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 		require.NoError(t, err)
-		val, err := txn.Get(context.Background(), key)
+		val, err := kv.GetValue(context.Background(), txn, key)
 		require.NoError(t, err)
 		colVals, err := tablecodec.DecodeIndexKV(key, val, 1, tablecodec.HandleDefault,
 			tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo))
@@ -263,7 +263,7 @@ func TestGenIndexValueWithLargePaddingSize(t *testing.T) {
 	require.NoError(t, err)
 	_, err = idx.Create(mockCtx.GetTableCtx(), txn, idxColVals, commonHandle, nil)
 	require.NoError(t, err)
-	val, err := txn.Get(context.Background(), key)
+	val, err := kv.GetValue(context.Background(), txn, key)
 	require.NoError(t, err)
 	colInfo := tables.BuildRowcodecColInfoForIndexColumns(idx.Meta(), tblInfo)
 	colInfo = append(colInfo, rowcodec.ColInfo{

@@ -383,7 +383,7 @@ func TestSlowLogFormat(t *testing.T) {
 	defer memory.CleanupGlobalMemArbitratorForTest()
 	require.True(t, memory.SetGlobalMemArbitratorWorkMode(memory.ArbitratorModeStandardName))
 	memTracker := seVar.StmtCtx.MemTracker
-	require.True(t, memTracker.InitMemArbitrator(memory.GlobalMemArbitrator(), 0, nil, "", memory.ArbitrationPriorityMedium, false, 0))
+	require.True(t, memTracker.InitMemArbitratorForTest())
 	memTracker.MemArbitrator.AwaitAlloc.TotalDur.Store(int64(logItems.MemArbitration * float64(time.Second.Nanoseconds())))
 
 	// get an ExecStmt
@@ -867,9 +867,12 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 
 	// Default empty
 	require.Len(t, cloudStorageURI.Value, 0)
-
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	}))
+	t.Cleanup(s.Close)
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(cancel)
 	// Set to noop
 	noopURI := "noop://blackhole?access-key=hello&secret-access-key=world"
 	err := mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, noopURI)
@@ -882,11 +885,6 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	// Set to s3, should fail
 	err = mock.SetGlobalSysVar(ctx, vardef.TiDBCloudStorageURI, "s3://blackhole")
 	require.Error(t, err, "unreachable storage URI")
-
-	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(200)
-	}))
-	defer s.Close()
 
 	// Set to s3, should return uri without variable
 	s3URI := "s3://tiflow-test/?access-key=testid&secret-access-key=testkey8&session-token=testtoken&endpoint=" + s.URL
@@ -919,4 +917,5 @@ func TestSetTiDBCloudStorageURI(t *testing.T) {
 	require.NoError(t, err1)
 	require.Len(t, val, 0)
 	cancel()
+	<-ctx.Done()
 }
