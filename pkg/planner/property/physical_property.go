@@ -324,8 +324,21 @@ type PhysicalProperty struct {
 // When PhysicalProperty.PartialOrderInfo is not nil, it indicates that
 // prefix index can be used to provide partial order.
 type PartialOrderInfo struct {
-	// ByItems are the ORDER BY columns from TopN
-	ByItems []*SortItem
+	// SortItems are the ORDER BY columns from TopN
+	SortItems []*SortItem
+}
+
+// AllSameOrder checks if all the items have same order.
+func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
+	if len(p.SortItems) == 0 {
+		return true, false
+	}
+	for i := 1; i < len(p.SortItems); i++ {
+		if p.SortItems[i].Desc != p.SortItems[i-1].Desc {
+			return
+		}
+	}
+	return true, p.SortItems[0].Desc
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.

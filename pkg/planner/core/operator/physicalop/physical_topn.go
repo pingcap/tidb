@@ -359,7 +359,7 @@ func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
 // getPhysTopNWithPartialOrderProperty generates PhysicalTopN plans with partial order property t
 // that use partial order optimization with prefix index.
 func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
-	// Convert ByItems to SortItems for PartialOrderInfo
+	// Convert logical TopN ByItems to SortItems for PartialOrderInfo
 	sortItems := make([]*property.SortItem, 0, len(lt.ByItems))
 	for _, byItem := range lt.ByItems {
 		col, ok := byItem.Expr.(*expression.Column)
@@ -379,7 +379,7 @@ func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *proper
 		TaskTp:      property.CopMultiReadTaskType,
 		ExpectedCnt: math.MaxFloat64,
 		PartialOrderInfo: &property.PartialOrderInfo{
-			ByItems: sortItems,
+			SortItems: sortItems,
 		},
 		CTEProducerStatus: prop.CTEProducerStatus,
 		NoCopPushDown:     prop.NoCopPushDown,

@@ -764,10 +764,10 @@ type candidatePath struct {
 type PartialOrderMatchResult struct {
 	// Matched indicates whether the index can provide partial order
 	Matched bool
+	// PrefixColId is the last and only one prefix column ID of index
+	PrefixColId int64
 	// PrefixLen is the prefix length in bytes for prefix index, 0 means full column match
 	PrefixLen int
-	// MatchedIndexCols is the number of matched index columns
-	MatchedIndexCols int
 }
 
 func compareBool(l, r bool) int {
@@ -1057,6 +1057,7 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 
 	// Match partial order property if exists PartialOrderInfo physical property.
 	if prop.PartialOrderInfo != nil {
+		// TODO: use the PartialOrderMatchResult in the further PR to construct the special TopN and Limit executor
 		if matchPartialOrderProperty(path, prop.PartialOrderInfo) != nil {
 			return property.PropMatched
 		} else {
@@ -1168,62 +1169,71 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 // matchPartialOrderProperty checks if the index can provide partial order for TopN optimization.
 // Unlike matchProperty, this function allows prefix index to match ORDER BY columns.
 // partialOrderInfo being non-nil indicates that partial order optimization is enabled.
+// The current implementation primarily supports cases where
+// the index can **completely match** the **prefix** of the order by column.
+// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
+// For example:
+// query: order by a, b
+// index: prefix(a)
+// index: a, prefix(b)
+// TODO
+// Case 2: Composite index INDEX idx(a, b) matches ORDER BY a, b, c (index provides order for a, b)
+// In fact, there is a Case3 that can also be supported, but it will not be explained in detail here.
+// Please refer to the design document for details.
 func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property.PartialOrderInfo) *PartialOrderMatchResult {
 	if partialOrderInfo == nil || path.Index == nil || len(path.IdxCols) == 0 {
 		return nil
 	}
 
-	byItems := partialOrderInfo.ByItems
-	if len(byItems) == 0 {
+	sortItems := partialOrderInfo.SortItems
+	if len(sortItems) == 0 {
 		return nil
 	}
 
+	allSameOrder, _ := partialOrderInfo.AllSameOrder()
+	if !allSameOrder {
+		return nil
+	}
+
+	// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
+	// Check if index columns can match ORDER BY columns (allowing prefix index)
+	// Constraint 1: The number of index columns must be <= the number of ORDER BY columns
+	if len(path.IdxCols) > len(sortItems) {
+		return nil
+	}
+	// Constraint 2: The last column of the index must be a prefix column
+	if path.IdxColLens[len(path.IdxCols)-1] == types.UnspecifiedLength {
+		// The Last column is not a prefix column, skip this index
+		return nil
+	}
 	// Extract ORDER BY columns
-	orderByCols := make([]*expression.Column, 0, len(byItems))
-	for _, item := range byItems {
+	orderByCols := make([]*expression.Column, 0, len(sortItems))
+	for _, item := range sortItems {
 		orderByCols = append(orderByCols, item.Col)
 	}
 
-	// Check if index columns can match ORDER BY columns (allowing prefix index)
-	// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
-	// Case 2: Composite index INDEX idx(a, b) matches ORDER BY a, b, c (index provides order for a, b)
-
-	matchedCols := 0
-	prefixLen := 0
-
-	for i := 0; i < len(path.IdxCols) && i < len(orderByCols); i++ {
+	var prefixColumnId int64
+	var prefixLen int
+	for i := 0; i < len(path.IdxCols); i++ {
+		// check if the same column
 		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
 			break
 		}
 
-		// Check if sort direction is consistent
-		// For now, we only support ASC index matching ASC order, or DESC index matching DESC order
-		// TODO: Support DESC index
-
+		// meet prefix index column, match termination
 		if path.IdxColLens[i] != types.UnspecifiedLength {
 			// Encountered a prefix index column
 			// This prefix index column can provide partial order, but subsequent columns cannot match
-			matchedCols = i + 1
+			prefixColumnId = path.IdxCols[i].UniqueID
 			prefixLen = path.IdxColLens[i]
 			break
 		}
-		matchedCols = i + 1
-	}
-
-	// Must match at least one column
-	if matchedCols == 0 {
-		return nil
-	}
-
-	// If all ORDER BY columns are fully matched without prefix index, use normal matchProperty logic
-	if matchedCols == len(orderByCols) && prefixLen == 0 {
-		return nil
 	}
 
 	return &PartialOrderMatchResult{
-		Matched:          true,
-		PrefixLen:        prefixLen,
-		MatchedIndexCols: matchedCols,
+		Matched:     true,
+		PrefixColId: prefixColumnId,
+		PrefixLen:   prefixLen,
 	}
 }
 
