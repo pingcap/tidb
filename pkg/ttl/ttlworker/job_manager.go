@@ -1583,7 +1583,7 @@ func (a *managerJobAdapter) Now() (now time.Time, _ error) {
 func (m *JobManager) jobLogger(job *ttlJob) *zap.Logger {
 	logger := logutil.Logger(m.ctx)
 
-	logger = logger.With(zap.String("jobID", job.id))
+	logger = logger.With(zap.String("jobID", job.id), zap.String("jobType", job.jobType))
 	logger = logger.With(zap.Int64("tableID", job.tableID))
 	if tbl, ok := m.infoSchemaCache.Tables[job.tableID]; ok {
 		logger = logger.With(zap.String("tableName", tbl.FullName()))
