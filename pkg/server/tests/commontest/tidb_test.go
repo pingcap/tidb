@@ -3517,6 +3517,29 @@ func TestAuditPluginRetrying(t *testing.T) {
 		retrying bool
 	}
 	testResults := make([]normalTest, 0)
+	var testResultsMu sync.Mutex
+	resetTestResults := func() {
+		testResultsMu.Lock()
+		testResults = testResults[:0]
+		testResultsMu.Unlock()
+	}
+	getTestResults := func() []normalTest {
+		testResultsMu.Lock()
+		res := slices.Clone(testResults)
+		testResultsMu.Unlock()
+		return res
+	}
+	getTestResultsLen := func() int {
+		testResultsMu.Lock()
+		l := len(testResults)
+		testResultsMu.Unlock()
+		return l
+	}
+	appendTestResult := func(res normalTest) {
+		testResultsMu.Lock()
+		testResults = append(testResults, res)
+		testResultsMu.Unlock()
+	}
 
 	onGeneralEvent := func(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 		// Only consider the Completed event
@@ -3529,7 +3552,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			audit.retrying = retrying.(bool)
 		}
 		audit.sql = sctx.StmtCtx.OriginalSQL
-		testResults = append(testResults, audit)
+		appendTestResult(audit)
 	}
 	plugin.LoadPluginForTest(t, onGeneralEvent)
 	defer plugin.Shutdown(context.Background())
@@ -3549,6 +3572,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 		testResults = testResults[:0]
 		// a big enough concurrency to trigger retries
 		concurrency := 500
+<<<<<<< HEAD
 		var wg sync.WaitGroup
 		for range concurrency {
 			wg.Add(1)
@@ -3563,6 +3587,35 @@ func TestAuditPluginRetrying(t *testing.T) {
 		wg.Wait()
 
 		require.Greater(t, len(testResults), concurrency)
+=======
+		db.SetMaxOpenConns(concurrency)
+		db.SetMaxIdleConns(concurrency)
+		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
+		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
+		// enough, it might need more times to trigger the retry.
+		require.Eventually(t, func() bool {
+			resetTestResults()
+			var wg sync.WaitGroup
+			errCh := make(chan error, concurrency)
+			for range concurrency {
+				wg.Go(func() {
+					_, err := db.ExecContext(context.Background(), updateSQL)
+					if err != nil {
+						errCh <- err
+					}
+				})
+			}
+			wg.Wait()
+			close(errCh)
+			for err := range errCh {
+				require.NoError(t, err)
+			}
+
+			return getTestResultsLen() > concurrency
+		}, time.Second*10, time.Millisecond*100)
+
+		testResults := getTestResults()
+>>>>>>> 1d4344fc2c5 (test: stabilize `TestAuditPluginRetrying` (#65523))
 		nonRetryingCount := 0
 		for _, res := range testResults {
 			if !res.retrying {
@@ -3597,7 +3650,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			return conn
 		}
 
-		testResults = testResults[:0]
+		resetTestResults()
 		var wg sync.WaitGroup
 		wg.Add(2)
 		// Transaction 1
@@ -3606,7 +3659,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			conn := connect()
 			defer conn.Close()
 
-			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
 			require.NoError(t, err)
 			close(step1T1Started)
 			<-step2T2Committed
@@ -3622,7 +3675,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 			conn := connect()
 			defer conn.Close()
 
-			_, err = conn.ExecContext(context.Background(), "BEGIN")
+			_, err := conn.ExecContext(context.Background(), "BEGIN")
 			require.NoError(t, err)
 			_, err = conn.ExecContext(context.Background(), "UPDATE retry_test SET val = val + 20 WHERE id = 1")
 			require.NoError(t, err)
@@ -3633,6 +3686,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 		}()
 		wg.Wait()
 
+		testResults := getTestResults()
 		retryingCount := 0
 		nonRetryingCount := 0
 		for _, res := range testResults {
@@ -3665,7 +3719,7 @@ func TestAuditPluginRetrying(t *testing.T) {
 	ts.RunTests(t, nil, func(dbt *testkit.DBTestKit) {
 		db := dbt.GetDB()
 
-		testResults = testResults[:0]
+		resetTestResults()
 		runExplicitTransactionRetry(db, true)
 	})
 }
