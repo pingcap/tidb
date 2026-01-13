@@ -173,25 +173,9 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		}
 	}
 
-	// If we don't need pruning, just return all preferred indexes (already filtered to score > 0)
-	if !needPruning {
-		result := make([]*util.AccessPath, 0, len(tablePaths)+len(mvIndexPaths)+len(indexMergeIndexPaths)+len(preferredIndexes))
-		result = append(result, tablePaths...)
-		result = append(result, mvIndexPaths...)
-		result = append(result, indexMergeIndexPaths...)
-		for _, idx := range preferredIndexes {
-			result = append(result, idx.path)
-		}
-		// Safety check: if we ended up with nothing, return the original paths
-		if len(result) == 0 {
-			return paths
-		}
-		return result
-	}
-
 	// Build final result by sorting and selecting top indexes
 	maxToKeep := max(threshold, defaultMaxIndexes)
-	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, req)
+	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, needPruning, req)
 
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
@@ -339,7 +323,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, req columnRequirements) []*util.AccessPath {
+func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, needPruning bool, req columnRequirements) []*util.AccessPath {
 	result := make([]*util.AccessPath, 0, defaultMaxIndexes)
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
@@ -366,6 +350,16 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	}
 
 	preferredScored := scoreAndSort(preferredIndexes, req)
+
+	// If we don't need pruning, skip two-phase selection and keep all indexes with score > 0
+	if !needPruning {
+		for _, entry := range preferredScored {
+			if _, ok := added[entry.info.path]; !ok {
+				result = append(result, entry.info.path)
+			}
+		}
+		return result
+	}
 
 	// Apply two-phase selection to limit the number of indexes
 	phase1Limit := maxToKeep / 2
