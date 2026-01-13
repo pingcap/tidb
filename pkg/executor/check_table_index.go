@@ -405,6 +405,33 @@ func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string
 	return true
 }
 
+func (w *checkIndexWorker) quickPassGlobalChecksum(ctx context.Context, se sessionctx.Context, tblName string, idxInfo *model.IndexInfo, rowChecksumExpr, idxCondition string) (bool, error) {
+	tableGlobalQuery := fmt.Sprintf(
+		"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ ifnull(bit_xor(%s), 0), 0, count(*) from %s use index() where %s(0 = 0)",
+		tblName, rowChecksumExpr, tblName, idxCondition)
+	indexGlobalQuery := fmt.Sprintf(
+		"select /*+ AGG_TO_COP() */ ifnull(bit_xor(%s), 0), 0, count(*) from %s use index(`%s`) where %s(0 = 0)",
+		rowChecksumExpr, tblName, idxInfo.Name, idxCondition)
+
+	tableGlobalChecksum, err := getCheckSum(w.e.contextCtx, se, tableGlobalQuery)
+	if err != nil {
+		return false, err
+	}
+	intest.AssertFunc(func() bool {
+		return verifyIndexSideQuery(ctx, se, indexGlobalQuery)
+	}, "index side query plan is not correct: %s", indexGlobalQuery)
+	indexGlobalChecksum, err := getCheckSum(w.e.contextCtx, se, indexGlobalQuery)
+	if err != nil {
+		return false, err
+	}
+	if len(tableGlobalChecksum) == 0 || len(indexGlobalChecksum) == 0 {
+		return len(tableGlobalChecksum) == len(indexGlobalChecksum), nil
+	}
+
+	return tableGlobalChecksum[0].count == indexGlobalChecksum[0].count &&
+		tableGlobalChecksum[0].checksum == indexGlobalChecksum[0].checksum, nil
+}
+
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) error {
 	failpoint.Inject("mockFastCheckTableError", func() {
@@ -471,9 +498,23 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	lookupCheckThreshold := int64(100)
 	checkOnce := false
 
+	idxCondition := ""
+	if idxInfo.HasCondition() {
+		idxCondition = fmt.Sprintf("(%s) AND ", idxInfo.ConditionExprString)
+	}
+
 	_, err = se.GetSQLExecutor().ExecuteInternal(ctx, "begin")
 	if err != nil {
 		return err
+	}
+
+	// Quick pass: avoid bucketed grouping if table/index checksum already matches.
+	match, err := w.quickPassGlobalChecksum(ctx, se, tblName, idxInfo, md5HandleAndIndexCol, idxCondition)
+	if err != nil {
+		return err
+	}
+	if match {
+		return nil
 	}
 
 	times := 0
@@ -490,10 +531,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 			whereKey = "0"
 		}
 		checkOnce = true
-		idxCondition := ""
-		if idxInfo.HasCondition() {
-			idxCondition = fmt.Sprintf("(%s) AND ", idxInfo.ConditionExprString)
-		}
 
 		tblQuery := fmt.Sprintf(
 			"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ bit_xor(%s), %s, count(*) from %s use index() where %s(%s = 0) group by %s",
@@ -578,10 +615,6 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	}
 
 	if meetError {
-		idxCondition := ""
-		if idxInfo.HasCondition() {
-			idxCondition = fmt.Sprintf("(%s) AND ", idxInfo.ConditionExprString)
-		}
 		groupByKey := fmt.Sprintf("((cast(%s as signed) - %d) %% %d)", md5Handle, offset, mod)
 		indexSQL := fmt.Sprintf(
 			"select /*+ AGG_TO_COP() */ %s, %s, %s from %s use index(`%s`) where %s(%s = 0) order by %s",
