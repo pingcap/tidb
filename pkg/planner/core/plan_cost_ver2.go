@@ -778,12 +778,11 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 		return costusage.ZeroCostVer2, err
 	}
 
-	// IndexJoin family uses OuterHashKeys/InnerHashKeys as the actual hash key set during execution.
-	// These two slices should be non-empty and aligned (same length), and Outer/InnerJoinKeys are prefixes
-	// of them. If not, it's either an incomplete plan or a bug in key construction.
-	intest.Assert(len(p.OuterHashKeys) > 0, "index join hash keys should be initialized before costing")
-	intest.Assert(len(p.InnerHashKeys) > 0, "index join hash keys should be initialized before costing")
+	// IndexJoin family uses OuterHashKeys/InnerHashKeys as the execution-time hash key set.
+	// Note: for non-equi/range index join (e.g. only CompareFilters), hash keys can be empty.
+	// When join keys exist, they must be prefixes of the hash keys. Outer/Inner hash keys should be aligned.
 	intest.Assert(len(p.OuterHashKeys) == len(p.InnerHashKeys), "outer/inner hash keys should be aligned")
+	intest.Assert(len(p.OuterJoinKeys) == len(p.InnerJoinKeys), "outer/inner join keys should be aligned")
 	intest.Assert(len(p.OuterJoinKeys) <= len(p.OuterHashKeys), "OuterJoinKeys should be prefix of OuterHashKeys")
 	intest.Assert(len(p.InnerJoinKeys) <= len(p.InnerHashKeys), "InnerJoinKeys should be prefix of InnerHashKeys")
 	outerHashKeyCnt := float64(len(p.OuterHashKeys))
