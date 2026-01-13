@@ -636,12 +636,18 @@ func TestOnlySocket(t *testing.T) {
 			dbt.MustExec("GRANT SELECT ON test.* TO user1@'%'")
 		})
 	// Test with Network interface connection with all hosts, should fail since server not configured
+	tcpListener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	cli.Port = uint(tcpListener.Addr().(*net.TCPAddr).Port)
+	require.NoError(t, tcpListener.Close())
 	db, err := sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
 		config.User = "root"
 		config.DBName = "test"
 	}))
 	require.NoErrorf(t, err, "Open failed")
-	err = db.Ping()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	err = db.PingContext(ctx)
+	cancel()
 	require.Errorf(t, err, "Connect succeeded when not configured!?!")
 	db.Close()
 	db, err = sql.Open("mysql", cli.GetDSN(func(config *mysql.Config) {
@@ -649,7 +655,9 @@ func TestOnlySocket(t *testing.T) {
 		config.DBName = "test"
 	}))
 	require.NoErrorf(t, err, "Open failed")
-	err = db.Ping()
+	ctx, cancel = context.WithTimeout(context.Background(), time.Second)
+	err = db.PingContext(ctx)
+	cancel()
 	require.Errorf(t, err, "Connect succeeded when not configured!?!")
 	db.Close()
 	// Test with unix domain socket file connection with all hosts
