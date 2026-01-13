@@ -1269,10 +1269,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Step 8: Calculate the total percentage of the out-of-range rows.
-	// totalPercent is used for the average estimate (estRows) - never updated for entirelyOutOfRange
+	// totalPercent is used for the average estimate (estRows)
 	// maxTotalPercent is used for the maximum estimate (maxAddedRows) - updated for entirelyOutOfRange
+	// In both cases - we limit any single out of range percentage to 50%
+	// because we never can truly estimate what percentage of rows are out of range.
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	maxTotalPercent := min(rightPercent, 1.0)
+	maxTotalPercent := min(rightPercent, 0.5)
 
 	// Calculate estRows using totalPercent (average)
 	if totalPercent > 0 {

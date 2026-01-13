@@ -89,7 +89,7 @@
         "End": 1600,
         "Count": 13,
         "MinEst": 9,
-        "MaxEst": 13
+        "MaxEst": 1508
       },
       {
         "Start": 300,
@@ -110,7 +110,7 @@
         "End": 1500,
         "Count": 381,
         "MinEst": 9,
-        "MaxEst": 1502
+        "MaxEst": 758
       },
       {
         "Start": 300,
@@ -124,21 +124,21 @@
         "End": 300,
         "Count": 122,
         "MinEst": 9,
-        "MaxEst": 467
+        "MaxEst": 1508
       },
       {
         "Start": 100,
         "End": 200,
         "Count": 101,
         "MinEst": 9,
-        "MaxEst": 383
+        "MaxEst": 1508
       },
       {
         "Start": 200,
         "End": 400,
         "Count": 872,
         "MinEst": 759,
-        "MaxEst": 1217
+        "MaxEst": 2258
       },
       {
         "Start": 200,
@@ -152,21 +152,21 @@
         "End": 100,
         "Count": 80,
         "MinEst": 9,
-        "MaxEst": 299
+        "MaxEst": 1508
       },
       {
         "Start": -100,
         "End": 100,
         "Count": 132,
         "MinEst": 9,
-        "MaxEst": 507
+        "MaxEst": 1508
       },
       {
         "Start": -100,
         "End": 0,
         "Count": 60,
         "MinEst": 9,
-        "MaxEst": 216
+        "MaxEst": 1508
       }
     ]
   },
@@ -311,110 +311,110 @@
         "Start": "2023-01-01 00:00:00",
         "End": "2023-02-01 00:00:00",
         "CountRatioZero": 33,
-        "CountRatio10Pct": 24,
-        "CountRatio50Pct": 84,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 86,
         "CountRatio100Pct": 159,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 159
       },
       {
         "Start": "2023-02-01 00:00:00",
         "End": "2023-03-01 00:00:00",
         "CountRatioZero": 28,
-        "CountRatio10Pct": 22,
-        "CountRatio50Pct": 76,
+        "CountRatio10Pct": 26,
+        "CountRatio50Pct": 78,
         "CountRatio100Pct": 144,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 144
       },
       {
         "Start": "2023-03-01 00:00:00",
         "End": "2023-04-01 00:00:00",
         "CountRatioZero": 29,
-        "CountRatio10Pct": 24,
-        "CountRatio50Pct": 84,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 86,
         "CountRatio100Pct": 159,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 159
       },
       {
         "Start": "2023-04-01 00:00:00",
         "End": "2023-05-01 00:00:00",
         "CountRatioZero": 26,
-        "CountRatio10Pct": 23,
-        "CountRatio50Pct": 81,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 83,
         "CountRatio100Pct": 154,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 154
       },
       {
         "Start": "2023-05-01 00:00:00",
         "End": "2023-06-01 00:00:00",
         "CountRatioZero": 25,
-        "CountRatio10Pct": 24,
-        "CountRatio50Pct": 84,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 86,
         "CountRatio100Pct": 159,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 159
       },
       {
         "Start": "2023-06-01 00:00:00",
         "End": "2023-07-01 00:00:00",
         "CountRatioZero": 22,
-        "CountRatio10Pct": 23,
-        "CountRatio50Pct": 81,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 83,
         "CountRatio100Pct": 154,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 154
       },
       {
         "Start": "2023-07-01 00:00:00",
         "End": "2023-08-01 00:00:00",
         "CountRatioZero": 21,
-        "CountRatio10Pct": 24,
-        "CountRatio50Pct": 84,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 86,
         "CountRatio100Pct": 159,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 159
       },
       {
         "Start": "2023-08-01 00:00:00",
         "End": "2023-09-01 00:00:00",
         "CountRatioZero": 19,
-        "CountRatio10Pct": 24,
-        "CountRatio50Pct": 84,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 86,
         "CountRatio100Pct": 159,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 159
       },
       {
         "Start": "2023-09-01 00:00:00",
         "End": "2023-10-01 00:00:00",
         "CountRatioZero": 17,
-        "CountRatio10Pct": 23,
-        "CountRatio50Pct": 81,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 83,
         "CountRatio100Pct": 154,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 154
       },
       {
         "Start": "2023-10-01 00:00:00",
         "End": "2023-11-01 00:00:00",
         "CountRatioZero": 15,
-        "CountRatio10Pct": 24,
-        "CountRatio50Pct": 84,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 86,
         "CountRatio100Pct": 159,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 159
       },
       {
         "Start": "2023-11-01 00:00:00",
         "End": "2023-12-01 00:00:00",
         "CountRatioZero": 13,
-        "CountRatio10Pct": 23,
-        "CountRatio50Pct": 81,
+        "CountRatio10Pct": 27,
+        "CountRatio50Pct": 83,
         "CountRatio100Pct": 154,
-        "MinEst": 9,
+        "MinEst": 13,
         "MaxEst": 154
       },
       {
