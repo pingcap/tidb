@@ -45,10 +45,6 @@ This file provides guidance to agents when working with code in this repository.
 - `/pkg/util/` - Utilities.
 - `/cmd/tidb-server/` - Main entry for TiDB service.
 
-### Source Files
-
-- When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
-
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
@@ -56,7 +52,6 @@ This file provides guidance to agents when working with code in this repository.
 Run `make bazel_prepare` **before building** when:
 - You just cloned the repo / set up a new workspace
 - You changed Bazel-related files (for example: `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`)
-- You added/removed/renamed/moved any Go source files (for example: `*.go`) in this PR; ALWAYS run `make bazel_prepare` and include any resulting `*.bazel/*.bzl` changes in the PR.
 - You changed Go module deps used by the build (for example: `go.mod`, `go.sum`), such as **adding a new third-party dependency**
 - You added new unit tests (UT) or RealTiKV tests and updated Bazel test targets accordingly (for example: adding new `_test.go` files to a `go_test` rule `srcs`, adjusting `shard_count`, or creating/updating `BUILD.bazel` under `tests/realtikvtest/`), which may require refreshing Bazel deps/toolchain
 - You hit Bazel dependency/toolchain errors locally
@@ -68,7 +63,7 @@ Recommended local build flow:
 make bazel_prepare
 
 # build
-make bazel_bin
+make
 
 # optional: regenerate generated code if needed
 make gogenerate
@@ -92,10 +87,9 @@ go test -run  <TestName>  -record --tags=intest
 popd
 ```
 
-- If the execution is successful, please check whether the result set file has been modified. If it has been modified,
-  please verify that the modifications are correct and notify the developer.
+- If the execution is successful, please check whether the result set file has been modified. If it has been modified, 
+  Please verify that the modifications are correct and notify the developer.
 - If the execution fails, please check the error message and notify the developer.
-- Prefer targeted test runs (use `-run <TestName>`); avoid running all tests in a directory/package unless necessary (e.g. broad refactors, reproducing CI failures, or updating shared testdata/golden files) because it is time-consuming.
 
 #### When to enable failpoint
 
@@ -135,13 +129,6 @@ The following points must be achieved:
 1. Within the same package, there should not be more than 50 unit tests. The exact number can be referenced from the `shard_count` in the `BUILD.bazel` file under the test path.
 2. Existing tests should be reused as much as possible, and existing test data and table structures should be utilized. Modifications should be made on this basis to accommodate the new tests.
 3. Some tests use the JSON files in `testdata` as the test set (`xxxx_in.json`) and the validation set (`xxxx_out.json` and `xxxx_xut.json`). It is necessary to modify the test set before running the unit test.
-
-#### Regression tests for bug fixes
-
-- A bug fix should include a regression test that reproduces the issue.
-- Verify the new/updated test fails on the buggy code (before the fix), and passes after the fix.
-  - Example approaches: run the test on `upstream/master` (or the target base commit) before applying the fix, or temporarily revert the fix and confirm the test fails.
-- Include the exact test command in the PR description under `Tests` (for example: `go test -run TestXxx --tags=intest ./pkg/...`).
 
 ### Integration Tests
 
@@ -255,17 +242,6 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 - **Atomicity**: Use `atomic` variables to track logic in concurrent tests.
 - **Environment check**: Check for running playground processes before starting.
 - **Fmt-only changes**: If PR only involves code formatting (gofmt, indentation), do NOT run time-consuming `realtikvtest`. Just ensure local compilation passes.
-
-## Issue Instructions
-
-- When submitting an issue, follow the GitHub templates under `.github/ISSUE_TEMPLATE/` and fill in all required fields.
-- Bug reports should include minimal reproduction steps, expected/actual behavior, and the TiDB version (for example: the output of `SELECT tidb_version()`).
-- Search existing issues/PRs first to avoid duplicates (try `gh` first; for example: `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), and include any relevant logs/configuration/SQL plans to help diagnosis.
-- Apply labels to help triage:
-  - `type/*` is usually applied by the issue template; add `type/regression` when applicable.
-  - Add at least one `component/*` label (for example: `component/ddl`, `component/br`, `component/parser`).
-  - For bug/regression issues, `severity/*` and affected-version label(s) are required (for example: `affects-8.5`; use `may-affects-*` if unsure).
-  - If you don't have permission to add labels, include a `Suggested labels: ...` line in the issue body.
 
 ## Pull Request Instructions
 
