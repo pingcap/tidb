@@ -301,11 +301,10 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	var innerPlan base.Plan
 	switch x := stmt.(type) {
 	case *ast.AdminStmt:
-		if x.Tp == ast.AdminReloadBindings {
-			innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
-		} else {
+		if x.Tp != ast.AdminReloadBindings {
 			return nil, errors.Errorf("unexpected admin statement %s in broadcast query", *e.BroadcastQuery.Query)
 		}
+		innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
 	case *ast.RefreshStatsStmt:
 		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
 	default:
