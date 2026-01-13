@@ -1695,3 +1695,33 @@ func TestIssue54652(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
 	tk.MustExec(`commit`)
 }
+
+func BenchmarkNewPlanCacheKey(b *testing.B) {
+	store := testkit.CreateMockStore(b)
+	tk := testkit.NewTestKit(b, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, key(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	stmtID, _, _, err := tk.Session().PrepareStmt("select * from t where a = ?")
+	if err != nil {
+		b.Fatal(err)
+	}
+	sctx := tk.Session().(sessionctx.Context)
+	prepStmt, err := sctx.GetSessionVars().GetPreparedStmtByID(stmtID)
+	if err != nil {
+		b.Fatal(err)
+	}
+	stmt := prepStmt.(*plannercore.PlanCacheStmt)
+
+	// Start a transaction and make the table dirty
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values (3, 3)")
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_, _, _, _, _ = plannercore.NewPlanCacheKey(sctx, stmt)
+	}
+	b.StopTimer()
+	tk.MustExec("rollback")
+}
