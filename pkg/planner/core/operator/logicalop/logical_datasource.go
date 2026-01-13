@@ -593,14 +593,17 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		if len(originColumns) > 0 {
 			resultColumnInfo = originSchemaColumns[0]
 			resultColumn = originColumns[0]
-		} else if len(dataSource.TableInfo.Columns) > 0 {
-			col := dataSource.TableInfo.Columns[0]
-			resultColumnInfo = col
-			resultColumn = &expression.Column{
-				RetType:  &col.FieldType,
-				UniqueID: dataSource.SCtx().GetSessionVars().AllocPlanColumnID(),
-				ID:       col.ID,
-				OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
+		} else {
+			cols := dataSource.Table.Meta().Columns
+			if len(cols) > 0 {
+				col := cols[0]
+				resultColumnInfo = col
+				resultColumn = &expression.Column{
+					RetType:  col.FieldType.Clone(),
+					UniqueID: dataSource.SCtx().GetSessionVars().AllocPlanColumnID(),
+					ID:       col.ID,
+					OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
+				}
 			}
 		}
 	} else {
