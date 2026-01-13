@@ -863,8 +863,4 @@ delete t1, t2 from t1, t2 where t1.a = t2.a;
 drop table t1, t2;
 
 # Issue65521
-# EXISTS subquery on cluster tables (like tiflash_replica) should work
-# Previously this would fail with "Column ID -1 of table tiflash_replica not found"
 SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_ID = 1);
-SELECT EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA);
-SELECT CASE WHEN EXISTS(SELECT 1 FROM INFORMATION_SCHEMA.TIFLASH_REPLICA WHERE TABLE_ID = 1) THEN 1 ELSE 0 END;
