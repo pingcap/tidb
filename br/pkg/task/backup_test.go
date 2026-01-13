@@ -9,10 +9,12 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func TestParseTSString(t *testing.T) {
@@ -32,8 +34,8 @@ func TestParseTSString(t *testing.T) {
 	ts, err = ParseTSString("2021-01-01 01:42:23", false)
 	require.NoError(t, err)
 	localTime := time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, time.Local)
-	localTimestamp := localTime.Unix()
-	localTSO := uint64((localTimestamp << 18) * 1000)
+	// Use oracle.GoTimeToTS instead of manual calculation to avoid overflow
+	localTSO := oracle.GoTimeToTS(localTime)
 	require.Equal(t, localTSO, ts)
 
 	_, err = ParseTSString("2021-01-01 01:42:23", true)
@@ -43,8 +45,8 @@ func TestParseTSString(t *testing.T) {
 	ts, err = ParseTSString("2021-01-01 01:42:23+00:00", true)
 	require.NoError(t, err)
 	localTime = time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, time.UTC)
-	localTimestamp = localTime.Unix()
-	localTSO = uint64((localTimestamp << 18) * 1000)
+	// Use oracle.GoTimeToTS instead of manual calculation to avoid overflow
+	localTSO = oracle.GoTimeToTS(localTime)
 	require.Equal(t, localTSO, ts)
 
 	ts, err = ParseTSString("2021-01-01 01:42:23+08:00", true)
@@ -52,8 +54,8 @@ func TestParseTSString(t *testing.T) {
 	secondsEastOfUTC := int((8 * time.Hour).Seconds())
 	beijing := time.FixedZone("Beijing Time", secondsEastOfUTC)
 	localTime = time.Date(2021, time.Month(1), 1, 1, 42, 23, 0, beijing)
-	localTimestamp = localTime.Unix()
-	localTSO = uint64((localTimestamp << 18) * 1000)
+	// Use oracle.GoTimeToTS instead of manual calculation to avoid overflow
+	localTSO = oracle.GoTimeToTS(localTime)
 	require.Equal(t, localTSO, ts)
 }
 
@@ -93,8 +95,8 @@ func hashCheck(t *testing.T, cfg *BackupConfig, originalHash []byte, check bool)
 func TestBackupConfigHash(t *testing.T) {
 	cfg := &BackupConfig{
 		Config: Config{
-			BackendOptions: storage.BackendOptions{
-				S3: storage.S3BackendOptions{
+			BackendOptions: objstore.BackendOptions{
+				S3: s3store.S3BackendOptions{
 					Endpoint: "123",
 				},
 			},

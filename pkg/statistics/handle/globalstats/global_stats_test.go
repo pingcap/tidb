@@ -1006,7 +1006,7 @@ func TestEmptyHists(t *testing.T) {
 )
 partition by hash( month(signed) )
 partitions 12;`)
-	tk.MustExec(`truncate table mysql.stats_histograms`)
+	tk.MustExec(`delete from mysql.stats_histograms`)
 	se := tk.Session().(sessionctx.Context)
 	infoSchema := dom.InfoSchema()
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))

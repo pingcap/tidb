@@ -21,12 +21,12 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -117,8 +117,8 @@ func TestClassicS3ExternalID(t *testing.T) {
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
-					require.Contains(t, u.Query(), storage.S3ExternalID)
-					require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+					require.Contains(t, u.Query(), s3store.S3ExternalID)
+					require.Equal(t, "allowed", u.Query().Get(s3store.S3ExternalID))
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
 				tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
@@ -132,8 +132,8 @@ func TestClassicS3ExternalID(t *testing.T) {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
-			require.Contains(t, u.Query(), storage.S3ExternalID)
-			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+			require.Contains(t, u.Query(), s3store.S3ExternalID)
+			require.Equal(t, "allowed", u.Query().Get(s3store.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
 		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
@@ -182,8 +182,8 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 					u, err := url.Parse(plan.Path)
 					require.NoError(t, err)
-					require.Contains(t, u.Query(), storage.S3ExternalID)
-					require.Equal(t, "aaa", u.Query().Get(storage.S3ExternalID))
+					require.Contains(t, u.Query(), s3store.S3ExternalID)
+					require.Equal(t, "aaa", u.Query().Get(s3store.S3ExternalID))
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
 				err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
@@ -207,8 +207,8 @@ func TestNextGenS3ExternalID(t *testing.T) {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
-			require.Contains(t, u.Query(), storage.S3ExternalID)
-			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+			require.Contains(t, u.Query(), s3store.S3ExternalID)
+			require.Equal(t, "allowed", u.Query().Get(s3store.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
 		err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket?external-id=allowed'")

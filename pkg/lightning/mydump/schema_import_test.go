@@ -24,10 +24,10 @@ import (
 	"github.com/DATA-DOG/go-sqlmock"
 	dmysql "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	tmysql "github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
@@ -46,7 +46,7 @@ func TestSchemaImporter(t *testing.T) {
 	})
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	store, err := storage.NewLocalStorage(tempDir)
+	store, err := objstore.NewLocalStorage(tempDir)
 	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewExample()}
 	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 4)
@@ -247,7 +247,7 @@ func TestSchemaImporterManyTables(t *testing.T) {
 	})
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	store, err := storage.NewLocalStorage(tempDir)
+	store, err := objstore.NewLocalStorage(tempDir)
 	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewExample()}
 	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 8)
