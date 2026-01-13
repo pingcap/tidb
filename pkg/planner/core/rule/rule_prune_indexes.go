@@ -69,20 +69,13 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	totalPathCount := len(paths)
 
 	// If totalPathCount <= threshold, we should keep all indexes with score > 0
-	// Which means only prune with score ==0
-	// Only prune with score > 0 when we have more index paths than the threshold
+	// Only prune indexes with score > 0 when we have more index paths than the threshold
 	// threshold = -1: disable pruning (handled by caller)
 	// threshold = 0: only prune indexes with no interesting columns (score == 0)
 	// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
-	var maxToKeep int
-	if totalPathCount > threshold && threshold >= 0 {
-		maxToKeep = max(threshold, defaultMaxIndexes) // Avoid being too aggressive when threshold is small
-	} else {
-		// When not pruning (len(paths) <= threshold), set maxToKeep to keep all indexes with score > 0
-		maxToKeep = totalPathCount
-	}
+	needPruning := totalPathCount > threshold && threshold >= 0
 
-	preferredIndexes := make([]indexWithScore, 0, maxToKeep)
+	preferredIndexes := make([]indexWithScore, 0, totalPathCount)
 	tablePaths := make([]*util.AccessPath, 0, 1)
 	mvIndexPaths := make([]*util.AccessPath, 0, 1)
 	indexMergeIndexPaths := make([]*util.AccessPath, 0, 1)
@@ -180,7 +173,24 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		}
 	}
 
+	// If we don't need pruning, just return all preferred indexes (already filtered to score > 0)
+	if !needPruning {
+		result := make([]*util.AccessPath, 0, len(tablePaths)+len(mvIndexPaths)+len(indexMergeIndexPaths)+len(preferredIndexes))
+		result = append(result, tablePaths...)
+		result = append(result, mvIndexPaths...)
+		result = append(result, indexMergeIndexPaths...)
+		for _, idx := range preferredIndexes {
+			result = append(result, idx.path)
+		}
+		// Safety check: if we ended up with nothing, return the original paths
+		if len(result) == 0 {
+			return paths
+		}
+		return result
+	}
+
 	// Build final result by sorting and selecting top indexes
+	maxToKeep := max(threshold, defaultMaxIndexes)
 	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, req)
 
 	// Safety check: if we ended up with nothing, return the original paths
@@ -356,6 +366,8 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	}
 
 	preferredScored := scoreAndSort(preferredIndexes, req)
+
+	// Apply two-phase selection to limit the number of indexes
 	phase1Limit := maxToKeep / 2
 	selectionState := newIndexSelectionState(phase1Limit, maxToKeep)
 
