@@ -303,12 +303,13 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	case *ast.AdminStmt:
 		if x.Tp == ast.AdminReloadBindings {
 			innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
+		} else {
+			return nil, errors.Errorf("unexpected admin statement %s in broadcast query", *e.BroadcastQuery.Query)
 		}
 	case *ast.RefreshStatsStmt:
 		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	}
-	if innerPlan == nil {
-		errors.Errorf("unexpected statement %s in broadcast query", *e.BroadcastQuery.Query)
+	default:
+		return nil, errors.Errorf("unexpected statement %s in broadcast query", *e.BroadcastQuery.Query)
 	}
 	return &PhysicalPlanWrapper{Inner: innerPlan}, nil
 }
