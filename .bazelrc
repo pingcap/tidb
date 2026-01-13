@@ -11,7 +11,6 @@ build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolu
 build --remote_local_fallback
 build:ci --color=yes
 build:ci --experimental_remote_cache_compression
-build:ci --remote_download_toplevel
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp
 build:release --config=ci
 build:race --config=ci
@@ -24,7 +23,6 @@ test:ci --test_env=GO_TEST_WRAP_TESTV=1
 test:ci --experimental_ui_max_stdouterr_bytes=268435456
 test:ci --test_timeout=150,300,900,3600
 test:ci --flaky_test_attempts=3
-test:ci --remote_download_toplevel
 test --test_env=HTTPS_PROXY --test_env=https_proxy
 test --test_env=HTTP_PROXY --test_env=http_proxy
 test:race --test_timeout=1200,6000,18000,72000
