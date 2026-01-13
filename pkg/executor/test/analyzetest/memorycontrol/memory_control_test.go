@@ -217,7 +217,9 @@ func TestMemQuotaAnalyze2(t *testing.T) {
 }
 
 func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
-	intest.Assert(statistics.MaxSampleValueLength > 32000)
+	// This test should be fast because the whole package is marked as `timeout = "short"` in Bazel.
+	const valueLen = 8 * 1024
+	intest.Assert(statistics.MaxSampleValueLength > valueLen)
 
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	oldChildTrackers := executor.GlobalAnalyzeMemoryTracker.GetChildrenForTest()
@@ -238,11 +240,10 @@ func TestAnalyzeV2MemoryUsageMetricNeverNegative(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_mem_usage")
 	tk.MustExec("create table t_mem_usage(a text collate utf8mb4_general_ci)")
-	tk.MustExec("insert into t_mem_usage values (repeat('a', 32000))")
-	for range 11 {
+	tk.MustExec(fmt.Sprintf("insert into t_mem_usage values (repeat('a', %d))", valueLen))
+	for range 6 {
 		tk.MustExec("insert into t_mem_usage select a from t_mem_usage")
 	}
-	tk.MustExec("insert into t_mem_usage select a from t_mem_usage limit 952")
 
 	tk.MustExec("analyze table t_mem_usage with 1.0 samplerate;")
 }
