@@ -529,7 +529,7 @@ func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 	}
 }
 
-// NewTrace creates a new Trace.
+// NewTraceBuf creates a new TraceBuf.
 func NewTraceBuf() *TraceBuf {
 	return &TraceBuf{}
 }

@@ -112,6 +112,7 @@ func GetTraceBuf(ctx context.Context) any {
 	return ctx.Value(traceBufKey)
 }
 
+// WithTraceBuf returns a context with TraceBuf.
 func WithTraceBuf(ctx context.Context, val TraceBuf) context.Context {
 	return context.WithValue(ctx, traceBufKey, val)
 }
