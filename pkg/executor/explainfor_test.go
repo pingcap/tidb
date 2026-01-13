@@ -265,7 +265,7 @@ func TestExplainDotForQuery(t *testing.T) {
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
 	tk2.MustQuery("explain format=\"dot\" select 1").Check(testkit.Rows(
-		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_5\"\n}\n}\n",
+		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_4\"\n}\n}\n",
 	))
 	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
 	require.Error(t, err)
