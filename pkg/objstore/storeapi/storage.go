@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -217,20 +216,23 @@ func NewPrefix(prefix string) Prefix {
 	return Prefix(p)
 }
 
-// Join two prefixes and return a new Prefix.
-func (p Prefix) Join(other Prefix) Prefix {
-	return Prefix(path.Join(string(p), string(other)))
+func (p Prefix) join(other Prefix) Prefix {
+	// due to the definition of Prefix, we can add them directly.
+	return p + other
 }
 
 // JoinStr returns a new Prefix by joining the given string to the current Prefix.
 func (p Prefix) JoinStr(str string) Prefix {
 	strPrefix := NewPrefix(str)
-	return p.Join(strPrefix)
+	return p.join(strPrefix)
 }
 
 // ObjectKey returns the object key by joining the name to the Prefix.
 func (p Prefix) ObjectKey(name string) string {
 	// if p is not empty, it already ends with '/'.
+	// the name better not start with '/', else there will be double '/' in the
+	// key.
+	// this is existing behavior, we keep it.
 	return string(p) + name
 }
 
@@ -258,6 +260,8 @@ func NewBucketPrefix(bucket, prefix string) BucketPrefix {
 // if startOffset = 0, `full` is true and `rangeVal` is nil.
 // If a partial object is requested, `full` is false and `rangeVal` contains the
 // Range header value.
+// if endOffset is not 0, startOffset must <= endOffset, we don't check the
+// validity here.
 func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal *string) {
 	// If we just open part of the object, we set `Range` in the request.
 	// If we meant to open the whole object, not just a part of it,

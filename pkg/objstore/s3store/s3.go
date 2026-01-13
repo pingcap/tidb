@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"net/url"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -278,7 +277,12 @@ func (options *S3BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 // NewS3StorageForTest creates a new S3Storage for testing only.
 func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
 	return &S3Storage{
-		svc:       svc,
+		svc: svc,
+		s3Cli: &s3Client{
+			svc:          svc,
+			BucketPrefix: storeapi.NewBucketPrefix(options.Bucket, options.Prefix),
+			options:      options,
+		},
 		options:   options,
 		accessRec: accessRec,
 	}
@@ -716,15 +720,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 	if opt == nil {
 		opt = &storeapi.WalkOption{}
 	}
-	prefix := path.Join(rs.options.Prefix, opt.SubDir)
-	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
-
-	if len(opt.ObjPrefix) != 0 {
-		prefix += opt.ObjPrefix
-	}
-
+	prefix := storeapi.NewPrefix(opt.SubDir).ObjectKey(opt.ObjPrefix)
 	var maxKeys = 1000
 	if opt.ListCount > 0 {
 		maxKeys = int(opt.ListCount)

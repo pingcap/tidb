@@ -16,10 +16,8 @@ package s3like
 
 import (
 	"context"
-	goerrors "errors"
 	"io"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
@@ -82,10 +80,12 @@ type PrefixClient interface {
 	DeleteObjects(ctx context.Context, names []string) error
 	// IsObjectExists checks whether the object with the given name exists.
 	IsObjectExists(ctx context.Context, name string) (bool, error)
-	// ListObjects lists objects with the given prefix, marker and maxKeys.
+	// ListObjects lists objects with the given extra prefix, marker and maxKeys.
 	// the marker is the key to start after, if nil, start from the beginning.
 	// maxKeys is the maximum number of keys to return.
-	ListObjects(ctx context.Context, prefix string, marker *string, maxKeys int) (*ListResp, error)
+	// Note: the extraPrefix is directly appended to the storeapi.Prefix of the
+	// PrefixClient, caller should make sure the input extraPrefix correct.
+	ListObjects(ctx context.Context, extraPrefix string, marker *string, maxKeys int) (*ListResp, error)
 	// CopyObject copies an object from the source to the destination.
 	CopyObject(ctx context.Context, params *CopyInput) error
 	// MultipartWriter creates a multipart writer for the object with the given
@@ -96,31 +96,4 @@ type PrefixClient interface {
 	// MultipartUploader creates a multipart uploader for the object.
 	// unlike MultipartWriter, this method allows concurrent uploading of parts.
 	MultipartUploader(name string, partSize int64, concurrency int) Uploader
-}
-
-// CheckPermissions checks whether the client has the given permissions.
-func CheckPermissions(ctx context.Context, cli PrefixClient, perms []storeapi.Permission) error {
-	for _, perm := range perms {
-		switch perm {
-		case storeapi.AccessBuckets:
-			if err := cli.CheckBucketExistence(ctx); err != nil {
-				return errors.Annotatef(err, "permission %s", perm)
-			}
-		case storeapi.ListObjects:
-			if err := cli.CheckListObjects(ctx); err != nil {
-				return errors.Annotatef(err, "permission %s", perm)
-			}
-		case storeapi.GetObject:
-			if err := cli.CheckGetObject(ctx); err != nil {
-				return errors.Annotatef(err, "permission %s", perm)
-			}
-		case storeapi.PutAndDeleteObject:
-			if err := cli.CheckPutAndDeleteObject(ctx); err != nil {
-				return errors.Annotatef(err, "permission %s", perm)
-			}
-		default:
-			return goerrors.New("unknown permission: " + string(perm))
-		}
-	}
-	return nil
 }

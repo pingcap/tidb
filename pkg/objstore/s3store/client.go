@@ -84,14 +84,13 @@ func (c *s3Client) CheckGetObject(ctx context.Context) error {
 	var aerr smithy.APIError
 	if goerrors.As(err, &aerr) {
 		if aerr.ErrorCode() == noSuchKey {
-			// if key not exists and we reach this error, that
-			// means we have the correct permission to GetObject
-			// other we will get another error
+			// if key not exists, and we reach this error, that means we have
+			// the correct permission to GetObject otherwise we will get another
+			// error
 			return nil
 		}
-		return errors.Trace(err)
 	}
-	return nil
+	return errors.Trace(err)
 }
 
 // CheckPutAndDeleteObject checks the permission of putObject
@@ -218,7 +217,8 @@ func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error
 	return true, nil
 }
 
-func (c *s3Client) ListObjects(ctx context.Context, prefix string, marker *string, maxKeys int) (*s3like.ListResp, error) {
+func (c *s3Client) ListObjects(ctx context.Context, extraPrefix string, marker *string, maxKeys int) (*s3like.ListResp, error) {
+	prefix := c.Prefix.ObjectKey(extraPrefix)
 	req := &s3.ListObjectsInput{
 		Bucket:  aws.String(c.Bucket),
 		Prefix:  aws.String(prefix),
