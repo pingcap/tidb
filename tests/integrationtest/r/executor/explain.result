@@ -349,7 +349,7 @@ Update	root		N/A
     └─HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
       ├─HashAgg(Build)	root		group by:executor__explain.t2.id2, funcs:count(1)->Column, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
       │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
-      │   ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
+      │   ├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
       │   │ ├─Projection(Build)	root		executor__explain.t1.id2
       │   │ │ └─IndexLookUp	root		
       │   │ │   ├─IndexRangeScan(Build)	cop[tikv]	table:rn, index:ix_id1(id1)	range:["03","03"], keep order:false, stats:pseudo
@@ -368,7 +368,7 @@ create table t (a int, b int, index (a));
 insert into t values (1, 1);
 explain analyze format='brief' select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
-IndexHashJoin	12.50	0	root		<execution_info>	inner join, inner:IndexLookUp, outer key:executor__explain.t.b, inner key:executor__explain.t.a, equal cond:eq(executor__explain.t.b, executor__explain.t.a)	<memory>	<disk>
+IndexJoin	12.50	0	root		<execution_info>	inner join, inner:IndexLookUp, outer key:executor__explain.t.b, inner key:executor__explain.t.a, equal cond:eq(executor__explain.t.b, executor__explain.t.a)	<memory>	<disk>
 ├─TableReader(Build)	10.00	0	root		<execution_info>	data:Selection	<memory>	<disk>
 │ └─Selection	10.00	0	cop[tikv]		<execution_info>	eq(executor__explain.t.b, 2333)	<memory>	<disk>
 │   └─TableFullScan	10000.00	1	cop[tikv]	table:t1	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>

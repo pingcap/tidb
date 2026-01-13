@@ -3395,7 +3395,7 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
-IndexHashJoin	root		left outer join, inner:StreamAgg, left side:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.ta.id, inner key:planner__core__casetest__physicalplantest__physical_plan.tb.id, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)
+IndexJoin	root		left outer join, inner:StreamAgg, left side:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.ta.id, inner key:planner__core__casetest__physicalplantest__physical_plan.tb.id, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)
 ├─IndexLookUp(Build)	root		
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
@@ -3460,7 +3460,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
   └─MaxOneRow(Probe)	root		
     └─StreamAgg	root		funcs:sum(Column)->Column
       └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column
-        └─IndexHashJoin	root		semi join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.tb.name, inner key:planner__core__casetest__physicalplantest__physical_plan.tc.name, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)
+        └─IndexJoin	root		semi join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.tb.name, inner key:planner__core__casetest__physicalplantest__physical_plan.tc.name, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)
           ├─IndexLookUp(Build)	root		
           │ ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
           │ └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.name))
@@ -3594,7 +3594,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name
 └─Apply	root		CARTESIAN inner join
   ├─Apply(Build)	root		CARTESIAN inner join
-  │ ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.tb.code, inner key:planner__core__casetest__physicalplantest__physical_plan.ta.code, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.tb.code, planner__core__casetest__physicalplantest__physical_plan.ta.code)
+  │ ├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.tb.code, inner key:planner__core__casetest__physicalplantest__physical_plan.ta.code, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.tb.code, planner__core__casetest__physicalplantest__physical_plan.ta.code)
   │ │ ├─HashAgg(Build)	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.code, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.code)->planner__core__casetest__physicalplantest__physical_plan.tb.code
   │ │ │ └─TableReader	root		data:Selection
   │ │ │   └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tb.name, "chad9%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.code))

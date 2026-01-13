@@ -37,8 +37,8 @@ id	task	access object	operator info
 Sort	root		planner__core__rule_join_reorder.queries_identifier.id
 └─Projection	root		planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_identifier.name
   └─Selection	root		or(and(eq(planner__core__rule_join_reorder.queries_channel.id, 5), eq(planner__core__rule_join_reorder.queries_program.id, 9)), eq(planner__core__rule_join_reorder.queries_program.id, 8))
-    └─IndexJoin	root		left outer join, inner:IndexReader, left side:IndexHashJoin, outer key:planner__core__rule_join_reorder.queries_identifier.id, inner key:planner__core__rule_join_reorder.queries_channel.identifier_id, equal cond:eq(planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_channel.identifier_id)
-      ├─IndexHashJoin(Build)	root		inner join, inner:TableReader, outer key:planner__core__rule_join_reorder.queries_program.identifier_id, inner key:planner__core__rule_join_reorder.queries_identifier.id, equal cond:eq(planner__core__rule_join_reorder.queries_program.identifier_id, planner__core__rule_join_reorder.queries_identifier.id)
+    └─IndexJoin	root		left outer join, inner:IndexReader, left side:IndexJoin, outer key:planner__core__rule_join_reorder.queries_identifier.id, inner key:planner__core__rule_join_reorder.queries_channel.identifier_id, equal cond:eq(planner__core__rule_join_reorder.queries_identifier.id, planner__core__rule_join_reorder.queries_channel.identifier_id)
+      ├─IndexJoin(Build)	root		inner join, inner:TableReader, outer key:planner__core__rule_join_reorder.queries_program.identifier_id, inner key:planner__core__rule_join_reorder.queries_identifier.id, equal cond:eq(planner__core__rule_join_reorder.queries_program.identifier_id, planner__core__rule_join_reorder.queries_identifier.id)
       │ ├─Batch_Point_Get(Build)	root	table:queries_program	handle:[8 9], keep order:false, desc:false
       │ └─TableReader(Probe)	root		data:TableRangeScan
       │   └─TableRangeScan	cop[tikv]	table:queries_identifier	range: decided by [planner__core__rule_join_reorder.queries_program.identifier_id], keep order:false, stats:pseudo

@@ -391,8 +391,8 @@ create table t2 (pk char(32) primary key nonclustered, col1 varchar(100));
 create table t3 (pk char(32) primary key nonclustered, keycol varchar(100), pad1 tinyint(1) default null, pad2 varchar(40), key (keycol,pad1,pad2));
 explain format='plan_tree' SELECT t1.pk FROM t1 INNER JOIN t2 ON t1.col1 = t2.pk INNER JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t1.col1, inner key:planner__core__casetest__integration.t2.pk, equal cond:eq(planner__core__casetest__integration.t1.col1, planner__core__casetest__integration.t2.pk)
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t3.pk, inner key:planner__core__casetest__integration.t1.col3, equal cond:eq(planner__core__casetest__integration.t3.pk, planner__core__casetest__integration.t1.col3)
+IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t1.col1, inner key:planner__core__casetest__integration.t2.pk, equal cond:eq(planner__core__casetest__integration.t1.col1, planner__core__casetest__integration.t2.pk)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t3.pk, inner key:planner__core__casetest__integration.t1.col3, equal cond:eq(planner__core__casetest__integration.t3.pk, planner__core__casetest__integration.t1.col3)
 │ ├─IndexLookUp(Build)	root		
 │ │ ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:keycol(keycol, pad1, pad2)	range:["c","c"], keep order:false, stats:pseudo
 │ │ └─TableRowIDScan(Probe)	cop[tikv]	table:t3	keep order:false, stats:pseudo
@@ -408,8 +408,8 @@ IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__case
     └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' SELECT t1.pk FROM t1 LEFT JOIN t2 ON t1.col1 = t2.pk LEFT JOIN t3 ON t1.col3 = t3.pk WHERE t2.col1 IN ('a' , 'b') AND t3.keycol = 'c' AND t1.col2 = 'a' AND t1.col1 != 'abcdef' AND t1.col1 != 'aaaaaa';
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t1.col1, inner key:planner__core__casetest__integration.t2.pk, equal cond:eq(planner__core__casetest__integration.t1.col1, planner__core__casetest__integration.t2.pk)
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t3.pk, inner key:planner__core__casetest__integration.t1.col3, equal cond:eq(planner__core__casetest__integration.t3.pk, planner__core__casetest__integration.t1.col3)
+IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t1.col1, inner key:planner__core__casetest__integration.t2.pk, equal cond:eq(planner__core__casetest__integration.t1.col1, planner__core__casetest__integration.t2.pk)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__integration.t3.pk, inner key:planner__core__casetest__integration.t1.col3, equal cond:eq(planner__core__casetest__integration.t3.pk, planner__core__casetest__integration.t1.col3)
 │ ├─IndexLookUp(Build)	root		
 │ │ ├─IndexRangeScan(Build)	cop[tikv]	table:t3, index:keycol(keycol, pad1, pad2)	range:["c","c"], keep order:false, stats:pseudo
 │ │ └─TableRowIDScan(Probe)	cop[tikv]	table:t3	keep order:false, stats:pseudo
