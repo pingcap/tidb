@@ -517,6 +517,10 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		return nil
 	}
 
+	failpoint.Inject("mockFastCheckTableBucketedCalled", func() {
+		failpoint.Return(errors.New("mock fast check table bucketed called"))
+	})
+
 	times := 0
 	const maxTimes = 10
 	for tableRowCntToCheck > lookupCheckThreshold || !checkOnce {
