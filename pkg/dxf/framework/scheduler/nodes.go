@@ -123,7 +123,7 @@ func (nm *NodeManager) maintainLiveNodes(ctx context.Context, taskMgr TaskManage
 func (nm *NodeManager) refreshNodesLoop(ctx context.Context, taskMgr TaskManager, slotMgr *SlotManager) {
 	ticker := time.NewTicker(nodesCheckInterval)
 	defer ticker.Stop()
-	trace := traceevent.NewTrace()
+	trace := traceevent.NewTraceBuf()
 	ctx = tracing.WithTraceBuf(ctx, trace)
 	for {
 		select {

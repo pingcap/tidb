@@ -225,7 +225,7 @@ func TestFlightRecorder(t *testing.T) {
 	tk.MustExec("create table t (a varchar(10) primary key, b int, index idx(b))")
 
 	ctx := context.Background()
-	sink := traceevent.NewTrace()
+	sink := traceevent.NewTraceBuf()
 	ctx = tracing.WithTraceBuf(ctx, sink)
 
 	// Basic check to see if flight recorder can dump events
@@ -352,7 +352,7 @@ func TestTiDBTraceEventVariable(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	sink := traceevent.NewTrace()
+	sink := traceevent.NewTraceBuf()
 	ctx = tracing.WithTraceBuf(ctx, sink)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

@@ -98,6 +98,7 @@ var flightRecorder = NewRingBufferSink(DefaultFlightRecorderCapacity)
 // init sets up the default sink configuration.
 // Default mode is "base" (flight recorder enabled, logging disabled).
 func init() {
+	tracing.IsEnabled = IsEnabled
 	defaultSink := &LogSink{}
 	eventSink.Store(sinkHolder{sink: defaultSink})
 	recorderEnabled.Store(true) // base mode: recorder enabled

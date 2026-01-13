@@ -1080,8 +1080,8 @@ func (cc *clientConn) Run(ctx context.Context) {
 	cc.addConnMetrics()
 
 	var traceInfo *tracing.TraceInfo
-	trace := traceevent.NewTrace()
-	ctx = traceevent.WithTraceBuf(ctx, trace)
+	traceBuf := traceevent.NewTraceBuf()
+	ctx = traceevent.WithTraceBuf(ctx, traceBuf)
 
 	// Usually, client connection status changes between [dispatching] <=> [reading].
 	// When some event happens, server may notify this client connection by setting
@@ -1176,7 +1176,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 		err = cc.dispatch(ctx, data)
 		cc.ctx.GetSessionVars().ClearAlloc(&cc.chunkAlloc, err != nil)
 		cc.chunkAlloc.Reset()
-		trace.DiscardOrFlush(ctx)
+		traceBuf.DiscardOrFlush(ctx)
 
 		if err != nil {
 			cc.audit(context.Background(), plugin.Error) // tell the plugin API there was a dispatch error

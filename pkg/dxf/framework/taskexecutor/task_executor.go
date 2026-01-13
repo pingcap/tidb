@@ -272,7 +272,7 @@ func (e *BaseTaskExecutor) Run() {
 		metering.UnregisterRecorder(e.GetTaskBase().ID)
 	}()
 
-	trace := traceevent.NewTrace()
+	trace := traceevent.NewTraceBuf()
 	ctx := traceevent.WithTraceBuf(e.ctx, trace)
 	// task executor occupies resources, if there's no subtask to run for 10s,
 	// we release the resources so that other tasks can use them.

@@ -89,7 +89,7 @@ func NewManager(ctx context.Context, store kv.Storage, id string, taskTable Task
 		logger:       logger,
 		slotManager:  newSlotManager(resource.TotalCPU),
 		nodeResource: resource,
-		trace:        traceevent.NewTrace(),
+		trace:        traceevent.NewTraceBuf(),
 	}
 
 	ctx = traceevent.WithTraceBuf(ctx, m.trace)

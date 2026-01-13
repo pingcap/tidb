@@ -1849,7 +1849,7 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	if sink := tracing.GetTraceBuf(ctx); sink == nil {
-		trace := traceevent.NewTrace()
+		trace := traceevent.NewTraceBuf()
 		ctx = traceevent.WithTraceBuf(ctx, trace)
 		defer trace.DiscardOrFlush(ctx)
 

@@ -23,8 +23,6 @@ import (
 
 	"github.com/opentracing/basictracer-go"
 	"github.com/opentracing/opentracing-go"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
 
@@ -140,7 +138,6 @@ func StartRegion(ctx context.Context, regionType string) Region {
 				Name:      regionType,
 				Phase:     PhaseBegin,
 				Timestamp: time.Now(),
-				// TraceID:   ExtractTraceID(ctx),
 			}
 			traceBuf.Record(ctx, event)
 			ret.span.event = &event
@@ -187,15 +184,8 @@ func GetEnabledCategories() TraceCategory {
 }
 
 // IsEnabled returns whether the specified category is enabled.
-// This function is inline-friendly for hot paths.
-// Trace events only work for next-gen kernel.
-func IsEnabled(category TraceCategory) bool {
-	// Fast path: check kernel type first
-	if kerneltype.IsClassic() && !intest.InTest {
-		return false
-	}
-	return enabledCategories.Load()&uint64(category) != 0
-}
+// It delegates to traceevent.IsEnabled
+var IsEnabled func(category TraceCategory) bool
 
 // TraceCategory represents different trace event categories.
 type TraceCategory uint64

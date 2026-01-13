@@ -310,7 +310,7 @@ func (s *jobScheduler) schedule() error {
 	defer ticker.Stop()
 	s.mustReloadSchemas()
 
-	trace := traceevent.NewTrace()
+	trace := traceevent.NewTraceBuf()
 	ctx := traceevent.WithTraceBuf(s.schCtx, trace)
 
 	for {
@@ -525,7 +525,7 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 			pool.put(wk)
 		}()
 
-		trace := traceevent.NewTrace()
+		trace := traceevent.NewTraceBuf()
 		jobCtx := s.getJobRunCtx(trace, jobW.ID, jobW.TraceInfo)
 		defer trace.DiscardOrFlush(jobCtx.ctx)
 
@@ -570,7 +570,6 @@ func (s *jobScheduler) getJobRunCtx(trace *traceevent.TraceBuf, jobID int64, tra
 	newCtx := traceevent.WithTraceBuf(s.schCtx, trace)
 	if len(traceInfo.TraceID) > 0 {
 		trace.TraceID = traceInfo.TraceID
-		// newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}
 	return &jobContext{
 		ctx:                  newCtx,

@@ -45,7 +45,7 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test with keep=false
 	t.Run("KeepFalse", func(t *testing.T) {
-		tr := NewTrace()
+		tr := NewTraceBuf()
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
@@ -62,7 +62,7 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test with keep=true
 	t.Run("KeepTrue", func(t *testing.T) {
-		tr := NewTrace()
+		tr := NewTraceBuf()
 		// This sets keep=true
 		tr.bits = GetFlightRecorder().truthTable[0]
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
@@ -81,7 +81,7 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test category mapping: TiKVRequest
 	t.Run("CategoryTiKVRequest", func(t *testing.T) {
-		tr := NewTrace()
+		tr := NewTraceBuf()
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
@@ -98,7 +98,7 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test category mapping: TiKVWriteDetails
 	t.Run("CategoryTiKVWriteDetails", func(t *testing.T) {
-		tr := NewTrace()
+		tr := NewTraceBuf()
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
@@ -115,7 +115,7 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test category mapping: TiKVReadDetails
 	t.Run("CategoryTiKVReadDetails", func(t *testing.T) {
-		tr := NewTrace()
+		tr := NewTraceBuf()
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
@@ -132,7 +132,7 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test multiple categories
 	t.Run("MultipleCategoriesAndKeep", func(t *testing.T) {
-		tr := NewTrace()
+		tr := NewTraceBuf()
 		// Set keep=true
 		tr.bits = GetFlightRecorder().truthTable[0]
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
@@ -153,7 +153,7 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test concurrent access (should not race)
 	t.Run("ConcurrentAccess", func(t *testing.T) {
-		tr := NewTrace()
+		tr := NewTraceBuf()
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test

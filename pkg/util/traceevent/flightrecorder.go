@@ -51,7 +51,7 @@ func getTraceBuf(ctx context.Context) *TraceBuf {
 	}
 	traceBuf, ok := val.(*TraceBuf)
 	if !ok {
-		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
+		logutil.BgLogger().Warn("getTraceBuf assertion fails, traceBuf object type mismatch")
 		return nil
 	}
 	return traceBuf
@@ -370,13 +370,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 		return
 	}
 	traceBuf := getTraceBuf(ctx)
-	// val := tracing.GetSink(ctx)
 	if traceBuf == nil {
-		// 	return
-		// }
-		// trace, ok := val.(*TraceBuf)
-		// if !ok {
-		logutil.BgLogger().Warn("CheckFlightRecorderDumpTrigger assertion fails, sink should be a Trace object")
 		return
 	}
 	idx, ok := flightRecorder.compiledDumpTriggerConfig.nameMapping[triggerName]
@@ -536,7 +530,7 @@ func (r *HTTPFlightRecorder) collect(ctx context.Context, events []Event) {
 }
 
 // NewTrace creates a new Trace.
-func NewTrace() *TraceBuf {
+func NewTraceBuf() *TraceBuf {
 	return &TraceBuf{}
 }
 
