@@ -8,19 +8,23 @@ build --http_timeout_scaling=0.1
 build --announce_rc
 build --experimental_guard_against_concurrent_changes
 build --incompatible_strict_action_env --incompatible_enable_cc_toolchain_resolution
+build --remote_local_fallback
 build:ci --color=yes
 build:ci --experimental_remote_cache_compression
+build:ci --remote_download_toplevel
 build:release --workspace_status_command=./build/print-workspace-status.sh --stamp
 build:release --config=ci
 build:race --config=ci
 build:race --@io_bazel_rules_go//go/config:race --test_env=GORACE=halt_on_error=1 --test_sharding_strategy=disabled
 test --test_output=errors --test_summary=detailed
+test --remote_local_fallback
 test:ci --color=yes
 test:ci --verbose_failures --test_verbose_timeout_warnings
 test:ci --test_env=GO_TEST_WRAP_TESTV=1
 test:ci --experimental_ui_max_stdouterr_bytes=268435456
 test:ci --test_timeout=150,300,900,3600
 test:ci --flaky_test_attempts=3
+test:ci --remote_download_toplevel
 test --test_env=HTTPS_PROXY --test_env=https_proxy
 test --test_env=HTTP_PROXY --test_env=http_proxy
 test:race --test_timeout=1200,6000,18000,72000
