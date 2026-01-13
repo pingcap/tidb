@@ -21,8 +21,18 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+>>>>>>> 27a4771206d (bindinfo: save bindinfo into stmtctx to avoid calling NormalizeStmtForBinding and getbindcache repeatedly (#65484))
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/hint"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/intest"
+	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+>>>>>>> 27a4771206d (bindinfo: save bindinfo into stmtctx to avoid calling NormalizeStmtForBinding and getbindcache repeatedly (#65484))
 	"github.com/pkg/errors"
 )
 
@@ -96,9 +106,160 @@ func (b *Binding) IsBindingAvailable() bool {
 	return b.IsBindingEnabled() || b.Status == Disabled
 }
 
+<<<<<<< HEAD
 // SinceUpdateTime returns the duration since last update time. Export for test.
 func (b *Binding) SinceUpdateTime() (time.Duration, error) {
 	updateTime, err := b.UpdateTime.GoTime(time.Local)
+=======
+// UpdateLastUsedAt is to update binding usage info when this binding is used.
+func (b *Binding) UpdateLastUsedAt() {
+	now := time.Now()
+	b.UsageInfo.LastUsedAt.Store(&now)
+}
+
+// UpdateLastSavedAt is to update the last saved time
+func (b *Binding) UpdateLastSavedAt(ts *time.Time) {
+	b.UsageInfo.LastSavedAt.Store(ts)
+}
+
+type bindingInfoUsageInfo struct {
+	// LastUsedAt records the last time when this binding is used.
+	// It is nil if this binding has never been used.
+	// It is updated when this binding is used.
+	// It is used to update the `last_used_time` field in mysql.bind_info table.
+	LastUsedAt atomic.Pointer[time.Time]
+	// LastSavedAt records the last time when this binding is saved into storage.
+	LastSavedAt atomic.Pointer[time.Time]
+}
+
+var (
+	// GetBindingHandle is a function to get the global binding handle.
+	// It is mainly used to resolve cycle import issue.
+	GetBindingHandle func(sctx sessionctx.Context) BindingHandle
+)
+
+// BindingMatchInfo records necessary information for cross-db binding matching.
+// This is mainly for plan cache to avoid normalizing the same statement repeatedly.
+type BindingMatchInfo struct {
+	NoDBDigest string
+	TableNames []*ast.TableName
+}
+
+// MatchSQLBindingForPlanCache matches binding for plan cache.
+func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode) (bindingSQL string) {
+	binding, matched, _ := matchSQLBinding(sctx, stmtNode)
+	if matched {
+		bindingSQL = binding.BindSQL
+	}
+	return
+}
+
+// MatchSQLBinding returns the matched binding for this statement.
+func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	return matchSQLBinding(sctx, stmtNode)
+}
+
+func getMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (cache *BindingCacheItem) {
+	if item := sessionVars.StmtCtx.MatchSQLBindingCacheKey; item != nil && item == stmtNode {
+		// We only use this temp bindinfo cache once to avoid retaining it after drop prepare.
+		cache = sessionVars.StmtCtx.MatchSQLBindingCache.(*BindingCacheItem)
+		intest.Assert(sessionVars.StmtCtx.MatchSQLBindingCache != nil)
+		return cache
+	}
+	return
+}
+
+func setMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode, matched bool, binding *Binding, scope string) {
+	if matched {
+		sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
+		sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
+			binding: binding,
+			matched: matched,
+			scope:   scope}
+		return
+	}
+	sessionVars.StmtCtx.MatchSQLBindingCacheKey = stmtNode
+	sessionVars.StmtCtx.MatchSQLBindingCache = &BindingCacheItem{
+		binding: nil,
+		matched: false}
+}
+
+func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	sessionVars := sctx.GetSessionVars()
+	defer func(begin time.Time) {
+		sessionVars.DurationOptimizer.BindingMatch = time.Since(begin)
+	}(time.Now())
+	useBinding := sessionVars.UsePlanBaselines
+	if !useBinding || stmtNode == nil {
+		return
+	}
+	// When the domain is initializing, the bind will be nil.
+	if sctx.Value(SessionBindInfoKeyType) == nil {
+		return
+	}
+	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
+	if intest.InTest {
+		binding, matched, scope = matchSQLBindingInternal(sctx, sessionVars, stmtNode)
+		assertMatchSQLBinding(cache, matched, binding, scope)
+		return
+	}
+	if cache != nil {
+		return cache.binding, cache.matched, cache.scope
+	}
+	return matchSQLBindingInternal(sctx, sessionVars, stmtNode)
+}
+
+func matchSQLBindingInternal(sctx sessionctx.Context, sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	_, noDBDigest := NormalizeStmtForBinding(stmtNode, "", true)
+	tableNames := CollectTableNames(stmtNode)
+
+	sessionHandle := sctx.Value(SessionBindInfoKeyType).(SessionBindingHandle)
+	if binding, matched := sessionHandle.MatchSessionBinding(sctx, noDBDigest, tableNames); matched {
+		setMatchSQLBindingCache(sessionVars, stmtNode, matched, binding, metrics.ScopeSession)
+		return binding, matched, metrics.ScopeSession
+	}
+	globalHandle := GetBindingHandle(sctx)
+	if globalHandle == nil {
+		return
+	}
+	binding, matched = globalHandle.MatchingBinding(sctx, noDBDigest, tableNames)
+	if matched {
+		if vardef.EnableBindingUsage.Load() {
+			// After hitting the cache, update the usage time of the bind.
+			binding.UpdateLastUsedAt()
+		}
+		setMatchSQLBindingCache(sessionVars, stmtNode, matched, binding, metrics.ScopeGlobal)
+		return binding, matched, metrics.ScopeGlobal
+	}
+	setMatchSQLBindingCache(sessionVars, stmtNode, false, nil, "")
+	return
+}
+
+func assertMatchSQLBinding(cache *BindingCacheItem, hit bool, binding *Binding, scope string) {
+	intest.AssertFunc(func() bool {
+		if cache == nil {
+			return true
+		}
+		if hit {
+			return cache.matched &&
+				cache.binding == binding &&
+				cache.scope == scope
+		}
+		return cache == nil || !cache.matched
+	})
+}
+
+// BindingCacheItem is to cache the bindinfo to avoid getting bindinfo from bind cache again.
+type BindingCacheItem struct {
+	binding *Binding
+	matched bool
+	scope   string
+}
+
+func noDBDigestFromBinding(binding *Binding) (string, error) {
+	p := parser.New()
+	stmt, err := p.ParseOneStmt(binding.BindSQL, binding.Charset, binding.Collation)
+>>>>>>> 27a4771206d (bindinfo: save bindinfo into stmtctx to avoid calling NormalizeStmtForBinding and getbindcache repeatedly (#65484))
 	if err != nil {
 		return 0, err
 	}

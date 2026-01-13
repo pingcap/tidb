@@ -95,7 +95,12 @@ func TestFuzzyDuplicatedBinding(t *testing.T) {
 		[][]any{{"select * from `*` . `t`", "SELECT /*+ use_index(`t` `b`)*/ * FROM `*`.`t`", "", "enabled", "manual", "a17da0a38af0f1d75229c5cd064d5222a610c5e5ef59436be5da1564c16f1013"}})
 }
 
+<<<<<<< HEAD:pkg/bindinfo/fuzzy_binding_test.go
 func TestFuzzyBindingPriority(t *testing.T) {
+=======
+func TestCrossDBBindingPriority(t *testing.T) {
+	t.Skip("tmp")
+>>>>>>> 27a4771206d (bindinfo: save bindinfo into stmtctx to avoid calling NormalizeStmtForBinding and getbindcache repeatedly (#65484)):pkg/bindinfo/tests/cross_db_binding_test.go
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -273,7 +278,8 @@ func TestFuzzyBindingInList(t *testing.T) {
 	tk.MustExec(`set @@tidb_opt_enable_fuzzy_binding=1`)
 	tk.MustExec(`create global binding using select * from *.t1 where a in (1,2,3)`)
 	tk.MustExec(`explain format='verbose' select * from test1.t1 where a in (1)`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(
+		"Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
 	tk.MustExec(`explain format='verbose' select * from test2.t1 where a in (1,2,3,4,5)`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Note 1105 Using the bindSQL: SELECT * FROM `*`.`t1` WHERE `a` IN (1,2,3)"))
 	tk.MustExec(`use test1`)
