@@ -65,7 +65,7 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 
 // MaxKeyLen implements Collator interface.
 func (*gbkChineseCICollator) MaxKeyLen(s string) int {
-	return utf8.RuneCountInString(s) * 4
+	return utf8.RuneCountInString(s) * 2
 }
 
 // Pattern implements Collator interface.
