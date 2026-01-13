@@ -47,3 +47,5 @@ coverage.dat
 .golangci.bck.yml
 go.work
 go.work.sum
+.cursor
+*__failpoint_stash__

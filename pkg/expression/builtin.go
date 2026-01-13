@@ -133,7 +133,6 @@ func newBaseBuiltinFunc(ctx BuildContext, funcName string, args []Expression, tp
 	}
 
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -225,7 +224,6 @@ func newBaseBuiltinFuncWithTp(ctx BuildContext, funcName string, args []Expressi
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -286,7 +284,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 
 	fieldType := newReturnFieldTypeForBaseBuiltinFunc(funcName, retType, ec)
 	bf = baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -305,7 +302,6 @@ func newBaseBuiltinFuncWithFieldTypes(ctx BuildContext, funcName string, args []
 // do not check and compute collation.
 func newBaseBuiltinFuncWithFieldType(tp *types.FieldType, args []Expression) (baseBuiltinFunc, error) {
 	bf := baseBuiltinFunc{
-		bufAllocator:           newLocalColumnPool(),
 		childrenVectorizedOnce: new(sync.Once),
 
 		args: args,
@@ -397,6 +393,10 @@ func (b *baseBuiltinFunc) isChildrenVectorized() bool {
 				break
 			}
 		}
+		if b.childrenVectorized {
+			// only init this when all children are vectorized
+			b.bufAllocator = newLocalColumnPool()
+		}
 	})
 	return b.childrenVectorized
 }
@@ -437,7 +437,6 @@ func (b *baseBuiltinFunc) cloneFrom(from *baseBuiltinFunc) {
 	}
 	b.tp = from.tp
 	b.pbCode = from.pbCode
-	b.bufAllocator = newLocalColumnPool()
 	b.childrenVectorizedOnce = new(sync.Once)
 	if from.ctor != nil {
 		b.ctor = from.ctor.Clone()
@@ -481,7 +480,6 @@ func newBaseBuiltinCastFunc4String(ctx BuildContext, funcName string, args []Exp
 	var err error
 	if isExplicitCharset {
 		bf = baseBuiltinFunc{
-			bufAllocator:           newLocalColumnPool(),
 			childrenVectorizedOnce: new(sync.Once),
 
 			args: args,
@@ -868,7 +866,11 @@ var funcs = map[string]functionClass{
 	ast.NameConst:       &nameConstFunctionClass{baseFunctionClass{ast.NameConst, 2, 2}},
 	ast.ReleaseAllLocks: &releaseAllLocksFunctionClass{baseFunctionClass{ast.ReleaseAllLocks, 0, 0}},
 	ast.UUID:            &uuidFunctionClass{baseFunctionClass{ast.UUID, 0, 0}},
+	ast.UUIDv4:          &uuidv4FunctionClass{baseFunctionClass{ast.UUIDv4, 0, 0}},
+	ast.UUIDv7:          &uuidv7FunctionClass{baseFunctionClass{ast.UUIDv7, 0, 0}},
 	ast.UUIDShort:       &uuidShortFunctionClass{baseFunctionClass{ast.UUIDShort, 0, 0}},
+	ast.UUIDVersion:     &uuidVersionFunctionClass{baseFunctionClass{ast.UUIDVersion, 1, 1}},
+	ast.UUIDTimestamp:   &uuidTimestampFunctionClass{baseFunctionClass{ast.UUIDTimestamp, 1, 1}},
 	ast.VitessHash:      &vitessHashFunctionClass{baseFunctionClass{ast.VitessHash, 1, 1}},
 	ast.UUIDToBin:       &uuidToBinFunctionClass{baseFunctionClass{ast.UUIDToBin, 1, 2}},
 	ast.BinToUUID:       &binToUUIDFunctionClass{baseFunctionClass{ast.BinToUUID, 1, 2}},

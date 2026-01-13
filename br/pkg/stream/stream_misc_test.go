@@ -8,9 +8,9 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,7 +47,7 @@ func TestGetCheckpointOfTask(t *testing.T) {
 func TestMetadataHelperReadFile(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	s, err := storage.NewLocalStorage(tmpdir)
+	s, err := objstore.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
 	helper := stream.NewMetadataHelper()
 	filename1 := "full_data"

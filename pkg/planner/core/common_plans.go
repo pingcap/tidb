@@ -693,6 +693,19 @@ func (e *Explain) prepareSchema() error {
 		format = types.ExplainFormatROW
 		e.Format = types.ExplainFormatROW
 	}
+	// Ensure StmtCtx.ExplainFormat is set early so shouldRemoveColumnNumbers can access it
+	// This needs to be set before any ExplainInfo() calls are made
+	// ResetContextOfStmt already set ExplainFormat to the original format (normalized to lowercase),
+	// so we preserve that value instead of overwriting it with the converted format
+	if e.SCtx() != nil {
+		stmtCtx := e.SCtx().GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		// Only set ExplainFormat if it's not already set (it should be set in ResetContextOfStmt)
+		// This preserves the original format value for test compatibility
+		if stmtCtx.ExplainFormat == "" {
+			stmtCtx.ExplainFormat = format
+		}
+	}
 	switch {
 	case (format == types.ExplainFormatROW || format == types.ExplainFormatBrief || format == types.ExplainFormatPlanCache) && (!e.Analyze && e.RuntimeStatsColl == nil):
 		fieldNames = []string{"id", "estRows", "task", "access object", "operator info"}
@@ -841,6 +854,13 @@ func (e *Explain) RenderResult() error {
 		}
 		e.Rows = rows
 		return nil
+	}
+	// Ensure StmtCtx.ExplainFormat is set to match e.Format so shouldRemoveColumnNumbers can access it
+	// e.Format is already normalized to lowercase in planbuilder.go and may have been converted from Traditional to ROW in prepareSchema()
+	// prepareSchema() already set ExplainFormat (preserving the original from ResetContextOfStmt), so we just ensure InExplainStmt is set
+	if e.SCtx() != nil {
+		e.SCtx().GetSessionVars().StmtCtx.InExplainStmt = true
+		// ExplainFormat should already be set correctly in prepareSchema() or ResetContextOfStmt
 	}
 	switch strings.ToLower(e.Format) {
 	case types.ExplainFormatROW, types.ExplainFormatBrief, types.ExplainFormatVerbose, types.ExplainFormatTrueCardCost, types.ExplainFormatCostTrace, types.ExplainFormatPlanCache, types.ExplainFormatPlanTree:
@@ -1086,6 +1106,13 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 	estCost = "N/A"
 	costFormula = "N/A"
 	sctx := p.SCtx()
+	// Ensure StmtCtx.ExplainFormat is set before calling ExplainInfo() so shouldRemoveColumnNumbers can access it
+	// format is already normalized to lowercase when passed from ExplainFlatPlanInRowFormat (which uses e.Format)
+	if sctx != nil {
+		stmtCtx := sctx.GetSessionVars().StmtCtx
+		stmtCtx.InExplainStmt = true
+		stmtCtx.ExplainFormat = format
+	}
 	if isPhysicalPlan {
 		if format != types.ExplainFormatPlanTree {
 			estRows = strconv.FormatFloat(pp.GetEstRowCountForDisplay(), 'f', 2, 64)
@@ -1113,6 +1140,8 @@ func getOperatorInfo(p base.Plan, format string) (estRows, estCost, costFormula,
 		}
 		operatorInfo = p.ExplainInfo()
 	}
+
+	// Column numbers are now removed in column.ExplainInfo() when format is plan_tree
 	return estRows, estCost, costFormula, accessObject, operatorInfo
 }
 

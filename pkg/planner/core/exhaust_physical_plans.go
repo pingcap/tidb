@@ -404,9 +404,8 @@ func completePhysicalIndexJoin(physic *physicalop.PhysicalIndexJoin, rt *physica
 		switch c := newOtherConds[i].(type) {
 		case *expression.ScalarFunction:
 			if c.FuncName.L == ast.EQ {
-				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
-				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
-				if ok1 && ok2 {
+				lhs, rhs, ok := expression.IsColOpCol(c)
+				if ok {
 					if lhs.InOperand || rhs.InOperand {
 						// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
 						// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.
@@ -520,9 +519,8 @@ func constructIndexJoin(
 		switch c := newOtherConds[i].(type) {
 		case *expression.ScalarFunction:
 			if c.FuncName.L == ast.EQ {
-				lhs, ok1 := c.GetArgs()[0].(*expression.Column)
-				rhs, ok2 := c.GetArgs()[1].(*expression.Column)
-				if ok1 && ok2 {
+				lhs, rhs, ok := expression.IsColOpCol(c)
+				if ok {
 					if lhs.InOperand || rhs.InOperand {
 						// if this other-cond is from a `[not] in` sub-query, do not convert it into eq-cond since
 						// IndexJoin cannot deal with NULL correctly in this case; please see #25799 for more details.

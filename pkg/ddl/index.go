@@ -42,11 +42,11 @@ import (
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
@@ -1762,6 +1762,7 @@ func loadCloudStorageURI(w *worker, job *model.Job) {
 	jc := w.jobContext(job.ID, job.ReorgMeta)
 	jc.cloudStorageURI = handle.GetCloudStorageURI(w.workCtx, w.store)
 	job.ReorgMeta.UseCloudStorage = len(jc.cloudStorageURI) > 0 && job.ReorgMeta.IsDistReorg
+	failpoint.InjectCall("afterLoadCloudStorageURI", job)
 }
 
 func doReorgWorkForCreateIndex(
@@ -2553,7 +2554,7 @@ func (w *addIndexTxnWorker) batchCheckUniqueKey(txn kv.Transaction, idxRecords [
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), uniqueBatchKeys)
+	batchVals, err := kv.BatchGetValue(context.Background(), txn, uniqueBatchKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -3037,8 +3038,8 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	}
 
 	var (
-		taskID                                            int64
-		lastConcurrency, lastBatchSize, lastMaxWriteSpeed int
+		taskID                                              int64
+		lastRequiredSlots, lastBatchSize, lastMaxWriteSpeed int
 	)
 	if task != nil {
 		// It's possible that the task state is succeed but the ddl job is paused.
@@ -3055,7 +3056,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 			return errors.Trace(err)
 		}
 		taskID = task.ID
-		lastConcurrency = task.Concurrency
+		lastRequiredSlots = task.RequiredSlots
 		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
 		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 		g.Go(func() error {
@@ -3081,12 +3082,12 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 	} else {
 		job := reorgInfo.Job
 		workerCntLimit := job.ReorgMeta.GetConcurrency()
-		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
+		requiredSlots, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
 		if err != nil {
 			return err
 		}
-		logutil.DDLLogger().Info("adjusted add-index task concurrency",
-			zap.Int("worker-cnt", workerCntLimit), zap.Int("task-concurrency", concurrency),
+		logutil.DDLLogger().Info("adjusted add-index task required slots",
+			zap.Int("worker-cnt", workerCntLimit), zap.Int("required-slots", requiredSlots),
 			zap.String("task-key", taskKey))
 		rowSize := estimateTableRowSize(w.workCtx, w.store, w.sess.GetRestrictedSQLExecutor(), t)
 		taskMeta := &BackfillTaskMeta{
@@ -3106,13 +3107,13 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 		targetScope := reorgInfo.ReorgMeta.TargetScope
 		maxNodeCnt := reorgInfo.ReorgMeta.MaxNodeCount
-		task, err := handle.SubmitTask(ctx, taskKey, taskType, w.store.GetKeyspace(), concurrency, targetScope, maxNodeCnt, metaData)
+		task, err := handle.SubmitTask(ctx, taskKey, taskType, w.store.GetKeyspace(), requiredSlots, targetScope, maxNodeCnt, metaData)
 		if err != nil {
 			return err
 		}
 
 		taskID = task.ID
-		lastConcurrency = concurrency
+		lastRequiredSlots = requiredSlots
 		lastBatchSize = taskMeta.Job.ReorgMeta.GetBatchSize()
 		lastMaxWriteSpeed = taskMeta.Job.ReorgMeta.GetMaxWriteSpeed()
 
@@ -3154,7 +3155,7 @@ func (w *worker) executeDistTask(jobCtx *jobContext, t table.Table, reorgInfo *r
 
 	g.Go(func() error {
 		modifyTaskParamLoop(ctx, jobCtx.sysTblMgr, taskManager, done,
-			reorgInfo.Job.ID, taskID, lastConcurrency, lastBatchSize, lastMaxWriteSpeed)
+			reorgInfo.Job.ID, taskID, lastRequiredSlots, lastBatchSize, lastMaxWriteSpeed)
 		return nil
 	})
 
@@ -3196,7 +3197,7 @@ func modifyTaskParamLoop(
 	taskManager storage.Manager,
 	done chan struct{},
 	jobID, taskID int64,
-	lastConcurrency, lastBatchSize, lastMaxWriteSpeed int,
+	lastRequiredSlots, lastBatchSize, lastMaxWriteSpeed int,
 ) {
 	logger := logutil.DDLLogger().With(zap.Int64("jobID", jobID), zap.Int64("taskID", taskID))
 	ticker := time.NewTicker(UpdateDDLJobReorgCfgInterval)
@@ -3220,15 +3221,15 @@ func modifyTaskParamLoop(
 
 		modifies := make([]proto.Modification, 0, 3)
 		workerCntLimit := latestJob.ReorgMeta.GetConcurrency()
-		concurrency, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
+		requiredSlots, err := adjustConcurrency(ctx, taskManager, workerCntLimit)
 		if err != nil {
-			logger.Error("adjust concurrency failed", zap.Error(err))
+			logger.Error("adjust required slots failed", zap.Error(err))
 			continue
 		}
-		if concurrency != lastConcurrency {
+		if requiredSlots != lastRequiredSlots {
 			modifies = append(modifies, proto.Modification{
-				Type: proto.ModifyConcurrency,
-				To:   int64(concurrency),
+				Type: proto.ModifyRequiredSlots,
+				To:   int64(requiredSlots),
 			})
 		}
 		batchSize := latestJob.ReorgMeta.GetBatchSize()
@@ -3271,12 +3272,12 @@ func modifyTaskParamLoop(
 			continue
 		}
 		logger.Info("modify task success",
-			zap.Int("oldConcurrency", lastConcurrency), zap.Int("newConcurrency", concurrency),
+			zap.Int("oldRequiredSlots", lastRequiredSlots), zap.Int("newRequiredSlots", requiredSlots),
 			zap.Int("oldBatchSize", lastBatchSize), zap.Int("newBatchSize", batchSize),
 			zap.String("oldMaxWriteSpeed", units.HumanSize(float64(lastMaxWriteSpeed))),
 			zap.String("newMaxWriteSpeed", units.HumanSize(float64(maxWriteSpeed))),
 		)
-		lastConcurrency = concurrency
+		lastRequiredSlots = requiredSlots
 		lastBatchSize = batchSize
 		lastMaxWriteSpeed = maxWriteSpeed
 	}
@@ -3650,7 +3651,7 @@ func (w *cleanUpIndexWorker) BackfillData(_ context.Context, handleRange reorgBa
 		}
 
 		var found map[string][]byte
-		found, err = txn.BatchGet(ctx, globalIndexKeys)
+		found, err = kv.BatchGetValue(ctx, txn, globalIndexKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
