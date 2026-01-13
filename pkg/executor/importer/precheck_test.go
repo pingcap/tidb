@@ -16,10 +16,12 @@ package importer_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"math/rand"
+	"net"
 	"net/http/httptest"
 	"net/url"
+	"syscall"
 	"testing"
 	"time"
 
@@ -43,28 +45,65 @@ import (
 
 const addrFmt = "http://127.0.0.1:%d"
 
-func createMockETCD(t *testing.T) (string, *embed.Etcd) {
-	cfg := embed.NewConfig()
-	cfg.Dir = t.TempDir()
-	// rand port in [20000, 60000)
-	randPort := int(rand.Int31n(40000)) + 20000
-	clientAddr := fmt.Sprintf(addrFmt, randPort)
-	lcurl, _ := url.Parse(clientAddr)
-	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
-	lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, randPort+1))
-	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
-	cfg.InitialCluster = "default=" + lpurl.String()
-	cfg.Logger = "zap"
-	embedEtcd, err := embed.StartEtcd(cfg)
-	require.NoError(t, err)
+func getFreePort(t *testing.T) int {
+	t.Helper()
 
-	select {
-	case <-embedEtcd.Server.ReadyNotify():
-	case <-time.After(5 * time.Second):
-		embedEtcd.Server.Stop() // trigger a shutdown
-		require.False(t, true, "server took too long to start")
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, listener.Close())
+	}()
+
+	addr, ok := listener.Addr().(*net.TCPAddr)
+	require.True(t, ok)
+	return addr.Port
+}
+
+func isAddrInUse(err error) bool {
+	return errors.Is(err, syscall.EADDRINUSE)
+}
+
+func createMockETCD(t *testing.T) (string, *embed.Etcd) {
+	t.Helper()
+
+	const maxAttempts = 5
+	for attempt := range maxAttempts {
+		cfg := embed.NewConfig()
+		cfg.Dir = t.TempDir()
+
+		clientPort := getFreePort(t)
+		peerPort := getFreePort(t)
+		for peerPort == clientPort {
+			peerPort = getFreePort(t)
+		}
+
+		clientAddr := fmt.Sprintf(addrFmt, clientPort)
+		lcurl, _ := url.Parse(clientAddr)
+		cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
+		lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, peerPort))
+		cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
+		cfg.InitialCluster = "default=" + lpurl.String()
+		cfg.Logger = "zap"
+
+		embedEtcd, err := embed.StartEtcd(cfg)
+		if err != nil {
+			if isAddrInUse(err) && attempt < maxAttempts-1 {
+				continue
+			}
+			require.NoError(t, err)
+		}
+
+		select {
+		case <-embedEtcd.Server.ReadyNotify():
+		case <-time.After(5 * time.Second):
+			embedEtcd.Server.Stop() // trigger a shutdown
+			require.FailNow(t, "server took too long to start")
+		}
+		return clientAddr, embedEtcd
 	}
-	return clientAddr, embedEtcd
+
+	require.FailNow(t, "failed to start etcd after retries")
+	return "", nil
 }
 
 func TestCheckRequirements(t *testing.T) {
