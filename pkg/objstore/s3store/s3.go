@@ -1133,7 +1133,7 @@ func (rs *S3Storage) open(
 		}
 		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown,
 			"open file '%s' failed, expected range: %s, got: %s",
-			path, *rangeOffset, rangeStr)
+			path, rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil
