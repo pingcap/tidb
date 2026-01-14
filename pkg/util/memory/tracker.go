@@ -1107,10 +1107,10 @@ func (m *memArbitrator) intoBigBudget() {
 	{ // internal session stats
 		delta := int64(0)
 		if oriCtx := root.entry.ctx.Load(); oriCtx != nil && oriCtx.arbitrateHelper.(*memArbitrator).isInternal {
-			delta -= 1
+			delta--
 		}
 		if m.isInternal {
-			delta += 1
+			delta++
 		}
 		if delta != 0 {
 			globalArbitrator.metrics.pools.internalSession.Add(delta)
