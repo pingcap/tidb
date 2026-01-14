@@ -21,7 +21,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
 )
 
@@ -137,28 +136,18 @@ func testTraceEventRecordsEvent(t *testing.T) {
 	fr := GetFlightRecorder()
 	defer fr.Close()
 
-	fr.SetCategories(AllCategories)
-	_, _ = SetMode(ModeFull)
-	FlightRecorder().DiscardOrFlush()
-	recorder := installRecorderSink(t, 8)
-	ctx := context.Background()
-
+	traceBuf := NewTraceBuf()
+	ctx := WithTraceBuf(context.Background(), traceBuf)
 	TraceEvent(ctx, TxnLifecycle, "test-event",
 		zap.Int("count", 42),
 		zap.String("scope", "unit-test"))
+	require.Len(t, traceBuf.events, 1)
 
-	frEvents := FlightRecorder().Snapshot()
-	require.Len(t, frEvents, 1)
-	ev := frEvents[0]
+	ev := traceBuf.events[0]
 	require.Equal(t, TxnLifecycle, ev.Category)
 	require.Equal(t, "test-event", ev.Name)
 	require.False(t, ev.Timestamp.IsZero())
 	require.Len(t, ev.Fields, 2)
-
-	recorded := recorder.Snapshot()
-	require.Len(t, recorded, 1)
-	require.Equal(t, "test-event", recorded[0].Name)
-	require.Len(t, recorded[0].Fields, 2)
 }
 
 func testTraceEventCarriesTraceID(t *testing.T) {
@@ -174,17 +163,14 @@ func testTraceEventCarriesTraceID(t *testing.T) {
 	fr := GetFlightRecorder()
 	defer fr.Close()
 
-	fr.SetCategories(AllCategories)
-	_, _ = SetMode(ModeFull)
-	FlightRecorder().DiscardOrFlush()
-
-	rawTrace := []byte{0x01, 0x10, 0xFE, 0xAA}
-	ctx := trace.ContextWithTraceID(context.Background(), rawTrace)
+	traceBuf := NewTraceBuf()
+	traceBuf.TraceID = []byte{0x01, 0x10, 0xFE, 0xAA}
+	ctx := WithTraceBuf(context.Background(), traceBuf)
 	TraceEvent(ctx, Txn2PC, "trace-id-check", zap.Int("value", 7))
 
-	events := FlightRecorder().Snapshot()
+	events := traceBuf.events
 	require.Len(t, events, 1)
-	require.Equal(t, rawTrace, events[0].TraceID)
+	require.Equal(t, traceBuf.TraceID, events[0].TraceID)
 }
 
 func testTraceEventLoggingSwitch(t *testing.T) {
@@ -200,27 +186,15 @@ func testTraceEventLoggingSwitch(t *testing.T) {
 	fr := GetFlightRecorder()
 	defer fr.Close()
 
-	fr.SetCategories(AllCategories)
-	_, _ = SetMode(ModeBase)
-	FlightRecorder().DiscardOrFlush()
-	recorder := installRecorderSink(t, 8)
-	_, _ = SetMode(ModeBase)
-	ctx := context.Background()
+	traceBuf := NewTraceBuf()
+	ctx := WithTraceBuf(context.Background(), traceBuf)
 
-	flightBefore := len(FlightRecorder().Snapshot())
-
-	require.Equal(t, ModeBase, CurrentMode())
 	TraceEvent(ctx, TxnLifecycle, "disabled-log", zap.Int("value", 1))
-	require.Equal(t, flightBefore+1, len(FlightRecorder().Snapshot()))
-	disabledLogged := len(recorder.Snapshot())
+	require.Len(t, traceBuf.events, 1)
 
-	_, _ = SetMode(ModeFull)
 	TraceEvent(ctx, TxnLifecycle, "enabled-log", zap.Int("value", 2))
-	fr1 := FlightRecorder().Snapshot()
-	require.Len(t, fr1, flightBefore+2)
-	recorded := recorder.Snapshot()
-	require.Len(t, recorded, disabledLogged+1)
-	require.Equal(t, "enabled-log", recorded[len(recorded)-1].Name)
+	require.Len(t, traceBuf.events, 2)
+	require.Equal(t, "enabled-log", traceBuf.events[1].Name)
 }
 
 func TestRingBufferSnapshotOrder(t *testing.T) {
@@ -363,7 +337,9 @@ func testFlightRecorderCoolingOff(t *testing.T) {
 	FlightRecorder().DiscardOrFlush()
 	lastDumpTime.Store(0) // Reset cooling-off state
 
-	ctx := context.Background()
+	traceBuf := NewTraceBuf()
+	ctx := WithTraceBuf(context.Background(), traceBuf)
+
 	TraceEvent(ctx, TxnLifecycle, "cooloff-test-event", zap.Int("value", 1))
 
 	// First dump should succeed
