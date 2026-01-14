@@ -317,6 +317,11 @@ type PhysicalProperty struct {
 	// PartialOrderInfo is used for TopN's partial order optimization.
 	// When this field is not nil, it indicates that prefix index can be used
 	// to provide partial order for TopN.
+	// For example:
+	// query: order by a, b limit 10
+	// partialOrderInfo: sortItems: [a, b]
+	// The partialOrderInfo property will pass through to the datasource and try to matchPartialOrderProperty such as:
+	// index: (a, b(10) )
 	PartialOrderInfo *PartialOrderInfo
 }
 

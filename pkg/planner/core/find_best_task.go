@@ -1542,11 +1542,6 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			}
 
 			currentCandidate = getIndexCandidate(ds, path, prop)
-
-			//// Record partial order match result in candidate
-			//if canUsePartialOrder {
-			//	currentCandidate.partialOrderMatch = partialOrderMatch
-			//}
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
