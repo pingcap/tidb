@@ -27,7 +27,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
@@ -41,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -745,11 +746,11 @@ func getRangeSplitter(
 	multiFileStat []external.MultipleFilesStat,
 	logger *zap.Logger,
 ) (*external.RangeSplitter, error) {
-	backend, err := storage.ParseBackend(cloudStorageURI, nil)
+	backend, err := objstore.ParseBackend(cloudStorageURI, nil)
 	if err != nil {
 		return nil, err
 	}
-	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
+	extStore, err := objstore.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
 		return nil, err
 	}
@@ -789,7 +790,7 @@ func getRangeSplitter(
 
 func forEachBackfillSubtaskMeta(
 	ctx context.Context,
-	extStore storage.ExternalStorage,
+	extStore storeapi.Storage,
 	taskHandle diststorage.TaskHandle,
 	gTaskID int64,
 	step proto.Step,

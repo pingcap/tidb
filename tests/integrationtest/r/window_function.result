@@ -5,47 +5,47 @@ set @@tidb_enable_window_function = 1;
 set @@session.tidb_window_concurrency = 1;
 explain format = 'plan_tree' select sum(a) over() from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over()
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:idx(a)	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:idx(a)	keep order:true, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b range between unbounded preceding and current row)
   └─Sort	root		window_function.t.a, window_function.t.b
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b rows unbounded preceding) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b rows between unbounded preceding and current row)
   └─Sort	root		window_function.t.a, window_function.t.b
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b rows between 1 preceding and 1 following)
   └─Sort	root		window_function.t.a, window_function.t.b
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b range between 1 preceding and 1 following)
   └─Sort	root		window_function.t.a, window_function.t.b
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.c range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
   └─Sort	root		window_function.t.a, window_function.t.c
     └─TableReader	root		data:TableFullScan
@@ -53,19 +53,19 @@ Projection	root		Column#6->Column#7
 set @@session.tidb_window_concurrency = 4;
 explain format = 'plan_tree' select sum(a) over() from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over()
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:idx(a)	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a)
   └─IndexReader	root		index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:t, index:idx(a)	keep order:true, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b range between unbounded preceding and current row)
     └─Sort	root		window_function.t.a, window_function.t.b
@@ -74,7 +74,7 @@ Projection	root		Column#6->Column#7
           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b rows unbounded preceding) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b rows between unbounded preceding and current row)
     └─Sort	root		window_function.t.a, window_function.t.b
@@ -83,7 +83,7 @@ Projection	root		Column#6->Column#7
           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b rows between 1 preceding and 1 following) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b rows between 1 preceding and 1 following)
     └─Sort	root		window_function.t.a, window_function.t.b
@@ -92,7 +92,7 @@ Projection	root		Column#6->Column#7
           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by b range between 1 preceding and 1 following) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.b range between 1 preceding and 1 following)
     └─Sort	root		window_function.t.a, window_function.t.b
@@ -101,7 +101,7 @@ Projection	root		Column#6->Column#7
           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) over(partition by a order by c range between interval '2:30' minute_second preceding and interval '2:30' minute_second following) from t;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:4, data sources:[TableReader]
   └─Window	root		sum(cast(window_function.t.a, decimal(10,0) BINARY))->Column#6 over(partition by window_function.t.a order by window_function.t.c range between interval "2:30" "MINUTE_SECOND" preceding and interval "2:30" "MINUTE_SECOND" following)
     └─Sort	root		window_function.t.a, window_function.t.c
@@ -114,7 +114,7 @@ insert into t1 values(1, 1), (2, 1);
 analyze table t1 all columns;
 explain format = 'plan_tree' select sum(a) over(partition by b) from t1;
 id	task	access object	operator info
-Projection	root		Column#4->Column#5
+Projection	root		Column
 └─Window	root		sum(cast(window_function.t1.a, decimal(10,0) BINARY))->Column#4 over(partition by window_function.t1.b)
   └─Sort	root		window_function.t1.b
     └─TableReader	root		data:TableFullScan
@@ -123,7 +123,7 @@ insert into t1 values(3, 3);
 analyze table t1 all columns;
 explain format = 'plan_tree' select sum(a) over(partition by b) from t1;
 id	task	access object	operator info
-Projection	root		Column#4->Column#5
+Projection	root		Column
 └─Shuffle	root		execution info: concurrency:2, data sources:[TableReader]
   └─Window	root		sum(cast(window_function.t1.a, decimal(10,0) BINARY))->Column#4 over(partition by window_function.t1.b)
     └─Sort	root		window_function.t1.b

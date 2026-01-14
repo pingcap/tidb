@@ -15,11 +15,12 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/importsdk",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//pkg/lightning/common",
         "//pkg/lightning/config",
         "//pkg/lightning/log",
         "//pkg/lightning/mydump",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/parser/mysql",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",

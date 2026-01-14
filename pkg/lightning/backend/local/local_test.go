@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/errdef"
@@ -54,6 +53,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -1765,7 +1765,7 @@ func TestSplitRangeAgain4BigRegionExternalEngine(t *testing.T) {
 		keys = append(keys, []byte{i})
 		value = append(value, []byte{i})
 	}
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	dataFiles, statFiles, err := external.MockExternalEngine(memStore, keys, value)
 	require.NoError(t, err)
@@ -2306,9 +2306,9 @@ func TestExternalEngine(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	storageURI := "file://" + filepath.ToSlash(dir)
-	storeBackend, err := storage.ParseBackend(storageURI, nil)
+	storeBackend, err := objstore.ParseBackend(storageURI, nil)
 	require.NoError(t, err)
-	extStorage, err := storage.New(ctx, storeBackend, nil)
+	extStorage, err := objstore.New(ctx, storeBackend, nil)
 	require.NoError(t, err)
 	keys := make([][]byte, 100)
 	values := make([][]byte, 100)

@@ -18,7 +18,7 @@ import (
 	"net/url"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -54,8 +54,8 @@ func TestRestrictedSQL(t *testing.T) {
 		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/importer/NewImportPlan", func(plan *plannercore.ImportInto) {
 			u, err := url.Parse(plan.Path)
 			require.NoError(t, err)
-			require.Contains(t, u.Query(), storage.S3ExternalID)
-			require.Equal(t, "allowed", u.Query().Get(storage.S3ExternalID))
+			require.Contains(t, u.Query(), s3store.S3ExternalID)
+			require.Equal(t, "allowed", u.Query().Get(s3store.S3ExternalID))
 			panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 		})
 		tk.MustExec("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=allowed'")
