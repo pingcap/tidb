@@ -349,35 +349,29 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 }
 
 /*
-		tie = 0.8
-		 | Pair       | Max     | log10(Max) | Tolerance | Ratio (min/max) | Is Close? |
-		 |------------|---------|------------|-----------|-----------------|-----------|
-		 | (1, 2)     | 2       | 0.3010     | 0.6157    | 0.5             | Yes       |
-		 | (100, 200) | 200     | 2.3010     | 0.242     | 0.5             | No        |
-		 | (1000,2000)| 2000    | 3.3010     | 0.186     | 0.5             | No        |
-		 | (1e6,2e6)  | 2e6     | 6.3010     | 0.1096    | 0.5             | No        |
+Simple NDV closeness rule:
 
-		tie = 1.7
-		 | Pair       | Max     | log10(Max) | Tolerance | Ratio (min/max) | Is Close? |
-		 |------------|---------|------------|-----------|-----------------|-----------|
-		 | (1, 2)     | 2       | 0.3010     | 0.6157    | 0.5             | Yes       |
-		 | (100, 200) | 200     | 2.3010     | 0.522     | 0.5             | Yes       |
-		 | (1000,2000)| 2000    | 3.3010     | 0.186     | 0.5             | No        |
-		 | (1e6,2e6)  | 2e6     | 6.3010     | 0.1096    | 0.5             | No        |
+	close if |a-b| < 200 OR |a-b|/max(a,b) < 0.5
 
-	  - 100 vs 500：max=500，tol≈0.46，diffRatio=0.8 → false   （need tie=2.3 to be true）
-	  - 1000 vs 5000：max=5000，tol≈0.36，diffRatio=0.8 → false （need tie=2.7 to be true）
+Examples:
+  - (1, 2)       → close
+  - (100, 200)   → close
+  - (100001, 100020) → close
+  - (1000, 2000) → not close
+  - (1e6, 2e6)   → not close
+  - (100, 500)   → not close
+  - (1000, 5000) → not close
 */
 func isNDVClose(lhs, rhs float64) bool {
 	if lhs == 0 || rhs == 0 {
 		return lhs == rhs
 	}
+	diff := math.Abs(lhs - rhs)
 	maxVal := math.Max(lhs, rhs)
-	// Shrink tolerance as NDV grows: small NDVs can differ more and still be treated close,
-	// large NDVs need a tighter relative gap.
-	adaptiveTolerance := 1.7 / (1 + math.Log10(maxVal))
-	diffRatio := math.Abs(lhs-rhs) / maxVal
-	return diffRatio <= adaptiveTolerance
+	if diff < 200 {
+		return true
+	}
+	return diff/maxVal < 0.5
 }
 
 // indexJoinPathConstructResult constructs the index join path result.
@@ -402,7 +396,7 @@ func indexJoinPathConstructResult(
 			eqUsedColsLen--
 		}
 		innerNDV, _ = cardinality.EstimateColsNDVWithMatchedLen(
-			sctx, path.IdxCols[:usedColsLen-1], indexJoinInfo.innerSchema, stats)
+			sctx, path.IdxCols[:eqUsedColsLen], indexJoinInfo.innerSchema, stats)
 	}
 	idxOff2KeyOff := make([]int, len(buildTmp.curIdxOff2KeyOff))
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
