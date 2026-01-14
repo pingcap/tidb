@@ -550,6 +550,10 @@ func (d *ddl) refreshTiFlashPlacementRules(sctx sessionctx.Context, tick uint64)
 	if tick%RefreshRulesTick.Load() != 0 {
 		return nil
 	}
+	// No need to refresh placement rules if TiFlash is not enabled
+	if !config.GetGlobalConfig().CSE.IsTiFlashEnabled() {
+		return nil
+	}
 	schema := d.infoCache.GetLatest()
 	if schema == nil {
 		return errors.New("schema is nil")
