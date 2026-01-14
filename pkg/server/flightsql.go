@@ -331,16 +331,14 @@ func (s *FlightSQLServer) DoGetXdbcTypeInfo(ctx context.Context, cmd flightsql.G
 }
 
 // GetFlightInfoSqlInfo returns flight info for SQL information.
-//
-//nolint:revive,all_revive
-func (s *FlightSQLServer) GetFlightInfoSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) { //nolint:revive,all_revive
+// Method name matches the flightsql.BaseServer interface from Apache Arrow.
+func (s *FlightSQLServer) GetFlightInfoSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo, desc *flight.FlightDescriptor) (*flight.FlightInfo, error) { // revive:disable-line:var-naming
 	return nil, errors.New("GetFlightInfoSqlInfo not implemented")
 }
 
 // DoGetSqlInfo returns SQL information.
-//
-//nolint:revive,all_revive
-func (s *FlightSQLServer) DoGetSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo) (*arrow.Schema, <-chan flight.StreamChunk, error) { //nolint:revive,all_revive
+// Method name matches the flightsql.BaseServer interface from Apache Arrow.
+func (s *FlightSQLServer) DoGetSqlInfo(ctx context.Context, cmd flightsql.GetSqlInfo) (*arrow.Schema, <-chan flight.StreamChunk, error) { // revive:disable-line:var-naming
 	return nil, nil, errors.New("DoGetSqlInfo not implemented")
 }
 
