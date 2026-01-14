@@ -842,7 +842,8 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 				ts.Columns = append(ts.Columns, col.ToInfo())
 			}
 		}
-	} else if !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
+	} else if ts.HandleCols != nil && !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
+		// For cluster tables, HandleCols is nil and we skip adding ExtraHandleID.
 		ts.Schema().Append(ts.HandleCols.GetCol(0))
 		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 		columnAdded = true
@@ -882,8 +883,13 @@ func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expre
 // setIndexMergeTableScanHandleCols set the handle columns of the table scan.
 func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.HandleCols
-	if handleCols == nil {
+	if handleCols == nil && !ds.Table.Type().IsClusterTable() {
 		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+	}
+	// For cluster tables without handles, ts.HandleCols remains nil.
+	// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
+	if handleCols == nil {
+		return nil
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)

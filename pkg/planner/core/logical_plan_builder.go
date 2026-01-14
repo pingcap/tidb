@@ -4637,7 +4637,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if tableInfo.IsCommonHandle {
 			primaryIdx := tables.FindPrimaryIndex(tableInfo)
 			handleCols = util.NewCommonHandleCols(tableInfo, primaryIdx, ds.TblCols)
-		} else {
+		} else if !tbl.Type().IsClusterTable() {
+			// Cluster tables are memory tables that don't support ExtraHandleID.
+			// ExtraHandleID would cause "Column ID -1 not found" errors when
+			// coprocessor requests are sent to other TiDB nodes.
 			extraCol := ds.NewExtraHandleSchemaCol()
 			handleCols = util.NewIntHandleCols(extraCol)
 			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
