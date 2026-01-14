@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2026 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -112,15 +113,17 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 			return paths
 		}
 
-		// Skip paths with nil Index or uninitialized FullIdxCols
-		if path.Index == nil || path.FullIdxCols == nil {
+		// Skip paths with nil Index
+		if path.Index == nil {
 			continue
 		}
 
 		// Calculate coverage for this index
-		idxScore := scoreIndexPath(path, req)
+		idxScore := scoreIndexPath(path, req, ds.Columns)
 
-		path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+		if path.FullIdxCols != nil {
+			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+		}
 
 		// Check if this index is specified in IndexMerge hints
 		// Note: Indexes specified in USE_INDEX_MERGE(t, idx1, idx2) are NOT marked as "forced"
@@ -225,31 +228,54 @@ func buildOrderingKey(columnIDs []int64) string {
 }
 
 // scoreIndexPath calculates coverage metrics for a single index path.
-func scoreIndexPath(path *util.AccessPath, req columnRequirements) indexWithScore {
+// When FullIdxCols is nil (e.g., in static pruning mode), it uses path.Index.Columns
+// and tableColumns to determine interesting columns. Note that consecutiveColumnIDs
+// cannot be determined when FullIdxCols is nil, so it will remain empty.
+func scoreIndexPath(path *util.AccessPath, req columnRequirements, tableColumns []*model.ColumnInfo) indexWithScore {
 	score := indexWithScore{path: path}
 
-	if path.FullIdxCols == nil {
-		return score
-	}
+	if path.FullIdxCols != nil {
+		// Normal path: use FullIdxCols which contains expression.Column with IDs
+		for i, idxCol := range path.FullIdxCols {
+			if idxCol == nil {
+				continue
+			}
+			idxColID := idxCol.ID
 
-	for i, idxCol := range path.FullIdxCols {
-		if idxCol == nil {
-			continue
+			// Check if this index column matches an interesting column
+			if _, found := req.interestingColIDs[idxColID]; found {
+				score.interestingCount++
+				// Track consecutive columns from the start of the index
+				if i == len(score.consecutiveColumnIDs) {
+					score.consecutiveColumnIDs = append(score.consecutiveColumnIDs, idxColID)
+				}
+			}
+			// Note: We continue checking all columns to count all interesting columns,
+			// even if they're not consecutive from the start. The consecutive tracking
+			// will naturally stop once we hit a non-interesting column, since the condition
+			// `i == len(score.consecutiveColumnIDs)` will no longer be true.
 		}
-		idxColID := idxCol.ID
+	} else if path.Index != nil && tableColumns != nil {
+		// Fallback path: use Index.Columns (for static pruning mode when FullIdxCols is nil)
+		// Map IndexColumn.Offset to column ID via tableColumns
+		for _, idxCol := range path.Index.Columns {
+			if idxCol.Offset < 0 || idxCol.Offset >= len(tableColumns) {
+				continue
+			}
+			colInfo := tableColumns[idxCol.Offset]
+			if colInfo == nil {
+				continue
+			}
+			idxColID := colInfo.ID
 
-		// Check if this index column matches an interesting column
-		if _, found := req.interestingColIDs[idxColID]; found {
-			score.interestingCount++
-			// Track consecutive columns from the start of the index
-			if i == len(score.consecutiveColumnIDs) {
-				score.consecutiveColumnIDs = append(score.consecutiveColumnIDs, idxColID)
+			// Check if this index column matches an interesting column
+			if _, found := req.interestingColIDs[idxColID]; found {
+				score.interestingCount++
+				// Note: We cannot track consecutiveColumnIDs here because we don't have
+				// the full column information needed to determine if columns are consecutive
+				// in the index. This is acceptable as the user indicated.
 			}
 		}
-		// Note: We continue checking all columns to count all interesting columns,
-		// even if they're not consecutive from the start. The consecutive tracking
-		// will naturally stop once we hit a non-interesting column, since the condition
-		// `i == len(score.consecutiveColumnIDs)` will no longer be true.
 	}
 
 	return score
@@ -473,8 +499,14 @@ func shouldAddIndexWithoutConsecutive(entry scoredIndex, path *util.AccessPath, 
 	return !covered || path.IsSingleScan
 }
 
-// findSingleInterestingColumn finds the single interesting column ID in an index
+// findSingleInterestingColumn finds the single interesting column ID in an index.
+// Returns -1 if FullIdxCols is nil (e.g., in static pruning mode) since we cannot
+// determine the specific column without FullIdxCols. This causes the caller to
+// keep the index, which is the safe default.
 func findSingleInterestingColumn(path *util.AccessPath, req columnRequirements) int64 {
+	if path.FullIdxCols == nil {
+		return -1
+	}
 	for _, idxCol := range path.FullIdxCols {
 		if idxCol != nil {
 			if _, found := req.interestingColIDs[idxCol.ID]; found {

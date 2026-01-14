@@ -214,9 +214,7 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 // collectInterestingColumnsForDataSource collects all interesting columns (WHERE + JOIN + ORDERING + GROUP BY) for a DataSource.
 func (c *columnStatsUsageCollector) collectInterestingColumnsForDataSource(ds *logicalop.DataSource, accumulatedJoinCols []*expression.Column, accumulatedOrderingCols []*expression.Column) {
 	// Clear the map for reuse instead of allocating a new one
-	for k := range c.colSet {
-		delete(c.colSet, k)
-	}
+	clear(c.colSet)
 	var allCols []*expression.Column
 
 	// Collect WHERE columns from local filter predicates
