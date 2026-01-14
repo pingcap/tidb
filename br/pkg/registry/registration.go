@@ -770,7 +770,6 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 
 	// check heartbeat every minute for up to 5 minutes
 	tickerDuration := time.Minute
-	remainingMinutes := StaleTaskThresholdMinutes
 	failpoint.Inject("is-task-stale-ticker-duration", func(val failpoint.Value) {
 		tickerDuration = time.Duration(val.(int)) * time.Second
 	})
@@ -778,6 +777,7 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 	defer ticker.Stop()
 
 	selectHeartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
+	remainingMinutes := StaleTaskThresholdMinutes
 	for remainingMinutes > 0 {
 		select {
 		case <-ctx.Done():
