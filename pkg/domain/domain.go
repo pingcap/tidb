@@ -2430,7 +2430,7 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
+	do.statsOwner.SetListener(owner.NewListenersWrapper(do.ddlNotifier))
 	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
 		err := do.statsOwner.CampaignOwner()
 		if err != nil {
@@ -2791,6 +2791,12 @@ func (do *Domain) autoAnalyzeWorker() {
 		case <-analyzeTicker.C:
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
+			} else if !variable.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {
+				// Once the auto analyze is disabled or this instance is not the owner,
+				// we close the priority queue to release resources.
+				// This would guarantee that when auto analyze is re-enabled or this instance becomes the owner again,
+				// the priority queue would be re-initialized.
+				statsHandle.ClosePriorityQueue()
 			}
 		case <-do.exit:
 			return

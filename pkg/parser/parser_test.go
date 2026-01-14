@@ -7695,3 +7695,29 @@ func TestVector(t *testing.T) {
 
 	RunTest(t, table, false)
 }
+
+func TestTableAffinityOption(t *testing.T) {
+	table := []testCase{
+		// create table with affinity option
+		{"create table t (a int) AFFINITY = 'table'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) affinity 'TABLE'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'TABLE'"},
+		{"create table t (a int) affinity 'partition'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'partition'"},
+		{"create table t (a int) AFFINITY = ''", true, "CREATE TABLE `t` (`a` INT) AFFINITY = ''"},
+		{"create table t (a int) AFFINITY 'none'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'none'"},
+		{"create table t (a int) AFFINITY 'PARTITION' partition by hash ( a ) PARTITIONS 1", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'PARTITION' PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"create table t (a int) /*T![affinity] AFFINITY = 'table'*/", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) AFFINITY 'abcd'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'abcd'"},
+
+		// alter table with affinity option
+		{"alter table t AFFINITY = 'table'", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+		{"alter table t affinity 'TABLE'", true, "ALTER TABLE `t` AFFINITY = 'TABLE'"},
+		{"alter table t /*T![affinity] affinity 'table'*/", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+
+		// invalid option
+		{"create table t (a int) AFFINITY 1", false, ""},
+		{"create table t (a int) AFFINITY = 1", false, ""},
+		{"create table t (a int) AFFINITY", false, ""},
+	}
+
+	RunTest(t, table, false)
+}

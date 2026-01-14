@@ -2598,6 +2598,15 @@ func (s *session) Close() {
 	if s.sessionPlanCache != nil {
 		s.sessionPlanCache.Close()
 	}
+	// Detach session trackers during session cleanup.
+	// ANALYZE attaches session MemTracker to GlobalAnalyzeMemoryTracker; without
+	// detachment, closed sessions cannot be garbage collected.
+	if s.sessionVars.MemTracker != nil {
+		s.sessionVars.MemTracker.Detach()
+	}
+	if s.sessionVars.DiskTracker != nil {
+		s.sessionVars.DiskTracker.Detach()
+	}
 }
 
 // GetSessionVars implements the context.Context interface.
@@ -3553,14 +3562,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.LoadBindInfoLoop(ses[1], ses[2])
-	if err != nil {
-		return nil, err
-	}
-
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -3570,6 +3571,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// We should make the load bind-info loop before some other internal SQLs.
+	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
+	// LoadBindInfoLoop inits global bind-info handler.
+	err = dom.LoadBindInfoLoop(ses[1], ses[2])
 	if err != nil {
 		return nil, err
 	}

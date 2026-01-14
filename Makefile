@@ -697,6 +697,7 @@ bazel_golangcilinter:
 bazel_brietest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+	--test_env=BRIETEST_TMPDIR --sandbox_writable_path=$${BRIETEST_TMPDIR:-$(CURDIR)} \
 		-- //tests/realtikvtest/brietest/...
 	./build/jenkins_collect_coverage.sh
 

@@ -1720,6 +1720,9 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
@@ -2255,6 +2258,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))

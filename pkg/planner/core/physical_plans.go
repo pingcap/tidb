@@ -630,15 +630,23 @@ func (p *PhysicalIndexLookUpReader) LoadTableStats(ctx sessionctx.Context) {
 }
 
 // tryPushDownLookUp tries to push down the index lookup to TiKV.
-func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext) {
+func (p *PhysicalIndexLookUpReader) tryPushDownLookUp(ctx base.PlanContext, tp util.IndexLookUpPushDownByType) {
 	intest.Assert(!p.IndexLookUpPushDown)
+	if tp == util.IndexLookUpPushDownNone {
+		// util.IndexLookUpPushDownNone indicates no index lookup push-down.
+		return
+	}
+
 	if p.keepOrder {
 		// Though most of the index-lookup push-down constraints should be checked in
 		// `checkIndexLookUpPushDownSupported` if possible,
 		// however, the keep order cannot be determined until the final plan is constructed.
 		// So we have to check the keep order here, and if it is required, we should not push down it and use
 		// the normal index-lookup instead.
-		ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		if tp == util.IndexLookUpPushDownByHint {
+			// only append warning when the push-down is forced by hint.
+			ctx.GetSessionVars().StmtCtx.SetHintWarning("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, keep order is not supported.")
+		}
 		return
 	}
 
@@ -3122,7 +3130,24 @@ func buildPushDownIndexLookUpPlan(
 		// - If common handle, we don't need to set the indexHandleOffsets to build the common handle key
 		// which can be read from the index value directly.
 		// - If int handle, it is the last column in the index schema.
-		indexHandleOffsets = []uint32{uint32(indexPlan.Schema().Len()) - 1}
+		//   - If the last column is ExtraHandleID, or a non-negative column ID, handle is the last column.
+		//   - Otherwise, we need to find the last column whose ID is not ExtraHandleID and is negative.
+		//     For example, when a partition table needs to append ExtraPhysTblID
+		//     to the end for the upper UnionScanExec.
+		offset := indexPlan.Schema().Len() - 1
+		for offset >= 0 {
+			col := indexPlan.Schema().Columns[offset]
+			if col.ID >= 0 || col.ID == model.ExtraHandleID {
+				break
+			}
+			offset--
+			intest.Assert(offset >= 0, "cannot find handle column in index schema")
+		}
+
+		if offset < 0 {
+			return nil, errors.New("cannot find handle column in index schema")
+		}
+		indexHandleOffsets = []uint32{uint32(offset)}
 	}
 
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)

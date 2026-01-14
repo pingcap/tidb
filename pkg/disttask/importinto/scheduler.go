@@ -445,10 +445,8 @@ func (sch *importScheduler) GetNextStep(task *proto.TaskBase) proto.Step {
 	case proto.ImportStepMergeSort:
 		return proto.ImportStepWriteAndIngest
 	case proto.ImportStepWriteAndIngest:
-		return proto.ImportStepCollectConflicts
-	case proto.ImportStepCollectConflicts:
-		return proto.ImportStepConflictResolution
-	case proto.ImportStepImport, proto.ImportStepConflictResolution:
+		return proto.ImportStepPostProcess
+	case proto.ImportStepImport:
 		return proto.ImportStepPostProcess
 	default:
 		// current step must be ImportStepPostProcess

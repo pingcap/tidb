@@ -3551,6 +3551,22 @@ var defaultSysVars = []*SysVar{
 			return AdvancerCheckPointLagLimit.Load().String(), nil
 		},
 	},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBIndexLookUpPushDownPolicy,
+		Value: DefTiDBIndexLookUpPushDownPolicy,
+		Type:  TypeEnum,
+		PossibleValues: []string{
+			IndexLookUpPushDownPolicyHintOnly,
+			IndexLookUpPushDownPolicyAffinityForce,
+			IndexLookUpPushDownPolicyForce,
+		},
+		IsHintUpdatableVerified: true,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexLookUpPushDownPolicy = s
+			return nil
+		},
+	},
 	{Scope: ScopeGlobal, Name: TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
 		Type: TypeFloat, MinValue: 0, MaxValue: 1,
 		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
