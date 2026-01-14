@@ -505,7 +505,7 @@ func TestWriteNoError(t *testing.T) {
 	s := createS3SuiteWithRec(t, accessRec)
 	ctx := context.Background()
 
-	putCall := s.s3.EXPECT().
+	s.s3.EXPECT().
 		PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 			require.Equal(t, "bucket", aws.ToString(input.Bucket))
@@ -518,14 +518,6 @@ func TestWriteNoError(t *testing.T) {
 			require.Equal(t, []byte("test"), body)
 			return &s3.PutObjectOutput{}, nil
 		})
-	s.s3.EXPECT().
-		HeadObject(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.HeadObjectInput, _ ...func(*s3.Options)) (*s3.HeadObjectOutput, error) {
-			require.Equal(t, "bucket", aws.ToString(input.Bucket))
-			require.Equal(t, "prefix/file", aws.ToString(input.Key))
-			return &s3.HeadObjectOutput{}, nil
-		}).
-		After(putCall)
 
 	err := s.storage.WriteFile(ctx, "file", []byte("test"))
 	require.NoError(t, err)
