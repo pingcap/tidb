@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
@@ -772,6 +773,11 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 
 	// check heartbeat every minute for up to 5 minutes
 	ticker := time.NewTicker(time.Minute)
+	failpoint.Inject("is-task-stale-ticker-duration", func(val failpoint.Value) {
+		ticker.Stop()
+		secs := val.(int)
+		ticker = time.NewTicker(time.Second * time.Duration(secs))
+	})
 	defer ticker.Stop()
 
 	selectHeartbeatSQL := fmt.Sprintf(selectTaskHeartbeatSQLTemplate, RestoreRegistryDBName, RestoreRegistryTableName)
