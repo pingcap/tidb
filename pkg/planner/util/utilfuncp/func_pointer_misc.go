@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -568,3 +569,8 @@ var DoOptimize func(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.LogicalPlan, base.PhysicalPlan, float64, error)
+
+// ****************************************** util function related ****************************************
+
+// TableHasDirtyContent checks whether the table or its partitions have dirty content in the current transaction.
+var TableHasDirtyContent func(ctx base.PlanContext, tableInfo *model.TableInfo) bool

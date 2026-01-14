@@ -152,7 +152,8 @@ func extractStringFromBoolSlice(slice []bool) string {
 	return strings.Join(l, ",")
 }
 
-func tableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool {
+// TableHasDirtyContent checks whether the table or its partitions have dirty content in the current transaction.
+func TableHasDirtyContent(ctx base.PlanContext, tableInfo *model.TableInfo) bool {
 	pi := tableInfo.GetPartitionInfo()
 	if pi == nil {
 		return ctx.HasDirtyContent(tableInfo.ID)

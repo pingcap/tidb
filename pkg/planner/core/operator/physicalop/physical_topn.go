@@ -340,14 +340,24 @@ func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
 	child := lt.Children()[0]
 
 	// Pattern 1: TopN -> DataSource
-	if _, ok := child.(*logicalop.DataSource); ok {
+	if ds, ok := child.(*logicalop.DataSource); ok {
+		// Check if the table has dirty content (uncommitted transaction writes)
+		// Partial order optimization cannot be applied in this case
+		if utilfuncp.TableHasDirtyContent(lt.SCtx(), ds.TableInfo) {
+			return false
+		}
 		return true
 	}
 
 	// Pattern 2: TopN -> Selection -> DataSource
 	if sel, ok := child.(*logicalop.LogicalSelection); ok {
 		if len(sel.Children()) == 1 {
-			if _, ok := sel.Children()[0].(*logicalop.DataSource); ok {
+			if ds, ok := sel.Children()[0].(*logicalop.DataSource); ok {
+				// Check if the table has dirty content (uncommitted transaction writes)
+				// Partial order optimization cannot be applied in this case
+				if utilfuncp.TableHasDirtyContent(lt.SCtx(), ds.TableInfo) {
+					return false
+				}
 				return true
 			}
 		}

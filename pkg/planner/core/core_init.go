@@ -180,4 +180,7 @@ func init() {
 	// for physical index merge reader.
 	utilfuncp.GetPlanCostVer14PhysicalIndexMergeReader = GetPlanCostVer14PhysicalIndexMergeReader
 	utilfuncp.GetPlanCostVer24PhysicalIndexMergeReader = GetPlanCostVer24PhysicalIndexMergeReader
+
+	// for util functions.
+	utilfuncp.TableHasDirtyContent = TableHasDirtyContent
 }

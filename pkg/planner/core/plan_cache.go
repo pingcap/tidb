@@ -173,7 +173,7 @@ func planCachePreprocess(ctx context.Context, sctx sessionctx.Context, isNonPrep
 	// step 6: initialize the tableInfo2UnionScan, which indicates which tables are dirty.
 	for _, tbl := range stmt.tbls {
 		tblInfo := tbl.Meta()
-		if tableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
+		if TableHasDirtyContent(sctx.GetPlanCtx(), tblInfo) {
 			sctx.GetSessionVars().StmtCtx.TblInfo2UnionScan[tblInfo] = true
 		}
 	}
