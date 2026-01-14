@@ -407,29 +407,25 @@ func verifyIndexSideQuery(ctx context.Context, se sessionctx.Context, sql string
 
 func (w *checkIndexWorker) quickPassGlobalChecksum(ctx context.Context, se sessionctx.Context, tblName string, idxInfo *model.IndexInfo, rowChecksumExpr, idxCondition string) (bool, error) {
 	tableGlobalQuery := fmt.Sprintf(
-		"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ ifnull(bit_xor(%s), 0), 0, count(*) from %s use index() where %s(0 = 0)",
+		"select /*+ read_from_storage(tikv[%s]), AGG_TO_COP() */ bit_xor(%s), count(*) from %s use index() where %s(0 = 0)",
 		tblName, rowChecksumExpr, tblName, idxCondition)
 	indexGlobalQuery := fmt.Sprintf(
-		"select /*+ AGG_TO_COP() */ ifnull(bit_xor(%s), 0), 0, count(*) from %s use index(`%s`) where %s(0 = 0)",
+		"select /*+ AGG_TO_COP() */ bit_xor(%s), count(*) from %s use index(`%s`) where %s(0 = 0)",
 		rowChecksumExpr, tblName, idxInfo.Name, idxCondition)
 
-	tableGlobalChecksum, err := getCheckSum(w.e.contextCtx, se, tableGlobalQuery)
+	tableGlobalChecksum, tableGlobalCnt, err := getGlobalCheckSum(w.e.contextCtx, se, tableGlobalQuery)
 	if err != nil {
 		return false, err
 	}
 	intest.AssertFunc(func() bool {
 		return verifyIndexSideQuery(ctx, se, indexGlobalQuery)
 	}, "index side query plan is not correct: %s", indexGlobalQuery)
-	indexGlobalChecksum, err := getCheckSum(w.e.contextCtx, se, indexGlobalQuery)
+	indexGlobalChecksum, indexGlobalCnt, err := getGlobalCheckSum(w.e.contextCtx, se, indexGlobalQuery)
 	if err != nil {
 		return false, err
 	}
-	if len(tableGlobalChecksum) == 0 || len(indexGlobalChecksum) == 0 {
-		return len(tableGlobalChecksum) == len(indexGlobalChecksum), nil
-	}
 
-	return tableGlobalChecksum[0].count == indexGlobalChecksum[0].count &&
-		tableGlobalChecksum[0].checksum == indexGlobalChecksum[0].checksum, nil
+	return tableGlobalCnt == indexGlobalCnt && tableGlobalChecksum == indexGlobalChecksum, nil
 }
 
 // HandleTask implements the Worker interface.
@@ -513,6 +509,9 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 	if err != nil {
 		return err
 	}
+	failpoint.Inject("forceAdminCheckBucketed", func() {
+		match = false
+	})
 	if match {
 		return nil
 	}
@@ -807,6 +806,35 @@ func getCheckSum(ctx context.Context, se sessionctx.Context, sql string) ([]grou
 		checksums = append(checksums, groupByChecksum{bucket: row.GetUint64(1), checksum: row.GetUint64(0), count: row.GetInt64(2)})
 	}
 	return checksums, nil
+}
+
+func getGlobalCheckSum(ctx context.Context, se sessionctx.Context, sql string) (checksum uint64, count int64, err error) {
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnAdmin)
+	rs, err := se.GetSQLExecutor().ExecuteInternal(ctx, sql)
+	if err != nil {
+		return 0, 0, err
+	}
+	defer func(rs sqlexec.RecordSet) {
+		err := rs.Close()
+		if err != nil {
+			logutil.BgLogger().Error("close record set failed", zap.Error(err))
+		}
+	}(rs)
+
+	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+	if err != nil {
+		return 0, 0, err
+	}
+	if len(rows) == 0 {
+		return 0, 0, nil
+	}
+
+	row := rows[0]
+	if !row.IsNull(0) {
+		checksum = row.GetUint64(0)
+	}
+	count = row.GetInt64(1)
+	return checksum, count, nil
 }
 
 // TableName returns `schema`.`table`
