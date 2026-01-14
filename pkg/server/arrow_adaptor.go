@@ -33,8 +33,8 @@ import (
 )
 
 var (
-	// ErrUnsupportedType indicates that a MySQL type cannot be converted to Arrow type
-	ErrUnsupportedType = errors.New("unsupported MySQL type for Arrow conversion")
+	// errUnsupportedType indicates that a MySQL type cannot be converted to Arrow type
+	errUnsupportedType = errors.New("unsupported MySQL type for Arrow conversion")
 )
 
 // ResultSetRecordReader reads from a ResultSet and retuns
@@ -285,6 +285,6 @@ func adaptFieldType(ft *types.FieldType) (arrow.DataType, error) {
 		return arrow.BinaryTypes.String, nil
 
 	default:
-		return nil, fmt.Errorf("%w: MySQL type %v", ErrUnsupportedType, ft.GetType())
+		return nil, fmt.Errorf("%w: MySQL type %v", errUnsupportedType, ft.GetType())
 	}
 }

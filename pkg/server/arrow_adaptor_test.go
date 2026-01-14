@@ -223,7 +223,7 @@ func TestAdaptFieldTypeUnsupported(t *testing.T) {
 	result, err := adaptFieldType(ft)
 	require.Error(t, err)
 	require.Nil(t, result)
-	require.ErrorIs(t, err, ErrUnsupportedType)
+	require.ErrorIs(t, err, errUnsupportedType)
 }
 
 func TestResultSetRecordReaderLifecycle(t *testing.T) {
@@ -243,10 +243,10 @@ func TestResultSetRecordReaderLifecycle(t *testing.T) {
 	require.NoError(t, reader.Err())
 }
 
-func TestErrUnsupportedType(t *testing.T) {
+func TesterrUnsupportedType(t *testing.T) {
 	// Verify the error is properly defined
-	require.NotNil(t, ErrUnsupportedType)
-	require.Contains(t, ErrUnsupportedType.Error(), "unsupported")
+	require.NotNil(t, errUnsupportedType)
+	require.Contains(t, errUnsupportedType.Error(), "unsupported")
 }
 
 // TestEncodePreparedHandle tests the encoding of prepared statement handles
