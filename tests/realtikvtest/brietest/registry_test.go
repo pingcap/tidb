@@ -181,9 +181,10 @@ func TestRegistryBasicOperations(t *testing.T) {
 	require.Equal(t, uint64(200), resolvedRestoreTS4, "Should use the same restoredTS")
 
 	// Test 5: Conflict detection - same task already running, waiting until it is stale
-	_, _, err = r.ResumeOrCreateRegistration(ctx, info, true)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "already exists and is running")
+	resumedID5, resolvedRestoreTS5, err := r.ResumeOrCreateRegistration(ctx, info, true)
+	require.NoError(t, err)
+	require.Equal(t, restoreID, resumedID5, "Should reuse existing task when auto-detected restoredTS is same")
+	require.Equal(t, uint64(200), resolvedRestoreTS5, "Should use the same restoredTS")
 
 	// Test 4: New task with different parameters should get its own RestoreTS
 	infoNewTask := registry.RegistrationInfo{
