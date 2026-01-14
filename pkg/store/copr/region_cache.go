@@ -195,6 +195,26 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	if err != nil {
 		return nil, derr.ToTiDBErr(err)
 	}
+	// In some path, RegionCache may be populated by region-scanning paths that do not carry buckets
+	// (e.g. PD ScanRegions). When that happens, BatchLocateKeyRanges can hit the cache and return locations
+	// without buckets, which will make cop request splitting fall back to region-level splitting.
+	//
+	// Proactively invalidate and reload once to refill buckets before constructing cop tasks.
+	// NOTE: In TiDB cse, buckets is always enabled.
+	if buckets {
+		needRefresh := false
+		for _, loc := range locs {
+			if loc.GetBucketVersion() == 0 {
+				needRefresh = true
+				c.InvalidateCachedRegion(loc.Region)
+			}
+		}
+		if needRefresh {
+			if refreshedLocs, refreshErr := c.BatchLocateKeyRanges(bo.TiKVBackoffer(), kvRanges, opts...); refreshErr == nil {
+				locs = refreshedLocs
+			}
+		}
+	}
 
 	resCap := len(locs)
 	if limit != UnspecifiedLimit {
