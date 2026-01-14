@@ -21,6 +21,9 @@ import (
 	pdgc "github.com/tikv/pd/client/clients/gc"
 )
 
+// testKeyspaceID is a non-global keyspace ID used for testing.
+const testKeyspaceID = tikv.KeyspaceID(100)
+
 // ============================================================================
 // Mock implementations
 // ============================================================================

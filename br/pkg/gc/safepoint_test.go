@@ -11,6 +11,7 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
 	tikv "github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -135,268 +136,259 @@ func TestBRServiceSafePoint_MarshalLogObject(t *testing.T) {
 	})
 }
 
-func TestStartKeeperWithManager(t *testing.T) {
-	t.Run("Validation", func(t *testing.T) {
-		t.Run("ValidParams", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-			// mockPD starts with gcSafePoint=0, BackupTS=1000 > 0 is valid
+// ============================================================================
+// SafepointKeeperSuite - parameterized tests for keyspace scope
+// ============================================================================
 
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      10,
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.NoError(t, err)
-
-			// Verify initial SetServiceSafePoint was called
-			require.Equal(t, 1, mgr.getSetSafePointCalls())
-
-			// Verify barrier was actually created in mockPD
-			state := getState(t, ctx, mgr.mockPD, tikv.NullspaceID)
-			requireBarrier(t, state, sp.ID, sp.BackupTS-1)
-		})
-
-		t.Run("EmptyID", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-
-			ctx := context.Background()
-			sp := gc.BRServiceSafePoint{
-				ID:       "",
-				TTL:      10,
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "invalid")
-		})
-
-		t.Run("ZeroTTL", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-
-			ctx := context.Background()
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      0,
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "invalid")
-		})
-
-		t.Run("NegativeTTL", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-
-			ctx := context.Background()
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      -1,
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "invalid")
-		})
-
-		t.Run("BackupTS_BehindSafePoint", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-			ctx := context.Background()
-			// Set GC safe point to 1000
-			require.NoError(t, mgr.setGCSafePoint(ctx, tikv.NullspaceID, 1000))
-
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      10,
-				BackupTS: 500, // BackupTS is behind GC safe point
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "exceed")
-		})
-
-		t.Run("BackupTS_EqualsSafePoint", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-			ctx := context.Background()
-			// Set GC safe point to 1000
-			require.NoError(t, mgr.setGCSafePoint(ctx, tikv.NullspaceID, 1000))
-
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      10,
-				BackupTS: 1000, // BackupTS equals GC safe point
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "exceed")
-		})
-	})
-
-	t.Run("Behavior", func(t *testing.T) {
-		t.Run("InitialSetCalled", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      10,
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.NoError(t, err)
-
-			// SetServiceSafePoint should be called once immediately
-			require.Equal(t, 1, mgr.getSetSafePointCalls())
-
-			// Verify barrier was actually created in mockPD
-			state := getState(t, ctx, mgr.mockPD, tikv.NullspaceID)
-			requireBarrier(t, state, sp.ID, sp.BackupTS-1)
-		})
-
-		t.Run("SetServiceSafePoint_Error_Propagated", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-			mgr.setSafePointErr = context.DeadlineExceeded
-
-			ctx := context.Background()
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      10,
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.Error(t, err)
-			require.ErrorIs(t, err, context.DeadlineExceeded)
-		})
-
-		t.Run("PeriodicRefresh", func(t *testing.T) {
-			if testing.Short() {
-				t.Skip("skipping periodic test in short mode")
-			}
-
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			// TTL=6s means update interval = 2s (TTL/3)
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      6,
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.NoError(t, err)
-
-			// Initial call
-			require.Equal(t, 1, mgr.getSetSafePointCalls())
-
-			// Verify barrier was created
-			state := getState(t, ctx, mgr.mockPD, tikv.NullspaceID)
-			requireBarrier(t, state, sp.ID, sp.BackupTS-1)
-
-			// Wait for at least one periodic refresh (2s interval + buffer)
-			time.Sleep(3 * time.Second)
-
-			// Should have at least 2 calls (initial + 1 periodic)
-			require.GreaterOrEqual(t, mgr.getSetSafePointCalls(), 2)
-
-			// Verify barrier still exists after refresh
-			state = getState(t, ctx, mgr.mockPD, tikv.NullspaceID)
-			requireBarrier(t, state, sp.ID, sp.BackupTS-1)
-		})
-
-		t.Run("ContextCancel_Exits", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-
-			ctx, cancel := context.WithCancel(context.Background())
-
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      300, // Long TTL = 100s interval
-				BackupTS: 1000,
-			}
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.NoError(t, err)
-
-			initialCalls := mgr.getSetSafePointCalls()
-			require.Equal(t, 1, initialCalls)
-
-			// Cancel context
-			cancel()
-
-			// Give goroutine time to exit
-			time.Sleep(100 * time.Millisecond)
-
-			// No additional calls should happen after cancel
-			// (The goroutine should have exited)
-			finalCalls := mgr.getSetSafePointCalls()
-			require.Equal(t, initialCalls, finalCalls)
-		})
-
-		t.Run("GetGCSafePoint_Error_Ignored", func(t *testing.T) {
-			mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-			mgr.gcSafePointErr = context.DeadlineExceeded // Error when getting GC safe point
-
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
-
-			sp := gc.BRServiceSafePoint{
-				ID:       "br-test",
-				TTL:      10,
-				BackupTS: 1000,
-			}
-			// Should NOT return error because GetGCSafePoint error is ignored
-			// in CheckGCSafePoint (returns nil on error)
-			err := gc.StartServiceSafePointKeeper(ctx, sp, mgr)
-			require.NoError(t, err)
-		})
-	})
+// SafepointKeeperSuite tests safepoint keeper and GC safepoint operations.
+// Each test method runs for both Global (NullspaceID) and Keyspace scopes.
+type SafepointKeeperSuite struct {
+	suite.Suite
+	keyspaceID tikv.KeyspaceID
+	mgr        *mockManager
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
-func TestCheckGCSafePoint(t *testing.T) {
-	t.Run("TS_GreaterThan_SafePoint", func(t *testing.T) {
-		mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-		ctx := context.Background()
-		// Set GC safe point to 100
-		require.NoError(t, mgr.setGCSafePoint(ctx, tikv.NullspaceID, 100))
+// SetupTest runs before each test method.
+func (s *SafepointKeeperSuite) SetupTest() {
+	s.mgr = newMockManagerWrapper(s.T(), s.keyspaceID)
+	s.ctx, s.cancel = context.WithCancel(context.Background())
+}
 
-		err := gc.CheckGCSafePoint(ctx, mgr, 200)
-		require.NoError(t, err)
-	})
+// TearDownTest runs after each test method.
+func (s *SafepointKeeperSuite) TearDownTest() {
+	s.cancel()
+}
 
-	t.Run("TS_Equals_SafePoint", func(t *testing.T) {
-		mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-		ctx := context.Background()
-		// Set GC safe point to 100
-		require.NoError(t, mgr.setGCSafePoint(ctx, tikv.NullspaceID, 100))
+// otherKeyspaceID returns the "other" keyspace for isolation checks.
+func (s *SafepointKeeperSuite) otherKeyspaceID() tikv.KeyspaceID {
+	if s.keyspaceID == tikv.NullspaceID {
+		return testKeyspaceID
+	}
+	return tikv.NullspaceID
+}
 
-		err := gc.CheckGCSafePoint(ctx, mgr, 100)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "exceed")
-	})
+// requireBarrierIsolation verifies barrier exists in this keyspace and not in others.
+func (s *SafepointKeeperSuite) requireBarrierIsolation(sp gc.BRServiceSafePoint) {
+	requireBarrier(s.T(), getState(s.T(), s.ctx, s.mgr.mockPD, s.keyspaceID), sp.ID, sp.BackupTS-1)
+	requireNoBarrier(s.T(), getState(s.T(), s.ctx, s.mgr.mockPD, s.otherKeyspaceID()), sp.ID)
+}
 
-	t.Run("TS_LessThan_SafePoint", func(t *testing.T) {
-		mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-		ctx := context.Background()
-		// Set GC safe point to 100
-		require.NoError(t, mgr.setGCSafePoint(ctx, tikv.NullspaceID, 100))
+// setGCSafePoint sets the GC safe point for the current keyspace.
+func (s *SafepointKeeperSuite) setGCSafePoint(ts uint64) {
+	s.Require().NoError(s.mgr.setGCSafePoint(s.ctx, s.keyspaceID, ts))
+}
 
-		err := gc.CheckGCSafePoint(ctx, mgr, 50)
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "exceed")
-	})
+// ============================================================================
+// Keeper Validation Tests
+// ============================================================================
 
-	t.Run("GetGCSafePoint_Error_Ignored", func(t *testing.T) {
-		mgr := newMockManagerWrapper(t, tikv.NullspaceID)
-		mgr.gcSafePointErr = context.DeadlineExceeded
+func (s *SafepointKeeperSuite) TestValidation_ValidParams() {
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      10,
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().NoError(err)
+	s.Require().Equal(1, s.mgr.getSetSafePointCalls())
+	s.requireBarrierIsolation(sp)
+}
 
-		// Error should be ignored, return nil
-		err := gc.CheckGCSafePoint(context.Background(), mgr, 100)
-		require.NoError(t, err)
-	})
+func (s *SafepointKeeperSuite) TestValidation_EmptyID() {
+	sp := gc.BRServiceSafePoint{
+		ID:       "",
+		TTL:      10,
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "invalid")
+}
+
+func (s *SafepointKeeperSuite) TestValidation_ZeroTTL() {
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      0,
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "invalid")
+}
+
+func (s *SafepointKeeperSuite) TestValidation_NegativeTTL() {
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      -1,
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "invalid")
+}
+
+func (s *SafepointKeeperSuite) TestValidation_BackupTSBehindSafePoint() {
+	s.setGCSafePoint(1000)
+
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      10,
+		BackupTS: 500, // BackupTS is behind GC safe point
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "exceed")
+}
+
+func (s *SafepointKeeperSuite) TestValidation_BackupTSEqualsSafePoint() {
+	s.setGCSafePoint(1000)
+
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      10,
+		BackupTS: 1000, // BackupTS equals GC safe point
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "exceed")
+}
+
+// ============================================================================
+// Keeper Behavior Tests
+// ============================================================================
+
+func (s *SafepointKeeperSuite) TestBehavior_InitialSetCalled() {
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      10,
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().NoError(err)
+	s.Require().Equal(1, s.mgr.getSetSafePointCalls())
+	s.requireBarrierIsolation(sp)
+}
+
+func (s *SafepointKeeperSuite) TestBehavior_SetServiceSafePointErrorPropagated() {
+	s.mgr.setSafePointErr = context.DeadlineExceeded
+
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      10,
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().Error(err)
+	s.Require().ErrorIs(err, context.DeadlineExceeded)
+}
+
+func (s *SafepointKeeperSuite) TestBehavior_PeriodicRefresh() {
+	if testing.Short() {
+		s.T().Skip("skipping periodic test in short mode")
+	}
+
+	// TTL=3s means update interval = 1s (TTL/3)
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      3,
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().NoError(err)
+	s.Require().Equal(1, s.mgr.getSetSafePointCalls())
+	s.requireBarrierIsolation(sp)
+
+	// Wait for at least one periodic refresh (1s interval + buffer)
+	s.Require().Eventually(func() bool {
+		return s.mgr.getSetSafePointCalls() >= 2
+	}, 2*time.Second, 25*time.Millisecond)
+
+	// Verify barrier still exists after refresh
+	s.requireBarrierIsolation(sp)
+}
+
+func (s *SafepointKeeperSuite) TestBehavior_ContextCancelExits() {
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      300, // Long TTL = 100s interval
+		BackupTS: 1000,
+	}
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().NoError(err)
+
+	initialCalls := s.mgr.getSetSafePointCalls()
+	s.Require().Equal(1, initialCalls)
+
+	// Cancel context
+	s.cancel()
+
+	// Give goroutine time to exit
+	time.Sleep(100 * time.Millisecond)
+
+	// No additional calls should happen after cancel
+	finalCalls := s.mgr.getSetSafePointCalls()
+	s.Require().Equal(initialCalls, finalCalls)
+}
+
+func (s *SafepointKeeperSuite) TestBehavior_GetGCSafePointErrorIgnored() {
+	s.mgr.gcSafePointErr = context.DeadlineExceeded
+
+	sp := gc.BRServiceSafePoint{
+		ID:       "br-test",
+		TTL:      10,
+		BackupTS: 1000,
+	}
+	// Should NOT return error because GetGCSafePoint error is ignored
+	// in CheckGCSafePoint (returns nil on error)
+	err := gc.StartServiceSafePointKeeper(s.ctx, sp, s.mgr)
+	s.Require().NoError(err)
+}
+
+// ============================================================================
+// CheckGCSafePoint Tests
+// ============================================================================
+
+func (s *SafepointKeeperSuite) TestCheckGCSafePoint_TSGreaterThanSafePoint() {
+	s.setGCSafePoint(100)
+
+	err := gc.CheckGCSafePoint(s.ctx, s.mgr, 200)
+	s.Require().NoError(err)
+}
+
+func (s *SafepointKeeperSuite) TestCheckGCSafePoint_TSEqualsSafePoint() {
+	s.setGCSafePoint(100)
+
+	err := gc.CheckGCSafePoint(s.ctx, s.mgr, 100)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "exceed")
+}
+
+func (s *SafepointKeeperSuite) TestCheckGCSafePoint_TSLessThanSafePoint() {
+	s.setGCSafePoint(100)
+
+	err := gc.CheckGCSafePoint(s.ctx, s.mgr, 50)
+	s.Require().Error(err)
+	s.Require().Contains(err.Error(), "exceed")
+}
+
+func (s *SafepointKeeperSuite) TestCheckGCSafePoint_ErrorIgnored() {
+	s.mgr.gcSafePointErr = context.DeadlineExceeded
+
+	// Error should be ignored, return nil
+	err := gc.CheckGCSafePoint(s.ctx, s.mgr, 100)
+	s.Require().NoError(err)
+}
+
+// ============================================================================
+// Suite Entry Points
+// ============================================================================
+
+func TestGlobalSafepointKeeper(t *testing.T) {
+	suite.Run(t, &SafepointKeeperSuite{keyspaceID: tikv.NullspaceID})
+}
+
+func TestKeyspaceSafepointKeeper(t *testing.T) {
+	suite.Run(t, &SafepointKeeperSuite{keyspaceID: testKeyspaceID})
 }

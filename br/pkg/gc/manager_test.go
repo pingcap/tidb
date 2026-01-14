@@ -28,9 +28,6 @@ func withKeyspaceConfig(t *testing.T, keyspaceName string) {
 	})
 }
 
-// testKeyspaceID is a non-global keyspace ID used for testing.
-const testKeyspaceID = tikv.KeyspaceID(100)
-
 func TestNewManager(t *testing.T) {
 	t.Run("GlobalMode", func(t *testing.T) {
 		// Set keyspaceName = "" (global mode)
