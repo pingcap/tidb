@@ -209,7 +209,7 @@ type Prefix string
 // NewPrefix returns a new Prefix instance from the given string.
 func NewPrefix(prefix string) Prefix {
 	p := strings.Trim(prefix, "/")
-	if p != "" && !strings.HasSuffix(p, "/") {
+	if p != "" {
 		p += "/"
 	}
 	return Prefix(p)
@@ -269,8 +269,8 @@ func (bp *BucketPrefix) PrefixStr() string {
 // If endOffset is not 0, startOffset must <= endOffset; we don't check the
 // validity here.
 // If startOffset == 0 and endOffset == 0, `full` is true and `rangeVal` is empty.
-// Otherwise a partial object is requested, `full` is false and `rangeVal` contains
-// the Range header value.
+// Otherwise, a partial object is requested, `full` is false and `rangeVal`
+// contains the Range header value.
 func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal string) {
 	// If we just open part of the object, we set `Range` in the request.
 	// If we meant to open the whole object, not just a part of it,

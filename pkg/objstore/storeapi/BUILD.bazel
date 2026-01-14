@@ -17,7 +17,6 @@ go_test(
     timeout = "short",
     srcs = ["storage_test.go"],
     embed = [":storeapi"],
-    flaky = True,
     shard_count = 2,
     deps = ["@com_github_stretchr_testify//require"],
 )
