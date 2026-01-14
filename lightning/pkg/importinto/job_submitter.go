@@ -17,13 +17,17 @@ package importinto
 import (
 	"context"
 	"net/url"
+	"regexp"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
+
+var importSQLURLRegexp = regexp.MustCompile(`(?i)'(?:s3|ks3|azure|azblob)://[^']*'`)
 
 // ImportJob represents a submitted import job with its metadata.
 type ImportJob struct {
@@ -70,7 +74,7 @@ func (s *DefaultJobSubmitter) SubmitTable(ctx context.Context, tableMeta *import
 		return nil, errors.Annotate(err, "generate import SQL")
 	}
 
-	logger.Info("submitting import job", zap.String("sql", sql))
+	logger.Info("submitting import job", zap.String("sql", redactImportSQL(sql)))
 	jobID, err := s.sdk.SubmitJob(ctx, sql)
 	if err != nil {
 		return nil, errors.Annotate(err, "submit job")
@@ -127,4 +131,14 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 	}
 
 	return opts
+}
+
+func redactImportSQL(sql string) string {
+	return importSQLURLRegexp.ReplaceAllStringFunc(sql, func(m string) string {
+		if len(m) <= 2 {
+			return m
+		}
+		u := m[1 : len(m)-1]
+		return "'" + ast.RedactURL(u) + "'"
+	})
 }

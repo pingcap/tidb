@@ -106,3 +106,29 @@ func TestJobSubmitterGetGroupKey(t *testing.T) {
 	submitter := importinto.NewJobSubmitter(mockSDK, cfg, groupKey, logger)
 	require.Equal(t, groupKey, submitter.GetGroupKey())
 }
+
+func TestJobSubmitterSubmitTableLogRedaction(t *testing.T) {
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	mockSDK := sdkmock.NewMockSDK(ctrl)
+	groupKey := "g1"
+	logger, buffer := log.MakeTestLogger()
+	submitter := importinto.NewJobSubmitter(mockSDK, config.NewConfig(), groupKey, logger)
+
+	rawSQL := "IMPORT INTO `db`.`t1` FROM 's3://bucket/path/*.csv?access-key=ak&endpoint=http%3A%2F%2Fminio%3A9000&secret-access-key=sk'"
+	mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).Return(rawSQL, nil)
+	mockSDK.EXPECT().SubmitJob(gomock.Any(), rawSQL).Return(int64(123), nil)
+
+	_, err := submitter.SubmitTable(context.Background(), &importsdk.TableMeta{
+		Database: "db",
+		Table:    "t1",
+	})
+	require.NoError(t, err)
+
+	out := buffer.String()
+	require.Contains(t, out, "access-key=xxxxxx")
+	require.Contains(t, out, "secret-access-key=xxxxxx")
+	require.NotContains(t, out, "access-key=ak")
+	require.NotContains(t, out, "secret-access-key=sk")
+}

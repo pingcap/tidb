@@ -33,11 +33,12 @@ type JobMonitor interface {
 
 // DefaultJobMonitor is the default implementation of JobMonitor.
 type DefaultJobMonitor struct {
-	sdk          importsdk.SDK
-	cpMgr        CheckpointManager
-	pollInterval time.Duration
-	logInterval  time.Duration
-	logger       log.Logger
+	sdk             importsdk.SDK
+	cpMgr           CheckpointManager
+	pollInterval    time.Duration
+	logInterval     time.Duration
+	logger          log.Logger
+	progressUpdater ProgressUpdater
 }
 
 type groupStats struct {
@@ -56,13 +57,15 @@ func NewJobMonitor(
 	pollInterval time.Duration,
 	logInterval time.Duration,
 	logger log.Logger,
+	progressUpdater ProgressUpdater,
 ) JobMonitor {
 	return &DefaultJobMonitor{
-		sdk:          sdk,
-		cpMgr:        cpMgr,
-		pollInterval: pollInterval,
-		logInterval:  logInterval,
-		logger:       logger,
+		sdk:             sdk,
+		cpMgr:           cpMgr,
+		pollInterval:    pollInterval,
+		logInterval:     logInterval,
+		logger:          logger,
+		progressUpdater: progressUpdater,
 	}
 }
 
@@ -73,14 +76,20 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 	}
 
 	jobMap := make(map[int64]*ImportJob, len(jobs))
+	jobTotalSize := make(map[int64]int64, len(jobs))
+	jobFinishedSize := make(map[int64]int64, len(jobs))
 	for _, job := range jobs {
 		jobMap[job.JobID] = job
+		if job.TableMeta != nil {
+			jobTotalSize[job.JobID] = job.TableMeta.TotalSize
+		}
 	}
 
 	groupKey := jobs[0].GroupKey
 	finishedJobs := make(map[int64]struct{})
 	var firstError error
 	stats := &groupStats{}
+	progressEstimator := newJobProgressEstimator(m.logger)
 
 	ticker := time.NewTicker(m.pollInterval)
 	defer ticker.Stop()
@@ -105,11 +114,14 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 				continue
 			}
 
-			stats = m.processJobStatuses(ctx, statuses, jobMap, finishedJobs, &firstError)
+			stats = m.processJobStatuses(ctx, statuses, jobMap, jobTotalSize, jobFinishedSize, finishedJobs, &firstError, progressEstimator)
 
-			// Fast-fail: if any job failed, cancel all and return error immediately
-			if err := m.handleFailures(ctx, groupKey, statuses, stats, &firstError); err != nil {
-				return err
+			// Fast-fail: return error immediately if any job failed.
+			if stats.failedCnt > 0 {
+				if firstError == nil {
+					firstError = errors.Errorf("job group %s has %d failed jobs", groupKey, stats.failedCnt)
+				}
+				return firstError
 			}
 
 			// Check if all jobs finished
@@ -147,8 +159,11 @@ func (m *DefaultJobMonitor) processJobStatuses(
 	ctx context.Context,
 	statuses []*importsdk.JobStatus,
 	jobMap map[int64]*ImportJob,
+	jobTotalSize map[int64]int64,
+	jobFinishedSize map[int64]int64,
 	finishedJobs map[int64]struct{},
 	firstError *error,
+	progressEstimator *jobProgressEstimator,
 ) *groupStats {
 	stats := &groupStats{}
 	for _, status := range statuses {
@@ -156,6 +171,8 @@ func (m *DefaultJobMonitor) processJobStatuses(
 		if !ok {
 			continue
 		}
+
+		progressEstimator.updateJobProgress(job, status, jobTotalSize, jobFinishedSize)
 
 		stats.totalImportedRows += status.ImportedRows
 
@@ -201,36 +218,21 @@ func (m *DefaultJobMonitor) processJobStatuses(
 			m.logJobCompletion(job, status)
 		}
 	}
-	return stats
-}
 
-func (m *DefaultJobMonitor) handleFailures(
-	ctx context.Context,
-	groupKey string,
-	statuses []*importsdk.JobStatus,
-	stats *groupStats,
-	firstError *error,
-) error {
-	if stats.failedCnt > 0 {
-		if *firstError == nil {
-			*firstError = errors.Errorf("job group %s has %d failed jobs", groupKey, stats.failedCnt)
-		}
-
-		m.logger.Error("detected failures in job group, cancelling remaining jobs", zap.String("groupKey", groupKey), zap.Int("failedCount", stats.failedCnt))
-
-		for _, status := range statuses {
-			// Only cancel jobs that are not completed (finished, failed, or cancelled)
-			if !status.IsCompleted() {
-				logger := m.logger.With(zap.Int64("jobID", status.JobID))
-				logger.Info("cancelling job")
-				if err := m.sdk.CancelJob(ctx, status.JobID); err != nil {
-					logger.Warn("failed to cancel job", zap.Error(err))
-				}
-			}
-		}
-		return *firstError
+	var (
+		totalSize    int64
+		finishedSize int64
+	)
+	for jobID := range jobMap {
+		totalSize += jobTotalSize[jobID]
+		finishedSize += jobFinishedSize[jobID]
 	}
-	return nil
+	if m.progressUpdater != nil {
+		m.progressUpdater.UpdateTotalSize(totalSize)
+		m.progressUpdater.UpdateFinishedSize(finishedSize)
+	}
+
+	return stats
 }
 
 func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.JobStatus) {
