@@ -65,7 +65,7 @@ go_test(
     ],
     embed = [":s3store"],
     flaky = True,
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//pkg/objstore",
         "//pkg/objstore/objectio",
