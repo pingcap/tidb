@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -3572,22 +3573,6 @@ func TestAuditPluginRetrying(t *testing.T) {
 		testResults = testResults[:0]
 		// a big enough concurrency to trigger retries
 		concurrency := 500
-<<<<<<< HEAD
-		var wg sync.WaitGroup
-		for range concurrency {
-			wg.Add(1)
-			conn, err := db.Conn(context.Background())
-			require.NoError(t, err)
-			go func() {
-				defer wg.Done()
-				_, err := conn.QueryContext(context.Background(), "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1")
-				require.NoError(t, err)
-			}()
-		}
-		wg.Wait()
-
-		require.Greater(t, len(testResults), concurrency)
-=======
 		db.SetMaxOpenConns(concurrency)
 		db.SetMaxIdleConns(concurrency)
 		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
@@ -3615,7 +3600,6 @@ func TestAuditPluginRetrying(t *testing.T) {
 		}, time.Second*10, time.Millisecond*100)
 
 		testResults := getTestResults()
->>>>>>> 1d4344fc2c5 (test: stabilize `TestAuditPluginRetrying` (#65523))
 		nonRetryingCount := 0
 		for _, res := range testResults {
 			if !res.retrying {
