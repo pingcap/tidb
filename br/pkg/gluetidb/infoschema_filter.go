@@ -29,7 +29,12 @@ func NewInfoSchemaFilter(allow func(ast.CIStr) bool) issyncer.Filter {
 func (f *brInfoSchemaFilter) SkipLoadDiff(diff *model.SchemaDiff, latestIS infoschema.InfoSchema) (skip bool) {
 	defer func() {
 		if skip {
-			log.Warn("skip load a schema diff due to configuration.", zap.Any("diff", diff), zap.Int64("version", diff.Version))
+			log.Info("skip load a schema diff due to configuration.",
+				zap.Stringer("type", diff.Type),
+				zap.Int64("schema-id", diff.SchemaID),
+				zap.Int64("table-id", diff.TableID),
+				zap.Int64("old-schema-id", diff.OldSchemaID),
+				zap.Int64("version", diff.Version))
 		}
 	}()
 
@@ -37,10 +42,15 @@ func (f *brInfoSchemaFilter) SkipLoadDiff(diff *model.SchemaDiff, latestIS infos
 		return false
 	}
 	// Always accept newly created schema as we cannot access its name in this context.
-	// Always accept `CREATE PLACEMENT POLICY`: its `schemaID` is ID of this policy but not zero.
-	if diff.Type == model.ActionCreateSchema || diff.Type == model.ActionCreatePlacementPolicy {
+	switch diff.Type {
+	case model.ActionCreateSchema,
+		// Always accept `PLACEMENT POLICY` SQLs: its `schemaID` is ID of this policy but not zero.
+		model.ActionCreatePlacementPolicy, model.ActionAlterPlacementPolicy, model.ActionDropPlacementPolicy,
+		// Always accept resource group related SQLs: their `schemaID` is resource group ID.
+		model.ActionCreateResourceGroup, model.ActionDropResourceGroup, model.ActionAlterResourceGroup:
 		return false
 	}
+
 	// Always accept db unrelated DDLs.
 	if diff.SchemaID == 0 {
 		return false

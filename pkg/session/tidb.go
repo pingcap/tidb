@@ -69,6 +69,10 @@ func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
 	return dm.getWithEtcdClient(store, nil, nil)
 }
 
+// GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
+//
+// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
+// the actual schema filter of the returned `Domain` is the one when the domain were created.
 func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
 	return dm.getWithEtcdClient(store, nil, filter)
 }
