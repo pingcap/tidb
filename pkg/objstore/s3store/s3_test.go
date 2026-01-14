@@ -1489,7 +1489,7 @@ func TestRetryError(t *testing.T) {
 	defer server.Close()
 	t.Log(server.URL)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3store/replace-error-to-connection-reset-by-peer", "return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3like/replace-error-to-connection-reset-by-peer", "return(true)")
 
 	ctx := context.Background()
 	s, err := NewS3Storage(ctx, &backuppb.S3{
