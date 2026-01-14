@@ -140,6 +140,7 @@ var errArbitrateFailError = errors.New("failed to allocate resource from arbitra
 var arbitrationPriorityNames = [maxArbitrationPriority]string{"LOW", "MEDIUM", "HIGH"}
 
 var mockNow func() time.Time
+var mockWinupCB func(*rootPoolEntry)
 
 // String returns the string representation of the ArbitrationPriority
 func (p ArbitrationPriority) String() string {
@@ -447,6 +448,12 @@ func (m *entryMap) init(shardNum uint64, maxQuotaShard int, minQuotaForReclaim i
 func (e *rootPoolEntry) windUp(delta int64, r ArbitrateResult) {
 	e.pool.forceAddCap(delta)
 	e.request.resultCh <- r
+
+	if intest.InTest {
+		if mockWinupCB != nil {
+			mockWinupCB(e)
+		}
+	}
 }
 
 // non thread safe: the mutex of root pool must have been locked
@@ -1327,23 +1334,22 @@ func (m *MemArbitrator) getRootPoolEntry(uid uint64) *rootPoolEntry {
 	return nil
 }
 
-type rootPool struct {
-	entry      *rootPoolEntry
-	arbitrator *MemArbitrator
+type rootPoolWrap struct {
+	entry *rootPoolEntry
 }
 
 // FindRootPool finds the root pool by ID
-func (m *MemArbitrator) FindRootPool(uid uint64) rootPool {
+func (m *MemArbitrator) FindRootPool(uid uint64) rootPoolWrap {
 	if e := m.getRootPoolEntry(uid); e != nil {
-		return rootPool{e, m}
+		return rootPoolWrap{e}
 	}
-	return rootPool{}
+	return rootPoolWrap{}
 }
 
 // EmplaceRootPool emplaces a new root pool with the given uid (uid < 0 means the internal pool)
-func (m *MemArbitrator) EmplaceRootPool(uid uint64) (rootPool, error) {
+func (m *MemArbitrator) EmplaceRootPool(uid uint64) (rootPoolWrap, error) {
 	if e := m.getRootPoolEntry(uid); e != nil {
-		return rootPool{e, m}, nil
+		return rootPoolWrap{e}, nil
 	}
 
 	pool := &ResourcePool{
@@ -1353,7 +1359,7 @@ func (m *MemArbitrator) EmplaceRootPool(uid uint64) (rootPool, error) {
 		allocAlignSize: 1,
 	}
 	entry, err := m.addRootPool(pool)
-	return rootPool{entry, m}, err
+	return rootPoolWrap{entry}, err
 }
 
 func (m *MemArbitrator) addRootPool(pool *ResourcePool) (*rootPoolEntry, error) {
@@ -2030,17 +2036,9 @@ func (m *MemArbitrator) asyncRun(duration time.Duration) bool {
 	return true
 }
 
-// Restart starts the root pool with the given context
-func (r *rootPool) Restart(ctx *ArbitrationContext) bool {
-	return r.arbitrator.restartEntryByContext(r.entry, ctx)
-}
-
-// Pool returns the internal resource pool
-func (r *rootPool) Pool() *ResourcePool {
-	return r.entry.pool
-}
-
-func (m *MemArbitrator) restartEntryByContext(entry *rootPoolEntry, ctx *ArbitrationContext) bool {
+// RestartEntryByContext starts the root pool with the given context
+func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationContext) bool {
+	entry := p.entry
 	if entry == nil {
 		return false
 	}
@@ -2085,12 +2083,12 @@ func (m *MemArbitrator) restartEntryByContext(entry *rootPoolEntry, ctx *Arbitra
 		m.entryMap.contextCache.num.Add(1)
 	}
 
-	entry.pool.actions.OutOfCapacityActionCB = func(s OutOfCapacityActionArgs) error {
+	entry.pool.doSetOutOfCapacityAction(func(s OutOfCapacityActionArgs) error {
 		if m.blockingAllocate(entry, s.Request) != ArbitrateOk {
 			return errArbitrateFailError
 		}
 		return nil
-	}
+	})
 	entry.pool.mu.stopped = false
 	entry.setExecState(execStateRunning)
 
@@ -2282,12 +2280,7 @@ func (m *MemArbitrator) updateAvoidSize() {
 			}
 		}
 		if reclaimed > 0 {
-			m.awaitFree.pool.mu.Lock()
-
-			m.awaitFree.pool.doRelease(reclaimed) // release even if `reclaimed` is 0
-			poolReleased = m.awaitFree.pool.mu.budget.release()
-
-			m.awaitFree.pool.mu.Unlock()
+			poolReleased = m.awaitFree.pool.releasePopBudget(reclaimed)
 		}
 		if poolReleased > 0 {
 			m.release(poolReleased)
@@ -2295,6 +2288,17 @@ func (m *MemArbitrator) updateAvoidSize() {
 			atomic.AddUint64(&m.mu.released, uint64(poolReleased))
 		}
 	}
+}
+
+func (p *ResourcePool) releasePopBudget(c int64) int64 {
+	p.mu.Lock()
+
+	p.doRelease(c)
+	released := p.mu.budget.available()
+	p.mu.budget.cap -= released
+
+	p.mu.Unlock()
+	return released
 }
 
 func (m *MemArbitrator) weakWake() {
@@ -2694,12 +2698,7 @@ func (m *MemArbitrator) shrinkAwaitFreePool(minRemain int64, utimeMilli int64) {
 	}
 
 	if reclaimed > 0 {
-		m.awaitFree.pool.mu.Lock()
-
-		m.awaitFree.pool.doRelease(reclaimed)
-		poolReleased = m.awaitFree.pool.mu.budget.release()
-
-		m.awaitFree.pool.mu.Unlock()
+		poolReleased = m.awaitFree.pool.releasePopBudget(reclaimed)
 	}
 	if poolReleased > 0 {
 		m.release(poolReleased)

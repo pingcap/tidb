@@ -50,7 +50,7 @@ func (m *MemArbitrator) waitNotiferForTest() {
 }
 
 func (m *MemArbitrator) restartEntryForTest(entry *rootPoolEntry, ctx *ArbitrationContext) {
-	require.True(testState, m.restartEntryByContext(entry, ctx))
+	require.True(testState, m.RestartEntryByContext(rootPoolWrap{entry}, ctx))
 }
 
 func (m *MemArbitrator) checkAwaitFree() {
@@ -83,7 +83,7 @@ func (m *MemArbitrator) addRootPoolForTest(
 		panic(err)
 	}
 	require.True(testState, entry != nil)
-	require.True(testState, m.restartEntryByContext(entry, ctx))
+	require.True(testState, m.RestartEntryByContext(rootPoolWrap{entry}, ctx))
 	return entry
 }
 
@@ -2749,7 +2749,7 @@ func TestBench(t *testing.T) {
 					false,
 					true,
 				)
-				if !root.Restart(ctx) {
+				if !m.RestartEntryByContext(root, ctx) {
 					panic(fmt.Errorf("failed to init root pool with session-id %d", root.entry.pool.uid))
 				}
 
@@ -2838,7 +2838,7 @@ func TestBench(t *testing.T) {
 					true,
 				)
 
-				if !root.Restart(ctx) {
+				if !m.RestartEntryByContext(root, ctx) {
 					panic(fmt.Errorf("failed to init root pool with session-id %d", root.entry.pool.uid))
 				}
 

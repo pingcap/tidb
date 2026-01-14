@@ -337,12 +337,6 @@ func (b *Budget) available() int64 {
 	return b.cap - b.used
 }
 
-func (b *Budget) release() (reclaimed int64) {
-	reclaimed = b.available()
-	b.cap = b.used
-	return
-}
-
 // CreateBudget creates a new budget from the resource pool
 func (p *ResourcePool) CreateBudget() Budget {
 	return Budget{pool: p}
@@ -555,8 +549,12 @@ func (p *ResourcePool) doRelease(sz int64) {
 // It is called when the resource pool is out of capacity
 func (p *ResourcePool) SetOutOfCapacityAction(f func(OutOfCapacityActionArgs) error) {
 	p.mu.Lock()
-	p.actions.OutOfCapacityActionCB = f
+	p.doSetOutOfCapacityAction(f)
 	p.mu.Unlock()
+}
+
+func (p *ResourcePool) doSetOutOfCapacityAction(f func(OutOfCapacityActionArgs) error) {
+	p.actions.OutOfCapacityActionCB = f
 }
 
 // SetOutOfLimitAction sets the out of limit action

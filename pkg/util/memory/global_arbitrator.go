@@ -27,6 +27,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 )
 
@@ -48,7 +49,6 @@ var (
 		}
 		v struct {
 			atomic.Pointer[MemArbitrator]
-			baseDir string
 			sync.Mutex
 		}
 		enable struct { // register callbacks after the global memory arbitrator is enabled
@@ -74,6 +74,7 @@ var (
 			sync.Mutex
 		}
 	}
+	mockinitGlobalMemArbitrator func() *MemArbitrator
 )
 
 func reportGlobalMemArbitratorMetrics() {
@@ -297,16 +298,12 @@ func CleanupGlobalMemArbitratorForTest() {
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
-	if globalArbitrator.v.baseDir == "" {
-		panic("env of the global memory arbitrator is not set, please call `SetupGlobalMemArbitratorForTest` first")
-	}
 	m := globalArbitrator.v.Load()
 	if m == nil {
 		return
 	}
 	m.stop()
 	globalArbitrator.v.Store(nil)
-	_ = os.Remove(runtimeMemStateRecorderFilePath(globalArbitrator.v.baseDir))
 	mockNow = nil
 	mockDebugInject = nil
 }
@@ -319,7 +316,33 @@ func SetupGlobalMemArbitratorForTest(baseDir string) {
 	if globalArbitrator.v.Load() != nil {
 		panic("the global memory arbitrator is already set up")
 	}
-	globalArbitrator.v.baseDir = baseDir
+
+	_ = os.Remove(runtimeMemStateRecorderFilePath(baseDir))
+	mockinitGlobalMemArbitrator = func() *MemArbitrator {
+		m := NewMemArbitrator(
+			0,
+			4,
+			defPoolQuotaShards,
+			64*byteSizeKB, /* 64k ~ */
+			newMemStateRecorder(baseDir),
+		)
+		m.AutoRun(
+			MemArbitratorActions{
+				Info:  logutil.BgLogger().Info,
+				Warn:  logutil.BgLogger().Warn,
+				Error: logutil.BgLogger().Error,
+				UpdateRuntimeMemStats: func() {
+				},
+				GC: func() {
+				},
+			},
+			defAwaitFreePoolAllocAlignSize,
+			4,
+			defTaskTickDur,
+		)
+		globalArbitrator.v.Store(m)
+		return m
+	}
 }
 
 // GetGlobalMemArbitratorWorkModeText returns the text of the global memory arbitrator work mode.
@@ -432,6 +455,10 @@ func RegisterCallbackForGlobalMemArbitrator(f func()) {
 }
 
 func initGlobalMemArbitrator() (m *MemArbitrator) {
+	if intest.InTest {
+		return mockinitGlobalMemArbitrator()
+	}
+
 	globalArbitrator.v.Lock()
 	defer globalArbitrator.v.Unlock()
 
@@ -439,11 +466,8 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 		return
 	}
 
-	baseDir := globalArbitrator.v.baseDir
-	if baseDir == "" {
-		cfg := config.GetGlobalConfig()
-		baseDir = filepath.Join(cfg.TempDir, fmt.Sprintf("mem_arbitrator-%d", cfg.Port))
-	}
+	cfg := config.GetGlobalConfig()
+	baseDir := filepath.Join(cfg.TempDir, fmt.Sprintf("mem_arbitrator-%d", cfg.Port))
 
 	limit := ServerMemoryLimit.Load()
 	if limit == 0 {
