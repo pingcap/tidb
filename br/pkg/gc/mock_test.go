@@ -132,7 +132,7 @@ func requireNoBarrier(t *testing.T, state pdgc.GCState, barrierID string) {
 
 // getState returns the GC state for the specified keyspace.
 // Use tikv.NullspaceID for global mode.
-func getState(t *testing.T, ctx context.Context, mockPD *mockPDClient, keyspaceID tikv.KeyspaceID) pdgc.GCState {
+func getState(ctx context.Context, t *testing.T, mockPD *mockPDClient, keyspaceID tikv.KeyspaceID) pdgc.GCState {
 	state, err := mockPD.GetGCStatesClient(uint32(keyspaceID)).GetGCState(ctx)
 	require.NoError(t, err)
 	return state

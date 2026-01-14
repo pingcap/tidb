@@ -80,7 +80,7 @@ func TestBRServiceSafePoint_MarshalLogObject(t *testing.T) {
 
 		// Check the context fields
 		fields := entry.ContextMap()
-		spFields, ok := fields["safepoint"].(map[string]interface{})
+		spFields, ok := fields["safepoint"].(map[string]any)
 		require.True(t, ok, "safepoint field should be a map")
 
 		require.Equal(t, "br-test-id", spFields["ID"])
@@ -105,7 +105,7 @@ func TestBRServiceSafePoint_MarshalLogObject(t *testing.T) {
 		entry := logs.All()[0]
 
 		fields := entry.ContextMap()
-		spFields, ok := fields["safepoint"].(map[string]interface{})
+		spFields, ok := fields["safepoint"].(map[string]any)
 		require.True(t, ok, "safepoint field should be a map")
 
 		require.Equal(t, "", spFields["ID"])
@@ -129,7 +129,7 @@ func TestBRServiceSafePoint_MarshalLogObject(t *testing.T) {
 		entry := logs.All()[0]
 
 		fields := entry.ContextMap()
-		spFields, ok := fields["safepoint"].(map[string]interface{})
+		spFields, ok := fields["safepoint"].(map[string]any)
 		require.True(t, ok)
 
 		require.Equal(t, "24h0m0s", spFields["TTL"])
@@ -171,8 +171,8 @@ func (s *SafepointKeeperSuite) otherKeyspaceID() tikv.KeyspaceID {
 
 // requireBarrierIsolation verifies barrier exists in this keyspace and not in others.
 func (s *SafepointKeeperSuite) requireBarrierIsolation(sp gc.BRServiceSafePoint) {
-	requireBarrier(s.T(), getState(s.T(), s.ctx, s.mgr.mockPD, s.keyspaceID), sp.ID, sp.BackupTS-1)
-	requireNoBarrier(s.T(), getState(s.T(), s.ctx, s.mgr.mockPD, s.otherKeyspaceID()), sp.ID)
+	requireBarrier(s.T(), getState(s.ctx, s.T(), s.mgr.mockPD, s.keyspaceID), sp.ID, sp.BackupTS-1)
+	requireNoBarrier(s.T(), getState(s.ctx, s.T(), s.mgr.mockPD, s.otherKeyspaceID()), sp.ID)
 }
 
 // setGCSafePoint sets the GC safe point for the current keyspace.

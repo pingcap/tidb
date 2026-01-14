@@ -47,9 +47,9 @@ func TestNewManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists in global state
-		requireBarrier(t, getState(t, ctx, mockPD, tikv.NullspaceID), sp.ID, sp.BackupTS-1)
+		requireBarrier(t, getState(ctx, t, mockPD, tikv.NullspaceID), sp.ID, sp.BackupTS-1)
 		// Verify barrier does NOT exist in keyspace state
-		requireNoBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID)
+		requireNoBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID)
 	})
 
 	t.Run("KeyspaceMode", func(t *testing.T) {
@@ -70,9 +70,9 @@ func TestNewManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists in keyspace state
-		requireBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
+		requireBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
 		// Verify barrier does NOT exist in global state
-		requireNoBarrier(t, getState(t, ctx, mockPD, tikv.NullspaceID), sp.ID)
+		requireNoBarrier(t, getState(ctx, t, mockPD, tikv.NullspaceID), sp.ID)
 	})
 }
 
@@ -95,9 +95,9 @@ func TestGlobalManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists in global state
-		requireBarrier(t, getState(t, ctx, mockPD, tikv.NullspaceID), sp.ID, sp.BackupTS-1)
+		requireBarrier(t, getState(ctx, t, mockPD, tikv.NullspaceID), sp.ID, sp.BackupTS-1)
 		// Verify barrier does NOT exist in keyspace state
-		requireNoBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID)
+		requireNoBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID)
 	})
 
 	t.Run("DeleteServiceSafePoint", func(t *testing.T) {
@@ -119,14 +119,14 @@ func TestGlobalManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists in global state
-		requireBarrier(t, getState(t, ctx, mockPD, tikv.NullspaceID), sp.ID, sp.BackupTS-1)
+		requireBarrier(t, getState(ctx, t, mockPD, tikv.NullspaceID), sp.ID, sp.BackupTS-1)
 
 		// Then delete it
 		err = mgr.DeleteServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
 		// Verify barrier no longer exists
-		requireNoBarrier(t, getState(t, ctx, mockPD, tikv.NullspaceID), sp.ID)
+		requireNoBarrier(t, getState(ctx, t, mockPD, tikv.NullspaceID), sp.ID)
 	})
 
 	t.Run("GetGCSafePoint", func(t *testing.T) {
@@ -164,9 +164,9 @@ func TestKeyspaceManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists in keyspace state
-		requireBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
+		requireBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
 		// Verify barrier does NOT exist in global state
-		requireNoBarrier(t, getState(t, ctx, mockPD, tikv.NullspaceID), sp.ID)
+		requireNoBarrier(t, getState(ctx, t, mockPD, tikv.NullspaceID), sp.ID)
 	})
 
 	t.Run("SetGCBarrier_ZeroTTL_CallsDelete", func(t *testing.T) {
@@ -187,7 +187,7 @@ func TestKeyspaceManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists in keyspace state
-		requireBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
+		requireBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
 
 		// Set with TTL=0, should delete
 		sp.TTL = 0
@@ -195,7 +195,7 @@ func TestKeyspaceManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier was removed
-		requireNoBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID)
+		requireNoBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID)
 	})
 
 	t.Run("DeleteGCBarrier", func(t *testing.T) {
@@ -216,14 +216,14 @@ func TestKeyspaceManager(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify barrier exists in keyspace state
-		requireBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
+		requireBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID, sp.BackupTS-1)
 
 		// Delete the barrier
 		err = mgr.DeleteServiceSafePoint(ctx, sp)
 		require.NoError(t, err)
 
 		// Verify barrier no longer exists
-		requireNoBarrier(t, getState(t, ctx, mockPD, testKeyspaceID), sp.ID)
+		requireNoBarrier(t, getState(ctx, t, mockPD, testKeyspaceID), sp.ID)
 	})
 
 	t.Run("GetGCSafePoint", func(t *testing.T) {
