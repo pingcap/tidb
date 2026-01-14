@@ -1019,25 +1019,30 @@ func (d *MyDecimal) ToInt() (int64, error) {
 	var x int64
 	wordIdx := 0
 	for i := d.digitsInt; i > 0; i -= digitsPerWord {
-		y := x
 		/*
 		   Attention: trick!
 		   we're calculating -|from| instead of |from| here
 		   because |LONGLONG_MIN| > LONGLONG_MAX
 		   so we can convert -9223372036854775808 correctly
 		*/
-		x = x*wordBase - int64(d.wordBuf[wordIdx])
-		wordIdx++
-		if y < math.MinInt64/wordBase || x > y {
-			/*
-			   the decimal is bigger than any possible integer
-			   return border integer depending on the sign
-			*/
+		// Check BEFORE multiplication to avoid int64 overflow
+		if x < math.MinInt64/wordBase {
 			if d.negative {
 				return math.MinInt64, ErrOverflow
 			}
 			return math.MaxInt64, ErrOverflow
 		}
+		x *= wordBase
+		// Check BEFORE subtraction to avoid int64 overflow
+		word := int64(d.wordBuf[wordIdx])
+		if x < math.MinInt64+word {
+			if d.negative {
+				return math.MinInt64, ErrOverflow
+			}
+			return math.MaxInt64, ErrOverflow
+		}
+		x -= word
+		wordIdx++
 	}
 	/* boundary case: 9223372036854775808 */
 	if !d.negative && x == math.MinInt64 {
@@ -1063,12 +1068,18 @@ func (d *MyDecimal) ToUint() (uint64, error) {
 	var x uint64
 	wordIdx := 0
 	for i := d.digitsInt; i > 0; i -= digitsPerWord {
-		y := x
-		x = x*wordBase + uint64(d.wordBuf[wordIdx])
-		wordIdx++
-		if y > math.MaxUint64/wordBase || x < y {
+		// Check BEFORE multiplication to avoid uint64 overflow
+		if x > math.MaxUint64/wordBase {
 			return math.MaxUint64, ErrOverflow
 		}
+		x *= wordBase
+		// Check BEFORE addition to avoid uint64 overflow
+		word := uint64(d.wordBuf[wordIdx])
+		if x > math.MaxUint64-word {
+			return math.MaxUint64, ErrOverflow
+		}
+		x += word
+		wordIdx++
 	}
 	for i := d.digitsFrac; i > 0; i -= digitsPerWord {
 		if d.wordBuf[wordIdx] != 0 {
