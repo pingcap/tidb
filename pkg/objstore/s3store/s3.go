@@ -795,15 +795,8 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Use the proper waiter pattern in AWS SDK v2
-	waiter := s3.NewObjectExistsWaiter(rs.svc)
-	hinput := &s3.HeadObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + file),
-	}
-	err = waiter.Wait(ctx, hinput, 30*time.Second)
 	rs.accessRec.RecWrite(len(data))
-	return errors.Trace(err)
+	return nil
 }
 
 // ReadFile implements Storage.ReadFile.
