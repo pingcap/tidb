@@ -660,7 +660,7 @@ bazel_ci_simple_prepare:
 	@mkdir -p ./bin; \
 	if [ ! -f ./bin/tikv-server.tar.gz ]; then \
 		echo "Downloading tikv-server tarball"; \
-		wget -q -O ./bin/tikv-server.tar.gz "http://fileserver.pingcap.net/download/pingcap/qa/builds/devbuild/tangenta/test/tikv-v9.0.0-alpha-143-g14cadb886-linux-amd64.tar.gz" || true; \
+		wget -q -O ./bin/tikv-server.tar.gz "https://fileserver.pingcap.net/download/builds/devbuild/9652/tikv-linux-amd64.tar.gz" || true; \
 	else \
 		echo "tikv-server tarball already exists, skipping download"; \
 	fi; \
