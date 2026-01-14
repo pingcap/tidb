@@ -110,9 +110,10 @@ var WriteBufferSize = 5 * 1024 * 1024
 // S3Storage defines some standard operations for BR/Lightning on the S3 storage.
 // It implements the `Storage` interface.
 type S3Storage struct {
-	svc       S3API
-	options   *backuppb.S3
-	accessRec *recording.AccessStats
+	svc          S3API
+	bucketPrefix storeapi.BucketPrefix
+	options      *backuppb.S3
+	accessRec    *recording.AccessStats
 	// used to indicate that the S3 storage is not the official AWS S3, but a
 	// S3-compatible storage, such as minio/KS3/OSS.
 	// SDK v2 has some compliance issue with its doc, such as DeleteObjects, v2
@@ -348,10 +349,12 @@ func (options *S3BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 
 // NewS3StorageForTest creates a new S3Storage for testing only.
 func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
+	bucketPrefix := storeapi.NewBucketPrefix(options.Bucket, options.Prefix)
 	return &S3Storage{
-		svc:       svc,
-		options:   options,
-		accessRec: accessRec,
+		svc:          svc,
+		bucketPrefix: bucketPrefix,
+		options:      options,
+		accessRec:    accessRec,
 	}
 }
 
@@ -643,10 +646,8 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	}
 	log.Info("succeed to get bucket region from s3", zap.String("bucket region", detectedRegion))
 
-	// Ensure prefix ends with "/"
-	if len(qs.Prefix) > 0 && !strings.HasSuffix(qs.Prefix, "/") {
-		qs.Prefix += "/"
-	}
+	qs.Prefix = storeapi.NewPrefix(qs.Prefix).String()
+	bucketPrefix := storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix)
 
 	// Perform permission checks
 	for _, p := range opts.CheckPermissions {
@@ -659,6 +660,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	// Create final S3Storage instance
 	s3Storage := &S3Storage{
 		svc:          client,
+		bucketPrefix: bucketPrefix,
 		options:      &qs,
 		accessRec:    opts.AccessRecording,
 		s3Compatible: !officialS3,
@@ -795,15 +797,8 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Use the proper waiter pattern in AWS SDK v2
-	waiter := s3.NewObjectExistsWaiter(rs.svc)
-	hinput := &s3.HeadObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + file),
-	}
-	err = waiter.Wait(ctx, hinput, 30*time.Second)
 	rs.accessRec.RecWrite(len(data))
-	return errors.Trace(err)
+	return nil
 }
 
 // ReadFile implements Storage.ReadFile.
@@ -958,14 +953,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 	if opt == nil {
 		opt = &storeapi.WalkOption{}
 	}
-	prefix := path.Join(rs.options.Prefix, opt.SubDir)
-	if len(prefix) > 0 && !strings.HasSuffix(prefix, "/") {
-		prefix += "/"
-	}
-
-	if len(opt.ObjPrefix) != 0 {
-		prefix += opt.ObjPrefix
-	}
+	prefix := rs.bucketPrefix.Prefix.JoinStr(opt.SubDir).ObjectKey(opt.ObjPrefix)
 
 	maxKeys := int64(1000)
 	if opt.ListCount > 0 {
@@ -977,6 +965,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 		MaxKeys: aws.Int32(int32(maxKeys)),
 	}
 
+	cliPrefix := rs.bucketPrefix.PrefixStr()
 	for {
 		// FIXME: We can't use ListObjectsV2, it is not universally supported.
 		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
@@ -1000,7 +989,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 			// when walk on specify directory, the result include storage.Prefix,
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
-			path := strings.TrimPrefix(*r.Key, rs.options.Prefix)
+			path := strings.TrimPrefix(*r.Key, cliPrefix)
 			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
 			path = strings.TrimPrefix(path, "/")
 			itemSize := *r.Size
@@ -1024,7 +1013,7 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 
 // URI returns s3://<base>/<prefix>.
 func (rs *S3Storage) URI() string {
-	return "s3://" + rs.options.Bucket + "/" + rs.options.Prefix
+	return "s3://" + rs.options.Bucket + "/" + rs.bucketPrefix.PrefixStr()
 }
 
 // Open a Reader by file path.
@@ -1090,24 +1079,10 @@ func (rs *S3Storage) open(
 		Key:    aws.String(rs.options.Prefix + path),
 	}
 
-	// If we just open part of the object, we set `Range` in the request.
-	// If we meant to open the whole object, not just a part of it,
-	// we do not pass the range in the request,
-	// so that even if the object is empty, we can still get the response without errors.
-	// Then this behavior is similar to openning an empty file in local file system.
-	isFullRangeRequest := false
-	var rangeOffset *string
-	switch {
-	case endOffset > startOffset:
-		// s3 endOffset is inclusive
-		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1))
-	case startOffset == 0:
-		// openning the whole object, no need to fill the `Range` field in the request
-		isFullRangeRequest = true
-	default:
-		rangeOffset = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
+	isFullRangeRequest, rangeOffset := storeapi.GetHTTPRange(startOffset, endOffset)
+	if rangeOffset != "" {
+		input.Range = aws.String(rangeOffset)
 	}
-	input.Range = rangeOffset
 	result, err := rs.svc.GetObject(ctx, input)
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
@@ -1151,7 +1126,7 @@ func (rs *S3Storage) open(
 		}
 		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown,
 			"open file '%s' failed, expected range: %s, got: %s",
-			path, *rangeOffset, rangeStr)
+			path, rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil

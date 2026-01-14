@@ -44,7 +44,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -288,8 +287,10 @@ const (
 	OpFlushBindings
 	// OpCaptureBindings is used to capture plan bindings.
 	OpCaptureBindings
-	// OpReloadBindings is used to reload plan binding.
+	// OpReloadBindings is used to reload plan binding in this node.
 	OpReloadBindings
+	// OpReloadClusterBindings is used to reload plan binding in the entire cluster.
+	OpReloadClusterBindings
 	// OpSetBindingStatus is used to set binding status.
 	OpSetBindingStatus
 	// OpSQLBindDropByDigest is used to drop SQL binds by digest
@@ -304,9 +305,10 @@ const (
 type SQLBindPlan struct {
 	physicalop.SimpleSchemaProducer
 
-	IsGlobal  bool
-	SQLBindOp SQLBindOpType
-	Details   []*SQLBindOpDetail
+	IsGlobal     bool
+	SQLBindOp    SQLBindOpType
+	Details      []*SQLBindOpDetail
+	IsFromRemote bool
 }
 
 // SQLBindOpDetail represents the detail of an operation on a single binding.
@@ -341,31 +343,23 @@ type Simple struct {
 	ResolveCtx *resolve.Context
 }
 
-// MemoryUsage return the memory usage of Simple
-func (s *Simple) MemoryUsage() (sum int64) {
-	if s == nil {
-		return
-	}
-
-	sum = s.SimpleSchemaProducer.MemoryUsage() + size.SizeOfInterface + size.SizeOfBool + size.SizeOfUint64
-	return
-}
-
-// PhysicalSimpleWrapper is a wrapper of `Simple` to implement physical plan interface.
+// PhysicalPlanWrapper is a wrapper to wrap any Plan to a PhysicalPlan.
 //
 //	Used for simple statements executing in coprocessor.
-type PhysicalSimpleWrapper struct {
+type PhysicalPlanWrapper struct {
 	physicalop.BasePhysicalPlan
-	Inner Simple
+	Inner base.Plan
 }
 
 // MemoryUsage return the memory usage of PhysicalSimpleWrapper
-func (p *PhysicalSimpleWrapper) MemoryUsage() (sum int64) {
+func (p *PhysicalPlanWrapper) MemoryUsage() (sum int64) {
 	if p == nil {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + p.Inner.MemoryUsage()
+	// base.Plan doesn't have MemoryUsage method, so we just use a fixed size.
+	planMem := int64(256)
+	sum = p.BasePhysicalPlan.MemoryUsage() + planMem
 	return
 }
 
