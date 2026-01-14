@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/registry"
@@ -177,7 +178,9 @@ func TestRegistryBasicOperations(t *testing.T) {
 	require.Equal(t, restoreID, resumedID3, "Should reuse existing task when auto-detected restoredTS is same")
 	require.Equal(t, uint64(200), resolvedRestoreTS4, "Should use the same restoredTS")
 
-	// Test 5: Conflict detection - same task already running
+	// Test 5: Conflict detection - same task already running, waiting until it is stale
+	failpoint.Enable("github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration", "return(1)")
+	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration")
 	_, _, err = r.ResumeOrCreateRegistration(ctx, info, true)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "already exists and is running")

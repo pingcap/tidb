@@ -17,4 +17,4 @@
 package intest
 
 // InTest checks if the code is running in test.
-var InTest = false
+var InTest = true

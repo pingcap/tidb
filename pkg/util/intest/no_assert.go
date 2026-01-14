@@ -17,7 +17,7 @@
 package intest
 
 // EnableAssert checks if the code is running in integration test.
-var EnableAssert = false
+var EnableAssert = true
 
 // Assert asserts a condition is true
 func Assert(cond bool, msgAndArgs ...any) {
