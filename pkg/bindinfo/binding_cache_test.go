@@ -159,3 +159,33 @@ func TestBindCache(t *testing.T) {
 	result = bindCache.get(bigBindCacheKey)
 	require.Nil(t, result)
 }
+
+// BenchmarkBindingCacheConcurrentReads benchmarks concurrent read performance of bindingCache.
+// This is mainly to cover the change in https://github.com/pingcap/tidb/issues/65412:
+// switching bindingCache from Mutex to RWMutex so multiple sessions can read concurrently.
+func BenchmarkBindingCacheConcurrentReads(b *testing.B) {
+	variable.MemQuotaBindingCache.Store(100000)
+	bindCache := newBindCache().(*bindingCache)
+
+	const numBindings = 256
+	for i := 0; i < numBindings; i++ {
+		sqlDigest := "digest_" + strconv.Itoa(i)
+		bindings := []Binding{{
+			OriginalSQL: "SELECT * FROM t" + strconv.Itoa(i),
+			SQLDigest:   sqlDigest,
+			BindSQL:     "SELECT * FROM t" + strconv.Itoa(i),
+		}}
+		_ = bindCache.SetBinding(sqlDigest, bindings)
+	}
+
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		i := 0
+		for pb.Next() {
+			sqlDigest := "digest_" + strconv.Itoa(i&(numBindings-1))
+			i++
+			_ = bindCache.GetBinding(sqlDigest)
+			_ = bindCache.Size()
+		}
+	})
+}
