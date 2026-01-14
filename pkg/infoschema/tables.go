@@ -440,7 +440,7 @@ func buildTableMeta(tableName string, cs []columnInfo) *model.TableInfo {
 				tblInfo.Indices = primaryIndices
 			}
 		}
-		cols = append(cols, buildColumnInfo(int64(offset), c))
+		cols = append(cols, buildColumnInfo(int64(offset) + 1, c))
 	}
 	for i, col := range cols {
 		col.Offset = i
