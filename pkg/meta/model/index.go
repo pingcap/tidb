@@ -592,6 +592,17 @@ func (index *IndexInfo) IsTiCIIndex() bool {
 	return index.FullTextInfo != nil || index.HybridInfo != nil
 }
 
+// HasExtraTiCIShardingKey checks whether the TiCI index has an extra sharding key.
+// Their storage layout is different.
+// When the TiCI index has an extra sharding key, it's encoded key format is like normal index.
+// When the TiCI index does not have an extra sharding key, it's encoded key format is like table key.
+func (index *IndexInfo) HasExtraTiCIShardingKey() bool {
+	if index.HybridInfo != nil && index.HybridInfo.Sharding != nil {
+		return true
+	}
+	return false
+}
+
 // GetColumnarIndexType returns the type of columnar index.
 func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 	if index.VectorInfo != nil {

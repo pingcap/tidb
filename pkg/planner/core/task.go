@@ -1328,21 +1328,6 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 				return attachPlan2Task(newGlobalTopN, rootTask)
 			}
 		} else {
-			// TODO: Currently, we only enable TiCI to return columns of pk.
-			// But actually it can return the columns defined in inverted clause and sort clause.
-			// Before we fix the tici side's output columns, there's some TopN cannot be pushed down to TiCI index plan.
-			// So we try to add a TopN to TiCI side again here.
-			// This will be removed once we fix the TiCI side's output columns.
-			if !copTask.IndexPlanFinished && copTask.IndexPlan != nil {
-				indexScanPlan := copTask.IndexPlan
-				for len(indexScanPlan.Children()) > 0 {
-					indexScanPlan = indexScanPlan.Children()[0]
-				}
-				indexScan := indexScanPlan.(*physicalop.PhysicalIndexScan)
-				if indexScan.StoreType == kv.TiCI {
-					indexScan.TryToPassTiCITopN(p)
-				}
-			}
 			// It works for both normal index scan and index merge scan.
 			copTask.FinishIndexPlan()
 			pushedDownTopN, newGlobalTopN = getPushedDownTopN(p, copTask.TablePlan, copTask.GetStoreType())

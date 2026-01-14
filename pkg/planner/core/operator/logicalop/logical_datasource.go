@@ -42,7 +42,6 @@ import (
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -192,7 +191,7 @@ func (ds *DataSource) PredicatePushDown(predicates []expression.Expression) ([]e
 func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.LogicalPlan, error) {
 	used := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), parentUsedCols, ds.Schema())
 
-	exprCols := expression.ExtractColumnsFromExpressions(ds.AllConds, nil)
+	exprCols := expression.ExtractColumnsFromExpressions(ds.AllConds, nil, true)
 	exprUsed := expression.GetUsedList(ds.SCtx().GetExprCtx().GetEvalCtx(), exprCols, ds.Schema())
 
 	originSchemaColumns := ds.Schema().Columns
@@ -729,13 +728,10 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		ds.SCtx().GetSessionVars().StmtCtx.AppendWarning(plannererrors.ErrWarnConflictingHint.FastGenByArgs("USE_INDEX"))
 	}
 
-	err := ds.preparePKRangesForTiCI(ds.PossibleAccessPaths[0], ds.PushedDownConds)
-	if err != nil {
-		return err
-	}
-
-	// Remove the matched conditions from PushedDownConds.
-	ds.PushedDownConds = slices.DeleteFunc(ds.PushedDownConds, func(cond expression.Expression) bool {
+	remainedFilters := make([]expression.Expression, len(ds.PushedDownConds))
+	copy(remainedFilters, ds.PushedDownConds)
+	// Remove the matched search functions from pushed down conditions.
+	remainedFilters = slices.DeleteFunc(remainedFilters, func(cond expression.Expression) bool {
 		sf, ok := cond.(*expression.ScalarFunction)
 		if !ok {
 			return false
@@ -743,8 +739,6 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		_, ok = matchedFuncs[sf]
 		return ok
 	})
-	// Re-construct the AllConds because column pruning relays on AllConds.
-	ds.AllConds = slices.Clone(ds.PushedDownConds)
 
 	evalCtx := ds.SCtx().GetExprCtx().GetEvalCtx()
 	client := ds.SCtx().GetBuildPBCtx().Client
@@ -776,6 +770,7 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	for ftsFunc := range matchedFuncs {
 		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
 	}
+	ds.PossibleAccessPaths[0].TableFilters = remainedFilters
 	return nil
 }
 
@@ -800,83 +795,6 @@ func (ds *DataSource) CleanUnusedTiCIIndexes() {
 	}
 }
 
-// preparePKRangesForTiCI prepares the pk ranges for TiCI index scan.
-// It's a tmp solution.
-// We should make it reusing the logic of building pk ranges for normal table scan.
-func (ds *DataSource) preparePKRangesForTiCI(ticiPath *util.AccessPath, pushedPredicates []expression.Expression) error {
-	if ds.TableInfo.IsCommonHandle {
-		ticiPath.Ranges = ranger.FullNotNullRange()
-		var commonHandle *model.IndexInfo
-		for _, idx := range ds.TableInfo.Indices {
-			if idx.Primary {
-				commonHandle = idx
-				break
-			}
-		}
-		ticiPath.IdxCols, ticiPath.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, commonHandle)
-		ticiPath.FullIdxCols, ticiPath.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, commonHandle)
-		if len(pushedPredicates) == 0 {
-			return nil
-		}
-		if err := detachCondAndBuildRangeForPath(ds.SCtx(), ticiPath, pushedPredicates); err != nil {
-			return err
-		}
-		ticiPath.IdxCols = ticiPath.IdxCols[:0]
-		ticiPath.IdxColLens = ticiPath.IdxColLens[:0]
-		ticiPath.FullIdxCols = ticiPath.FullIdxCols[:0]
-		ticiPath.FullIdxColLens = ticiPath.FullIdxColLens[:0]
-		return nil
-	}
-	var pkCol *expression.Column
-	isUnsigned := false
-	if ds.TableInfo.PKIsHandle {
-		if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
-			pkCol = expression.ColInfo2Col(ds.Schema().Columns, pkColInfo)
-		}
-	} else {
-		pkCol = ds.Schema().GetExtraHandleColumn()
-	}
-	if pkCol == nil {
-		ticiPath.Ranges = ranger.FullIntRange(isUnsigned)
-		return nil
-	}
-
-	ticiPath.Ranges = ranger.FullIntRange(isUnsigned)
-	if len(pushedPredicates) == 0 {
-		return nil
-	}
-	// for cnf condition combination, c=1 and c=2 and (1 member of (a)),
-	// c=1 and c=2 will derive invalid range represented by an access condition as constant of 0 (false).
-	// later this constant of 0 will be built as empty range.
-	ticiPath.AccessConds, _ = ranger.DetachCondsForColumn(ds.SCtx().GetRangerCtx(), pushedPredicates, pkCol)
-	var err error
-	ticiPath.Ranges, ticiPath.AccessConds, _, err = ranger.BuildTableRange(ticiPath.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
-	if err != nil {
-		return err
-	}
-	// Row count estimation is not updated
-	return nil
-}
-
-func detachCondAndBuildRangeForPath(
-	sctx base.PlanContext,
-	path *util.AccessPath,
-	conds []expression.Expression,
-) error {
-	if len(path.IdxCols) == 0 {
-		return nil
-	}
-	res, err := ranger.DetachCondAndBuildRangeForIndex(sctx.GetRangerCtx(), conds, path.IdxCols, path.IdxColLens, sctx.GetSessionVars().RangeMaxSize)
-	if err != nil {
-		return err
-	}
-	path.Ranges = res.Ranges
-	path.AccessConds = res.AccessConds
-	// Row count estimation is not updated
-	return err
-}
-
 // IsSingleScan checks whether all the needed columns and conditions can be covered by the index.
 func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens []int) bool {
 	if !ds.SCtx().GetSessionVars().OptPrefixIndexSingleScan || ds.ColsRequiringFullLen == nil {
@@ -888,6 +806,19 @@ func (ds *DataSource) IsSingleScan(indexColumns []*expression.Column, idxColLens
 		return false
 	}
 	for _, cond := range ds.AllConds {
+		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
+			return false
+		}
+	}
+	return true
+}
+
+// IsTiCISingleScan checks whether all the needed columns and conditions can be covered by the index for TiCI index.
+func (ds *DataSource) IsTiCISingleScan(indexColumns []*expression.Column, idxColLens []int, path *util.AccessPath) bool {
+	if !ds.IsIndexCoveringColumns(ds.ColsRequiringFullLen, indexColumns, idxColLens) {
+		return false
+	}
+	for _, cond := range path.TableFilters {
 		if !ds.IsIndexCoveringCondition(cond, indexColumns, idxColLens) {
 			return false
 		}
@@ -981,24 +912,6 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 		}
 	}
 	return false
-}
-
-func (ds *DataSource) isHandleCoveringColumns(columns []*expression.Column) bool {
-	for _, col := range columns {
-		if pkCoveringState := ds.handleCoveringColumn(col, false); pkCoveringState == stateNotCoveredByHandle {
-			return false
-		}
-	}
-	return true
-}
-
-// IsTiCISingleScan checks whether the scan can be served as a single scan in TiCI.
-func (ds *DataSource) IsTiCISingleScan() bool {
-	// No filter can be calculated in TiCI.
-	if len(ds.PushedDownConds) > 0 {
-		return false
-	}
-	return ds.isHandleCoveringColumns(ds.Schema().Columns)
 }
 
 // AppendTableCol appends a column to the original columns of the table before pruning,

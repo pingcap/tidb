@@ -367,14 +367,6 @@ func (e *IndexReaderExecutor) buildKVReq(r []kv.KeyRange) (*kv.Request, error) {
 		builder.FullTextInfo.TableID = e.table.Meta().ID
 		builder.FullTextInfo.IndexID = e.index.ID
 		builder.FullTextInfo.ExecutorID = e.plans[0].ExplainID().String()
-
-		id := e.Table().Meta().ID
-		startKey := tablecodec.EncodeTablePrefix(id)
-		endKey := tablecodec.EncodeTablePrefix(id + 1)
-		kvRange := kv.KeyRange{StartKey: startKey, EndKey: endKey}
-		kvRanges := make([]kv.KeyRange, 0, 1)
-		kvRanges = append(kvRanges, kvRange)
-		builder.SetKeyRanges(kvRanges)
 	}
 	kvReq, err := builder.Build()
 	return kvReq, err
@@ -642,12 +634,25 @@ func buildKeyRanges(dctx *distsqlctx.DistSQLContext,
 	table table.Table,
 ) ([][]kv.KeyRange, error) {
 	results := make([][]kv.KeyRange, 0, len(physicalIDs))
+	isTiCIIndex := index.IsTiCIIndex()
+	var (
+		ticiShardType distsql.TiCIShardType
+	)
+	if isTiCIIndex {
+		if index.HasExtraTiCIShardingKey() {
+			ticiShardType = distsql.TiCIShardExtraShardingKey
+		} else if table.Meta().IsCommonHandle {
+			ticiShardType = distsql.TiCIShardCommonHandle
+		} else {
+			ticiShardType = distsql.TiCIShardIntHandle
+		}
+	}
 	for _, physicalID := range physicalIDs {
 		if pRange, ok := rangeOverrideForPartitionID[physicalID]; ok {
 			ranges = pRange
 		}
 		if index.IsTiCIIndex() {
-			kvRanges, err := distsql.FulltextIndexRangesToKVRanges(dctx, []int64{physicalID}, ranges, table.Meta().IsCommonHandle)
+			kvRanges, err := distsql.TiCIIndexRangesToKVRanges(dctx, []int64{physicalID}, index.ID, ranges, ticiShardType)
 			if err != nil {
 				return nil, err
 			}

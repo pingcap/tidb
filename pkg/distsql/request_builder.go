@@ -923,14 +923,29 @@ func appendRanges(tbl *model.TableInfo, tblID int64) ([]kv.KeyRange, error) {
 	return retRanges, nil
 }
 
-// FulltextIndexRangesToKVRanges converts fulltext index ranges to "KeyRange".
+// TiCIShardType is TiCI index's encoding type for sharding.
+type TiCIShardType int8
+
+// Different TiCI index shard types.
+// The three types are corresponding to three kinds of encoding formats.
+const (
+	TiCIShardIntHandle TiCIShardType = iota
+	TiCIShardCommonHandle
+	TiCIShardExtraShardingKey
+)
+
+// TiCIIndexRangesToKVRanges converts fulltext index ranges to "KeyRange".
 // This is a temporary solution, and we should implement the fulltext index
 // ranges conversion in the future.
-func FulltextIndexRangesToKVRanges(
+func TiCIIndexRangesToKVRanges(
 	dctx *distsqlctx.DistSQLContext,
 	tids []int64,
+	idxID int64,
 	ranges []*ranger.Range,
-	tableIsCommonHandle bool,
+	shardType TiCIShardType,
 ) (*kv.KeyRanges, error) {
-	return TableHandleRangesToKVRanges(dctx, tids, tableIsCommonHandle, ranges)
+	if shardType == TiCIShardExtraShardingKey {
+		return IndexRangesToKVRanges(dctx, tids[0], idxID, ranges)
+	}
+	return TableHandleRangesToKVRanges(dctx, tids, shardType == TiCIShardCommonHandle, ranges)
 }

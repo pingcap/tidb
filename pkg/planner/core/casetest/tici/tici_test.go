@@ -81,6 +81,19 @@ func TestTiCISearchExplain(t *testing.T) {
 			"columns": ["i", "ts"]
 		}
 	}'`)
+	tk.MustExec("create table t5(i bigint, ts timestamp(5), d datetime(3), t text, primary key(i))")
+	tk.MustExec(`create hybrid index idx1 on t5(ts, d, t) parameter '{
+		"inverted": {
+			"columns": ["ts", "d", "t"]
+		},
+		"sort": {
+			"columns": ["ts", "d"],
+			"order": ["asc", "desc"]
+		},
+		"sharding_key": {
+			"columns": ["ts"]
+		}
+	}'`)
 
 	var input []string
 	var output []struct {
