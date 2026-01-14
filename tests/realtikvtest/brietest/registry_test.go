@@ -22,7 +22,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
 	"github.com/pingcap/tidb/br/pkg/registry"
@@ -31,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -68,8 +68,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 	tk, dom, g := initRegistryTest(t)
 	cleanupRegistryTable(tk)
 
-	failpoint.Enable("github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration", "return(1)")
-	defer failpoint.Disable("github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration", "return(1)")
 	// Create registry
 	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
