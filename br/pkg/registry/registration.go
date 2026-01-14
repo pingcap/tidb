@@ -771,7 +771,8 @@ func (r *Registry) isTaskStale(ctx context.Context, taskID uint64, initialHeartb
 	// check heartbeat every minute for up to 5 minutes
 	tickerDuration := time.Minute
 	failpoint.Inject("is-task-stale-ticker-duration", func(val failpoint.Value) {
-		tickerDuration = time.Duration(val.(int)) * time.Second
+		secs := time.Duration(val.(int))
+		tickerDuration = secs * time.Second
 	})
 	ticker := time.NewTicker(tickerDuration)
 	defer ticker.Stop()
