@@ -230,6 +230,49 @@ func TestStaleReadProcessorWithSelectTable(t *testing.T) {
 	tk.MustExec("set tidb_enable_external_ts_read=OFF")
 }
 
+func TestStaleReadSupportDateTimeAndTSO(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	p1 := genStaleReadPoint(t, tk)
+	p2 := genStaleReadPoint(t, tk)
+
+	require.NotEqual(t, p1.ts, p2.ts)
+
+	// Reading AS OF TIMESTAMP 'TSO' should be parsed correctly.
+	processor := createProcessor(t, tk.Session())
+	err := processor.OnSelectTable(astTableWithAsOf(t, fmt.Sprintf("%d", p1.ts)))
+	require.NoError(t, err)
+	require.Equal(t, processor.GetStalenessReadTS(), p1.ts)
+
+	// Reading AS OF TIMESTAMP 'TSO' does not lose precision.
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnSelectTable(astTableWithAsOf(t, fmt.Sprintf("%d", p1.ts+1)))
+	require.NoError(t, err)
+	require.Equal(t, processor.GetStalenessReadTS(), p1.ts+1)
+
+	// Reading AS OF TIMESTAMP 'YYYY-MM-DD HH:MM:SS' should be parsed correctly.
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnSelectTable(astTableWithAsOf(t, p1.dt))
+	require.NoError(t, err)
+	require.Equal(t, processor.GetStalenessReadTS(), p1.ts)
+
+	// AS OF TIMESTAMP 'YYYYMMDDHHMMSS' is a valid datetime and is parsed as
+	// 'YYYY-MM-DD HH:MM:S', not as TSO. This is for backward compatibility.
+	compactDatetime := p1.tm.Format("20060102150405") // Go format for YYYYMMDDHHMMSS
+	// Truncate to seconds since compact format doesn't have subsecond precision
+	expectedTSFromDatetime := oracle.GoTimeToTS(p1.tm.Truncate(time.Second))
+
+	processor = createProcessor(t, tk.Session())
+	err = processor.OnSelectTable(astTableWithAsOf(t, compactDatetime))
+	require.NoError(t, err)
+	// The timestamp should match the datetime interpretation, not the raw integer
+	require.Equal(t, expectedTSFromDatetime, processor.GetStalenessReadTS())
+	// Verify it's NOT treated as a raw TSO (which would be a completely different value)
+	compactAsInt, err := strconv.ParseUint(compactDatetime, 10, 64)
+	require.NoError(t, err)
+	require.NotEqual(t, compactAsInt, processor.GetStalenessReadTS())
+}
+
 func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
 	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
 	tk := testkit.NewTestKit(t, store)

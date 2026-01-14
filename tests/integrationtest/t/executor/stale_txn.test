@@ -39,3 +39,22 @@ create table t1 (id int primary key, v int);
 select * from t1 as of timestamp NULL;
 --error 8135
 start transaction read only as of timestamp NULL;
+
+# TestAsOfTimestampSupportTSO
+drop table if exists t1;
+create table t1 (value int);
+
+insert into t1 values (1);
+insert into t1 values (2);
+set @last_commit_ts = json_extract(@@tidb_last_txn_info, '$.commit_ts');
+set @prev_commit_ts = cast(cast(@last_commit_ts as unsigned) - 1 as char);
+
+select count(*) as prev_count from t1 as of timestamp @prev_commit_ts;
+select count(*) as exact_count from t1 as of timestamp @last_commit_ts;
+--error 1292
+select count(*) from t1 as of timestamp 'invalid-date';
+
+start transaction read only as of timestamp @last_commit_ts;
+select @@tidb_current_ts = CAST(@last_commit_ts AS UNSIGNED) AS ts_matches;
+select count(*) as count_from_txn from t1;
+commit;
