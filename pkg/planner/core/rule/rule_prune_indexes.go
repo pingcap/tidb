@@ -29,6 +29,10 @@ import (
 const (
 	// defaultMaxIndexes is the default maximum number of indexes to keep when pruning.
 	// This prevents overly aggressive pruning when the threshold is small.
+	// TODO: We should add a second pruning phase around the fillIndexPath step,
+	// where we can refine the indexes further based on the actual column statistics.
+	// Therefore, if a customer did set tidn_opt_index_prune_threshold < 10, we could
+	// a minimum of 10 in the first pruning phase, and prune further in the second phase.
 	defaultMaxIndexes = 10
 )
 
@@ -119,7 +123,12 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		}
 
 		// Calculate coverage for this index
-		idxScore := scoreIndexPath(path, req, ds.Columns)
+		// Use TableInfo.Columns (not ds.Columns) because IndexColumn.Offset refers to TableInfo.Columns
+		var tableColumns []*model.ColumnInfo
+		if ds.TableInfo != nil {
+			tableColumns = ds.TableInfo.Columns
+		}
+		idxScore := scoreIndexPath(path, req, tableColumns)
 
 		if path.FullIdxCols != nil {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
