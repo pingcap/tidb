@@ -166,20 +166,33 @@ func (o *DefaultJobOrchestrator) SubmitAndWait(ctx context.Context, tables []*im
 
 // Cancel cancels all active jobs.
 func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
-	groupKey := ""
-	if len(o.activeJobs) > 0 {
-		groupKey = o.activeJobs[0].GroupKey
-	}
-	if groupKey == "" && o.submitter != nil {
-		groupKey = o.submitter.GetGroupKey()
-	}
+	groupKey := o.getGroupKey()
 	if groupKey == "" {
 		o.logger.Warn("no group key found, skip cancelling jobs")
 		return nil
 	}
 
 	o.logger.Info("cancelling import jobs", zap.String("groupKey", groupKey))
+	statusByID, cancelledJobs, err := o.cancelJobsInGroup(ctx, groupKey)
 
+	updateErr := o.updateCheckpointsAfterCancel(ctx, groupKey, statusByID, cancelledJobs)
+	if err == nil {
+		err = updateErr
+	}
+	return err
+}
+
+func (o *DefaultJobOrchestrator) getGroupKey() string {
+	if len(o.activeJobs) > 0 {
+		return o.activeJobs[0].GroupKey
+	}
+	if o.submitter != nil {
+		return o.submitter.GetGroupKey()
+	}
+	return ""
+}
+
+func (o *DefaultJobOrchestrator) cancelJobsInGroup(ctx context.Context, groupKey string) (map[int64]*importsdk.JobStatus, map[int64]struct{}, error) {
 	var firstErr error
 	statusByID := make(map[int64]*importsdk.JobStatus)
 	cancelledJobs := make(map[int64]struct{})
@@ -228,11 +241,20 @@ func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return errors.Trace(ctx.Err())
+			return nil, nil, errors.Trace(ctx.Err())
 		case <-timer.C:
 		}
 	}
+	return statusByID, cancelledJobs, firstErr
+}
 
+func (o *DefaultJobOrchestrator) updateCheckpointsAfterCancel(
+	ctx context.Context,
+	groupKey string,
+	statusByID map[int64]*importsdk.JobStatus,
+	cancelledJobs map[int64]struct{},
+) error {
+	var firstErr error
 	// Update checkpoints based on final job status.
 	// Use activeJobs as the source for table names.
 	for _, job := range o.activeJobs {
@@ -275,7 +297,6 @@ func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
 			}
 		}
 	}
-
 	return firstErr
 }
 
