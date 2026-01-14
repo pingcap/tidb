@@ -266,11 +266,11 @@ func (bp *BucketPrefix) PrefixStr() string {
 
 // GetHTTPRange returns the HTTP Range header value for the given start and end
 // offsets.
-// if endOffset is not 0, startOffset must <= endOffset, we don't check the
+// If endOffset is not 0, startOffset must <= endOffset; we don't check the
 // validity here.
-// if startOffset = 0, `full` = true and 'rangeVal' is empty, else a partial
-// object is requested, `full` is false and `rangeVal` contains the Range header
-// value.
+// If startOffset == 0 and endOffset == 0, `full` is true and `rangeVal` is empty.
+// Otherwise a partial object is requested, `full` is false and `rangeVal` contains
+// the Range header value.
 func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal string) {
 	// If we just open part of the object, we set `Range` in the request.
 	// If we meant to open the whole object, not just a part of it,
