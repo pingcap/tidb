@@ -411,12 +411,13 @@ func BuildIndexInfo(
 		}
 		idxInfo.Global = indexOption.Global
 		// Set global index version for new global indexes.
-		// Version 1 is only needed for non-clustered tables with non-unique global indexes
+		// Version 2 is needed for non-clustered tables with non-unique global indexes
 		// to prevent collisions after EXCHANGE PARTITION due to duplicate _tidb_rowid values.
+		// V2 encodes partition ID in the key only (not in the value) for storage efficiency.
 		// Clustered tables and unique indexes don't have this issue and use version 0.
 		idxInfo.GlobalIndexVersion = 0
 		if indexOption.Global && !idxInfo.Unique && !tblInfo.HasClusteredIndex() {
-			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV1
+			idxInfo.GlobalIndexVersion = model.GlobalIndexVersionV2
 			failpoint.Inject("SetGlobalIndexVersion", func(val failpoint.Value) {
 				if valInt, ok := val.(int); ok {
 					idxInfo.GlobalIndexVersion = uint8(valInt)

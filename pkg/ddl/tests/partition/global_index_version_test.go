@@ -199,8 +199,8 @@ func TestGlobalIndexVersion1(t *testing.T) {
 	require.NotNil(t, globalIdx, "Global index idx_b not found")
 	require.True(t, globalIdx.Global, "Index should be global")
 
-	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
-		"Global index should have version %d", model.GlobalIndexVersionV1)
+	require.Equal(t, model.GlobalIndexVersionV2, globalIdx.GlobalIndexVersion,
+		"Global index should have version %d", model.GlobalIndexVersionV2)
 
 	// Create a non-global index and verify it has version 0
 	tk.MustExec("CREATE INDEX idx_a ON tp(a)")

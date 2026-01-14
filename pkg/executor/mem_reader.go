@@ -1000,9 +1000,17 @@ func (iter *memRowsIterForIndex) Next() ([]types.Datum, error) {
 			continue
 		}
 
-		// filter key/value by partitition id
+		// filter key/value by partition id
 		if iter.index.Global {
-			_, pid, err := codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+			var pid int64
+			var err error
+			// For V2+ non-unique global indexes, the partition ID is in the key, not the value.
+			// For unique global indexes or legacy (V0/V1) indexes, partition ID is in the value.
+			if !iter.index.Unique && iter.index.GlobalIndexVersion >= model.GlobalIndexVersionV2 {
+				pid, err = tablecodec.DecodePartitionIDFromGlobalIndexKey(key, len(iter.index.Columns))
+			} else {
+				_, pid, err = codec.DecodeInt(tablecodec.SplitIndexValue(value).PartitionID)
+			}
 			if err != nil {
 				return nil, err
 			}
