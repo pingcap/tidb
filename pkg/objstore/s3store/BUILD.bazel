@@ -3,9 +3,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "s3store",
     srcs = [
+        "interface.go",
+        "io.go",
         "ks3.go",
+        "logger.go",
+        "retry.go",
         "s3.go",
-        "s3_interface.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/objstore/s3store",
     visibility = ["//visibility:public"],
@@ -16,6 +19,7 @@ go_library(
         "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
         "//pkg/objstore/recording",
+        "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",
         "//pkg/util/injectfailpoint",
         "//pkg/util/prefetch",
@@ -54,6 +58,8 @@ go_test(
     name = "s3store_test",
     timeout = "short",
     srcs = [
+        "main_test.go",
+        "retry_test.go",
         "s3_flags_test.go",
         "s3_test.go",
     ],
@@ -61,11 +67,10 @@ go_test(
     flaky = True,
     shard_count = 48,
     deps = [
-        "//br/pkg/mock",
-        "//dumpling/context",
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/recording",
+        "//pkg/objstore/s3store/mock",
         "//pkg/objstore/storeapi",
         "//pkg/testkit/testfailpoint",
         "@com_github_aws_aws_sdk_go_v2//aws",
