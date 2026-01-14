@@ -304,8 +304,10 @@ func CleanupGlobalMemArbitratorForTest() {
 	}
 	m.stop()
 	globalArbitrator.v.Store(nil)
+
 	mockNow = nil
 	mockDebugInject = nil
+	mockWinupCB = nil
 }
 
 // SetupGlobalMemArbitratorForTest sets up the global memory arbitrator for tests.

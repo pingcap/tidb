@@ -1219,31 +1219,37 @@ func (t *Tracker) DetachMemArbitrator() bool {
 		return false
 	}
 
-	switch m.state.Swap(memArbitratorStateDown) {
+	maxConsumed := t.MaxConsumed()
+	killed := false
+	if m.killer != nil {
+		killed = m.killer.Signal != 0
+	}
+
+	switch oriState := m.state.Swap(memArbitratorStateDown); oriState {
 	case memArbitratorStateSmallBudget:
 		globalArbitrator.metrics.pools.small.Add(-1)
-	case memArbitratorStateIntoBigBudget:
-		{
-			m.budget.useBig.Lock() // wait for initBigBudget to finish
+	case memArbitratorStateIntoBigBudget, memArbitratorStateBigBudget:
+		if m.killer != nil {
+			if !intest.InTest { // if in test, let the test case control the killer
+				m.killer.Reset() // trigger kill event and stop any arbitration wait
+			}
+		}
+
+		if oriState == memArbitratorStateIntoBigBudget { // wait for initBigBudget to finish
+			m.budget.useBig.Lock()
 
 			globalArbitrator.metrics.pools.intoBig.Add(-1)
 
 			m.budget.useBig.Unlock()
+		} else {
+			globalArbitrator.metrics.pools.big.Add(-1)
 		}
-	case memArbitratorStateBigBudget:
-		globalArbitrator.metrics.pools.big.Add(-1)
 	default:
 		return false
 	}
 
 	if m.isInternal {
 		globalArbitrator.metrics.pools.internal.Add(-1)
-	}
-
-	maxConsumed := t.MaxConsumed()
-	killed := false
-	if m.killer != nil {
-		killed = m.killer.Signal != 0
 	}
 
 	if !killed {

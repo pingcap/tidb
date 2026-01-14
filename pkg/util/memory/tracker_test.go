@@ -720,7 +720,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			require.True(t, execMetrics.Task.pairSuccessFail == pairSuccessFail{2, 0})
 			require.True(t, execMetrics.Task.SuccByPriority == NumByPriority{})
 		}
-		require.True(t, t0.Killer.Signal == 0)
+		require.True(t, t0.Killer.GetKillSignal() == 0)
 
 		newLimit := int64(5e14)
 		m.SetLimit(uint64(newLimit))
@@ -730,7 +730,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.Panics(t, func() {
 			t2.Consume(newLimit)
 		})
-		require.True(t, t0.Killer.Signal == sqlkiller.KilledByMemArbitrator)
+		require.True(t, t0.Killer.GetKillSignal() == sqlkiller.KilledByMemArbitrator)
 		{
 			execMetrics := m.ExecMetrics()
 			require.True(t, execMetrics.Task.pairSuccessFail == pairSuccessFail{3, 1})
@@ -894,7 +894,16 @@ func TestGlobalMemArbitrator(t *testing.T) {
 			wg.Go(func() {
 				defer func() {
 					recover()
-					trackers[i].Detach()
+					if i != 0 {
+						trackers[i].Detach()
+					} else {
+						for trackers[0].MemArbitrator.killer.GetKillSignal() == 0 {
+							runtime.Gosched()
+						}
+						// priority low: canceled
+						require.ErrorContains(t, trackers[0].Killer.HandleSignal(), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & priority-mode)] [conn=")
+						trackers[0].Detach()
+					}
 				}()
 				trackers[i].Consume(newLimit)
 			})
@@ -909,12 +918,12 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		}
 		m.restartForTest()
 		wg.Wait()
+		m.stop()
 		mockWinupCB = nil
+		m.restartForTest()
 
 		{
 			require.Equal(t, []int{1, 3, 2}, consumeEvent)
-			// priority low: canceled
-			require.ErrorContains(t, trackers[0].Killer.HandleSignal(), "[executor:8180]Query execution was stopped by the global memory arbitrator [reason=CANCEL(out-of-quota & priority-mode)] [conn=")
 			// exec by priority order high -> medium
 			require.NoError(t, trackers[1].Killer.HandleSignal())
 			require.NoError(t, trackers[2].Killer.HandleSignal())
@@ -946,13 +955,13 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		wg.Go(func() {
 			defer func() {
 				recover()
+				require.ErrorContains(t, t1.Killer.HandleSignal(), "[executor:1317]Query execution was interrupted")
 				t1.Detach()
 			}()
 			t1.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
 			t1.Consume(m.limit())
 		})
 		wg.Wait()
-		require.ErrorContains(t, t1.Killer.HandleSignal(), "[executor:1317]Query execution was interrupted")
 		t1.Detach()
 		t2.Detach()
 		RemovePoolFromGlobalMemArbitrator(t1.SessionID.Load())
@@ -1013,7 +1022,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		}
 		m.runOneRound()
 		require.Equal(t, NumByPriority{1, 0, 0}, m.ExecMetrics().Risk.OOMKill)
-		require.True(t, t2.Killer.Signal == sqlkiller.KilledByMemArbitrator)
+		require.True(t, t2.Killer.GetKillSignal() == sqlkiller.KilledByMemArbitrator)
 		wg := sync.WaitGroup{}
 		var err error
 		wg.Go(func() {

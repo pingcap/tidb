@@ -3078,6 +3078,8 @@ func (r ArbitratorStopReason) String() (desc string) {
 		desc = "CANCEL(out-of-quota & standard-mode)"
 	case ArbitratorPriorityCancel:
 		desc = "CANCEL(out-of-quota & priority-mode)"
+	default:
+		desc = "UNKNOWN"
 	}
 	return
 }
