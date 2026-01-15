@@ -569,7 +569,7 @@ func (s *jobScheduler) getJobRunCtx(trace *traceevent.TraceBuf, jobID int64, tra
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
 	newCtx := traceevent.WithTraceBuf(s.schCtx, trace)
 	if len(traceInfo.TraceID) > 0 {
-		trace.TraceID = traceInfo.TraceID
+		trace.SetTraceID(traceInfo.TraceID)
 	}
 	return &jobContext{
 		ctx:                  newCtx,

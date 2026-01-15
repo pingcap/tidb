@@ -250,7 +250,7 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		Name:      name,
 		Phase:     tracing.PhaseInstant,
 		Timestamp: time.Now(),
-		TraceID:   traceBuf.TraceID,
+		TraceID:   traceBuf.GetTraceID(),
 		Fields:    copyFieldsWithCapacity(fields, 3),
 	}
 	traceBuf.Record(ctx, event)
@@ -281,7 +281,7 @@ func GenerateTraceID(ctx context.Context, startTS uint64, stmtCount uint64) []by
 	binary.BigEndian.PutUint32(traceID[16:20], rand.Uint32())
 	if traceBuf := getTraceBuf(ctx); traceBuf != nil {
 		traceBuf.mu.Lock()
-		traceBuf.TraceID = traceID
+		traceBuf.traceID = traceID
 		traceBuf.mu.Unlock()
 	}
 	return traceID

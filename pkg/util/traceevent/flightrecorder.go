@@ -28,12 +28,27 @@ import (
 )
 
 // TraceBuf is the buffer for trace events.
-// The buffer might be discard or dump.
+// The buffer might be discarded or dumped.
 type TraceBuf struct {
 	mu      sync.RWMutex
 	events  []Event
 	bits    uint64
-	TraceID []byte
+	traceID []byte
+}
+
+// GetTraceID gets the traceID field.
+func (t *TraceBuf) GetTraceID() []byte {
+	t.mu.RLock()
+	traceID := t.traceID
+	t.mu.RUnlock()
+	return traceID
+}
+
+// SetTraceID sets the traceID field.
+func (t *TraceBuf) SetTraceID(traceID []byte) {
+	t.mu.Lock()
+	t.traceID = traceID
+	t.mu.Unlock()
 }
 
 var _ tracing.TraceBuf = (*TraceBuf)(nil)
@@ -590,6 +605,6 @@ func (r *TraceBuf) DiscardOrFlush(ctx context.Context) {
 	} else {
 		r.events = r.events[:0]
 	}
-	r.TraceID = nil
+	r.traceID = nil
 	r.mu.Unlock()
 }
