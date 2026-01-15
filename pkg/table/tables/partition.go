@@ -1149,7 +1149,16 @@ func (lp *ForListPruning) locateListColumnsPartitionByRow(tc types.Context, ec e
 		if lp.defaultPartitionIdx >= 0 {
 			return lp.defaultPartitionIdx, nil
 		}
-		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
+		// Build a string representation of the column values for the error message
+		colVals := make([]string, 0, len(lp.ColPrunes))
+		for _, colPrune := range lp.ColPrunes {
+			val, err := r[colPrune.ExprCol.Index].ToString()
+			if err != nil {
+				val = r[colPrune.ExprCol.Index].GetString()
+			}
+			colVals = append(colVals, val)
+		}
+		return -1, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("'" + strings.Join(colVals, "'-'") + "'")
 	}
 	return location[0].PartIdx, nil
 }
@@ -1523,7 +1532,16 @@ func (t *partitionedTable) locateRangeColumnPartition(ctx expression.EvalContext
 		return 0, errors.Trace(lastError)
 	}
 	if idx >= len(upperBounds) {
-		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("from column_list")
+		// Build a string representation of the column values for the error message
+		colVals := make([]string, 0, len(partitionExpr.ColumnOffset))
+		for _, offset := range partitionExpr.ColumnOffset {
+			val, err := r[offset].ToString()
+			if err != nil {
+				val = r[offset].GetString()
+			}
+			colVals = append(colVals, val)
+		}
+		return 0, table.ErrNoPartitionForGivenValue.GenWithStackByArgs("'" + strings.Join(colVals, "'-'") + "'")
 	}
 	return idx, nil
 }
