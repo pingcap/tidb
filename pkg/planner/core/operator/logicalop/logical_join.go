@@ -302,6 +302,7 @@ func isNullFromInner(innerSchSet *intset.FastIntSet, isNullColumnID int64, eq []
 			}
 		}
 	}
+	return false
 }
 
 func vaildProj4ConvertAntiJoin(proj *LogicalProjection) bool {
