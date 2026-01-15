@@ -1044,8 +1044,8 @@ type heapController struct {
 		utime     atomic.Int64 // end time of last GC
 	}
 	heapTotalFree atomic.Int64
-	heapAlloc     atomic.Int64 // heap-alloc <= heap-inuse
-	heapInuse     atomic.Int64
+	heapAlloc     atomic.Int64 // heap allocated objects bytes
+	heapInuse     atomic.Int64 // heap-inuse = heap-alloc + unused
 	memOffHeap    atomic.Int64 // off-heap memory: `stack` + `gc` + `other` + `meta` ...
 	memInuse      atomic.Int64 // heap-inuse + off-heap: must be less than runtime-limit to avoid Heavy GC / OOM
 	sync.Mutex
@@ -2485,7 +2485,7 @@ func (m *MemArbitrator) updateMemMagnification(utimeMilli int64) (updatedPreProf
 	}
 
 	if cur.tsAlign == curTsAlign {
-		if ut := m.heapController.lastGC.utime.Load(); curTsAlign == ut/1e9/defUpdateMemMagnifUtimeAlign {
+		if ut := m.heapController.lastGC.utime.Load(); curTsAlign == ut/int64(time.Second)/defUpdateMemMagnifUtimeAlign {
 			cur.heap = max(cur.heap, m.heapController.lastGC.heapAlloc.Load())
 		}
 		if blockedSize, utimeSec := m.lastBlockedAt(); utimeSec/defUpdateMemMagnifUtimeAlign == curTsAlign {

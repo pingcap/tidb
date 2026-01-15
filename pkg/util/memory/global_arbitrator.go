@@ -490,8 +490,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 			Warn:  logutil.BgLogger().Warn,
 			Error: logutil.BgLogger().Error,
 			UpdateRuntimeMemStats: func() {
-				s := ForceReadMemStats()
-				m.SetRuntimeMemStats(intoRuntimeMemStats(s))
+				m.SetRuntimeMemStats(runtimeMemStats())
 			},
 			GC: func() {
 				runtime.GC() //nolint: revive
@@ -612,7 +611,7 @@ func intoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
 		HeapAlloc:  int64(s.HeapAlloc),
 		HeapInuse:  int64(s.HeapInuse),
 		TotalFree:  int64(s.TotalAlloc - s.Alloc),
-		MemOffHeap: int64(s.StackSys + s.MSpanSys + s.MCacheSys + s.BuckHashSys + s.GCSys + s.OtherSys),
+		MemOffHeap: int64(s.Sys - s.HeapSys),
 		LastGC:     int64(s.LastGC),
 	}
 }

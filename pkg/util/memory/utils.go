@@ -17,6 +17,7 @@ package memory
 import (
 	"container/list"
 	"math/bits"
+	"runtime/metrics"
 	"sync/atomic"
 	"time"
 
@@ -250,3 +251,43 @@ func intoRatio(x float64) (zMilli int64) {
 }
 
 type cpuCacheLinePad cpu.CacheLinePad
+
+// efficient method to read runtime mem stats (No `LastGC`) without STW
+//
+//go:norace
+func runtimeMemStats() RuntimeMemStats {
+	metrics.Read(heapSample) // It is safe to execute multiple Read calls concurrently because their arguments share no underlying memory.
+	res := RuntimeMemStats{
+		HeapAlloc: int64(heapSample[0].Value.Uint64()),
+		HeapInuse: int64(heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64()), // inuse = alloc + unused
+		TotalFree: int64(heapSample[5].Value.Uint64()),
+	}
+	res.MemOffHeap = int64(heapSample[4].Value.Uint64()) -
+		int64(heapSample[0].Value.Uint64()) -
+		int64(heapSample[1].Value.Uint64()) -
+		int64(heapSample[2].Value.Uint64()) -
+		int64(heapSample[3].Value.Uint64())
+	return res
+}
+
+var heapSample = []metrics.Sample{
+	// heap alloc
+	{Name: "/memory/classes/heap/objects:bytes"},
+	// heap available
+	{Name: "/memory/classes/heap/unused:bytes"}, // unused
+	{Name: "/memory/classes/heap/free:bytes"},
+	{Name: "/memory/classes/heap/released:bytes"},
+	// memory total
+	{Name: "/memory/classes/total:bytes"},
+	// total free
+	{Name: "/gc/heap/frees:bytes"},
+}
+
+func init() {
+	runtimeMemStats()
+	for i := range heapSample {
+		if heapSample[i].Value.Kind() != metrics.KindUint64 {
+			panic("unexpected metric kind")
+		}
+	}
+}
