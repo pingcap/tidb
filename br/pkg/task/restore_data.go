@@ -58,15 +58,21 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 
 	// read the backup meta resolved ts and total tikvs from backup storage
 	var resolveTS uint64
-	_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
-	if err != nil {
-		return errors.Trace(err)
+	var numStores int
+	if cfg.FullBackupType == FullBackupTypeIDC {
+		resolveTS = cfg.RestoreTS
+	} else {
+		_, externStorage, err := GetStorage(ctx, cfg.Config.Storage, &cfg.Config)
+		if err != nil {
+			return errors.Trace(err)
+		}
+
+		resolveTS, numStores, err = ReadBackupMetaData(ctx, externStorage)
+		if err != nil {
+			return errors.Trace(err)
+		}
 	}
 
-	resolveTS, numStores, err := ReadBackupMetaData(ctx, externStorage)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	summary.CollectUint("resolve-ts", resolveTS)
 
 	keepaliveCfg := GetKeepalive(&cfg.Config)
@@ -129,9 +135,12 @@ func RunResolveKvData(c context.Context, g glue.Glue, cmdName string, cfg *Resto
 		},
 		utils.NewPDReqBackofferExt(),
 	)
+
 	restoreNumStores := len(allStores)
-	if restoreNumStores != numStores {
-		log.Warn("the number of stores in the cluster has changed", zap.Int("origin", numStores), zap.Int("current", restoreNumStores))
+	if cfg.FullBackupType != FullBackupTypeIDC {
+		if restoreNumStores != numStores {
+			log.Warn("the number of stores in the cluster has changed", zap.Int("origin", numStores), zap.Int("current", restoreNumStores))
+		}
 	}
 
 	if err != nil {

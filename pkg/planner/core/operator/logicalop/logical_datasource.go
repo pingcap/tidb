@@ -114,6 +114,9 @@ type DataSource struct {
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit
 }
 
 // Init initializes DataSource.

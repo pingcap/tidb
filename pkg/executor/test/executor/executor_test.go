@@ -3101,3 +3101,31 @@ func TestQueryWithKill(t *testing.T) {
 	}()
 	wg.Wait()
 }
+
+func TestUUIDShort(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	originConfig := config.GetGlobalConfig()
+	originConfig.Instance.ServerID = 1
+	config.StoreGlobalConfig(originConfig)
+	defer func() {
+		config.StoreGlobalConfig(originConfig)
+	}()
+	count := 10
+	values := make(map[uint64]struct{}, count)
+	for i := 0; i < count; i++ {
+		rows := tk.MustQuery("select uuid_short()").Rows()
+		require.Equal(t, 1, len(rows))
+		require.Equal(t, 1, len(rows[0]))
+		v, err := strconv.ParseUint(rows[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		values[v] = struct{}{}
+	}
+	require.Equal(t, count, len(values))
+	tk.MustExec("use test;")
+	tk.MustExec("create table t (a int);")
+	tk.MustExec("insert into t values (1),(2);")
+	tk.MustExec("create table t1 (id bigint primary key, b int);")
+	tk.MustExec("insert into t1 select uuid_short(), a from t;")
+	tk.MustQuery("select count(distinct id), count(distinct b) from t1;").Check(testkit.Rows("2 2"))
+}

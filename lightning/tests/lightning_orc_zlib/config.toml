@@ -1,0 +1,3 @@
+[tikv-importer]
+send-kv-pairs=10
+region-split-size = 1024

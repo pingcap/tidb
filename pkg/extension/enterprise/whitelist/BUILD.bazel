@@ -1,0 +1,41 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "whitelist",
+    srcs = [
+        "pkdb_manager.go",
+        "pkdb_register.go",
+        "pkdb_util.go",
+        "pkdb_whitelist.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/extension/enterprise/whitelist",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/extension",
+        "//pkg/kv",
+        "//pkg/parser/terror",
+        "//pkg/sessionctx/variable",
+        "//pkg/util/chunk",
+        "//pkg/util/logutil",
+        "//pkg/util/sqlexec",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@org_uber_go_atomic//:atomic",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "whitelist_test",
+    timeout = "short",
+    srcs = ["pkdb_whitelist_test.go"],
+    embed = [":whitelist"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/server",
+        "//pkg/testkit",
+        "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_stretchr_testify//require",
+    ],
+)

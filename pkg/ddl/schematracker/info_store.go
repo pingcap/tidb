@@ -185,3 +185,8 @@ func (i InfoStoreAdaptor) TableByName(ctx context.Context, schema, table pmodel.
 func (i InfoStoreAdaptor) TableInfoByName(schema, table pmodel.CIStr) (*model.TableInfo, error) {
 	return i.inner.TableByName(context.Background(), schema, table)
 }
+
+// CiStr2Key gets name according to lower_case_table_names
+func (i *InfoStore) CiStr2Key(name pmodel.CIStr) string {
+	return i.ciStr2Key(name)
+}

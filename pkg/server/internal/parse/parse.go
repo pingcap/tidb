@@ -66,6 +66,10 @@ func HandshakeResponseHeader(ctx context.Context, packet *handshake.Response41, 
 	offset++
 	// skip reserved 23[00]
 	offset += 23
+	// server TLCP capability
+	if capability&mysql.ClientCapabilityExtension > 0 {
+		packet.TLCPCapability = data[9]
+	}
 
 	return offset, nil
 }
