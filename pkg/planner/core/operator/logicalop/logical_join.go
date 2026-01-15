@@ -265,21 +265,24 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// filterOutNullEQ4ConvertAntiJoin is to iterate all equal condition's out columns except NullEQ ones
-// and all other condition's columns except GT, GE, LE, LT, NE ones.
-func filterOutNullEQ4ConvertAntiJoin(outerSchSet, joinOuterKeySet *intset.FastIntSet, eq []*expression.ScalarFunction, other []expression.Expression) {
+// isNullFromInner is to iterate all equal condition's inner columns except NullEQ ones
+// and all other condition's columns except GT, GE, LE, LT, NE ones. and then check where
+// is null columns is from the join key in the inner table.
+func isNullFromInner(innerSchSet *intset.FastIntSet, isNullColumnID int64, eq []*expression.ScalarFunction, other []expression.Expression) bool {
 	for _, s := range eq {
 		if s.FuncName.L == ast.NullEQ {
 			continue
 		}
 		col1, col2, ok := expression.IsColOpCol(s)
 		if ok {
-			// In left outer join，equal condition is inner colomn =  outer column
-			// In right outer join, equal condition is outer colomn = inner column
-			if outerSchSet.Has(int(col1.UniqueID)) {
-				joinOuterKeySet.Insert(int(col1.UniqueID))
-			} else if outerSchSet.Has(int(col2.UniqueID)) {
-				joinOuterKeySet.Insert(int(col2.UniqueID))
+			if innerSchSet.Has(int(col1.UniqueID)) {
+				if isNullColumnID == col1.UniqueID {
+					return true
+				}
+			} else if innerSchSet.Has(int(col2.UniqueID)) {
+				if isNullColumnID == col2.UniqueID {
+					return true
+				}
 			}
 		}
 	}
@@ -289,12 +292,10 @@ func filterOutNullEQ4ConvertAntiJoin(outerSchSet, joinOuterKeySet *intset.FastIn
 			case ast.GT, ast.GE, ast.LE, ast.LT, ast.NE:
 				col1, col2, ok := expression.IsColOpCol(sf)
 				if ok {
-					// In left outer join，equal condition is inner colomn =  outer column
-					// In right outer join, equal condition is outer colomn = inner column
-					if outerSchSet.Has(int(col1.UniqueID)) {
-						joinOuterKeySet.Insert(int(col1.UniqueID))
-					} else if outerSchSet.Has(int(col2.UniqueID)) {
-						joinOuterKeySet.Insert(int(col2.UniqueID))
+					if innerSchSet.Has(int(col1.UniqueID)) && isNullColumnID == col1.UniqueID {
+						return true
+					} else if innerSchSet.Has(int(col2.UniqueID)) && isNullColumnID == col2.UniqueID {
+						return true
 					}
 				}
 			default:
@@ -466,12 +467,10 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	expression.ExtractColumnsSetFromExpressions(&innerSchSet, func(c *expression.Column) bool {
 		return !outerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
-	joinInnerKeySet := intset.NewFastIntSet()
 	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
-	filterOutNullEQ4ConvertAntiJoin(&innerSchSet, &joinInnerKeySet, p.EqualConditions, p.OtherConditions)
-	selConditionColInInner = joinInnerKeySet.Has(int(isNullcol.UniqueID))
+	selConditionColInInner = isNullFromInner(&innerSchSet, isNullcol.UniqueID, p.EqualConditions, p.OtherConditions)
 	// resultProj is to generate the NULL values for the columns of the inner table, which is the
 	// expected result for this kind of anti-join query.
 	if selConditionColInInner {
