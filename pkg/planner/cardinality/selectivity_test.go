@@ -1380,8 +1380,8 @@ func TestSelectivity(t *testing.T) {
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
 	}
-	// Helper function to truncate to 8 decimal places
-	truncateTo8Decimals := func(val float64) float64 {
+	// Helper function to round to 8 decimal places
+	roundTo8Decimals := func(val float64) float64 {
 		return math.Round(val*1e8) / 1e8
 	}
 	tests := []struct {
@@ -1479,14 +1479,14 @@ func TestSelectivity(t *testing.T) {
 
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
-		truncatedRatio := truncateTo8Decimals(ratio)
-		// Allow 5% tolerance for selectivity
-		tolerance := math.Max(eps, tt.selectivity*0.05)
+		truncatedRatio := roundTo8Decimals(ratio)
+		// Allow 2% tolerance for selectivity
+		tolerance := math.Max(eps, tt.selectivity*0.02)
 		require.Truef(t, math.Abs(truncatedRatio-tt.selectivity) < tolerance, "for %s, needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.selectivity, truncatedRatio, tolerance)
 
 		// Verify row estimate: rowEstimate = selectivity * RealtimeCount
 		rowEst := ratio * originalRealtimeCount
-		truncatedRowEst := truncateTo8Decimals(rowEst)
+		truncatedRowEst := roundTo8Decimals(rowEst)
 		// Allow 5% tolerance for rowEstimate
 		rowTolerance := math.Max(eps*originalRealtimeCount, tt.rowEstimate*0.05)
 		require.Truef(t, math.Abs(truncatedRowEst-tt.rowEstimate) < rowTolerance, "for %s, rowEstimate needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.rowEstimate, truncatedRowEst, rowTolerance)
@@ -1505,14 +1505,14 @@ func TestSelectivity(t *testing.T) {
 		increasedRealtimeCount := float64(histColl.RealtimeCount)
 		ratio, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
-		truncatedRatioAfterIncrease := truncateTo8Decimals(ratio)
+		truncatedRatioAfterIncrease := roundTo8Decimals(ratio)
 		// Allow 5% tolerance for selectivityAfterIncrease
 		toleranceAfterIncrease := math.Max(eps, tt.selectivityAfterIncrease*0.05)
 		require.Truef(t, math.Abs(truncatedRatioAfterIncrease-tt.selectivityAfterIncrease) < toleranceAfterIncrease, "for %s, needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.selectivityAfterIncrease, truncatedRatioAfterIncrease, toleranceAfterIncrease)
 
 		// Verify row estimate after increase: rowEstimateAfterIncrease = selectivityAfterIncrease * (RealtimeCount * 10)
 		rowEstAfterIncrease := ratio * increasedRealtimeCount
-		truncatedRowEstAfterIncrease := truncateTo8Decimals(rowEstAfterIncrease)
+		truncatedRowEstAfterIncrease := roundTo8Decimals(rowEstAfterIncrease)
 		// Allow 5% tolerance for rowEstimateAfterIncrease
 		rowToleranceAfterIncrease := math.Max(eps*increasedRealtimeCount, tt.rowEstimateAfterIncrease*0.05)
 		require.Truef(t, math.Abs(truncatedRowEstAfterIncrease-tt.rowEstimateAfterIncrease) < rowToleranceAfterIncrease, "for %s, rowEstimateAfterIncrease needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.rowEstimateAfterIncrease, truncatedRowEstAfterIncrease, rowToleranceAfterIncrease)

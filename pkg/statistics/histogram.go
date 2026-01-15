@@ -719,10 +719,7 @@ func (hg *Histogram) TotalRowCount() float64 {
 // topNCount is the TopN total count to include in the histogram row count (pass 0 to exclude TopN).
 func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uint64) (float64, bool) {
 	histRowCount := hg.NotNullCount() + float64(hg.NullCount) + float64(topNCount)
-	isNegative := false
-	if realtimeRowCount < int64(histRowCount) {
-		isNegative = true
-	}
+	isNegative := realtimeRowCount < int64(histRowCount)
 	return math.Abs(float64(realtimeRowCount) - histRowCount), isNegative
 }
 

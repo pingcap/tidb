@@ -283,6 +283,7 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 
 		// handling the out-of-range part
 		// Unless the row count already covers the realtime row count
+		// 0.99 is used as a tolerance factor to account for minor estimation differences.
 		if count.Est < float64(realtimeRowCount)*0.99 && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
