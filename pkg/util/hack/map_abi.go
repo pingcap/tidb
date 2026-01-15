@@ -407,7 +407,7 @@ func (m *MemAwareMap[K, V]) RealBytes() uint64 {
 }
 
 func checkMapABI() {
-	if !strings.Contains(runtime.Version(), `go1.25`) {
+	if !strings.Contains(runtime.Version(), `go1.26`) {
 		panic("The hack package only supports go1.25, please confirm the correctness of the ABI before upgrading")
 	}
 }
