@@ -1044,7 +1044,7 @@ type heapController struct {
 		utime     atomic.Int64 // end time of last GC
 	}
 	heapTotalFree atomic.Int64
-	heapAlloc     atomic.Int64 // heap allocated objects bytes
+	heapAlloc     atomic.Int64 // heap objects occupied bytes
 	heapInuse     atomic.Int64 // heap-inuse = heap-alloc + unused
 	memOffHeap    atomic.Int64 // off-heap memory: `stack` + `gc` + `other` + `meta` ...
 	memInuse      atomic.Int64 // heap-inuse + off-heap: must be less than runtime-limit to avoid Heavy GC / OOM
