@@ -575,6 +575,15 @@ func (w *encodeWorker) parserData2TableData(
 		row = append(row, d)
 	}
 
+	// Ensure row length matches insertColumns length to prevent index out of range panic
+	// This can happen if fieldMappings doesn't include all columns
+	if len(row) < len(w.insertColumns) {
+		// Pad with NULL values for missing columns
+		for len(row) < len(w.insertColumns) {
+			row = append(row, types.NewDatum(nil))
+		}
+	}
+
 	// a new row buffer will be allocated in getRow
 	newRow, err := w.getRow(ctx, row)
 	if err != nil {
