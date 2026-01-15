@@ -517,7 +517,7 @@ func TestLoadDataAutoRandomError(t *testing.T) {
 
 	ctx := tk.Session().(sessionctx.Context)
 	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
-	defer ctx.SetValue(executor.LoadDataVarKey, nil)
+	defer ctx.SetValue(executor.LoadDataReaderBuilderKey, nil)
 
 	// Should return proper error, not panic
 	err := tk.ExecToErr("load data local infile '/tmp/a.csv' into table a fields terminated by ','")

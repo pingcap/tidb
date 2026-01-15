@@ -112,11 +112,6 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 	}
 
-	// Check if row has enough elements to prevent index out of range panic
-	if len(row) == 0 {
-		return nil, errors.Errorf("empty row provided to getKeysNeedCheckOneRow")
-	}
-
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
 	// Append record keys and errors.
 	var handle kv.Handle
