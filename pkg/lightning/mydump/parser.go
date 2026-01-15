@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -676,9 +677,9 @@ func ReadUntil(parser Parser, pos int64) error {
 func OpenReader(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,
-	store objstore.Storage,
+	store storeapi.Storage,
 	decompressCfg compressedio.DecompressConfig,
-) (reader objstore.ReadSeekCloser, err error) {
+) (reader storeapi.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Type == SourceTypeParquet:
 		reader, err = OpenParquetReader(ctx, store, fileMeta.Path)

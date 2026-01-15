@@ -24,6 +24,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 // ParquetColumn defines the properties of a column in a Parquet file.
@@ -58,7 +59,7 @@ func (w *writeWrapper) Close() error {
 	return w.Writer.Close(context.Background())
 }
 
-func getStore(path string) (objstore.Storage, error) {
+func getStore(path string) (storeapi.Storage, error) {
 	s, err := objstore.ParseBackend(path, nil)
 	if err != nil {
 		return nil, err

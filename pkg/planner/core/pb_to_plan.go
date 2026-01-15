@@ -285,8 +285,8 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+	simple := &Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalPlanWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
@@ -297,8 +297,20 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+
+	var innerPlan base.Plan
+	switch x := stmt.(type) {
+	case *ast.AdminStmt:
+		if x.Tp != ast.AdminReloadBindings {
+			return nil, errors.Errorf("unexpected admin statement %s in broadcast query", *e.BroadcastQuery.Query)
+		}
+		innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
+	case *ast.RefreshStatsStmt:
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	default:
+		return nil, errors.Errorf("unexpected statement %s in broadcast query", *e.BroadcastQuery.Query)
+	}
+	return &PhysicalPlanWrapper{Inner: innerPlan}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, base.PhysicalPlan) {

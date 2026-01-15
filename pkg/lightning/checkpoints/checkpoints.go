@@ -40,6 +40,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -1127,13 +1128,13 @@ type FileCheckpointsDB struct {
 	ctx         context.Context
 	path        string
 	fileName    string
-	exStorage   objstore.Storage
+	exStorage   storeapi.Storage
 }
 
 func newFileCheckpointsDB(
 	ctx context.Context,
 	path string,
-	exStorage objstore.Storage,
+	exStorage storeapi.Storage,
 	fileName string,
 ) (*FileCheckpointsDB, error) {
 	cpdb := &FileCheckpointsDB{
@@ -1202,14 +1203,14 @@ func NewFileCheckpointsDB(ctx context.Context, path string) (*FileCheckpointsDB,
 func NewFileCheckpointsDBWithExstorageFileName(
 	ctx context.Context,
 	path string,
-	s objstore.Storage,
+	s storeapi.Storage,
 	fileName string,
 ) (*FileCheckpointsDB, error) {
 	return newFileCheckpointsDB(ctx, path, s, fileName)
 }
 
 // createExstorageByCompletePath create Storage by completePath and return fileName.
-func createExstorageByCompletePath(ctx context.Context, completePath string) (objstore.Storage, string, error) {
+func createExstorageByCompletePath(ctx context.Context, completePath string) (storeapi.Storage, string, error) {
 	if completePath == "" {
 		return nil, "", nil
 	}
@@ -1221,7 +1222,7 @@ func createExstorageByCompletePath(ctx context.Context, completePath string) (ob
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}
-	s, err := objstore.New(ctx, u, &objstore.Options{})
+	s, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
 		return nil, "", errors.Trace(err)
 	}

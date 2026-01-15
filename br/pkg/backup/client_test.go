@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
@@ -45,7 +46,7 @@ type testBackup struct {
 	backupClient *backup.Client
 
 	cluster *mock.Cluster
-	storage objstore.Storage
+	storage storeapi.Storage
 }
 
 // locks used to solve race when mock then behaviour when store drops
