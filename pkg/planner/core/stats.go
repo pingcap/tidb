@@ -135,7 +135,13 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
+<<<<<<< HEAD
 	for _, path := range ds.PossibleAccessPaths {
+=======
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
+	// Fill index paths for all paths
+	for _, path := range ds.AllPossibleAccessPaths {
+>>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999))
 		if path.IsTablePath() {
 			continue
 		}
@@ -599,7 +605,13 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
+<<<<<<< HEAD
 			path.IsSingleScan = isSingleScan(ds, path.FullIdxCols, path.FullIdxColLens)
+=======
+			// Reevaluate path.IsSingleScan because it may have been set incorrectly
+			// in the pruning logic.
+			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
+>>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999))
 		}
 		// step: 3
 		// Try some heuristic rules to select access path.
