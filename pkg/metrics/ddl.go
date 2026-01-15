@@ -53,6 +53,7 @@ var (
 	UpdateGlobalState = "update_global_state"
 
 	OwnerHandleSyncerHistogram *prometheus.HistogramVec
+	IsOwnerSinceGauge          *prometheus.GaugeVec
 
 	// Metrics for job_worker.go.
 	WorkerAddDDLJob    = "add_job"
@@ -225,6 +226,14 @@ func InitDDLMetrics() {
 	DDLTransitOneStepOpHist = DDLWorkerHistogram.WithLabelValues("transit_one_step", "*", "*")
 	DDLLockVerDurationHist = DDLWorkerHistogram.WithLabelValues("lock_ver_duration", "*", "*")
 	DDLCleanMDLInfoHist = DDLWorkerHistogram.WithLabelValues("clean_mdl_info", "*", "*")
+
+	IsOwnerSinceGauge = metricscommon.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Namespace: "tidb",
+			Subsystem: "owner",
+			Name:      "is_owner_since_seconds",
+			Help:      "The start time in seconds since epoch when the current instance became owner. The value is 0 if the instance is not owner.",
+		}, []string{LblType})
 }
 
 var (

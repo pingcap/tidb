@@ -171,6 +171,7 @@ func RegisterMetrics() {
 	prometheus.MustRegister(LoadSchemaDuration)
 	prometheus.MustRegister(MetaHistogram)
 	prometheus.MustRegister(NewSessionHistogram)
+	prometheus.MustRegister(IsOwnerSinceGauge)
 	prometheus.MustRegister(OwnerHandleSyncerHistogram)
 	prometheus.MustRegister(PanicCounter)
 	prometheus.MustRegister(PlanCacheCounter)

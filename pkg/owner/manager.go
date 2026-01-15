@@ -145,7 +145,7 @@ type ownerManager struct {
 
 // NewOwnerManager creates a new Manager.
 func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, key string) Manager {
-	return &ownerManager{
+	mgr := &ownerManager{
 		etcdCli:      etcdCli,
 		id:           id,
 		key:          key,
@@ -154,6 +154,8 @@ func NewOwnerManager(ctx context.Context, etcdCli *clientv3.Client, prompt, id, 
 		logger:       logutil.BgLogger().With(zap.String("key", key), zap.String("id", id)),
 		sessionLease: atomicutil.NewInt64(0),
 	}
+	metrics.IsOwnerSinceGauge.WithLabelValues(prompt).Set(0)
+	return mgr
 }
 
 // ID implements Manager.ID interface.
@@ -321,6 +323,7 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 	m.elec.Store(elec)
+	metrics.IsOwnerSinceGauge.WithLabelValues(m.prompt).Set(float64(time.Now().UnixNano()) / float64(time.Second))
 	m.logger.Info("become owner")
 	if m.listener != nil {
 		m.listener.OnBecomeOwner()
@@ -330,6 +333,7 @@ func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 // RetireOwner make the manager to be a not owner.
 func (m *ownerManager) RetireOwner() {
 	m.elec.Store(nil)
+	metrics.IsOwnerSinceGauge.WithLabelValues(m.prompt).Set(0)
 	m.logger.Info("retire owner")
 	if m.listener != nil {
 		m.listener.OnRetireOwner()
