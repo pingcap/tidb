@@ -660,7 +660,6 @@ func (sch *importScheduler) finishJob(ctx context.Context, logger *zap.Logger,
 			Delta:    taskMeta.Summary.ImportedRows,
 			Count:    taskMeta.Summary.ImportedRows,
 			InitTime: time.Now(),
-			TableID:  taskMeta.Plan.TableInfo.ID,
 		},
 		TableID: taskMeta.Plan.TableInfo.ID,
 	}

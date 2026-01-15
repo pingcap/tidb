@@ -76,9 +76,6 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if dumpAll {
 		return true
 	}
-	if item.InitTime.IsZero() {
-		item.InitTime = currentTime
-	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
 		// Dump the stats to kv at least once 5 minutes.
 		return true
@@ -141,8 +138,14 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			batchUpdates = make([]*storage.DeltaUpdate, 0, len(batchTableIDs))
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {
+				// NOTE: Ensure InitTime is initialized before evaluating dump conditions.
 				item := deltaMap[id]
-				if !s.needDumpStatsDelta(is, dumpAll, id, item, batchStart) {
+				if item.InitTime.IsZero() {
+					item.InitTime = batchStart
+					deltaMap[id] = item
+				}
+				needDump := s.needDumpStatsDelta(is, dumpAll, id, item, batchStart)
+				if !needDump {
 					continue
 				}
 				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
@@ -584,7 +587,10 @@ func (m *TableDelta) GetDeltaAndReset() map[int64]variable.TableDelta {
 func (m *TableDelta) Update(id int64, delta int64, count int64) {
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	UpdateTableDeltaMap(m.delta, id, delta, count)
+	item := m.delta[id]
+	item.Delta += delta
+	item.Count += count
+	m.delta[id] = item
 }
 
 // Merge merges the deltaMap into the TableDelta.
@@ -594,17 +600,11 @@ func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
 	}
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	for id, item := range deltaMap {
-		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count)
+	for id, incoming := range deltaMap {
+		item := m.delta[id]
+		item.MergeFrom(incoming)
+		m.delta[id] = item
 	}
-}
-
-// UpdateTableDeltaMap updates the delta of the table.
-func UpdateTableDeltaMap(m map[int64]variable.TableDelta, id int64, delta int64, count int64) {
-	item := m[id]
-	item.Delta += delta
-	item.Count += count
-	m[id] = item
 }
 
 // StatsUsage maps (tableID, columnID) to the last time when the column stats are used(needed).

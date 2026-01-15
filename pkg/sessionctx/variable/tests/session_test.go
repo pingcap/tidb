@@ -454,7 +454,6 @@ func TestTableDeltaClone(t *testing.T) {
 		Delta:    1,
 		Count:    2,
 		InitTime: time.Now(),
-		TableID:  5,
 	}
 	td1 := td0.Clone()
 	require.Equal(t, td0, td1)
@@ -473,7 +472,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 					Delta:    1,
 					Count:    2,
 					InitTime: time.Now(),
-					TableID:  5,
 				},
 			},
 		},
@@ -494,7 +492,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    6,
 		Count:    7,
 		InitTime: time.Now(),
-		TableID:  9,
 	}
 	tc.SetPessimisticLockCache([]byte{'b'}, []byte{'b'})
 	tc.FlushStmtPessimisticLockCache()
@@ -510,7 +507,6 @@ func TestTransactionContextSavepoint(t *testing.T) {
 		Delta:    10,
 		Count:    11,
 		InitTime: time.Now(),
-		TableID:  13,
 	}
 	tc.SetPessimisticLockCache([]byte{'c'}, []byte{'c'})
 	tc.FlushStmtPessimisticLockCache()
