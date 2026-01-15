@@ -842,20 +842,21 @@ func (w *Writer) writeDupKVs(ctx context.Context, kvLocs []compactedLocation) (s
 
 func (w *Writer) getKeyByLoc(loc *compactedLocation) []byte {
 	block := w.kvBuffer.GetSliceWithoutLength(loc.bufIndex, loc.offset)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	keyLen := binary.BigEndian.Uint32(block[4:lengthBytes])
 	return block[2*lengthBytes : 2*lengthBytes+keyLen]
 }
 
 func (w *Writer) getValueByLoc(loc *compactedLocation) []byte {
 	block := w.kvBuffer.GetSliceWithoutLength(loc.bufIndex, loc.offset)
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
-	return block[2*lengthBytes+keyLen:]
+	keyLen := binary.BigEndian.Uint32(block[4:lengthBytes])
+	valLen := binary.BigEndian.Uint32(block[lengthBytes+4 : 2*lengthBytes])
+	return block[2*lengthBytes+keyLen : 2*lengthBytes+keyLen+valLen]
 }
 
 func (w *Writer) getSlice(loc compactedLocation) []byte {
 	block := w.kvBuffer.GetSliceWithoutLength(loc.bufIndex, loc.offset)
-	valLen := binary.BigEndian.Uint64(block[lengthBytes : 2*lengthBytes])
-	keyLen := binary.BigEndian.Uint64(block[:lengthBytes])
+	valLen := binary.BigEndian.Uint32(block[lengthBytes+4 : 2*lengthBytes])
+	keyLen := binary.BigEndian.Uint32(block[4:lengthBytes])
 	return block[:2*lengthBytes+keyLen+valLen]
 }
 
