@@ -578,6 +578,20 @@ func (p *PhysicalProperty) HashCode() []byte {
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
+	// encode PartialOrderInfo into physical prop's hashcode.
+	if p.PartialOrderInfo != nil {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		for _, item := range p.PartialOrderInfo.SortItems {
+			p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+			if item.Desc {
+				p.hashcode = codec.EncodeInt(p.hashcode, 1)
+			} else {
+				p.hashcode = codec.EncodeInt(p.hashcode, 0)
+			}
+		}
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
 	return p.hashcode
 }
 

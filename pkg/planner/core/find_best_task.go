@@ -1540,8 +1540,9 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
 			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			shouldUseIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex
-			if !shouldUseIndex {
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex
+			if !keepIndex {
+				// If none of the above conditions are met, this index will be directly pruned here.
 				continue
 			}
 			currentCandidate = getIndexCandidate(ds, path, prop)

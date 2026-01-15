@@ -318,16 +318,13 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 // Supported patterns:
 // 1. TopN -> DataSource
 // 2. TopN -> Selection -> DataSource
+// 3. TopN -> Projection -> DataSource
+// 4. TopN -> Projection -> Selection -> DataSource
+// 5. TopN -> Selection -> Projection -> DataSource
 //
-// In fact, as long as the new physical property `partial order by` can be passed down layer by layer to the datasource,
-// it could support *more query patterns* that select partial indexes as candidate paths.
-//
-// However, since there is currently no requirement for such complex query patterns,
-// and this new physical property does not implement its layer-by-layer passing logic,
-// the scope of the query pattern is currently limited by this function.
-// TODO:
-// Support more query patterns; replace function judgment with a method that
-// passes physical properties layer by layer and then judges them.
+// Note: This function only checks if the query pattern is supported.
+// The actual check of whether PartialOrderInfo can pass through Projection
+// is done in LogicalProjection.TryToGetChildProp during physical optimization.
 func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
 	if !lt.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN {
 		return false
@@ -337,33 +334,40 @@ func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
 		return false
 	}
 
-	child := lt.Children()[0]
+	return checkPartialOrderPattern(lt.SCtx(), lt.Children()[0])
+}
 
-	// Pattern 1: TopN -> DataSource
-	if ds, ok := child.(*logicalop.DataSource); ok {
-		// Check if the table has dirty content (uncommitted transaction writes)
-		// Partial order optimization cannot be applied in this case
-		if utilfuncp.TableHasDirtyContent(lt.SCtx(), ds.TableInfo) {
+// checkPartialOrderPattern recursively checks if the plan tree matches
+// a supported pattern for partial order optimization.
+// Supported intermediate operators: Selection, Projection
+// Terminal operator: DataSource
+func checkPartialOrderPattern(ctx base.PlanContext, plan base.LogicalPlan) bool {
+	switch p := plan.(type) {
+	case *logicalop.DataSource:
+		// Reached DataSource - check for dirty content
+		if utilfuncp.TableHasDirtyContent(ctx, p.TableInfo) {
 			return false
 		}
 		return true
-	}
 
-	// Pattern 2: TopN -> Selection -> DataSource
-	if sel, ok := child.(*logicalop.LogicalSelection); ok {
-		if len(sel.Children()) == 1 {
-			if ds, ok := sel.Children()[0].(*logicalop.DataSource); ok {
-				// Check if the table has dirty content (uncommitted transaction writes)
-				// Partial order optimization cannot be applied in this case
-				if utilfuncp.TableHasDirtyContent(lt.SCtx(), ds.TableInfo) {
-					return false
-				}
-				return true
-			}
+	case *logicalop.LogicalSelection:
+		// Selection can pass through, check its child
+		if len(p.Children()) != 1 {
+			return false
 		}
-	}
+		return checkPartialOrderPattern(ctx, p.Children()[0])
 
-	return false
+	case *logicalop.LogicalProjection:
+		// Projection can pass through (actual column check is done in TryToGetChildProp)
+		if len(p.Children()) != 1 {
+			return false
+		}
+		return checkPartialOrderPattern(ctx, p.Children()[0])
+
+	default:
+		// Other operators are not supported
+		return false
+	}
 }
 
 // getPhysTopNWithPartialOrderProperty generates PhysicalTopN plans with partial order property t
