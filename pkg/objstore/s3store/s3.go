@@ -77,6 +77,7 @@ const (
 	noSuchKey            = "NoSuchKey"
 	// max number of retries when meets error
 	maxErrorRetries = 3
+
 	// the maximum number of byte to read for seek.
 	maxSkipOffsetByRead = 1 << 16 // 64KB
 
@@ -562,6 +563,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 		options:      &qs,
 		s3Compatible: !officialS3,
 	}
+
 	// Perform permission checks
 	if err := s3like.CheckPermissions(ctx, s3Cli, opts.CheckPermissions); err != nil {
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission failed due to %v", err)

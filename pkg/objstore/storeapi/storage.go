@@ -21,7 +21,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -210,7 +209,7 @@ type Prefix string
 // NewPrefix returns a new Prefix instance from the given string.
 func NewPrefix(prefix string) Prefix {
 	p := strings.Trim(prefix, "/")
-	if p != "" && !strings.HasSuffix(p, "/") {
+	if p != "" {
 		p += "/"
 	}
 	return Prefix(p)
@@ -267,12 +266,12 @@ func (bp *BucketPrefix) PrefixStr() string {
 
 // GetHTTPRange returns the HTTP Range header value for the given start and end
 // offsets.
-// if startOffset = 0, `full` is true and `rangeVal` is nil.
-// If a partial object is requested, `full` is false and `rangeVal` contains the
-// Range header value.
-// if endOffset is not 0, startOffset must <= endOffset, we don't check the
+// If endOffset is not 0, startOffset must <= endOffset; we don't check the
 // validity here.
-func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal *string) {
+// If startOffset == 0 and endOffset == 0, `full` is true and `rangeVal` is empty.
+// Otherwise, a partial object is requested, `full` is false and `rangeVal`
+// contains the Range header value.
+func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal string) {
 	// If we just open part of the object, we set `Range` in the request.
 	// If we meant to open the whole object, not just a part of it,
 	// we do not pass the range in the request,
@@ -281,12 +280,12 @@ func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal *string) {
 	switch {
 	case endOffset > startOffset:
 		// both end of http Range header are inclusive
-		rangeVal = aws.String(fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1))
+		rangeVal = fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1)
 	case startOffset == 0:
 		// opening the whole object, no need to fill the `Range` field in the request
 		full = true
 	default:
-		rangeVal = aws.String(fmt.Sprintf("bytes=%d-", startOffset))
+		rangeVal = fmt.Sprintf("bytes=%d-", startOffset)
 	}
 	return
 }

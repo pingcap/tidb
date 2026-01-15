@@ -43,17 +43,17 @@ func TestPrefix(t *testing.T) {
 func TestGetHTTPRange(t *testing.T) {
 	full, val := GetHTTPRange(0, 0)
 	require.True(t, full)
-	require.Nil(t, val)
+	require.Empty(t, val)
 
 	full, val = GetHTTPRange(0, 100)
 	require.False(t, full)
-	require.EqualValues(t, "bytes=0-99", *val)
+	require.EqualValues(t, "bytes=0-99", val)
 
 	full, val = GetHTTPRange(50, 100)
 	require.False(t, full)
-	require.EqualValues(t, "bytes=50-99", *val)
+	require.EqualValues(t, "bytes=50-99", val)
 
 	full, val = GetHTTPRange(50, 0)
 	require.False(t, full)
-	require.EqualValues(t, "bytes=50-", *val)
+	require.EqualValues(t, "bytes=50-", val)
 }

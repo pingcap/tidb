@@ -20,30 +20,37 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/stretchr/testify/require"
 )
 
 func TestS3TidbRetryerNeverExhaustTokens(t *testing.T) {
-	retryer := newRetryer()
+	retry := newRetryer()
 	ctx := context.Background()
 	// default retry.NewStandard only have 500 tokens
 	opErr := &net.DNSError{IsTimeout: true}
 	for range 10000 {
-		_, err := retryer.GetRetryToken(ctx, opErr)
+		_, err := retry.GetRetryToken(ctx, opErr)
 		require.NoError(t, err)
 	}
 }
 
 func TestS3TiDBRetryer(t *testing.T) {
-	retryer := newRetryer()
+	retry := newRetryer()
 	// S3 will run for retryer.MaxAttempts() attempts, so will have MaxAttempts - 1
 	// retries and delay between retries
 	var totalDelay time.Duration
-	for i := 1; i < retryer.MaxAttempts(); i++ {
-		delay, _ := retryer.RetryDelay(i, nil)
+	for i := 1; i < retry.MaxAttempts(); i++ {
+		delay, _ := retry.RetryDelay(i, nil)
 		totalDelay += delay
 	}
 	require.Greater(t, totalDelay, 7*time.Minute)
 	require.Less(t, totalDelay, 9*time.Minute)
 	t.Log(totalDelay)
+}
+
+func TestRetryerIsInstanceMetadataError(t *testing.T) {
+	retry := newRetryer()
+	require.False(t, retry.IsErrorRetryable(errors.Annotate(context.DeadlineExceeded, "169.254.169.254")))
+	require.True(t, retry.IsErrorRetryable(errors.Annotate(context.DeadlineExceeded, "normal err")))
 }

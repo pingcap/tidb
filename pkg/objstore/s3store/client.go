@@ -131,11 +131,13 @@ func (c *s3Client) CheckPutAndDeleteObject(ctx context.Context) (err error) {
 
 func (c *s3Client) GetObject(ctx context.Context, name string, startOffset, endOffset int64) (*s3like.GetResp, error) {
 	key := c.Prefix.ObjectKey(name)
-	fullRange, rangeVal := storeapi.GetHTTPRange(startOffset, endOffset)
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
-		Range:  rangeVal,
+	}
+	fullRange, rangeVal := storeapi.GetHTTPRange(startOffset, endOffset)
+	if rangeVal != "" {
+		input.Range = aws.String(rangeVal)
 	}
 	result, err := c.svc.GetObject(ctx, input)
 	if err != nil {

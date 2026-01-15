@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//pkg/objstore/objectio",
         "//pkg/objstore/recording",
-        "@com_github_aws_aws_sdk_go_v2//aws",
         "@com_github_aws_aws_sdk_go_v2//aws/retry",
     ],
 )
