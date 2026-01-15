@@ -265,9 +265,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// filterOutNullEQAndOtherCondition4ConvertAntiJoin is to iterate all equal condition's out columns except NullEQ ones
+// filterOutNullEQ4ConvertAntiJoin is to iterate all equal condition's out columns except NullEQ ones
 // and all other condition's columns except GT, GE, LE, LT, NE ones.
-func filterOutNullEQAndOtherCondition4ConvertAntiJoin(inner int, joinOuterKeySch *intset.FastIntSet, eq []*expression.ScalarFunction, other []expression.Expression) {
+func filterOutNullEQ4ConvertAntiJoin(inner int, joinOuterKeySch *intset.FastIntSet, eq []*expression.ScalarFunction, other []expression.Expression) {
 	for _, s := range eq {
 		if s.FuncName.L == ast.NullEQ {
 			continue
@@ -344,7 +344,7 @@ FROM
 LEFT JOIN
 	Table_B ON Table_A.id = Table_B.id
 WHERE
-	Table_B.id IS NULL;
+	Table_A.id IS NULL;
 +--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
 | id                       | task      | access object | operator info                                                                        |
 +--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
@@ -369,9 +369,11 @@ WHERE
 |   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
 +----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
 ```
-#### Scenario 2: IS NULL on a Non-Join NOT NULL Column
+#### Scenario 2: IS NULL on a Non-Join-key NOT NULL Column
 
-If a column in the outer table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join, it implies that the join failed to find a match. This allows us to convert the join into ```ANTI SEMI JOIN``` even if the column is not part of the join keys.
+If a column in the outer table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join,
+it implies that the join failed to find a match. This allows us to convert the join into ```ANTI SEMI JOIN```
+even if the column is not part of the join keys.
 
 ##### Table Schema:
 
@@ -387,7 +389,7 @@ CREATE TABLE Table_B (
 -- ensures that 'B.status IS NULL' only occurs when no match is found.
 SELECT A.* FROM Table_A A
 LEFT JOIN Table_B B ON A.id = B.id
-WHERE B.status IS NULL;
+WHERE A.status IS NULL;
 
 +--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
 | id                       | task      | access object | operator info                                                                        |
@@ -472,7 +474,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
-	filterOutNullEQAndOtherCondition4ConvertAntiJoin(innerChildIdx, &joinOuterKeySch, p.EqualConditions, p.OtherConditions)
+	filterOutNullEQ4ConvertAntiJoin(innerChildIdx, &joinOuterKeySch, p.EqualConditions, p.OtherConditions)
 	selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
 	// resultProj is to generate the NULL values for the columns of the outer table, which is the
 	// expected result for this kind of anti-join query.
