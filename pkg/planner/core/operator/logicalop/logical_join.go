@@ -435,7 +435,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	if _, ok := p.Self().(*LogicalApply); ok {
 		return nil, false
 	}
-	innerChildIdx := 0
+	var innerChildIdx int
 	switch p.JoinType {
 	case base.LeftOuterJoin:
 		innerChildIdx = 0
