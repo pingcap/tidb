@@ -112,6 +112,11 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		}
 	}
 
+	// Check if row has enough elements to prevent index out of range panic
+	if len(row) == 0 {
+		return nil, errors.Errorf("empty row provided to getKeysNeedCheckOneRow")
+	}
+
 	uniqueKeys := make([]*keyValueWithDupInfo, 0, nUnique)
 	// Append record keys and errors.
 	var handle kv.Handle
@@ -122,6 +127,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 			return nil, err
 		}
 	} else if len(handleCols) > 0 {
+		if handleCols[0].Offset >= len(row) {
+			return nil, errors.Errorf("row length %d is less than handle column offset %d", len(row), handleCols[0].Offset)
+		}
 		handle = kv.IntHandle(row[handleCols[0].Offset].GetInt64())
 	}
 	var handleKey *keyValueWithDupInfo
@@ -135,10 +143,16 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if t.Meta().IsCommonHandle {
 			data := make([]types.Datum, len(handleCols))
 			for i, col := range handleCols {
+				if col.Offset >= len(row) {
+					return nil, errors.Errorf("row length %d is less than handle column offset %d", len(row), col.Offset)
+				}
 				data[i] = row[col.Offset]
 			}
 			keyCols, err = dataToStrings(data)
 		} else {
+			if handleCols[0].Offset >= len(row) {
+				return nil, errors.Errorf("row length %d is less than handle column offset %d", len(row), handleCols[0].Offset)
+			}
 			var s string
 			s, err = row[handleCols[0].Offset].ToString()
 			keyCols = []string{s}
@@ -165,6 +179,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 	for _, col := range t.WritableCols() {
 		// if there is a changing column, append the dependency column for index fetch values
 		if col.ChangeStateInfo != nil && col.State != model.StatePublic {
+			if col.DependencyColumnOffset >= len(row) {
+				return nil, errors.Errorf("row length %d is less than dependency column offset %d", len(row), col.DependencyColumnOffset)
+			}
 			value, err := table.CastValue(ctx, row[col.DependencyColumnOffset], col.ColumnInfo, false, false)
 			if err != nil {
 				return nil, err
@@ -242,6 +259,9 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 func buildHandleFromDatumRow(sctx *stmtctx.StatementContext, row []types.Datum, tblHandleCols []*table.Column, pkIdxInfo *model.IndexInfo) (kv.Handle, error) {
 	pkDts := make([]types.Datum, 0, len(tblHandleCols))
 	for i, col := range tblHandleCols {
+		if col.Offset >= len(row) {
+			return nil, errors.Errorf("row length %d is less than handle column offset %d", len(row), col.Offset)
+		}
 		d := row[col.Offset]
 		if pkIdxInfo != nil && len(pkIdxInfo.Columns) > 0 {
 			tablecodec.TruncateIndexValue(&d, pkIdxInfo.Columns[i], col.ColumnInfo)

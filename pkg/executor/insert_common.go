@@ -553,11 +553,6 @@ func (e *InsertValues) getRow(ctx context.Context, vals []types.Datum) ([]types.
 
 	inLoadData := e.Ctx().GetSessionVars().StmtCtx.InLoadDataStmt
 
-	// Check bounds to prevent index out of range panic
-	if len(vals) < e.rowLen {
-		return nil, errors.Errorf("column count mismatch: expected %d values, got %d", e.rowLen, len(vals))
-	}
-
 	for i := range e.rowLen {
 		col := e.insertColumns[i].ToInfo()
 		casted, err := table.CastValue(e.Ctx(), vals[i], col, false, false)
