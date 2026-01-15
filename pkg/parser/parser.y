@@ -1829,7 +1829,7 @@ SplitIndexOption:
 	{
 		$$ = &ast.SplitIndexOption{
 			PrimaryKey: true,
-			IndexName: ast.NewCIStr($4),
+			IndexName: ast.NewCIStr($4.(string)),
 			SplitOpt: $5.(*ast.SplitOption),
 		}
 	}
