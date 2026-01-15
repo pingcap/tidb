@@ -344,7 +344,7 @@ FROM
 LEFT JOIN
 	Table_B ON Table_A.id = Table_B.id
 WHERE
-	Table_A.id IS NULL;
+	Table_B.id IS NULL;
 +--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
 | id                       | task      | access object | operator info                                                                        |
 +--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
@@ -369,7 +369,7 @@ WHERE
 |   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
 +----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
 ```
-#### Scenario 2: IS NULL on a Non-Join-key NOT NULL Column
+#### Scenario 2: IS NULL on a Non-Join-Key NOT NULL Column
 
 If a column in the outer table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join,
 it implies that the join failed to find a match. This allows us to convert the join into ```ANTI SEMI JOIN```
@@ -389,7 +389,7 @@ CREATE TABLE Table_B (
 -- ensures that 'B.status IS NULL' only occurs when no match is found.
 SELECT A.* FROM Table_A A
 LEFT JOIN Table_B B ON A.id = B.id
-WHERE A.status IS NULL;
+WHERE B.status IS NULL;
 
 +--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
 | id                       | task      | access object | operator info                                                                        |
