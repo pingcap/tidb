@@ -1367,6 +1367,9 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *storeapi.W
 			u.PartSize = option.PartSize
 			u.Concurrency = option.Concurrency
 			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * HardcodedChunkSize)
+			if rs.s3Compatible {
+				u.ClientOptions = append(u.ClientOptions, withContentMD5)
+			}
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3.PutObjectInput{
