@@ -48,8 +48,11 @@ SELECT UUID_VERSION('123e4567-e89b-12d3-a456-426614174000');
 SELECT UUID_TIMESTAMP('123e4567-e89b-12d3-a456-426614174000');
 SELECT HEX(UUID_TO_BIN('123e4567-e89b-12d3-a456-426614174000'));
 
--- error 1305
-SELECT UUID_SHORT();
+# UUID_SHORT() returns a 64-bit unsigned integer
+# The exact value changes each call, so we just verify it returns a positive integer
+SELECT UUID_SHORT() > 0;
+# Verify it increments with each call
+SELECT UUID_SHORT() != UUID_SHORT();
 
 -- error 3102
 CREATE TABLE t123 (id int PRIMARY KEY, uuid VARCHAR(255) AS (UUID()));

@@ -22,6 +22,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/globalconn"
 	"github.com/pingcap/tidb/pkg/util/vitess"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -104,6 +106,7 @@ var (
 	_ builtinFunc = &builtinTimeAnyValueSig{}
 	_ builtinFunc = &builtinUsedLockSig{}
 	_ builtinFunc = &builtinUUIDSig{}
+	_ builtinFunc = &builtinUUIDShortSig{}
 	_ builtinFunc = &builtinUUIDTimestampSig{}
 	_ builtinFunc = &builtinUUIDToBinSig{}
 	_ builtinFunc = &builtinUUIDv4Sig{}
@@ -115,6 +118,25 @@ var (
 
 const (
 	tidbShardBucketCount = 256
+)
+
+// uuidShortState holds the state needed for UUID_SHORT() function.
+// UUID_SHORT returns a "short" universal identifier as a 64-bit unsigned integer.
+// The value is composed as:
+//
+//	(server_id & 255) << 56
+//	+ (server_startup_time_in_seconds << 24)
+//	+ incremented_variable++;
+//
+// In TiDB's distributed environment, server_id is extracted from the session's
+// ConnectionID, which encodes the unique TiDB instance ID. This ensures UUID_SHORT
+// generates unique values across all TiDB nodes in a cluster.
+var (
+	// uuidShortServerStartTime is the server startup time in seconds since Unix epoch,
+	// used as part of the UUID_SHORT calculation.
+	uuidShortServerStartTime = uint64(time.Now().Unix())
+	// uuidShortCounter is an atomic counter that increments with each UUID_SHORT() call.
+	uuidShortCounter atomic.Uint64
 )
 
 type sleepFunctionClass struct {
@@ -1734,14 +1756,76 @@ type uuidShortFunctionClass struct {
 }
 
 func (c *uuidShortFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
-	// This should be:
-	//
+	if err := c.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETInt)
+	if err != nil {
+		return nil, err
+	}
+	bf.tp.SetFlen(21)
+	bf.tp.AddFlag(mysql.UnsignedFlag)
+	sig := &builtinUUIDShortSig{baseBuiltinFunc: bf}
+	return sig, nil
+}
+
+type builtinUUIDShortSig struct {
+	baseBuiltinFunc
+	expropt.SessionVarsPropReader
+
+	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
+	// as this expression may be shared across sessions.
+	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
+}
+
+func (b *builtinUUIDShortSig) Clone() builtinFunc {
+	newSig := &builtinUUIDShortSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+// RequiredOptionalEvalProps implements the RequireOptionalEvalProps interface.
+func (b *builtinUUIDShortSig) RequiredOptionalEvalProps() OptionalEvalPropKeySet {
+	return b.SessionVarsPropReader.RequiredOptionalEvalProps()
+}
+
+// evalInt implements the UUID_SHORT() function.
+// Returns a "short" universal identifier as a 64-bit unsigned integer.
+// The value is computed as:
+//
+//	(server_id & 255) << 56
+//	+ (server_startup_time_in_seconds << 24)
+//	+ incremented_variable++;
+//
+// In TiDB's distributed environment, we extract server_id from the ConnectionID
+// which encodes the unique TiDB instance ID.
+func (b *builtinUUIDShortSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+	// Get server ID from session's ConnectionID
+	var serverID uint64
+	vars, err := b.GetSessionVars(ctx)
+	if err == nil && vars != nil && vars.ConnectionID != 0 {
+		// Parse the ConnectionID to extract the server ID
+		// ConnectionID encodes server_id in its upper bits
+		gcid, _, parseErr := globalconn.ParseConnID(vars.ConnectionID)
+		if parseErr == nil {
+			serverID = gcid.ServerID
+		}
+	}
+
+	// Increment the counter atomically and get the previous value
+	counter := uuidShortCounter.Add(1) - 1
+
 	// (server_id & 255) << 56
-	// + (server_startup_time_in_seconds << 24)
-	// + incremented_variable++;
-	//
-	// But we have a noop server_id
-	return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", "UUID_SHORT")
+	serverIDPart := (serverID & 255) << 56
+
+	// server_startup_time_in_seconds << 24
+	startTimePart := (uuidShortServerStartTime & 0xFFFFFFFF) << 24
+
+	// Combine all parts: (server_id & 255) << 56 + (startup_time << 24) + counter
+	// Use lower 24 bits of counter as per MySQL spec
+	result := serverIDPart | startTimePart | (counter & 0xFFFFFF)
+
+	return int64(result), false, nil
 }
 
 type vitessHashFunctionClass struct {
