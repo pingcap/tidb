@@ -184,9 +184,9 @@ func GetEnabledCategories() TraceCategory {
 	return TraceCategory(enabledCategories.Load())
 }
 
-// It delegates to traceevent.IsEnabled
-// This default implementation is just used to avoid nil pointer.
-var IsEnabled = func(category TraceCategory) bool { return false }
+// IsEnabled delegates to traceevent.IsEnabled
+// This implementation here is just used to avoid nil pointer.
+var IsEnabled = func(_ TraceCategory) bool { return false }
 
 // TraceCategory represents different trace event categories.
 type TraceCategory uint64
