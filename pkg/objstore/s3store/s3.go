@@ -749,7 +749,11 @@ func PutAndDeleteObjectCheck(ctx context.Context, svc S3API, options *backuppb.S
 	}()
 	// when no permission, aws returns err with code "AccessDenied"
 	input := buildPutObjectInput(options, file, []byte("check"))
-	_, err = svc.PutObject(ctx, input)
+	var optFns []func(*s3.Options)
+	if options.Provider != "" && options.Provider != "aws" {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	_, err = svc.PutObject(ctx, input, optFns...)
 	return errors.Trace(err)
 }
 
@@ -798,7 +802,11 @@ func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) er
 	// we don't need to calculate contentMD5 if s3 object lock enabled.
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
-	_, err := rs.svc.PutObject(ctx, input)
+	var optFns []func(*s3.Options)
+	if rs.s3Compatible {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	_, err := rs.svc.PutObject(ctx, input, optFns...)
 	if err != nil {
 		return errors.Trace(err)
 	}
