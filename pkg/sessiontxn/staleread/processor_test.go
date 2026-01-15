@@ -255,15 +255,21 @@ func TestStaleReadSupportDateTimeAndTSO(t *testing.T) {
 	err = processor.OnSelectTable(astTableWithAsOf(t, p1.dt))
 	require.NoError(t, err)
 	require.Equal(t, processor.GetStalenessReadTS(), p1.ts)
+}
+
+func TestStaleReadCompactDateTime(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	p1 := genStaleReadPoint(t, tk)
 
 	// AS OF TIMESTAMP 'YYYYMMDDHHMMSS' is a valid datetime and is parsed as
-	// 'YYYY-MM-DD HH:MM:S', not as TSO. This is for backward compatibility.
+	// 'YYYY-MM-DD HH:MM:SS', not as TSO. This is for backward compatibility.
 	compactDatetime := p1.tm.Format("20060102150405") // Go format for YYYYMMDDHHMMSS
 	// Truncate to seconds since compact format doesn't have subsecond precision
 	expectedTSFromDatetime := oracle.GoTimeToTS(p1.tm.Truncate(time.Second))
 
-	processor = createProcessor(t, tk.Session())
-	err = processor.OnSelectTable(astTableWithAsOf(t, compactDatetime))
+	processor := createProcessor(t, tk.Session())
+	err := processor.OnSelectTable(astTableWithAsOf(t, compactDatetime))
 	require.NoError(t, err)
 	// The timestamp should match the datetime interpretation, not the raw integer
 	require.Equal(t, expectedTSFromDatetime, processor.GetStalenessReadTS())
@@ -271,6 +277,32 @@ func TestStaleReadSupportDateTimeAndTSO(t *testing.T) {
 	compactAsInt, err := strconv.ParseUint(compactDatetime, 10, 64)
 	require.NoError(t, err)
 	require.NotEqual(t, compactAsInt, processor.GetStalenessReadTS())
+}
+
+func TestStaleReadInvalidExpression(t *testing.T) {
+	store := testkit.CreateMockStore(t, mockstore.WithStoreType(mockstore.EmbedUnistore))
+	tk := testkit.NewTestKit(t, store)
+	// Initialize the test table
+	tk.MustExec("create table if not exists test.t(a bigint)")
+
+	// Test invalid formats that can't be parsed as datetime or TSO.
+	// These should return the original datetime parsing error.
+	testCases := []struct {
+		input       string
+		expectedErr string
+	}{
+		{"invalid_timestamp", "Incorrect datetime value: 'invalid_timestamp'"},
+		{"not-a-date", "Incorrect datetime value: 'not-a-date'"},
+		{"2024-13-01 00:00:00", "Incorrect time value"},                            // invalid month
+		{"2024-01-32 00:00:00", "Incorrect datetime value: '2024-01-32 00:00:00'"}, // invalid day
+	}
+
+	for _, tc := range testCases {
+		processor := createProcessor(t, tk.Session())
+		err := processor.OnSelectTable(astTableWithAsOf(t, tc.input))
+		require.Error(t, err, "expected error for invalid format: %s", tc.input)
+		require.Contains(t, err.Error(), tc.expectedErr, "unexpected error message for: %s", tc.input)
+	}
 }
 
 func TestStaleReadProcessorWithExecutePreparedStmt(t *testing.T) {
