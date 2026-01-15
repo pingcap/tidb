@@ -104,7 +104,7 @@ var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
 
 // IsInternalColumn will check if a column name is reserved.
 func IsInternalColumn(x ast.CIStr) bool {
-	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x == ExtraHandleName
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x == ExtraHandleName || x == ExtraCommitTSName
 }
 
 // IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
@@ -114,7 +114,7 @@ func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
 
 // IsActiveActiveColumn will check if a column name is reserved.
 func IsActiveActiveColumn(x ast.CIStr) bool {
-	return x == ExtraOriginTSName || x == ExtraCommitTSName
+	return x == ExtraOriginTSName
 }
 
 // IsSoftDeleteColumn will check if a column name is reserved.

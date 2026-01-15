@@ -212,8 +212,8 @@ func TestIsXXXColumn(t *testing.T) {
 
 	commitTS := ast.NewCIStr(ExtraCommitTSName.O)
 	require.False(t, IsSoftDeleteColumn(commitTS))
-	require.True(t, IsActiveActiveColumn(commitTS))
-	require.True(t, IsSoftDeleteOrActiveActiveColumn(commitTS))
+	require.False(t, IsActiveActiveColumn(commitTS))
+	require.False(t, IsSoftDeleteOrActiveActiveColumn(commitTS))
 	require.True(t, IsInternalColumn(commitTS))
 
 	handle := ast.NewCIStr(ExtraHandleName.O)
