@@ -114,7 +114,7 @@ func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
 
 // IsActiveActiveColumn will check if a column name is reserved.
 func IsActiveActiveColumn(x ast.CIStr) bool {
-	return x == ExtraOriginTSName
+	return x == ExtraOriginTSName || x == ExtraCommitTSName
 }
 
 // IsSoftDeleteColumn will check if a column name is reserved.
