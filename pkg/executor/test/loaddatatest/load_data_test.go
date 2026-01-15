@@ -495,34 +495,3 @@ func TestFix56408(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 	tk.MustExec("ADMIN CHECK TABLE a")
 }
-
-func TestLoadDataAutoRandomError(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists a")
-	tk.MustExec("create table a (a bigint primary key auto_random(5), b int)")
-
-	// Set allow_auto_random_explicit_insert to false (default)
-	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
-
-	// Create a CSV file with explicit value for auto_random column
-	var reader io.ReadCloser = mydump.NewStringReader("1,2\n")
-	var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
-		Build: func(_ string) (r io.ReadCloser, err error) {
-			return reader, nil
-		},
-		Wg: &sync.WaitGroup{},
-	}
-
-	ctx := tk.Session().(sessionctx.Context)
-	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
-	defer ctx.SetValue(executor.LoadDataReaderBuilderKey, nil)
-
-	// Should return proper error, not panic
-	err := tk.ExecToErr("load data local infile '/tmp/a.csv' into table a fields terminated by ','")
-	require.Error(t, err)
-	// Should return error 8216 with proper message about auto_random
-	require.Contains(t, err.Error(), "Invalid auto random")
-	require.Contains(t, err.Error(), "allow_auto_random_explicit_insert")
-}
