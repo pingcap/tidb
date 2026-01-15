@@ -183,19 +183,7 @@ func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, u
 		return nil, errors.Trace(err)
 	}
 
-	// For global indexes, if the handle is a PartitionHandle, extract the partition ID from it
-	// to ensure the partition ID is encoded in the index value.
-	// This is critical for non-clustered tables after EXCHANGE PARTITION,
-	// where duplicate _tidb_rowid values exist across partitions.
-	partitionID := c.phyTblID
-	innerHandle := h
-	if c.idxInfo.Global {
-		if ph, ok := h.(kv.PartitionHandle); ok {
-			partitionID = ph.PartitionID
-			innerHandle = ph.Handle
-		}
-	}
-	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, innerHandle, partitionID, restoredData, buf)
+	idx, err := tablecodec.GenIndexValuePortal(loc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
 	err = ec.HandleError(err)
 	return idx, err
 }
