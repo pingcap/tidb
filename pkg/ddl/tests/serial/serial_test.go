@@ -373,14 +373,18 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 
 	tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
 	tk.MustExec("create table table_pre_split(id int) shard_row_id_bits=2 pre_split_regions=2")
-	err = tk.ExecToErr("create temporary table tmp_pre_split like table_pre_split")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
+	tk.MustExec("create temporary table tmp_pre_split like table_pre_split")
+	tk.MustQuery("show create table tmp_pre_split").Check(testkit.Rows("tmp_pre_split CREATE TEMPORARY TABLE `tmp_pre_split` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	defer tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
 
 	tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
 	tk.MustExec("create table table_shard_row_id(id int) shard_row_id_bits=2")
-	err = tk.ExecToErr("create temporary table tmp_shard_row_id like table_shard_row_id")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	tk.MustExec("create temporary table tmp_shard_row_id like table_shard_row_id")
+	tk.MustQuery("show create table tmp_shard_row_id").Check(testkit.Rows("tmp_shard_row_id CREATE TEMPORARY TABLE `tmp_shard_row_id` (\n" +
+		"  `id` int(11) DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 	defer tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
 
 	tk.MustExec("drop table if exists partition_table, tmp_partition_table")

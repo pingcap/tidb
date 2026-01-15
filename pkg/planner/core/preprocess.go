@@ -1512,17 +1512,12 @@ func checkTableEngine(engineName string) error {
 }
 
 func checkReferInfoForTemporaryTable(tableMetaInfo *model.TableInfo) error {
+	// We allow PreSplitRegions and ShardRowIdBits for temp table by ignoring them.
 	if tableMetaInfo.AutoRandomBits != 0 {
 		return plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random")
 	}
-	if tableMetaInfo.PreSplitRegions != 0 {
-		return plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions")
-	}
 	if tableMetaInfo.Partition != nil {
 		return plannererrors.ErrPartitionNoTemporary
-	}
-	if tableMetaInfo.ShardRowIDBits != 0 {
-		return plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits")
 	}
 	if tableMetaInfo.PlacementPolicyRef != nil {
 		return plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("placement")
