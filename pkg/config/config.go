@@ -1480,7 +1480,7 @@ func (c *Config) Valid() error {
 	return l.UnmarshalText([]byte(c.Log.Level))
 }
 
-// UpdateGlobal updates the global config, and provide a restore function that can be used to restore to the original.
+// UpdateGlobal updates the global config.
 func UpdateGlobal(f func(conf *Config)) {
 	g := GetGlobalConfig()
 	newConf := *g
