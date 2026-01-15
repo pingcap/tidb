@@ -764,9 +764,15 @@ type candidatePath struct {
 type PartialOrderMatchResult struct {
 	// Matched indicates whether the index can provide partial order
 	Matched bool
-	// PrefixColId is the last and only one prefix column ID of index
-	PrefixColId int64
-	// PrefixLen is the prefix length in bytes for prefix index, 0 means full column match
+	// PrefixColID is the last and only one prefix column ID of index, only used for executor part
+	// For example:
+	// Query ORDER BY a,b,c
+	// Index: a, b, c(10)
+	// ColIds: a=0, b=1, c=2
+	// PrefixColID: 2, the col id of c
+	// PrefixLen: 10, the col length of c in index
+	PrefixColID int64
+	// PrefixLen is the prefix length in bytes for prefix index,  only used for executor part
 	PrefixLen int
 }
 
@@ -1055,15 +1061,6 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		return property.PropMatched
 	}
 
-	// Match partial order property if exists PartialOrderInfo physical property.
-	if prop.PartialOrderInfo != nil {
-		// TODO: use the PartialOrderMatchResult in the further PR to construct the special TopN and Limit executor
-		if matchPartialOrderProperty(path, prop.PartialOrderInfo) != nil {
-			return property.PropMatched
-		}
-		return property.PropNotMatched
-	}
-
 	// Match SortItems physical property.
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
@@ -1211,7 +1208,7 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 		orderByCols = append(orderByCols, item.Col)
 	}
 
-	var prefixColumnId int64
+	var prefixColumnID int64
 	var prefixLen int
 	for i := range len(path.IdxCols) {
 		// check if the same column
@@ -1223,7 +1220,7 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 		if path.IdxColLens[i] != types.UnspecifiedLength {
 			// Encountered a prefix index column
 			// This prefix index column can provide partial order, but subsequent columns cannot match
-			prefixColumnId = path.IdxCols[i].UniqueID
+			prefixColumnID = path.IdxCols[i].UniqueID
 			prefixLen = path.IdxColLens[i]
 			break
 		}
@@ -1231,7 +1228,7 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 
 	return &PartialOrderMatchResult{
 		Matched:     true,
-		PrefixColId: prefixColumnId,
+		PrefixColID: prefixColumnID,
 		PrefixLen:   prefixLen,
 	}
 }
@@ -1527,20 +1524,27 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if path.IsTablePath() {
 			currentCandidate = getTableCandidate(ds, path, prop)
 		} else {
-			// Check if candidate path need to consider partial order optimization
-			considerPartialOrderIndex := ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN && prop.PartialOrderInfo != nil
+			// Check if candidate path match the partial order property
+			// To consider an index for partial order optimization, the following conditions must be met together:
+			// 1. OptPartialOrderedIndexForTopN should be enabled.
+			// 2. Physical property should has PartialOrderInfo
+			// 3. The path should match PartialOrderInfo
+			// TODO: use the PartialOrderMatchResult in the further PR to construct the special TopN and Limit executor
+			matchPartialOrderIndex := ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN &&
+				prop.PartialOrderInfo != nil &&
+				matchPartialOrderProperty(path, prop.PartialOrderInfo) != nil
 
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
 			// 1. This path's access cond is not nil.
 			// 2. We have a non-empty prop to match.
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
-			// 5. Has PartialOrderInfo physical property to be considered for partial order optimization (new condition).
-			if !(len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || !considerPartialOrderIndex) {
+			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
+			if len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex {
+				currentCandidate = getIndexCandidate(ds, path, prop)
+			} else {
 				continue
 			}
-
-			currentCandidate = getIndexCandidate(ds, path, prop)
 		}
 		pruned := false
 		for i := len(candidates) - 1; i >= 0; i-- {
