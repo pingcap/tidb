@@ -495,3 +495,39 @@ func TestFix56408(t *testing.T) {
 	checkCases(tests, loadSQL, t, tk, ctx, selectSQL, deleteSQL)
 	tk.MustExec("ADMIN CHECK TABLE a")
 }
+
+// TestLoadDataAutoRandomError tests that LOAD DATA returns proper error
+// when inserting explicit values into AUTO_RANDOM column without
+// allow_auto_random_explicit_insert enabled.
+// See https://github.com/pingcap/tidb/issues/65585
+func TestLoadDataAutoRandomError(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t_auto_random")
+	tk.MustExec("create table t_auto_random (a bigint primary key auto_random(5), b int)")
+
+	// Ensure allow_auto_random_explicit_insert is disabled (default)
+	tk.MustExec("set @@allow_auto_random_explicit_insert = false")
+
+	ctx := tk.Session().(sessionctx.Context)
+
+	// Create a reader with explicit value for auto_random column
+	var reader io.ReadCloser = mydump.NewStringReader("1,2\n")
+	var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
+		Build: func(_ string) (r io.ReadCloser, err error) {
+			return reader, nil
+		},
+		Wg: &sync.WaitGroup{},
+	}
+	ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+
+	// This should return error 8216, not a runtime panic
+	err := tk.ExecToErr("load data local infile '/tmp/test.csv' into table t_auto_random fields terminated by ','")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "auto_random")
+	require.Contains(t, err.Error(), "allow_auto_random_explicit_insert")
+
+	// Clean up
+	tk.MustExec("drop table if exists t_auto_random")
+}
