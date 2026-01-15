@@ -705,11 +705,17 @@ func (ds *DataSource) AppendTableCol(col *expression.Column) {
 }
 
 // CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
+// It will go thourgh each partial index to see whether it's condition constraints are all satisfied by the pushed down conditions.
+// Detailed checking can be found in the comment of `CheckConstraints`.
+// And we specially impelement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
+// It's a special handler now, and it's not easy to extend to other constraints.
 func (ds *DataSource) CheckPartialIndexes() {
 	var columnNames types.NameSlice
 	var removedPaths map[int64]struct{}
 	partialIndexUsedHint, hasPartialIndex := false, false
 	for _, path := range ds.PossibleAccessPaths {
+		// If there is no condition expression, it is not a partial index.
+		// So we skip it directly.
 		if path.Index == nil || path.Index.ConditionExprString == "" {
 			continue
 		}
@@ -723,6 +729,7 @@ func (ds *DataSource) CheckPartialIndexes() {
 				})
 			}
 		}
+		// Convert the raw string expression to Expression.
 		expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), path.Index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
 		cnfExprs := expression.SplitCNFItems(expr)
 		if err != nil || !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
@@ -735,8 +742,10 @@ func (ds *DataSource) CheckPartialIndexes() {
 		if path.Forced {
 			partialIndexUsedHint = true
 		}
+		// A special handler for plan cache.
+		// We only do it for single IS NOT NULL constraint now.
 		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
-			path.PreMatchCanBeFalse = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+			path.PreMatchNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
 		}
 	}
 	// 1. No partial index,
