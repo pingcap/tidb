@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -47,7 +48,7 @@ import (
 // only used in testing for now.
 func mergeOverlappingFilesImpl(ctx context.Context,
 	paths []string,
-	store objstore.Storage,
+	store storeapi.Storage,
 	readBufferSize int,
 	newFilePrefix string,
 	writerID string,
@@ -488,14 +489,14 @@ func TestWriterSort(t *testing.T) {
 }
 
 type writerFirstCloseFailStorage struct {
-	objstore.Storage
+	storeapi.Storage
 	shouldFail bool
 }
 
 func (s *writerFirstCloseFailStorage) Create(
 	ctx context.Context,
 	path string,
-	option *objstore.WriterOption,
+	option *storeapi.WriterOption,
 ) (objectio.Writer, error) {
 	w, err := s.Storage.Create(ctx, path, option)
 	if err != nil {
@@ -565,7 +566,7 @@ func TestGetAdjustedIndexBlockSize(t *testing.T) {
 	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB, DefaultBlockSize))
 }
 
-func readKVFile(t *testing.T, store objstore.Storage, filename string) []KVPair {
+func readKVFile(t *testing.T, store storeapi.Storage, filename string) []KVPair {
 	t.Helper()
 	reader, err := NewKVReader(context.Background(), filename, store, 0, units.KiB)
 	require.NoError(t, err)
@@ -587,19 +588,19 @@ type testWriter interface {
 }
 
 func TestWriterOnDup(t *testing.T) {
-	getWriterFn := func(store objstore.Storage, b *WriterBuilder) testWriter {
+	getWriterFn := func(store storeapi.Storage, b *WriterBuilder) testWriter {
 		return b.Build(store, "/test", "0")
 	}
 	doTestWriterOnDupRecord(t, false, getWriterFn)
 	doTestWriterOnDupRemove(t, false, getWriterFn)
 }
 
-func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(store objstore.Storage, b *WriterBuilder) testWriter) {
+func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(store storeapi.Storage, b *WriterBuilder) testWriter) {
 	t.Helper()
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 	var summary *WriterSummary
-	doGetWriter := func(store objstore.Storage, builder *WriterBuilder) testWriter {
+	doGetWriter := func(store storeapi.Storage, builder *WriterBuilder) testWriter {
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRecord)
 		return getWriter(store, builder)
 	}
@@ -741,12 +742,12 @@ func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(s
 	})
 }
 
-func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(objstore.Storage, *WriterBuilder) testWriter) {
+func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(storeapi.Storage, *WriterBuilder) testWriter) {
 	t.Helper()
 	ctx := context.Background()
 	store := objstore.NewMemStorage()
 	var summary *WriterSummary
-	doGetWriter := func(store objstore.Storage, builder *WriterBuilder) testWriter {
+	doGetWriter := func(store storeapi.Storage, builder *WriterBuilder) testWriter {
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
 		return getWriter(store, builder)
 	}

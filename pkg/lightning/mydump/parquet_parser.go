@@ -26,7 +26,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -215,12 +215,12 @@ type convertedType struct {
 type parquetFileWrapper struct {
 	ctx context.Context
 
-	objstore.ReadSeekCloser
+	storeapi.ReadSeekCloser
 	lastOff int64
 	skipBuf []byte
 
 	// current file path and store, used to open file
-	store objstore.Storage
+	store storeapi.Storage
 	path  string
 }
 
@@ -490,9 +490,9 @@ func (pp *ParquetParser) SetRowID(rowID int64) {
 // OpenParquetReader opens a parquet file and returns a handle that can at least read the file.
 func OpenParquetReader(
 	ctx context.Context,
-	store objstore.Storage,
+	store storeapi.Storage,
 	path string,
-) (objstore.ReadSeekCloser, error) {
+) (storeapi.ReadSeekCloser, error) {
 	r, err := store.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
@@ -511,7 +511,7 @@ func OpenParquetReader(
 // ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
 func ReadParquetFileRowCountByFile(
 	ctx context.Context,
-	store objstore.Storage,
+	store storeapi.Storage,
 	fileMeta SourceFileMeta,
 ) (int64, error) {
 	r, err := store.Open(ctx, fileMeta.Path, nil)
@@ -530,8 +530,8 @@ func ReadParquetFileRowCountByFile(
 // NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
-	store objstore.Storage,
-	r objstore.ReadSeekCloser,
+	store storeapi.Storage,
+	r storeapi.ReadSeekCloser,
 	path string,
 	meta ParquetFileMeta,
 ) (*ParquetParser, error) {
@@ -609,7 +609,7 @@ func NewParquetParser(
 func SampleStatisticsFromParquet(
 	ctx context.Context,
 	path string,
-	store objstore.Storage,
+	store storeapi.Storage,
 ) (
 	rowCount int64,
 	avgRowSize float64,

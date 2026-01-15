@@ -24,6 +24,7 @@ go_test(
     deps = [
         "//pkg/objstore",
         "//pkg/objstore/compressedio",
+        "//pkg/objstore/storeapi",
         "@com_github_klauspost_compress//zstd",
         "@com_github_stretchr_testify//require",
     ],

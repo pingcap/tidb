@@ -16,12 +16,13 @@ package objstore
 
 import (
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/spf13/pflag"
 )
 
 // DefineFlags adds flags to the flag set corresponding to all backend options.
 func DefineFlags(flags *pflag.FlagSet) {
-	defineS3Flags(flags)
+	s3store.DefineS3Flags(flags)
 	defineGCSFlags(flags)
 	defineAzblobFlags(flags)
 }
@@ -34,7 +35,7 @@ func HiddenFlagsForStream(flags *pflag.FlagSet) {
 
 // ParseFromFlags obtains the backend options from the flag set.
 func (options *BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
-	if err := options.S3.parseFromFlags(flags); err != nil {
+	if err := options.S3.ParseFromFlags(flags); err != nil {
 		return errors.Trace(err)
 	}
 	if err := options.GCS.parseFromFlags(flags); err != nil {

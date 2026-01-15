@@ -43,6 +43,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/objstore",
         "//pkg/objstore/compressedio",
+        "//pkg/objstore/storeapi",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",

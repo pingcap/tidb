@@ -14,6 +14,7 @@ import (
 	"github.com/fatih/color"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -150,7 +151,7 @@ type TestStorageConfig struct {
 type TestContext struct {
 	Ctx           context.Context
 	Report        *TestReport
-	Store         objstore.Storage
+	Store         storeapi.Storage
 	PauseWhenFail bool
 }
 
@@ -239,7 +240,7 @@ func RunTestStorage(ctx context.Context, cfg TestStorageConfig) error {
 		return errors.Annotate(err, "failed to parse storage backend")
 	}
 
-	store, err := objstore.New(ctx, backend, &objstore.Options{
+	store, err := objstore.New(ctx, backend, &storeapi.Options{
 		SendCredentials: true,
 	})
 	if err != nil {
@@ -475,7 +476,7 @@ func testOpenWithRange(tc *TestContext, name string, expectedData []byte) {
 
 	startOffset := int64(100)
 	endOffset := int64(200)
-	reader, err := tc.Store.Open(tc.Ctx, name, &objstore.ReaderOption{
+	reader, err := tc.Store.Open(tc.Ctx, name, &storeapi.ReaderOption{
 		StartOffset: &startOffset,
 		EndOffset:   &endOffset,
 	})
@@ -665,7 +666,7 @@ func testWalkDir(tc *TestContext) {
 	}
 
 	var fileCount int
-	err := tc.Store.WalkDir(tc.Ctx, &objstore.WalkOption{}, func(path string, size int64) error {
+	err := tc.Store.WalkDir(tc.Ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 		fileCount++
 		return nil
 	})
@@ -717,7 +718,7 @@ func testWalkDirWithSubDir(tc *TestContext, testFile string, testData []byte) {
 
 	// Walk the subdirectory
 	var fileCount int
-	err := tc.Store.WalkDir(tc.Ctx, &objstore.WalkOption{
+	err := tc.Store.WalkDir(tc.Ctx, &storeapi.WalkOption{
 		SubDir: testDirName,
 	}, func(path string, size int64) error {
 		fileCount++
@@ -781,7 +782,7 @@ func testWalkDirWithPagination(tc *TestContext, testData []byte) {
 	// This forces WalkDir to make multiple internal requests
 	pageSize := int64(3)
 
-	opt := &objstore.WalkOption{
+	opt := &storeapi.WalkOption{
 		SubDir:    paginationTestDir,
 		ListCount: pageSize, // Small page size to force multiple internal pages
 	}
