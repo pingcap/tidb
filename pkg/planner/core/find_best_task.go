@@ -1060,9 +1060,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		// TODO: use the PartialOrderMatchResult in the further PR to construct the special TopN and Limit executor
 		if matchPartialOrderProperty(path, prop.PartialOrderInfo) != nil {
 			return property.PropMatched
-		} else {
-			return property.PropNotMatched
 		}
+		return property.PropNotMatched
 	}
 
 	// Match SortItems physical property.
@@ -1214,7 +1213,7 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 
 	var prefixColumnId int64
 	var prefixLen int
-	for i := 0; i < len(path.IdxCols); i++ {
+	for i := range len(path.IdxCols) {
 		// check if the same column
 		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
 			break
