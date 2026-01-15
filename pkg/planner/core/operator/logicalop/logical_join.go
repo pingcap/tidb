@@ -267,22 +267,20 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 
 // filterOutNullEQ4ConvertAntiJoin is to iterate all equal condition's out columns except NullEQ ones
 // and all other condition's columns except GT, GE, LE, LT, NE ones.
-func filterOutNullEQ4ConvertAntiJoin(inner int, joinOuterKeySch *intset.FastIntSet, eq []*expression.ScalarFunction, other []expression.Expression) {
+func filterOutNullEQ4ConvertAntiJoin(outerSchSet, joinOuterKeySet *intset.FastIntSet, eq []*expression.ScalarFunction, other []expression.Expression) {
 	for _, s := range eq {
 		if s.FuncName.L == ast.NullEQ {
 			continue
 		}
 		col1, col2, ok := expression.IsColOpCol(s)
 		if ok {
-			var col *expression.Column
 			// In left outer join，equal condition is inner colomn =  outer column
 			// In right outer join, equal condition is outer colomn = inner column
-			if inner == 0 {
-				col = col2
-			} else {
-				col = col1
+			if outerSchSet.Has(int(col1.UniqueID)) {
+				joinOuterKeySet.Insert(int(col1.UniqueID))
+			} else if outerSchSet.Has(int(col2.UniqueID)) {
+				joinOuterKeySet.Insert(int(col2.UniqueID))
 			}
-			joinOuterKeySch.Insert(int(col.UniqueID))
 		}
 	}
 	for _, s := range other {
@@ -291,15 +289,13 @@ func filterOutNullEQ4ConvertAntiJoin(inner int, joinOuterKeySch *intset.FastIntS
 			case ast.GT, ast.GE, ast.LE, ast.LT, ast.NE:
 				col1, col2, ok := expression.IsColOpCol(sf)
 				if ok {
-					var col *expression.Column
 					// In left outer join，equal condition is inner colomn =  outer column
 					// In right outer join, equal condition is outer colomn = inner column
-					if inner == 0 {
-						col = col2
-					} else {
-						col = col1
+					if outerSchSet.Has(int(col1.UniqueID)) {
+						joinOuterKeySet.Insert(int(col1.UniqueID))
+					} else if outerSchSet.Has(int(col2.UniqueID)) {
+						joinOuterKeySet.Insert(int(col2.UniqueID))
 					}
-					joinOuterKeySch.Insert(int(col.UniqueID))
 				}
 			default:
 			}
@@ -462,20 +458,20 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		return nil, false
 	}
 	inner := p.children[innerChildIdx]
-	innerSch := inner.Schema()
+	innerSchema := inner.Schema()
 	outerSchSet := intset.NewFastIntSet()
 	// Obtain all the columns that meet the requirements in the eq condition and other condition.
 	// If the column that is isnull is an outside column in the eq/other condition,
 	// It can be directly converted into an anti semi join.
 	expression.ExtractColumnsSetFromExpressions(&outerSchSet, func(c *expression.Column) bool {
-		return !innerSch.Contains(c)
+		return !innerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
-	joinOuterKeySch := intset.NewFastIntSet()
+	joinOuterKeySet := intset.NewFastIntSet()
 	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
-	filterOutNullEQ4ConvertAntiJoin(innerChildIdx, &joinOuterKeySch, p.EqualConditions, p.OtherConditions)
-	selConditionColInOuter = joinOuterKeySch.Has(int(isNullcol.UniqueID))
+	filterOutNullEQ4ConvertAntiJoin(&outerSchSet, &joinOuterKeySet, p.EqualConditions, p.OtherConditions)
+	selConditionColInOuter = joinOuterKeySet.Has(int(isNullcol.UniqueID))
 	// resultProj is to generate the NULL values for the columns of the outer table, which is the
 	// expected result for this kind of anti-join query.
 	if selConditionColInOuter {
