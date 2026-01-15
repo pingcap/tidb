@@ -1090,6 +1090,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
+	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
+	OptIndexPruneThreshold int
+
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
@@ -2147,6 +2150,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AutoIncrementOffset:           DefAutoIncrementOffset,
 		StmtCtx:                       stmtctx.NewStmtCtx(),
 		AllowAggPushDown:              false,
+<<<<<<< HEAD
 		AllowCartesianBCJ:             DefOptCartesianBCJ,
 		MPPOuterJoinFixedBuildSide:    DefOptMPPOuterJoinFixedBuildSide,
 		BroadcastJoinThresholdSize:    DefBroadcastJoinThresholdSize,
@@ -2156,6 +2160,23 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableNoDecorrelateInSelect:   DefOptEnableNoDecorrelateInSelect,
 		RetryLimit:                    DefTiDBRetryLimit,
 		DisableTxnAutoRetry:           DefTiDBDisableTxnAutoRetry,
+=======
+		AllowCartesianBCJ:             vardef.DefOptCartesianBCJ,
+		MPPOuterJoinFixedBuildSide:    vardef.DefOptMPPOuterJoinFixedBuildSide,
+		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
+		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
+		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
+		OptIndexPruneThreshold:        vardef.DefTiDBOptIndexPruneThreshold,
+		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
+		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
+		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
+		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
+		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
+		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
+		EnableSemiJoinRewrite:         vardef.DefOptEnableSemiJoinRewrite,
+		RetryLimit:                    vardef.DefTiDBRetryLimit,
+		DisableTxnAutoRetry:           vardef.DefTiDBDisableTxnAutoRetry,
+>>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999))
 		DDLReorgPriority:              kv.PriorityLow,
 		allowInSubqToJoinAndAgg:       DefOptInSubqToJoinAndAgg,
 		preferRangeScan:               DefOptPreferRangeScan,
