@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/channel"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -74,7 +75,10 @@ type TopNExec struct {
 	// ColumnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	ColumnIdxsUsedByChild []int
 
-	prefixKeyFieldTypes     []expression.Expression
+	typeCtx types.Context
+
+	prefixKeyExprs          []expression.Expression
+	prefixKeyFieldTypes     []*types.FieldType
 	prefixKeyFieldCollators []collate.Collator
 	prefixKeyColIdxs        []int
 	prefixKeyCharCounts     []int
@@ -98,6 +102,10 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.inMemoryThenSpillFlag = false
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
+
+	if len(e.prefixKeyCharCounts) > 0 {
+		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
+	}
 
 	if vardef.EnableTmpStorageOnOOM.Load() {
 		e.diskTracker = disk.NewTracker(e.ID(), -1)
@@ -279,7 +287,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 		return nil
 	}
 
-	if len(e.prefixKeyFieldTypes) > 0 {
+	if len(e.prefixKeyExprs) > 0 {
 		err := e.loadChunksUntilTotalLimitForRankTopN(ctx)
 		if err != nil {
 			close(e.resultChannel)
@@ -310,13 +318,21 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		return err
 	}
 
-	e.prefixKeyFieldCollators = make([]collate.Collator, 0, len(e.prefixKeyFieldTypes))
-	for i := range e.prefixKeyFieldTypes {
-		collateName := e.prefixKeyFieldTypes[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetCollate()
-		e.prefixKeyFieldCollators = append(e.prefixKeyFieldCollators, collate.GetCollator(collateName))
+	e.prefixKeyFieldCollators = make([]collate.Collator, 0, len(e.prefixKeyExprs))
+	e.prefixKeyFieldTypes = make([]*types.FieldType, 0, len(e.prefixKeyExprs))
+	for i := range e.prefixKeyExprs {
+		fieldType := e.prefixKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
+		e.prefixKeyFieldTypes = append(e.prefixKeyFieldTypes, fieldType)
+		switch fieldType.GetType() {
+		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			collateName := fieldType.GetCollate()
+			e.prefixKeyFieldCollators = append(e.prefixKeyFieldCollators, collate.GetCollator(collateName))
+		default:
+			e.prefixKeyFieldCollators = append(e.prefixKeyFieldCollators, nil)
+		}
 	}
 
-	e.prefixKeyCount = len(e.prefixKeyFieldTypes)
+	e.prefixKeyCount = len(e.prefixKeyExprs)
 
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	return nil
@@ -354,8 +370,8 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 	e.initBeforeLoadingChunks()
 
 	// Check types, we need string types as prefix index only supports string types.
-	for i := range e.prefixKeyFieldTypes {
-		prefixKeyType := e.prefixKeyFieldTypes[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
+	for i := range e.prefixKeyExprs {
+		prefixKeyType := e.prefixKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
 		switch prefixKeyType {
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -383,7 +399,10 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 		// 	input = fmt.Sprintf("%s\n%s", input, srcChk.GetRow(i).ToString(e.RetFieldTypes()))
 		// }
 
-		endIdx := e.findEndIdx(srcChk)
+		endIdx, err := e.findEndIdx(srcChk)
+		if err != nil {
+			return err
+		}
 
 		if endIdx < srcChk.NumRows() {
 			srcChk.TruncateTo(endIdx)
@@ -406,17 +425,29 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 	return nil
 }
 
-func (e *TopNExec) getPrefixKeys(row chunk.Row) []string {
+func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]string, error) {
 	prefixKeys := make([]string, 0, e.prefixKeyCount)
 	for i := range e.prefixKeyFieldCollators {
-		key := row.GetString(e.prefixKeyColIdxs[i])
-		prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, e.prefixKeyCharCounts[i]))))
-
+		if e.prefixKeyCharCounts[i] == -1 {
+			bytes, err := row.SerializeToBytesForOneColumn(
+				e.typeCtx,
+				e.prefixKeyFieldTypes[i],
+				e.prefixKeyColIdxs[i],
+				e.prefixKeyFieldCollators[i])
+			if err != nil {
+				return nil, err
+			}
+			prefixKeys = append(prefixKeys, string(hack.String(bytes)))
+		} else {
+			key := row.GetString(e.prefixKeyColIdxs[i])
+			prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, e.prefixKeyCharCounts[i]))))
+		}
 	}
-	return prefixKeys
+	return prefixKeys, nil
 }
 
-func (e *TopNExec) findEndIdx(chk *chunk.Chunk) int {
+func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
+	var err error
 	idx := 0
 	rowCnt := chk.NumRows()
 	savedRowCount := e.chkHeap.rowChunks.Len()
@@ -424,8 +455,8 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) int {
 
 	if savedRowCount+rowCnt <= totalLimit {
 		// Fast path
-		e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
-		return rowCnt
+		e.prevPrefixKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+		return rowCnt, err
 	}
 
 	// Maybe savedRowCount is greater than totalLimit
@@ -438,18 +469,24 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) int {
 
 	// both idx == 0 and len(e.prevPrefixKeys) == 0 is impossible
 	if idx > 0 {
-		e.prevPrefixKeys = e.getPrefixKeys(chk.GetRow(idx - 1))
+		e.prevPrefixKeys, err = e.getPrefixKeys(chk.GetRow(idx - 1))
+		if err != nil {
+			return 0, err
+		}
 	}
 
 	// Now, len(e.prevPrefixKeys) must be greater than 0
 	for ; idx < rowCnt; idx++ {
-		currentPrefixKeys := e.getPrefixKeys(chk.GetRow(idx))
+		currentPrefixKeys, err := e.getPrefixKeys(chk.GetRow(idx))
+		if err != nil {
+			return 0, err
+		}
 		if !slices.Equal(currentPrefixKeys, e.prevPrefixKeys) {
-			return idx
+			return idx, nil
 		}
 		idx++
 	}
-	return idx
+	return idx, nil
 }
 
 const topNCompactionFactor = 4
@@ -833,10 +870,9 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 	}
 }
 
-// SetPrefixKeyFieldsForTest sets prefix key fields for testing the RankTopN path.
-func (e *TopNExec) SetPrefixKeyFieldsForTest(prefixKeyFieldTypes []expression.Expression, prefixKeyColIdxs []int, prefixKeyCharCounts []int, prefixKeyFieldCollators []collate.Collator) {
-	e.prefixKeyFieldTypes = prefixKeyFieldTypes
+// SetPrefixKeyMetasForTest sets prefix key fields for testing the RankTopN path.
+func (e *TopNExec) SetPrefixKeyMetasForTest(prefixKeyExprs []expression.Expression, prefixKeyColIdxs []int, prefixKeyCharCounts []int) {
+	e.prefixKeyExprs = prefixKeyExprs
 	e.prefixKeyColIdxs = prefixKeyColIdxs
 	e.prefixKeyCharCounts = prefixKeyCharCounts
-	e.prefixKeyFieldCollators = prefixKeyFieldCollators
 }

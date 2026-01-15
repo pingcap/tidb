@@ -31,7 +31,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
@@ -39,14 +38,13 @@ import (
 
 // rankTopNCase is the sort case for RankTopN tests with string prefix key
 type rankTopNCase struct {
-	ctx                     sessionctx.Context
-	rowCount                int
-	cols                    []*expression.Column
-	orderByIdx              []int
-	prefixKeyFieldTypes     []expression.Expression
-	prefixKeyFieldCollators []collate.Collator
-	prefixKeyColIdxs        []int
-	prefixKeyCharCounts     []int
+	ctx                 sessionctx.Context
+	rowCount            int
+	cols                []*expression.Column
+	orderByIdx          []int
+	prefixKeyExprs      []expression.Expression
+	prefixKeyColIdxs    []int
+	prefixKeyCharCounts []int
 }
 
 func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Schema) *testutil.MockDataSource {
@@ -55,22 +53,22 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 		DataSchema: schema,
 		Rows:       rankTopNCase.rowCount,
 		Ctx:        rankTopNCase.ctx,
-		Ndvs:       make([]int, len(rankTopNCase.prefixKeyFieldTypes)+1),
-		Datums:     make([][]any, len(rankTopNCase.prefixKeyFieldTypes)+1),
+		Ndvs:       make([]int, len(rankTopNCase.prefixKeyExprs)+1),
+		Datums:     make([][]any, len(rankTopNCase.prefixKeyExprs)+1),
 	}
 
-	for i := range rankTopNCase.prefixKeyFieldTypes {
+	for i := range rankTopNCase.prefixKeyExprs {
 		// -2 means use provided data
 		opt.Ndvs[i] = -2
 	}
 
 	outputs := make([]string, rankTopNCase.rowCount)
 
-	opt.Ndvs[len(rankTopNCase.prefixKeyFieldTypes)] = 0
+	opt.Ndvs[len(rankTopNCase.prefixKeyExprs)] = 0
 	// Generate prefix key data: strings that are pre-ordered.
 	// Each prefix group has multiple rows; the group size is variable and each group
 	// size is randomized in [1, 200].
-	for i, ft := range rankTopNCase.prefixKeyFieldTypes {
+	for i, ft := range rankTopNCase.prefixKeyExprs {
 		prefixData := make([]any, rankTopNCase.rowCount)
 		groupIdx := 0
 		var bufLen int
@@ -137,7 +135,7 @@ func buildRankTopNExec(rankTopNCase *rankTopNCase, dataSource *testutil.MockData
 		Concurrency: 5,
 	}
 
-	topNexec.SetPrefixKeyFieldsForTest(rankTopNCase.prefixKeyFieldTypes, rankTopNCase.prefixKeyColIdxs, rankTopNCase.prefixKeyCharCounts, rankTopNCase.prefixKeyFieldCollators)
+	topNexec.SetPrefixKeyMetasForTest(rankTopNCase.prefixKeyExprs, rankTopNCase.prefixKeyColIdxs, rankTopNCase.prefixKeyCharCounts)
 	return topNexec
 }
 
@@ -168,18 +166,38 @@ func TestRankTopN(t *testing.T) {
 			rowCount:   rand.Intn(9000) + 1000,
 			ctx:        ctx,
 			orderByIdx: []int{0}, // Order by prefix key column
-			prefixKeyFieldTypes: []expression.Expression{
+			prefixKeyExprs: []expression.Expression{
 				&expression.Column{
 					RetType: prefixKeyField,
 					Index:   0,
 				}},
-			prefixKeyFieldCollators: []collate.Collator{collate.GetCollator(collationName)},
-			prefixKeyColIdxs:        []int{0},
-			prefixKeyCharCounts:     []int{14},
+			prefixKeyColIdxs:    []int{0},
+			prefixKeyCharCounts: []int{14},
 			cols: []*expression.Column{
 				{Index: 0, RetType: prefixKeyField},
 				{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		})
+		rankTopNCases = append(rankTopNCases, &rankTopNCase{
+			rowCount:   rand.Intn(9000) + 1000,
+			ctx:        ctx,
+			orderByIdx: []int{0, 1}, // Order by prefix key column
+			prefixKeyExprs: []expression.Expression{
+				&expression.Column{
+					RetType: prefixKeyField,
+					Index:   0,
+				},
+				&expression.Column{
+					RetType: prefixKeyField,
+					Index:   1,
+				}},
+			prefixKeyColIdxs:    []int{0, 1},
+			prefixKeyCharCounts: []int{-1, 12},
+			cols: []*expression.Column{
+				{Index: 0, RetType: prefixKeyField},
+				{Index: 1, RetType: prefixKeyField},
+				{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}},
+		})
+		// TODO(x) add more different types
 	}
 
 	for _, testCase := range rankTopNCases {

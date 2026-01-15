@@ -18,8 +18,12 @@ import (
 	"strconv"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
 )
 
 // RowSize is the size of `Row{}`
@@ -261,4 +265,82 @@ func (r Row) ToString(ft []*types.FieldType) string {
 		}
 	}
 	return string(buf)
+}
+
+// SerializeToBytesForOneColumn serializes value to bytes for one specified column
+func (r Row) SerializeToBytesForOneColumn(typeCtx types.Context, ft *types.FieldType, colIdx int, collator collate.Collator) ([]byte, error) {
+	// TODO(x) add comment to explain why we return this string for null
+	nullValue := "#$^NULL@*^"
+	if r.IsNull(colIdx) {
+		return hack.Slice(nullValue), nil
+	}
+
+	switch ft.GetType() {
+	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear, mysql.TypeDuration:
+		return r.c.columns[colIdx].GetRaw(r.idx), nil
+	case mysql.TypeFloat:
+		f32s := r.c.columns[colIdx].Float32s()
+		d := float64(f32s[r.idx])
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		if d == 0 {
+			d = 0
+		}
+		return unsafe.Slice((*byte)(unsafe.Pointer(&d)), sizeFloat64), nil
+	case mysql.TypeDouble:
+		f64s := r.c.columns[colIdx].Float64s()
+		// For negative zero. In memory, 0 is [0, 0, 0, 0, 0, 0, 0, 0] and -0 is [0, 0, 0, 0, 0, 0, 0, 128].
+		// It makes -0's hash val different from 0's.
+		f := f64s[r.idx]
+		if f == 0 {
+			f = 0
+		}
+		return unsafe.Slice((*byte)(unsafe.Pointer(&f)), sizeFloat64), nil
+	case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+		return collator.ImmutableKey(string(hack.String(r.c.columns[colIdx].GetBytes(r.idx)))), nil
+	case mysql.TypeDate, mysql.TypeDatetime, mysql.TypeTimestamp:
+		ts := r.c.columns[colIdx].Times()
+		v, err := ts[r.idx].ToPackedUint()
+		if err != nil {
+			return nil, err
+		}
+		return unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64), nil
+	case mysql.TypeNewDecimal:
+		ds := r.c.columns[colIdx].Decimals()
+		b, err := ds[r.idx].ToHashKey()
+		if err != nil {
+			return nil, err
+		}
+		return b, nil
+	case mysql.TypeEnum:
+		if mysql.HasEnumSetAsIntFlag(ft.GetFlag()) {
+			v := r.c.columns[colIdx].GetEnum(r.idx).Value
+			return unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64), nil
+		} else {
+			v := r.c.columns[colIdx].GetEnum(r.idx).Value
+			str := ""
+			if enum, err := types.ParseEnumValue(ft.GetElems(), v); err == nil {
+				str = enum.Name
+			}
+			return collator.ImmutableKey(str), nil
+		}
+	case mysql.TypeSet:
+		s, err := types.ParseSetValue(ft.GetElems(), r.c.columns[colIdx].GetSet(r.idx).Value)
+		if err != nil {
+			return nil, err
+		}
+		return collator.ImmutableKey(s.Name), nil
+	case mysql.TypeBit:
+		v, err1 := types.BinaryLiteral(r.c.columns[colIdx].GetBytes(r.idx)).ToInt(typeCtx)
+		terror.Log(errors.Trace(err1))
+		return unsafe.Slice((*byte)(unsafe.Pointer(&v)), sizeUint64), nil
+	case mysql.TypeJSON:
+		jsonHashBuffer := make([]byte, 0)
+		jsonHashBuffer = r.c.columns[colIdx].GetJSON(r.idx).HashValue(jsonHashBuffer)
+		return jsonHashBuffer, nil
+	case mysql.TypeNull:
+		return hack.Slice(nullValue), nil
+	default:
+		return nil, errors.Errorf("unsupport column type for encode %d", ft.GetType())
+	}
 }
