@@ -164,13 +164,13 @@ func testTraceEventCarriesTraceID(t *testing.T) {
 	defer fr.Close()
 
 	traceBuf := NewTraceBuf()
-	traceBuf.TraceID = []byte{0x01, 0x10, 0xFE, 0xAA}
+	traceBuf.SetTraceID([]byte{0x01, 0x10, 0xFE, 0xAA})
 	ctx := WithTraceBuf(context.Background(), traceBuf)
 	TraceEvent(ctx, Txn2PC, "trace-id-check", zap.Int("value", 7))
 
 	events := traceBuf.events
 	require.Len(t, events, 1)
-	require.Equal(t, traceBuf.TraceID, events[0].TraceID)
+	require.Equal(t, traceBuf.GetTraceID(), events[0].TraceID)
 }
 
 func testTraceEventLoggingSwitch(t *testing.T) {
