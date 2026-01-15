@@ -59,7 +59,7 @@ local newDash = dashboard.new(
     label='tidb_cluster',
     multi=false,
     name='tidb_cluster',
-    query='label_values(pd_cluster_status{k8s_cluster="$kuberentes"}, tidb_cluster)',
+    query='label_values(pd_cluster_status{k8s_cluster="$k8s_cluster"}, tidb_cluster)',
     refresh='time',
     regex='',
     sort=1,
