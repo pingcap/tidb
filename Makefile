@@ -657,15 +657,6 @@ bazel_ci_prepare:
 
 .PHONY: bazel_ci_simple_prepare
 bazel_ci_simple_prepare:
-	@mkdir -p ./bin; \
-	if [ ! -f ./bin/tikv-server.tar.gz ]; then \
-		echo "Downloading tikv-server tarball"; \
-		wget -q -O ./bin/tikv-server.tar.gz "http://fileserver.pingcap.net/download/pingcap/qa/builds/devbuild/tangenta/test/tikv-v9.0.0-alpha-143-g14cadb886-linux-amd64.tar.gz" || true; \
-	else \
-		echo "tikv-server tarball already exists, skipping download"; \
-	fi; \
-	echo "Extracting tikv-server"; \
-	tar -xzf ./bin/tikv-server.tar.gz -C ./bin/ || true
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) //:gazelle
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  \
 		--run_under="cd $(CURDIR) && " \
