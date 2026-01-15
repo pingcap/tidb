@@ -386,7 +386,8 @@ func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *proper
 	// Create PhysicalProperty with PartialOrderInfo
 	// Use CopMultiReadTaskType for IndexLookUp
 	partialOrderProp := &property.PhysicalProperty{
-		TaskTp:      property.CopMultiReadTaskType,
+		TaskTp: property.CopMultiReadTaskType,
+		// TODO: change it to limit + offset + N
 		ExpectedCnt: math.MaxFloat64,
 		PartialOrderInfo: &property.PartialOrderInfo{
 			SortItems: sortItems,
