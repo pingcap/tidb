@@ -85,6 +85,26 @@
         "SQL": "explain explore select * from t1, t2 where t1.a=t2.a",
         "Plan": [
           [
+            "IndexJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+            "├─IndexLookUp(Build)  9990.00  root    ",
+            "│ ├─IndexFullScan(Build)  9990.00  cop[tikv]  table:t1, index:a(a)  keep order:false, stats:pseudo",
+            "│ └─TableRowIDScan(Probe)  9990.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
+            "└─IndexLookUp(Probe)  12487.50  root    ",
+            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
+            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
+          ],
+          [
+            "IndexJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+            "├─TableReader(Build)  9990.00  root    data:Selection",
+            "│ └─Selection  9990.00  cop[tikv]    not(isnull(test.t1.a))",
+            "│   └─TableFullScan  10000.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
+            "└─IndexLookUp(Probe)  12487.50  root    ",
+            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
+            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
+          ],
+          [
             "MergeJoin  12487.50  root    inner join, left key:test.t1.a, right key:test.t2.a",
             "├─Projection(Probe)  9990.00  root    test.t1.a, test.t1.b, test.t1.c",
             "│ └─IndexLookUp  9990.00  root    ",
@@ -96,16 +116,6 @@
             "    └─TableRowIDScan(Probe)  9990.00  cop[tikv]  table:t2  keep order:false, stats:pseudo"
           ],
           [
-            "IndexHashJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-            "├─TableReader(Build)  9990.00  root    data:Selection",
-            "│ └─Selection  9990.00  cop[tikv]    not(isnull(test.t1.a))",
-            "│   └─TableFullScan  10000.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
-            "└─IndexLookUp(Probe)  12487.50  root    ",
-            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
-            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
-          ],
-          [
             "HashJoin  12487.50  root    inner join, equal:[eq(test.t1.a, test.t2.a)]",
             "├─TableReader(Probe)  9990.00  root    data:Selection",
             "│ └─Selection  9990.00  cop[tikv]    not(isnull(test.t1.a))",
@@ -113,16 +123,6 @@
             "└─TableReader(Build)  9990.00  root    data:Selection",
             "  └─Selection  9990.00  cop[tikv]    not(isnull(test.t2.a))",
             "    └─TableFullScan  10000.00  cop[tikv]  table:t2  keep order:false, stats:pseudo"
-          ],
-          [
-            "IndexHashJoin  12487.50  root    inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
-            "├─IndexLookUp(Build)  9990.00  root    ",
-            "│ ├─IndexFullScan(Build)  9990.00  cop[tikv]  table:t1, index:a(a)  keep order:false, stats:pseudo",
-            "│ └─TableRowIDScan(Probe)  9990.00  cop[tikv]  table:t1  keep order:false, stats:pseudo",
-            "└─IndexLookUp(Probe)  12487.50  root    ",
-            "  ├─Selection(Build)  12487.50  cop[tikv]    not(isnull(test.t2.a))",
-            "  │ └─IndexRangeScan  12500.00  cop[tikv]  table:t2, index:a(a)  range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
-            "  └─TableRowIDScan(Probe)  12487.50  cop[tikv]  table:t2  keep order:false, stats:pseudo"
           ]
         ]
       }
