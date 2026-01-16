@@ -222,18 +222,24 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 		for {
 			timeGap := time.Since(lastUpdateTime)
 			if tr.ttl-timeGap <= timeLeftThreshold {
-				lease, err := tr.grant(ctx)
+				var (
+					lease    *clientv3.LeaseGrantResponse
+					grantErr error
+				)
 				failpoint.Inject("brie-task-register-failed-to-grant", func(_ failpoint.Value) {
-					err = errors.New("failpoint-error")
+					grantErr = errors.New("failpoint-error")
 				})
-				if err != nil {
+				if grantErr == nil {
+					lease, grantErr = tr.grant(ctx)
+				}
+				if grantErr != nil {
 					select {
 					case <-ctx.Done():
 						return
 					default:
 					}
-					log.Warn("failed to grant lease", zap.Error(err))
-					time.Sleep(RegisterRetryInternal)
+					log.Warn("failed to grant lease", zap.Error(grantErr))
+					tr.sleepRetryInterval(RegisterRetryInternal)
 					continue
 				}
 				tr.curLeaseID = lease.ID
@@ -241,19 +247,22 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 				needReputKV = true
 			}
 			if needReputKV {
-				// if the lease has expired, need to put the key again
-				_, err := tr.client.KV.Put(ctx, tr.key, "", clientv3.WithLease(tr.curLeaseID))
+				var reputErr error
 				failpoint.Inject("brie-task-register-failed-to-reput", func(_ failpoint.Value) {
-					err = errors.New("failpoint-error")
+					reputErr = errors.New("failpoint-error")
 				})
-				if err != nil {
+				if reputErr == nil {
+					// If the lease has expired, need to put the key again.
+					_, reputErr = tr.client.KV.Put(ctx, tr.key, "", clientv3.WithLease(tr.curLeaseID))
+				}
+				if reputErr != nil {
 					select {
 					case <-ctx.Done():
 						return
 					default:
 					}
-					log.Warn("failed to put new kv", zap.Error(err))
-					time.Sleep(RegisterRetryInternal)
+					log.Warn("failed to put new kv", zap.Error(reputErr))
+					tr.sleepRetryInterval(RegisterRetryInternal)
 					continue
 				}
 				needReputKV = false
@@ -267,13 +276,34 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 				default:
 				}
 				log.Warn("failed to create new kv", zap.Error(err))
-				time.Sleep(RegisterRetryInternal)
+				tr.sleepRetryInterval(RegisterRetryInternal)
 				continue
 			}
 
 			break RECREATE
 		}
 	}
+}
+
+func (tr *taskRegister) sleepRetryInterval(defaultInterval time.Duration) {
+	interval := defaultInterval
+	failpoint.Inject("brie-task-register-retry-interval", func(val failpoint.Value) {
+		switch v := val.(type) {
+		case int:
+			if v > 0 {
+				interval = time.Duration(v) * time.Millisecond
+			}
+		case int64:
+			if v > 0 {
+				interval = time.Duration(v) * time.Millisecond
+			}
+		case float64:
+			if v > 0 {
+				interval = time.Duration(v) * time.Millisecond
+			}
+		}
+	})
+	time.Sleep(interval)
 }
 
 // RegisterTask saves the task's information
