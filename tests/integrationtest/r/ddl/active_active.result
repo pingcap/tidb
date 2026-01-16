@@ -99,6 +99,8 @@ ALTER TABLE t ADD COLUMN _tidb_origin_ts bigint;
 Error 1060 (42S21): Duplicate column name '_tidb_origin_ts'
 ALTER TABLE t ADD COLUMN _tidb_softdelete_time timestamp(6);
 Error 1060 (42S21): Duplicate column name '_tidb_softdelete_time'
+ALTER TABLE t ADD COLUMN _tidb_commit_ts bigint;
+Error 1166 (42000): Incorrect column name '_tidb_commit_ts'
 ALTER TABLE t MODIFY COLUMN _tidb_origin_ts bigint;
 Error 1166 (42000): Incorrect column name '_tidb_origin_ts'
 ALTER TABLE t CHANGE COLUMN _tidb_softdelete_time _tidb_softdelete_time datetime;

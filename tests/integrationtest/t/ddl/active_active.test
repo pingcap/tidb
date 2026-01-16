@@ -86,6 +86,8 @@ ALTER TABLE t DROP COLUMN _tidb_softdelete_time;
 ALTER TABLE t ADD COLUMN _tidb_origin_ts bigint;
 -- error 1060
 ALTER TABLE t ADD COLUMN _tidb_softdelete_time timestamp(6);
+-- error 1166
+ALTER TABLE t ADD COLUMN _tidb_commit_ts bigint;
 
 # forbid modifying internal columns
 -- error 1166
