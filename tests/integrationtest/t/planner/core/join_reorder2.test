@@ -29,6 +29,42 @@ explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2
     (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub
     inner join t4 on sub.id=t4.id;
 
+# Correlated subquery with Selection between joins.
+set @@tidb_opt_join_reorder_sel = 0;
+explain format = 'plan_tree' select * from t1 where exists (
+    select 1
+    from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id
+    where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id
+);
+
+set @@tidb_opt_join_reorder_sel = 1;
+explain format = 'plan_tree' select * from t1 where exists (
+    select 1
+    from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id
+    where (t3.name like 'test3' or t4.name like 'test4') and t2.id = t1.id
+);
+
+# Volatile/side-effect functions in Selection should block join reorder through selection
+set @@tidb_opt_join_reorder_sel = 0;
+explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
+    (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub
+    inner join t4 on sub.id=t4.id;
+
+set @@tidb_opt_join_reorder_sel = 1;
+explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
+    (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub
+    inner join t4 on sub.id=t4.id;
+
+set @@tidb_opt_join_reorder_sel = 0;
+explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
+    (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub
+    inner join t4 on sub.id=t4.id;
+
+set @@tidb_opt_join_reorder_sel = 1;
+explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
+    (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub
+    inner join t4 on sub.id=t4.id;
+
 # Deeper nesting - subquery in subquery with Selection blocking
 # Use leading(t1, t5, t4, t2, t3) to require t5 join before t4,t2,t3
 set @@tidb_opt_join_reorder_sel = 0;
