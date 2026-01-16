@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -189,6 +190,38 @@ func TestModelBasic(t *testing.T) {
 	require.Equal(t, mysql.NotNullFlag|mysql.PriKeyFlag, extraPK.GetFlag())
 	require.Equal(t, charset.CharsetBin, extraPK.GetCharset())
 	require.Equal(t, charset.CollationBin, extraPK.GetCollate())
+}
+
+func TestIsXXXColumn(t *testing.T) {
+	name := ast.NewCIStr("a")
+	require.False(t, IsSoftDeleteColumn(name))
+	require.False(t, IsActiveActiveColumn(name))
+	require.False(t, IsSoftDeleteOrActiveActiveColumn(name))
+	require.False(t, IsInternalColumn(name))
+
+	softDeleteTime := ast.NewCIStr(ExtraSoftDeleteTimeName.O)
+	require.True(t, IsSoftDeleteColumn(softDeleteTime))
+	require.False(t, IsActiveActiveColumn(softDeleteTime))
+	require.True(t, IsSoftDeleteOrActiveActiveColumn(softDeleteTime))
+	require.True(t, IsInternalColumn(softDeleteTime))
+
+	originTS := ast.NewCIStr(ExtraOriginTSName.O)
+	require.False(t, IsSoftDeleteColumn(originTS))
+	require.True(t, IsActiveActiveColumn(originTS))
+	require.True(t, IsSoftDeleteOrActiveActiveColumn(originTS))
+	require.True(t, IsInternalColumn(originTS))
+
+	commitTS := ast.NewCIStr(ExtraCommitTSName.O)
+	require.False(t, IsSoftDeleteColumn(commitTS))
+	require.False(t, IsActiveActiveColumn(commitTS))
+	require.False(t, IsSoftDeleteOrActiveActiveColumn(commitTS))
+	require.True(t, IsInternalColumn(commitTS))
+
+	handle := ast.NewCIStr(ExtraHandleName.O)
+	require.False(t, IsSoftDeleteColumn(handle))
+	require.False(t, IsActiveActiveColumn(handle))
+	require.False(t, IsSoftDeleteOrActiveActiveColumn(handle))
+	require.True(t, IsInternalColumn(handle))
 }
 
 func TestTTLInfoClone(t *testing.T) {

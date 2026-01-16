@@ -22,6 +22,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -91,6 +92,32 @@ var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
 
 // ExtraCommitTSName is the name of ExtraCommitTSID Column.
 var ExtraCommitTSName = model.NewCIStr("_tidb_commit_ts")
+
+// ExtraOriginTSName is the name of ExtraOriginTSID Column.
+var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
+
+// ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
+var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
+
+// IsInternalColumn will check if a column name is reserved.
+func IsInternalColumn(x ast.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x.L == ExtraHandleName.L || x.L == ExtraCommitTSName.L
+}
+
+// IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
+func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x)
+}
+
+// IsActiveActiveColumn will check if a column name is reserved.
+func IsActiveActiveColumn(x ast.CIStr) bool {
+	return x.L == ExtraOriginTSName.L
+}
+
+// IsSoftDeleteColumn will check if a column name is reserved.
+func IsSoftDeleteColumn(x ast.CIStr) bool {
+	return x.L == ExtraSoftDeleteTimeName.L
+}
 
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
