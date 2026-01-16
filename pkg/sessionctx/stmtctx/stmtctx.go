@@ -329,6 +329,11 @@ type StatementContext struct {
 	// If the binding is not used by the stmt, the value is empty
 	BindSQL string
 
+	// MatchSQLBindingCacheKey is the AST node used to match the sql binding. It is the key of the MatchSQLBindingCache.
+	MatchSQLBindingCacheKey ast.StmtNode
+	// MatchSQLBindingCache is to cache the bindinfo to avoid getting bindinfo from bind cache again.
+	MatchSQLBindingCache any
+
 	// ExecRetryCount records the number of retries for executing the statement.
 	// It is set after ExecStmt execution and currently only used in the Slow Log phase
 	// after LogSlowQuery is called.
@@ -506,10 +511,11 @@ func NewStmtCtx() *StatementContext {
 func NewStmtCtxWithTimeZone(tz *time.Location) *StatementContext {
 	intest.AssertNotNil(tz)
 	sc := &StatementContext{
-		ctxID:            contextutil.GenContextID(),
-		mu:               &stmtCtxMu{},
-		stmtCache:        &stmtCache{},
-		StaleTSOProvider: &staleTSOProvider{},
+		ctxID:                contextutil.GenContextID(),
+		mu:                   &stmtCtxMu{},
+		stmtCache:            &stmtCache{},
+		StaleTSOProvider:     &staleTSOProvider{},
+		MatchSQLBindingCache: nil,
 	}
 	sc.typeCtx = types.NewContext(types.DefaultStmtFlags, tz, sc)
 	sc.errCtx = newErrCtx(sc.typeCtx, DefaultStmtErrLevels, sc)

@@ -515,9 +515,15 @@ func (h *Handle) initStatsHistogramsConcurrently(is infoschema.InfoSchema, cache
 	return nil
 }
 
-func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64) {
+func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iterator4Chunk, totalMemory uint64, tablesWithBuckets map[int64]struct{}) {
 	if IsFullCacheFunc(cache, totalMemory) {
 		return
+	}
+	markAllIndexesFullLoadIfNoBuckets := func(table *statistics.Table) {
+		if _, exists := tablesWithBuckets[table.PhysicalID]; !exists {
+			// If the table has no buckets, we consider all indexes are fully loaded during bootstrap.
+			table.SetAllIndexFullLoadForBootstrap()
+		}
 	}
 	affectedIndexes := make(map[*statistics.Index]struct{})
 	var table *statistics.Table
@@ -525,7 +531,8 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		tblID := row.GetInt64(0)
 		if table == nil || table.PhysicalID != tblID {
 			if table != nil {
-				cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+				markAllIndexesFullLoadIfNoBuckets(table)
+				cache.Put(table.PhysicalID, table) // put this table in the cache because all statistics of the table have been read.
 			}
 			var ok bool
 			table, ok = cache.Get(tblID)
@@ -548,7 +555,8 @@ func (*Handle) initStatsTopN4Chunk(cache statstypes.StatsCache, iter *chunk.Iter
 		idx.TopN.AppendTopN(data, row.GetUint64(3))
 	}
 	if table != nil {
-		cache.Put(table.PhysicalID, table) // put this table in the cache because all statstics of the table have been read.
+		markAllIndexesFullLoadIfNoBuckets(table)
+		cache.Put(table.PhysicalID, table) // put this table in the cache because all statistics of the table have been read.
 	}
 	for idx := range affectedIndexes {
 		idx.TopN.Sort()
@@ -570,6 +578,44 @@ func genInitStatsTopNSQLForIndexes(isPaging bool, tableRange [2]int64) string {
 	return selectPrefix + rangeStartClause + rangeEndClause + orderSuffix
 }
 
+// getTablesWithBucketsInRange checks which tables in the given range have buckets.
+// Returns a map where keys are table IDs that have bucket entries.
+func getTablesWithBucketsInRange(sctx sessionctx.Context, tableRange [2]int64) (map[int64]struct{}, error) {
+	// Query to find table_ids that have buckets in the given range
+	// TODO: Figure out if HIGH_PRIORITY is working as intended here.
+	sql := "select /*+ USE_INDEX(stats_buckets, tbl) */ HIGH_PRIORITY distinct table_id from mysql.stats_buckets" +
+		" where is_index = 1" +
+		" and table_id >= " + strconv.FormatInt(tableRange[0], 10) +
+		" and table_id < " + strconv.FormatInt(tableRange[1], 10)
+
+	rc, err := util.Exec(sctx, sql)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer terror.Call(rc.Close)
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+	req := rc.NewChunk(nil)
+	iter := chunk.NewIterator4Chunk(req)
+	tablesWithBuckets := make(map[int64]struct{})
+
+	for {
+		err := rc.Next(ctx, req)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if req.NumRows() == 0 {
+			break
+		}
+		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			tableID := row.GetInt64(0)
+			tablesWithBuckets[tableID] = struct{}{}
+		}
+	}
+
+	return tablesWithBuckets, nil
+}
+
 func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
 	return h.Pool.SPool().WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
@@ -581,6 +627,12 @@ func (h *Handle) initStatsTopNByPaging(cache statstypes.StatsCache, task initsta
 // initStatsTopNByPagingWithSCtx contains the core business logic for initStatsTopNByPaging.
 // This method preserves git blame history by keeping the original logic intact.
 func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache statstypes.StatsCache, task initstats.Task, totalMemory uint64) error {
+	// First, get the tables with buckets in this range
+	tablesWithBuckets, err := getTablesWithBucketsInRange(sctx, [2]int64{task.StartTid, task.EndTid})
+	if err != nil {
+		return errors.Trace(err)
+	}
+
 	sql := genInitStatsTopNSQLForIndexes(true, [2]int64{task.StartTid, task.EndTid})
 	rc, err := util.Exec(sctx, sql)
 	if err != nil {
@@ -598,7 +650,7 @@ func (h *Handle) initStatsTopNByPagingWithSCtx(sctx sessionctx.Context, cache st
 		if req.NumRows() == 0 {
 			break
 		}
-		h.initStatsTopN4Chunk(cache, iter, totalMemory)
+		h.initStatsTopN4Chunk(cache, iter, totalMemory, tablesWithBuckets)
 	}
 	return nil
 }
@@ -733,6 +785,11 @@ func (h *Handle) initStatsBucketsByPagingWithSCtx(sctx sessionctx.Context, cache
 }
 
 func (h *Handle) initStatsBucketsConcurrently(cache statstypes.StatsCache, totalMemory uint64, concurrency int, strategy loadStrategy) error {
+	failpoint.Inject("mockBucketsLoadMemoryLimit", func(val failpoint.Value) {
+		if v, ok := val.(int); ok {
+			totalMemory = uint64(v)
+		}
+	})
 	if IsFullCacheFunc(cache, totalMemory) {
 		return nil
 	}

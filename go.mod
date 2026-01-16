@@ -1,6 +1,6 @@
 module github.com/pingcap/tidb
 
-go 1.25.5
+go 1.25.6
 
 require (
 	cloud.google.com/go/kms v1.15.8
@@ -13,6 +13,7 @@ require (
 	github.com/Masterminds/semver v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
+	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.2.3
 	github.com/apache/arrow-go/v18 v18.0.0
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
@@ -67,7 +68,7 @@ require (
 	github.com/google/btree v1.1.2
 	github.com/google/pprof v0.0.0-20250903194437-c28834ac2320
 	github.com/google/skylark v0.0.0-20181101142754-a5f7082aabed
-	github.com/google/uuid v1.6.0
+	github.com/google/uuid v1.6.1-0.20241114170450-2d3c2a9cc518
 	github.com/gordonklaus/ineffassign v0.1.0
 	github.com/gorilla/mux v1.8.1
 	github.com/gostaticanalysis/forcetypeassert v0.2.0
@@ -103,7 +104,7 @@ require (
 	github.com/pingcap/metering_sdk v0.0.0-20251110022152-dac449ac5389
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
 	github.com/pingcap/tidb/pkg/parser v0.0.0-20211011031125-9b13dc409c5e
-	github.com/pingcap/tipb v0.0.0-20250928030846-9fd33ded6f2c
+	github.com/pingcap/tipb v0.0.0-20251230094608-1374320b4bd8
 	github.com/prometheus/client_golang v1.23.0
 	github.com/prometheus/client_model v0.6.2
 	github.com/prometheus/common v0.65.0
@@ -145,9 +146,9 @@ require (
 	golang.org/x/net v0.48.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sync v0.19.0
-	golang.org/x/sys v0.39.0
-	golang.org/x/term v0.38.0
-	golang.org/x/text v0.32.0
+	golang.org/x/sys v0.40.0
+	golang.org/x/term v0.39.0
+	golang.org/x/text v0.33.0
 	golang.org/x/time v0.14.0
 	golang.org/x/tools v0.40.0
 	google.golang.org/api v0.170.0
@@ -174,7 +175,6 @@ require (
 	github.com/alibabacloud-go/tea v1.3.11 // indirect
 	github.com/alibabacloud-go/tea-utils/v2 v2.0.7 // indirect
 	github.com/alibabacloud-go/tea-xml v1.1.3 // indirect
-	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.2.3 // indirect
 	github.com/aliyun/credentials-go v1.4.7 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
@@ -214,7 +214,7 @@ require (
 	github.com/tidwall/sjson v1.2.5 // indirect
 	github.com/tjfoc/gmsm v1.4.1 // indirect
 	github.com/zeebo/xxh3 v1.0.2 // indirect
-	golang.org/x/telemetry v0.0.0-20251203150158-8fff8a5912fc // indirect
+	golang.org/x/telemetry v0.0.0-20251222180846-3f2a21fb04ff // indirect
 	golang.org/x/tools/godoc v0.1.0-deprecated // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 )
@@ -345,7 +345,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.1.0 // indirect
-	golang.org/x/crypto v0.46.0 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
@@ -29,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -209,7 +209,7 @@ type SharedVars struct {
 	SortedIndexMetas        map[int64]*external.SortedKVMeta
 	RecordedConflictKVCount uint64
 	ShareMu                 sync.Mutex
-	globalSortStore         storage.ExternalStorage
+	globalSortStore         storeapi.Storage
 	dataKVFileCount         *atomic.Int64
 	indexKVFileCount        *atomic.Int64
 }

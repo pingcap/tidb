@@ -702,7 +702,7 @@ func testIssue64802(t *testing.T, injectedPanic bool) {
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use test")
 	tk.MustExec("drop table test.test_table")
-	tk.MustExec(`truncate table mysql.bind_info;`)
+	tk.MustExec(`delete from mysql.bind_info;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2

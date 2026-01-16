@@ -26,7 +26,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
@@ -36,6 +35,8 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/tikv/client-go/v2/oracle"
@@ -395,7 +396,7 @@ type Client struct {
 	mgr       ClientMgr
 	clusterID uint64
 
-	storage    storage.ExternalStorage
+	storage    storeapi.Storage
 	backend    *backuppb.StorageBackend
 	apiVersion kvrpcpb.APIVersion
 
@@ -529,15 +530,15 @@ func (bc *Client) GetStorageBackend() *backuppb.StorageBackend {
 }
 
 // GetStorage gets storage for this backup.
-func (bc *Client) GetStorage() storage.ExternalStorage {
+func (bc *Client) GetStorage() storeapi.Storage {
 	return bc.storage
 }
 
-// SetStorageAndCheckNotInUse sets ExternalStorage for client and check storage not in used by others.
+// SetStorageAndCheckNotInUse sets Storage for client and check storage not in used by others.
 func (bc *Client) SetStorageAndCheckNotInUse(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *storage.ExternalStorageOptions,
+	opts *storeapi.Options,
 ) error {
 	err := bc.SetStorage(ctx, backend, opts)
 	if err != nil {
@@ -652,16 +653,16 @@ func (bc *Client) getProgressRange(r rtree.KeyRange, sharedFreeListG *btree.Free
 	}
 }
 
-// SetStorage sets ExternalStorage for client.
+// SetStorage sets Storage for client.
 func (bc *Client) SetStorage(
 	ctx context.Context,
 	backend *backuppb.StorageBackend,
-	opts *storage.ExternalStorageOptions,
+	opts *storeapi.Options,
 ) error {
 	var err error
 
 	bc.backend = backend
-	bc.storage, err = storage.New(ctx, backend, opts)
+	bc.storage, err = objstore.New(ctx, backend, opts)
 	return errors.Trace(err)
 }
 
@@ -701,13 +702,13 @@ func (bc *Client) BuildBackupRangeAndSchema(
 // CheckBackupStorageIsLocked checks whether backups is locked.
 // which means we found other backup progress already write
 // some data files into the same backup directory or cloud prefix.
-func CheckBackupStorageIsLocked(ctx context.Context, s storage.ExternalStorage) error {
+func CheckBackupStorageIsLocked(ctx context.Context, s storeapi.Storage) error {
 	exist, err := s.FileExists(ctx, metautil.LockFile)
 	if err != nil {
 		return errors.Annotatef(err, "error occurred when checking %s file", metautil.LockFile)
 	}
 	if exist {
-		err = s.WalkDir(ctx, &storage.WalkOption{}, func(path string, size int64) error {
+		err = s.WalkDir(ctx, &storeapi.WalkOption{}, func(path string, size int64) error {
 			// should return error to break the walkDir when found lock file and other .sst files.
 			if strings.HasSuffix(path, ".sst") {
 				return errors.Annotatef(berrors.ErrInvalidArgument, "backup lock file and sst file exist in %v, "+

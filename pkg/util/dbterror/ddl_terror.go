@@ -511,20 +511,19 @@ var (
 	// ErrWarnGlobalIndexNeedManuallyAnalyze is used for global indexes,
 	// which cannot trigger automatic analysis when it contains prefix columns or virtual generated columns.
 	ErrWarnGlobalIndexNeedManuallyAnalyze = ClassDDL.NewStd(mysql.ErrWarnGlobalIndexNeedManuallyAnalyze)
-
 	// ErrEngineAttributeInvalidFormat is returned when meeting invalid format of engine attribute.
 	ErrEngineAttributeInvalidFormat = ClassDDL.NewStd(mysql.ErrEngineAttributeInvalidFormat)
 	// ErrStorageClassInvalidSpec is reserved for future use.
 	ErrStorageClassInvalidSpec = ClassDDL.NewStd(mysql.ErrStorageClassInvalidSpec)
-
 	// ErrCannotSetAffinityOnTable is returned when set an invalid affinity on a table
 	ErrCannotSetAffinityOnTable = ClassDDL.NewStdErr(
 		mysql.ErrInvalidAffinityOption,
 		parser_mysql.Message("Can not set %s on a %s.", nil),
 	)
-
 	// ErrInvalidTableAffinity is returned when set an invalid affinity value on a table
 	ErrInvalidTableAffinity = ClassDDL.NewStd(mysql.ErrInvalidAffinityOption)
+	// ErrForbiddenDDL is returned when a DDL operation is forbidden.
+	ErrForbiddenDDL = ClassDDL.NewStd(mysql.ErrForbiddenDDL)
 )
 
 // ReorgRetryableErrCodes are the error codes that are retryable for reorganization.

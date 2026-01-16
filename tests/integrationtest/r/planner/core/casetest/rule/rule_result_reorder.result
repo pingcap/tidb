@@ -29,10 +29,10 @@ Sort	root		planner__core__casetest__rule__rule_result_reorder.t.b, planner__core
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select min(b), max(c) from t use index(primary) group by d;
 id	task	access object	operator info
-Sort	root		Column#5, Column#6
-└─HashAgg	root		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(Column#7)->Column#5, funcs:max(Column#8)->Column#6
+Sort	root		Column, Column
+└─HashAgg	root		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(Column)->Column, funcs:max(Column)->Column
   └─TableReader	root		data:HashAgg
-    └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t.b)->Column#7, funcs:max(planner__core__casetest__rule__rule_result_reorder.t.c)->Column#8
+    └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t.b)->Column, funcs:max(planner__core__casetest__rule__rule_result_reorder.t.c)->Column
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select min(b), max(c) from t use index(primary) group by a;
 id	task	access object	operator info
@@ -97,7 +97,7 @@ Insert	root		N/A
 explain format='plan_tree' insert into t select t1.a, t2.b, t1.c+t2.c from t t1, t t2 where t1.a=t2.a;
 id	task	access object	operator info
 Insert	root		N/A
-└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.b, plus(planner__core__casetest__rule__rule_result_reorder.t.c, planner__core__casetest__rule__rule_result_reorder.t.c)->Column#10
+└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a, planner__core__casetest__rule__rule_result_reorder.t.b, plus(planner__core__casetest__rule__rule_result_reorder.t.c, planner__core__casetest__rule__rule_result_reorder.t.c)->Column
   └─MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_result_reorder.t.a, right key:planner__core__casetest__rule__rule_result_reorder.t.a
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -106,7 +106,7 @@ Insert	root		N/A
 explain format='plan_tree' insert into t select min(a), max(b), sum(c) from t group by a;
 id	task	access object	operator info
 Insert	root		N/A
-└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a->Column#7, planner__core__casetest__rule__rule_result_reorder.t.b->Column#8, cast(planner__core__casetest__rule__rule_result_reorder.t.c, decimal(32,0) BINARY)->Column#9
+└─Projection	root		planner__core__casetest__rule__rule_result_reorder.t.a->Column, planner__core__casetest__rule__rule_result_reorder.t.b->Column, cast(planner__core__casetest__rule__rule_result_reorder.t.c, decimal(32,0) BINARY)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' delete from t;
@@ -245,11 +245,8 @@ Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__cor
 explain format='plan_tree' select t1.* from t1 left outer join t2 on t1.a=t2.a;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
-└─MergeJoin	root		left outer join, left side:TableReader, left key:planner__core__casetest__rule__rule_result_reorder.t1.a, right key:planner__core__casetest__rule__rule_result_reorder.t2.a
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
+└─TableReader	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select t1.* from t1 join t2 on t1.a!=t2.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.c, planner__core__casetest__rule__rule_result_reorder.t1.d
@@ -279,7 +276,7 @@ id	task	access object	operator info
 Batch_Point_Get	root	table:t1, index:b(b)	keep order:true, desc:false
 explain format='plan_tree' select * from t1 where a > 10 union all select * from t2 where b > 20;
 id	task	access object	operator info
-Sort	root		Column#9, Column#10, Column#11, Column#12
+Sort	root		Column, Column, Column, Column
 └─Union	root		
   ├─TableReader	root		data:TableRangeScan
   │ └─TableRangeScan	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
@@ -288,8 +285,8 @@ Sort	root		Column#9, Column#10, Column#11, Column#12
       └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select * from t1 where a > 10 union distinct select * from t2 where b > 20;
 id	task	access object	operator info
-Sort	root		Column#9, Column#10, Column#11, Column#12
-└─HashAgg	root		group by:Column#10, Column#11, Column#12, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12
+Sort	root		Column, Column, Column, Column
+└─HashAgg	root		group by:Column, Column, Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
   └─Union	root		
     ├─TableReader	root		data:TableRangeScan
     │ └─TableRangeScan	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
@@ -316,29 +313,29 @@ Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.a, planner__cor
     └─TableRangeScan	cop[tikv]	table:t1	range:(10,+inf], keep order:false, stats:pseudo
 explain format='plan_tree' select sum(b) over(partition by a) as sum_b from t1;
 id	task	access object	operator info
-Projection	root		Column#6->Column#7
-└─Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.a, Column#6
+Projection	root		Column
+└─Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.a, Column
   └─Window	root		sum(cast(planner__core__casetest__rule__rule_result_reorder.t1.b, decimal(10,0) BINARY))->Column#6 over(partition by planner__core__casetest__rule__rule_result_reorder.t1.a)
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
 explain format='plan_tree' select min(a), max(b), sum(c) from t1 group by d;
 id	task	access object	operator info
-Sort	root		Column#5, Column#6, Column#7
-└─HashAgg	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column#8)->Column#5, funcs:max(Column#9)->Column#6, funcs:sum(Column#10)->Column#7
+Sort	root		Column, Column, Column
+└─HashAgg	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column)->Column, funcs:max(Column)->Column, funcs:sum(Column)->Column
   └─TableReader	root		data:HashAgg
-    └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column#8, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column#9, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column#10
+    └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select min(a), max(b), sum(c) from t1 group by d having max(b) < 20;
 id	task	access object	operator info
-Sort	root		Column#5, Column#6, Column#7
-└─Selection	root		lt(Column#6, 20)
-  └─HashAgg	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:sum(Column#13)->Column#7
+Sort	root		Column, Column, Column
+└─Selection	root		lt(Column, 20)
+  └─HashAgg	root		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(Column)->Column, funcs:max(Column)->Column, funcs:sum(Column)->Column
     └─TableReader	root		data:HashAgg
-      └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column#11, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column#12, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column#13
+      └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_result_reorder.t1.d, funcs:min(planner__core__casetest__rule__rule_result_reorder.t1.a)->Column, funcs:max(planner__core__casetest__rule__rule_result_reorder.t1.b)->Column, funcs:sum(planner__core__casetest__rule__rule_result_reorder.t1.c)->Column
         └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select case when a=1 then 'a1' when a=2 then 'a2' else 'ax' end from t1 ;
 id	task	access object	operator info
-Projection	root		case(eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 1), a1, eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 2), a2, ax)->Column#5
+Projection	root		case(eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 1), a1, eq(planner__core__casetest__rule__rule_result_reorder.t1.a, 2), a2, ax)->Column
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
 set tidb_partition_prune_mode='dynamic';

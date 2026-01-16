@@ -20,10 +20,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	. "github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -198,7 +198,7 @@ func TestMakeTableRegionsSplitLargeFile(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(".")
 	assert.NoError(t, err)
 
 	meta.DataFiles[0].FileMeta.Compression = CompressionNone
@@ -249,7 +249,7 @@ func TestCompressedMakeSourceFileRegion(t *testing.T) {
 	colCnt := 3
 
 	ctx := context.Background()
-	store, err := storage.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(".")
 	assert.NoError(t, err)
 	compressRatio, err := SampleFileCompressRatio(ctx, fileInfo.FileMeta, store)
 	require.NoError(t, err)
@@ -299,7 +299,7 @@ func TestSplitLargeFile(t *testing.T) {
 	fileSize := dataFileInfo.Size()
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: filePath, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
-	store, err := storage.NewLocalStorage(".")
+	store, err := objstore.NewLocalStorage(".")
 	assert.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 3, ioWorker, store, meta)
 	columns := []string{"a", "b", "c"}
@@ -367,7 +367,7 @@ func TestSplitLargeFileNoNewLineAtEOF(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
 	columns := []string{"a", "b"}
@@ -417,7 +417,7 @@ func TestSplitLargeFileWithCustomTerminator(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 3, ioWorker, store, meta)
 
@@ -472,7 +472,7 @@ func TestSplitLargeFileOnlyOneChunk(t *testing.T) {
 	columns := []string{"field1", "field2"}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 	divideConfig := NewDataDivideConfig(cfg, 2, ioWorker, store, meta)
 
@@ -510,7 +510,7 @@ func TestSplitLargeFileSeekInsideCRLF(t *testing.T) {
 	fileInfo := FileInfo{FileMeta: SourceFileMeta{Path: fileName, Type: SourceTypeCSV, FileSize: fileSize}}
 	ioWorker := worker.NewPool(context.Background(), 4, "io")
 
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	// if we don't set terminator, it will get the wrong result
