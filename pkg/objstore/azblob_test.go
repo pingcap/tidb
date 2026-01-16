@@ -493,16 +493,16 @@ func TestCopyObject(t *testing.T) {
 	w, err := strg1.Create(ctx, "test.bin", &storeapi.WriterOption{})
 	require.NoError(t, err)
 	hasher := sha256.New()
-		const testFileSize = 128 * 1024 * 1024
-		_, err = io.Copy(wr{w, ctx}, io.TeeReader(io.LimitReader(rand.Reader, testFileSize), hasher))
-		require.NoError(t, err)
-		require.NoError(t, w.Close(ctx))
-		checksum := hasher.Sum(nil)
+	const testFileSize = 128 * 1024 * 1024
+	_, err = io.Copy(wr{w, ctx}, io.TeeReader(io.LimitReader(rand.Reader, testFileSize), hasher))
+	require.NoError(t, err)
+	require.NoError(t, w.Close(ctx))
+	checksum := hasher.Sum(nil)
 
-		require.NoError(t, strg2.CopyFrom(ctx, strg1, storeapi.CopySpec{
-			From: "test.bin",
-			To:   "somewhere/test.bin",
-		}))
+	require.NoError(t, strg2.CopyFrom(ctx, strg1, storeapi.CopySpec{
+		From: "test.bin",
+		To:   "somewhere/test.bin",
+	}))
 
 	reader, err := strg2.Open(ctx, "somewhere/test.bin", nil)
 	require.NoError(t, err)

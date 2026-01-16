@@ -68,6 +68,7 @@ go_test(
         "//pkg/sessionctx/vardef",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testflag",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/dbterror/exeerrors",

@@ -29,6 +29,7 @@ go_test(
         "//pkg/config",
         "//pkg/meta/autoid",
         "//pkg/parser/mysql",
+        "//pkg/testkit/testflag",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/chunk",

@@ -46,6 +46,7 @@ go_test(
         "//pkg/domain",
         "//pkg/keyspace",
         "//pkg/kv",
+        "//pkg/session",
         "//pkg/store/mockstore",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",

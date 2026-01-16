@@ -107,6 +107,7 @@ go_test(
         "//pkg/tablecodec",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testflag",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util",
