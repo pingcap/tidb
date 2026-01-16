@@ -344,10 +344,6 @@ func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
 func checkPartialOrderPattern(ctx base.PlanContext, plan base.LogicalPlan) bool {
 	switch p := plan.(type) {
 	case *logicalop.DataSource:
-		// Reached DataSource - check for dirty content
-		if utilfuncp.TableHasDirtyContent(ctx, p.TableInfo) {
-			return false
-		}
 		return true
 
 	case *logicalop.LogicalSelection:
