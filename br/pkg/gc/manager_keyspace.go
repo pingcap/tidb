@@ -4,9 +4,12 @@ package gc
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
@@ -69,6 +72,19 @@ func (m *keyspaceManager) SetServiceSafePoint(ctx context.Context, sp BRServiceS
 		return errors.Trace(err)
 	}
 
+	// Integration tests use this to distinguish global vs keyspace GC protection.
+	failpoint.Inject("hint-gc-keyspace-set-barrier", func(v failpoint.Value) {
+		if sigFile, ok := v.(string); ok {
+			// Include keyspaceID so the test can sanity-check scope if needed.
+			content := fmt.Sprintf("keyspace=%d\nid=%s\n", uint32(m.keyspaceID), sp.ID)
+			if writeErr := os.WriteFile(sigFile, []byte(content), 0o644); writeErr != nil {
+				log.Warn("failed to write failpoint signal file", zap.Error(writeErr), zap.String("file", sigFile))
+			}
+		}
+		// Provide a small observation window for test scripts.
+		time.Sleep(3 * time.Second)
+	})
+
 	log.Debug("set keyspace GC barrier succeeded",
 		zap.Uint32("keyspaceID", uint32(m.keyspaceID)),
 		zap.String("barrierID", barrierInfo.BarrierID),
@@ -84,6 +100,14 @@ func (m *keyspaceManager) DeleteServiceSafePoint(ctx context.Context, sp BRServi
 	if err != nil {
 		return errors.Trace(err)
 	}
+	failpoint.Inject("hint-gc-keyspace-delete-barrier", func(v failpoint.Value) {
+		if sigFile, ok := v.(string); ok {
+			content := fmt.Sprintf("keyspace=%d\nid=%s\n", uint32(m.keyspaceID), sp.ID)
+			if writeErr := os.WriteFile(sigFile, []byte(content), 0o644); writeErr != nil {
+				log.Warn("failed to write failpoint signal file", zap.Error(writeErr), zap.String("file", sigFile))
+			}
+		}
+	})
 	log.Debug("deleted keyspace GC barrier",
 		zap.Uint32("keyspaceID", uint32(m.keyspaceID)),
 		zap.String("barrierID", sp.ID))
