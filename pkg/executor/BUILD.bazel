@@ -447,7 +447,7 @@ go_test(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
-        "//pkg/objstore/s3store",
+        "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",
         "//pkg/parser",
         "//pkg/parser/ast",

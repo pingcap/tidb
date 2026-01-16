@@ -16,10 +16,16 @@ package s3like
 
 import (
 	"context"
+	goerrors "errors"
 	"io"
 
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+)
+
+var (
+	// ErrNoSuchBucket is the error returned when the bucket does not exist.
+	ErrNoSuchBucket = goerrors.New("no such bucket")
 )
 
 // GetResp is the response of GetObject.
@@ -38,6 +44,8 @@ type Object struct {
 
 // ListResp is the response of ListObjects.
 type ListResp struct {
+	// we use the term from AWS ListObjects, but for other S3-like storage, it
+	// may come from different field, such as for OSS, it's NextContinuationToken
 	NextMarker  *string
 	IsTruncated bool
 	Objects     []Object

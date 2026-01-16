@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package s3store
+package s3like
 
 import (
 	"bytes"
@@ -25,7 +25,6 @@ import (
 	errors2 "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
@@ -33,7 +32,7 @@ import (
 
 // s3ObjectReader wrap GetObjectOutput.Body and add the `Seek` method.
 type s3ObjectReader struct {
-	storage   *S3Storage
+	storage   *Storage
 	name      string
 	reader    io.ReadCloser
 	pos       int64
@@ -167,7 +166,7 @@ type asyncWriter struct {
 	rd       *io.PipeReader
 	wd       *io.PipeWriter
 	wg       *sync.WaitGroup
-	uploader s3like.Uploader
+	uploader Uploader
 	err      error
 	name     string
 }

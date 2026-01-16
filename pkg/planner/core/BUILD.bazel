@@ -95,7 +95,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/objstore",
-        "//pkg/objstore/s3store",
+        "//pkg/objstore/s3like",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",

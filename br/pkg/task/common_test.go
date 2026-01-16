@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/s3store"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
@@ -267,7 +267,7 @@ func must[T any](t T, err error) T {
 
 func expectedDefaultConfig() Config {
 	return Config{
-		BackendOptions:            objstore.BackendOptions{S3: s3store.S3BackendOptions{ForcePathStyle: true}},
+		BackendOptions:            objstore.BackendOptions{S3: s3like.S3BackendOptions{ForcePathStyle: true}},
 		PD:                        []string{"127.0.0.1:2379"},
 		ChecksumConcurrency:       4,
 		Checksum:                  false,

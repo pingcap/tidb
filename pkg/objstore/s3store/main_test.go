@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -32,7 +33,7 @@ import (
 type Suite struct {
 	Controller *gomock.Controller
 	MockS3     *mock.MockS3API
-	Storage    *S3Storage
+	Storage    *s3like.Storage
 }
 
 func CreateS3Suite(t *testing.T) *Suite {
