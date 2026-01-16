@@ -4,12 +4,14 @@
     "cases": [
       // GROUP 1: LEFT JOIN to SEMI JOIN (Positive cases, equi-join on id)
       "select A.* from A left join B on A.id = B.a_id where B.val > 0",
+      "select A.* from A left join B on A.id = B.a_id is null where B.val > 0",
       "select A.* from A left join B on A.id <=> B.a_id where B.val > 0",
       "select A.* from A left join B on A.id = B.a_id and B.val > 100 where B.id is not null",
 
       // GROUP 2: LEFT JOIN to ANTI SEMI JOIN (Positive cases, equi-join on id)
       "select A.* from A left join B on A.id = B.a_id where B.id IS NULL",
       "select A.* from A left join B on A.id = B.a_id where B.non_null_col IS NULL",
+      "select A.* from A left join B on A.id = B.a_id is null where B.non_null_col IS NULL",
       "select A.* from A left join B on A.id <=> B.a_id where B.id IS NULL",
       "select A.* from A left join B on A.id = B.a_id where B.id is null and A.val > 30",
 
@@ -21,6 +23,7 @@
       // GROUP 4: RIGHT JOIN to SEMI/ANTI SEMI JOIN (Positive cases, equi-join)
       "select B.* from A right join B on A.id = B.a_id where A.val > 10",
       "select B.* from A right join B on A.id = B.a_id where A.id IS NULL",
+      "select B.* from A right join B on A.id = B.a_id is null where A.id IS NULL",
       "select B.* from A right join B on A.id <=> B.a_id where A.id IS NULL",
       "select B.* from A right join B on A.id = B.a_id where A.id is null and B.val > 100",
       "select B.* from A right join B on A.val <=> B.val where A.id IS NULL",
