@@ -1210,27 +1210,32 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 
 	var prefixColumnID int64
 	var prefixLen int
-	for i := range len(path.IdxCols) {
+	for i := 0; i < len(path.IdxCols); i++ {
 		// check if the same column
 		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
-			break
+			return nil
 		}
 
 		// meet prefix index column, match termination
 		if path.IdxColLens[i] != types.UnspecifiedLength {
-			// Encountered a prefix index column
-			// This prefix index column can provide partial order, but subsequent columns cannot match
+			// If we meet a prefix column but it's not the last index column, it's not supported.
+			// e.g. prefix(a), b cannot provide partial order for ORDER BY a, b.
+			if i != len(path.IdxCols)-1 {
+				return nil
+			}
+			// Encountered a prefix index column.
+			// This prefix index column can provide partial order, but subsequent columns cannot match.
 			prefixColumnID = path.IdxCols[i].UniqueID
 			prefixLen = path.IdxColLens[i]
-			break
+			return &PartialOrderMatchResult{
+				Matched:     true,
+				PrefixColID: prefixColumnID,
+				PrefixLen:   prefixLen,
+			}
 		}
 	}
 
-	return &PartialOrderMatchResult{
-		Matched:     true,
-		PrefixColID: prefixColumnID,
-		PrefixLen:   prefixLen,
-	}
+	return nil
 }
 
 // GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs.

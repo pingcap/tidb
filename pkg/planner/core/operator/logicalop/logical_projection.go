@@ -576,7 +576,6 @@ func (p *LogicalProjection) tryTransformSortItemPtrs(items []*property.SortItem)
 			newItems = append(newItems, &property.SortItem{Col: expr, Desc: item.Desc})
 		case *expression.ScalarFunction:
 			return nil, false
-			// For constants, just skip (don't add to newItems)
 		}
 	}
 	return newItems, true
