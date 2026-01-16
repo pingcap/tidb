@@ -44,6 +44,7 @@ func (e *ReplaceExec) Close() error {
 	if e.RuntimeStats() != nil && e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	e.reportActiveActiveStats("Replace")
 	if e.SelectExec != nil {
 		return exec.Close(e.SelectExec)
 	}

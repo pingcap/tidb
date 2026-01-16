@@ -263,6 +263,7 @@ sendReaderInfoLoop:
 	close(readerInfoCh)
 	err = group.Wait()
 	e.setResult(encoder.exprWarnings)
+	committer.reportActiveActiveStats("LoadData")
 	return err
 }
 
@@ -348,6 +349,7 @@ func createInsertValues(e *LoadDataWorker) (insertVal *InsertValues, err error) 
 		insertColumns:  insertColumns,
 		rowLen:         len(insertColumns),
 		hasExtraHandle: hasExtraHandle,
+		activeActive:   newActiveActiveTableInfo(e.table.Meta()),
 	}
 	if len(insertColumns) > 0 {
 		ret.initEvalBuffer()

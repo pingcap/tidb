@@ -347,6 +347,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalMemArbitratorRootPool)
 	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
 	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
+
+	prometheus.MustRegister(ActiveActiveHardDeleteStmtCounter)
+	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsRowCounter)
+	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsStmtCounter)
 }
 
 // Register registers custom collectors.

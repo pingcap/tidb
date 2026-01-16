@@ -18,12 +18,15 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
@@ -41,6 +44,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
 func TestSingleSessionInsert(t *testing.T) {
@@ -1296,4 +1302,55 @@ func TestAutoAnalyzePartitionTableAfterAddingIndex(t *testing.T) {
 		return h.HandleAutoAnalyze()
 	}, 3*time.Second, time.Millisecond*100)
 	require.NotNil(t, h.GetPhysicalTableStats(tblInfo.ID, tblInfo).GetIdx(idxInfo.ID))
+}
+
+func TestUpdateRuntimeStats(t *testing.T) {
+	setSnapshotRPCStats := func(rs *txnsnapshot.SnapshotRuntimeStats, rpcStats *tikv.RegionRequestRuntimeStats) {
+		v := reflect.ValueOf(rs).Elem().FieldByName("rpcStats")
+		reflect.NewAt(v.Type(), unsafe.Pointer(v.UnsafeAddr())).Elem().Set(reflect.ValueOf(rpcStats))
+	}
+
+	stats := &executor.UpdateRuntimeStats{
+		SnapshotRuntimeStats: func() *txnsnapshot.SnapshotRuntimeStats {
+			snap := &txnsnapshot.SnapshotRuntimeStats{}
+			snap.GetTimeDetail().ProcessTime = time.Second
+			setSnapshotRPCStats(snap, &tikv.RegionRequestRuntimeStats{
+				RPCStatsList: []tikv.RPCRuntimeStats{{Cmd: tikvrpc.CmdGet, Count: 1, Consume: 100 * time.Millisecond}},
+			})
+			return snap
+		}(),
+		ActiveActive: &executor.ActiveActiveStats{
+			CdcConflictSkipCount: 1,
+			UnsafeOriginTSCount:  2,
+		},
+	}
+	require.Equal(t, "Get:{num_rpc:1, total_time:100ms}, time_detail: {total_process_time: 1s}, active_active: {cdc_conflict_skip_cnt: 1, unsafe_write_origin_ts_cnt: 2}", stats.String())
+
+	cloned := stats.Clone().(*executor.UpdateRuntimeStats)
+	require.Equal(t, stats.String(), cloned.String())
+	require.NotSame(t, stats.SnapshotRuntimeStats, cloned.SnapshotRuntimeStats)
+	require.NotSame(t, stats.ActiveActive, cloned.ActiveActive)
+
+	cloned.SnapshotRuntimeStats.GetTimeDetail().ProcessTime = time.Second
+	cloned.ActiveActive.CdcConflictSkipCount = 3
+	cloned.ActiveActive.UnsafeOriginTSCount = 4
+	stats.Merge(cloned)
+	require.Equal(t, "Get:{num_rpc:2, total_time:200ms}, time_detail: {total_process_time: 2s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}", stats.String())
+
+	stats2 := &executor.UpdateRuntimeStats{}
+	stats2.Merge(&executor.UpdateRuntimeStats{
+		SnapshotRuntimeStats: func() *txnsnapshot.SnapshotRuntimeStats {
+			snap := &txnsnapshot.SnapshotRuntimeStats{}
+			snap.GetTimeDetail().ProcessTime = time.Second
+			setSnapshotRPCStats(snap, &tikv.RegionRequestRuntimeStats{
+				RPCStatsList: []tikv.RPCRuntimeStats{{Cmd: tikvrpc.CmdGet, Count: 2, Consume: 300 * time.Millisecond}},
+			})
+			return snap
+		}(),
+		ActiveActive: &executor.ActiveActiveStats{
+			CdcConflictSkipCount: 2,
+			UnsafeOriginTSCount:  3,
+		},
+	})
+	require.Equal(t, "Get:{num_rpc:2, total_time:300ms}, time_detail: {total_process_time: 1s}, active_active: {cdc_conflict_skip_cnt: 2, unsafe_write_origin_ts_cnt: 3}", stats2.String())
 }

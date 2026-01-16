@@ -18,6 +18,28 @@ select id, v, _tidb_origin_ts from t where id = 2;
 id	v	_tidb_origin_ts
 2	2	22222222
 truncate table t;
+insert into t (id, v, _tidb_origin_ts) values (1, 10, 123);
+update t set _tidb_origin_ts = 567;
+select id, v, _tidb_origin_ts from t;
+id	v	_tidb_origin_ts
+1	10	567
+update t set v=v+_tidb_origin_ts, _tidb_origin_ts=v*_tidb_origin_ts;
+select id, v, _tidb_origin_ts from t;
+id	v	_tidb_origin_ts
+1	577	5670
+update t set v=200;
+select id, v, _tidb_origin_ts from t;
+id	v	_tidb_origin_ts
+1	200	NULL
+update t set _tidb_origin_ts = 789;
+select id, v, _tidb_origin_ts from t;
+id	v	_tidb_origin_ts
+1	200	789
+update t set v=_tidb_origin_ts*10;
+select id, v, _tidb_origin_ts from t;
+id	v	_tidb_origin_ts
+1	7890	NULL
+truncate table t;
 insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
 create table t1 (id int primary key, v int) softdelete retention 7 day, active_active = 'on';
 insert into t1 (id, v) values (1, 101);

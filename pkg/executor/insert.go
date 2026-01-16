@@ -492,6 +492,7 @@ func (e *InsertExec) Close() error {
 	}
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
+	e.reportActiveActiveStats("Insert")
 	if e.SelectExec != nil {
 		return exec.Close(e.SelectExec)
 	}
@@ -592,24 +593,14 @@ func (e *InsertExec) doDupRowUpdate(
 	}
 
 	needActiveActiveSyncStats := false
-	updateOriginTSCol := -1
-	if e.Table.Meta().IsActiveActive {
-		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
-		// should be set to null rather than copy the old value.
-		for _, col := range e.Table.Cols() {
-			if col.Name.Equals(&model.ExtraOriginTSName) {
-				updateOriginTSCol = col.Offset
-			}
-		}
-
+	updateOriginTSCol := e.activeActive.originTSColOffset
+	if updateOriginTSCol >= 0 && e.Ctx().GetSessionVars().CDCWriteSource != 0 {
 		// Only CDC uses this pattern:
 		// _tidb_origin_ts = IF(@cond, VALUES(_tidb_origin_ts), test._tidb_origin_ts)
-		if e.Ctx().GetSessionVars().CDCWriteSource != 0 {
-			for _, assign := range nonGenerated {
-				if assign.ColName.Equals(&model.ExtraOriginTSName) {
-					needActiveActiveSyncStats = true
-					break
-				}
+		for _, assign := range nonGenerated {
+			if assign.ColName.Equals(&model.ExtraOriginTSName) {
+				needActiveActiveSyncStats = true
+				break
 			}
 		}
 	}
@@ -678,6 +669,9 @@ func (e *InsertExec) doDupRowUpdate(
 		// In this case, the skipped row is not caused by business logic, but CDC, we should not give misleading information.
 		if !originTSEqual {
 			e.Ctx().GetSessionVars().ActiveActiveConflictSkipRows.Add(1)
+			if e.stats != nil {
+				e.stats.ActiveActive.CdcConflictSkipCount++
+			}
 			redactMode := e.Ctx().GetSessionVars().EnableRedactLog
 			oldRowOriginTS, _ := oldRow[updateOriginTSCol].ToString()
 			newRowOriginTS, _ := newRow[updateOriginTSCol].ToString()
@@ -693,10 +687,12 @@ func (e *InsertExec) doDupRowUpdate(
 
 	newData := e.row4Update[:len(e.Table.WritableCols())]
 	if updateOriginTSCol >= 0 && !assignFlag[updateOriginTSCol] {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
 		newData[updateOriginTSCol].SetNull()
 	}
 
-	_, ignored, err := updateRecord(
+	changed, ignored, err := updateRecord(
 		ctx, e.Ctx(),
 		handle, oldRow, newData,
 		0, generated, e.evalBuffer4Dup, errorHandler,
@@ -721,6 +717,18 @@ func (e *InsertExec) doDupRowUpdate(
 			e.Ctx().GetSessionVars().StmtCtx.InsertID = 0
 		}
 	}
+
+	if changed && e.activeActive.originTSColOffset >= 0 {
+		recordUnsafeActiveActiveOriginTS(
+			e.Ctx().GetSessionVars(),
+			e.Table.Meta(),
+			e.activeActive.originTSColOffset,
+			handle,
+			newData,
+			&e.activeActiveStats,
+		)
+	}
+
 	return nil
 }
 

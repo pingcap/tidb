@@ -65,6 +65,13 @@ var (
 	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
 	AffectedRowsCounterNTDMLReplace prometheus.Counter
 
+	// ActiveActiveHardDeleteStmtCounter records the num of hard delete statements on a active-active table
+	ActiveActiveHardDeleteStmtCounter prometheus.Counter
+	// ActiveActiveWriteUnsafeOriginTsRowCounter records the num of unsafe _tidb_origin_ts write rows.
+	ActiveActiveWriteUnsafeOriginTsRowCounter prometheus.Counter
+	// ActiveActiveWriteUnsafeOriginTsStmtCounter records the num of unsafe _tidb_origin_ts statements.
+	ActiveActiveWriteUnsafeOriginTsStmtCounter prometheus.Counter
+
 	// NetworkTransmissionStats records the network transmission for queries
 	NetworkTransmissionStats *prometheus.CounterVec
 )
@@ -146,6 +153,30 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterNTDMLDelete = AffectedRowsCounter.WithLabelValues("NTDML-Delete")
 	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
 	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
+
+	ActiveActiveHardDeleteStmtCounter = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "soft_delete_table_hard_delete_stmt_total",
+			Help:      "hard delete statement count for a soft delete table",
+		})
+
+	ActiveActiveWriteUnsafeOriginTsRowCounter = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "write_unsafe_origin_ts_rows",
+			Help:      "rows written with unsafe _tidb_origin_ts column",
+		})
+
+	ActiveActiveWriteUnsafeOriginTsStmtCounter = metricscommon.NewCounter(
+		prometheus.CounterOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "write_unsafe_origin_ts_stmt_total",
+			Help:      "stmts written with unsafe _tidb_origin_ts column",
+		})
 
 	NetworkTransmissionStats = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{

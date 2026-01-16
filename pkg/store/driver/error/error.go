@@ -62,6 +62,8 @@ var (
 	ErrResourceGroupConfigUnavailable = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupConfigUnavailable)
 	// ErrResourceGroupThrottled is the error when resource group is exceeded quota limitation
 	ErrResourceGroupThrottled = dbterror.ClassTiKV.NewStd(errno.ErrResourceGroupThrottled)
+	// ErrPDTimestampLagsTooMuch is the error the TSO get from PD lags too much with the expect value
+	ErrPDTimestampLagsTooMuch = dbterror.ClassTiKV.NewStd(errno.ErrPDTimestampLagsTooMuch)
 	// ErrUnknown is the unknow error.
 	ErrUnknown = dbterror.ClassTiKV.NewStd(errno.ErrUnknown)
 )
@@ -215,6 +217,10 @@ func ToTiDBErr(err error) error {
 
 	if stderrs.Is(err, pderr.ErrClientResourceGroupThrottled) {
 		return ErrResourceGroupThrottled
+	}
+
+	if tikverr.IsErrorCommitTSLag(err) {
+		return ErrPDTimestampLagsTooMuch.FastGenByArgs(err.Error())
 	}
 
 	return errors.Trace(err)
