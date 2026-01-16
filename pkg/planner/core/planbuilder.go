@@ -1670,6 +1670,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+	case ast.AdminReloadClusterBindings:
+		return &SQLBindPlan{SQLBindOp: OpReloadClusterBindings}, nil
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminFlushPlanCache:

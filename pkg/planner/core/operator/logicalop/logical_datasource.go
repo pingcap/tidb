@@ -125,6 +125,11 @@ type DataSource struct {
 
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
+
+	// InterestingColumns stores columns from this DataSource that are used in the query.
+	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
+	// index pruning early in the planning phase - which is an approximate heuristic.
+	InterestingColumns []*expression.Column
 }
 
 // Init initializes DataSource.

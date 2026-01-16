@@ -733,7 +733,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *storeapi.
 			Body:   rd,
 			Size:   1024 * 1024 * 5, // ks3 SDK need to set this value to non-zero.
 		}
-		s3Writer := &s3ObjectWriter{wd: wd, wg: &sync.WaitGroup{}}
+		s3Writer := &asyncWriter{wd: wd, wg: &sync.WaitGroup{}}
 		s3Writer.wg.Add(1)
 		go func() {
 			_, err := up.UploadWithContext(ctx, upParams)
