@@ -550,10 +550,10 @@ func NewTraceBuf() *TraceBuf {
 }
 
 // Record implements the FlightRecorder interface.
-func (r *TraceBuf) Record(_ context.Context, event Event) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.events = append(r.events, event)
+func (t *TraceBuf) Record(_ context.Context, event Event) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.events = append(t.events, event)
 }
 
 func (r *TraceBuf) markBits(idx int) {
