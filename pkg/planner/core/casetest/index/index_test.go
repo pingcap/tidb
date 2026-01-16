@@ -20,9 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -404,5 +406,61 @@ func TestPartialIndexWithPlanCache(t *testing.T) {
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
 		tk.MustExec("execute stmt using @a")
 		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	})
+}
+
+func TestPartialIndexWithIndexPrune(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+		tk.MustQuery("explain select * from t use index(idx1) where a > 1").CheckContain("idx1")
+
+		// Set the prune behavior to prune all non interesting ones.
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
+
+		// The failpoint will check whether all partial indexes are pruned.
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
+			for _, path := range paths {
+				if path.Index != nil && path.Index.ConditionExprString != "" {
+					require.True(t, false, "Partial index should be pruned")
+				}
+			}
+		}))
+		tk.MustQuery("select * from t")
+
+		// idx1 is pruned because a is not referenced as interesting one.
+		// idx2 is kept though its constraint is not matched.
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
+			idx2Found := false
+			for _, path := range paths {
+				if path.Index != nil && path.Index.Name.L == "idx1" {
+					require.True(t, false, "Partial index idx1 should be pruned")
+				}
+				if path.Index != nil && path.Index.Name.L == "idx2" {
+					idx2Found = true
+				}
+			}
+			require.True(t, idx2Found, "Partial index idx2 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t order by b").CheckNotContain("idx2")
+
+		// idx2 is pruned because b is not referenced as interesting one.
+		// idx1 is kept though its constraint is not matched.
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
+			idx1Found := false
+			for _, path := range paths {
+				if path.Index != nil && path.Index.Name.L == "idx2" {
+					require.True(t, false, "Partial index idx2 should be pruned")
+				}
+				if path.Index != nil && path.Index.Name.L == "idx1" {
+					idx1Found = true
+				}
+			}
+			require.True(t, idx1Found, "Partial index idx1 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t where a is null").CheckNotContain("idx1")
+		failpoint.Disable("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune")
 	})
 }

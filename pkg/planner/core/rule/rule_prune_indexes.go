@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -128,7 +129,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		if ds.TableInfo != nil {
 			tableColumns = ds.TableInfo.Columns
 		}
-		idxScore := scoreIndexPath(path, req, tableColumns)
+		idxScore := scoreIndexPath(ds, path, req, tableColumns)
 
 		if path.FullIdxCols != nil {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
@@ -189,6 +190,8 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	maxToKeep := max(threshold, defaultMaxIndexes)
 	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, needPruning, req)
 
+	failpoint.InjectCall("InjectCheckForIndexPrune", paths)
+
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
 		return paths
@@ -240,8 +243,25 @@ func buildOrderingKey(columnIDs []int64) string {
 // When FullIdxCols is nil (e.g., in static pruning mode), it uses path.Index.Columns
 // and tableColumns to determine interesting columns. Note that consecutiveColumnIDs
 // cannot be determined when FullIdxCols is nil, so it will remain empty.
-func scoreIndexPath(path *util.AccessPath, req columnRequirements, tableColumns []*model.ColumnInfo) indexWithScore {
+func scoreIndexPath(
+	ds *logicalop.DataSource,
+	path *util.AccessPath,
+	req columnRequirements,
+	tableColumns []*model.ColumnInfo,
+) indexWithScore {
 	score := indexWithScore{path: path}
+
+	if path.Index != nil && path.Index.ConditionExprString != "" {
+		for _, col := range path.Index.AffectColumn {
+			// Some columns from the constraint is not found. Then the path can not be selected.
+			// We mixed the WHERE clause and other clauses like JOIN/ORDER BY to prune the indexes.
+			// So this check is not the strictest one.
+			if _, found := req.interestingColIDs[ds.TableInfo.Columns[col.Offset].ID]; !found {
+				return score
+			}
+		}
+		// Pre check for partial index passed, continue to calculate the score.
+	}
 
 	if path.FullIdxCols != nil {
 		// Normal path: use FullIdxCols which contains expression.Column with IDs
