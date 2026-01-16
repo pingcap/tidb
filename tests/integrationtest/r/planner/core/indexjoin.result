@@ -1172,7 +1172,7 @@ Sort	root		planner__core__indexjoin.td89f296a.col_64, Column, Column, Column
     │   └─TableFullScan	cop[tikv]	table:td89f296a	keep order:false, stats:pseudo
     └─Projection(Probe)	root		planner__core__indexjoin.tac9d3b07.col_61, ifnull(cast(cast(planner__core__indexjoin.tac9d3b07.col_61, bigint BINARY), bigint UNSIGNED BINARY), 18446744073709551615)->Column
       └─IndexLookUp	root		
-        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#16)], keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#18)], keep order:false, stats:pseudo
         └─TableRowIDScan(Probe)	cop[tikv]	table:tac9d3b07	keep order:false, stats:pseudo
 select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 r0	r1	r2	r3
@@ -1207,16 +1207,16 @@ CREATE TABLE `t8e1f515f` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 explain select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
 id	estRows	task	access object	operator info
-Sort_13	8000.00	root		Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
-└─Projection_15	8000.00	root		concat(Column#18, Column#18)->Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
-  └─Projection_17	8000.00	root		planner__core__indexjoin.t8e1f515f.col_44, planner__core__indexjoin.t5602f14e.col_55, Column#18
-    └─HashJoin_32	8000.00	root		inner join, equal:[eq(Column#22, planner__core__indexjoin.t5602f14e.col_55)]
-      ├─StreamAgg_72(Build)	6400.00	root		group by:Column#26, funcs:group_concat(Column#24 order by Column#25 separator ",")->Column#18, funcs:firstrow(Column#26)->planner__core__indexjoin.t5602f14e.col_55
-      │ └─Projection_91	8000.00	root		cast(planner__core__indexjoin.t5602f14e.col_56, var_string(20))->Column#24, planner__core__indexjoin.t5602f14e.col_56->Column#25, planner__core__indexjoin.t5602f14e.col_55->Column#26
+Sort_13	8000.00	root		Column#22, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+└─Projection_15	8000.00	root		concat(Column#20, Column#20)->Column#22, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+  └─Projection_17	8000.00	root		planner__core__indexjoin.t8e1f515f.col_44, planner__core__indexjoin.t5602f14e.col_55, Column#20
+    └─HashJoin_32	8000.00	root		inner join, equal:[eq(Column#24, planner__core__indexjoin.t5602f14e.col_55)]
+      ├─StreamAgg_72(Build)	6400.00	root		group by:Column#28, funcs:group_concat(Column#26 order by Column#27 separator ",")->Column#20, funcs:firstrow(Column#28)->planner__core__indexjoin.t5602f14e.col_55
+      │ └─Projection_91	8000.00	root		cast(planner__core__indexjoin.t5602f14e.col_56, var_string(20))->Column#26, planner__core__indexjoin.t5602f14e.col_56->Column#27, planner__core__indexjoin.t5602f14e.col_55->Column#28
       │   └─Selection_82	8000.00	root		not(isnull(json_overlaps(cast("[15114205522559919477,7224822526648750310]", json BINARY), planner__core__indexjoin.t5602f14e.col_51)))
       │     └─TableReader_84	10000.00	root	partition:all	data:TableFullScan_83
       │       └─TableFullScan_83	10000.00	cop[tikv]	table:t5602f14e	keep order:true, stats:pseudo
-      └─Projection_35(Probe)	10000.00	root		planner__core__indexjoin.t8e1f515f.col_44, cast(planner__core__indexjoin.t8e1f515f.col_48, datetime(6) BINARY)->Column#22
+      └─Projection_35(Probe)	10000.00	root		planner__core__indexjoin.t8e1f515f.col_44, cast(planner__core__indexjoin.t8e1f515f.col_48, datetime(6) BINARY)->Column#24
         └─TableReader_38	10000.00	root		data:TableFullScan_37
           └─TableFullScan_37	10000.00	cop[tikv]	table:t8e1f515f	keep order:false, stats:pseudo
 select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
