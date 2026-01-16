@@ -433,12 +433,12 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	if _, ok := p.Self().(*LogicalApply); ok {
 		return nil, false
 	}
-	var OuterChildIdx int
+	var outerChildIdx int
 	switch p.JoinType {
 	case base.LeftOuterJoin:
-		OuterChildIdx = 0
+		outerChildIdx = 0
 	case base.RightOuterJoin:
-		OuterChildIdx = 1
+		outerChildIdx = 1
 	default:
 		return nil, false
 	}
