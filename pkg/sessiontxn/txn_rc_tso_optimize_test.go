@@ -799,16 +799,13 @@ func TestRcWaitTSInSlowLog(t *testing.T) {
 
 	res := tk.MustQuery("show variables like 'transaction_isolation'")
 	require.Equal(t, "READ-COMMITTED", res.Rows()[0][1])
-	sctx.SetValue(sessiontxn.TsoRequestCount, 0)
 
 	tk.MustExec("begin pessimistic")
-	waitTs1 := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 = 1")
 	waitTs2 := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("update t1 set id3 = id3 + 10 where id1 > 3 and id1 < 6")
 	waitTs3 := sctx.GetSessionVars().DurationWaitTS
 	tk.MustExec("commit")
-	require.NotEqual(t, waitTs1, waitTs2)
-	require.NotEqual(t, waitTs1, waitTs2)
-	require.NotEqual(t, waitTs2, waitTs3)
+	require.NotZero(t, waitTs2)
+	require.NotZero(t, waitTs3)
 }

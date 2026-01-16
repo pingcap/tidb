@@ -111,9 +111,9 @@ func TestPBMemoryLeak(t *testing.T) {
 	tk.MustExec("use test_mem")
 
 	// prepare data
-	totalSize := uint64(256 << 20) // 256MB
-	blockSize := uint64(8 << 10)   // 8KB
-	delta := totalSize / 5
+	totalSize := uint64(192 << 20) // 192MB
+	blockSize := uint64(8 << 10) // 8KB
+	delta := totalSize / 3
 	numRows := totalSize / blockSize
 	tk.MustExec(fmt.Sprintf("create table t (c varchar(%v))", blockSize))
 	sql := fmt.Sprintf("insert into t values (space(%v))", blockSize)

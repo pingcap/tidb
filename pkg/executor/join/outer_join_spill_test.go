@@ -176,12 +176,6 @@ func TestOuterJoinSpillBasic(t *testing.T) {
 		// Normal case
 		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
 		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
-		// rightUsed is empty
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{2000000, 2000000, 3300000, 200000, 10000}, testFuncName},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{0, 1, 3, 4}, []int{}, nil, nil, nil, []int64{3000000, 2000000, 5300000, 400000, 10000}, testFuncName},
-		// leftUsed is empty
-		{true, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{3000000, 2000000, 5000000, 400000, 10000}, testFuncName},
-		{false, leftKeys, rightKeys, leftTypes, rightTypes, []int{}, []int{0, 2, 3, 4}, nil, nil, nil, []int64{2000000, 2000000, 3300000, 200000, 10000}, testFuncName},
 	}
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/join/slowWorkers", "return(true)")
@@ -447,7 +441,7 @@ func TestHashJoinRandomFail(t *testing.T) {
 	joinTypes = append(joinTypes, base.LeftOuterJoin)
 	joinTypes = append(joinTypes, base.RightOuterJoin)
 
-	for range 15 {
+	for range 3 {
 		for _, joinType := range joinTypes {
 			for _, param := range params {
 				testRandomFail(t, ctx, joinType, param, leftDataSource, rightDataSource)

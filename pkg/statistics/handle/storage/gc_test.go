@@ -115,6 +115,18 @@ func TestGCExtendedStats(t *testing.T) {
 	testKit.MustExec("alter table t add stats_extended s1 correlation(a,b)")
 	testKit.MustExec("alter table t add stats_extended s2 correlation(b,c)")
 	h := dom.StatsHandle()
+	origLease := h.Lease()
+	t.Cleanup(func() { h.SetLease(origLease) })
+	drainDDLEvents := func() {
+		for {
+			select {
+			case event := <-h.DDLEventCh():
+				require.NoError(t, statstestutil.HandleDDLEventWithTxn(h, event))
+			default:
+				return
+			}
+		}
+	}
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	testKit.MustExec("analyze table t")
@@ -128,6 +140,7 @@ func TestGCExtendedStats(t *testing.T) {
 		"s1 2 [1,2] 1.000000 1",
 		"s2 2 [2,3] 1.000000 1",
 	))
+	drainDDLEvents()
 	ddlLease := time.Duration(0)
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
@@ -139,12 +152,14 @@ func TestGCExtendedStats(t *testing.T) {
 		"s2 2 [2,3] 1.000000 1",
 	))
 
+	h.SetLease(0)
 	testKit.MustExec("drop table t")
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 1",
 	))
-	err = statstestutil.HandleNextDDLEventWithTxn(h)
-	require.NoError(t, err)
+	require.NoError(t, dom.Reload())
+	drainDDLEvents()
+	time.Sleep(20 * time.Millisecond)
 	require.Nil(t, h.GCStats(dom.InfoSchema(), ddlLease))
 	testKit.MustQuery("select name, type, column_ids, stats, status from mysql.stats_extended").Sort().Check(testkit.Rows(
 		"s2 2 [2,3] 1.000000 2",

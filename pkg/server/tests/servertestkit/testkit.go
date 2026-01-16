@@ -156,7 +156,7 @@ func CreateTidbTestTopSQLSuite(t *testing.T) *tidbTestTopSQLSuite {
 
 	dbt := testkit.NewDBTestKit(t, db)
 	topsqlstate.GlobalState.PrecisionSeconds.Store(1)
-	topsqlstate.GlobalState.ReportIntervalSeconds.Store(2)
+	topsqlstate.GlobalState.ReportIntervalSeconds.Store(1)
 	dbt.MustExec("set @@global.tidb_top_sql_max_time_series_count=5;")
 
 	require.NoError(t, cpuprofile.StartCPUProfiler())

@@ -57,9 +57,6 @@ func TestManager(t *testing.T) {
 		t.Skip("cross keyspace is not supported in classic kernel")
 	}
 	integration.BeforeTestExternal(t)
-	clientCount := 20
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: clientCount})
-	defer cluster.Terminate(t)
 	keyspaceIDs := map[string]uint32{
 		keyspace.System: 1,
 		"ks1":           2,
@@ -67,21 +64,26 @@ func TestManager(t *testing.T) {
 		"ks3":           4,
 		"ksmdl":         5,
 	}
-	getETCDCli := func(ks string, ksID uint32) *clientv3.Client {
-		for i := range clientCount {
-			cli := cluster.Client(i)
-			if cli == nil {
-				continue
-			}
-			// we will close the client.
-			cluster.TakeClient(i)
-			codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
-			require.NoError(t, err)
-			etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
-			return cli
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	t.Cleanup(func() {
+		cluster.Terminate(t)
+	})
+	var allEtcdClients []*clientv3.Client
+	t.Cleanup(func() {
+		for _, cli := range allEtcdClients {
+			_ = cli.Close()
 		}
-		require.Fail(t, "cannot find etcd client for keyspace %s", ks)
-		return nil
+	})
+
+	member := cluster.Members[0]
+	getETCDCli := func(ks string, ksID uint32) *clientv3.Client {
+		cli, err := integration.NewClientV3(member)
+		require.NoError(t, err)
+		allEtcdClients = append(allEtcdClients, cli)
+		codec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: ksID, Name: ks})
+		require.NoError(t, err)
+		etcd.SetEtcdCliByNamespace(cli, keyspace.MakeKeyspaceEtcdNamespace(codec))
+		return cli
 	}
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/domain/crossks/injectETCDCli",
 		func(cliP **clientv3.Client, ks string) {

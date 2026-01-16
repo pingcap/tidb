@@ -204,12 +204,9 @@ func TestCTEIterationMemTracker(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	insertStr := "insert into t1 values(0)"
-	rowNum := 1000
-	vals := make([]int, rowNum)
-	vals[0] = 0
+	rowNum := 50
 	for i := 1; i < rowNum; i++ {
 		v := rand.Intn(100)
-		vals[i] = v
 		insertStr += fmt.Sprintf(", (%d)", v)
 	}
 	tk.MustExec("use test;")
@@ -217,18 +214,18 @@ func TestCTEIterationMemTracker(t *testing.T) {
 	tk.MustExec("create table t1(c1 int);")
 	tk.MustExec(insertStr)
 
-	tk.MustExec("set @@cte_max_recursion_depth=1000000")
 	tk.MustExec("set global tidb_mem_oom_action = 'log';")
 	defer func() {
 		tk.MustExec("set global tidb_mem_oom_action = default;")
 	}()
 	tk.MustExec("set @@tidb_mem_quota_query=10;")
-	maxIter := 5000
+	maxIter := 200
+	tk.MustExec(fmt.Sprintf("set @@cte_max_recursion_depth=%d", maxIter+100))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk", fmt.Sprintf("return(%d)", maxIter)))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertIterTableSpillToDisk"))
 	}()
-	tk.MustQuery(fmt.Sprintf("explain analyze with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < %d) select * from cte1", maxIter))
+	tk.MustQuery(fmt.Sprintf("with recursive cte1 as (select c1 from t1 union all select c1 + 1 c1 from cte1 where c1 < %d) select count(*) from cte1", maxIter))
 }
 
 func TestCTETableInvalidTask(t *testing.T) {

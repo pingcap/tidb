@@ -81,6 +81,9 @@ ut build xxx
 // write the junitfile
 ut run --junitfile xxx
 
+// override per-test timeout (default: 2m; 30m for --race/--long)
+ut run --timeout 10m
+
 // test with race flag
 ut run --race
 
@@ -388,7 +391,10 @@ func runTestCases(tasks []task) bool {
 	}
 
 	if coverprofile != "" {
-		collectCoverProfileFile()
+		if err := collectCoverProfileFile(); err != nil {
+			fmt.Println("collect cover file error:", err)
+			return false
+		}
 	}
 
 	for _, work := range works {
@@ -510,28 +516,44 @@ var coverFileTempDir string
 var race bool
 var short bool
 var long bool
+var testTimeout string
 
 var except string
 var only string
 
-//nolint:typecheck
 func main() {
+	os.Exit(run())
+}
+
+//nolint:typecheck
+func run() int {
 	junitfile = handleFlags("--junitfile")
 	coverprofile = handleFlags("--coverprofile")
 	except = handleFlags("--except")
 	only = handleFlags("--only")
+	testTimeout = handleFlags("--timeout")
 	race = handleFlag("--race")
 	short = handleFlag("--short")
 	long = handleFlag("--long")
+
+	if testTimeout != "" {
+		d, err := time.ParseDuration(testTimeout)
+		if err != nil || d <= 0 {
+			fmt.Println("invalid --timeout value:", testTimeout)
+			return 1
+		}
+	}
 
 	if coverprofile != "" {
 		var err error
 		coverFileTempDir, err = os.MkdirTemp(os.TempDir(), "cov")
 		if err != nil {
 			fmt.Println("create temp dir fail", coverFileTempDir)
-			os.Exit(1)
+			return 1
 		}
-		defer os.Remove(coverFileTempDir)
+		defer func() {
+			_ = os.RemoveAll(coverFileTempDir)
+		}()
 	}
 
 	// Get the correct count of CPU if it's in docker.
@@ -542,7 +564,7 @@ func main() {
 	workDir, err = os.Getwd()
 	if err != nil {
 		fmt.Println("os.Getwd() error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	var isSucceed bool
@@ -566,22 +588,21 @@ func main() {
 		}
 	}
 	if !isSucceed {
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
-func collectCoverProfileFile() {
+func collectCoverProfileFile() error {
 	// Combine all the cover file of single test function into a whole.
 	files, err := os.ReadDir(coverFileTempDir)
 	if err != nil {
-		fmt.Println("collect cover file error:", err)
-		os.Exit(-1)
+		return err
 	}
 
 	w, err := os.Create(coverprofile)
 	if err != nil {
-		fmt.Println("create cover file error:", err)
-		os.Exit(-1)
+		return err
 	}
 	//nolint: errcheck
 	defer w.Close()
@@ -592,7 +613,9 @@ func collectCoverProfileFile() {
 		if file.IsDir() {
 			continue
 		}
-		collectOneCoverProfileFile(result, file)
+		if err := collectOneCoverProfileFile(result, file); err != nil {
+			return err
+		}
 	}
 
 	w1 := bufio.NewWriter(w)
@@ -609,27 +632,26 @@ func collectCoverProfileFile() {
 			)
 		}
 		if err := w1.Flush(); err != nil {
-			fmt.Println("flush data to cover profile file error:", err)
-			os.Exit(-1)
+			return err
 		}
 	}
+	return nil
 }
 
-func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) {
+func collectOneCoverProfileFile(result map[string]*cover.Profile, file os.DirEntry) error {
 	f, err := os.Open(filepath.Join(coverFileTempDir, file.Name()))
 	if err != nil {
-		fmt.Println("open temp cover file error:", err)
-		os.Exit(-1)
+		return err
 	}
 	//nolint: errcheck
 	defer f.Close()
 
 	profs, err := cover.ParseProfilesFromReader(f)
 	if err != nil {
-		fmt.Println("parse cover profile file error:", err)
-		os.Exit(-1)
+		return err
 	}
 	mergeProfile(result, profs)
+	return nil
 }
 
 func mergeProfile(m map[string]*cover.Profile, profs []*cover.Profile) {
@@ -931,7 +953,9 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 		testCPU = p / longTestWorkerCount
 	}
 	args = append(args, "-test.cpu", strconv.Itoa(testCPU))
-	if !race && !long {
+	if testTimeout != "" {
+		args = append(args, []string{"-test.timeout", testTimeout}...)
+	} else if !race && !long {
 		args = append(args, []string{"-test.timeout", "2m"}...)
 	} else {
 		// it takes a longer when race is enabled. so it is set more timeout value.

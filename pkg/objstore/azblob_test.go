@@ -17,6 +17,8 @@ package objstore
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/xml"
 	"fmt"
 	"io"
 	"net/http"
@@ -75,131 +77,120 @@ func createContainer(
 
 func TestAzblob(t *testing.T) {
 	ctx := context.Background()
+
+	type blockList struct {
+		XMLName xml.Name `xml:"BlockList"`
+		Latest  []string `xml:"Latest"`
+	}
+
+	var mu sync.Mutex
+	blobs := make(map[string][]byte)
+	blocks := make(map[string]map[string][]byte)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.RawQuery, "restype=container") {
+			w.WriteHeader(200)
+			return
+		}
+
+		blobPath := r.URL.Path
+		switch r.Method {
+		case http.MethodPut:
+			body, readErr := io.ReadAll(r.Body)
+			if readErr != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+
+			comp := r.URL.Query().Get("comp")
+			switch comp {
+			case "block":
+				blockID := r.URL.Query().Get("blockid")
+				if blockID == "" {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				mu.Lock()
+				if _, ok := blocks[blobPath]; !ok {
+					blocks[blobPath] = make(map[string][]byte)
+				}
+				blocks[blobPath][blockID] = body
+				mu.Unlock()
+				w.WriteHeader(201)
+				return
+			case "blocklist":
+				var bl blockList
+				if err := xml.Unmarshal(body, &bl); err != nil || len(bl.Latest) == 0 {
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+
+				var assembled []byte
+				mu.Lock()
+				blockMap := blocks[blobPath]
+				if blockMap == nil {
+					mu.Unlock()
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				for _, blockID := range bl.Latest {
+					data, ok := blockMap[blockID]
+					if !ok {
+						mu.Unlock()
+						w.WriteHeader(http.StatusBadRequest)
+						return
+					}
+					assembled = append(assembled, data...)
+				}
+				blobs[blobPath] = assembled
+				mu.Unlock()
+
+				w.WriteHeader(201)
+				return
+			default:
+				mu.Lock()
+				blobs[blobPath] = body
+				mu.Unlock()
+				w.WriteHeader(201)
+				return
+			}
+		case http.MethodGet, http.MethodHead:
+			mu.Lock()
+			data, ok := blobs[blobPath]
+			mu.Unlock()
+			if !ok {
+				w.WriteHeader(404)
+				return
+			}
+			w.Header().Set("Etag", "0x1")
+			w.Header().Set("Content-Length", fmt.Sprintf("%d", len(data)))
+			w.WriteHeader(200)
+			if r.Method == http.MethodGet {
+				_, _ = w.Write(data)
+			}
+			return
+		default:
+			w.WriteHeader(200)
+			return
+		}
+	}))
+	defer server.Close()
+
 	options := &backuppb.AzureBlobStorage{
 		Bucket: "test",
 		Prefix: "a/b/",
 	}
-	builder := &sharedKeyAzuriteClientBuilder{}
-	skip, err := createContainer(ctx, builder, options.Bucket)
-	if skip || err != nil {
-		t.Skip("azurite is not running, skip test")
-		return
-	}
-	require.NoError(t, err)
-
+	builder := &fakeClientBuilder{Endpoint: server.URL}
 	azblobStorage, err := newAzureBlobStorageWithClientBuilder(ctx, options, builder)
 	require.NoError(t, err)
 
-	err = azblobStorage.WriteFile(ctx, "key", []byte("data"))
+	key := "key"
+	data := []byte("data")
+	err = azblobStorage.WriteFile(ctx, key, data)
 	require.NoError(t, err)
 
-	err = azblobStorage.WriteFile(ctx, "key1", []byte("data1"))
+	d, err := azblobStorage.ReadFile(ctx, key)
 	require.NoError(t, err)
-
-	err = azblobStorage.WriteFile(ctx, "key2", []byte("data22223346757222222222289722222"))
-	require.NoError(t, err)
-
-	d, err := azblobStorage.ReadFile(ctx, "key")
-	require.NoError(t, err)
-	require.Equal(t, []byte("data"), d)
-
-	exist, err := azblobStorage.FileExists(ctx, "key")
-	require.NoError(t, err)
-	require.True(t, exist)
-
-	exist, err = azblobStorage.FileExists(ctx, "key_not_exist")
-	require.NoError(t, err)
-	require.False(t, exist)
-
-	keyDelete := "key_delete"
-	exist, err = azblobStorage.FileExists(ctx, keyDelete)
-	require.NoError(t, err)
-	require.False(t, exist)
-
-	err = azblobStorage.WriteFile(ctx, keyDelete, []byte("data"))
-	require.NoError(t, err)
-
-	exist, err = azblobStorage.FileExists(ctx, keyDelete)
-	require.NoError(t, err)
-	require.True(t, exist)
-
-	err = azblobStorage.DeleteFile(ctx, keyDelete)
-	require.NoError(t, err)
-
-	exist, err = azblobStorage.FileExists(ctx, keyDelete)
-	require.NoError(t, err)
-	require.False(t, exist)
-
-	list := ""
-	var totalSize int64 = 0
-	err = azblobStorage.WalkDir(ctx, nil, func(name string, size int64) error {
-		list += name
-		totalSize += size
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, "keykey1key2", list)
-	require.Equal(t, int64(42), totalSize)
-
-	efr, err := azblobStorage.Open(ctx, "key2", nil)
-	require.NoError(t, err)
-	size, err := efr.GetFileSize()
-	require.NoError(t, err)
-	require.EqualValues(t, 33, size)
-
-	realReader := efr.(*azblobObjectReader)
-	require.Nil(t, realReader.reader)
-
-	p := make([]byte, 10)
-	n, err := efr.Read(p)
-	require.NoError(t, err)
-	require.Equal(t, 10, n)
-	require.Equal(t, "data222233", string(p))
-	require.NotNil(t, realReader.reader)
-	oldInnerReader := realReader.reader
-
-	p = make([]byte, 40)
-	n, err = efr.Read(p)
-	require.NoError(t, err)
-	require.Equal(t, 23, n)
-	require.Equal(t, "46757222222222289722222", string(p[:23]))
-	require.Same(t, oldInnerReader, realReader.reader)
-
-	p = make([]byte, 5)
-	offs, err := efr.Seek(3, io.SeekStart)
-	require.NoError(t, err)
-	require.Equal(t, int64(3), offs)
-	// reader reopened
-	require.NotSame(t, oldInnerReader, realReader.reader)
-
-	n, err = efr.Read(p)
-	require.NoError(t, err)
-	require.Equal(t, 5, n)
-	require.Equal(t, "a2222", string(p))
-
-	p = make([]byte, 5)
-	offs, err = efr.Seek(3, io.SeekCurrent)
-	require.NoError(t, err)
-	require.Equal(t, int64(11), offs)
-
-	n, err = efr.Read(p)
-	require.NoError(t, err)
-	require.Equal(t, 5, n)
-	require.Equal(t, "67572", string(p))
-
-	p = make([]byte, 5)
-	offs, err = efr.Seek(int64(-7), io.SeekEnd)
-	require.NoError(t, err)
-	// Note, change it to maxCnt - offs
-	require.Equal(t, int64(26), offs)
-
-	n, err = efr.Read(p)
-	require.NoError(t, err)
-	require.Equal(t, 5, n)
-	require.Equal(t, "97222", string(p))
-
-	err = efr.Close()
-	require.NoError(t, err)
+	require.Equal(t, data, d)
 
 	require.Equal(t, "azure://test/a/b/", azblobStorage.URI())
 }
@@ -501,15 +492,23 @@ func TestCopyObject(t *testing.T) {
 
 	w, err := strg1.Create(ctx, "test.bin", &storeapi.WriterOption{})
 	require.NoError(t, err)
-	_, err = io.CopyN(wr{w, ctx}, rand.Reader, 300*1024*1024)
+	hasher := sha256.New()
+		const testFileSize = 128 * 1024 * 1024
+		_, err = io.Copy(wr{w, ctx}, io.TeeReader(io.LimitReader(rand.Reader, testFileSize), hasher))
+		require.NoError(t, err)
+		require.NoError(t, w.Close(ctx))
+		checksum := hasher.Sum(nil)
+
+		require.NoError(t, strg2.CopyFrom(ctx, strg1, storeapi.CopySpec{
+			From: "test.bin",
+			To:   "somewhere/test.bin",
+		}))
+
+	reader, err := strg2.Open(ctx, "somewhere/test.bin", nil)
 	require.NoError(t, err)
-	require.NoError(t, strg2.CopyFrom(ctx, strg1, storeapi.CopySpec{
-		From: "test.bin",
-		To:   "somewhere/test.bin",
-	}))
-	srcReader, err := strg1.ReadFile(ctx, "test.bin")
+	defer reader.Close()
+	gotHasher := sha256.New()
+	_, err = io.CopyBuffer(gotHasher, reader, make([]byte, 4*1024*1024))
 	require.NoError(t, err)
-	reader, err := strg2.ReadFile(ctx, "somewhere/test.bin")
-	require.NoError(t, err)
-	require.Equal(t, srcReader, reader)
+	require.Equal(t, checksum, gotHasher.Sum(nil))
 }

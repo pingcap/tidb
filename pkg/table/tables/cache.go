@@ -303,10 +303,21 @@ func (c *cachedTable) renewLease(handle StateRemote, ts uint64, data *cacheData,
 	})
 }
 
-const cacheTableWriteLease = 5 * time.Second
+const defaultCacheTableWriteLease = 5 * time.Second
+
+func cacheTableWriteLeaseDuration() time.Duration {
+	lease := defaultCacheTableWriteLease
+	failpoint.Inject("mockCacheTableWriteLease", func(val failpoint.Value) {
+		if ms, ok := val.(int); ok && ms > 0 {
+			lease = time.Duration(ms) * time.Millisecond
+		}
+	})
+	return lease
+}
 
 func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struct{}, leasePtr *uint64, wg chan error) {
-	writeLockLease, err := c.lockForWrite(ctx)
+	leaseDuration := cacheTableWriteLeaseDuration()
+	writeLockLease, err := c.lockForWrite(ctx, leaseDuration)
 	atomic.StoreUint64(leasePtr, writeLockLease)
 	wg <- err
 	if err != nil {
@@ -314,12 +325,12 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struc
 		return
 	}
 
-	t := time.NewTicker(cacheTableWriteLease / 2)
+	t := time.NewTicker(leaseDuration / 2)
 	defer t.Stop()
 	for {
 		select {
 		case <-t.C:
-			if err := c.renew(ctx, leasePtr); err != nil {
+			if err := c.renew(ctx, leasePtr, leaseDuration); err != nil {
 				logutil.Logger(ctx).Warn("renew write lock lease fail", zap.String("category", "cached table"), zap.Error(err))
 				return
 			}
@@ -329,10 +340,10 @@ func (c *cachedTable) WriteLockAndKeepAlive(ctx context.Context, exit chan struc
 	}
 }
 
-func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
+func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64, leaseDuration time.Duration) error {
 	oldLease := atomic.LoadUint64(leasePtr)
 	physicalTime := oracle.GetTimeFromTS(oldLease)
-	newLease := oracle.GoTimeToTS(physicalTime.Add(cacheTableWriteLease))
+	newLease := oracle.GoTimeToTS(physicalTime.Add(leaseDuration))
 
 	h := c.TakeStateRemoteHandle()
 	defer c.PutStateRemoteHandle(h)
@@ -347,9 +358,9 @@ func (c *cachedTable) renew(ctx context.Context, leasePtr *uint64) error {
 	return nil
 }
 
-func (c *cachedTable) lockForWrite(ctx context.Context) (uint64, error) {
+func (c *cachedTable) lockForWrite(ctx context.Context, leaseDuration time.Duration) (uint64, error) {
 	handle := c.TakeStateRemoteHandle()
 	defer c.PutStateRemoteHandle(handle)
 
-	return handle.LockForWrite(ctx, c.Meta().ID, cacheTableWriteLease)
+	return handle.LockForWrite(ctx, c.Meta().ID, leaseDuration)
 }

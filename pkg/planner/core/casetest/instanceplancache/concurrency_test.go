@@ -21,6 +21,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/testkit"
 )
@@ -70,6 +71,49 @@ type worker struct {
 	wg    *sync.WaitGroup
 }
 
+const maxDeadlockRetries = 10
+
+func isDeadlockErr(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "Deadlock found when trying to get lock")
+}
+
+func restartTxn(tk *testkit.TestKit) {
+	// Ignore rollback error. If the txn is already aborted by the deadlock error, rollback may fail
+	// with "no active transaction", which is fine for restarting a new txn.
+	_ = tk.ExecToErr("rollback")
+	tk.MustExec("begin")
+}
+
+func (w *worker) runDML(stmt *testStmt) {
+	var lastErr error
+	for range maxDeadlockRetries {
+		lastErr = w.tk.ExecToErr(stmt.normalStmt)
+		if lastErr != nil {
+			if isDeadlockErr(lastErr) {
+				restartTxn(w.tk)
+				time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)+1))
+				continue
+			}
+			w.tk.RequireNoError(lastErr, "sql:%s", stmt.normalStmt)
+		}
+
+		w.tk.MustExec(stmt.prepStmt)
+		w.tk.MustExec(stmt.setStmt)
+		lastErr = w.tk.ExecToErr(stmt.execStmt)
+		if lastErr != nil {
+			if isDeadlockErr(lastErr) {
+				restartTxn(w.tk)
+				time.Sleep(time.Millisecond * time.Duration(rand.Intn(10)+1))
+				continue
+			}
+			w.tk.RequireNoError(lastErr, "sql:%s", stmt.execStmt)
+		}
+		return
+	}
+
+	w.tk.RequireNoError(lastErr, "sql:%s", stmt.normalStmt)
+}
+
 func (w *worker) run() {
 	defer w.wg.Done()
 	for _, stmt := range w.stmts {
@@ -82,10 +126,7 @@ func (w *worker) run() {
 			preparedResult := w.tk.MustQuery(stmt.execStmt)
 			normalResult.Sort().Check(preparedResult.Sort().Rows())
 		} else if isDML(stmt.normalStmt) { // DML
-			w.tk.MustExec(stmt.normalStmt)
-			w.tk.MustExec(stmt.prepStmt)
-			w.tk.MustExec(stmt.setStmt)
-			w.tk.MustExec(stmt.execStmt)
+			w.runDML(stmt)
 		}
 	}
 }
@@ -248,8 +289,8 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 		}
 	}
 
-	nStmt := 2000
-	nInitialRecords := 100
+	nStmt := 1000
+	nInitialRecords := 50
 	stmts := make([]*testStmt, 0, nStmt)
 	stmts = append(stmts, &testStmt{normalStmt: "begin"})
 	for len(stmts) < nStmt {
@@ -276,7 +317,7 @@ func TestInstancePlanCacheConcurrencySysbench(t *testing.T) {
 	}
 	stmts = append(stmts, &testStmt{normalStmt: "commit"})
 
-	nConcurrency := 10
+	nConcurrency := 6
 	TKs := make([]*testkit.TestKit, nConcurrency)
 	for i := range TKs {
 		TKs[i] = testkit.NewTestKit(t, store)

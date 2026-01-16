@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -148,8 +149,16 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	}
 	failpoint.Inject("mockKillPendingAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
-		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
-			dom.SysProcTracker().KillSysProcess(id)
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			ids := handleutil.GlobalAutoAnalyzeProcessList.All()
+			if len(ids) > 0 || time.Now().After(deadline) {
+				for _, id := range ids {
+					dom.SysProcTracker().KillSysProcess(id)
+				}
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	})
 TASKLOOP:
@@ -173,13 +182,22 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		finishRemainingAnalyzeJobsOnErr(statsHandle, tasks, err)
 		return err
 	}
 
 	failpoint.Inject("mockKillFinishedAnalyzeJob", func() {
 		dom := domain.GetDomain(e.Ctx())
-		for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
-			dom.SysProcTracker().KillSysProcess(id)
+		deadline := time.Now().Add(2 * time.Second)
+		for {
+			ids := handleutil.GlobalAutoAnalyzeProcessList.All()
+			if len(ids) > 0 || time.Now().After(deadline) {
+				for _, id := range ids {
+					dom.SysProcTracker().KillSysProcess(id)
+				}
+				break
+			}
+			time.Sleep(10 * time.Millisecond)
 		}
 	})
 	// If we enabled dynamic prune mode, then we need to generate global stats here for partition tables.
@@ -608,6 +626,22 @@ func finishJobWithLog(statsHandle *handle.Handle, job *statistics.AnalyzeJob, an
 				zap.String("cost", job.EndTime.Sub(job.StartTime).String()),
 				zap.String("sample rate reason", job.SampleRateReason))
 		}
+	}
+}
+
+func finishRemainingAnalyzeJobsOnErr(statsHandle *handle.Handle, tasks []*analyzeTask, analyzeErr error) {
+	if analyzeErr == nil {
+		return
+	}
+	for _, task := range tasks {
+		job := task.job
+		if job == nil || job.ID == nil || !job.EndTime.IsZero() {
+			continue
+		}
+		if job.StartTime.IsZero() {
+			statsHandle.StartAnalyzeJob(job)
+		}
+		finishJobWithLog(statsHandle, job, analyzeErr)
 	}
 }
 

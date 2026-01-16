@@ -3865,7 +3865,11 @@ var defaultSysVars = []*SysVar{
 			return nil
 		},
 		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
-			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
+			limit := vardef.GlobalSlowLogRateLimiter.Limit()
+			if limit == rate.Inf {
+				return "0", nil
+			}
+			return strconv.Itoa(int(limit)), nil
 		},
 	},
 	{

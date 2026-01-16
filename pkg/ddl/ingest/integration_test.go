@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,6 +44,7 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test;")
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	isLong := testflag.Long()
 
 	assertLastNDDLUseIngest := func(n int) {
 		tk.MustExec("admin check table t;")
@@ -60,33 +62,63 @@ func TestAddIndexIngestGeneratedColumns(t *testing.T) {
 	}
 	tk.MustExec("create table t (a int, b int, c int as (b+10), d int as (b+c), primary key (a) clustered);")
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3);")
-	tk.MustExec("alter table t add index idx(c);")
-	tk.MustExec("alter table t add index idx1(c, a);")
-	tk.MustExec("alter table t add index idx2(a);")
-	tk.MustExec("alter table t add index idx3(d);")
-	tk.MustExec("alter table t add index idx4(d, c);")
+	stmts := []string{
+		"alter table t add index idx(c);",
+		"alter table t add index idx1(c, a);",
+		"alter table t add index idx2(a);",
+		"alter table t add index idx3(d);",
+		"alter table t add index idx4(d, c);",
+	}
+	if !isLong {
+		stmts = []string{
+			"alter table t add index idx4(d, c);",
+		}
+	}
+	for _, stmt := range stmts {
+		tk.MustExec(stmt)
+	}
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 11 12", "2 2 12 14", "3 3 13 16"))
-	assertLastNDDLUseIngest(5)
+	assertLastNDDLUseIngest(len(stmts))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b char(10), c char(10) as (concat(b, 'x')), d int, e char(20) as (c));")
 	tk.MustExec("insert into t (a, b, d) values (1, '1', 1), (2, '2', 2), (3, '3', 3);")
-	tk.MustExec("alter table t add index idx(c);")
-	tk.MustExec("alter table t add index idx1(a, c);")
-	tk.MustExec("alter table t add index idx2(c(7));")
-	tk.MustExec("alter table t add index idx3(e(5));")
+	stmts = []string{
+		"alter table t add index idx(c);",
+		"alter table t add index idx1(a, c);",
+		"alter table t add index idx2(c(7));",
+		"alter table t add index idx3(e(5));",
+	}
+	if !isLong {
+		stmts = []string{
+			"alter table t add index idx3(e(5));",
+		}
+	}
+	for _, stmt := range stmts {
+		tk.MustExec(stmt)
+	}
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1x 1 1x", "2 2 2x 2 2x", "3 3 3x 3 3x"))
-	assertLastNDDLUseIngest(4)
+	assertLastNDDLUseIngest(len(stmts))
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int, b char(10), c tinyint, d int as (a + c), e bigint as (d - a), primary key(b, a) clustered);")
 	tk.MustExec("insert into t (a, b, c) values (1, '1', 1), (2, '2', 2), (3, '3', 3);")
-	tk.MustExec("alter table t add index idx(d);")
-	tk.MustExec("alter table t add index idx1(b(2), d);")
-	tk.MustExec("alter table t add index idx2(d, c);")
-	tk.MustExec("alter table t add index idx3(e);")
+	stmts = []string{
+		"alter table t add index idx(d);",
+		"alter table t add index idx1(b(2), d);",
+		"alter table t add index idx2(d, c);",
+		"alter table t add index idx3(e);",
+	}
+	if !isLong {
+		stmts = []string{
+			"alter table t add index idx2(d, c);",
+		}
+	}
+	for _, stmt := range stmts {
+		tk.MustExec(stmt)
+	}
 	tk.MustQuery("select * from t;").Check(testkit.Rows("1 1 1 2 1", "2 2 2 4 2", "3 3 3 6 3"))
-	assertLastNDDLUseIngest(4)
+	assertLastNDDLUseIngest(len(stmts))
 }
 
 func TestIngestError(t *testing.T) {
@@ -523,47 +555,25 @@ func TestAddGlobalIndexInIngest(t *testing.T) {
 	tk.MustExec("insert into t (a, b) values (1, 1), (2, 2), (3, 3)")
 	var i atomic.Int32
 	i.Store(3)
+	var injected atomic.Int32
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/writeLocalExec", func(bool) {
+		if injected.Add(1) > 2 {
+			return
+		}
 		tk2 := testkit.NewTestKit(t, store)
 		tmp := i.Add(1)
 		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
 		assert.Nil(t, err)
 	})
-	tk.MustExec("alter table t add index idx_1(b), add unique index idx_2(b) global")
-	rsGlobalIndex := tk.MustQuery("select * from t use index(idx_2)").Sort()
+	tk.MustExec("alter table t add index idx_1(b), add unique index idx_2(b) global, add index idx_3(b) global")
+	rsGlobalUniqueIndex := tk.MustQuery("select * from t use index(idx_2)").Sort()
+	rsGlobalIndex := tk.MustQuery("select * from t use index(idx_3)").Sort()
 	rsTable := tk.MustQuery("select * from t use index()").Sort()
 	rsNormalIndex := tk.MustQuery("select * from t use index(idx_1)").Sort()
-	num := len(rsGlobalIndex.Rows())
-	require.Greater(t, num, 3)
-	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
-	require.Equal(t, rsGlobalIndex.String(), rsNormalIndex.String())
-
-	// for indexes have different columns
-	tk.MustExec("alter table t add index idx_3(a), add unique index idx_4(b) global")
-	rsGlobalIndex = tk.MustQuery("select * from t use index(idx_4)").Sort()
-	rsTable = tk.MustQuery("select * from t use index()").Sort()
-	rsNormalIndex = tk.MustQuery("select * from t use index(idx_3)").Sort()
-	require.Greater(t, len(rsGlobalIndex.Rows()), num)
-	require.Equal(t, rsGlobalIndex.String(), rsTable.String())
-	require.Equal(t, rsGlobalIndex.String(), rsNormalIndex.String())
-
-	// for all global indexes
-	tk.MustExec("alter table t add unique index idx_5(b) global, add unique index idx_6(b) global")
-	rsGlobalIndex1 := tk.MustQuery("select * from t use index(idx_6)").Sort()
-	rsTable = tk.MustQuery("select * from t use index()").Sort()
-	rsGlobalIndex2 := tk.MustQuery("select * from t use index(idx_5)").Sort()
-	require.Greater(t, len(rsGlobalIndex1.Rows()), len(rsGlobalIndex.Rows()))
-	require.Equal(t, rsGlobalIndex1.String(), rsTable.String())
-	require.Equal(t, rsGlobalIndex1.String(), rsGlobalIndex2.String())
-
-	// for non-unique global idnexes
-	tk.MustExec("alter table t add index idx_7(b) global, add index idx_8(b) global")
-	rsNonUniqueGlobalIndex1 := tk.MustQuery("select * from t use index(idx_7)").Sort()
-	rsTable = tk.MustQuery("select * from t use index()").Sort()
-	rsNonUniqueGlobalIndex2 := tk.MustQuery("select * from t use index(idx_8)").Sort()
-	require.Greater(t, len(rsNonUniqueGlobalIndex1.Rows()), len(rsGlobalIndex.Rows()))
-	require.Equal(t, rsNonUniqueGlobalIndex1.String(), rsTable.String())
-	require.Equal(t, rsNonUniqueGlobalIndex1.String(), rsNonUniqueGlobalIndex2.String())
+	require.Greater(t, len(rsGlobalUniqueIndex.Rows()), 3)
+	require.Equal(t, rsGlobalUniqueIndex.String(), rsTable.String())
+	require.Equal(t, rsGlobalUniqueIndex.String(), rsNormalIndex.String())
+	require.Equal(t, rsGlobalUniqueIndex.String(), rsGlobalIndex.String())
 }
 
 func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {

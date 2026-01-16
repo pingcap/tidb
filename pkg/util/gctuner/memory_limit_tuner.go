@@ -121,8 +121,23 @@ func (t *memoryLimitTuner) tuning() {
 					}
 				})
 				failpoint.Inject("testMemoryLimitTuner", func(val failpoint.Value) {
-					if val, ok := val.(bool); val && ok {
-						resetInterval = 1 * time.Second
+					switch v := val.(type) {
+					case bool:
+						if v {
+							resetInterval = 1 * time.Second
+						}
+					case int:
+						if v > 0 {
+							resetInterval = time.Duration(v) * time.Millisecond
+						}
+					case int64:
+						if v > 0 {
+							resetInterval = time.Duration(v) * time.Millisecond
+						}
+					case float64:
+						if v > 0 {
+							resetInterval = time.Duration(v) * time.Millisecond
+						}
 					}
 				})
 				time.Sleep(resetInterval)

@@ -1016,6 +1016,15 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	require.NoError(t, err)
 	newTableID := tbl.Meta().ID
 	if tableID != newTableID {
+		// EmulatorGC handles unistore deletions asynchronously. Wait until the old table key-range is gone
+		// before doing the verbose entry dump on failure.
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if !hasAnyEntryForTableIndex(t, tkO, tableID, 0) {
+				break
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
 		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
 	}
 	checkTableAndIndexEntries(t, tkO, originalPartitions)
@@ -1045,6 +1054,40 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	domOwner.Close()
 	domNonOwner.Close()
 	store.Close()
+}
+
+func hasAnyEntryForTableIndex(t *testing.T, tk *testkit.TestKit, ids ...int64) bool {
+	var start kv.Key
+	var end kv.Key
+	if len(ids) < 2 || len(ids) > 3 {
+		require.Fail(t, "hasAnyEntryForTableIndex requires 2 or 3 ids: tableID, indexID [, lastIndexID]")
+	}
+	tableID := ids[0]
+	indexID := ids[1]
+	if indexID == 0 {
+		start = tablecodec.EncodeTablePrefix(tableID)
+		end = tablecodec.EncodeTablePrefix(tableID + 1)
+	} else {
+		start = tablecodec.EncodeTableIndexPrefix(tableID, indexID)
+		if len(ids) == 3 {
+			if ids[2] == 0 {
+				end = tablecodec.EncodeTableIndexPrefix(tableID, math.MaxInt64)
+				end = end.Next()
+			} else {
+				end = tablecodec.EncodeTableIndexPrefix(tableID, ids[2])
+			}
+		} else {
+			end = tablecodec.EncodeTableIndexPrefix(tableID, indexID+1)
+		}
+	}
+	ctx := tk.Session()
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+	it, err := txn.Iter(start, end)
+	require.NoError(t, err)
+	defer it.Close()
+	return it.Valid()
 }
 
 // HaveEntriesForTableIndex returns number of entries in the KV range of table+index or just the table if index is 0.

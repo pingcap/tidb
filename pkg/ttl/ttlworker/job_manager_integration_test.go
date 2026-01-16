@@ -816,19 +816,13 @@ func TestTriggerScanTask(t *testing.T) {
 	})
 	require.NoError(t, m.InfoSchemaCache().Update(se))
 	nCli := m.GetNotificationCli()
-	done := make(chan struct{})
-	go func() {
-		<-nCli.WatchNotification(context.Background(), "scan")
-		close(done)
-	}()
+	notifyCh := nCli.WatchNotification(context.Background(), "scan")
 	require.NoError(t, m.SubmitJob(se, tblID, tblID, "request1"))
 
 	// notification is sent
-	timeoutCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	select {
-	case <-done:
-	case <-timeoutCtx.Done():
+	case <-notifyCh:
+	case <-time.After(15 * time.Second):
 		require.FailNow(t, "notification not got")
 	}
 }

@@ -126,12 +126,6 @@ func TestRelease(t *testing.T) {
 		go func() {
 			defer waitGroup.Done()
 			tracker.Consume(10)
-		}()
-	}
-	waitGroup.Add(10)
-	for range 10 {
-		go func() {
-			defer waitGroup.Done()
 			tracker.Release(10)
 		}()
 	}

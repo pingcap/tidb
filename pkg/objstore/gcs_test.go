@@ -626,7 +626,16 @@ func TestGCSShouldRetry(t *testing.T) {
 }
 
 func TestCtxUsage(t *testing.T) {
-	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"invalid_request"}`))
+		default:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("dummy-subject-token"))
+		}
+	}))
 	defer httpSvr.Close()
 
 	ctx := context.Background()
@@ -639,10 +648,11 @@ func TestCtxUsage(t *testing.T) {
 		CredentialsBlob: fmt.Sprintf(`
 {
 	"type":"external_account",
+	"token_url":"%s/token",
 	"audience":"//iam.googleapis.com/projects/1234567890123/locations/global/workloadIdentityPools/my-pool/providers/my-provider",
 	"subject_token_type":"urn:ietf:params:oauth:token-type:access_token",
-	"credential_source":{"url":"%s"}
-}`, httpSvr.URL),
+	"credential_source":{"url":"%s/subject"}
+}`, httpSvr.URL, httpSvr.URL),
 	}
 	stg, err := NewGCSStorage(ctx, gcs, &storeapi.Options{})
 	require.NoError(t, err)

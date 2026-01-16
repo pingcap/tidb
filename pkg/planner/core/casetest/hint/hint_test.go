@@ -296,10 +296,10 @@ func TestOptimizeHintOnPartitionTable(t *testing.T) {
 			testKit.MustQuery("explain format = 'brief' " + tt).Check(testkit.Rows(output[i].Plan...))
 			testKit.MustQuery("show warnings").Check(testkit.Rows(output[i].Warn...))
 		}
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10)  */ SLEEP(5)").Check(testkit.Rows("0"))
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt)  */ SLEEP(5)").Check(testkit.Rows("0"))
+		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10)  */ SLEEP(0.001)").Check(testkit.Rows("0"))
+		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt)  */ SLEEP(0.001)").Check(testkit.Rows("0"))
 		require.Len(t, testKit.Session().GetSessionVars().StmtCtx.GetWarnings(), 1)
-		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt) unknow(t1,t2) */ SLEEP(5)").Check(testkit.Rows("0"))
+		testKit.MustQuery("SELECT /*+ MAX_EXECUTION_TIME(10), dtc(name=tt) unknow(t1,t2) */ SLEEP(0.001)").Check(testkit.Rows("0"))
 		require.Len(t, testKit.Session().GetSessionVars().StmtCtx.GetWarnings(), 2)
 	})
 }

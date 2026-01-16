@@ -157,7 +157,7 @@ func TestCacheTableSizeLimit(t *testing.T) {
 			cached = true
 			break
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	// require.True(t, cached)

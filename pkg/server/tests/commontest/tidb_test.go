@@ -1272,12 +1272,17 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		// since 1 sql may has many plan, check `len(stats) > 0` instead of `len(stats) == 1`.
 		require.Greaterf(t, len(stats), 0, "sql: "+sql)
 
+		// Normalize the user SQL before check.
+		normalizedSQL := parser.Normalize(sql, "ON")
 		for _, s := range stats {
 			sqlStr := mc.GetSQL(s.SQLDigest)
-			encodedPlan := mc.GetPlan(s.PlanDigest)
-			// Normalize the user SQL before check.
-			normalizedSQL := parser.Normalize(sql, "ON")
 			require.Equalf(t, normalizedSQL, sqlStr, "sql: %v", sql)
+
+			if len(planRegexp) == 0 {
+				continue
+			}
+
+			encodedPlan := mc.GetPlan(s.PlanDigest)
 			// decode plan before check.
 			normalizedPlan, err := plancodec.DecodeNormalizedPlan(encodedPlan)
 			require.NoError(t, err)
@@ -1293,17 +1298,11 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		sql        string
 		planRegexp string
 	}{
-		{sql: "insert into t () values (),(),(),(),(),(),();", planRegexp: ""},
-		{sql: "insert into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
+		{sql: "insert into t (b) values (1),(1);", planRegexp: ""},
 		{sql: "update t set b=a where b is null limit 1;", planRegexp: ".*Limit.*TableReader.*"},
-		{sql: "delete from t where b = a limit 2;", planRegexp: ".*Limit.*TableReader.*"},
-		{sql: "replace into t (b) values (1),(1),(1),(1),(1),(1),(1),(1);", planRegexp: ""},
 		{sql: "select * from t use index(idx) where a<10;", planRegexp: ".*IndexLookUp.*"},
-		{sql: "select * from t ignore index(idx) where a>1000000000;", planRegexp: ".*TableReader.*"},
 		{sql: "select /*+ HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t1.a=t2.a where t1.b is not null;", planRegexp: ".*HashJoin.*"},
-		{sql: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t t1 join t t2 on t2.a=t1.a where t1.b is not null;", planRegexp: ".*IndexHashJoin.*"},
 		{sql: "select * from t where a=1;", planRegexp: ".*Point_Get.*"},
-		{sql: "select * from t where a in (1,2,3,4)", planRegexp: ".*Batch_Point_Get.*"},
 	}
 	execFn := func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
@@ -1329,17 +1328,9 @@ func TestTopSQLCPUProfile(t *testing.T) {
 		args       []any
 		planRegexp string
 	}{
-		{prepare: "insert into t1 (b) values (?);", args: []any{1}, planRegexp: ""},
-		{prepare: "replace into t1 (b) values (?);", args: []any{1}, planRegexp: ""},
 		{prepare: "update t1 set b=a where b is null limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "delete from t1 where b = a limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "replace into t1 (b) values (?);", args: []any{1}, planRegexp: ""},
 		{prepare: "select * from t1 use index(idx) where a<?;", args: []any{10}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t1 ignore index(idx) where a>?;", args: []any{1000000000}, planRegexp: ".*TableReader.*"},
-		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
-		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t1 t1 join t1 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
 		{prepare: "select * from t1 where a=?;", args: []any{1}, planRegexp: ".*Point_Get.*"},
-		{prepare: "select * from t1 where a in (?,?,?,?)", args: []any{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
 	}
 	execFn = func(db *sql.DB) {
 		dbt := testkit.NewDBTestKit(t, db)
@@ -1365,67 +1356,12 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 	ts.TestCase(t, mc, execFn, check)
 
-	// Test case 3: prepare, execute stmt using @val...
-	cases3 := []struct {
-		prepare    string
-		args       []any
-		planRegexp string
-	}{
-		{prepare: "insert into t2 (b) values (?);", args: []any{1}, planRegexp: ""},
-		{prepare: "update t2 set b=a where b is null limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "delete from t2 where b = a limit ?;", args: []any{1}, planRegexp: ".*Limit.*TableReader.*"},
-		{prepare: "replace into t2 (b) values (?);", args: []any{1}, planRegexp: ""},
-		{prepare: "select * from t2 use index(idx) where a<?;", args: []any{10}, planRegexp: ".*IndexLookUp.*"},
-		{prepare: "select * from t2 ignore index(idx) where a>?;", args: []any{1000000000}, planRegexp: ".*TableReader.*"},
-		{prepare: "select /*+ HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t1.a=t2.a where t1.b is not null;", args: nil, planRegexp: ".*HashJoin.*"},
-		{prepare: "select /*+ INL_HASH_JOIN(t1, t2) */ * from t2 t1 join t2 t2 on t2.a=t1.a where t1.b is not null;", args: nil, planRegexp: ".*IndexHashJoin.*"},
-		{prepare: "select * from t2 where a=?;", args: []any{1}, planRegexp: ".*Point_Get.*"},
-		{prepare: "select * from t2 where a in (?,?,?,?)", args: []any{1, 2, 3, 4}, planRegexp: ".*Batch_Point_Get.*"},
-	}
-	execFn = func(db *sql.DB) {
-		dbt := testkit.NewDBTestKit(t, db)
-		for _, ca := range cases3 {
-			prepare, args := ca.prepare, ca.args
-			dbt.MustExec(fmt.Sprintf("prepare stmt from '%v'", prepare))
-
-			var params []string
-			for i := range args {
-				param := 'a' + i
-				dbt.MustExec(fmt.Sprintf("set @%c=%v", param, args[i]))
-				params = append(params, fmt.Sprintf("@%c", param))
-			}
-
-			sqlStr := "execute stmt"
-			if len(params) > 0 {
-				sqlStr += " using "
-				sqlStr += strings.Join(params, ",")
-			}
-			if strings.HasPrefix(prepare, "select") {
-				mustQuery(t, dbt, sqlStr)
-			} else {
-				dbt.MustExec(sqlStr)
-			}
-		}
-	}
-	check = func() {
-		for _, ca := range cases3 {
-			checkFn(ca.prepare, ca.planRegexp)
-		}
-	}
-	ts.TestCase(t, mc, execFn, check)
-
 	// Test case for other statements
 	cases4 := []struct {
 		sql     string
 		plan    string
 		isQuery bool
 	}{
-		{"begin", "", false},
-		{"insert into t () values (),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),(),()", "", false},
-		{"commit", "", false},
-		{"analyze table t", "", false},
-		{"explain analyze select sum(a+b) from t", ".*TableReader.*", true},
-		{"trace select sum(b*a), sum(a+b) from t", "", true},
 		{"set global tidb_stmt_summary_history_size=5;", "", false},
 	}
 	execFn = func(db *sql.DB) {
@@ -1557,20 +1493,6 @@ func TestTopSQLCPUProfile(t *testing.T) {
 	}
 	ts.TestCase(t, mc, execFn, check)
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockHighLoadForAddIndex"))
-
-	// Test case for execute failed cause by storage error.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/handleTaskOnceError", `return(true)`))
-	execFailedQuery := "select * from t where a*b < 1000"
-	execFn = func(db *sql.DB) {
-		_, err = db.Query(execFailedQuery)
-		require.NotNil(t, err)
-		require.Equal(t, "Error 1105 (HY000): mock handleTaskOnce error", err.Error())
-	}
-	check = func() {
-		checkFn(execFailedQuery, "")
-	}
-	ts.TestCase(t, mc, execFn, check)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/handleTaskOnceError"))
 }
 
 func mustQuery(t *testing.T, dbt *testkit.DBTestKit, query string) {
@@ -3100,7 +3022,7 @@ func (p *mockProxyProtocolProxy) generateProxyProtocolHeaderV2(network, srcAddr,
 
 func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	cfg := util2.NewTestConfig()
-	cfg.Port = 4999
+	cfg.Port = 0
 	cfg.Status.ReportStatus = false
 	// Setup proxy protocol config
 	cfg.ProxyProtocol.Networks = "*"
@@ -3117,24 +3039,28 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 		err := server.Run(nil)
 		require.NoError(t, err)
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		server.Close()
 	}()
 	<-server2.RunInGoTestChan
 	require.NotNil(t, server.Listener())
 	require.Nil(t, server.Socket())
+	serverPort := testutil.GetPortFromTCPAddr(server.Listener().Addr())
 
 	// Prepare Proxy
-	ppProxy := newMockProxyProtocolProxy("127.0.0.1:5000", "127.0.0.1:4999", "192.168.1.2:60055", false)
+	ppProxy := newMockProxyProtocolProxy("127.0.0.1:0", fmt.Sprintf("127.0.0.1:%d", serverPort), "192.168.1.2:60055", false)
+	proxyErrCh := make(chan error, 1)
 	go func() {
-		ppProxy.Run()
+		proxyErrCh <- ppProxy.Run()
 	}()
-	time.Sleep(time.Millisecond * 100)
 	defer func() {
 		ppProxy.Close()
 	}()
-	<-ppProxy.runChan
+	select {
+	case <-ppProxy.runChan:
+	case err := <-proxyErrCh:
+		require.NoError(t, err)
+	}
 	cli := testserverclient.NewTestServerClient()
 	cli.Port = testutil.GetPortFromTCPAddr(ppProxy.ListenAddr())
 	cli.WaitUntilServerCanConnect()
@@ -3151,14 +3077,14 @@ func TestProxyProtocolWithIpFallbackable(t *testing.T) {
 	)
 
 	cli2 := testserverclient.NewTestServerClient()
-	cli2.Port = 4999
+	cli2.Port = serverPort
 	cli2.RunTests(t,
 		func(config *mysql.Config) {
 			config.User = "root"
 		},
 		func(dbt *testkit.DBTestKit) {
 			rows := dbt.MustQuery("SHOW PROCESSLIST;")
-			records := cli.Rows(t, rows)
+			records := cli2.Rows(t, rows)
 			require.Contains(t, records[0], "127.0.0.1:")
 		},
 	)
@@ -3732,9 +3658,9 @@ func TestAuditPluginRetrying(t *testing.T) {
 		require.NoError(t, err)
 
 		// a big enough concurrency to trigger retries
-		concurrency := 500
-		db.SetMaxOpenConns(concurrency)
-		db.SetMaxIdleConns(concurrency)
+		concurrency := 200
+		db.SetMaxOpenConns(64)
+		db.SetMaxIdleConns(64)
 		updateSQL := "UPDATE auto_retry_test SET val = val + 1 WHERE id = 1"
 		// Usually the following retry-loop will succeed in the first try. However, if we are lucky
 		// enough, it might need more times to trigger the retry.

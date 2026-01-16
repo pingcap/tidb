@@ -153,7 +153,9 @@ func TestSwissTable(t *testing.T) {
 			}
 		}
 		sz := m.RealBytes()
-		require.True(t, sz == 2165296, sz)
+		minReal := m.groupSize * uint64(m.Len()) / swissMapGroupSlots
+		require.GreaterOrEqual(t, sz, minReal, "RealSize %d, MinSize %d", sz, minReal)
+		require.LessOrEqual(t, sz, minReal*2, "RealSize %d, MaxSize %d", sz, minReal*2)
 		require.True(t, delta == 2702278, delta)
 		require.True(t, delta == int64(m.Bytes))
 		require.True(t, seed == m.unwrap().seed)

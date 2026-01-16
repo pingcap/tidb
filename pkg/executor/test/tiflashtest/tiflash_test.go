@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/tiflashcompute"
@@ -213,12 +214,21 @@ func TestJoinRace(t *testing.T) {
 }
 
 func TestMppExecution(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	tiflashNodes := 1
+	tiflashReplicaCount := 1
+	repeatCount := 1
+	if testflag.Long() {
+		tiflashNodes = 2
+		tiflashReplicaCount = 2
+		repeatCount = 20
+	}
+
+	store := testkit.CreateMockStore(t, withMockTiFlash(tiflashNodes))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
-	tk.MustExec("alter table t set tiflash replica 2")
+	tk.MustExec(fmt.Sprintf("alter table t set tiflash replica %d", tiflashReplicaCount))
 	tb := external.GetTableByName(t, tk, "test", "t")
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -227,7 +237,7 @@ func TestMppExecution(t *testing.T) {
 	tk.MustExec("insert into t values(3,0)")
 
 	tk.MustExec("create table t1(a int primary key, b int not null)")
-	tk.MustExec("alter table t1 set tiflash replica 2")
+	tk.MustExec(fmt.Sprintf("alter table t1 set tiflash replica %d", tiflashReplicaCount))
 	tb = external.GetTableByName(t, tk, "test", "t1")
 	err = domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
@@ -241,10 +251,17 @@ func TestMppExecution(t *testing.T) {
 	// mock executor does not support use outer table as build side for outer join, so need to
 	// force the inner table as build side
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
-	for range 20 {
+	for range repeatCount {
 		// test if it is stable.
 		tk.MustQuery("select count(*) from t1 , t where t1.a = t.a").Check(testkit.Rows("3"))
 	}
+	// cover basic join/agg/proj behaviors without paying the full long-suite cost.
+	tk.MustQuery("select avg(t1.a) from t1 , t where t1.a = t.a").Check(testkit.Rows("2.0000"))
+	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("3"))
+	if !testflag.Long() {
+		return
+	}
+
 	// test multi-way join
 	tk.MustExec("create table t2(a int primary key, b int not null)")
 	tk.MustExec("alter table t2 set tiflash replica 1")
@@ -256,11 +273,6 @@ func TestMppExecution(t *testing.T) {
 	tk.MustExec("insert into t2 values(2,0)")
 	tk.MustExec("insert into t2 values(3,0)")
 	tk.MustQuery("select count(*) from t1 , t, t2 where t1.a = t.a and t2.a = t.a").Check(testkit.Rows("3"))
-
-	// test avg
-	tk.MustQuery("select avg(t1.a) from t1 , t where t1.a = t.a").Check(testkit.Rows("2.0000"))
-	// test proj and selection
-	tk.MustQuery("select count(*) from (select a * 2 as a from t1) t1 , (select b + 4 as a from t)t where t1.a = t.a").Check(testkit.Rows("3"))
 
 	// test shuffle hash join.
 	tk.MustExec("set @@session.tidb_broadcast_join_threshold_size=1")
@@ -965,12 +977,26 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_AGG")
 	tk.MustExec("use tiflash_partition_AGG")
+
+	valueDomain := 80
+	insertRows := 30
+	repeatCount := 1
+	tables := []string{`thash`, `tlist`}
+	if testflag.Long() {
+		valueDomain = 400
+		insertRows = 100
+		repeatCount = 2
+		tables = []string{`thash`, `trange`, `tlist`, `tnormal`}
+	}
+
 	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
-	tk.MustExec(`create table trange (a int, b int) partition by range(a) (
-		partition p0 values less than (100), partition p1 values less than (200),
-		partition p2 values less than (300), partition p3 values less than (400))`)
+	if testflag.Long() {
+		tk.MustExec(`create table trange (a int, b int) partition by range(a) (
+			partition p0 values less than (100), partition p1 values less than (200),
+			partition p2 values less than (300), partition p3 values less than (400))`)
+	}
 	listPartitions := make([]string, 4)
-	for i := range 400 {
+	for i := range valueDomain {
 		idx := i % 4
 		if listPartitions[idx] != "" {
 			listPartitions[idx] += ", "
@@ -980,20 +1006,22 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (
 		partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
 		partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
-	tk.MustExec(`create table tnormal (a int, b int) partition by hash(a) partitions 4`)
+	if testflag.Long() {
+		tk.MustExec(`create table tnormal (a int, b int) partition by hash(a) partitions 4`)
+	}
 
-	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+	for _, tbl := range tables {
 		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "tiflash_partition_AGG", tbl)
 		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 
-	vals := make([]string, 0, 100)
-	for range 100 {
-		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
+	vals := make([]string, 0, insertRows)
+	for range insertRows {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(valueDomain), rand.Intn(valueDomain)))
 	}
-	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+	for _, tbl := range tables {
 		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
@@ -1006,19 +1034,19 @@ func TestTiFlashPartitionTableShuffledHashAggregation(t *testing.T) {
 	tk.MustExec("set tidb_opt_mpp_outer_join_fixed_build_side=1")
 
 	lr := func() (int, int) {
-		l, r := rand.Intn(400), rand.Intn(400)
+		l, r := rand.Intn(valueDomain), rand.Intn(valueDomain)
 		if l > r {
 			l, r = r, l
 		}
 		return l, r
 	}
-	for range 2 {
+	for range repeatCount {
 		l1, r1 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v", l1, r1)
 		var res [][]any
 		for _, mode := range []string{"static", "dynamic"} {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
-			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+			for _, tbl := range tables {
 				q := fmt.Sprintf("select /*+ HASH_AGG() */ count(*) from %v t1 where %v", tbl, cond)
 				tk.MustHavePlan(q, "HashAgg")
 				if res == nil {
@@ -1056,35 +1084,49 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database tiflash_partition_BCJ")
 	tk.MustExec("use tiflash_partition_BCJ")
+
+	valueDomain := 80
+	insertRows := 30
+	repeatCount := 1
+	tables := []string{`thash`, `trange`, `tnormal`}
+	if testflag.Long() {
+		valueDomain = 400
+		insertRows = 100
+		repeatCount = 2
+		tables = []string{`thash`, `trange`, `tlist`, `tnormal`}
+	}
+
 	tk.MustExec(`create table thash (a int, b int) partition by hash(a) partitions 4`)
 	tk.MustExec(`create table trange (a int, b int) partition by range(a) (
 		partition p0 values less than (100), partition p1 values less than (200),
 		partition p2 values less than (300), partition p3 values less than (400))`)
-	listPartitions := make([]string, 4)
-	for i := range 400 {
-		idx := i % 4
-		if listPartitions[idx] != "" {
-			listPartitions[idx] += ", "
+	if testflag.Long() {
+		listPartitions := make([]string, 4)
+		for i := range valueDomain {
+			idx := i % 4
+			if listPartitions[idx] != "" {
+				listPartitions[idx] += ", "
+			}
+			listPartitions[idx] = listPartitions[idx] + fmt.Sprintf("%v", i)
 		}
-		listPartitions[idx] = listPartitions[idx] + fmt.Sprintf("%v", i)
+		tk.MustExec(`create table tlist (a int, b int) partition by list(a) (
+			partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
+			partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
 	}
-	tk.MustExec(`create table tlist (a int, b int) partition by list(a) (
-		partition p0 values in (` + listPartitions[0] + `), partition p1 values in (` + listPartitions[1] + `),
-		partition p2 values in (` + listPartitions[2] + `), partition p3 values in (` + listPartitions[3] + `))`)
 	tk.MustExec(`create table tnormal (a int, b int)`)
 
-	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+	for _, tbl := range tables {
 		tk.MustExec("alter table " + tbl + " set tiflash replica 1")
 		tb := external.GetTableByName(t, tk, "tiflash_partition_BCJ", tbl)
 		err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 		require.NoError(t, err)
 	}
 
-	vals := make([]string, 0, 100)
-	for range 100 {
-		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(400), rand.Intn(400)))
+	vals := make([]string, 0, insertRows)
+	for range insertRows {
+		vals = append(vals, fmt.Sprintf("(%v, %v)", rand.Intn(valueDomain), rand.Intn(valueDomain)))
 	}
-	for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+	for _, tbl := range tables {
 		tk.MustExec(fmt.Sprintf("insert into %v values %v", tbl, strings.Join(vals, ", ")))
 		tk.MustExec(fmt.Sprintf("analyze table %v", tbl))
 	}
@@ -1097,20 +1139,20 @@ func TestTiFlashPartitionTableBroadcastJoin(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 
 	lr := func() (int, int) {
-		l, r := rand.Intn(400), rand.Intn(400)
+		l, r := rand.Intn(valueDomain), rand.Intn(valueDomain)
 		if l > r {
 			l, r = r, l
 		}
 		return l, r
 	}
-	for range 2 {
+	for range repeatCount {
 		l1, r1 := lr()
 		l2, r2 := lr()
 		cond := fmt.Sprintf("t1.b>=%v and t1.b<=%v and t2.b>=%v and t2.b<=%v", l1, r1, l2, r2)
 		var res [][]any
 		for _, mode := range []string{"static", "dynamic"} {
 			tk.MustExec(fmt.Sprintf("set @@tidb_partition_prune_mode = '%v'", mode))
-			for _, tbl := range []string{`thash`, `trange`, `tlist`, `tnormal`} {
+			for _, tbl := range tables {
 				q := fmt.Sprintf("select count(*) from %v t1 join %v t2 on t1.a=t2.a where %v", tbl, tbl, cond)
 				if res == nil {
 					res = tk.MustQuery(q).Sort().Rows()
@@ -1831,14 +1873,18 @@ func TestMPP47766(t *testing.T) {
 }
 
 func TestUnionScan(t *testing.T) {
-	store := testkit.CreateMockStore(t, withMockTiFlash(2))
+	store := testkit.CreateMockStore(t, withMockTiFlash(1))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("set @@session.tidb_allow_mpp=1")
 	tk.MustExec("set @@session.tidb_enforce_mpp=1")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=off")
 
-	for x := range 2 {
+	scenarios := []int{1} // default: dirty transaction
+	if testflag.Long() {
+		scenarios = []int{0, 1}
+	}
+	for _, x := range scenarios {
 		tk.MustExec("drop table if exists t")
 		if x == 0 {
 			// Test cache table.
@@ -1869,51 +1915,39 @@ func TestUnionScan(t *testing.T) {
 		}
 
 		// Test Basic.
-		sql := "select /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("10"))
+		sqlCount := "select /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
+		checkMPPInExplain(t, tk, "explain "+sqlCount)
+		tk.MustQuery(sqlCount).Check(testkit.Rows("10"))
 
 		// Test Delete.
 		tk.MustExec("delete from t where a = 0")
 
-		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("9"))
+		tk.MustQuery(sqlCount).Check(testkit.Rows("9"))
 
-		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
+		sqlOrder := "select /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1"
+		tk.MustQuery(sqlOrder).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9"))
 
 		// Test Insert.
 		tk.MustExec("insert into t values(100, 100)")
 
-		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("10"))
+		tk.MustQuery(sqlCount).Check(testkit.Rows("10"))
 
-		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 100"))
+		sqlOrder = "select /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2"
+		tk.MustQuery(sqlOrder).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 100"))
 
 		// Test Update
 		tk.MustExec("update t set b = 200 where a = 100")
 
-		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("10"))
+		tk.MustQuery(sqlCount).Check(testkit.Rows("10"))
 
-		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ a, b from t order by 1, 2"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 200"))
+		tk.MustQuery(sqlOrder).Check(testkit.Rows("1 1", "2 2", "3 3", "4 4", "5 5", "6 6", "7 7", "8 8", "9 9", "100 200"))
 
 		if x != 0 {
 			// Test dirty transaction.
 			tk.MustExec("commit")
 		}
 
-		sql = "select  /*+ READ_FROM_STORAGE(tiflash[t]) */ count(1) from t"
-		checkMPPInExplain(t, tk, "explain "+sql)
-		tk.MustQuery(sql).Check(testkit.Rows("10"))
+		tk.MustQuery(sqlCount).Check(testkit.Rows("10"))
 
 		if x == 0 {
 			tk.MustExec("alter table t nocache")
@@ -1942,9 +1976,14 @@ func TestMPPRecovery(t *testing.T) {
 	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
-	checkStrs := []string{"0 0"}
+	rowCount := 96
+	if testflag.Long() {
+		rowCount = 1500
+	}
+	checkStrs := make([]string, 0, rowCount)
+	checkStrs = append(checkStrs, "0 0")
 	insertStr := "insert into t values(0, 0)"
-	for i := 1; i < 1500; i++ {
+	for i := 1; i < rowCount; i++ {
 		insertStr += fmt.Sprintf(",(%d, %d)", i, i)
 		checkStrs = append(checkStrs, fmt.Sprintf("%d %d", i, i))
 	}
@@ -1954,6 +1993,7 @@ func TestMPPRecovery(t *testing.T) {
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	sql := "select * from t order by 1, 2"
 	const packagePath = "github.com/pingcap/tidb/pkg/executor/internal/mpp/"
+	isLong := testflag.Long()
 
 	require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_mock_enable", "return()"))
 	require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_ignore_recovery_err", "return()"))
@@ -1961,8 +2001,10 @@ func TestMPPRecovery(t *testing.T) {
 	{
 		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(1)"))
 
-		tk.MustExec("set @@tidb_max_chunk_size = default")
-		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+		if isLong {
+			tk.MustExec("set @@tidb_max_chunk_size = default")
+			tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
+		}
 		tk.MustExec("set @@tidb_max_chunk_size = 32")
 		tk.MustQuery(sql).Check(testkit.Rows(checkStrs...))
 
@@ -1980,7 +2022,7 @@ func TestMPPRecovery(t *testing.T) {
 		require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_max_err_times"))
 	}
 
-	{
+	if isLong {
 		// When AllowFallbackToTiKV, mpp err recovery should be disabled.
 		// So event we inject mock err multiple times, the query should be ok.
 		tk.MustExec("set @@tidb_allow_fallback_to_tikv = \"tiflash\"")
@@ -1994,7 +2036,7 @@ func TestMPPRecovery(t *testing.T) {
 	}
 
 	// Test hold logic. Default hold 4 * MaxChunkSize rows.
-	{
+	if isLong {
 		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_max_err_times", "return(0)"))
 
 		tk.MustExec("set @@tidb_max_chunk_size = 32")
@@ -2008,7 +2050,7 @@ func TestMPPRecovery(t *testing.T) {
 	require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_ignore_recovery_err"))
 	require.NoError(t, failpoint.Disable(packagePath+"mpp_recovery_test_mock_enable"))
 
-	{
+	if isLong {
 		// We have 2 mock tiflash, but the table is small, so only 1 tiflash node is in computation.
 		require.NoError(t, failpoint.Enable(packagePath+"mpp_recovery_test_check_node_cnt", "return(1)"))
 
@@ -2046,7 +2088,11 @@ func TestIssue50358(t *testing.T) {
 	// unistore does not support later materialization
 	tk.MustExec("set @@session.tidb_opt_enable_late_materialization=0")
 	tk.MustExec("set @@session.tidb_allow_mpp=ON")
-	for range 20 {
+	repeatCount := 3
+	if testflag.Long() {
+		repeatCount = 20
+	}
+	for range repeatCount {
 		// test if it is stable.
 		tk.MustQuery("select 8 from t join t1").Check(testkit.Rows("8", "8"))
 	}
@@ -2141,29 +2187,34 @@ func TestMppTableReaderCacheForSingleSQL(t *testing.T) {
 
 	testCases := []testCase{
 		// Non-Partition
-		// Cache hit
+		// Cache hit.
 		{"select * from t", 0, 1},
 		{"select * from t union select * from t", 1, 1},
-		{"select * from t union select * from t t1 union select * from t t2", 2, 1},
-		{"select * from t where b <= 3 union select * from t where b > 3", 1, 1},  // both full range
-		{"select * from t where a <= 3 union select * from t where a <= 3", 1, 1}, // same range
 		{"select * from t t1 join t t2 on t1.b=t2.b", 1, 1},
 
-		// Cache miss
+		// Cache miss.
 		{"select * from t union all select * from t", 0, 2},                      // different mpp task root
 		{"select * from t where a <= 3 union select * from t where a > 3", 0, 2}, // different range
 
 		// Partition
-		// Cache hit
+		// Cache hit.
 		{"select * from t2 union select * from t2", 1, 1},
-		{"select * from t2 where b = 1 union select * from t2 where b = 5", 1, 1},                     // same partition, full range
-		{"select * from t2 where b = 1 and a < 3 union select * from t2 where b = 5 and a < 3", 1, 1}, // same partition, same range
 		{"select * from t2 t1 join t2 t2 on t1.b=t2.b", 1, 1},
-		{"select * from t2 t1 join t2 t2 on t1.b=t2.b where t1.a = 2 and t2.a = 2", 1, 1},
 
-		// Cache miss
-		{"select * from t2 union select * from t2 where b = 1", 0, 2},             // different partition
-		{"select * from t2 where b = 2 union select * from t2 where b = 1", 0, 2}, // different partition
+		// Cache miss.
+		{"select * from t2 union select * from t2 where b = 1", 0, 2}, // different partition
+	}
+	if testflag.Long() {
+		testCases = append(testCases,
+			testCase{"select * from t union select * from t t1 union select * from t t2", 2, 1},
+			testCase{"select * from t where b <= 3 union select * from t where b > 3", 1, 1},  // both full range
+			testCase{"select * from t where a <= 3 union select * from t where a <= 3", 1, 1}, // same range
+
+			testCase{"select * from t2 where b = 1 union select * from t2 where b = 5", 1, 1},                     // same partition, full range
+			testCase{"select * from t2 where b = 1 and a < 3 union select * from t2 where b = 5 and a < 3", 1, 1}, // same partition, same range
+			testCase{"select * from t2 t1 join t2 t2 on t1.b=t2.b where t1.a = 2 and t2.a = 2", 1, 1},
+			testCase{"select * from t2 where b = 2 union select * from t2 where b = 1", 0, 2}, // different partition
+		)
 	}
 
 	var hitNum, missNum atomic.Int32
