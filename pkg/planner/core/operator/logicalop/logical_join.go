@@ -426,8 +426,8 @@ Currently, we only support projections with column mapping relationships, not tr
 func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, selConditionColInInner bool) {
 	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		// selectCond can only have one expression.
-		// The inner expression can definitely be pushed down, so selectCond must be the outer expression.
-		// If they are semantically similar, leaving only one and the other should be eliminable.
+		// The outer expression can definitely be pushed down, so selectCond must be the inner expression.
+		// If the inner expression are semantically similar, leaving only one and the other should be eliminable.
 		return nil, false
 	}
 	if _, ok := p.Self().(*LogicalApply); ok {
@@ -443,10 +443,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		return nil, false
 	}
 
-	var sf *expression.ScalarFunction
-	var ok bool
-	var isNullcol *expression.Column
-	sf, ok = selectCond[0].(*expression.ScalarFunction)
+	sf, ok := selectCond[0].(*expression.ScalarFunction)
 	if !ok || sf == nil {
 		return nil, false
 	}
@@ -455,7 +452,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	}
 	args := sf.GetArgs()
 	// Get the Column in the IsNull
-	isNullcol, ok = args[0].(*expression.Column)
+	isNullCol, ok := args[0].(*expression.Column)
 	if !ok {
 		return nil, false
 	}
@@ -471,7 +468,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
-	selConditionColInInner = isNullFromInner(&innerSchemaSet, isNullcol.UniqueID, p.EqualConditions, p.OtherConditions)
+	selConditionColInInner = isNullFromInner(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
 	// resultProj is to generate the NULL values for the columns of the inner table, which is the
 	// expected result for this kind of anti-join query.
 	if selConditionColInInner {
@@ -481,14 +478,14 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		} else {
 			resultProj = p.generateProject4ConvertAntiJoin(&innerSchemaSet, selectSch)
 		}
-	} else if innerSchemaSet.Has(int(isNullcol.UniqueID)) {
+	} else if innerSchemaSet.Has(int(isNullCol.UniqueID)) {
 		// Scenario 2:
 		//  column in IsNull expression is from the inner side columns.
 		//  but it is not in the equal/other condition.
 		//  We need to check whether inner column is not null in the origin table schema.
 		//  If it is not null column, it can be directly converted into an anti-semi join.
 		innerSch := p.Children()[1^outerChildIdx].Schema()
-		idx := innerSch.ColumnIndex(isNullcol)
+		idx := innerSch.ColumnIndex(isNullCol)
 		if mysql.HasNotNullFlag(innerSch.Columns[idx].RetType.GetFlag()) {
 			if proj != nil {
 				resultProj = p.generateProject4ConvertAntiJoin(&innerSchemaSet, proj.Schema())
