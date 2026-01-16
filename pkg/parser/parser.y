@@ -1569,7 +1569,6 @@ import (
 	ProcedureHandlerType                   "Procedure handler operation type"
 	ProcedureHcondList                     "Procedure handler condition value list"
 	SplitOptionBetween                     "Split index option, between format"
-	SplitIndexIdentifierOpt                "Split index ident fallbacks to mysql.PrimaryKeyName"
 	SplitIndexOption                       "Split index option in CREATE/ALTER table"
 	SplitIndexList                         "Split index option list in CREATE table"
 	SplitIndexListOpt                      "Optional split index option list"
@@ -1815,22 +1814,13 @@ SplitIndexList:
 		$$ = append($1.([]*ast.SplitIndexOption), $2.(*ast.SplitIndexOption))
 	}
 
-SplitIndexIdentifierOpt:
-	{
-		$$ = mysql.PrimaryKeyName
-	}
-|	Identifier
-	{
-		$$ = $1
-	}
-
 SplitIndexOption:
-	"SPLIT" "PRIMARY" "KEY" SplitIndexIdentifierOpt SplitOptionBetween
+	"SPLIT" "PRIMARY" "KEY" SplitOptionBetween
 	{
 		$$ = &ast.SplitIndexOption{
 			PrimaryKey: true,
-			IndexName: ast.NewCIStr($4.(string)),
-			SplitOpt: $5.(*ast.SplitOption),
+			IndexName: ast.NewCIStr(mysql.PrimaryKeyName),
+			SplitOpt: $4.(*ast.SplitOption),
 		}
 	}
 |	"SPLIT" "INDEX" Identifier SplitOptionBetween
