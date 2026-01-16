@@ -1503,7 +1503,7 @@ func TestS3ReadFileRetryable(t *testing.T) {
 		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3store/read-s3-body-failed", "2*return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3like/read-s3-body-failed", "2*return(true)")
 	_, err := s.Storage.ReadFile(ctx, "file")
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), errMsg))

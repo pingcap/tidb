@@ -107,7 +107,7 @@ func (rs *Storage) GetOptions() *backuppb.S3 {
 func (rs *Storage) CopyFrom(ctx context.Context, inStore storeapi.Storage, spec storeapi.CopySpec) error {
 	srcStore, ok := inStore.(*Storage)
 	if !ok {
-		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "CopyFrom only supported by S3 storage, get %T", inStore)
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "CopyFrom is only supported by S3 storage, get %T", inStore)
 	}
 
 	return rs.s3Cli.CopyObject(ctx, &CopyInput{
