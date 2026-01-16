@@ -362,7 +362,7 @@ type slowLogTask struct {
 
 type slowLogBlock []string
 
-func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int, fileLine int) ([][]string, int, error) {
+func (*slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, _ *offset, num int, fileLine int) ([][]string, int, error) {
 	var line string
 	log := make([]string, 0, num)
 	var err error
