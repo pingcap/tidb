@@ -21,7 +21,10 @@ TIKV_BIN="./third_bin/tikv-server"
 PD_BIN="./third_bin/pd-server"
 DUMPLING_BIN="./third_bin/dumpling"
 TICDC_BIN="./third_bin/cdc"
-TIFLASH_BIN="./third_bin/tiflash-server"
+TIFLASH_BIN_DEFAULT="./third_bin/tiflash"
+TICI_BIN_DEFAULT="./third_bin/tici-server"
+MINIO_BIN_DEFAULT="minio"
+MINIO_MC_BIN_DEFAULT="mc"
 
 # Variables to set data directories
 PD_DATA_DIR="./data/pd_data"
@@ -31,6 +34,7 @@ TIKV_DATA_DIR2="./data/tikv_data2"
 TIFLASH_DATA_DIR="./data/tiflash_data"
 TIFLASH_DATA_DIR2="./data/tiflash_data2"
 TICDC_DATA_DIR="./data/ticdc_data"
+MINIO_DATA_DIR="./data/minio_data"
 
 rm -rf ./data
 mkdir ./data
@@ -44,6 +48,8 @@ TIFLASH_LOG_FILE2="./logs/tiflash2.log"
 PD_LOG_FILE="./logs/pd.log"
 PD_LOG_FILE2="./logs/pd2.log"
 TICDC_LOG_FILE="./logs/ticdc.log"
+TICI_LOG_FILE="./logs/tici.log"
+MINIO_LOG_FILE="./logs/minio.log"
 
 rm -rf ./logs
 mkdir ./logs
@@ -63,6 +69,20 @@ set -eu
 trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
+
+TICI_BIN="${TICI_BIN:-$TICI_BIN_DEFAULT}"
+MINIO_BIN="${MINIO_BIN:-$MINIO_BIN_DEFAULT}"
+MINIO_MC_BIN="${MINIO_MC_BIN:-$MINIO_MC_BIN_DEFAULT}"
+TIFLASH_BIN="${TIFLASH_BIN:-$TIFLASH_BIN_DEFAULT}"
+TICI_ARGS="${TICI_ARGS:-}"
+MINIO_PORT="${MINIO_PORT:-9000}"
+MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
+MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
+MINIO_BUCKET="${MINIO_BUCKET:-ticidefaultbucket}"
+MINIO_PREFIX="${MINIO_PREFIX:-tici_default_prefix/cdc}"
+MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_PORT}}"
+TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true"
+TICDC_S3_SINK_URI="${TICDC_S3_SINK_URI:-$TICDC_S3_SINK_URI_DEFAULT}"
 
 function help_message()
 {
@@ -84,6 +104,10 @@ function help_message()
     -t <test-name>: Run tests in file \"t/<test-name>.test\".
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
+
+    tici/minio settings (env vars):
+      TICI_BIN, TICI_ARGS, MINIO_BIN, MINIO_MC_BIN, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
+      MINIO_BUCKET, MINIO_PREFIX, MINIO_ENDPOINT, TICDC_S3_SINK_URI
 
 "
 }
@@ -123,6 +147,21 @@ function find_multiple_available_ports() {
     done
 
     echo "${ports[@]}"
+}
+
+function resolve_bin() {
+    local bin="$1"
+
+    if [[ -x "$bin" ]]; then
+        echo "$bin"
+        return 0
+    fi
+    if command -v "$bin" >/dev/null 2>&1; then
+        command -v "$bin"
+        return 0
+    fi
+
+    return 1
 }
 
 function build_tidb_server()
@@ -257,9 +296,16 @@ start_tikv_server() {
 
 # TiFlash Server Configuration
 start_tiflash_server() {
+    local tiflash_bin
+
+    tiflash_bin=$(resolve_bin "$TIFLASH_BIN") || {
+        echo "tiflash binary not found: $TIFLASH_BIN" >&2
+        exit 1
+    }
+
     echo "Starting TiFlash server..."
     mkdir -p $TIFLASH_DATA_DIR
-    $TIFLASH_BIN --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log &
+    $tiflash_bin --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log &
 
     sleep 5  # Wait for TiFlash to connect
 }
@@ -282,17 +328,79 @@ function start_tidb_server()
     echo "tidb-server(PID: $SERVER_PID) started, port: $tidb_port"
 }
 
+function start_tici_server() {
+    log_file=${1:-$TICI_LOG_FILE}
+    local tici_bin
+
+    tici_bin=$(resolve_bin "$TICI_BIN") || {
+        echo "tici binary not found: $TICI_BIN" >&2
+        exit 1
+    }
+
+    echo "Starting tici..."
+    $tici_bin $TICI_ARGS > "$log_file" 2>&1 &
+    TICI_PID=$!
+    echo "tici(PID: $TICI_PID) started"
+}
+
+function start_minio() {
+    local minio_bin
+    local mc_bin
+
+    minio_bin=$(resolve_bin "$MINIO_BIN") || {
+        echo "minio binary not found: $MINIO_BIN" >&2
+        exit 1
+    }
+    mc_bin=$(resolve_bin "$MINIO_MC_BIN" || true)
+
+    echo "Starting MinIO server..."
+    mkdir -p "$MINIO_DATA_DIR/$MINIO_BUCKET"
+    export MINIO_ROOT_USER="$MINIO_ACCESS_KEY"
+    export MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY"
+    "$minio_bin" server "$MINIO_DATA_DIR" --address ":$MINIO_PORT" > "$MINIO_LOG_FILE" 2>&1 &
+    MINIO_PID=$!
+
+    for i in {1..10}; do
+        if curl -s "http://127.0.0.1:$MINIO_PORT/minio/health/ready" | grep -q "OK"; then
+            echo "MinIO is up"
+            if [ -n "$mc_bin" ]; then
+                "$mc_bin" alias set localminio "http://127.0.0.1:$MINIO_PORT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+                "$mc_bin" mb --ignore-existing "localminio/$MINIO_BUCKET"
+            else
+                echo "mc not found; skipping bucket creation"
+            fi
+            return 0
+        fi
+        sleep 1
+    done
+
+    echo "MinIO failed to start"
+    return 1
+}
+
 function start_ticdc_server() {
     pd_client_addr=${1:-http://127.0.0.1:2379}
     ticdc_port=${2:-8300}
-    downstream_port=${3:-4100}
+    data_dir=${3:-$TICDC_DATA_DIR}
+    log_file=${4:-$TICDC_LOG_FILE}
 
     echo "Starting TiCDC server..."
-    mkdir -p $TICDC_DATA_DIR
-    $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$TICDC_DATA_DIR --log-file=$TICDC_LOG_FILE &
+    mkdir -p "$data_dir"
+    $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$data_dir --log-file=$log_file &
     sleep 5  # Wait for TiCDC to connect
+}
 
-    $TICDC_BIN cli changefeed create --server=127.0.0.1:$ticdc_port --sink-uri="mysql://root:@127.0.0.1:$downstream_port/" --changefeed-id="simple-replication-task"
+function create_ticdc_changefeed() {
+    ticdc_port=${1:-8300}
+    sink_uri=${2:-}
+    changefeed_id=${3:-"simple-replication-task"}
+
+    if [ -z "$sink_uri" ]; then
+        echo "sink-uri is required for changefeed creation" >&2
+        exit 1
+    fi
+
+    $TICDC_BIN cli changefeed create --server=127.0.0.1:$ticdc_port --sink-uri="$sink_uri" --changefeed-id="$changefeed_id"
     sleep 5  # Wait for changefeed to connect
 }
 
@@ -381,32 +489,65 @@ fi
 
 non_ticdc_cases=()
 ticdc_cases=()
+tici_cases=()
 
 if [ -z "$tests" ]; then
     while IFS= read -r file; do
         file_name=$(basename "$file" .test)
         if [[ "$file" == t/ticdc/* ]]; then
             ticdc_cases+=("ticdc/$file_name")
+        elif [[ "$file" == t/tici/* ]]; then
+            tici_cases+=("tici/$file_name")
         else
             non_ticdc_cases+=("$file_name")
         fi
     done < <(find t -name "*.test")
 else
-    ticdc_cases=($(echo "$tests" | grep 'ticdc/' || echo ""))
-    non_ticdc_cases=($(echo "$tests" | grep -v 'ticdc/' || echo ""))
+    read -ra test_list <<< "$tests"
+    for test_name in "${test_list[@]}"; do
+        case "$test_name" in
+            ticdc/*)
+                ticdc_cases+=("$test_name")
+                ;;
+            tici/*)
+                tici_cases+=("$test_name")
+                ;;
+            *)
+                non_ticdc_cases+=("$test_name")
+                ;;
+        esac
+    done
 fi
 
 if [ ${#non_ticdc_cases[@]} -ne 0 ]; then
     run_mysql_tester "${non_ticdc_cases[@]}"
 fi
 
-if [ ${#ticdc_cases[@]} -ne 0 ]; then
+if [ ${#tici_cases[@]} -ne 0 ]; then
+    start_minio
+    start_tiflash_server
+fi
+
+if [ ${#ticdc_cases[@]} -ne 0 ] || [ ${#tici_cases[@]} -ne 0 ]; then
     ticdc_port=$(find_available_port 8300)
-    start_ticdc_server "http://127.0.0.1:$upstream_pd_client_port" $ticdc_port $tidb_port
+    start_ticdc_server "http://127.0.0.1:$upstream_pd_client_port" $ticdc_port
 
     echo "TiCDC started successfully!"
+    if [ ${#ticdc_cases[@]} -ne 0 ]; then
+        create_ticdc_changefeed $ticdc_port "mysql://root:@127.0.0.1:$DOWNSTREAM_PORT/" "simple-replication-task"
+    fi
+    if [ ${#tici_cases[@]} -ne 0 ]; then
+        create_ticdc_changefeed $ticdc_port "$TICDC_S3_SINK_URI" "tici-replication-task"
+        start_tici_server
+    fi
+fi
 
+if [ ${#ticdc_cases[@]} -ne 0 ]; then
     run_mysql_tester "${ticdc_cases[@]}"
+fi
+
+if [ ${#tici_cases[@]} -ne 0 ]; then
+    run_mysql_tester "${tici_cases[@]}"
 fi
 
 kill -15 $SERVER_PID
