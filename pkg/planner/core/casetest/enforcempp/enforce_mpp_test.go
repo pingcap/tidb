@@ -74,12 +74,12 @@ func TestEnforceMPP(t *testing.T) {
 				}
 			}
 			return warnings
-			}
-			for i, tt := range input {
-				testdata.OnRecord(func() {
-					output[i].SQL = tt
-				})
-				if strings.HasPrefix(tt, "set") {
+		}
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") {
 				testKit.MustExec(tt)
 				continue
 			}
@@ -232,13 +232,13 @@ func TestEnforceMPPWarning3(t *testing.T) {
 			Plan []string
 			Warn []string
 		}
-			enforceMPPSuiteData := GetEnforceMPPSuiteData()
-			enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-			for i, tt := range input {
-				testdata.OnRecord(func() {
-					output[i].SQL = tt
-				})
-				if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+		enforceMPPSuiteData := GetEnforceMPPSuiteData()
+		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
 				testKit.MustExec(tt)
 				continue
 			}
@@ -284,13 +284,13 @@ func TestEnforceMPPWarning4(t *testing.T) {
 			Plan []string
 			Warn []string
 		}
-			enforceMPPSuiteData := GetEnforceMPPSuiteData()
-			enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-			for i, tt := range input {
-				testdata.OnRecord(func() {
-					output[i].SQL = tt
-				})
-				if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+		enforceMPPSuiteData := GetEnforceMPPSuiteData()
+		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
 				testKit.MustExec(tt)
 				continue
 			}
@@ -334,13 +334,13 @@ func TestMPP2PhaseAggPushDown(t *testing.T) {
 			Plan []string
 			Warn []string
 		}
-			enforceMPPSuiteData := GetEnforceMPPSuiteData()
-			enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-			for i, tt := range input {
-				testdata.OnRecord(func() {
-					output[i].SQL = tt
-				})
-				if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
+		enforceMPPSuiteData := GetEnforceMPPSuiteData()
+		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			testdata.OnRecord(func() {
+				output[i].SQL = tt
+			})
+			if strings.HasPrefix(tt, "set") || strings.HasPrefix(tt, "UPDATE") {
 				testKit.MustExec(tt)
 				continue
 			}

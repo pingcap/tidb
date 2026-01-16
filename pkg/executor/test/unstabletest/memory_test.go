@@ -112,7 +112,7 @@ func TestPBMemoryLeak(t *testing.T) {
 
 	// prepare data
 	totalSize := uint64(192 << 20) // 192MB
-	blockSize := uint64(8 << 10) // 8KB
+	blockSize := uint64(8 << 10)   // 8KB
 	delta := totalSize / 3
 	numRows := totalSize / blockSize
 	tk.MustExec(fmt.Sprintf("create table t (c varchar(%v))", blockSize))
