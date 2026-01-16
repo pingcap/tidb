@@ -197,7 +197,6 @@ func TestRankTopN(t *testing.T) {
 				{Index: 1, RetType: prefixKeyField},
 				{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		})
-		// TODO(x) add more different types
 	}
 
 	for _, testCase := range rankTopNCases {
