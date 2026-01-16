@@ -1,0 +1,51 @@
+# Test RETURNING clause support
+# See https://github.com/pingcap/tidb/issues/58939
+
+# Create test table
+drop table if exists t;
+create table t (id int auto_increment primary key, name varchar(20), val int default 10);
+
+# ===========================================
+# INSERT RETURNING tests (fully supported)
+# ===========================================
+
+# Test INSERT RETURNING *
+insert into t (name) values ('alice') returning *;
+
+# Test INSERT RETURNING specific columns
+insert into t (name, val) values ('bob', 20) returning id, name;
+
+# Test INSERT RETURNING with expression
+insert into t (name, val) values ('charlie', 30) returning id, val + 1 as val_plus_one;
+
+# Test INSERT RETURNING with default value
+insert into t (name) values ('dave') returning id, val;
+
+# Test multi-row INSERT RETURNING
+insert into t (name, val) values ('eve', 50), ('frank', 60) returning id, name, val;
+
+# Verify all rows were inserted correctly
+select * from t order by id;
+
+# ===========================================
+# UPDATE RETURNING tests (not supported yet)
+# ===========================================
+
+--error 1235
+update t set val = val + 1 returning *;
+
+--error 1235
+update t set val = 100 where id = 1 returning id, val;
+
+# ===========================================
+# DELETE RETURNING tests (not supported yet)
+# ===========================================
+
+--error 1235
+delete from t returning *;
+
+--error 1235
+delete from t where id = 1 returning id, name;
+
+# Clean up
+drop table t;

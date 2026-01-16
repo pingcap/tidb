@@ -588,6 +588,7 @@ import (
 	restart                    "RESTART"
 	restore                    "RESTORE"
 	restores                   "RESTORES"
+	returning                  "RETURNING"
 	resume                     "RESUME"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
@@ -1340,6 +1341,7 @@ import (
 	SelectLockOpt                          "SELECT lock options"
 	SelectStmtSQLCache                     "SELECT statement optional SQL_CAHCE/SQL_NO_CACHE"
 	SelectStmtFieldList                    "SELECT statement field list"
+	ReturningClause                        "RETURNING clause for DML"
 	SelectStmtLimit                        "SELECT statement LIMIT clause"
 	SelectStmtLimitOpt                     "SELECT statement optional LIMIT clause"
 	SelectStmtOpt                          "Select statement option"
@@ -1680,6 +1682,7 @@ import (
 %precedence remove
 %precedence lowerThenOrder
 %precedence order
+%precedence returning
 %precedence lowerThanFunction
 %precedence function
 %precedence constraint
@@ -5297,7 +5300,7 @@ DoStmt:
  *
  *******************************************************************/
 DeleteWithoutUsingStmt:
-	"DELETE" TableOptimizerHintsOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause
+	"DELETE" TableOptimizerHintsOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause ReturningClause
 	{
 		// Single Table
 		tn := $7.(*ast.TableName)
@@ -5321,6 +5324,9 @@ DeleteWithoutUsingStmt:
 		}
 		if $13 != nil {
 			x.Limit = $13.(*ast.Limit)
+		}
+		if $14 != nil {
+			x.Returning = $14.(*ast.FieldList)
 		}
 
 		$$ = x
@@ -6632,7 +6638,7 @@ Field:
 	}
 
 FieldAsNameOpt:
-	/* EMPTY */
+	/* EMPTY */ %prec empty
 	{
 		$$ = ""
 	}
@@ -7598,7 +7604,7 @@ ProcedureCall:
  *
  **********************************************************************************/
 InsertIntoStmt:
-	"INSERT" TableOptimizerHintsOpt PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate
+	"INSERT" TableOptimizerHintsOpt PriorityOpt IgnoreOptional IntoOpt TableName PartitionNameListOpt InsertValues OnDuplicateKeyUpdate ReturningClause
 	{
 		x := $8.(*ast.InsertStmt)
 		x.Priority = $3.(mysql.PriorityEnum)
@@ -7613,6 +7619,9 @@ InsertIntoStmt:
 			x.TableHints = $2.([]*ast.TableOptimizerHint)
 		}
 		x.PartitionNames = $7.([]ast.CIStr)
+		if $10 != nil {
+			x.Returning = $10.(*ast.FieldList)
+		}
 		$$ = x
 	}
 
@@ -7758,6 +7767,16 @@ OnDuplicateKeyUpdate:
 |	"ON" "DUPLICATE" "KEY" "UPDATE" AssignmentList
 	{
 		$$ = $5
+	}
+
+ReturningClause:
+	%prec empty
+	{
+		$$ = nil
+	}
+|	"RETURNING" FieldList
+	{
+		$$ = &ast.FieldList{Fields: $2.([]*ast.SelectField)}
 	}
 
 /************************************************************************************
@@ -7970,6 +7989,7 @@ OptOrder:
 	}
 
 OrderByOptional:
+	%prec empty
 	{
 		$$ = nil
 	}
@@ -10341,6 +10361,7 @@ CrossOpt:
 |	"INNER" "JOIN"
 
 LimitClause:
+	%prec empty
 	{
 		$$ = nil
 	}
@@ -13947,7 +13968,7 @@ UpdateStmt:
 	}
 
 UpdateStmtNoWith:
-	"UPDATE" TableOptimizerHintsOpt PriorityOpt IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause
+	"UPDATE" TableOptimizerHintsOpt PriorityOpt IgnoreOptional TableRef "SET" AssignmentList WhereClauseOptional OrderByOptional LimitClause ReturningClause
 	{
 		var refs *ast.Join
 		if x, ok := $5.(*ast.Join); ok {
@@ -13973,9 +13994,12 @@ UpdateStmtNoWith:
 		if $10 != nil {
 			st.Limit = $10.(*ast.Limit)
 		}
+		if $11 != nil {
+			st.Returning = $11.(*ast.FieldList)
+		}
 		$$ = st
 	}
-|	"UPDATE" TableOptimizerHintsOpt PriorityOpt IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional
+|	"UPDATE" TableOptimizerHintsOpt PriorityOpt IgnoreOptional TableRefs "SET" AssignmentList WhereClauseOptional ReturningClause
 	{
 		st := &ast.UpdateStmt{
 			Priority:  $3.(mysql.PriorityEnum),
@@ -13988,6 +14012,9 @@ UpdateStmtNoWith:
 		}
 		if $8 != nil {
 			st.Where = $8.(ast.ExprNode)
+		}
+		if $9 != nil {
+			st.Returning = $9.(*ast.FieldList)
 		}
 		$$ = st
 	}
@@ -14005,6 +14032,7 @@ WhereClause:
 	}
 
 WhereClauseOptional:
+	%prec empty
 	{
 		$$ = nil
 	}

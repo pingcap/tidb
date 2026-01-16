@@ -53,6 +53,12 @@ type InsertExec struct {
 	row4Update     []types.Datum
 
 	Priority mysql.PriorityEnum
+
+	// For RETURNING clause support
+	returningExprs  []expression.Expression
+	returningSchema *expression.Schema
+	insertedRows    [][]types.Datum
+	returningDone   bool
 }
 
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
@@ -64,6 +70,16 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 		}
 		return tblName
 	}))
+
+	// Capture rows for RETURNING clause
+	if len(e.returningExprs) > 0 {
+		for _, row := range rows {
+			// Clone the row since it might be reused
+			rowCopy := make([]types.Datum, len(row))
+			copy(rowCopy, row)
+			e.insertedRows = append(e.insertedRows, rowCopy)
+		}
+	}
 	// If tidb_batch_insert is ON and not in a transaction, we could use BatchInsert mode.
 	sessVars := e.Ctx().GetSessionVars()
 	defer sessVars.CleanBuffers()
@@ -363,6 +379,11 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		ctx = context.WithValue(ctx, autoid.AllocatorRuntimeStatsCtxKey, e.stats.AllocatorRuntimeStats)
 	}
 
+	// Handle RETURNING clause
+	if len(e.returningExprs) > 0 {
+		return e.nextWithReturning(ctx, req)
+	}
+
 	if !e.EmptyChildren() && e.Children(0) != nil {
 		return insertRowsFromSelect(ctx, e)
 	}
@@ -375,6 +396,52 @@ func (e *InsertExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return err
 	}
+	return nil
+}
+
+// nextWithReturning handles the RETURNING clause for INSERT statements.
+func (e *InsertExec) nextWithReturning(ctx context.Context, req *chunk.Chunk) error {
+	// If we've already returned all rows, we're done
+	if e.returningDone {
+		return nil
+	}
+
+	// First, execute the insert operation
+	if len(e.insertedRows) == 0 {
+		if !e.EmptyChildren() && e.Children(0) != nil {
+			err := insertRowsFromSelect(ctx, e)
+			if err != nil {
+				return err
+			}
+		} else {
+			err := insertRows(ctx, e)
+			if err != nil {
+				terr, ok := errors.Cause(err).(*terror.Error)
+				if ok && len(e.OnDuplicate) == 0 && terr.Code() == errno.ErrAutoincReadFailed {
+					ec := e.Ctx().GetSessionVars().StmtCtx.ErrCtx()
+					return ec.HandleError(err)
+				}
+				return err
+			}
+		}
+	}
+
+	// Now evaluate RETURNING expressions for each inserted row
+	evalCtx := e.Ctx().GetExprCtx().GetEvalCtx()
+	for _, row := range e.insertedRows {
+		// Create a chunk row from the inserted data for expression evaluation
+		chkRow := chunk.MutRowFromDatums(row).ToRow()
+
+		for i, expr := range e.returningExprs {
+			val, err := expr.Eval(evalCtx, chkRow)
+			if err != nil {
+				return err
+			}
+			req.AppendDatum(i, &val)
+		}
+	}
+
+	e.returningDone = true
 	return nil
 }
 

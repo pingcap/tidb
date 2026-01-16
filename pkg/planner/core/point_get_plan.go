@@ -1162,6 +1162,10 @@ func checkIfAssignmentListHasSubQuery(list []*ast.Assignment) bool {
 }
 
 func tryUpdatePointPlan(ctx base.PlanContext, updateStmt *ast.UpdateStmt, resolveCtx *resolve.Context) base.Plan {
+	// Avoid using the point_get when RETURNING clause is present (not yet supported).
+	if updateStmt.Returning != nil {
+		return nil
+	}
 	// Avoid using the point_get when assignment_list contains the sub-query in the UPDATE.
 	if checkIfAssignmentListHasSubQuery(updateStmt.List) {
 		return nil
@@ -1297,6 +1301,10 @@ func buildOrderedList(ctx base.PlanContext, plan base.Plan, list []*ast.Assignme
 
 func tryDeletePointPlan(ctx base.PlanContext, delStmt *ast.DeleteStmt, resolveCtx *resolve.Context) base.Plan {
 	if delStmt.IsMultiTable {
+		return nil
+	}
+	// Avoid using the point_get when RETURNING clause is present (not yet supported).
+	if delStmt.Returning != nil {
 		return nil
 	}
 	selStmt := &ast.SelectStmt{

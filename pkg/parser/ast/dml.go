@@ -2358,6 +2358,8 @@ type InsertStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints     []*TableOptimizerHint
 	PartitionNames []CIStr
+	// Returning represents the RETURNING clause for INSERT statement.
+	Returning *FieldList
 }
 
 // Restore implements Node interface.
@@ -2483,6 +2485,12 @@ func (n *InsertStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 	}
+	if n.Returning != nil && len(n.Returning.Fields) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := n.Returning.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore InsertStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -2531,6 +2539,13 @@ func (n *InsertStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.OnDuplicate[i] = node.(*Assignment)
+	}
+	if n.Returning != nil {
+		node, ok := n.Returning.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning = node.(*FieldList)
 	}
 	return v.Leave(n)
 }
@@ -2591,6 +2606,8 @@ type DeleteStmt struct {
 	// TableHints represents the table level Optimizer Hint for join type.
 	TableHints []*TableOptimizerHint
 	With       *WithClause
+	// Returning represents the RETURNING clause for DELETE statement.
+	Returning *FieldList
 }
 
 // Restore implements Node interface.
@@ -2680,6 +2697,12 @@ func (n *DeleteStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occurred while restore DeleteStmt.Limit")
 		}
 	}
+	if n.Returning != nil && len(n.Returning.Fields) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := n.Returning.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore DeleteStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -2733,6 +2756,13 @@ func (n *DeleteStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Limit = node.(*Limit)
+	}
+	if n.Returning != nil {
+		node, ok = n.Returning.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning = node.(*FieldList)
 	}
 	return v.Leave(n)
 }
@@ -2843,6 +2873,8 @@ type UpdateStmt struct {
 	MultipleTable bool
 	TableHints    []*TableOptimizerHint
 	With          *WithClause
+	// Returning represents the RETURNING clause for UPDATE statement.
+	Returning *FieldList
 }
 
 // Restore implements Node interface.
@@ -2921,6 +2953,12 @@ func (n *UpdateStmt) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotate(err, "An error occur while restore UpdateStmt.Limit")
 		}
 	}
+	if n.Returning != nil && len(n.Returning.Fields) > 0 {
+		ctx.WriteKeyWord(" RETURNING ")
+		if err := n.Returning.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore UpdateStmt.Returning")
+		}
+	}
 
 	return nil
 }
@@ -2971,6 +3009,13 @@ func (n *UpdateStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Limit = node.(*Limit)
+	}
+	if n.Returning != nil {
+		node, ok = n.Returning.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Returning = node.(*FieldList)
 	}
 	return v.Leave(n)
 }

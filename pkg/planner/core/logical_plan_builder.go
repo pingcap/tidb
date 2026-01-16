@@ -5508,7 +5508,16 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt.PartitionedTable = b.partitionedTable
 	updt.TblID2Table = tblID2table
 	err = updt.BuildOnUpdateFKTriggers(b.ctx, b.is, tblID2table)
-	return updt, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle RETURNING clause
+	if update.Returning != nil {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("RETURNING clause")
+	}
+
+	return updt, nil
 }
 
 type tblUpdateInfo struct {
@@ -5972,8 +5981,16 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	p = proj
 	del.SetOutputNames(p.OutputNames())
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
+	if err != nil {
+		return nil, err
+	}
 
-	return del, err
+	// Handle RETURNING clause
+	if ds.Returning != nil && len(ds.Returning.Fields) > 0 {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("RETURNING clause")
+	}
+
+	return del, nil
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]util.HandleCols, schema *expression.Schema) (map[int64][]util.HandleCols, error) {

@@ -1017,7 +1017,12 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 	if selectExec != nil {
 		children = append(children, selectExec)
 	}
-	baseExec := exec.NewBaseExecutor(b.ctx, nil, v.ID(), children...)
+	// Use RETURNING schema if present, otherwise nil
+	var schema *expression.Schema
+	if v.ReturningSchema != nil {
+		schema = v.ReturningSchema
+	}
+	baseExec := exec.NewBaseExecutor(b.ctx, schema, v.ID(), children...)
 	baseExec.SetInitCap(chunk.ZeroCapacity)
 
 	ivs := &InsertValues{
@@ -1050,8 +1055,10 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		return b.buildReplace(ivs)
 	}
 	insert := &InsertExec{
-		InsertValues: ivs,
-		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		InsertValues:    ivs,
+		OnDuplicate:     append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		returningExprs:  v.Returning,
+		returningSchema: v.ReturningSchema,
 	}
 	return insert
 }

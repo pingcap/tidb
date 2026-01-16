@@ -4309,7 +4309,26 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, err
 	}
 	err = insertPlan.BuildOnInsertFKTriggers(b.ctx, b.is, tnW.DBInfo.Name.L)
-	return insertPlan, err
+	if err != nil {
+		return nil, err
+	}
+
+	// Handle RETURNING clause
+	if insert.Returning != nil && len(insert.Returning.Fields) > 0 {
+		returningExprs, returningSchema, returningNames, err := b.buildReturningClause(
+			ctx, insert.Returning, insertPlan.TableSchema, insertPlan.TableColNames, mockTablePlan)
+		if err != nil {
+			return nil, err
+		}
+		insertPlan.Returning = returningExprs
+		insertPlan.ReturningSchema = returningSchema
+		insertPlan.ReturningNames = returningNames
+		// Set the output schema for the insert plan to be the returning schema
+		insertPlan.SetSchema(returningSchema)
+		insertPlan.SetOutputNames(returningNames)
+	}
+
+	return insertPlan, nil
 }
 
 func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physicalop.Insert) (affectedValuesCols []*table.Column, err error) {
@@ -6514,4 +6533,85 @@ func (b *PlanBuilder) checkSEMStmt(stmt ast.Node) error {
 	}
 
 	return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs(stmtNode.Text())
+}
+
+// buildReturningClause builds the RETURNING clause for DML statements.
+// It takes the RETURNING field list from AST and converts it to expressions.
+func (b *PlanBuilder) buildReturningClause(
+	ctx context.Context,
+	returning *ast.FieldList,
+	tableSchema *expression.Schema,
+	tableNames types.NameSlice,
+	mockPlan base.LogicalPlan,
+) ([]expression.Expression, *expression.Schema, types.NameSlice, error) {
+	var exprs []expression.Expression
+	var cols []*expression.Column
+	var names types.NameSlice
+
+	for _, field := range returning.Fields {
+		// Handle RETURNING *
+		if field.WildCard != nil {
+			// Expand * to all visible columns
+			for i, col := range tableSchema.Columns {
+				exprs = append(exprs, col)
+				cols = append(cols, col)
+				names = append(names, tableNames[i])
+			}
+			continue
+		}
+
+		// Handle specific column or expression
+		expr, np, err := b.rewrite(ctx, field.Expr, mockPlan, nil, true)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		_ = np // We don't need the new plan for simple column references
+
+		exprs = append(exprs, expr)
+
+		// Build the column for the schema
+		newCol := &expression.Column{
+			UniqueID: b.ctx.GetSessionVars().AllocPlanColumnID(),
+			RetType:  expr.GetType(b.ctx.GetExprCtx().GetEvalCtx()),
+		}
+		cols = append(cols, newCol)
+
+		// Build the name
+		var colName *types.FieldName
+		if field.AsName.L != "" {
+			colName = &types.FieldName{
+				ColName: field.AsName,
+			}
+		} else if col, ok := expr.(*expression.Column); ok {
+			// Find the original column name
+			for i, c := range tableSchema.Columns {
+				if c.UniqueID == col.UniqueID {
+					// Copy the FieldName
+					origName := tableNames[i]
+					colName = &types.FieldName{
+						OrigTblName: origName.OrigTblName,
+						OrigColName: origName.OrigColName,
+						DBName:      origName.DBName,
+						TblName:     origName.TblName,
+						ColName:     origName.ColName,
+					}
+					break
+				}
+			}
+			if colName == nil {
+				colName = &types.FieldName{
+					ColName: ast.NewCIStr(col.OrigName),
+				}
+			}
+		} else {
+			// For expressions, use the field text or a generated name
+			colName = &types.FieldName{
+				ColName: ast.NewCIStr(field.Expr.OriginalText()),
+			}
+		}
+		names = append(names, colName)
+	}
+
+	schema := expression.NewSchema(cols...)
+	return exprs, schema, names, nil
 }
