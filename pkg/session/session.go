@@ -1504,9 +1504,10 @@ const (
 
 var keySQLToken = map[string]int{
 	"select": isSelectSQLToken,
-	"from":   coreSQLToken, "insert": coreSQLToken, "update": coreSQLToken, "delete": coreSQLToken, "replace": coreSQLToken, "analyze": coreSQLToken,
-	"execute": coreSQLToken, // ignore `prepare` statement because its content will be parsed later
-	"explain": bypassSQLToken, "desc": bypassSQLToken}
+	"from":   coreSQLToken, "insert": coreSQLToken, "update": coreSQLToken, "delete": coreSQLToken, "replace": coreSQLToken,
+	// ignore prepare statement
+	"explain": bypassSQLToken, "desc": bypassSQLToken, "analyze": bypassSQLToken,
+}
 
 // approximate memory quota related token count for parsing a SQL statement which covers most DML statements
 // 1. ignore comments
