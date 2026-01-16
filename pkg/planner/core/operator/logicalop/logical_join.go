@@ -343,29 +343,19 @@ LEFT JOIN
 	Table_B ON Table_A.id = Table_B.id
 WHERE
 	Table_B.id IS NULL;
-+--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
-| id                       | task      | access object | operator info                                                                        |
-+--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
-| Projection               | root      |               | test.table_a.id, test.table_a.name                                                   |
-| └─Selection              | root      |               | isnull(test.table_b.id)                                                              |
-|   └─HashJoin             | root      |               | left outer join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
-|     ├─TableReader(Build) | root      |               | data:Selection                                                                       |
-|     │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                         |
-|     │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                       |
-|     └─TableReader(Probe) | root      |               | data:TableFullScan                                                                   |
-|       └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                       |
-+--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
+
 =>
-+----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
-| id                   | task      | access object | operator info                                                                       |
-+----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
-| HashJoin             | root      |               | anti semi join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
-| ├─TableReader(Build) | root      |               | data:Selection                                                                      |
-| │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                        |
-| │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                      |
-| └─TableReader(Probe) | root      |               | data:TableFullScan                                                                  |
-|   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
-+----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+
+SELECT Table_A.id, Table_A.name
+FROM
+	Table_A
+WHERE NOT EXISTS (
+	SELECT 1
+	FROM
+		Table_B
+	WHERE
+		Table_B.id = Table_B.id
+);
 ```
 #### Scenario 2: IS NULL on a Non-Join-Key NOT NULL Column
 
@@ -389,39 +379,17 @@ SELECT A.* FROM Table_A A
 LEFT JOIN Table_B B ON A.id = B.id
 WHERE B.status IS NULL;
 
-+--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
-| id                       | task      | access object | operator info                                                                        |
-+--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
-| Projection               | root      |               | test.table_a.id, test.table_a.name                                                   |
-| └─Selection              | root      |               | isnull(test.table_b.status)                                                          |
-|   └─HashJoin             | root      |               | left outer join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
-|     ├─TableReader(Build) | root      |               | data:Selection                                                                       |
-|     │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                         |
-|     │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                       |
-|     └─TableReader(Probe) | root      |               | data:TableFullScan                                                                   |
-|       └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                       |
-+--------------------------+-----------+---------------+--------------------------------------------------------------------------------------+
- =>
-+----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
-| id                   | task      | access object | operator info                                                                       |
-+----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
-| HashJoin             | root      |               | anti semi join, left side:TableReader, equal:[eq(test.table_a.id, test.table_b.id)] |
-| ├─TableReader(Build) | root      |               | data:Selection                                                                      |
-| │ └─Selection        | cop[tikv] |               | not(isnull(test.table_b.id))                                                        |
-| │   └─TableFullScan  | cop[tikv] | table:B       | keep order:false, stats:pseudo                                                      |
-| └─TableReader(Probe) | root      |               | data:TableFullScan                                                                  |
-|   └─TableFullScan    | cop[tikv] | table:A       | keep order:false, stats:pseudo                                                      |
-+----------------------+-----------+---------------+-------------------------------------------------------------------------------------+
+=>
+SELECT A.* FROM Table_A A
+WHERE NOT EXISTS (
+	SELECT 1 FROM Table_B B WHERE A.id = B.id
+);
 ```
 
 Additionally, we found that there may be a projection between select and join.
-
 	Select[isnull(col1)] <- Projection[col1,col2,col3,col4] <- left outer join[outer side: col1 col2, inner side: col3 col4]
-
 Currently, we only support projections with column mapping relationships, not transformation relationships.
-
 	Projection[null->col1,null->col2,col3,col4] <- anti semi join[outer side: col1 col2, inner side: col3 col4]
-
 */
 func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, selConditionColInInner bool) {
 	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
