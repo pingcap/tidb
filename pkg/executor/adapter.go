@@ -558,6 +558,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		recoverdErr, ok := r.(error)
 		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
+			exeerrors.ErrQueryExecStopped.Equal(recoverdErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)

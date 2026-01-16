@@ -2320,6 +2320,7 @@ func (cc *clientConn) writeResultSet(ctx context.Context, rs resultset.ResultSet
 		recoverdErr, ok := r.(error)
 		if !ok || !(exeerrors.ErrMemoryExceedForQuery.Equal(recoverdErr) ||
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
+			exeerrors.ErrQueryExecStopped.Equal(recoverdErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
 			panic(r)
