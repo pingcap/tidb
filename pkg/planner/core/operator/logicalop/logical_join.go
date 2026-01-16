@@ -265,9 +265,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// isIsNullColInInnerJoinKey checks whether the IS NULL column (above the join) is from the inner
-// side and appears in the join key/related predicates (excluding NullEQ; only GT/GE/LE/LT/NE in others).
-func isIsNullColInInnerJoinKey(innerSchSet *intset.FastIntSet, isNullColumnID int64, eq []*expression.ScalarFunction, other []expression.Expression) bool {
+// joinCondNullRejectsInnerCol checks whether the IS NULL column (above the join) is from the inner
+// side and appears in the join predicate that null-rejects it (excluding NullEQ; only GT/GE/LE/LT/NE in others).
+func joinCondNullRejectsInnerCol(innerSchSet *intset.FastIntSet, isNullColumnID int64, eq []*expression.ScalarFunction, other []expression.Expression) bool {
 	for _, s := range eq {
 		if s.FuncName.L == ast.NullEQ {
 			continue
@@ -390,7 +390,7 @@ Additionally, we found that there may be a projection between select and join.
 Currently, we only support projections with column mapping relationships, not transformation relationships.
 	Projection[null->col1,null->col2,col3,col4] <- anti semi join[outer side: col1 col2, inner side: col3 col4]
 */
-func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, selConditionColInInner bool) {
+func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, canConvertToAntiSemiJoin bool) {
 	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		// selectCond can only have one expression.
 		// The outer expression can definitely be pushed down, so selectCond must be the inner expression.
@@ -435,10 +435,10 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
-	selConditionColInInner = isIsNullColInInnerJoinKey(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
+	canConvertToAntiSemiJoin = joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
 	// resultProj is to generate the NULL values for the columns of the inner table, which is the
 	// expected result for this kind of anti-join query.
-	if selConditionColInInner {
+	if canConvertToAntiSemiJoin {
 		// Scenario 1: column in IsNull expression is from the inner side columns in the eq/other condition.
 		if proj != nil {
 			resultProj = p.generateProject4ConvertAntiJoin(&innerSchemaSet, proj.Schema())
@@ -459,11 +459,11 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 			} else {
 				resultProj = p.generateProject4ConvertAntiJoin(&innerSchemaSet, selectSch)
 			}
-			selConditionColInInner = true
+			canConvertToAntiSemiJoin = true
 		}
 	}
 
-	if selConditionColInInner {
+	if canConvertToAntiSemiJoin {
 		// Anti-semi join's first child is outer, the second child is inner. join condition is outer op inner
 		// right outer join's first child is inner, the second child is outer, join condition is inner op outer
 		// left outer join's  first child is outer, the second child is inner. join condition is outer op inner
@@ -480,7 +480,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		p.JoinType = base.AntiSemiJoin
 		p.MergeSchema()
 	}
-	return resultProj, selConditionColInInner
+	return resultProj, canConvertToAntiSemiJoin
 }
 
 // generateProject4ConvertAntiJoin is to generate projection and put it on the anti-semi join which is from outer join.
