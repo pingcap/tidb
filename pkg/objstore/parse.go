@@ -31,9 +31,9 @@ import (
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
-	S3  s3like.S3BackendOptions `json:"s3" toml:"s3"`
-	GCS GCSBackendOptions       `json:"gcs" toml:"gcs"`
-	Azblob AzblobBackendOptions     `json:"azblob" toml:"azblob"`
+	S3     s3like.S3BackendOptions `json:"s3" toml:"s3"`
+	GCS    GCSBackendOptions       `json:"gcs" toml:"gcs"`
+	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
 }
 
 // ParseRawURL parse raw url to url object.

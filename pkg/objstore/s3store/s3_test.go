@@ -60,9 +60,9 @@ func createGetBucketRegionServer(region string, statusCode int, incHeader bool) 
 
 func TestApply(t *testing.T) {
 	type testcase struct {
-		name    string
-		options S3BackendOptions
-		errMsg  string
+		name      string
+		options   S3BackendOptions
+		errMsg    string
 		errReturn bool
 	}
 	testFn := func(test *testcase, t *testing.T) {
