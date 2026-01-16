@@ -29,18 +29,18 @@ import (
 	"go.uber.org/mock/gomock"
 )
 
-type S3Suite struct {
+type Suite struct {
 	Controller *gomock.Controller
 	MockS3     *mock.MockS3API
 	Storage    *S3Storage
 }
 
-func CreateS3Suite(t *testing.T) *S3Suite {
+func CreateS3Suite(t *testing.T) *Suite {
 	return CreateS3SuiteWithRec(t, nil)
 }
 
-func CreateS3SuiteWithRec(t *testing.T, accessRec *recording.AccessStats) *S3Suite {
-	s := new(S3Suite)
+func CreateS3SuiteWithRec(t *testing.T, accessRec *recording.AccessStats) *Suite {
+	s := new(Suite)
 	s.Controller = gomock.NewController(t)
 	s.MockS3 = mock.NewMockS3API(s.Controller)
 	s.Storage = NewS3StorageForTest(
@@ -63,7 +63,7 @@ func CreateS3SuiteWithRec(t *testing.T, accessRec *recording.AccessStats) *S3Sui
 	return s
 }
 
-func (s *S3Suite) ExpectedCalls(t *testing.T, data []byte, startOffsets []int, newReader func(data []byte, offset int) io.ReadCloser) {
+func (s *Suite) ExpectedCalls(t *testing.T, data []byte, startOffsets []int, newReader func(data []byte, offset int) io.ReadCloser) {
 	var lastCall *gomock.Call
 	for _, offset := range startOffsets {
 		thisOffset := offset

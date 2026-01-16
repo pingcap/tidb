@@ -731,31 +731,6 @@ func TestOpenReadSlowly(t *testing.T) {
 	require.Equal(t, []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), res)
 }
 
-func TestPutAndDeleteObjectCheck(t *testing.T) {
-	s := CreateS3Suite(t)
-	ctx := context.Background()
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	require.NoError(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}))
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "mock put error")
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "mock del error")
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &smithy.GenericAPIError{Code: "AccessDenied", Message: "AccessDenied", Fault: smithy.FaultUnknown})
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "AccessDenied")
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "mock put error")
-}
-
 // TestOpenSeek checks that Seek is implemented correctly.
 func TestOpenSeek(t *testing.T) {
 	s := CreateS3Suite(t)
@@ -1537,7 +1512,7 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 			}, nil
 		})
 	reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{StartOffset: &start, EndOffset: &end})
-	require.ErrorContains(t, err, "expected range: bytes=10-29, got: bytes 10-20/20")
+	require.ErrorContains(t, err, "expected range: [10,30), got: bytes 10-20/20")
 	require.Nil(t, reader)
 
 	s.MockS3.EXPECT().

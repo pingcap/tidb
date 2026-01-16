@@ -25,6 +25,7 @@ import (
 	errors2 "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
 	"go.uber.org/zap"
@@ -163,17 +164,34 @@ func (r *s3ObjectReader) GetFileSize() (int64, error) {
 }
 
 type asyncWriter struct {
-	wd  *io.PipeWriter
-	wg  *sync.WaitGroup
-	err error
+	rd       *io.PipeReader
+	wd       *io.PipeWriter
+	wg       *sync.WaitGroup
+	uploader s3like.Uploader
+	err      error
+	name     string
 }
 
-// Write implement the io.Writer interface.
+func (s *asyncWriter) start(ctx context.Context) {
+	s.wg.Add(1)
+	go func() {
+		err := s.uploader.Upload(ctx, s.rd)
+		// like a channel we only let sender close the pipe in happy path
+		if err != nil {
+			log.Warn("upload to s3 failed", zap.String("filename", s.name), zap.Error(err))
+			_ = s.rd.CloseWithError(err)
+		}
+		s.err = err
+		s.wg.Done()
+	}()
+}
+
+// Write implement the objectio.Writer interface.
 func (s *asyncWriter) Write(_ context.Context, p []byte) (int, error) {
 	return s.wd.Write(p)
 }
 
-// Close implement the io.Closer interface.
+// Close implement the objectio.Writer interface.
 func (s *asyncWriter) Close(_ context.Context) error {
 	err := s.wd.Close()
 	if err != nil {

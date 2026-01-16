@@ -15,13 +15,10 @@
 package s3store
 
 import (
-	"bytes"
 	"context"
-	goerrors "errors"
 	"fmt"
 	"io"
 	"net/url"
-	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -38,10 +35,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -92,13 +87,6 @@ const (
 	domainAWS    = "amazonaws.com"
 )
 
-var permissionCheckFn = map[storeapi.Permission]func(context.Context, S3API, *backuppb.S3) error{
-	storeapi.AccessBuckets:      s3BucketExistenceCheck,
-	storeapi.ListObjects:        listObjectsCheck,
-	storeapi.GetObject:          getObjectCheck,
-	storeapi.PutAndDeleteObject: PutAndDeleteObjectCheck,
-}
-
 // WriteBufferSize is the size of the buffer used for writing. (64K may be a better choice)
 var WriteBufferSize = 5 * 1024 * 1024
 
@@ -106,15 +94,10 @@ var WriteBufferSize = 5 * 1024 * 1024
 // It implements the `Storage` interface.
 type S3Storage struct {
 	svc          S3API
+	s3Cli        s3like.PrefixClient
 	bucketPrefix storeapi.BucketPrefix
 	options      *backuppb.S3
 	accessRec    *recording.AccessStats
-	// used to indicate that the S3 storage is not the official AWS S3, but a
-	// S3-compatible storage, such as minio/KS3/OSS.
-	// SDK v2 has some compliance issue with its doc, such as DeleteObjects, v2
-	// doesn't send the Content-MD5 header while the doc says it must be sent,
-	// and might report "Missing required header for this request: Content-Md5"
-	s3Compatible bool
 }
 
 // MarkStrongConsistency implements the Storage interface.
@@ -128,66 +111,17 @@ func (rs *S3Storage) GetOptions() *backuppb.S3 {
 }
 
 // CopyFrom implements the Storage interface.
-func (rs *S3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec storeapi.CopySpec) error {
-	s, ok := e.(*S3Storage)
+func (rs *S3Storage) CopyFrom(ctx context.Context, inStore storeapi.Storage, spec storeapi.CopySpec) error {
+	srcStore, ok := inStore.(*S3Storage)
 	if !ok {
-		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", e)
+		return errors.Annotatef(berrors.ErrStorageInvalidConfig, "S3Storage.CopyFrom supports S3 storage only, get %T", inStore)
 	}
 
-	copyInput := &s3.CopyObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		// NOTE: Perhaps we need to allow copy cross regions / accounts.
-		CopySource: aws.String(path.Join(s.options.Bucket, s.options.Prefix, spec.From)),
-		Key:        aws.String(rs.options.Prefix + spec.To),
-	}
-
-	// We must use the client of the target region.
-	_, err := rs.svc.CopyObject(ctx, copyInput)
-	return err
-}
-
-// S3Uploader does multi-part upload to s3.
-type S3Uploader struct {
-	svc           S3API
-	createOutput  *s3.CreateMultipartUploadOutput
-	completeParts []types.CompletedPart
-}
-
-// UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
-// and call CompleteMultipartUpload to finish it.
-func (u *S3Uploader) Write(ctx context.Context, data []byte) (int, error) {
-	partInput := &s3.UploadPartInput{
-		Body:          bytes.NewReader(data),
-		Bucket:        u.createOutput.Bucket,
-		Key:           u.createOutput.Key,
-		PartNumber:    aws.Int32(int32(len(u.completeParts) + 1)),
-		UploadId:      u.createOutput.UploadId,
-		ContentLength: aws.Int64(int64(len(data))),
-	}
-
-	uploadResult, err := u.svc.UploadPart(ctx, partInput)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	u.completeParts = append(u.completeParts, types.CompletedPart{
-		ETag:       uploadResult.ETag,
-		PartNumber: partInput.PartNumber,
+	return rs.s3Cli.CopyObject(ctx, &s3like.CopyInput{
+		FromLoc: srcStore.bucketPrefix,
+		FromKey: spec.From,
+		ToKey:   spec.To,
 	})
-	return len(data), nil
-}
-
-// Close complete multi upload request.
-func (u *S3Uploader) Close(ctx context.Context) error {
-	completeInput := &s3.CompleteMultipartUploadInput{
-		Bucket:   u.createOutput.Bucket,
-		Key:      u.createOutput.Key,
-		UploadId: u.createOutput.UploadId,
-		MultipartUpload: &types.CompletedMultipartUpload{
-			Parts: u.completeParts,
-		},
-	}
-	_, err := u.svc.CompleteMultipartUpload(ctx, completeInput)
-	return errors.Trace(err)
 }
 
 // S3BackendOptions contains options for s3 storage.
@@ -346,7 +280,12 @@ func (options *S3BackendOptions) ParseFromFlags(flags *pflag.FlagSet) error {
 func NewS3StorageForTest(svc S3API, options *backuppb.S3, accessRec *recording.AccessStats) *S3Storage {
 	bucketPrefix := storeapi.NewBucketPrefix(options.Bucket, options.Prefix)
 	return &S3Storage{
-		svc:          svc,
+		svc: svc,
+		s3Cli: &s3Client{
+			svc:          svc,
+			BucketPrefix: bucketPrefix,
+			options:      options,
+		},
 		bucketPrefix: bucketPrefix,
 		options:      options,
 		accessRec:    accessRec,
@@ -618,22 +557,25 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 
 	qs.Prefix = storeapi.NewPrefix(qs.Prefix).String()
 	bucketPrefix := storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix)
+	s3Cli := &s3Client{
+		svc:          client,
+		BucketPrefix: bucketPrefix,
+		options:      &qs,
+		s3Compatible: !officialS3,
+	}
 
 	// Perform permission checks
-	for _, p := range opts.CheckPermissions {
-		err := permissionCheckFn[p](ctx, client, &qs)
-		if err != nil {
-			return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission %s failed due to %v", p, err)
-		}
+	if err := s3like.CheckPermissions(ctx, s3Cli, opts.CheckPermissions); err != nil {
+		return nil, errors.Annotatef(berrors.ErrStorageInvalidPermission, "check permission failed due to %v", err)
 	}
 
 	// Create final S3Storage instance
 	s3Storage := &S3Storage{
 		svc:          client,
+		s3Cli:        s3Cli,
 		bucketPrefix: bucketPrefix,
 		options:      &qs,
 		accessRec:    opts.AccessRecording,
-		s3Compatible: !officialS3,
 	}
 
 	// Check object lock status if requested
@@ -642,80 +584,6 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	}
 
 	return s3Storage, nil
-}
-
-// s3BucketExistenceCheck checks if a bucket exists.
-func s3BucketExistenceCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
-	input := &s3.HeadBucketInput{
-		Bucket: aws.String(qs.Bucket),
-	}
-	_, err := svc.HeadBucket(ctx, input)
-	return errors.Trace(err)
-}
-
-// listObjectsCheck checks the permission of listObjects
-func listObjectsCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
-	input := &s3.ListObjectsInput{
-		Bucket:  aws.String(qs.Bucket),
-		Prefix:  aws.String(qs.Prefix),
-		MaxKeys: aws.Int32(1),
-	}
-	_, err := svc.ListObjects(ctx, input)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// getObjectCheck checks the permission of getObject
-func getObjectCheck(ctx context.Context, svc S3API, qs *backuppb.S3) error {
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(qs.Bucket),
-		Key:    aws.String("not-exists"),
-	}
-	_, err := svc.GetObject(ctx, input)
-	var aerr smithy.APIError
-	if goerrors.As(err, &aerr) {
-		if aerr.ErrorCode() == noSuchKey {
-			// if key not exists and we reach this error, that
-			// means we have the correct permission to GetObject
-			// other we will get another error
-			return nil
-		}
-		return errors.Trace(err)
-	}
-	return nil
-}
-
-// PutAndDeleteObjectCheck checks the permission of putObject
-// S3 API doesn't provide a way to check the permission, we have to put an
-// object to check the permission.
-// exported for testing.
-func PutAndDeleteObjectCheck(ctx context.Context, svc S3API, options *backuppb.S3) (err error) {
-	file := fmt.Sprintf("access-check/%s", uuid.New().String())
-	defer func() {
-		// we always delete the object used for permission check,
-		// even on error, since the object might be created successfully even
-		// when it returns an error.
-		input := &s3.DeleteObjectInput{
-			Bucket: aws.String(options.Bucket),
-			Key:    aws.String(options.Prefix + file),
-		}
-		_, err2 := svc.DeleteObject(ctx, input)
-		var noSuchKey *types.NoSuchKey
-		if !goerrors.As(err2, &noSuchKey) {
-			log.Warn("failed to delete object used for permission check",
-				zap.String("bucket", options.Bucket),
-				zap.String("key", *input.Key), zap.Error(err2))
-		}
-		if err == nil {
-			err = errors.Trace(err2)
-		}
-	}()
-	// when no permission, aws returns err with code "AccessDenied"
-	input := buildPutObjectInput(options, file, []byte("check"))
-	_, err = svc.PutObject(ctx, input)
-	return errors.Trace(err)
 }
 
 // IsObjectLockEnabled checks whether the S3 bucket has Object Lock enabled.
@@ -736,34 +604,9 @@ func (rs *S3Storage) IsObjectLockEnabled() bool {
 	return false
 }
 
-func buildPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
-	input := &s3.PutObjectInput{
-		Body:   bytes.NewReader(data),
-		Bucket: aws.String(options.Bucket),
-		Key:    aws.String(options.Prefix + file),
-	}
-	if options.Acl != "" {
-		input.ACL = types.ObjectCannedACL(options.Acl)
-	}
-	if options.Sse != "" {
-		input.ServerSideEncryption = types.ServerSideEncryption(options.Sse)
-	}
-	if options.SseKmsKeyId != "" {
-		input.SSEKMSKeyId = aws.String(options.SseKmsKeyId)
-	}
-	if options.StorageClass != "" {
-		input.StorageClass = types.StorageClass(options.StorageClass)
-	}
-	return input
-}
-
 // WriteFile writes data to a file to storage.
 func (rs *S3Storage) WriteFile(ctx context.Context, file string, data []byte) error {
-	input := buildPutObjectInput(rs.options, file, data)
-	// we don't need to calculate contentMD5 if s3 object lock enabled.
-	// since aws-go-sdk already did it in #computeBodyHashes
-	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
-	_, err := rs.svc.PutObject(ctx, input)
+	err := rs.s3Cli.PutObject(ctx, file, data)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -810,15 +653,11 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		readErr error
 	)
 	for retryCnt := range maxErrorRetries {
-		input := &s3.GetObjectInput{
-			Bucket: aws.String(rs.options.Bucket),
-			Key:    aws.String(rs.options.Prefix + file),
-		}
-		result, err := rs.svc.GetObject(ctx, input)
+		result, err := rs.s3Cli.GetObject(ctx, file, 0, 0)
 		if err != nil {
 			return nil, errors.Annotatef(err,
 				"failed to read s3 file, file info: input.bucket='%s', input.key='%s'",
-				*input.Bucket, *input.Key)
+				rs.options.Bucket, rs.bucketPrefix.ObjectKey(file))
 		}
 		data, readErr = io.ReadAll(result.Body)
 		// close the body of response since data has been already read out
@@ -832,7 +671,7 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 		if readErr != nil {
 			if s3like.IsDeadlineExceedError(readErr) || isCancelError(readErr) {
 				return nil, errors.Annotatef(readErr, "failed to read body from get object result, file info: input.bucket='%s', input.key='%s', retryCnt='%d'",
-					*input.Bucket, *input.Key, retryCnt)
+					rs.options.Bucket, rs.bucketPrefix.ObjectKey(file), retryCnt)
 			}
 			metrics.RetryableErrorCount.WithLabelValues(readErr.Error()).Inc()
 			continue
@@ -841,18 +680,12 @@ func (rs *S3Storage) doReadFile(ctx context.Context, file string) ([]byte, error
 	}
 	// retry too much, should be failed
 	return nil, errors.Annotatef(readErr, "failed to read body from get object result (retry too much), file info: input.bucket='%s', input.key='%s'",
-		rs.options.Bucket, rs.options.Prefix+file)
+		rs.options.Bucket, rs.bucketPrefix.ObjectKey(file))
 }
 
 // DeleteFile delete the file in s3 storage
 func (rs *S3Storage) DeleteFile(ctx context.Context, file string) error {
-	input := &s3.DeleteObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + file),
-	}
-
-	_, err := rs.svc.DeleteObject(ctx, input)
-	return errors.Trace(err)
+	return rs.s3Cli.DeleteObject(ctx, file)
 }
 
 // s3DeleteObjectsLimit is the upper limit of objects in a delete request.
@@ -866,24 +699,7 @@ func (rs *S3Storage) DeleteFiles(ctx context.Context, files []string) error {
 		if len(batch) > s3DeleteObjectsLimit {
 			batch = batch[:s3DeleteObjectsLimit]
 		}
-		objects := make([]types.ObjectIdentifier, 0, len(batch))
-		for _, file := range batch {
-			objects = append(objects, types.ObjectIdentifier{
-				Key: aws.String(rs.options.Prefix + file),
-			})
-		}
-		input := &s3.DeleteObjectsInput{
-			Bucket: aws.String(rs.options.Bucket),
-			Delete: &types.Delete{
-				Objects: objects,
-				Quiet:   aws.Bool(false),
-			},
-		}
-		var optFns []func(*s3.Options)
-		if rs.s3Compatible {
-			optFns = []func(*s3.Options){withContentMD5}
-		}
-		_, err := rs.svc.DeleteObjects(ctx, input, optFns...)
+		err := rs.s3Cli.DeleteObjects(ctx, batch)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -894,23 +710,7 @@ func (rs *S3Storage) DeleteFiles(ctx context.Context, files []string) error {
 
 // FileExists check if file exists on s3 storage.
 func (rs *S3Storage) FileExists(ctx context.Context, file string) (bool, error) {
-	input := &s3.HeadObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + file),
-	}
-
-	_, err := rs.svc.HeadObject(ctx, input)
-	if err != nil {
-		var aerr smithy.APIError
-		if goerrors.As(errors.Cause(err), &aerr) {
-			switch aerr.ErrorCode() {
-			case noSuchBucket, noSuchKey, notFound:
-				return false, nil
-			}
-		}
-		return false, errors.Trace(err)
-	}
-	return true, nil
+	return rs.s3Cli.IsObjectExists(ctx, file)
 }
 
 // WalkDir traverse all the files in a dir.
@@ -923,57 +723,41 @@ func (rs *S3Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn f
 	if opt == nil {
 		opt = &storeapi.WalkOption{}
 	}
-	prefix := rs.bucketPrefix.Prefix.JoinStr(opt.SubDir).ObjectKey(opt.ObjPrefix)
-
-	maxKeys := int64(1000)
+	prefix := storeapi.NewPrefix(opt.SubDir).ObjectKey(opt.ObjPrefix)
+	var maxKeys = 1000
 	if opt.ListCount > 0 {
-		maxKeys = opt.ListCount
-	}
-	req := &s3.ListObjectsInput{
-		Bucket:  aws.String(rs.options.Bucket),
-		Prefix:  aws.String(prefix),
-		MaxKeys: aws.Int32(int32(maxKeys)),
+		maxKeys = int(opt.ListCount)
 	}
 
-	cliPrefix := rs.bucketPrefix.PrefixStr()
+	var (
+		marker    *string
+		cliPrefix = rs.bucketPrefix.PrefixStr()
+	)
 	for {
-		// FIXME: We can't use ListObjectsV2, it is not universally supported.
-		// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
-		// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
-		res, err := rs.svc.ListObjects(ctx, req)
+		res, err := rs.s3Cli.ListObjects(ctx, prefix, marker, maxKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		for _, r := range res.Contents {
-			// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
-			//
-			// `res.NextMarker` is populated only if we specify req.Delimiter.
-			// Aliyun OSS and minio will populate NextMarker no matter what,
-			// but this documented behavior does apply to AWS S3:
-			//
-			// "If response does not include the NextMarker and it is truncated,
-			// you can use the value of the last Key in the response as the marker
-			// in the subsequent request to get the next set of object keys."
-			req.Marker = r.Key
-
-			// when walk on specify directory, the result include storage.Prefix,
+		for _, r := range res.Objects {
+			// when walk on specify directory, the result include client prefix,
 			// which can not be reuse in other API(Open/Read) directly.
 			// so we use TrimPrefix to filter Prefix for next Open/Read.
-			path := strings.TrimPrefix(*r.Key, cliPrefix)
+			trimmedKey := strings.TrimPrefix(r.Key, cliPrefix)
 			// trim the prefix '/' to ensure that the path returned is consistent with the local storage
-			path = strings.TrimPrefix(path, "/")
-			itemSize := *r.Size
+			trimmedKey = strings.TrimPrefix(trimmedKey, "/")
+			itemSize := r.Size
 
 			// filter out s3's empty directory items
-			if itemSize <= 0 && strings.HasSuffix(path, "/") {
-				log.Info("this path is an empty directory and cannot be opened in S3.  Skip it", zap.String("path", path))
+			if itemSize <= 0 && strings.HasSuffix(trimmedKey, "/") {
+				log.Info("skip empty directory which cannot be opened", zap.String("key", trimmedKey))
 				continue
 			}
-			if err = fn(path, itemSize); err != nil {
+			if err = fn(trimmedKey, itemSize); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		if !aws.ToBool(res.IsTruncated) {
+		marker = res.NextMarker
+		if !res.IsTruncated {
 			break
 		}
 	}
@@ -1044,16 +828,7 @@ func (rs *S3Storage) open(
 	path string,
 	startOffset, endOffset int64,
 ) (io.ReadCloser, RangeInfo, error) {
-	input := &s3.GetObjectInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + path),
-	}
-
-	isFullRangeRequest, rangeOffset := storeapi.GetHTTPRange(startOffset, endOffset)
-	if rangeOffset != "" {
-		input.Range = aws.String(rangeOffset)
-	}
-	result, err := rs.svc.GetObject(ctx, input)
+	result, err := rs.s3Cli.GetObject(ctx, path, startOffset, endOffset)
 	if err != nil {
 		return nil, RangeInfo{}, errors.Trace(err)
 	}
@@ -1061,7 +836,7 @@ func (rs *S3Storage) open(
 	var r RangeInfo
 	// Those requests without a `Range` will have no `ContentRange` in the response,
 	// In this case, we'll parse the `ContentLength` field instead.
-	if isFullRangeRequest {
+	if result.IsFullRange {
 		// We must ensure the `ContentLengh` has data even if for empty objects,
 		// otherwise we have no places to get the object size
 		if result.ContentLength == nil {
@@ -1095,8 +870,8 @@ func (rs *S3Storage) open(
 			rangeStr = *result.ContentRange
 		}
 		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown,
-			"open file '%s' failed, expected range: %s, got: %s",
-			path, rangeOffset, rangeStr)
+			"open file '%s' failed, expected range: [%d,%d), got: %s",
+			path, startOffset, endOffset, rangeStr)
 	}
 
 	return result.Body, r, nil
@@ -1134,76 +909,33 @@ func ParseRangeInfo(info *string) (ri RangeInfo, err error) {
 	return
 }
 
-// createUploader create multi upload request.
-func (rs *S3Storage) createUploader(ctx context.Context, name string) (objectio.Writer, error) {
-	input := &s3.CreateMultipartUploadInput{
-		Bucket: aws.String(rs.options.Bucket),
-		Key:    aws.String(rs.options.Prefix + name),
-	}
-	if rs.options.Acl != "" {
-		input.ACL = types.ObjectCannedACL(rs.options.Acl)
-	}
-	if rs.options.Sse != "" {
-		input.ServerSideEncryption = types.ServerSideEncryption(rs.options.Sse)
-	}
-	if rs.options.SseKmsKeyId != "" {
-		input.SSEKMSKeyId = aws.String(rs.options.SseKmsKeyId)
-	}
-	if rs.options.StorageClass != "" {
-		input.StorageClass = types.StorageClass(rs.options.StorageClass)
-	}
-
-	resp, err := rs.svc.CreateMultipartUpload(ctx, input)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return &S3Uploader{
-		svc:           rs.svc,
-		createOutput:  resp,
-		completeParts: make([]types.CompletedPart, 0, 128),
-	}, nil
-}
-
 // Create creates multi upload request.
 func (rs *S3Storage) Create(ctx context.Context, name string, option *storeapi.WriterOption) (objectio.Writer, error) {
-	var uploader objectio.Writer
+	var writer objectio.Writer
 	var err error
 	if option == nil || option.Concurrency <= 1 {
-		uploader, err = rs.createUploader(ctx, name)
+		writer, err = rs.s3Cli.MultipartWriter(ctx, name)
 		if err != nil {
 			return nil, err
 		}
 	} else {
-		up := manager.NewUploader(rs.svc, func(u *manager.Uploader) {
-			u.PartSize = option.PartSize
-			u.Concurrency = option.Concurrency
-			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * HardcodedChunkSize)
-		})
+		up := rs.s3Cli.MultipartUploader(name, option.PartSize, option.Concurrency)
 		rd, wd := io.Pipe()
-		upParams := &s3.PutObjectInput{
-			Bucket: aws.String(rs.options.Bucket),
-			Key:    aws.String(rs.options.Prefix + name),
-			Body:   rd,
+		asyncW := &asyncWriter{
+			rd:       rd,
+			wd:       wd,
+			wg:       &sync.WaitGroup{},
+			uploader: up,
+			name:     name,
 		}
-		s3Writer := &asyncWriter{wd: wd, wg: &sync.WaitGroup{}}
-		s3Writer.wg.Add(1)
-		go func() {
-			_, err := up.Upload(ctx, upParams)
-			// like a channel we only let sender close the pipe in happy path
-			if err != nil {
-				log.Warn("upload to s3 failed", zap.String("filename", name), zap.Error(err))
-				_ = rd.CloseWithError(err)
-			}
-			s3Writer.err = err
-			s3Writer.wg.Done()
-		}()
-		uploader = s3Writer
+		asyncW.start(ctx)
+		writer = asyncW
 	}
 	bufSize := WriteBufferSize
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
-	uploaderWriter := objectio.NewBufferedWriter(uploader, bufSize, compressedio.NoCompression, rs.accessRec)
+	uploaderWriter := objectio.NewBufferedWriter(writer, bufSize, compressedio.NoCompression, rs.accessRec)
 	return uploaderWriter, nil
 }
 
@@ -1225,18 +957,6 @@ func (rs *S3Storage) Rename(ctx context.Context, oldFileName, newFileName string
 
 // Close implements Storage interface.
 func (*S3Storage) Close() {}
-
-// withContentMD5 removes all flexible checksum procecdures from an operation,
-// instead computing an MD5 checksum for the request payload.
-func withContentMD5(o *s3.Options) {
-	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
-		_, _ = stack.Initialize.Remove("AWSChecksum:SetupInputContext")
-		_, _ = stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
-		_, _ = stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
-		_, _ = stack.Finalize.Remove("addInputChecksumTrailer")
-		return smithyhttp.AddContentChecksumMiddleware(stack)
-	})
-}
 
 func isCancelError(err error) bool {
 	return strings.Contains(err.Error(), "context canceled")
