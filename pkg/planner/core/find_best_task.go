@@ -1210,7 +1210,7 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 
 	var prefixColumnID int64
 	var prefixLen int
-	for i := 0; i < len(path.IdxCols); i++ {
+	for i := range len(path.IdxCols) {
 		// check if the same column
 		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
 			return nil
