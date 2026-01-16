@@ -84,7 +84,11 @@ type Loader struct {
 	// if true, it means the loader is used for cross keyspace, we only allow
 	// loading system tables
 	crossKS bool
-	logger  *zap.Logger
+	// allowOnDemandLoad indicates whether to allow loading schema/table info
+	// on demand from TiKV meta when not found in memory. This is useful for
+	// cross keyspace sessions that want to access user tables.
+	allowOnDemandLoad bool
+	logger            *zap.Logger
 
 	// below fields are set when running background routines
 	// Note: for cross keyspace loader, we don't set below fields as system tables
@@ -120,6 +124,13 @@ func NewLoaderForCrossKS(store kv.Storage, infoCache *infoschema.InfoCache) *Loa
 		crossKS:   true,
 		logger:    logutil.BgLogger().With(zap.String("targetKS", store.GetKeyspace()), zap.Stringer("mode", mode)),
 	}
+}
+
+// WithOnDemandLoad sets whether to allow loading schema/table info on demand
+// from TiKV meta when not found in memory. Returns the loader for chaining.
+func (l *Loader) WithOnDemandLoad(allowOnDemandLoad bool) *Loader {
+	l.allowOnDemandLoad = allowOnDemandLoad
+	return l
 }
 
 // initFields initializes some fields of the Loader.
@@ -264,7 +275,8 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 		data = infoschema.NewData()
 	}
 	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, data, useV2).
-		WithCrossKS(l.crossKS)
+		WithCrossKS(l.crossKS).
+		WithOnDemandLoad(l.allowOnDemandLoad)
 	err = builder.InitWithDBInfos(schemas, policies, resourceGroups, neededSchemaVersion)
 	if err != nil {
 		return nil, false, currentSchemaVersion, nil, err
@@ -341,7 +353,8 @@ func (l *Loader) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, newV
 	})
 
 	builder := infoschema.NewBuilder(l, schemaCacheSize, l.sysExecutorFactory, l.infoCache.Data, useV2).
-		WithCrossKS(l.crossKS)
+		WithCrossKS(l.crossKS).
+		WithOnDemandLoad(l.allowOnDemandLoad)
 	err := builder.InitWithOldInfoSchema(l.infoCache.GetLatest())
 	if err != nil {
 		return nil, nil, nil, errors.Trace(err)

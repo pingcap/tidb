@@ -113,6 +113,15 @@ func NewCrossKSSyncer(
 	return s
 }
 
+// WithOnDemandLoad enables on-demand loading of schema/table info from TiKV meta
+// when not found in memory. This is useful for cross keyspace sessions that want
+// to access user tables without preloading all table metadata.
+// Note: This must be called before Reload() to take effect.
+func (s *Syncer) WithOnDemandLoad(allowOnDemandLoad bool) *Syncer {
+	s.loader.WithOnDemandLoad(allowOnDemandLoad)
+	return s
+}
+
 func newSyncer(
 	store kv.Storage,
 	logger *zap.Logger,

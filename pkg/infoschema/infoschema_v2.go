@@ -788,6 +788,11 @@ type infoschemaV2 struct {
 	factory     func() (pools.Resource, error)
 	ts          uint64
 	*Data
+
+	// allowOnDemandLoad indicates whether we allow loading schema/table info on demand
+	// from TiKV meta when not found in memory. This is used for cross keyspace sessions
+	// that want to access user tables without preloading all table metadata.
+	allowOnDemandLoad bool
 }
 
 // NewInfoSchemaV2 create infoschemaV2.
@@ -861,6 +866,19 @@ func (is *infoschemaV2) TableByID(ctx context.Context, id int64) (val table.Tabl
 	is.keepAlive()
 	itm, ok := is.searchTableItemByID(id)
 	if !ok {
+		// If not found in memory and on-demand loading is allowed, try to load from TiKV meta.
+		if is.allowOnDemandLoad {
+			ret, err := is.loadTableByIDOnDemand(id)
+			if err != nil {
+				logutil.BgLogger().Warn("failed to load table by ID on demand",
+					zap.Int64("tableID", id),
+					zap.Error(err))
+				return nil, false
+			}
+			if ret != nil {
+				return ret, true
+			}
+		}
 		return nil, false
 	}
 
@@ -1023,6 +1041,10 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 	is.byName.Load().DescendLessOrEqual(&h.end, h.onItem)
 
 	if !h.found {
+		// If not found in memory and on-demand loading is allowed, try to load from TiKV meta.
+		if is.allowOnDemandLoad {
+			return is.tableByNameOnDemand(schema, tbl, start)
+		}
 		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 	itm := h.res
@@ -1047,6 +1069,27 @@ func (is *infoschemaV2) TableByName(ctx context.Context, schema, tbl ast.CIStr) 
 	}
 	if refill {
 		is.tableCache.Set(oldKey, ret)
+	}
+
+	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
+	return ret, nil
+}
+
+// tableByNameOnDemand loads table on demand when the table is not found in memory.
+func (is *infoschemaV2) tableByNameOnDemand(schema, tbl ast.CIStr, start time.Time) (table.Table, error) {
+	// First, get the database info
+	dbInfo, ok := is.SchemaByName(schema)
+	if !ok {
+		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
+	}
+
+	// Load the table from meta
+	ret, err := is.loadTableByNameOnDemand(dbInfo.ID, tbl)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if ret == nil {
+		return nil, ErrTableNotExists.FastGenByArgs(schema, tbl)
 	}
 
 	metrics.TableByNameMissDuration.Observe(float64(time.Since(start)))
@@ -1215,6 +1258,20 @@ func (is *infoschemaV2) SchemaByName(schema ast.CIStr) (val *model.DBInfo, ok bo
 		}
 		return true
 	})
+
+	// If not found in memory and on-demand loading is allowed, try to load from TiKV meta.
+	if !ok && is.allowOnDemandLoad {
+		loadedDB, err := is.loadSchemaByNameOnDemand(schema)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to load schema on demand",
+				zap.String("schema", schema.L),
+				zap.Error(err))
+			return nil, false
+		}
+		if loadedDB != nil {
+			return loadedDB, true
+		}
+	}
 	return
 }
 
@@ -1377,6 +1434,19 @@ func (is *infoschemaV2) SchemaByID(id int64) (*model.DBInfo, bool) {
 		return true
 	})
 	if !ok {
+		// If not found in memory and on-demand loading is allowed, try to load from TiKV meta.
+		if is.allowOnDemandLoad {
+			dbInfo, err := is.loadSchemaByIDOnDemand(id)
+			if err != nil {
+				logutil.BgLogger().Warn("failed to load schema by ID on demand",
+					zap.Int64("schemaID", id),
+					zap.Error(err))
+				return nil, false
+			}
+			if dbInfo != nil {
+				return dbInfo, true
+			}
+		}
 		return nil, false
 	}
 	return is.SchemaByName(name)
@@ -1446,6 +1516,140 @@ func (is *infoschemaV2) loadTableInfo(ctx context.Context, tblID, dbID int64, ts
 }
 
 var loadTableSF = &singleflight.Group{}
+var loadSchemaSF = &singleflight.Group{}
+
+// getMetaReaderWithSnapshot creates a meta reader with the given timestamp.
+func (is *infoschemaV2) getMetaReaderWithSnapshot() meta.Reader {
+	snapshot := is.r.Store().GetSnapshot(kv.NewVersion(is.ts))
+	snapshot.SetOption(kv.TiKVClientReadTimeout, uint64(3000)) // 3000ms.
+	return meta.NewReader(snapshot)
+}
+
+// buildTableFromTableInfo builds a table.Table from model.TableInfo.
+func (is *infoschemaV2) buildTableFromTableInfo(dbID int64, tblInfo *model.TableInfo) (table.Table, error) {
+	ConvertCharsetCollateToLowerCaseIfNeed(tblInfo)
+	ConvertOldVersionUTF8ToUTF8MB4IfNeed(tblInfo)
+	allocs := autoid.NewAllocatorsFromTblInfo(is.r, dbID, tblInfo)
+	return tableFromMeta(allocs, is.factory, tblInfo)
+}
+
+// loadSchemaByNameOnDemand loads database info from TiKV meta by database name.
+// This is used for on-demand loading when the schema is not found in memory.
+func (is *infoschemaV2) loadSchemaByNameOnDemand(schemaName ast.CIStr) (*model.DBInfo, error) {
+	res, err, _ := loadSchemaSF.Do(fmt.Sprintf("schema-%s-%d", schemaName.L, is.infoSchema.schemaMetaVersion), func() (any, error) {
+		m := is.getMetaReaderWithSnapshot()
+		allDBs, err := m.ListDatabases()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		for _, dbInfo := range allDBs {
+			if dbInfo.Name.L == schemaName.L {
+				return dbInfo, nil
+			}
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if res == nil {
+		return nil, nil
+	}
+	return res.(*model.DBInfo), nil
+}
+
+// loadSchemaByIDOnDemand loads database info from TiKV meta by database ID.
+// This is used for on-demand loading when the schema is not found in memory.
+func (is *infoschemaV2) loadSchemaByIDOnDemand(schemaID int64) (*model.DBInfo, error) {
+	res, err, _ := loadSchemaSF.Do(fmt.Sprintf("schemaByID-%d-%d", schemaID, is.infoSchema.schemaMetaVersion), func() (any, error) {
+		m := is.getMetaReaderWithSnapshot()
+		return m.GetDatabase(schemaID)
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if res == nil {
+		return nil, nil
+	}
+	return res.(*model.DBInfo), nil
+}
+
+// loadTableByNameOnDemand loads table info from TiKV meta by database ID and table name.
+// This is used for on-demand loading when the table is not found in memory.
+func (is *infoschemaV2) loadTableByNameOnDemand(dbID int64, tableName ast.CIStr) (table.Table, error) {
+	res, err, _ := loadTableSF.Do(fmt.Sprintf("table-%d-%s-%d", dbID, tableName.L, is.infoSchema.schemaMetaVersion), func() (any, error) {
+		m := is.getMetaReaderWithSnapshot()
+		// Get all table name to ID mappings for the database
+		nameToID, _, err := m.GetAllNameToIDAndTheMustLoadedTableInfo(dbID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// The nameToID map uses original case names, do case-insensitive lookup
+		var tableID int64
+		var found bool
+		for name, id := range nameToID {
+			if strings.EqualFold(name, tableName.L) {
+				tableID = id
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, nil
+		}
+		// Load the table info
+		tblInfo, err := m.GetTable(dbID, tableID)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if tblInfo == nil {
+			return nil, nil
+		}
+		return is.buildTableFromTableInfo(dbID, tblInfo)
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if res == nil {
+		return nil, nil
+	}
+	return res.(table.Table), nil
+}
+
+// loadTableByIDOnDemand loads table info from TiKV meta by table ID.
+// This is used for on-demand loading when the table is not found in memory.
+// It needs to iterate all databases to find the table since meta storage requires dbID.
+func (is *infoschemaV2) loadTableByIDOnDemand(tableID int64) (table.Table, error) {
+	res, err, _ := loadTableSF.Do(fmt.Sprintf("tableByID-%d-%d", tableID, is.infoSchema.schemaMetaVersion), func() (any, error) {
+		m := is.getMetaReaderWithSnapshot()
+		allDBs, err := m.ListDatabases()
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		// Search for the table in each database
+		for _, dbInfo := range allDBs {
+			tblInfo, err := m.GetTable(dbInfo.ID, tableID)
+			if err != nil {
+				if meta.ErrDBNotExists.Equal(err) {
+					continue
+				}
+				return nil, errors.Trace(err)
+			}
+			if tblInfo == nil {
+				continue
+			}
+			return is.buildTableFromTableInfo(dbInfo.ID, tblInfo)
+		}
+		return nil, nil
+	})
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if res == nil {
+		return nil, nil
+	}
+	return res.(table.Table), nil
+}
 
 // IsV2 tells whether an InfoSchema is v2 or not.
 func IsV2(is InfoSchema) (bool, *infoschemaV2) {

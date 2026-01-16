@@ -58,6 +58,9 @@ type Builder struct {
 	infoData *Data
 	store    kv.Storage
 	crossKS  bool
+	// allowOnDemandLoad indicates whether to allow loading schema/table info
+	// on demand from TiKV meta when not found in memory.
+	allowOnDemandLoad bool
 }
 
 // SetSchemaVersion sets the schema version of the InfoSchema.
@@ -954,6 +957,7 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	if b.enableV2 {
 		b.infoschemaV2.ts = schemaTS
+		b.infoschemaV2.allowOnDemandLoad = b.allowOnDemandLoad
 		updateInfoSchemaBundles(b)
 		return &b.infoschemaV2
 	}
@@ -1205,6 +1209,14 @@ func (b *Builder) WithStore(s kv.Storage) *Builder {
 // WithCrossKS marks whether this builder is used to build I_S for cross keyspace.
 func (b *Builder) WithCrossKS(crossKS bool) *Builder {
 	b.crossKS = crossKS
+	return b
+}
+
+// WithOnDemandLoad sets whether to allow loading schema/table info on demand
+// from TiKV meta when not found in memory. This is useful for cross keyspace
+// sessions that want to access user tables without preloading all table metadata.
+func (b *Builder) WithOnDemandLoad(allowOnDemandLoad bool) *Builder {
+	b.allowOnDemandLoad = allowOnDemandLoad
 	return b
 }
 

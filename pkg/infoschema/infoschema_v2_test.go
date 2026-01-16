@@ -835,3 +835,46 @@ func TestGCOldFKVersion(t *testing.T) {
 		ChildFKName: ast.NewCIStr("fk"),
 	}, got[0])
 }
+
+func TestTableByNameOnDemandLoad(t *testing.T) {
+	r := internal.CreateAutoIDRequirement(t)
+	defer func() {
+		r.Store().Close()
+	}()
+
+	schemaName := ast.NewCIStr("testDB")
+	tableName := ast.NewCIStr("testTable")
+
+	dbInfo := internal.MockDBInfo(t, r.Store(), schemaName.O)
+	tblInfo := internal.MockTableInfo(t, r.Store(), tableName.O)
+	tblInfo.DBID = dbInfo.ID
+
+	// Create infoschema v2 with only database info in memory (NOT table info)
+	is := NewInfoSchemaV2(r, nil, NewData())
+	is.Data.addDB(1, dbInfo)
+
+	// Add database and table to TiKV meta (persistent storage)
+	internal.AddDB(t, r.Store(), dbInfo)
+	internal.AddTable(t, r.Store(), dbInfo.ID, tblInfo)
+
+	ver, err := r.Store().CurrentVersion(kv.GlobalTxnScope)
+	require.NoError(t, err)
+	is.base().schemaMetaVersion = 1
+	is.ts = ver.Ver
+
+	// Without on-demand loading, TableByName should fail
+	is.allowOnDemandLoad = false
+	_, err = is.TableByName(context.Background(), schemaName, tableName)
+	require.True(t, ErrTableNotExists.Equal(err))
+
+	// Enable on-demand loading, TableByName should succeed
+	is.allowOnDemandLoad = true
+	tbl, err := is.TableByName(context.Background(), schemaName, tableName)
+	require.NoError(t, err)
+	require.Equal(t, tblInfo.ID, tbl.Meta().ID)
+
+	// Verify TableByID also works with on-demand loading
+	tblByID, ok := is.TableByID(context.Background(), tblInfo.ID)
+	require.True(t, ok)
+	require.Equal(t, tblInfo.ID, tblByID.Meta().ID)
+}

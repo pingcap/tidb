@@ -188,7 +188,8 @@ func (m *Manager) GetOrCreate(
 		return nil, errors.Trace(err)
 	}
 	infoCache := infoschema.NewCache(store, int(vardef.SchemaVersionCacheLimit.Load()))
-	isSyncer := issyncer.NewCrossKSSyncer(store, infoCache, vardef.GetSchemaLease(), sessPool, isValidator, ks)
+	isSyncer := issyncer.NewCrossKSSyncer(store, infoCache, vardef.GetSchemaLease(), sessPool, isValidator, ks).
+		WithOnDemandLoad(true) // Enable on-demand loading of user tables
 	isSyncer.InitRequiredFields(
 		func() sessmgr.InfoSchemaCoordinator {
 			return coordinator
