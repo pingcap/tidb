@@ -937,6 +937,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		return nil, err
 	}
 
+	// Insert new entries into indices.
 	h, err := t.addIndices(sctx, recordID, r, txn, opt.GetCreateIdxOpt())
 	if err != nil {
 		return h, err
