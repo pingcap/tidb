@@ -98,7 +98,7 @@ go_test(
         "//pkg/lightning/membuf",
         "//pkg/objstore",
         "//pkg/objstore/objectio",
-        "//pkg/objstore/s3store",
+        "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/testkit/testfailpoint",

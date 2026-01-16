@@ -5,11 +5,10 @@ go_library(
     srcs = [
         "client.go",
         "interface.go",
-        "io.go",
         "ks3.go",
         "logger.go",
         "retry.go",
-        "s3.go",
+        "store.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/objstore/s3store",
     visibility = ["//visibility:public"],
@@ -47,10 +46,8 @@ go_library(
         "@com_github_ks3sdklib_aws_sdk_go//service/s3",
         "@com_github_ks3sdklib_aws_sdk_go//service/s3/s3manager",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
-        "@com_github_spf13_pflag//:pflag",
         "@org_uber_go_zap//:zap",
     ],
 )
