@@ -459,7 +459,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	if !ok {
 		return nil, false
 	}
-	outer := p.children[OuterChildIdx]
+	outer := p.children[outerChildIdx]
 	outerSchema := outer.Schema()
 	innerSchemaSet := intset.NewFastIntSet()
 	// Obtain all the columns that meet the requirements in the eq condition and other condition.
@@ -487,7 +487,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		//  but it is not in the equal/other condition.
 		//  We need to check whether inner column is not null in the origin table schema.
 		//  If it is not null column, it can be directly converted into an anti-semi join.
-		innerSch := p.Children()[1^OuterChildIdx].Schema()
+		innerSch := p.Children()[1^outerChildIdx].Schema()
 		idx := innerSch.ColumnIndex(isNullcol)
 		if mysql.HasNotNullFlag(innerSch.Columns[idx].RetType.GetFlag()) {
 			if proj != nil {
