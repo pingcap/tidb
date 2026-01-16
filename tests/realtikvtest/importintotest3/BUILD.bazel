@@ -14,7 +14,6 @@ go_test(
     race = "on",
     shard_count = 2,
     deps = [
-        "//br/pkg/storage",
         "//pkg/config/kerneltype",
         "//pkg/dxf/framework/proto",
         "//pkg/dxf/framework/storage",
@@ -24,6 +23,7 @@ go_test(
         "//pkg/executor/importer",
         "//pkg/kv",
         "//pkg/lightning/mydump",
+        "//pkg/objstore",
         "//pkg/planner/core",
         "//pkg/sessionctx/vardef",
         "//pkg/store",

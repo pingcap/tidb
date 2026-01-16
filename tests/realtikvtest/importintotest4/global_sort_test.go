@@ -424,7 +424,7 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/objstore/GCSReadUnexpectedEOF", "return(0)")
 	s.tk.MustExec("truncate table t")
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
@@ -549,7 +549,7 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 16, put: 13}")
+	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 13}")
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
@@ -560,18 +560,18 @@ func TestNextGenMetering(t *testing.T) {
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
 	s.EqualValues(27, sum.Bytes.Load())
-	s.EqualValues(2, sum.GetReqCnt.Load())
+	s.EqualValues(1, sum.GetReqCnt.Load())
 	s.EqualValues(5, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
 	s.EqualValues(288, sum.Bytes.Load())
-	s.EqualValues(6, sum.GetReqCnt.Load())
+	s.EqualValues(4, sum.GetReqCnt.Load())
 	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	// if we retry write, the bytes may be larger than 288
 	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
-	s.EqualValues(8, sum.GetReqCnt.Load())
+	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(2, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {

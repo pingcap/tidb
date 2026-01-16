@@ -28,7 +28,6 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/phayes/freeport"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -93,9 +93,9 @@ func genServerWithStorage(t *testing.T) (*fakestorage.Server, string) {
 }
 
 func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	storeBackend, err := objstore.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
@@ -108,9 +108,9 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 
 // check the file under dir or partitioned dir have files with keyword
 func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	storeBackend, err := objstore.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
@@ -992,7 +992,7 @@ func TestNextGenMetering(t *testing.T) {
 		return gotMeterData.Load() != ""
 	}, 30*time.Second, 300*time.Millisecond)
 	require.Contains(t, gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	require.Contains(t, gotMeterData.Load(), "requests{get: 7, put: 6}")
+	require.Contains(t, gotMeterData.Load(), "requests{get: 5, put: 6}")
 	// the read bytes is not stable, but it's more than 100B.
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	require.Regexp(t, `cluster{r: 1\d\dB, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
@@ -1004,13 +1004,13 @@ func TestNextGenMetering(t *testing.T) {
 	readIndexSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
 	mergeSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepMergeSort)
 	ingestSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepWriteAndIngest)
-	require.EqualValues(t, 1, readIndexSum.GetReqCnt.Load())
+	require.EqualValues(t, 0, readIndexSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, readIndexSum.PutReqCnt.Load())
 	require.Greater(t, readIndexSum.ReadBytes.Load(), int64(0))
 	require.EqualValues(t, 153, readIndexSum.Bytes.Load())
 	require.EqualValues(t, 3, readIndexSum.RowCnt.Load())
 
-	require.EqualValues(t, 3, mergeSum.GetReqCnt.Load())
+	require.EqualValues(t, 2, mergeSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, mergeSum.PutReqCnt.Load())
 	require.EqualValues(t, 0, mergeSum.ReadBytes.Load())
 	require.EqualValues(t, 0, mergeSum.Bytes.Load())
