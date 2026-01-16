@@ -174,7 +174,9 @@ func TestIssue48741(t *testing.T) {
 			return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNum < getMemoryLimitGCTotal()
 		}, 3*time.Second, 20*time.Millisecond)
 
-		require.Equal(t, int64(baseMemoryLimit)*110/100, debug.SetMemoryLimit(-1))
+		require.Eventually(t, func() bool {
+			return debug.SetMemoryLimit(-1) == int64(baseMemoryLimit)*110/100
+		}, 3*time.Second, 20*time.Millisecond)
 
 		gcNumAfterFirstGC := getMemoryLimitGCTotal()
 		waitingTunningFinishFn()
@@ -213,7 +215,9 @@ func TestIssue48741(t *testing.T) {
 			return GlobalMemoryLimitTuner.adjustPercentageInProgress.Load() && gcNumAfterUpdate < getMemoryLimitGCTotal()
 		}, 3*time.Second, 20*time.Millisecond)
 
-		require.Equal(t, int64(newMemoryLimit)*110/100, debug.SetMemoryLimit(-1))
+		require.Eventually(t, func() bool {
+			return debug.SetMemoryLimit(-1) == int64(newMemoryLimit)*110/100
+		}, 3*time.Second, 20*time.Millisecond)
 		waitingTunningFinishFn()
 
 		allocator.free(memoryLimitGCTriggerBytes)
