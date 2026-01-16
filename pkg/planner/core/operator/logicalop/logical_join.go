@@ -265,10 +265,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	return ret, newnChild, err
 }
 
-// isNullFromInner is to iterate all equal condition's inner columns except NullEQ ones
-// and all other condition's columns except GT, GE, LE, LT, NE ones. and then check where
-// is null columns is from the join key in the inner table.
-func isNullFromInner(innerSchSet *intset.FastIntSet, isNullColumnID int64, eq []*expression.ScalarFunction, other []expression.Expression) bool {
+// isIsNullColInInnerJoinKey checks whether the IS NULL column (above the join) is from the inner
+// side and appears in the join key/related predicates (excluding NullEQ; only GT/GE/LE/LT/NE in others).
+func isIsNullColInInnerJoinKey(innerSchSet *intset.FastIntSet, isNullColumnID int64, eq []*expression.ScalarFunction, other []expression.Expression) bool {
 	for _, s := range eq {
 		if s.FuncName.L == ast.NullEQ {
 			continue
@@ -436,7 +435,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	if !vaildProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
-	selConditionColInInner = isNullFromInner(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
+	selConditionColInInner = isIsNullColInInnerJoinKey(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
 	// resultProj is to generate the NULL values for the columns of the inner table, which is the
 	// expected result for this kind of anti-join query.
 	if selConditionColInInner {
@@ -479,6 +478,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 			p.SetChildren(args[1], args[0])
 		}
 		p.JoinType = base.AntiSemiJoin
+		p.MergeSchema()
 	}
 	return resultProj, selConditionColInInner
 }
