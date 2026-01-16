@@ -524,7 +524,12 @@ func (p *PhysicalProperty) HashCode() []byte {
 	if p.hashcode != nil {
 		return p.hashcode
 	}
-	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8 + (16+8)*len(p.PartialOrderInfo.SortItems)
+	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
+	if p.PartialOrderInfo != nil {
+		hashcodeSize += (16 + 8) * len(p.PartialOrderInfo.SortItems)
+	} else {
+		hashcodeSize += 8
+	}
 	p.hashcode = make([]byte, 0, hashcodeSize)
 	if p.CanAddEnforcer {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
