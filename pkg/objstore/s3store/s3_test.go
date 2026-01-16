@@ -38,6 +38,7 @@ import (
 	. "github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	. "github.com/pingcap/tidb/pkg/objstore/s3like"
 	. "github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/s3store/mock"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -59,9 +60,9 @@ func createGetBucketRegionServer(region string, statusCode int, incHeader bool) 
 
 func TestApply(t *testing.T) {
 	type testcase struct {
-		name      string
-		options   S3BackendOptions
-		errMsg    string
+		name    string
+		options S3BackendOptions
+		errMsg  string
 		errReturn bool
 	}
 	testFn := func(test *testcase, t *testing.T) {
@@ -1326,9 +1327,18 @@ func TestSendCreds(t *testing.T) {
 
 func TestObjectLock(t *testing.T) {
 	s := CreateS3Suite(t)
+
+	options := &backuppb.S3{
+		Region:       "us-west-2",
+		Bucket:       "bucket",
+		Prefix:       "prefix/",
+		Acl:          "acl",
+		Sse:          "sse",
+		StorageClass: "sc",
+	}
 	// resp is nil
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp is not nil, but resp.ObjectLockConfiguration is nil
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1336,7 +1346,7 @@ func TestObjectLock(t *testing.T) {
 			ObjectLockConfiguration: nil,
 		}, nil,
 	)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp.ObjectLockConfiguration is not nil, but resp.ObjectLockConfiguration.ObjectLockEnabled is empty
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1344,7 +1354,7 @@ func TestObjectLock(t *testing.T) {
 			ObjectLockConfiguration: &types.ObjectLockConfiguration{},
 		}, nil,
 	)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp.ObjectLockConfiguration.ObjectLockEnabled is illegal string
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1354,7 +1364,7 @@ func TestObjectLock(t *testing.T) {
 			},
 		}, nil,
 	)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp.ObjectLockConfiguration.ObjectLockEnabled is enabled
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1364,7 +1374,7 @@ func TestObjectLock(t *testing.T) {
 			},
 		}, nil,
 	)
-	require.Equal(t, true, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, true, IsObjectLockEnabled(s.MockS3, options))
 }
 
 func TestS3StorageBucketRegion(t *testing.T) {
@@ -1432,7 +1442,7 @@ func TestS3StorageBucketRegion(t *testing.T) {
 				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
 				&storeapi.Options{})
 			require.NoError(t, err)
-			ss, ok := es.(*S3Storage)
+			ss, ok := es.(*Storage)
 			require.True(t, ok)
 			require.Equal(t, region, ss.GetOptions().Region)
 		}(ca.name, ca.expectRegion, ca.s3)

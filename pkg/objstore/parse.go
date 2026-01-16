@@ -24,14 +24,15 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
-	S3     s3store.S3BackendOptions `json:"s3" toml:"s3"`
-	GCS    GCSBackendOptions        `json:"gcs" toml:"gcs"`
+	S3  s3like.S3BackendOptions `json:"s3" toml:"s3"`
+	GCS GCSBackendOptions       `json:"gcs" toml:"gcs"`
 	Azblob AzblobBackendOptions     `json:"azblob" toml:"azblob"`
 }
 
@@ -99,7 +100,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
-		var s3Options s3store.S3BackendOptions = s3store.S3BackendOptions{ForcePathStyle: true}
+		var s3Options s3like.S3BackendOptions = s3like.S3BackendOptions{ForcePathStyle: true}
 		if options != nil {
 			s3Options = options.S3
 		}

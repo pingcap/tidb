@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/injectfailpoint"
 	"github.com/pingcap/tidb/pkg/util/prefetch"
@@ -51,7 +52,10 @@ var (
 const (
 	// KS3SDKProvider ks3 sdk does not expose context, we use hardcoded timeout
 	// for network request
-	KS3SDKProvider = "ks3-sdk"
+	KS3SDKProvider      = "ks3-sdk"
+	maxSkipOffsetByRead = 1 << 16 // 64KB
+	// max number of retries when meets error
+	maxErrorRetries = 3
 )
 
 // KS3Storage acts almost same as S3Storage except it's used for kingsoft s3.
@@ -325,6 +329,7 @@ func (rs *KS3Storage) DeleteFile(ctx context.Context, file string) error {
 
 // DeleteFiles delete the files in batch in s3 storage.
 func (rs *KS3Storage) DeleteFiles(ctx context.Context, files []string) error {
+	const s3DeleteObjectsLimit = 1000
 	for len(files) > 0 {
 		batch := files
 		if len(batch) > s3DeleteObjectsLimit {
@@ -485,7 +490,7 @@ func (rs *KS3Storage) open(
 	ctx context.Context,
 	path string,
 	startOffset, endOffset int64,
-) (io.ReadCloser, RangeInfo, error) {
+) (io.ReadCloser, s3like.RangeInfo, error) {
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(rs.options.Bucket),
 		Key:    aws.String(rs.options.Prefix + path),
@@ -511,28 +516,28 @@ func (rs *KS3Storage) open(
 	input.Range = rangeOffset
 	result, err := rs.svc.GetObjectWithContext(ctx, input)
 	if err != nil {
-		return nil, RangeInfo{}, errors.Trace(err)
+		return nil, s3like.RangeInfo{}, errors.Trace(err)
 	}
 
-	var r RangeInfo
+	var r s3like.RangeInfo
 	// Those requests without a `Range` will have no `ContentRange` in the response,
 	// In this case, we'll parse the `ContentLength` field instead.
 	if isFullRangeRequest {
 		// We must ensure the `ContentLengh` has data even if for empty objects,
 		// otherwise we have no places to get the object size
 		if result.ContentLength == nil {
-			return nil, RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
+			return nil, s3like.RangeInfo{}, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed. The S3 object has no content length", path)
 		}
 		objectSize := *(result.ContentLength)
-		r = RangeInfo{
+		r = s3like.RangeInfo{
 			Start: 0,
 			End:   objectSize - 1,
 			Size:  objectSize,
 		}
 	} else {
-		r, err = ParseRangeInfo(result.ContentRange)
+		r, err = s3like.ParseRangeInfo(result.ContentRange)
 		if err != nil {
-			return nil, RangeInfo{}, errors.Trace(err)
+			return nil, s3like.RangeInfo{}, errors.Trace(err)
 		}
 	}
 
@@ -557,7 +562,7 @@ type ks3ObjectReader struct {
 	name         string
 	reader       io.ReadCloser
 	pos          int64
-	rangeInfo    RangeInfo
+	rangeInfo    s3like.RangeInfo
 	prefetchSize int
 }
 
@@ -747,7 +752,7 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *storeapi.
 		}()
 		uploader = s3Writer
 	}
-	bufSize := WriteBufferSize
+	bufSize := s3like.WriteBufferSize
 	if option != nil && option.PartSize > 0 {
 		bufSize = int(option.PartSize)
 	}
@@ -814,4 +819,25 @@ func (rs *KS3Storage) CopyFrom(ctx context.Context, e storeapi.Storage, spec sto
 		}
 	}
 	return nil
+}
+
+type asyncWriter struct {
+	wd  *io.PipeWriter
+	wg  *sync.WaitGroup
+	err error
+}
+
+// Write implement the objectio.Writer interface.
+func (s *asyncWriter) Write(_ context.Context, p []byte) (int, error) {
+	return s.wd.Write(p)
+}
+
+// Close implement the objectio.Writer interface.
+func (s *asyncWriter) Close(_ context.Context) error {
+	err := s.wd.Close()
+	if err != nil {
+		return err
+	}
+	s.wg.Wait()
+	return s.err
 }

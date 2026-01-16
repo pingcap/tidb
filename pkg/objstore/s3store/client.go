@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	goerrors "errors"
-	"fmt"
 	"io"
 	"path"
 
@@ -29,7 +28,6 @@ import (
 	"github.com/aws/smithy-go"
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
-	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -37,6 +35,12 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
+)
+
+const (
+	notFound     = "NotFound"
+	noSuchBucket = "NoSuchBucket"
+	noSuchKey    = "NoSuchKey"
 )
 
 type s3Client struct {
@@ -64,7 +68,7 @@ func (c *s3Client) CheckBucketExistence(ctx context.Context) error {
 func (c *s3Client) CheckListObjects(ctx context.Context) error {
 	input := &s3.ListObjectsInput{
 		Bucket:  aws.String(c.Bucket),
-		Prefix:  aws.String(c.Prefix.String()),
+		Prefix:  aws.String(c.PrefixStr()),
 		MaxKeys: aws.Int32(1),
 	}
 	_, err := c.svc.ListObjects(ctx, input)
@@ -76,9 +80,10 @@ func (c *s3Client) CheckListObjects(ctx context.Context) error {
 
 // CheckGetObject checks the permission of getObject
 func (c *s3Client) CheckGetObject(ctx context.Context) error {
+	key := c.ObjectKey(storeapi.GenPermCheckObjectKey())
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(c.Bucket),
-		Key:    aws.String("not-exists"),
+		Key:    aws.String(key),
 	}
 	_, err := c.svc.GetObject(ctx, input)
 	var aerr smithy.APIError
@@ -98,8 +103,7 @@ func (c *s3Client) CheckGetObject(ctx context.Context) error {
 // object to check the permission.
 // exported for testing.
 func (c *s3Client) CheckPutAndDeleteObject(ctx context.Context) (err error) {
-	file := fmt.Sprintf("access-check/%s", uuid.New().String())
-	key := c.Prefix.ObjectKey(file)
+	key := c.ObjectKey(storeapi.GenPermCheckObjectKey())
 	defer func() {
 		// we always delete the object used for permission check,
 		// even on error, since the object might be created successfully even
@@ -130,7 +134,7 @@ func (c *s3Client) CheckPutAndDeleteObject(ctx context.Context) (err error) {
 }
 
 func (c *s3Client) GetObject(ctx context.Context, name string, startOffset, endOffset int64) (*s3like.GetResp, error) {
-	key := c.Prefix.ObjectKey(name)
+	key := c.ObjectKey(name)
 	input := &s3.GetObjectInput{
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
@@ -161,7 +165,7 @@ func (c *s3Client) PutObject(ctx context.Context, name string, data []byte) erro
 }
 
 func (c *s3Client) buildPutObjectInput(options *backuppb.S3, file string, data []byte) *s3.PutObjectInput {
-	key := c.Prefix.ObjectKey(file)
+	key := c.ObjectKey(file)
 	input := &s3.PutObjectInput{
 		Body:   bytes.NewReader(data),
 		Bucket: aws.String(options.Bucket),
@@ -183,7 +187,7 @@ func (c *s3Client) buildPutObjectInput(options *backuppb.S3, file string, data [
 }
 
 func (c *s3Client) DeleteObject(ctx context.Context, name string) error {
-	key := c.Prefix.ObjectKey(name)
+	key := c.ObjectKey(name)
 	input := &s3.DeleteObjectInput{
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
@@ -199,7 +203,7 @@ func (c *s3Client) DeleteObjects(ctx context.Context, names []string) error {
 	}
 	objects := make([]types.ObjectIdentifier, 0, len(names))
 	for _, file := range names {
-		key := c.Prefix.ObjectKey(file)
+		key := c.ObjectKey(file)
 		objects = append(objects, types.ObjectIdentifier{
 			Key: aws.String(key),
 		})
@@ -221,7 +225,7 @@ func (c *s3Client) DeleteObjects(ctx context.Context, names []string) error {
 }
 
 func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error) {
-	key := c.Prefix.ObjectKey(name)
+	key := c.ObjectKey(name)
 	input := &s3.HeadObjectInput{
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
@@ -242,7 +246,7 @@ func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error
 }
 
 func (c *s3Client) ListObjects(ctx context.Context, extraPrefix string, marker *string, maxKeys int) (*s3like.ListResp, error) {
-	prefix := c.Prefix.ObjectKey(extraPrefix)
+	prefix := c.ObjectKey(extraPrefix)
 	req := &s3.ListObjectsInput{
 		Bucket:  aws.String(c.Bucket),
 		Prefix:  aws.String(prefix),
@@ -284,8 +288,8 @@ func (c *s3Client) ListObjects(ctx context.Context, extraPrefix string, marker *
 }
 
 func (c *s3Client) CopyObject(ctx context.Context, params *s3like.CopyInput) error {
-	fromKey := params.FromLoc.Prefix.ObjectKey(params.FromKey)
-	toKey := c.Prefix.ObjectKey(params.ToKey)
+	fromKey := params.FromLoc.ObjectKey(params.FromKey)
+	toKey := c.ObjectKey(params.ToKey)
 	copyInput := &s3.CopyObjectInput{
 		Bucket: aws.String(c.Bucket),
 		// NOTE: Perhaps we need to allow copy cross regions / accounts.
@@ -299,7 +303,7 @@ func (c *s3Client) CopyObject(ctx context.Context, params *s3like.CopyInput) err
 }
 
 func (c *s3Client) MultipartWriter(ctx context.Context, name string) (objectio.Writer, error) {
-	key := c.Prefix.ObjectKey(name)
+	key := c.ObjectKey(name)
 	input := &s3.CreateMultipartUploadInput{
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
@@ -332,12 +336,12 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 	up := manager.NewUploader(c.svc, func(u *manager.Uploader) {
 		u.PartSize = partSize
 		u.Concurrency = concurrency
-		u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(concurrency * HardcodedChunkSize)
+		u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(concurrency * s3like.HardcodedChunkSize)
 	})
 	return &multipartUploader{
 		uploader:     up,
 		BucketPrefix: c.BucketPrefix,
-		key:          c.Prefix.ObjectKey(name),
+		key:          c.ObjectKey(name),
 	}
 }
 
