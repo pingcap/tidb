@@ -35,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
 )
@@ -293,7 +294,7 @@ func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*s3l
 		o.UsePathStyle = true // Removes need for subdomain
 	})
 
-	st := s3like.NewS3StorageForTest(svc, &backuppb.S3{
+	st := s3store.NewS3StorageForTest(svc, &backuppb.S3{
 		Region:       "region",
 		Bucket:       bucketName,
 		Prefix:       prefixName,

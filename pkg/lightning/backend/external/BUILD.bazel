@@ -99,6 +99,7 @@ go_test(
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/s3like",
+        "//pkg/objstore/s3store",
         "//pkg/objstore/storeapi",
         "//pkg/resourcemanager/pool/workerpool",
         "//pkg/testkit/testfailpoint",
