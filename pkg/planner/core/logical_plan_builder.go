@@ -3782,6 +3782,13 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 	}
+	if sel.Kind == ast.SelectStmtKindValues {
+		p, err = b.buildValuesSelect(ctx, sel)
+		if err != nil {
+			return nil, err
+		}
+		return b.tryToBuildSequence(currentLayerCTEs, p), nil
+	}
 
 	p, err = b.buildTableRefs(ctx, sel.From)
 	if err != nil {
@@ -4041,6 +4048,49 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 	}
 
 	return b.tryToBuildSequence(currentLayerCTEs, p), nil
+}
+
+func (b *PlanBuilder) buildValuesSelect(ctx context.Context, sel *ast.SelectStmt) (base.LogicalPlan, error) {
+	if len(sel.Lists) == 0 {
+		return nil, plannererrors.ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
+	}
+	columnCount := len(sel.Lists[0].Values)
+	if columnCount == 0 {
+		return nil, plannererrors.ErrValuesClauseNoColumns.GenWithStackByArgs()
+	}
+	selects := make([]ast.Node, 0, len(sel.Lists))
+	for rowIdx, row := range sel.Lists {
+		if len(row.Values) == 0 {
+			return nil, plannererrors.ErrValuesClauseNoColumns.GenWithStackByArgs()
+		} else if len(row.Values) != columnCount {
+			return nil, plannererrors.ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
+		}
+		fields := make([]*ast.SelectField, 0, columnCount)
+		for colIdx, expr := range row.Values {
+			fields = append(fields, &ast.SelectField{
+				Expr:   expr,
+				AsName: ast.NewCIStr(fmt.Sprintf("column_%d", colIdx)),
+			})
+		}
+		rowSelect := &ast.SelectStmt{
+			Kind:             ast.SelectStmtKindSelect,
+			QueryBlockOffset: sel.QueryBlockOffset,
+			Fields:           &ast.FieldList{Fields: fields},
+		}
+		if rowIdx > 0 {
+			op := ast.UnionAll
+			rowSelect.AfterSetOperator = &op
+		}
+		selects = append(selects, rowSelect)
+	}
+	setOpr := &ast.SetOprStmt{
+		SelectList: &ast.SetOprSelectList{
+			Selects: selects,
+		},
+		OrderBy: sel.OrderBy,
+		Limit:   sel.Limit,
+	}
+	return b.buildSetOpr(ctx, setOpr)
 }
 
 func (b *PlanBuilder) tryToBuildSequence(ctes []*cteInfo, p base.LogicalPlan) base.LogicalPlan {

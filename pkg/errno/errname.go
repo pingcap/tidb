@@ -942,6 +942,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrCTEMaxRecursionDepth:                                  mysql.Message("Recursive query aborted after %d iterations. Try increasing @@cte_max_recursion_depth to a larger value", nil),
 	ErrTableWithoutPrimaryKey:                                mysql.Message("Unable to create or change a table without a primary key, when the system variable 'sql_require_primary_key' is set. Add a primary key to the table or unset this variable to avoid this message. Note that tables without a primary key can cause performance problems in row-based replication, so please consult your DBA before changing this setting.", nil),
 	ErrConstraintNotFound:                                    mysql.Message("Constraint '%s' does not exist.", nil),
+	ErrValuesClauseNoColumns:                                 mysql.Message("Each row of a VALUES clause must have at least one column, unless when used as source in an INSERT statement.", nil),
 	ErrDependentByCheckConstraint:                            mysql.Message("Check constraint '%s' uses column '%s', hence column cannot be dropped or renamed.", nil),
 	ErrEngineAttributeNotSupported:                           mysql.Message("Storage engine does not support ENGINE_ATTRIBUTE.", nil),
 	ErrJSONInBooleanContext:                                  mysql.Message("Evaluating a JSON value in SQL boolean context does an implicit comparison against JSON integer 0; if this is not what you want, consider converting JSON to a SQL numeric type with JSON_VALUE RETURNING", nil),
