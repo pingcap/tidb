@@ -6544,9 +6544,17 @@ func (b *PlanBuilder) buildReturningClause(
 	tableNames types.NameSlice,
 	mockPlan base.LogicalPlan,
 ) ([]expression.Expression, *expression.Schema, types.NameSlice, error) {
-	var exprs []expression.Expression
-	var cols []*expression.Column
-	var names types.NameSlice
+	capacity := 0
+	for _, field := range returning.Fields {
+		if field.WildCard != nil {
+			capacity += len(tableSchema.Columns)
+		} else {
+			capacity++
+		}
+	}
+	exprs := make([]expression.Expression, 0, capacity)
+	cols := make([]*expression.Column, 0, capacity)
+	names := make(types.NameSlice, 0, capacity)
 
 	for _, field := range returning.Fields {
 		// Handle RETURNING *
