@@ -110,7 +110,7 @@
         "End": 1500,
         "Count": 381,
         "MinEst": 9,
-        "MaxEst": 758
+        "MaxEst": 1502
       },
       {
         "Start": 300,
@@ -124,21 +124,21 @@
         "End": 300,
         "Count": 122,
         "MinEst": 9,
-        "MaxEst": 1508
+        "MaxEst": 467
       },
       {
         "Start": 100,
         "End": 200,
         "Count": 101,
         "MinEst": 9,
-        "MaxEst": 1508
+        "MaxEst": 383
       },
       {
         "Start": 200,
         "End": 400,
         "Count": 872,
         "MinEst": 759,
-        "MaxEst": 2258
+        "MaxEst": 1217
       },
       {
         "Start": 200,
@@ -152,21 +152,21 @@
         "End": 100,
         "Count": 80,
         "MinEst": 9,
-        "MaxEst": 1508
+        "MaxEst": 299
       },
       {
         "Start": -100,
         "End": 100,
         "Count": 132,
         "MinEst": 9,
-        "MaxEst": 1508
+        "MaxEst": 507
       },
       {
         "Start": -100,
         "End": 0,
         "Count": 60,
         "MinEst": 9,
-        "MaxEst": 1508
+        "MaxEst": 216
       }
     ]
   },
