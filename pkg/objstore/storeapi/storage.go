@@ -19,9 +19,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"path"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
@@ -288,4 +290,9 @@ func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal string) {
 		rangeVal = fmt.Sprintf("bytes=%d-", startOffset)
 	}
 	return
+}
+
+// GenPermCheckObjectKey generates a unique object key for permission checking.
+func GenPermCheckObjectKey() string {
+	return path.Join("perm-check", uuid.New().String())
 }
