@@ -719,8 +719,17 @@ func (hg *Histogram) TotalRowCount() float64 {
 // topNCount is the TopN total count to include in the histogram row count (pass 0 to exclude TopN).
 func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uint64) (float64, bool) {
 	histRowCount := hg.NotNullCount() + float64(hg.NullCount) + float64(topNCount)
+	// Calculate the percentage or NULLs in the original row count
+	// Assume that 50% of the newly added rows are NULLs
+	nullsRatio := (float64(hg.NullCount) / histRowCount) * 0.5
+	// Calcuate the percent of topN in the original row count
+	// Assume that 50% of the newly added rows are topN
+	topNRatio := (float64(topNCount) / histRowCount) * 0.5
+	addedRows := math.Abs(float64(realtimeRowCount) - histRowCount)
+	// Adjust the added rows by the NULLs and topN ratios
+	addedRows = addedRows * (1 - nullsRatio - topNRatio)
 	isNegative := realtimeRowCount < int64(histRowCount)
-	return math.Abs(float64(realtimeRowCount) - histRowCount), isNegative
+	return addedRows, isNegative
 }
 
 // NotNullCount indicates the count of non-null values in column histogram and single-column index histogram,
@@ -1132,8 +1141,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// oneValue assumes "one value qualifies", and is used as a lower bound.
 	// outOfRangeBetweenRate (100) avoids an artificially low NDV.
 	// TODO: If we have a large number of added rows, the NDV maybe underestimated.
-	histNDV = max(histNDV, int64(outOfRangeBetweenRate))
 	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
+	if float64(histNDV) < outOfRangeBetweenRate {
+		oneValue = max(oneValue, float64(realtimeRowCount)/float64(outOfRangeBetweenRate))
+	}
 
 	// Step 3: Exit if usage of modifications (changes to realtimeRowCount) is disabled.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
@@ -1268,10 +1279,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Step 8: Calculate the total percentage of the out-of-range rows.
 	// totalPercent is used for the average estimate (estRows)
 	// maxTotalPercent is used for the maximum estimate (maxAddedRows) - updated for entirelyOutOfRange
-	// In both cases - we limit any single out of range percentage to 50%
-	// because we never can truly estimate what percentage of rows are out of range.
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	maxTotalPercent := min(rightPercent, 0.5)
+	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
 
 	// Calculate estRows using totalPercent (average)
 	if totalPercent > 0 {

@@ -215,6 +215,7 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 
 		// handling the out-of-range part
 		// Unless the row count already covers the realtime row count
+		// 0.99 is used as a tolerance factor to account for minor estimation differences.
 		if cnt.Est < float64(realtimeRowCount)*0.99 && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			var count statistics.RowEstimate
 			histNDV := c.NDV
