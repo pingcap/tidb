@@ -423,6 +423,7 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
@@ -565,6 +566,8 @@ mock_import: mockgen
 gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
 	tools/bin/mockgen -package mockobjstore github.com/pingcap/tidb/pkg/objstore Storage > pkg/objstore/mockobjstore/objstore_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3store S3API > pkg/objstore/s3store/mock/s3api_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3like PrefixClient > pkg/objstore/s3like/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl/systable Manager > pkg/ddl/mock/systable_manager_mock.go
 

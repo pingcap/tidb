@@ -29,6 +29,8 @@ import (
 func TestGenLightningDataDir(t *testing.T) {
 	tmpDir := t.TempDir()
 	port, iPort := "5678", uint(5678)
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.TempDir = tmpDir
 		conf.Port = iPort

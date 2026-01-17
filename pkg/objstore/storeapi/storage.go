@@ -16,10 +16,14 @@ package storeapi
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
+	"path"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
 )
@@ -196,4 +200,99 @@ type Options struct {
 	// we don't consider the traffic consumed by network protocol, and traffic
 	// caused by retry
 	AccessRecording *recording.AccessStats
+}
+
+// Prefix is like a folder if not empty, we still call it a prefix to match S3
+// terminology.
+// if not empty, it cannot start with '/' and must end with a '/', such as
+// 'a/b/'. the folder name must be valid, we don't check it here.
+type Prefix string
+
+// NewPrefix returns a new Prefix instance from the given string.
+func NewPrefix(prefix string) Prefix {
+	p := strings.Trim(prefix, "/")
+	if p != "" {
+		p += "/"
+	}
+	return Prefix(p)
+}
+
+func (p Prefix) join(other Prefix) Prefix {
+	// due to the definition of Prefix, we can add them directly.
+	return p + other
+}
+
+// JoinStr returns a new Prefix by joining the given string to the current Prefix.
+func (p Prefix) JoinStr(str string) Prefix {
+	strPrefix := NewPrefix(str)
+	return p.join(strPrefix)
+}
+
+// ObjectKey returns the object key by joining the name to the Prefix.
+func (p Prefix) ObjectKey(name string) string {
+	// if p is not empty, it already ends with '/'.
+	// the name better not start with '/', else there will be double '/' in the
+	// key.
+	// this is existing behavior, we keep it.
+	return string(p) + name
+}
+
+// String implements fmt.Stringer interface.
+func (p Prefix) String() string {
+	return string(p)
+}
+
+// BucketPrefix represents a prefix in a bucket.
+type BucketPrefix struct {
+	Bucket string
+	Prefix Prefix
+}
+
+// NewBucketPrefix returns a new BucketPrefix instance.
+func NewBucketPrefix(bucket, prefix string) BucketPrefix {
+	return BucketPrefix{
+		Bucket: bucket,
+		Prefix: NewPrefix(prefix),
+	}
+}
+
+// ObjectKey returns the object key by joining the name to the Prefix.
+func (bp *BucketPrefix) ObjectKey(name string) string {
+	return bp.Prefix.ObjectKey(name)
+}
+
+// PrefixStr returns the Prefix as a string.
+func (bp *BucketPrefix) PrefixStr() string {
+	return bp.Prefix.String()
+}
+
+// GetHTTPRange returns the HTTP Range header value for the given start and end
+// offsets.
+// If endOffset is not 0, startOffset must <= endOffset; we don't check the
+// validity here.
+// If startOffset == 0 and endOffset == 0, `full` is true and `rangeVal` is empty.
+// Otherwise, a partial object is requested, `full` is false and `rangeVal`
+// contains the Range header value.
+func GetHTTPRange(startOffset, endOffset int64) (full bool, rangeVal string) {
+	// If we just open part of the object, we set `Range` in the request.
+	// If we meant to open the whole object, not just a part of it,
+	// we do not pass the range in the request,
+	// so that even if the object is empty, we can still get the response without errors.
+	// Then this behavior is similar to opening an empty file in local file system.
+	switch {
+	case endOffset > startOffset:
+		// both end of http Range header are inclusive
+		rangeVal = fmt.Sprintf("bytes=%d-%d", startOffset, endOffset-1)
+	case startOffset == 0:
+		// opening the whole object, no need to fill the `Range` field in the request
+		full = true
+	default:
+		rangeVal = fmt.Sprintf("bytes=%d-", startOffset)
+	}
+	return
+}
+
+// GenPermCheckObjectKey generates a unique object key for permission checking.
+func GenPermCheckObjectKey() string {
+	return path.Join("perm-check", uuid.New().String())
 }
