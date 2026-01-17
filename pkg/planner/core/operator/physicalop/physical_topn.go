@@ -366,7 +366,7 @@ func checkPartialOrderPattern(ctx base.PlanContext, plan base.LogicalPlan) bool 
 	}
 }
 
-// getPhysTopNWithPartialOrderProperty generates PhysicalTopN plans with partial order property t
+// getPhysTopNWithPartialOrderProperty generates PhysicalTopN plans with partial order property
 // that use partial order optimization with prefix index.
 func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
 	// Convert logical TopN ByItems to SortItems for PartialOrderInfo
