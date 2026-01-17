@@ -1199,7 +1199,7 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 	}
 	// Constraint 2: The last column of the index must be a prefix column
 	if path.IdxColLens[len(path.IdxCols)-1] == types.UnspecifiedLength {
-		// The Last column is not a prefix column, skip this index
+		// The last column is not a prefix column, skip this index
 		return nil
 	}
 	// Extract ORDER BY columns
