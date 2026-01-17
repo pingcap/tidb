@@ -1143,7 +1143,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// TODO: If we have a large number of added rows, the NDV maybe underestimated.
 	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
 	if float64(histNDV) < outOfRangeBetweenRate {
-		oneValue = max(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate)
+		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
 	}
 
 	// Step 3: Exit if usage of modifications (changes to realtimeRowCount) is disabled.
