@@ -135,8 +135,9 @@ func parseSearchTerm(word string) searchTerm {
 // 2. No stop word filtering - searches for all words regardless of length or commonness
 // 3. No word length limits - MySQL ignores words shorter than ft_min_word_len (default 4)
 // 4. No word boundaries - LIKE %word% matches within words (e.g., "cat" matches "concatenate")
-//    - Affects prefix wildcard: "Optim*" matches "reOptimizing" (MySQL would not match)
-//    - Affects phrase matching: "quick brown" matches "aquick brownie" (MySQL would not match)
+//   - Affects prefix wildcard: "Optim*" matches "reOptimizing" (MySQL would not match)
+//   - Affects phrase matching: "quick brown" matches "aquick brownie" (MySQL would not match)
+//
 // 5. Case sensitivity - follows column collation (MySQL full-text search is case-insensitive)
 // 6. Performance - LIKE predicates cannot use full-text indexes (much slower on large datasets)
 //
@@ -255,28 +256,28 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 		}
 
 		return expression.ComposeCNFCondition(er.sctx, allPredicates...), nil
-	} else {
-		// Natural Language Mode: split into words and OR them together
-		words := strings.Fields(searchText)
-		if len(words) == 0 {
-			return &expression.Constant{
-				Value:   types.NewIntDatum(0),
-				RetType: types.NewFieldType(mysql.TypeTiny),
-			}, nil
-		}
+	}
 
-		for _, column := range columns {
-			var wordPredicates []expression.Expression
-			for _, word := range words {
-				pred, err := er.buildLikePredicate(column, word, false, false)
-				if err != nil {
-					return nil, err
-				}
-				wordPredicates = append(wordPredicates, pred)
+	// Natural Language Mode: split into words and OR them together
+	words := strings.Fields(searchText)
+	if len(words) == 0 {
+		return &expression.Constant{
+			Value:   types.NewIntDatum(0),
+			RetType: types.NewFieldType(mysql.TypeTiny),
+		}, nil
+	}
+
+	for _, column := range columns {
+		var wordPredicates []expression.Expression
+		for _, word := range words {
+			pred, err := er.buildLikePredicate(column, word, false, false)
+			if err != nil {
+				return nil, err
 			}
-			if len(wordPredicates) > 0 {
-				columnPredicates = append(columnPredicates, expression.ComposeDNFCondition(er.sctx, wordPredicates...))
-			}
+			wordPredicates = append(wordPredicates, pred)
+		}
+		if len(wordPredicates) > 0 {
+			columnPredicates = append(columnPredicates, expression.ComposeDNFCondition(er.sctx, wordPredicates...))
 		}
 	}
 
@@ -311,7 +312,7 @@ func (er *expressionRewriter) buildLikePredicate(
 	column expression.Expression,
 	term string,
 	isNegated bool,
-	isPrefixMatch bool,
+	_ bool,
 ) (expression.Expression, error) {
 	// Escape special LIKE characters in the search term
 	escapedTerm := escapeLikePattern(term)
@@ -323,9 +324,8 @@ func (er *expressionRewriter) buildLikePredicate(
 	// perfectly enforce word-start boundaries. We use %term% which may produce false positives
 	// (matching mid-word like "reOptimizing"), but avoids false negatives. This is an acceptable
 	// limitation for a fallback implementation.
-	var pattern string
 	// Both prefix and general matches use %term% to find the term anywhere in text
-	pattern = "%" + escapedTerm + "%"
+	pattern := "%" + escapedTerm + "%"
 
 	// Create constant for pattern
 	patternConst := &expression.Constant{
