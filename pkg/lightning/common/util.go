@@ -55,6 +55,11 @@ const (
 	defaultMaxRetry = 3
 )
 
+// SQLUseDB generates the SQL statement to select a database.
+func SQLUseDB(dbName string) string {
+	return "USE " + EscapeIdentifier(dbName)
+}
+
 // MySQLConnectParam records the parameters needed to connect to a MySQL database.
 type MySQLConnectParam struct {
 	Host                     string

@@ -300,9 +300,8 @@ func (si *SchemaImporter) runJob(ctx context.Context, job *schemaJob, stmts []st
 	}
 
 	if job.stmtType == schemaCreateView {
-		sb := new(strings.Builder)
-		sqlescape.MustFormatSQL(sb, "USE %n", job.dbName)
-		if err := sqlWithRetry.Exec(ctx, "use db", sb.String()); err != nil {
+		stmt := common.SQLUseDB(job.dbName)
+		if err := sqlWithRetry.Exec(ctx, "run create schema job", stmt); err != nil {
 			return errors.Trace(err)
 		}
 	}
