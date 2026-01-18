@@ -341,6 +341,10 @@ const (
 	// TiDBOptEnableCorrelationAdjustment is used to indicates if enable correlation adjustment.
 	TiDBOptEnableCorrelationAdjustment = "tidb_opt_enable_correlation_adjustment"
 
+	// TiDBOptFulltextSearchFallback controls the behavior when MATCH...AGAINST syntax is used.
+	// Options: 'like' (convert to LIKE predicates, default), 'error' (throw error if no fulltext index).
+	TiDBOptFulltextSearchFallback = "tidb_opt_fulltext_search_fallback"
+
 	// TiDBOptLimitPushDownThreshold determines if push Limit or TopN down to TiKV forcibly.
 	TiDBOptLimitPushDownThreshold = "tidb_opt_limit_push_down_threshold"
 
@@ -1405,6 +1409,7 @@ const (
 	DefOptMPPOuterJoinFixedBuildSide        = false
 	DefOptWriteRowID                        = false
 	DefOptEnableCorrelationAdjustment       = true
+	DefOptFulltextSearchFallback            = "like"
 	DefOptLimitPushDownThreshold            = 5000
 	DefOptCorrelationThreshold              = 0.9
 	DefOptCorrelationExpFactor              = 1

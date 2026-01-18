@@ -1692,6 +1692,8 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		er.ctxStack[len(er.ctxStack)-1].SetCoercibility(expression.CoercibilityExplicit)
 		er.ctxStack[len(er.ctxStack)-1].SetCharsetAndCollation(arg.GetType(er.sctx.GetEvalCtx()).GetCharset(), arg.GetType(er.sctx.GetEvalCtx()).GetCollate())
+	case *ast.MatchAgainst:
+		er.matchAgainstToExpression(v)
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
@@ -2215,6 +2217,74 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 
 	er.ctxStackPop(2)
 	er.ctxStackAppend(function, types.EmptyName)
+}
+
+func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
+	// Check the session variable to determine behavior
+	var fallbackMode string
+	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
+		fallbackMode = er.planCtx.builder.ctx.GetSessionVars().FulltextSearchFallback
+	} else {
+		fallbackMode = "like" // default
+	}
+
+	if fallbackMode == "error" {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST without fulltext index")
+		return
+	}
+
+	// The Against expression has been visited and should be on the ctxStack
+	// Pop it from the stack
+	l := len(er.ctxStack)
+	if l < 1 {
+		er.err = errors.Errorf("MATCH...AGAINST: expected Against expression on stack")
+		return
+	}
+
+	againstExpr := er.ctxStack[l-1]
+	er.ctxStackPop(1)
+
+	// Check if it's a constant string
+	constExpr, ok := againstExpr.(*expression.Constant)
+	if !ok {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-constant search string")
+		return
+	}
+
+	searchText, err := constExpr.Eval(er.sctx.GetEvalCtx(), chunk.Row{})
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	if searchText.Kind() != types.KindString {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with non-string search expression")
+		return
+	}
+
+	// Resolve column expressions
+	var columns []expression.Expression
+	for _, colName := range v.ColumnNames {
+		idx, err := expression.FindFieldName(er.names, colName)
+		if err != nil {
+			er.err = err
+			return
+		}
+		if idx < 0 {
+			er.err = errors.Errorf("Unknown column '%s' in MATCH...AGAINST", colName.Name.O)
+			return
+		}
+		columns = append(columns, er.schema.Columns[idx])
+	}
+
+	// Convert to LIKE predicates
+	result, err := er.convertMatchAgainstToLike(columns, searchText.GetString(), v.Modifier)
+	if err != nil {
+		er.err = err
+		return
+	}
+
+	er.ctxStackAppend(result, types.EmptyName)
 }
 
 func (er *expressionRewriter) regexpToScalarFunc(v *ast.PatternRegexpExpr) {

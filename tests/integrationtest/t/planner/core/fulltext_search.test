@@ -1,0 +1,55 @@
+# Test cases for MATCH...AGAINST to LIKE conversion
+
+# Setup
+set tidb_cost_model_version=1;
+set @@tidb_opt_fulltext_search_fallback='like';
+drop table if exists articles;
+create table articles (id int primary key, title varchar(200), body text);
+insert into articles values
+  (1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
+  (2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
+  (3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'),
+  (4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'),
+  (5, 'MySQL Security', 'How to secure your MySQL database');
+
+# Test 1: Natural Language Mode - Single Column
+select id, title from articles where match(title) against('MySQL tutorial');
+
+# Test 2: Natural Language Mode - Multiple Columns
+select id, title from articles where match(title, body) against('MySQL tutorial');
+
+# Test 3: Boolean Mode - Required Terms
+select id, title from articles where match(title) against('+MySQL +tutorial' in boolean mode);
+
+# Test 4: Boolean Mode - Excluded Terms
+select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
+
+# Test 5: Boolean Mode - Prefix Wildcard
+select id, title from articles where match(title) against('Optim*' in boolean mode);
+
+# Test 6: Boolean Mode - Exact Phrase
+select id, title from articles where match(title, body) against('"MySQL tutorial"' in boolean mode);
+
+# Test 7: Boolean Mode - Complex Query
+select id, title from articles where match(title, body) against('+MySQL +database -PostgreSQL' in boolean mode);
+
+# Test 8: Boolean Mode - Optional Terms
+select id, title from articles where match(title) against('tutorial security' in boolean mode);
+
+# Test 9: Empty Search String
+select id, title from articles where match(title) against('');
+
+# Test 10: Test with error mode
+set @@tidb_opt_fulltext_search_fallback='error';
+-- error 8200
+select id, title from articles where match(title) against('MySQL');
+
+# Test 11: Switch back to like mode
+set @@tidb_opt_fulltext_search_fallback='like';
+select id, title from articles where match(title) against('MySQL');
+
+# Test 12: Natural Language Mode with single word
+select id, title from articles where match(title) against('PostgreSQL');
+
+# Cleanup
+drop table if exists articles;
