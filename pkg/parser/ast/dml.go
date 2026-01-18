@@ -4175,8 +4175,8 @@ func (n *SplitIndexOption) Accept(v Visitor) (Node, bool) {
 func (n *SplitIndexOption) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("SPLIT ")
 
+	// Table split, empty prefix
 	if n.TableLevel {
-		// Table split
 	} else if n.PrimaryKey {
 		ctx.WriteKeyWord("PRIMARY KEY ")
 	} else {
