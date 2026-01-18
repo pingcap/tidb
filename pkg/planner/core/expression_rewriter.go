@@ -2233,16 +2233,18 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 
-	// The Against expression has been visited and should be on the ctxStack
-	// Pop it from the stack
+	// Both the column expressions and Against expression have been visited
+	// and pushed onto the ctxStack. The stack layout is:
+	// [..., col1, col2, ..., colN, against]
+	numColumns := len(v.ColumnNames)
 	l := len(er.ctxStack)
-	if l < 1 {
-		er.err = errors.Errorf("MATCH...AGAINST: expected Against expression on stack")
+	if l < numColumns+1 {
+		er.err = errors.Errorf("MATCH...AGAINST: expected %d column expressions and Against expression on stack, got %d", numColumns+1, l)
 		return
 	}
 
+	// The Against expression is the last one on the stack
 	againstExpr := er.ctxStack[l-1]
-	er.ctxStackPop(1)
 
 	// Check if it's a constant string
 	constExpr, ok := againstExpr.(*expression.Constant)
@@ -2262,20 +2264,15 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 
-	// Resolve column expressions
-	var columns []expression.Expression
-	for _, colName := range v.ColumnNames {
-		idx, err := expression.FindFieldName(er.names, colName)
-		if err != nil {
-			er.err = err
-			return
-		}
-		if idx < 0 {
-			er.err = errors.Errorf("Unknown column '%s' in MATCH...AGAINST", colName.Name.O)
-			return
-		}
-		columns = append(columns, er.schema.Columns[idx])
+	// Get the column expressions from the stack
+	// They're at positions [l-numColumns-1 : l-1]
+	columns := make([]expression.Expression, numColumns)
+	for i := 0; i < numColumns; i++ {
+		columns[i] = er.ctxStack[l-numColumns-1+i]
 	}
+
+	// Pop all column expressions and the Against expression
+	er.ctxStackPop(numColumns + 1)
 
 	// Convert to LIKE predicates
 	result, err := er.convertMatchAgainstToLike(columns, searchText.GetString(), v.Modifier)

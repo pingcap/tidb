@@ -243,6 +243,21 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 	return expression.ComposeDNFCondition(er.sctx, columnPredicates...), nil
 }
 
+// escapeLikePattern escapes special LIKE characters (%, _, \) in the search term
+// so they are treated as literal characters rather than wildcards
+func escapeLikePattern(term string) string {
+	var result strings.Builder
+	result.Grow(len(term))
+	for i := 0; i < len(term); i++ {
+		ch := term[i]
+		if ch == '\\' || ch == '%' || ch == '_' {
+			result.WriteByte('\\')
+		}
+		result.WriteByte(ch)
+	}
+	return result.String()
+}
+
 // buildLikePredicate builds a single LIKE predicate for a column and search term
 func (er *expressionRewriter) buildLikePredicate(
 	column expression.Expression,
@@ -251,17 +266,20 @@ func (er *expressionRewriter) buildLikePredicate(
 	isPrefixMatch bool,
 	isPhrase bool,
 ) (expression.Expression, error) {
+	// Escape special LIKE characters in the search term
+	escapedTerm := escapeLikePattern(term)
+
 	// Build the pattern
 	var pattern string
 	if isPhrase {
 		// Exact phrase: %term%
-		pattern = "%" + term + "%"
+		pattern = "%" + escapedTerm + "%"
 	} else if isPrefixMatch {
 		// Prefix match: term%
-		pattern = term + "%"
+		pattern = escapedTerm + "%"
 	} else {
 		// General match: %term%
-		pattern = "%" + term + "%"
+		pattern = "%" + escapedTerm + "%"
 	}
 
 	// Create constant for pattern

@@ -129,3 +129,46 @@ func TestParseSearchTerm(t *testing.T) {
 		})
 	}
 }
+
+func TestEscapeLikePattern(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{
+			input:    "normal text",
+			expected: "normal text",
+		},
+		{
+			input:    "100%",
+			expected: "100\\%",
+		},
+		{
+			input:    "test_file",
+			expected: "test\\_file",
+		},
+		{
+			input:    "path\\to\\file",
+			expected: "path\\\\to\\\\file",
+		},
+		{
+			input:    "mix_%_all",
+			expected: "mix\\_\\%\\_all",
+		},
+		{
+			input:    "\\%_",
+			expected: "\\\\\\%\\_",
+		},
+		{
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := escapeLikePattern(tt.input)
+			require.Equal(t, tt.expected, result, "Escaped pattern should match")
+		})
+	}
+}

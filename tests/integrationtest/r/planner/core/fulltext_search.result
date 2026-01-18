@@ -1,79 +1,83 @@
-# Test cases for MATCH...AGAINST to LIKE conversion
-
-# Setup
 set tidb_cost_model_version=1;
 set @@tidb_opt_fulltext_search_fallback='like';
 drop table if exists articles;
 create table articles (id int primary key, title varchar(200), body text);
 insert into articles values
-  (1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
-  (2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
-  (3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'),
-  (4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'),
-  (5, 'MySQL Security', 'How to secure your MySQL database');
-
-# Test 1: Natural Language Mode - Single Column
+(1, 'MySQL Tutorial', 'This tutorial provides a basic MySQL tutorial'),
+(2, 'How To Use MySQL Well', 'After you went through a MySQL tutorial'),
+(3, 'Optimizing MySQL', 'In this tutorial we will show how to optimize MySQL'),
+(4, 'MySQL vs. PostgreSQL', 'This article compares MySQL and PostgreSQL'),
+(5, 'MySQL Security', 'How to secure your MySQL database');
 select id, title from articles where match(title) against('MySQL tutorial');
-
-# Test 2: Natural Language Mode - Multiple Columns
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
 select id, title from articles where match(title, body) against('MySQL tutorial');
-
-# Test 3: Boolean Mode - Required Terms
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
 select id, title from articles where match(title) against('+MySQL +tutorial' in boolean mode);
-
-# Test 4: Boolean Mode - Excluded Terms
+id	title
 select id, title from articles where match(title) against('+MySQL -tutorial' in boolean mode);
-
-# Test 5: Boolean Mode - Prefix Wildcard
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
 select id, title from articles where match(title) against('Optim*' in boolean mode);
-
-# Test 6: Boolean Mode - Exact Phrase
+id	title
+3	Optimizing MySQL
 select id, title from articles where match(title, body) against('"MySQL tutorial"' in boolean mode);
-
-# Test 7: Boolean Mode - Complex Query
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
 select id, title from articles where match(title, body) against('+MySQL +database -PostgreSQL' in boolean mode);
-
-# Test 8: Boolean Mode - Optional Terms
+id	title
+5	MySQL Security
 select id, title from articles where match(title) against('tutorial security' in boolean mode);
-
-# Test 9: Empty Search String
+id	title
 select id, title from articles where match(title) against('');
-
-# Test 10: Test with error mode
+id	title
 set @@tidb_opt_fulltext_search_fallback='error';
--- error 1235
 select id, title from articles where match(title) against('MySQL');
-
-# Test 11: Switch back to like mode
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST without fulltext index'
 set @@tidb_opt_fulltext_search_fallback='like';
 select id, title from articles where match(title) against('MySQL');
-
-# Test 12: Natural Language Mode with single word
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
 select id, title from articles where match(title) against('PostgreSQL');
-
-# Test 13: Test escaping of special LIKE characters
+id	title
+4	MySQL vs. PostgreSQL
 drop table if exists special_chars;
 create table special_chars (id int primary key, content varchar(200));
 insert into special_chars values
-  (1, 'Progress is at 100%'),
-  (2, 'Progress is at 50%'),
-  (3, 'File name is test_file.txt'),
-  (4, 'Path is C:\\Windows\\System32'),
-  (5, 'Normal text without special chars');
-
-# Test searching for literal % character
+(1, 'Progress is at 100%'),
+(2, 'Progress is at 50%'),
+(3, 'File name is test_file.txt'),
+(4, 'Path is C:\\Windows\\System32'),
+(5, 'Normal text without special chars');
 select id, content from special_chars where match(content) against('100%');
-
-# Test searching for literal _ character
+id	content
+1	Progress is at 100%
 select id, content from special_chars where match(content) against('test_file');
-
-# Test searching for literal \ character
+id	content
+3	File name is test_file.txt
 select id, content from special_chars where match(content) against('C:\\Windows');
-
-# Test Boolean mode with special characters
+id	content
+4	Path is C:\Windows\System32
 select id, content from special_chars where match(content) against('+100% +Progress' in boolean mode);
-
+id	content
+1	Progress is at 100%
 drop table if exists special_chars;
-
-# Cleanup
 drop table if exists articles;
