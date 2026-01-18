@@ -271,14 +271,11 @@ func (er *expressionRewriter) buildLikePredicate(
 
 	// Build the pattern
 	var pattern string
-	if isPhrase {
-		// Exact phrase: %term%
-		pattern = "%" + escapedTerm + "%"
-	} else if isPrefixMatch {
+	if isPrefixMatch {
 		// Prefix match: term%
 		pattern = escapedTerm + "%"
 	} else {
-		// General match: %term%
+		// General match (words) or exact phrase: %term%
 		pattern = "%" + escapedTerm + "%"
 	}
 
