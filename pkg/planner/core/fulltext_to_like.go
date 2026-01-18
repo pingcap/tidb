@@ -171,7 +171,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 
 			// AND all required terms
 			for _, term := range required {
-				pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch, term.isPhrase)
+				pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
 				if err != nil {
 					return nil, err
 				}
@@ -180,7 +180,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 
 			// AND NOT all excluded terms
 			for _, term := range excluded {
-				pred, err := er.buildLikePredicate(column, term.word, true, term.isPrefixMatch, term.isPhrase)
+				pred, err := er.buildLikePredicate(column, term.word, true, term.isPrefixMatch)
 				if err != nil {
 					return nil, err
 				}
@@ -191,7 +191,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 			if len(optional) > 0 {
 				var optionalPreds []expression.Expression
 				for _, term := range optional {
-					pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch, term.isPhrase)
+					pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
 					if err != nil {
 						return nil, err
 					}
@@ -220,7 +220,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 		for _, column := range columns {
 			var wordPredicates []expression.Expression
 			for _, word := range words {
-				pred, err := er.buildLikePredicate(column, word, false, false, false)
+				pred, err := er.buildLikePredicate(column, word, false, false)
 				if err != nil {
 					return nil, err
 				}
@@ -264,7 +264,6 @@ func (er *expressionRewriter) buildLikePredicate(
 	term string,
 	isNegated bool,
 	isPrefixMatch bool,
-	isPhrase bool,
 ) (expression.Expression, error) {
 	// Escape special LIKE characters in the search term
 	escapedTerm := escapeLikePattern(term)
