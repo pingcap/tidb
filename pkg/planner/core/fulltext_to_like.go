@@ -46,6 +46,11 @@ func parseBooleanSearchString(text string) []searchTerm {
 		case '"':
 			if inQuote {
 				// End of phrase
+				// NOTE: Phrase matching in MySQL full-text search finds the exact phrase as a sequence
+				// of words (word boundaries are enforced). Using LIKE %phrase%, we cannot perfectly
+				// enforce word boundaries without REGEXP. For example, "quick brown" would match
+				// "aquick brownie" which MySQL full-text search would not match. This is an acceptable
+				// limitation for a fallback implementation.
 				phrase := current.String()
 				if phrase != "" {
 					terms = append(terms, searchTerm{
@@ -121,6 +126,22 @@ func parseSearchTerm(word string) searchTerm {
 }
 
 // convertMatchAgainstToLike converts a MATCH...AGAINST expression to LIKE predicates
+//
+// This is a fallback implementation since TiDB does not natively support full-text search.
+// It provides basic text matching capabilities but has the following semantic differences
+// from MySQL's full-text search:
+//
+// 1. No relevance scoring - returns 1 for match, 0 for no match (MySQL returns a relevance score)
+// 2. No stop word filtering - searches for all words regardless of length or commonness
+// 3. No word length limits - MySQL ignores words shorter than ft_min_word_len (default 4)
+// 4. No word boundaries - LIKE %word% matches within words (e.g., "cat" matches "concatenate")
+//    - Affects prefix wildcard: "Optim*" matches "reOptimizing" (MySQL would not match)
+//    - Affects phrase matching: "quick brown" matches "aquick brownie" (MySQL would not match)
+// 5. Case sensitivity - follows column collation (MySQL full-text search is case-insensitive)
+// 6. Performance - LIKE predicates cannot use full-text indexes (much slower on large datasets)
+//
+// Supported Boolean mode operators: + (required), - (excluded), * (prefix wildcard), "..." (phrase)
+// Unsupported operators: ~ (negation with ranking), > < (relevance modifiers), () (grouping)
 func (er *expressionRewriter) convertMatchAgainstToLike(
 	columns []expression.Expression,
 	searchText string,
@@ -165,48 +186,75 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 			}
 		}
 
-		// Build predicates for each column
-		for _, column := range columns {
-			var predicates []expression.Expression
+		// Build predicates with correct Boolean logic for multiple columns
+		// In MySQL, MATCH(col1, col2) AGAINST('+word1 +word2') means:
+		// - word1 must appear in (col1 OR col2)
+		// - word2 must appear in (col1 OR col2)
+		var allPredicates []expression.Expression
 
-			// AND all required terms
-			for _, term := range required {
+		// For each required term: (col1 LIKE %term% OR col2 LIKE %term%)
+		for _, term := range required {
+			var termColumnPreds []expression.Expression
+			for _, column := range columns {
 				pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
 				if err != nil {
 					return nil, err
 				}
-				predicates = append(predicates, pred)
+				termColumnPreds = append(termColumnPreds, pred)
 			}
+			// At least one column must match this required term
+			if len(termColumnPreds) > 0 {
+				allPredicates = append(allPredicates, expression.ComposeDNFCondition(er.sctx, termColumnPreds...))
+			}
+		}
 
-			// AND NOT all excluded terms
-			for _, term := range excluded {
-				pred, err := er.buildLikePredicate(column, term.word, true, term.isPrefixMatch)
+		// For each excluded term: NOT(col1 LIKE %term% OR col2 LIKE %term%)
+		for _, term := range excluded {
+			var termColumnPreds []expression.Expression
+			for _, column := range columns {
+				pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
 				if err != nil {
 					return nil, err
 				}
-				predicates = append(predicates, pred)
+				termColumnPreds = append(termColumnPreds, pred)
 			}
+			// None of the columns should match this excluded term
+			if len(termColumnPreds) > 0 {
+				notPred, err := er.newFunction(ast.UnaryNot, types.NewFieldType(mysql.TypeTiny),
+					expression.ComposeDNFCondition(er.sctx, termColumnPreds...))
+				if err != nil {
+					return nil, err
+				}
+				allPredicates = append(allPredicates, notPred)
+			}
+		}
 
-			// OR all optional terms (if any)
-			if len(optional) > 0 {
-				var optionalPreds []expression.Expression
-				for _, term := range optional {
+		// For optional terms: OR across all term-column combinations
+		if len(optional) > 0 {
+			var allOptionalPreds []expression.Expression
+			for _, term := range optional {
+				for _, column := range columns {
 					pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
 					if err != nil {
 						return nil, err
 					}
-					optionalPreds = append(optionalPreds, pred)
-				}
-				if len(optionalPreds) > 0 {
-					predicates = append(predicates, expression.ComposeDNFCondition(er.sctx, optionalPreds...))
+					allOptionalPreds = append(allOptionalPreds, pred)
 				}
 			}
-
-			// If we have any predicates for this column, combine them with AND
-			if len(predicates) > 0 {
-				columnPredicates = append(columnPredicates, expression.ComposeCNFCondition(er.sctx, predicates...))
+			if len(allOptionalPreds) > 0 {
+				allPredicates = append(allPredicates, expression.ComposeDNFCondition(er.sctx, allOptionalPreds...))
 			}
 		}
+
+		// AND all predicates together
+		if len(allPredicates) == 0 {
+			return &expression.Constant{
+				Value:   types.NewIntDatum(0),
+				RetType: types.NewFieldType(mysql.TypeTiny),
+			}, nil
+		}
+
+		return expression.ComposeCNFCondition(er.sctx, allPredicates...), nil
 	} else {
 		// Natural Language Mode: split into words and OR them together
 		words := strings.Fields(searchText)
@@ -269,14 +317,15 @@ func (er *expressionRewriter) buildLikePredicate(
 	escapedTerm := escapeLikePattern(term)
 
 	// Build the pattern
+	// NOTE: Prefix matching (word*) in MySQL full-text search matches words that START with
+	// the prefix, but the word can appear anywhere in the text. For example, "Optim*" should
+	// match "Optimizing MySQL" but NOT "reOptimizing". Using LIKE without REGEXP, we cannot
+	// perfectly enforce word-start boundaries. We use %term% which may produce false positives
+	// (matching mid-word like "reOptimizing"), but avoids false negatives. This is an acceptable
+	// limitation for a fallback implementation.
 	var pattern string
-	if isPrefixMatch {
-		// Prefix match: term%
-		pattern = escapedTerm + "%"
-	} else {
-		// General match (words) or exact phrase: %term%
-		pattern = "%" + escapedTerm + "%"
-	}
+	// Both prefix and general matches use %term% to find the term anywhere in text
+	pattern = "%" + escapedTerm + "%"
 
 	// Create constant for pattern
 	patternConst := &expression.Constant{
