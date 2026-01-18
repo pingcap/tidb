@@ -75,6 +75,19 @@ func TestParseBooleanSearchString(t *testing.T) {
 				{word: "word2", isExcluded: true},
 			},
 		},
+		{
+			input: `"unclosed quote`,
+			expected: []searchTerm{
+				{word: "unclosed quote", isPhrase: true},
+			},
+		},
+		{
+			input: "word1\t\nword2",
+			expected: []searchTerm{
+				{word: "word1"},
+				{word: "word2"},
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -116,6 +129,14 @@ func TestParseSearchTerm(t *testing.T) {
 		{
 			input:    "word",
 			expected: searchTerm{word: "word"},
+		},
+		{
+			input:    "",
+			expected: searchTerm{word: ""},
+		},
+		{
+			input:    "+*",
+			expected: searchTerm{word: "", isRequired: true, isPrefixMatch: true},
 		},
 	}
 

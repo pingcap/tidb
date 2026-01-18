@@ -80,4 +80,34 @@ select id, content from special_chars where match(content) against('+100% +Progr
 id	content
 1	Progress is at 100%
 drop table if exists special_chars;
+select id, title from articles where match(title) against('-PostgreSQL -Security' in boolean mode);
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+select id, title from articles where match(title) against('"MySQL tutorial' in boolean mode);
+id	title
+select id, title from articles where match(title) against('+MySQL	+tutorial
+-Security' in boolean mode);
+id	title
+select id, title from articles where match(title) against('+MySQL +* tutorial' in boolean mode);
+id	title
+select id, title from articles where match(title) against('+MySQL -PostgreSQL -Security -Well' in boolean mode);
+id	title
+1	MySQL Tutorial
+3	Optimizing MySQL
+select id, title from articles where match(title) against('+MySQL -Security tutorial "How To" Optim*' in boolean mode);
+id	title
+2	How To Use MySQL Well
+3	Optimizing MySQL
+select id, title from articles where match(title) against('
+');
+id	title
+select id, title from articles where match(title) against('MySQL     tutorial    PostgreSQL');
+id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
 drop table if exists articles;

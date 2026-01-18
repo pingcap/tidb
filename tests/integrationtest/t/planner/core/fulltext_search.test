@@ -75,5 +75,31 @@ select id, content from special_chars where match(content) against('+100% +Progr
 
 drop table if exists special_chars;
 
+# Test 14: Boolean mode - only excluded terms (no required/optional)
+select id, title from articles where match(title) against('-PostgreSQL -Security' in boolean mode);
+
+# Test 15: Boolean mode - unclosed quote (should treat as phrase)
+select id, title from articles where match(title) against('"MySQL tutorial' in boolean mode);
+
+# Test 16: Boolean mode - mixed whitespace (tabs and newlines)
+select id, title from articles where match(title) against('+MySQL	+tutorial
+-Security' in boolean mode);
+
+# Test 17: Boolean mode - empty word after operator removal (+* should be ignored)
+select id, title from articles where match(title) against('+MySQL +* tutorial' in boolean mode);
+
+# Test 18: Boolean mode - multiple excluded terms
+select id, title from articles where match(title) against('+MySQL -PostgreSQL -Security -Well' in boolean mode);
+
+# Test 19: Boolean mode - all term types combined
+select id, title from articles where match(title) against('+MySQL -Security tutorial "How To" Optim*' in boolean mode);
+
+# Test 20: Natural language mode - only whitespace
+select id, title from articles where match(title) against('
+  ');
+
+# Test 21: Natural language mode - multiple spaces between words
+select id, title from articles where match(title) against('MySQL     tutorial    PostgreSQL');
+
 # Cleanup
 drop table if exists articles;
