@@ -15,9 +15,12 @@
 package core
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -37,6 +40,8 @@ func parseBooleanSearchString(text string) []searchTerm {
 	var terms []searchTerm
 	var current strings.Builder
 	inQuote := false
+	phraseIsRequired := false
+	phraseIsExcluded := false
 	i := 0
 
 	for i < len(text) {
@@ -54,13 +59,29 @@ func parseBooleanSearchString(text string) []searchTerm {
 				phrase := current.String()
 				if phrase != "" {
 					terms = append(terms, searchTerm{
-						word:     phrase,
-						isPhrase: true,
+						word:       phrase,
+						isRequired: phraseIsRequired,
+						isExcluded: phraseIsExcluded,
+						isPhrase:   true,
 					})
 				}
 				current.Reset()
 				inQuote = false
+				phraseIsRequired = false
+				phraseIsExcluded = false
 			} else {
+				// Check for leading operator before the quote (e.g., +"phrase" or -"phrase")
+				if current.Len() > 0 {
+					prefix := current.String()
+					if len(prefix) > 0 {
+						if prefix[0] == '+' {
+							phraseIsRequired = true
+						} else if prefix[0] == '-' {
+							phraseIsExcluded = true
+						}
+					}
+					current.Reset()
+				}
 				// Start of phrase
 				inQuote = true
 			}
@@ -125,6 +146,75 @@ func parseSearchTerm(word string) searchTerm {
 	return term
 }
 
+// hasFulltextIndex checks if a fulltext index exists for the given columns
+func hasFulltextIndex(is infoschema.InfoSchema, columnNames []*ast.ColumnName) (bool, error) {
+	if len(columnNames) == 0 {
+		return false, nil
+	}
+
+	// All columns in a MATCH clause must be from the same table
+	// Get the schema and table from the first column
+	schema := columnNames[0].Schema
+	tableName := columnNames[0].Table
+
+	// If schema is not specified, we cannot determine the table
+	// In this case, we'll need to check later during execution
+	if tableName.L == "" {
+		return false, nil
+	}
+
+	// Get the table from info schema
+	tbl, err := is.TableByName(nil, schema, tableName)
+	if err != nil {
+		// Table not found, cannot check for fulltext index
+		return false, nil
+	}
+
+	tblInfo := tbl.Meta()
+	if tblInfo == nil {
+		return false, nil
+	}
+
+	// Extract column names from the MATCH clause
+	matchColumns := make([]string, len(columnNames))
+	for i, col := range columnNames {
+		matchColumns[i] = col.Name.L // Use lowercase for case-insensitive comparison
+	}
+
+	// Check each index to see if it's a fulltext index covering the exact columns
+	for _, idx := range tblInfo.Indices {
+		// Check if this is a fulltext index
+		if idx.Tp != ast.IndexTypeFulltext {
+			continue
+		}
+
+		// Check if the index is in a usable state
+		if idx.State != model.StatePublic {
+			continue
+		}
+
+		// Check if the index covers the exact set of columns
+		if len(idx.Columns) != len(matchColumns) {
+			continue
+		}
+
+		// Extract index column names
+		idxColumns := make([]string, len(idx.Columns))
+		for i, col := range idx.Columns {
+			idxColumns[i] = col.Name.L
+		}
+
+		// Check if the columns match (order doesn't matter for MATCH...AGAINST)
+		slices.Sort(matchColumns)
+		slices.Sort(idxColumns)
+		if slices.Equal(matchColumns, idxColumns) {
+			return true, nil
+		}
+	}
+
+	return false, nil
+}
+
 // convertMatchAgainstToLike converts a MATCH...AGAINST expression to LIKE predicates
 //
 // This is a fallback implementation since TiDB does not natively support full-text search.
@@ -134,9 +224,14 @@ func parseSearchTerm(word string) searchTerm {
 // 1. No relevance scoring - returns 1 for match, 0 for no match (MySQL returns a relevance score)
 // 2. No stop word filtering - searches for all words regardless of length or commonness
 // 3. No word length limits - MySQL ignores words shorter than ft_min_word_len (default 4)
-// 4. No word boundaries - LIKE %word% matches within words (e.g., "cat" matches "concatenate")
-//   - Affects prefix wildcard: "Optim*" matches "reOptimizing" (MySQL would not match)
-//   - Affects phrase matching: "quick brown" matches "aquick brownie" (MySQL would not match)
+// 4. No word boundaries - LIKE %term% matches substrings anywhere, not just complete words
+//   - Simple terms: "cat" matches "concatenate", "category", "application"
+//     (MySQL FTS only matches "cat" as a standalone word)
+//   - Prefix wildcard: "Optim*" matches "reOptimizing", "Optimizing"
+//     (MySQL FTS only matches words starting with "Optim" like "Optimizing", not "reOptimizing")
+//   - Phrase matching: "quick brown" matches "aquick brownie"
+//     (MySQL FTS only matches the exact phrase with word boundaries)
+//   This limitation exists because LIKE cannot enforce word boundaries without REGEXP
 //
 // 5. Case sensitivity - follows column collation (MySQL full-text search is case-insensitive)
 // 6. Performance - LIKE predicates cannot use full-text indexes (much slower on large datasets)
@@ -295,8 +390,18 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 // escapeLikePattern escapes special LIKE characters (%, _, \) in the search term
 // so they are treated as literal characters rather than wildcards
 func escapeLikePattern(term string) string {
+	// Count special characters to pre-allocate the exact buffer size needed
+	escapeCount := 0
+	for i := range len(term) {
+		ch := term[i]
+		if ch == '\\' || ch == '%' || ch == '_' {
+			escapeCount++
+		}
+	}
+
+	// Allocate exact size: original length + number of escape characters
 	var result strings.Builder
-	result.Grow(len(term))
+	result.Grow(len(term) + escapeCount)
 	for i := range len(term) {
 		ch := term[i]
 		if ch == '\\' || ch == '%' || ch == '_' {

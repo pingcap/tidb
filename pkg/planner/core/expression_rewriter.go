@@ -2220,7 +2220,24 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 }
 
 func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
-	// Check the session variable to determine behavior
+	// Check if a fulltext index exists for the given columns
+	var hasIndex bool
+	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.is != nil {
+		var err error
+		hasIndex, err = hasFulltextIndex(er.planCtx.builder.is, v.ColumnNames)
+		if err != nil {
+			er.err = err
+			return
+		}
+	}
+
+	// If a fulltext index exists, TiDB doesn't support it yet
+	if hasIndex {
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with fulltext index (native fulltext search not supported)")
+		return
+	}
+
+	// No fulltext index exists - check fallback mode
 	var fallbackMode string
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		fallbackMode = er.planCtx.builder.ctx.GetSessionVars().FulltextSearchFallback
@@ -2233,6 +2250,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 		return
 	}
 
+	// Fallback mode is "like" - convert to LIKE predicates
 	// Both the column expressions and Against expression have been visited
 	// and pushed onto the ctxStack. The stack layout is:
 	// [..., col1, col2, ..., colN, against]

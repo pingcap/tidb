@@ -101,5 +101,20 @@ select id, title from articles where match(title) against('
 # Test 21: Natural language mode - multiple spaces between words
 select id, title from articles where match(title) against('MySQL     tutorial    PostgreSQL');
 
+# Test 22: Boolean mode - required phrase with + operator
+select id, title from articles where match(title) against('+"MySQL Tutorial"' in boolean mode);
+
+# Test 23: Boolean mode - excluded phrase with - operator
+select id, title from articles where match(title) against('-"MySQL Tutorial"' in boolean mode);
+
+# Test 24: Boolean mode - mix of required/excluded phrases and words
+select id, title from articles where match(title) against('+MySQL +"How To" -PostgreSQL' in boolean mode);
+
+# NOTE: An additional test would verify that MATCH...AGAINST returns an error when a fulltext
+# index exists (since TiDB doesn't natively support fulltext search yet). However, we cannot
+# test this in the integration test environment because creating fulltext indexes requires
+# TiFlash, which is not available in the test setup. The code properly checks for fulltext
+# indexes and returns an error when one is found (see expression_rewriter.go:matchAgainstToExpression).
+
 # Cleanup
 drop table if exists articles;

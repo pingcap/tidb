@@ -88,6 +88,35 @@ func TestParseBooleanSearchString(t *testing.T) {
 				{word: "word2"},
 			},
 		},
+		{
+			input: `+"required phrase"`,
+			expected: []searchTerm{
+				{word: "required phrase", isRequired: true, isPhrase: true},
+			},
+		},
+		{
+			input: `-"excluded phrase"`,
+			expected: []searchTerm{
+				{word: "excluded phrase", isExcluded: true, isPhrase: true},
+			},
+		},
+		{
+			input: `+"required phrase" optional -"excluded phrase"`,
+			expected: []searchTerm{
+				{word: "required phrase", isRequired: true, isPhrase: true},
+				{word: "optional"},
+				{word: "excluded phrase", isExcluded: true, isPhrase: true},
+			},
+		},
+		{
+			input: `+word1 +"required phrase" -word2 -"excluded phrase"`,
+			expected: []searchTerm{
+				{word: "word1", isRequired: true},
+				{word: "required phrase", isRequired: true, isPhrase: true},
+				{word: "word2", isExcluded: true},
+				{word: "excluded phrase", isExcluded: true, isPhrase: true},
+			},
+		},
 	}
 
 	for _, tt := range tests {

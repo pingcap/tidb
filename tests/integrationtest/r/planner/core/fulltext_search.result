@@ -110,4 +110,16 @@ id	title
 3	Optimizing MySQL
 4	MySQL vs. PostgreSQL
 5	MySQL Security
+select id, title from articles where match(title) against('+"MySQL Tutorial"' in boolean mode);
+id	title
+1	MySQL Tutorial
+select id, title from articles where match(title) against('-"MySQL Tutorial"' in boolean mode);
+id	title
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
+select id, title from articles where match(title) against('+MySQL +"How To" -PostgreSQL' in boolean mode);
+id	title
+2	How To Use MySQL Well
 drop table if exists articles;
