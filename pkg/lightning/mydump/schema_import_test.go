@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"regexp"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -123,6 +124,10 @@ func TestSchemaImporter(t *testing.T) {
 				AddRow("test04").AddRow("test05"))
 		mock.ExpectQuery("SHOW CREATE TABLE `test02`.`t`").
 			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t", "CREATE TABLE `t` (a int);"))
+		// mock.ExpectExec(regexp.QuoteMeta("USE `test02`")).WillReturnResult(sqlmock.NewResult(0, 0))
+
+		// mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `test02`.`t`")).
+		//	WillReturnResult(sqlmock.NewResult(0, 0))
 		require.NoError(t, importer.Run(ctx, dbMetas))
 		require.NoError(t, mock.ExpectationsWereMet())
 	})
@@ -157,6 +162,11 @@ func TestSchemaImporter(t *testing.T) {
 			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("t1", "CREATE TABLE `t1` (a int);"))
 		mock.ExpectQuery("SHOW CREATE TABLE `test01`.`T2`").
 			WillReturnRows(sqlmock.NewRows([]string{"Table", "Create Table"}).AddRow("T2", "CREATE TABLE `t2` (a int);"))
+		// mock.ExpectExec(regexp.QuoteMeta("USE `test01`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		// mock.ExpectExec(regexp.QuoteMeta("USE `test01`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		// mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `test01`.`t1`")).
+		//	WillReturnResult(sqlmock.NewResult(0, 0))
+		// mock.ExpectExec(regexp.QuoteMeta("USE `test01`")).WillReturnResult(sqlmock.NewResult(0, 0))
 		require.NoError(t, importer.Run(ctx, dbMetas))
 		require.NoError(t, mock.ExpectationsWereMet())
 		require.NoError(t, os.Remove(path.Join(tempDir, fileName)))
@@ -178,7 +188,8 @@ func TestSchemaImporter(t *testing.T) {
 				{DB: "test01", Name: "t2", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameT2}}},
 			}},
 		}
-		mock.ExpectExec("CREATE TABLE IF NOT EXISTS `test01`.`t1`").
+		// mock.ExpectExec(regexp.QuoteMeta("USE `test01`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta("CREATE TABLE IF NOT EXISTS `test01`.`t1`")).
 			WillReturnError(errors.New("non retryable create table error"))
 		require.ErrorContains(t, importer2.Run(ctx, dbMetas), "non retryable create table error")
 		require.NoError(t, mock.ExpectationsWereMet())
@@ -225,13 +236,45 @@ func TestSchemaImporter(t *testing.T) {
 			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01").AddRow("test02"))
 		mock.ExpectQuery("VIEWS WHERE TABLE_SCHEMA = 'test02'").
 			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}).AddRow("V1"))
-		mock.ExpectExec("VIEW `test02`.`V2` AS SELECT").
+		mock.ExpectExec(regexp.QuoteMeta("USE `test02`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(regexp.QuoteMeta("CREATE ALGORITHM = UNDEFINED DEFINER = CURRENT_USER SQL SECURITY DEFINER VIEW `test02`.`V2` AS SELECT * FROM `t`;")).
 			WillReturnResult(sqlmock.NewResult(0, 0))
 		require.NoError(t, importer.Run(ctx, dbMetas))
 		require.NoError(t, mock.ExpectationsWereMet())
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV0)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV1)))
 		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV2)))
+	})
+
+	t.Run("view: implicit database usage", func(t *testing.T) {
+		mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
+			sqlmock.NewRows([]string{"SCHEMA_NAME"}).AddRow("test01"))
+		mock.ExpectQuery("VIEWS WHERE TABLE_SCHEMA = 'test01'").
+			WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME"}))
+		fileNameV1 := "test01.v1-schema-view.sql"
+		// This view definition uses 't1' without qualification, so it depends on 'USE test01'
+		require.NoError(t, os.WriteFile(path.Join(tempDir, fileNameV1), []byte("CREATE VIEW v1 AS SELECT * FROM t1;"), 0o644))
+		dbMetas := []*MDDatabaseMeta{
+			{Name: "test01", Views: []*MDTableMeta{
+				{DB: "test01", Name: "v1", charSet: "auto", SchemaFile: FileInfo{FileMeta: SourceFileMeta{Path: fileNameV1}}}}},
+		}
+		
+
+		// IMPORTANT: We expect "USE `test01`" to be executed before CREATE VIEW
+		mock.ExpectExec(regexp.QuoteMeta("USE `test01`")).WillReturnResult(sqlmock.NewResult(0, 0))
+		
+		// We use createIfNotExistsStmt to get the exact list of statements
+		p := parser.New()
+		p.SetSQLMode(mysql.SQLMode(0))
+		stmts, err := createIfNotExistsStmt(p, "CREATE VIEW v1 AS SELECT * FROM t1;", "test01", "v1")
+		require.NoError(t, err)
+		for _, stmt := range stmts {
+			mock.ExpectExec(regexp.QuoteMeta(stmt)).WillReturnResult(sqlmock.NewResult(0, 0))
+		}
+
+		require.NoError(t, importer.Run(ctx, dbMetas))
+		require.NoError(t, mock.ExpectationsWereMet())
+		require.NoError(t, os.Remove(path.Join(tempDir, fileNameV1)))
 	})
 }
 
@@ -250,7 +293,7 @@ func TestSchemaImporterManyTables(t *testing.T) {
 	store, err := storage.NewLocalStorage(tempDir)
 	require.NoError(t, err)
 	logger := log.Logger{Logger: zap.NewExample()}
-	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 8)
+	importer := NewSchemaImporter(logger, mysql.SQLMode(0), db, store, 1)
 
 	mock.ExpectQuery(`information_schema.SCHEMATA`).WillReturnRows(
 		sqlmock.NewRows([]string{"SCHEMA_NAME"}))
@@ -264,7 +307,8 @@ func TestSchemaImporterManyTables(t *testing.T) {
 			tblName := fmt.Sprintf("t%03d", j)
 			fileName := fmt.Sprintf("%s.%s-schema.sql", dbName, tblName)
 			require.NoError(t, os.WriteFile(path.Join(tempDir, fileName), fmt.Appendf(nil, "CREATE TABLE %s(a int);", tblName), 0o644))
-			mock.ExpectExec(fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s`", dbName, tblName)).
+			// mock.ExpectExec(regexp.QuoteMeta(fmt.Sprintf("USE `%s`", dbName))).WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectExec(regexp.QuoteMeta(fmt.Sprintf("CREATE TABLE IF NOT EXISTS `%s`.`%s`", dbName, tblName))).
 				WillReturnResult(sqlmock.NewResult(0, 0))
 			dbMeta.Tables = append(dbMeta.Tables, &MDTableMeta{
 				DB: dbName, Name: tblName, charSet: "auto",
