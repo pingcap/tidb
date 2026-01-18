@@ -109,12 +109,15 @@ func parseBooleanSearchString(text string) []searchTerm {
 	if current.Len() > 0 {
 		if inQuote {
 			// Unclosed quote, treat as phrase and preserve operator flags
-			terms = append(terms, searchTerm{
-				word:       current.String(),
-				isRequired: phraseIsRequired,
-				isExcluded: phraseIsExcluded,
-				isPhrase:   true,
-			})
+			phrase := current.String()
+			if phrase != "" {
+				terms = append(terms, searchTerm{
+					word:       phrase,
+					isRequired: phraseIsRequired,
+					isExcluded: phraseIsExcluded,
+					isPhrase:   true,
+				})
+			}
 		} else {
 			word := current.String()
 			terms = append(terms, parseSearchTerm(word))
@@ -237,7 +240,7 @@ func hasFulltextIndex(is infoschema.InfoSchema, columnNames []*ast.ColumnName) (
 //     (MySQL FTS only matches words starting with "Optim" like "Optimizing", not "reOptimizing")
 //   - Phrase matching: "quick brown" matches "aquick brownie"
 //     (MySQL FTS only matches the exact phrase with word boundaries)
-//   This limitation exists because LIKE cannot enforce word boundaries without REGEXP
+//     This limitation exists because LIKE cannot enforce word boundaries without REGEXP
 //
 // 5. Case sensitivity - follows column collation (MySQL full-text search is case-insensitive)
 // 6. Performance - LIKE predicates cannot use full-text indexes (much slower on large datasets)
