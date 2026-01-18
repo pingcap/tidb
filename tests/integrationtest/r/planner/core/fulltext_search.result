@@ -92,14 +92,21 @@ select id, title from articles where match(title) against('+MySQL	+tutorial
 id	title
 select id, title from articles where match(title) against('+MySQL +* tutorial' in boolean mode);
 id	title
+1	MySQL Tutorial
+2	How To Use MySQL Well
+3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
+5	MySQL Security
 select id, title from articles where match(title) against('+MySQL -PostgreSQL -Security -Well' in boolean mode);
 id	title
 1	MySQL Tutorial
 3	Optimizing MySQL
 select id, title from articles where match(title) against('+MySQL -Security tutorial "How To" Optim*' in boolean mode);
 id	title
+1	MySQL Tutorial
 2	How To Use MySQL Well
 3	Optimizing MySQL
+4	MySQL vs. PostgreSQL
 select id, title from articles where match(title) against('
 ');
 id	title

@@ -73,12 +73,15 @@ func parseBooleanSearchString(text string) []searchTerm {
 				// Check for leading operator before the quote (e.g., +"phrase" or -"phrase")
 				if current.Len() > 0 {
 					prefix := current.String()
-					if len(prefix) > 0 {
-						if prefix[0] == '+' {
-							phraseIsRequired = true
-						} else if prefix[0] == '-' {
-							phraseIsExcluded = true
-						}
+					// Only extract operator if prefix is exactly "+" or "-"
+					// Otherwise, treat it as a regular word
+					if prefix == "+" {
+						phraseIsRequired = true
+					} else if prefix == "-" {
+						phraseIsExcluded = true
+					} else {
+						// Not an operator, parse as a regular word first
+						terms = append(terms, parseSearchTerm(prefix))
 					}
 					current.Reset()
 				}
@@ -105,10 +108,12 @@ func parseBooleanSearchString(text string) []searchTerm {
 	// Handle remaining content
 	if current.Len() > 0 {
 		if inQuote {
-			// Unclosed quote, treat as phrase
+			// Unclosed quote, treat as phrase and preserve operator flags
 			terms = append(terms, searchTerm{
-				word:     current.String(),
-				isPhrase: true,
+				word:       current.String(),
+				isRequired: phraseIsRequired,
+				isExcluded: phraseIsExcluded,
+				isPhrase:   true,
 			})
 		} else {
 			word := current.String()
@@ -180,6 +185,8 @@ func hasFulltextIndex(is infoschema.InfoSchema, columnNames []*ast.ColumnName) (
 	for i, col := range columnNames {
 		matchColumns[i] = col.Name.L // Use lowercase for case-insensitive comparison
 	}
+	// Sort once outside the loop for efficiency
+	slices.Sort(matchColumns)
 
 	// Check each index to see if it's a fulltext index covering the exact columns
 	for _, idx := range tblInfo.Indices {
@@ -198,15 +205,14 @@ func hasFulltextIndex(is infoschema.InfoSchema, columnNames []*ast.ColumnName) (
 			continue
 		}
 
-		// Extract index column names
+		// Extract index column names and sort
 		idxColumns := make([]string, len(idx.Columns))
 		for i, col := range idx.Columns {
 			idxColumns[i] = col.Name.L
 		}
+		slices.Sort(idxColumns)
 
 		// Check if the columns match (order doesn't matter for MATCH...AGAINST)
-		slices.Sort(matchColumns)
-		slices.Sort(idxColumns)
 		if slices.Equal(matchColumns, idxColumns) {
 			return true, nil
 		}
@@ -325,8 +331,10 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 			}
 		}
 
-		// For optional terms: OR across all term-column combinations
-		if len(optional) > 0 {
+		// For optional terms:
+		// - If there are required/excluded terms, ignore optional terms (we can't rank in LIKE fallback)
+		// - If there are ONLY optional terms, require at least one to match
+		if len(optional) > 0 && len(required) == 0 && len(excluded) == 0 {
 			var allOptionalPreds []expression.Expression
 			for _, term := range optional {
 				for _, column := range columns {
@@ -338,11 +346,12 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 				}
 			}
 			if len(allOptionalPreds) > 0 {
-				allPredicates = append(allPredicates, expression.ComposeDNFCondition(er.sctx, allOptionalPreds...))
+				// When there are only optional terms, at least one must match
+				return expression.ComposeDNFCondition(er.sctx, allOptionalPreds...), nil
 			}
 		}
 
-		// AND all predicates together
+		// AND all required/excluded predicates together
 		if len(allPredicates) == 0 {
 			return &expression.Constant{
 				Value:   types.NewIntDatum(0),
