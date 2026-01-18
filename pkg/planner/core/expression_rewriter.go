@@ -2267,7 +2267,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	// Get the column expressions from the stack
 	// They're at positions [l-numColumns-1 : l-1]
 	columns := make([]expression.Expression, numColumns)
-	for i := 0; i < numColumns; i++ {
+	for i := range numColumns {
 		columns[i] = er.ctxStack[l-numColumns-1+i]
 	}
 

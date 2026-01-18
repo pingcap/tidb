@@ -248,7 +248,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 func escapeLikePattern(term string) string {
 	var result strings.Builder
 	result.Grow(len(term))
-	for i := 0; i < len(term); i++ {
+	for i := range len(term) {
 		ch := term[i]
 		if ch == '\\' || ch == '%' || ch == '_' {
 			result.WriteByte('\\')
