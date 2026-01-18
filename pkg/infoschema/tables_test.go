@@ -20,6 +20,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/stretchr/testify/require"
+	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
 func TestIsTiFlashStore(t *testing.T) {
@@ -88,4 +89,24 @@ func TestIsTiFlashWriteNode(t *testing.T) {
 		},
 	}
 	require.True(t, isTiFlashWriteNode(multiLabelStore))
+}
+
+func TestIssue62639(t *testing.T) {
+	// 
+	colInfo := []model.ColumnInfo{
+		{name: "COL1", tp: mysql.TypeVarchar, size: 64},  
+		{name: "COL2", tp: mysql.TypeLong, size: 11},  
+		{name: "COL3", tp: mysql.TypeDatetime, size: 19},
+	}
+	tableInfo := buildTableMeta("TEST_TABLE", colInfo)
+
+	// Validate that column IDs start from 1 (not 0) and are sequential  
+	require.Equal(t, int64(1), tableInfo.Columns[0].ID)  
+	require.Equal(t, int64(2), tableInfo.Columns[1].ID)  
+	require.Equal(t, int64(3), tableInfo.Columns[2].ID)  
+	  
+	// Also validate column names are preserved correctly  
+	require.Equal(t, "COL1", tableInfo.Columns[0].Name.O)  
+	require.Equal(t, "COL2", tableInfo.Columns[1].Name.O)  
+	require.Equal(t, "COL3", tableInfo.Columns[2].Name.O)  
 }
