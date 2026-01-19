@@ -63,7 +63,7 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
 			switch cc := sel.Children()[0].(type) {
 			case *logicalop.LogicalJoin:
-				proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema(), nil)
+				proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema())
 				if ok {
 					if proj != nil {
 						proj.SetChildren(cc)
@@ -74,9 +74,12 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 					isChanged = true
 				}
 			case *logicalop.LogicalProjection:
+				if !validProjForConvertAntiJoin(cc) {
+					return nil, false
+				}
 				join, ok := cc.Children()[0].(*logicalop.LogicalJoin)
 				if ok {
-					proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema(), cc)
+					proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
 					if ok {
 						if proj != nil {
 							// projection <- projection <- anti semi join
@@ -174,8 +177,7 @@ Additionally, we found that there may be a projection between select and join.
 Currently, we only support projections with column mapping relationships, not transformation relationships.
 	Projection[null->col1,null->col2,col3,col4] <- anti semi join[outer side: col1 col2, inner side: col3 col4]
 */
-func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expression, selectSch *expression.Schema,
-	proj *logicalop.LogicalProjection) (resultProj *logicalop.LogicalProjection, canConvertToAntiSemiJoin bool) {
+func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expression, selectSch *expression.Schema) (resultProj *logicalop.LogicalProjection, canConvertToAntiSemiJoin bool) {
 	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
 		// This optimization only supports a single selection condition in selectCond.
 		// Any condition that refers only to the outer side of the join can be pushed below the join,
@@ -221,9 +223,6 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	expression.ExtractColumnsSetFromExpressions(&innerSchemaSet, func(c *expression.Column) bool {
 		return !outerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
-	if !validProjForConvertAntiJoin(proj) {
-		return nil, false
-	}
 	parentNodeSchema := selectSch
 	// Scenario 1: column in IsNull expression is from the inner side columns in the eq/other condition.
 	joinCondNRInnerCol := joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
