@@ -66,19 +66,20 @@
         "Result": null
       },
       {
-        "SQL": "select A.* from A left join B on A.id = B.a_id where B.id IS NULL",
+        "SQL": "select A.* from A left join B on A.id = B.a_id where B.id IS NULL order by A.id",
         "Plan": [
-          "HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.a.id, test.b.a_id)]",
-          "├─TableReader(Build) root  data:Selection",
-          "│ └─Selection cop[tikv]  not(isnull(test.b.a_id))",
-          "│   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
-          "└─TableReader(Probe) root  data:TableFullScan",
-          "  └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
+          "Sort root  test.a.id",
+          "└─HashJoin root  anti semi join, left side:TableReader, equal:[eq(test.a.id, test.b.a_id)]",
+          "  ├─TableReader(Build) root  data:Selection",
+          "  │ └─Selection cop[tikv]  not(isnull(test.b.a_id))",
+          "  │   └─TableFullScan cop[tikv] table:B keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) root  data:TableFullScan",
+          "    └─TableFullScan cop[tikv] table:A keep order:false, stats:pseudo"
         ],
         "Result": [
+          "<nil> 50 500",
           "3 <nil> 300",
-          "4 40 400",
-          "<nil> 50 500"
+          "4 40 400"
         ]
       },
       {
