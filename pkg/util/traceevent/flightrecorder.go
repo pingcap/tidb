@@ -575,7 +575,7 @@ func (r *HTTPFlightRecorder) CheckSampling(conf *DumpTriggerConfig) bool {
 }
 
 // DiscardOrFlush will flush or discard the trace.
-func (r *TraceBuf) DiscardOrFlush(ctx context.Context) {
+func (t *TraceBuf) DiscardOrFlush(ctx context.Context) {
 	sink := globalHTTPFlightRecorder.Load()
 	if sink != nil {
 		var shouldFlush bool
@@ -584,12 +584,12 @@ func (r *TraceBuf) DiscardOrFlush(ctx context.Context) {
 		// We must clone while holding the lock to avoid data races where
 		// concurrent Record() or DiscardOrFlush() calls might modify the
 		// backing array after we release RLock.
-		r.mu.RLock()
-		if sink.shouldKeep(r.bits) {
+		t.mu.RLock()
+		if sink.shouldKeep(t.bits) {
 			shouldFlush = true
-			eventsToFlush = slices.Clone(r.events) // Deep copy to avoid data race
+			eventsToFlush = slices.Clone(t.events) // Deep copy to avoid data race
 		}
-		r.mu.RUnlock()
+		t.mu.RUnlock()
 
 		// Process without holding any lock
 		if shouldFlush {
@@ -597,14 +597,14 @@ func (r *TraceBuf) DiscardOrFlush(ctx context.Context) {
 		}
 	}
 	// Write phase: use Lock for cleanup
-	r.mu.Lock()
-	r.bits = 0
-	if len(r.events) > maxEvents {
+	t.mu.Lock()
+	t.bits = 0
+	if len(t.events) > maxEvents {
 		// avoid using too much memory for each session.
-		r.events = nil
+		t.events = nil
 	} else {
-		r.events = r.events[:0]
+		t.events = t.events[:0]
 	}
-	r.traceID = nil
-	r.mu.Unlock()
+	t.traceID = nil
+	t.mu.Unlock()
 }
