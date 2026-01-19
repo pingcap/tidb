@@ -34,6 +34,7 @@ func TestJobProgressEstimator_NonGlobalSort(t *testing.T) {
 		Status:        "running",
 		Phase:         "importing",
 		Step:          "import",
+		Percent:       "50",
 		TotalSize:     "100MB",
 		ProcessedSize: "50MB",
 	}
@@ -65,6 +66,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		Status:        "running",
 		Phase:         "global-sorting",
 		Step:          "encode",
+		Percent:       "50",
 		TotalSize:     "100MB",
 		ProcessedSize: "50MB",
 	}
@@ -90,6 +92,7 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 		Status:        "running",
 		Phase:         "global-sorting",
 		Step:          "merge-sort",
+		Percent:       "0",
 		TotalSize:     "100MB",
 		ProcessedSize: "0MB",
 	}

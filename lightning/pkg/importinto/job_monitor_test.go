@@ -54,7 +54,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// First poll: running
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
-					{JobID: 1, Status: "running", Phase: "importing", Step: "import", TotalSize: "100MB", ProcessedSize: "50MB"},
+					{JobID: 1, Status: "running", Phase: "importing", Step: "import", TotalSize: "100MB", ProcessedSize: "50MB", Percent: "50"},
 				}, nil)
 				mockPU.EXPECT().UpdateTotalSize(100 * mb)
 				mockPU.EXPECT().UpdateFinishedSize(25 * mb)
@@ -179,7 +179,7 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 			setup: func(mockSDK *sdkmock.MockSDK, mockCpMgr *mockimport.MockCheckpointManager, mockPU *mockimport.MockProgressUpdater) {
 				// Poll 1: job1 is almost done, job2 hasn't started reporting step progress yet.
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
-					{JobID: 1, Status: "running", Phase: "importing", Step: "import", TotalSize: "100MB", ProcessedSize: "100MB"},
+					{JobID: 1, Status: "running", Phase: "importing", Step: "import", TotalSize: "100MB", ProcessedSize: "100MB", Percent: "100"},
 					{JobID: 2, Status: "pending"},
 				}, nil)
 				mockPU.EXPECT().UpdateTotalSize(500 * mb)
@@ -189,10 +189,10 @@ func TestJobMonitorWaitForJobs(t *testing.T) {
 				// job2 starts running. Group progress should not rollback.
 				mockSDK.EXPECT().GetJobsByGroup(gomock.Any(), "g1").Return([]*importsdk.JobStatus{
 					{JobID: 1, Status: "finished"},
-					{JobID: 2, Status: "running", Phase: "importing", Step: "import", TotalSize: "400MB", ProcessedSize: "2MB"},
+					{JobID: 2, Status: "running", Phase: "importing", Step: "import", TotalSize: "400MB", ProcessedSize: "2MB", Percent: "0"},
 				}, nil)
 				mockPU.EXPECT().UpdateTotalSize(500 * mb)
-				mockPU.EXPECT().UpdateFinishedSize(101 * mb)
+				mockPU.EXPECT().UpdateFinishedSize(100 * mb)
 				mockCpMgr.EXPECT().Update(gomock.Any(), gomock.Any()).DoAndReturn(func(_ context.Context, cp *importinto.TableCheckpoint) error {
 					require.Equal(t, common.UniqueTable("db", "t1"), cp.TableName)
 					require.Equal(t, importinto.CheckpointStatusFinished, cp.Status)

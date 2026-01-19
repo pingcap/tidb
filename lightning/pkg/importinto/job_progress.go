@@ -15,6 +15,8 @@
 package importinto
 
 import (
+	"strconv"
+
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -100,19 +102,21 @@ func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
 	}
 }
 
-func (e *jobProgressEstimator) stepRatio(status *importsdk.JobStatus) (float64, bool) {
-	// `ProcessedSize/TotalSize` are progress metrics of the *current step*.
-	// The meaning of bytes may vary by step (e.g. source file bytes, merged bytes, KV bytes),
-	// so we only use the ratio as a generic progress indicator.
-	stepProcessedBytes, ok1 := e.parseHumanSize(status.JobID, status.ProcessedSize, "failed to parse processed size")
-	stepTotalBytes, ok2 := e.parseHumanSize(status.JobID, status.TotalSize, "failed to parse total size")
-	if ok1 && ok2 && stepTotalBytes > 0 {
-		ratio := float64(stepProcessedBytes) / float64(stepTotalBytes)
-		ratio = min(ratio, 1)
-		ratio = max(ratio, 0)
-		return ratio, true
+func clamp01(v float64) float64 {
+	return max(0.0, min(v, 1.0))
+}
+
+func (e *jobProgressEstimator) stepRatio(status *importsdk.JobStatus) float64 {
+	if status.Percent == "" || status.Percent == "N/A" {
+		return 0
 	}
-	return 0, false
+
+	p, err := strconv.ParseFloat(status.Percent, 64)
+	if err != nil {
+		e.logger.Warn("failed to parse progress percent", zap.String("percent", status.Percent), zap.Int64("jobID", status.JobID), zap.Error(err))
+		return 0
+	}
+	return clamp01(p / 100.0)
 }
 
 func findPhase(phases []jobProgressPhase, phase string) (int, bool) {
@@ -149,20 +153,17 @@ func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 
 		return 0
 	}
 
-	ratio, _ := e.stepRatio(status)
+	ratio := e.stepRatio(status)
 	stepIdx, ok := findStep(phases[phaseIdx].steps, status.Step)
 	if !ok {
 		stepIdx = 0
 		ratio = 0
 	}
 	phaseProgress := (float64(stepIdx) + ratio) / float64(len(phases[phaseIdx].steps))
-	phaseProgress = min(phaseProgress, 1)
-	phaseProgress = max(phaseProgress, 0)
+	phaseProgress = clamp01(phaseProgress)
 
 	progress := (float64(phaseIdx) + phaseProgress) / float64(len(phases))
-	progress = min(progress, 1)
-	progress = max(progress, 0)
-	return progress
+	return clamp01(progress)
 }
 
 func (e *jobProgressEstimator) estimateJobFinishedSize(
