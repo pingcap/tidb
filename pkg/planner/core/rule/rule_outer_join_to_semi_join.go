@@ -31,7 +31,7 @@ import (
 //
 // A key part of this transformation is the creation of a `LogicalProjection` on top of the
 // new `AntiSemiJoin`. This projection is responsible for generating the `NULL` values for the
-// columns of the outer table, which is the expected result for this type of query.
+// columns of the inner table, which is the expected result for this type of query.
 //
 // The rule is triggered if the `WHERE` clause checks for `IS NULL` on a column from the
 // inner table that is guaranteed to be non-null if a match had occurred. This guarantee
