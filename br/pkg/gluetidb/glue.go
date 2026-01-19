@@ -21,7 +21,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
@@ -51,17 +50,17 @@ func New() Glue {
 	}
 }
 
-func FilterLoadSysDBs(name ast.CIStr) bool {
+func FilterLoadSysDBs(name pmodel.CIStr) bool {
 	return metadef.IsSystemDB(name.L) || metadef.IsBRRelatedDB(name.O)
 }
 
-func FilterLoadSpecifiedDBAndSysDBs(extraDBNames []string) func(dbName ast.CIStr) bool {
+func FilterLoadSpecifiedDBAndSysDBs(extraDBNames []string) func(dbName pmodel.CIStr) bool {
 	dbNameSet := make(map[string]struct{})
 	for _, name := range extraDBNames {
-		ciName := ast.NewCIStr(name)
+		ciName := pmodel.NewCIStr(name)
 		dbNameSet[ciName.L] = struct{}{}
 	}
-	return func(name ast.CIStr) bool {
+	return func(name pmodel.CIStr) bool {
 		_, exists := dbNameSet[name.L]
 		shouldLoad := exists || metadef.IsSystemDB(name.L) || metadef.IsBRRelatedDB(name.O)
 		return shouldLoad

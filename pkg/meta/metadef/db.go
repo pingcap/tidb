@@ -17,17 +17,17 @@ package metadef
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 )
 
 var (
 	// InformationSchemaName is the `INFORMATION_SCHEMA` database name.
-	InformationSchemaName = ast.NewCIStr("INFORMATION_SCHEMA")
+	InformationSchemaName = pmodel.NewCIStr("INFORMATION_SCHEMA")
 	// PerformanceSchemaName is the `PERFORMANCE_SCHEMA` database name.
-	PerformanceSchemaName = ast.NewCIStr("PERFORMANCE_SCHEMA")
+	PerformanceSchemaName = pmodel.NewCIStr("PERFORMANCE_SCHEMA")
 	// MetricSchemaName is the `METRICS_SCHEMA` database name.
-	MetricSchemaName = ast.NewCIStr("METRICS_SCHEMA")
+	MetricSchemaName = pmodel.NewCIStr("METRICS_SCHEMA")
 	// ClusterTableInstanceColumnName is the `INSTANCE` column name of the cluster table.
 	ClusterTableInstanceColumnName = "INSTANCE"
 )
@@ -54,7 +54,7 @@ func IsMemDB(dbLowerName string) bool {
 
 // IsSystemRelatedDB checks whether dbLowerName is system related database.
 func IsSystemRelatedDB(dbLowerName string) bool {
-	return IsSystemDB(dbLowerName) || dbLowerName == mysql.SysDB || dbLowerName == mysql.WorkloadSchema
+	return IsSystemDB(dbLowerName) || dbLowerName == mysql.SysDB
 }
 
 // IsSystemDB checks whether dbLowerName is the system database.
@@ -66,4 +66,3 @@ func IsSystemDB(dbLowerName string) bool {
 func IsBRRelatedDB(dbOriginName string) bool {
 	return strings.HasPrefix(dbOriginName, temporaryDBNamePrefix)
 }
-
