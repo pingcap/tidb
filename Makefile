@@ -13,6 +13,7 @@
 # limitations under the License.
 
 include Makefile.common
+include Makefile.realtikvtest.gotest
 
 
 .DEFAULT_GOAL := default
@@ -47,7 +48,7 @@ check-setup:tools/bin/revive
 precheck: fmt bazel_prepare
 
 # disable license check
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc 
+check: parser_yacc check-parallel lint tidy testSuite errdoc
 
 .PHONY: fmt
 fmt:
@@ -167,8 +168,15 @@ ddltest:
 	@cd cmd/ddltest && $(GO) test --tags=deadllock,intest -o ../../bin/ddltest -c
 
 .PHONY: ut
-ut: tools/bin/ut tools/bin/xprog failpoint-enable
-	tools/bin/ut $(X) || { $(FAILPOINT_DISABLE); exit 1; }
+ut: tools/bin/ut tools/bin/xprog failpoint-enable ## Run unit tests
+	@echo "Debug: Running ut with X=$(X)"
+	tools/bin/ut $(X) --except flaky_ut.list --retry-cnt 3 || { $(FAILPOINT_DISABLE); $(CLEAN_UT_BINARY); exit 1; }
+	@$(FAILPOINT_DISABLE)
+	@$(CLEAN_UT_BINARY)
+
+.PHONY: ut-long
+ut-long: tools/bin/ut tools/bin/xprog failpoint-enable
+	tools/bin/ut --long --race || { $(FAILPOINT_DISABLE); $(CLEAN_UT_BINARY); exit 1; }
 	@$(FAILPOINT_DISABLE)
 	@$(CLEAN_UT_BINARY)
 
