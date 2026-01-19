@@ -51,6 +51,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -146,6 +147,7 @@ func NewMockDomain() *Domain {
 type Domain struct {
 	store           kv.Storage
 	infoCache       *infoschema.InfoCache
+	schemaFilter    issyncer.Filter
 	privHandle      *privileges.Handle
 	bindHandle      atomic.Value
 	statsHandle     atomic.Pointer[handle.Handle]
@@ -469,7 +471,19 @@ func (*Domain) fetchResourceGroups(m meta.Reader) ([]*model.ResourceGroupInfo, e
 }
 
 func (do *Domain) fetchAllSchemasWithTables(m meta.Reader) ([]*model.DBInfo, error) {
-	allSchemas, err := m.ListDatabases()
+	var allSchemas []*model.DBInfo
+	var err error
+	if do.schemaFilter != nil {
+		allSchemas = make([]*model.DBInfo, 0, 6)
+		err = m.IterDatabases(func(dbInfo *model.DBInfo) error {
+			if !do.schemaFilter.SkipLoadSchema(dbInfo) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			return nil
+		})
+	} else {
+		allSchemas, err = m.ListDatabases()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -648,6 +662,12 @@ func (do *Domain) tryLoadSchemaDiffs(useV2 bool, m meta.Reader, usedVersion, new
 	actions := make([]uint64, 0, len(diffs))
 	diffTypes := make([]string, 0, len(diffs))
 	for _, diff := range diffs {
+		if do.schemaFilter != nil && do.schemaFilter.SkipLoadDiff(diff, do.infoCache.GetLatest()) {
+			// We still need to advance the schema version even if we skip applying
+			// the diff to reflect where the infoschema has been synced to.
+			builder.SetSchemaVersion(diff.Version)
+			continue
+		}
 		if diff.RegenerateSchemaMap {
 			return nil, nil, nil, errors.Errorf("Meets a schema diff with RegenerateSchemaMap flag")
 		}
@@ -1302,12 +1322,13 @@ func (do *Domain) Close() {
 const resourceIdleTimeout = 3 * time.Minute // resources in the ResourcePool will be recycled after idleTimeout
 
 // NewDomain creates a new domain. Should not create multiple domains for the same store.
-func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory) *Domain {
+func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Duration, dumpFileGcLease time.Duration, factory pools.Factory, schemaFilter issyncer.Filter) *Domain {
 	intest.Assert(schemaLease > 0, "schema lease should be a positive duration")
 	capacity := 200 // capacity of the sysSessionPool size
 	do := &Domain{
-		store: store,
-		exit:  make(chan struct{}),
+		store:        store,
+		exit:         make(chan struct{}),
+		schemaFilter: schemaFilter,
 		sysSessionPool: util.NewSessionPool(
 			capacity, factory,
 			func(r pools.Resource) {
