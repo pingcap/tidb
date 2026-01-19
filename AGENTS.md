@@ -45,6 +45,10 @@ This file provides guidance to agents when working with code in this repository.
 - `/pkg/util/` - Utilities.
 - `/cmd/tidb-server/` - Main entry for TiDB service.
 
+### Source Files
+
+- When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
+
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
@@ -52,6 +56,7 @@ This file provides guidance to agents when working with code in this repository.
 Run `make bazel_prepare` **before building** when:
 - You just cloned the repo / set up a new workspace
 - You changed Bazel-related files (for example: `WORKSPACE`, `DEPS.bzl`, `BUILD.bazel`)
+- You added/removed/renamed/moved any Go source files (for example: `*.go`) in this PR; ALWAYS run `make bazel_prepare` and include any resulting `*.bazel/*.bzl` changes in the PR.
 - You changed Go module deps used by the build (for example: `go.mod`, `go.sum`), such as **adding a new third-party dependency**
 - You added new unit tests (UT) or RealTiKV tests and updated Bazel test targets accordingly (for example: adding new `_test.go` files to a `go_test` rule `srcs`, adjusting `shard_count`, or creating/updating `BUILD.bazel` under `tests/realtikvtest/`), which may require refreshing Bazel deps/toolchain
 - You hit Bazel dependency/toolchain errors locally

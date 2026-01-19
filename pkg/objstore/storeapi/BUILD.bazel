@@ -9,6 +9,7 @@ go_library(
         "//pkg/objstore/objectio",
         "//pkg/objstore/recording",
         "@com_github_aws_aws_sdk_go_v2//aws/retry",
+        "@com_github_google_uuid//:uuid",
     ],
 )
 
