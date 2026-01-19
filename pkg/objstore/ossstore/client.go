@@ -265,14 +265,14 @@ func (c *client) MultipartUploader(name string, partSize int64, concurrency int)
 	}
 }
 
-// multipartWriter does multi-part upload to s3.
+// multipartWriter does multi-part upload.
 type multipartWriter struct {
 	svc           API
 	createOutput  *oss.InitiateMultipartUploadResult
 	completeParts []oss.UploadPart
 }
 
-// UploadPart update partial data.
+// UploadPart updates partial data.
 // the size of each part except the last part must >= oss.MinPartSize, and <=
 // oss.MaxPartSize
 func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
@@ -296,7 +296,7 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 	return len(data), nil
 }
 
-// Close complete multi upload request.
+// Close completes the multi-part upload request.
 func (u *multipartWriter) Close(ctx context.Context) error {
 	req := &oss.CompleteMultipartUploadRequest{
 		Bucket:   u.createOutput.Bucket,

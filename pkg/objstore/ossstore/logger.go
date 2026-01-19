@@ -73,7 +73,7 @@ func (l *logPrinter) Print(args ...any) {
 }
 
 func getOSSLogLevel() int {
-	// on oss.LogInfo level, OSS SDk will log invocation start/end, which is
+	// on oss.LogInfo level, OSS SDK will log invocation start/end, which is
 	// quite noisy. So we map one level higher.
 	switch tidblogutil.BgLogger().Level() {
 	case zap.ErrorLevel:

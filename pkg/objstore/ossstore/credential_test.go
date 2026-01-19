@@ -34,7 +34,7 @@ func TestCredentialRefresher(t *testing.T) {
 	defer ctrl.Finish()
 	mockProvider := mock.NewMockCredentialsProvider(ctrl)
 	logger := zap.Must(zap.NewDevelopment())
-	refersher := newCredentialRefresher(mockProvider, logger)
+	refresher := newCredentialRefresher(mockProvider, logger)
 	ctx := context.Background()
 
 	getAKTimeFn := func(cred credentials.Credentials) int64 {
@@ -49,15 +49,15 @@ func TestCredentialRefresher(t *testing.T) {
 				AccessKeyId: strconv.Itoa(int(time.Now().UnixNano())),
 			}, nil
 		}).AnyTimes()
-		require.NoError(t, refersher.refreshOnce())
-		cred, err := refersher.GetCredentials(ctx)
+		require.NoError(t, refresher.refreshOnce())
+		cred, err := refresher.GetCredentials(ctx)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, getAKTimeFn(cred), start)
-		require.NoError(t, refersher.startRefresh())
+		require.NoError(t, refresher.startRefresh())
 		time.Sleep(time.Minute + 5*time.Second)
-		cred2, err := refersher.GetCredentials(ctx)
+		cred2, err := refresher.GetCredentials(ctx)
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, getAKTimeFn(cred2), start+time.Minute.Nanoseconds())
-		refersher.close()
+		refresher.close()
 	})
 }

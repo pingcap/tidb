@@ -39,18 +39,6 @@ func CreateSuite(t *testing.T) *Suite {
 	s := new(Suite)
 	s.Controller = gomock.NewController(t)
 	s.MockCli = mock.NewMockAPI(s.Controller)
-	s.Storage = newOSSStorageForTest(
-		s.MockCli,
-		&backuppb.S3{
-			Region:       "us-west-2",
-			Bucket:       "bucket",
-			Prefix:       "prefix/",
-			Acl:          "acl",
-			Sse:          "sse",
-			StorageClass: "sc",
-		},
-		nil,
-	)
 
 	t.Cleanup(func() {
 		s.Controller.Finish()
