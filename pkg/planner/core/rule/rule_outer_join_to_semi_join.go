@@ -75,7 +75,7 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 				}
 			case *logicalop.LogicalProjection:
 				if !validProjForConvertAntiJoin(cc) {
-					return nil, false
+					continue
 				}
 				join, ok := cc.Children()[0].(*logicalop.LogicalJoin)
 				if ok {
