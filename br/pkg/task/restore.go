@@ -1282,6 +1282,18 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		return errors.Trace(err)
 	}
 
+	for {
+		time.Sleep(1 * time.Second)
+		_, err := os.Stat("/tmp/test.placeholder")
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return errors.Trace(err)
+		}
+		break
+	}
+
 	isNextGenRestore := utils.CheckNextGenCompatibility(cfg.KeyspaceName, cfg.CheckRequirements)
 	if isNextGenRestore {
 		log.Info("start restore to next-gen cluster")

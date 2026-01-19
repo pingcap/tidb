@@ -613,7 +613,10 @@ func (r *Registry) checkForTableConflicts(
 			zap.String("database", dbName),
 			zap.Strings("filter_strings", regInfo.FilterStrings),
 		)
-		return nil
+		return errors.Annotatef(berrors.ErrDatabasesAlreadyExisted,
+			"database %s cannot be restored concurrently by current task with ID %d "+
+				"because it is already being restored by task (restoreId: %d, time range: %d->%d, cmd: %s)",
+			dbName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
 	}
 
 	// Use PiTRTableTracker if available for PiTR task
