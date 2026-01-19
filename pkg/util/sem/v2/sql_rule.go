@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/s3store"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
 
@@ -96,7 +96,7 @@ var ImportWithExternalIDRule SQLRule = func(stmt ast.StmtNode) bool {
 			values := u.Query()
 			for k := range values {
 				lowerK := strings.ToLower(k)
-				if lowerK == s3store.S3ExternalID {
+				if lowerK == s3like.S3ExternalID {
 					return true
 				}
 			}
