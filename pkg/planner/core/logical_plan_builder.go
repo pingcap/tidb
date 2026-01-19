@@ -749,8 +749,8 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
 
 	ap := logicalop.LogicalApply{
-		LogicalJoin: logicalop.LogicalJoin{JoinType: joinType},
-		CorCols:     corCols,
+		LogicalJoin:   logicalop.LogicalJoin{JoinType: joinType},
+		CorCols:       corCols,
 		NoDecorrelate: false, // Allow decorrelation; optimizer will decide if safe
 	}.Init(b.ctx, b.getSelectOffset())
 
