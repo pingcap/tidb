@@ -261,7 +261,7 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	if canConvertToAntiSemiJoin {
 		// resultProj is to generate the NULL values for the columns of the inner table, which is the
 		// expected result for this kind of anti-join query.
-		resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, selectSch)
+		resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, outerSchema, selectSch)
 		// Anti-semi join's first child is outer, the second child is inner. join condition is outer op inner
 		// right outer join's first child is inner, the second child is outer, join condition is inner op outer
 		// left outer join's  first child is outer, the second child is inner. join condition is outer op inner
@@ -343,7 +343,17 @@ func joinCondNullRejectsInnerCol(innerSchSet *intset.FastIntSet, isNullColumnID 
 
 // generateProjectForConvertAntiJoin is to generate projection and put it on the anti-semi join which is from outer join.
 // outer column will not be changed. inner column will output the null.
-func generateProjectForConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *intset.FastIntSet, parentNodeSchema *expression.Schema) (proj *logicalop.LogicalProjection) {
+func generateProjectForConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *intset.FastIntSet, outerSchema, parentNodeSchema *expression.Schema) (proj *logicalop.LogicalProjection) {
+	isAllFromOuterSide := true
+	for _, c := range parentNodeSchema.Columns {
+		if !outerSchema.Contains(c) {
+			isAllFromOuterSide = false
+			break
+		}
+	}
+	if isAllFromOuterSide {
+		return nil
+	}
 	projExprs := make([]expression.Expression, 0, len(parentNodeSchema.Columns))
 	for _, c := range parentNodeSchema.Columns {
 		if innerSchSet.Has(int(c.UniqueID)) {
