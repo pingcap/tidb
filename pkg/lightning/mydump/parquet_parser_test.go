@@ -608,8 +608,6 @@ func TestBinaryToDecimalStr(t *testing.T) {
 }
 
 func TestParquetDecimalFromInt64(t *testing.T) {
-	var d types.Datum
-
 	type testCase struct {
 		value    int64
 		scale    int32
@@ -617,6 +615,9 @@ func TestParquetDecimalFromInt64(t *testing.T) {
 	}
 
 	tcs := []testCase{
+		{0, 0, "0"},
+		{0, 3, "0.000"},
+		{0, 6, "0.000000"},
 		{123, 0, "123"},
 		{123, 3, "0.123"},
 		{-7, 0, "-7"},
@@ -628,9 +629,15 @@ func TestParquetDecimalFromInt64(t *testing.T) {
 
 	for _, tc := range tcs {
 		// No decimal meta or scale=0: stored as int64.
-		err := setParquetDecimalFromInt64(tc.value, &d,
+		var dec types.MyDecimal
+		err := setParquetDecimalFromInt64(tc.value, &dec,
 			schema.DecimalMetadata{IsSet: true, Scale: tc.scale})
 		require.NoError(t, err)
-		require.Equal(t, tc.expected, d.GetMysqlDecimal().String())
+		require.Equal(t, tc.expected, dec.String())
 	}
+
+	// Test overflow
+	var dec types.MyDecimal
+	raw := bytes.Repeat([]byte{0x7f}, 40)
+	require.ErrorIs(t, types.ErrOverflow, dec.FromParquetArray(raw, 0))
 }

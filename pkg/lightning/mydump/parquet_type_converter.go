@@ -43,10 +43,9 @@ func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
 
 func setParquetDecimalFromInt64(
 	unscaled int64,
-	d *types.Datum,
+	dec *types.MyDecimal,
 	decimalMeta schema.DecimalMetadata,
 ) error {
-	dec := initializeMyDecimal(d)
 	dec.FromInt(unscaled)
 
 	scale := int(decimalMeta.Scale)
@@ -71,7 +70,8 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) error {
-			return setParquetDecimalFromInt64(int64(val), d, converted.decimalMeta)
+			dec := initializeMyDecimal(d)
+			return setParquetDecimalFromInt64(int64(val), dec, converted.decimalMeta)
 		}
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) error {
@@ -155,7 +155,8 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.Decimal:
 		return func(val int64, d *types.Datum) error {
-			return setParquetDecimalFromInt64(val, d, converted.decimalMeta)
+			dec := initializeMyDecimal(d)
+			return setParquetDecimalFromInt64(val, dec, converted.decimalMeta)
 		}
 	}
 
