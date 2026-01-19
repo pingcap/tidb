@@ -677,5 +677,6 @@ func SampleStatisticsFromParquet(
 	}
 
 	avgRowSize = float64(rowSize) / float64(rowCount)
+
 	return totalReadRows, avgRowSize, err
 }
