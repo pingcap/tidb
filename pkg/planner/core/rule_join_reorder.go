@@ -46,18 +46,13 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		hasOuterJoin      bool
 	)
 
-	allowReorderThroughSelection := func(conds []expression.Expression) bool {
-		// Join reorder may distribute/push down conditions during constructing the new join tree.
-		// For volatile or side-effect expressions, moving them can change evaluation times/orders
-		// thus may change query results.
-		return !slices.ContainsFunc(conds, func(e expression.Expression) bool {
-			return expression.IsMutableEffectsExpr(e)
-		})
-	}
-
 	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
 	// to otherConds and continue extracting the join group from the child.
-	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderSel && allowReorderThroughSelection(selection.Conditions) {
+	// Join reorder may distribute/push down conditions during constructing the new join tree.
+	// For volatile or side-effect expressions, moving them can change evaluation times/orders
+	// thus may change query results, so we skip reordering through Selection in such cases.
+	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderSel &&
+		!slices.ContainsFunc(selection.Conditions, expression.IsMutableEffectsExpr) {
 		child := selection.Children()[0]
 		if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {
 			childResult := extractJoinGroup(child)
