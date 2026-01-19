@@ -334,7 +334,7 @@ type Transaction interface {
 	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
 
 	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
-	UpdateMemBufferFlags(key []byte, flags ...FlagsOp)
+	UpdateMemBufferFlags(key []byte, flags ...tikvstore.FlagsOp)
 	// IsPipelined returns whether the transaction is used for pipelined DML.
 	IsPipelined() bool
 	// MayFlush flush the pipelined memdb if the keys or size exceeds threshold, no effect for standard DML.
@@ -344,9 +344,7 @@ type Transaction interface {
 // AssertionProto is an interface defined for the assertion protocol.
 type AssertionProto interface {
 	// SetAssertion sets an assertion for an operation on the key.
-	// TODO: Use a special type instead of `FlagsOp`. Otherwise there's risk that the assertion flag is incorrectly used
-	// in other places like `MemBuffer.SetWithFlags`.
-	SetAssertion(key []byte, assertion ...FlagsOp) error
+	SetAssertion(key []byte, assertion AssertionOp) error
 }
 
 // FairLockingController is the interface that defines fair locking related operations.

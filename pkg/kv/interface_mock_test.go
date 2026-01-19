@@ -20,6 +20,7 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -30,7 +31,7 @@ type mockTxn struct {
 	valid bool
 }
 
-func (t *mockTxn) SetAssertion(_ []byte, _ ...FlagsOp) error {
+func (t *mockTxn) SetAssertion(_ []byte, _ AssertionOp) error {
 	return nil
 }
 
@@ -168,12 +169,10 @@ func (t *mockTxn) ClearDiskFullOpt() {
 	// TODO nothing
 }
 
-func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...FlagsOp) {
-
+func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...tikvstore.FlagsOp) {
 }
 
 func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {
-
 }
 
 func (t *mockTxn) MemHookSet() bool { return false }

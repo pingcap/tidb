@@ -259,7 +259,7 @@ func (*transaction) CacheTableInfo(_ int64, _ *model.TableInfo) {
 }
 
 // SetAssertion implements the kv.Transaction interface.
-func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
+func (*transaction) SetAssertion(_ []byte, _ kv.AssertionOp) error {
 	return nil
 }
 

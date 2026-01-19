@@ -772,88 +772,88 @@ func TestSetAssertion(t *testing.T) {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 
-	mustHaveAssertion := func(key []byte, assertion kv.FlagsOp) {
+	mustHaveAssertion := func(key []byte, assertion kv.AssertionOp) {
 		f, err1 := txn.GetMemBuffer().GetFlags(key)
 		require.NoError(t, err1)
-		if assertion == kv.SetAssertExist {
+		if assertion == kv.AssertExist {
 			require.True(t, f.HasAssertExists())
 			require.False(t, f.HasAssertUnknown())
-		} else if assertion == kv.SetAssertNotExist {
+		} else if assertion == kv.AssertNotExist {
 			require.True(t, f.HasAssertNotExists())
 			require.False(t, f.HasAssertUnknown())
-		} else if assertion == kv.SetAssertUnknown {
+		} else if assertion == kv.AssertUnknown {
 			require.True(t, f.HasAssertUnknown())
-		} else if assertion == kv.SetAssertNone {
+		} else if assertion == kv.AssertNone {
 			require.False(t, f.HasAssertionFlags())
 		} else {
 			require.FailNow(t, "unreachable")
 		}
 	}
 
-	testUnchangeable := func(key []byte, expectAssertion kv.FlagsOp) {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+	testUnchangeable := func(key []byte, expectAssertion kv.AssertionOp) {
+		err = txn.SetAssertion(key, kv.AssertExist)
 		require.NoError(t, err)
 		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+		err = txn.SetAssertion(key, kv.AssertNotExist)
 		require.NoError(t, err)
 		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = txn.SetAssertion(key, kv.AssertUnknown)
 		require.NoError(t, err)
 		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.SetAssertNone)
+		err = txn.SetAssertion(key, kv.AssertNone)
 		require.NoError(t, err)
 		mustHaveAssertion(key, expectAssertion)
 	}
 
 	k1 := []byte("k1")
-	err = txn.SetAssertion(k1, kv.SetAssertExist)
+	err = txn.SetAssertion(k1, kv.AssertExist)
 	require.NoError(t, err)
-	mustHaveAssertion(k1, kv.SetAssertExist)
-	testUnchangeable(k1, kv.SetAssertExist)
+	mustHaveAssertion(k1, kv.AssertExist)
+	testUnchangeable(k1, kv.AssertExist)
 
 	k2 := []byte("k2")
-	err = txn.SetAssertion(k2, kv.SetAssertNotExist)
+	err = txn.SetAssertion(k2, kv.AssertNotExist)
 	require.NoError(t, err)
-	mustHaveAssertion(k2, kv.SetAssertNotExist)
-	testUnchangeable(k2, kv.SetAssertNotExist)
+	mustHaveAssertion(k2, kv.AssertNotExist)
+	testUnchangeable(k2, kv.AssertNotExist)
 
 	k3 := []byte("k3")
-	err = txn.SetAssertion(k3, kv.SetAssertUnknown)
+	err = txn.SetAssertion(k3, kv.AssertUnknown)
 	require.NoError(t, err)
-	mustHaveAssertion(k3, kv.SetAssertUnknown)
-	testUnchangeable(k3, kv.SetAssertUnknown)
+	mustHaveAssertion(k3, kv.AssertUnknown)
+	testUnchangeable(k3, kv.AssertUnknown)
 
 	k4 := []byte("k4")
-	err = txn.SetAssertion(k4, kv.SetAssertNone)
+	err = txn.SetAssertion(k4, kv.AssertNone)
 	require.NoError(t, err)
-	mustHaveAssertion(k4, kv.SetAssertNone)
-	err = txn.SetAssertion(k4, kv.SetAssertExist)
+	mustHaveAssertion(k4, kv.AssertNone)
+	err = txn.SetAssertion(k4, kv.AssertExist)
 	require.NoError(t, err)
-	mustHaveAssertion(k4, kv.SetAssertExist)
-	testUnchangeable(k4, kv.SetAssertExist)
+	mustHaveAssertion(k4, kv.AssertExist)
+	testUnchangeable(k4, kv.AssertExist)
 
 	k5 := []byte("k5")
 	err = txn.Set(k5, []byte("v5"))
 	require.NoError(t, err)
-	mustHaveAssertion(k5, kv.SetAssertNone)
-	err = txn.SetAssertion(k5, kv.SetAssertNotExist)
+	mustHaveAssertion(k5, kv.AssertNone)
+	err = txn.SetAssertion(k5, kv.AssertNotExist)
 	require.NoError(t, err)
-	mustHaveAssertion(k5, kv.SetAssertNotExist)
-	testUnchangeable(k5, kv.SetAssertNotExist)
+	mustHaveAssertion(k5, kv.AssertNotExist)
+	testUnchangeable(k5, kv.AssertNotExist)
 
 	k6 := []byte("k6")
-	err = txn.SetAssertion(k6, kv.SetAssertNotExist)
+	err = txn.SetAssertion(k6, kv.AssertNotExist)
 	require.NoError(t, err)
 	err = txn.GetMemBuffer().SetWithFlags(k6, []byte("v6"), kv.SetPresumeKeyNotExists)
 	require.NoError(t, err)
-	mustHaveAssertion(k6, kv.SetAssertNotExist)
-	testUnchangeable(k6, kv.SetAssertNotExist)
+	mustHaveAssertion(k6, kv.AssertNotExist)
+	testUnchangeable(k6, kv.AssertNotExist)
 	flags, err := txn.GetMemBuffer().GetFlags(k6)
 	require.NoError(t, err)
 	require.True(t, flags.HasPresumeKeyNotExists())
 	err = txn.GetMemBuffer().DeleteWithFlags(k6, kv.SetNeedLocked)
-	mustHaveAssertion(k6, kv.SetAssertNotExist)
-	testUnchangeable(k6, kv.SetAssertNotExist)
+	mustHaveAssertion(k6, kv.AssertNotExist)
+	testUnchangeable(k6, kv.AssertNotExist)
 	flags, err = txn.GetMemBuffer().GetFlags(k6)
 	require.NoError(t, err)
 	require.True(t, flags.HasPresumeKeyNotExists())
@@ -863,7 +863,7 @@ func TestSetAssertion(t *testing.T) {
 	lockCtx := kv2.NewLockCtx(txn.StartTS(), 2000, time.Now())
 	err = txn.LockKeys(context.Background(), lockCtx, k7)
 	require.NoError(t, err)
-	mustHaveAssertion(k7, kv.SetAssertNone)
+	mustHaveAssertion(k7, kv.AssertNone)
 
 	require.NoError(t, txn.Rollback())
 }
