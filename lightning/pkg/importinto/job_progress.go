@@ -133,30 +133,6 @@ func findStep(steps []string, step string) (int, bool) {
 	return 0, false
 }
 
-func phaseFromStep(step string, isGlobalSort bool) string {
-	if !isGlobalSort {
-		switch step {
-		case "import":
-			return "importing"
-		case "post-process":
-			return "validating"
-		}
-		return ""
-	}
-
-	switch step {
-	case "encode", "merge-sort":
-		return "global-sorting"
-	case "ingest":
-		return "importing"
-	case "collect-conflicts", "conflict-resolution":
-		return "resolving-conflicts"
-	case "post-process":
-		return "validating"
-	}
-	return ""
-}
-
 func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 {
 	isGlobalSort := e.isGlobalSort
 	phases := jobProgressPhases(isGlobalSort)
@@ -166,7 +142,7 @@ func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 
 
 	phase := status.Phase
 	if phase == "" {
-		phase = phaseFromStep(status.Step, isGlobalSort)
+		return 0
 	}
 	phaseIdx, ok := findPhase(phases, phase)
 	if !ok {

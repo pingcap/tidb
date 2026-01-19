@@ -85,10 +85,10 @@ func TestJobProgressEstimator_GlobalSort(t *testing.T) {
 	}, jobTotalSize, jobFinishedSize)
 	require.True(t, estimator.isGlobalSort)
 
-	// Phase can be empty, fallback to phaseFromStep().
 	mergeSort := &importsdk.JobStatus{
 		JobID:         jobID,
 		Status:        "running",
+		Phase:         "global-sorting",
 		Step:          "merge-sort",
 		TotalSize:     "100MB",
 		ProcessedSize: "0MB",
