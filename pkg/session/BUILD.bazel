@@ -42,6 +42,7 @@ go_library(
         "//pkg/extension/extensionimpl",
         "//pkg/infoschema",
         "//pkg/infoschema/context",
+        "//pkg/infoschema/issyncer",
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/metabuild",

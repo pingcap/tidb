@@ -636,9 +636,9 @@ func TestIterDatabases(t *testing.T) {
 
 	m := meta.NewMutator(txn)
 
-	db1 := &model.DBInfo{ID: 1, Name: ast.NewCIStr("db1")}
-	db2 := &model.DBInfo{ID: 2, Name: ast.NewCIStr("db2")}
-	db3 := &model.DBInfo{ID: 3, Name: ast.NewCIStr("db3")}
+	db1 := &model.DBInfo{ID: 1, Name: pmodel.NewCIStr("db1")}
+	db2 := &model.DBInfo{ID: 2, Name: pmodel.NewCIStr("db2")}
+	db3 := &model.DBInfo{ID: 3, Name: pmodel.NewCIStr("db3")}
 
 	require.NoError(t, m.CreateDatabase(db1))
 	require.NoError(t, m.CreateDatabase(db2))
