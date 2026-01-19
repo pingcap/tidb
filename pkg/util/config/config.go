@@ -27,7 +27,7 @@ import (
 	"go.uber.org/zap"
 )
 
-var blackSystemVariableForPlanReplayerLoad = map[string]struct{}{
+var ignoredSystemVariablesForPlanReplayerLoad = map[string]struct{}{
 	"innodb_lock_wait_timeout": {}, // It is unncessary to load this variable for plan replayer.
 }
 
@@ -42,7 +42,7 @@ func LoadConfig(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, e
 	unLoadVars = make([]string, 0)
 	vars := ctx.GetSessionVars()
 	for name, value := range varMap {
-		if _, ok := blackSystemVariableForPlanReplayerLoad[name]; ok {
+		if _, ok := ignoredSystemVariablesForPlanReplayerLoad[name]; ok {
 			continue
 		}
 		sysVar := variable.GetSysVar(name)
