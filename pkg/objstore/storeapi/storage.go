@@ -157,6 +157,7 @@ type Storage interface {
 
 	// URI returns the base path as a URI
 	URI() string
+
 	// Create opens a file writer by path. path is relative path to storage base
 	// path. The old file under same path will be overwritten. Currently only s3
 	// implemented WriterOption.
