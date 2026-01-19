@@ -176,6 +176,13 @@ func (o *DefaultJobOrchestrator) Cancel(ctx context.Context) error {
 	statusByID, cancelledJobs, err := o.cancelJobsInGroup(ctx, groupKey)
 
 	updateErr := o.updateCheckpointsAfterCancel(ctx, groupKey, statusByID, cancelledJobs)
+	if updateErr != nil {
+		if err != nil {
+			o.logger.Warn("failed to update checkpoints after cancelling jobs", zap.String("groupKey", groupKey), zap.NamedError("cancelErr", err), zap.NamedError("updateErr", updateErr))
+		} else {
+			o.logger.Warn("failed to update checkpoints after cancelling jobs", zap.String("groupKey", groupKey), zap.Error(updateErr))
+		}
+	}
 	if err == nil {
 		err = updateErr
 	}
@@ -199,7 +206,7 @@ func (o *DefaultJobOrchestrator) cancelJobsInGroup(ctx context.Context, groupKey
 
 	// Poll by group key for the grace period to cancel all running jobs.
 	// This handles both existing jobs and late-appearing jobs from concurrent submissions.
-	// SHOW IMPORT JOBS apperently may lag behind job creation.
+	// SHOW IMPORT JOBS apparently may lag behind job creation.
 	deadline := time.Now().Add(o.cancelGracePeriod)
 	for {
 		statuses, err := o.sdk.GetJobsByGroup(ctx, groupKey)
