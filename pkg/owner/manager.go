@@ -323,7 +323,7 @@ func (m *ownerManager) ResignOwner(ctx context.Context) error {
 
 func (m *ownerManager) toBeOwner(elec *concurrency.Election) {
 	m.elec.Store(elec)
-	metrics.IsOwnerSinceGauge.WithLabelValues(m.prompt).Set(float64(time.Now().UnixNano()) / float64(time.Second))
+	metrics.IsOwnerSinceGauge.WithLabelValues(m.prompt).Set(float64(time.Now().UnixNano()))
 	m.logger.Info("become owner")
 	if m.listener != nil {
 		m.listener.OnBecomeOwner()
