@@ -20,6 +20,7 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -102,10 +103,6 @@ func jobProgressPhases(isGlobalSort bool) []jobProgressPhase {
 	}
 }
 
-func clamp01(v float64) float64 {
-	return max(0.0, min(v, 1.0))
-}
-
 func (e *jobProgressEstimator) stepRatio(status *importsdk.JobStatus) float64 {
 	if status.Percent == "" || status.Percent == "N/A" {
 		return 0
@@ -116,7 +113,7 @@ func (e *jobProgressEstimator) stepRatio(status *importsdk.JobStatus) float64 {
 		e.logger.Warn("failed to parse progress percent", zap.String("percent", status.Percent), zap.Int64("jobID", status.JobID), zap.Error(err))
 		return 0
 	}
-	return clamp01(p / 100.0)
+	return mathutil.Clamp(p/100.0, 0, 1)
 }
 
 func findPhase(phases []jobProgressPhase, phase string) (int, bool) {
@@ -160,10 +157,10 @@ func (e *jobProgressEstimator) jobProgress(status *importsdk.JobStatus) float64 
 		ratio = 0
 	}
 	phaseProgress := (float64(stepIdx) + ratio) / float64(len(phases[phaseIdx].steps))
-	phaseProgress = clamp01(phaseProgress)
+	phaseProgress = mathutil.Clamp(phaseProgress, 0, 1)
 
 	progress := (float64(phaseIdx) + phaseProgress) / float64(len(phases))
-	return clamp01(progress)
+	return mathutil.Clamp(progress, 0, 1)
 }
 
 func (e *jobProgressEstimator) estimateJobFinishedSize(
