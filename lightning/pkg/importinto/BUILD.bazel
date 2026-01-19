@@ -21,6 +21,7 @@ go_library(
         "//pkg/lightning/log",
         "//pkg/objstore",
         "//pkg/parser/ast",
+        "//pkg/util/mathutil",
         "@com_github_docker_go_units//:go-units",
         "@com_github_google_uuid//:uuid",
         "@com_github_joho_sqltocsv//:sqltocsv",
