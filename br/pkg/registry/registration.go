@@ -543,6 +543,7 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 	ctx context.Context,
 	restoreID uint64,
 	tracker *utils.PiTRIdTracker,
+	dbs []*metautil.Database,
 	tables []*metautil.Table,
 ) error {
 	registrations, err := r.GetRegistrationsByMaxID(ctx, restoreID)
@@ -567,7 +568,7 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 		f = filter.CaseInsensitive(f)
 
 		// check if a table is already being restored
-		if err := r.checkForTableConflicts(tracker, tables, regInfo, f, restoreID); err != nil {
+		if err := r.checkForTableConflicts(tracker, dbs, tables, regInfo, f, restoreID); err != nil {
 			return err
 		}
 	}
@@ -583,6 +584,7 @@ func (r *Registry) CheckTablesWithRegisteredTasks(
 // match with the given filter, indicating a conflict with an existing restore task
 func (r *Registry) checkForTableConflicts(
 	tracker *utils.PiTRIdTracker,
+	dbs []*metautil.Database,
 	tables []*metautil.Table,
 	regInfo RegistrationInfoWithID,
 	f filter.Filter,
@@ -632,6 +634,14 @@ func (r *Registry) checkForTableConflicts(
 			}
 		}
 	} else {
+		// for existing point restore task, we need to check database conflicts with snapshot restore.
+		if regInfo.Cmd == "Point Restore" {
+			for _, db := range dbs {
+				if utils.MatchSchema(f, db.Info.Name.O, regInfo.WithSysTable) {
+					return handleSchemaConflict(db.Info.Name.O)
+				}
+			}
+		}
 		// use tables as this is a snapshot restore task
 		for _, table := range tables {
 			dbName := table.DB.Name.O
