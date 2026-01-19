@@ -12,56 +12,41 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Simple smoke test for LATERAL join parsing
-package main
+package parser_test
 
 import (
-	"fmt"
-	"os"
 	"strings"
+	"testing"
 
 	"github.com/pingcap/tidb/pkg/parser"
-	_ "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/parser/format"
 )
 
-func main() {
+func TestLateralParsing(t *testing.T) {
 	p := parser.New()
 
 	// Test case 1: Basic LATERAL with comma syntax
 	sql1 := "SELECT * FROM t1, LATERAL (SELECT t1.a) AS dt"
 	stmt1, err := p.ParseOneStmt(sql1, "", "")
 	if err != nil {
-		fmt.Printf("FAIL: Failed to parse LATERAL with comma syntax: %v\n", err)
-		os.Exit(1)
+		t.Fatalf("Failed to parse LATERAL with comma syntax: %v", err)
 	}
-
-	// Just verify the statement parsed - checking flag requires deep navigation
-	_ = stmt1
-	fmt.Printf("PASS: Basic LATERAL parsing works\n")
 
 	// Test case 2: LATERAL with LEFT JOIN
 	sql2 := "SELECT * FROM t1 LEFT JOIN LATERAL (SELECT t1.b) AS dt ON true"
 	_, err = p.ParseOneStmt(sql2, "", "")
 	if err != nil {
-		fmt.Printf("FAIL: Failed to parse LATERAL with LEFT JOIN: %v\n", err)
-		os.Exit(1)
+		t.Fatalf("Failed to parse LATERAL with LEFT JOIN: %v", err)
 	}
-	fmt.Printf("PASS: LATERAL with LEFT JOIN parses correctly\n")
 
 	// Test case 3: Verify Restore works (round-trip test)
 	var sb strings.Builder
 	restoreCtx := format.NewRestoreCtx(format.RestoreStringSingleQuotes, &sb)
 	if err := stmt1.Restore(restoreCtx); err != nil {
-		fmt.Printf("FAIL: Failed to restore LATERAL statement: %v\n", err)
-		os.Exit(1)
+		t.Fatalf("Failed to restore LATERAL statement: %v", err)
 	}
 	restored := sb.String()
 	if !strings.Contains(restored, "LATERAL") {
-		fmt.Printf("FAIL: LATERAL keyword missing in restored SQL: %s\n", restored)
-		os.Exit(1)
+		t.Errorf("LATERAL keyword missing in restored SQL: %s", restored)
 	}
-	fmt.Printf("PASS: LATERAL keyword preserved in round-trip: %s\n", restored)
-
-	fmt.Printf("\n=== All smoke tests passed! ===\n")
 }

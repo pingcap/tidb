@@ -741,12 +741,17 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	}
 
 	// Build LogicalApply (leveraging existing correlated subquery infrastructure)
+	// Note: We enable decorrelation optimization, which will attempt to convert the
+	// nested loop (LogicalApply) into a more efficient join when safe. The decorrelator
+	// is conservative and will only transform patterns it can prove are semantically equivalent.
+	// Complex cases (aggregates with correlation, non-deterministic functions, etc.) will
+	// remain as Apply and use nested loop execution.
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
 
 	ap := logicalop.LogicalApply{
 		LogicalJoin: logicalop.LogicalJoin{JoinType: joinType},
 		CorCols:     corCols,
-		NoDecorrelate: false, // LATERAL can be decorrelated like correlated subqueries
+		NoDecorrelate: false, // Allow decorrelation; optimizer will decide if safe
 	}.Init(b.ctx, b.getSelectOffset())
 
 	ap.SetChildren(leftPlan, rightPlan)
@@ -762,7 +767,7 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 			return nil, err
 		}
 		if newPlan != ap {
-			return nil, errors.New("LATERAL ON condition doesn't support subqueries yet")
+			return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("ON condition contains subqueries")
 		}
 		onCondition := expression.SplitCNFItems(onExpr)
 		ap.AttachOnConds(onCondition)
