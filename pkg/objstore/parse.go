@@ -93,7 +93,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		noop := &backuppb.Noop{}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Noop{Noop: noop}}, nil
 
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
 		if u.Host == "" {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
 		}
@@ -110,6 +110,8 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		}
 		if u.Scheme == "ks3" {
 			s3.Provider = s3like.KS3SDKProvider
+		} else if u.Scheme == "oss" {
+			s3.Provider = s3like.OSSProvider
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
