@@ -69,7 +69,7 @@ func BRIECreateDatabase(sctx sessionctx.Context, schema *model.DBInfo, brComment
 	if len(schema.Charset) == 0 {
 		schema.Charset = mysql.DefaultCharset
 	}
-	return d.CreateSchemaWithInfo(sctx, schema, ddl.OnExistIgnore)
+	return d.CreateSchemaWithInfo(sctx, schema, ddl.OnExistError)
 }
 
 // showRestoredCreateTable shows the result of SHOW CREATE TABLE from a tableInfo.

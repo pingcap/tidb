@@ -589,12 +589,16 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 			existingDBReplace.DbID = newID
 		}
 
-		// db replace in `TableMappingManager` has no name yet, it is determined by baseMap.
-		// TODO: update the name of the db replace that is not exists in baseMap.
-		// Now it is OK because user tables' name is not used.
-		if existingDBReplace.Name == "" {
-			if baseDBReplace, exists := baseMap[upDBID]; exists && baseDBReplace.Name != "" {
+		if baseDBReplace, exists := baseMap[upDBID]; exists {
+			// db replace in `TableMappingManager` has no name yet, it is determined by baseMap.
+			// TODO: update the name of the db replace that is not exists in baseMap.
+			// Now it is OK because user tables' name is not used.
+			if existingDBReplace.Name == "" && baseDBReplace.Name != "" {
 				existingDBReplace.Name = baseDBReplace.Name
+			}
+			// update the reused flag of the db replace, maybe it is reused in snapshot restore.
+			if existingDBReplace.Reused == false && baseDBReplace.Reused == true {
+				existingDBReplace.Reused = true
 			}
 		}
 
@@ -855,7 +859,15 @@ func (tm *TableMappingManager) UpdateDownstreamIds(dbs []*metautil.Database, tab
 		}
 		_, exist := dbReplaces[oldDB.Info.ID]
 		if !exist {
-			dbReplaces[oldDB.Info.ID] = NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
+			dbReplace := NewDBReplace(newDBInfo.Name.O, newDBInfo.ID)
+			dbReplace.Reused = oldDB.IsReusedByPITR()
+			if dbReplace.Reused {
+				log.Info("the database is reused by snapshot restore",
+					zap.Stringer("db", newDBInfo.Name),
+					zap.Int64("upstream-db-id", oldDB.Info.ID),
+					zap.Int64("downstream-db-id", newDBInfo.ID))
+			}
+			dbReplaces[oldDB.Info.ID] = dbReplace
 		}
 	}
 

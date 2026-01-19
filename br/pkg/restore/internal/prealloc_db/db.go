@@ -15,6 +15,7 @@ import (
 	prealloctableid "github.com/pingcap/tidb/br/pkg/restore/internal/prealloc_table_id"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -81,7 +82,11 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	case model.ActionCreateSchema:
 		err = db.se.CreateDatabase(ctx, dbInfo)
 		if err != nil {
-			log.Error("create database failed", zap.Stringer("db", dbInfo.Name), zap.Error(err))
+			if infoschema.ErrDatabaseExists.Equal(err) {
+				err = nil
+			} else {
+				log.Error("create database failed", zap.Stringer("db", dbInfo.Name), zap.Error(err))
+			}
 		}
 		return errors.Trace(err)
 	case model.ActionCreateTable:
@@ -152,7 +157,7 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportP
 	}
 
 	err := db.se.CreateDatabase(ctx, schema)
-	if err != nil {
+	if err != nil && !infoschema.ErrDatabaseExists.Equal(err) {
 		log.Error("create database failed", zap.Stringer("db", schema.Name), zap.Error(err))
 	}
 	return errors.Trace(err)

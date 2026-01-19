@@ -91,6 +91,7 @@ func NewDBReplace(name string, newID DownstreamID) *DBReplace {
 		DbID:        newID,
 		TableMap:    make(map[UpstreamID]*TableReplace),
 		FilteredOut: false,
+		Reused:      false,
 	}
 }
 

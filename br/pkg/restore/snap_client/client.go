@@ -54,6 +54,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1015,7 +1016,10 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		for _, db := range dbs {
 			err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
-				return errors.Trace(err)
+				if !infoschema.ErrDatabaseExists.Equal(err) {
+					return errors.Trace(err)
+				}
+				db.SetReusedByPITR()
 			}
 		}
 		return nil
@@ -1028,7 +1032,14 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			if err != nil {
+				if !infoschema.ErrDatabaseExists.Equal(err) {
+					return errors.Trace(err)
+				}
+				db.SetReusedByPITR()
+			}
+			return nil
 		})
 	}
 	return eg.Wait()
