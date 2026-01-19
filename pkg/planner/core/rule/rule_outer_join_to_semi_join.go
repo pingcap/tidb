@@ -217,13 +217,11 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	innerSchemaSet := intset.NewFastIntSet()
 	// Obtain all the columns that meet the requirements in the eq condition and other condition.
 	// If the column that is isnull is an inner column in the eq/other condition,
-	// It can be directly converted into an anti semi join.
+	// It can be directly converted into an anti-semi join.
 	expression.ExtractColumnsSetFromExpressions(&innerSchemaSet, func(c *expression.Column) bool {
 		return !outerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
-	if !validProjForConvertAntiJoin(proj) {
-		return nil, false
-	}
+
 	// Scenario 1: column in IsNull expression is from the inner side columns in the eq/other condition.
 	joinCondNRInnerCol := joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
 
@@ -238,7 +236,7 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	isNullColInInnerSch := IsNullColInnerSchIdx >= 0 &&
 		mysql.HasNotNullFlag(innerSch.Columns[IsNullColInnerSchIdx].RetType.GetFlag())
 
-	// meet either scenario can be converted to anti semi join.
+	// meet either scenario can be converted to anti-semi join.
 	canConvertToAntiSemiJoin = joinCondNRInnerCol || isNullColInInnerSch
 	// resultProj is to generate the NULL values for the columns of the inner table, which is the
 	// expected result for this kind of anti-join query.
@@ -279,23 +277,6 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 		p.MergeSchema()
 	}
 	return resultProj, canConvertToAntiSemiJoin
-}
-
-func validProjForConvertAntiJoin(proj *logicalop.LogicalProjection) bool {
-	if proj == nil {
-		return true
-	}
-	// Sometimes there is a projection between select and join.
-	// We require that this projection does not make additional changes to any columns,
-	// then we can continue converting to a semi join.
-	//  Pass: Projection[col1,col2]
-	//  Fail: Projection[col2->ABC, col2+1->col2]
-	for idx, c := range proj.Schema().Columns {
-		if !c.Equals(proj.Exprs[idx]) {
-			return false
-		}
-	}
-	return true
 }
 
 // joinCondNullRejectsInnerCol checks whether the IS NULL column (above the join) is from the inner
