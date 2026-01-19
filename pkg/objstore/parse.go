@@ -25,7 +25,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
-	"github.com/pingcap/tidb/pkg/objstore/s3store"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
@@ -110,7 +109,7 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 			return nil, errors.Trace(err)
 		}
 		if u.Scheme == "ks3" {
-			s3.Provider = s3store.KS3SDKProvider
+			s3.Provider = s3like.KS3SDKProvider
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
