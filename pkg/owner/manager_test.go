@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/phayes/freeport"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/owner"
@@ -34,7 +35,6 @@ import (
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/tests/v3/integration"
-	"golang.org/x/exp/rand"
 )
 
 type testInfo struct {
@@ -415,7 +415,8 @@ func TestAcquireDistributedLock(t *testing.T) {
 	cfg := embed.NewConfig()
 	cfg.Dir = t.TempDir()
 	// rand port in [20000, 60000)
-	randPort := int(rand.Int31n(40000)) + 20000
+	randPort, err := freeport.GetFreePort()
+	require.NoError(t, err)
 	clientAddr := fmt.Sprintf(addrFmt, randPort)
 	lcurl, _ := url.Parse(clientAddr)
 	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
