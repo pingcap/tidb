@@ -353,7 +353,7 @@ WHERE NOT EXISTS (
 	FROM
 		Table_B
 	WHERE
-		Table_B.id = Table_B.id
+		Table_A.id = Table_B.id
 );
 ```
 #### Scenario 2: IS NULL on a Non-Join-Key NOT NULL Column
