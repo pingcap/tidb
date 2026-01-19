@@ -375,7 +375,11 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			}
 			//nolint: errcheck,all_revive,revive
 			defer v.Close()
+<<<<<<< HEAD
 			_, err = toml.NewDecoder(v).Decode(&varMap)
+=======
+			unLoadVars, err = config.LoadConfigForPlanReplayerLoad(ctx, v)
+>>>>>>> ecfd25ad580 (statistics, config: rightly deal with innodb_lock_wait_timeout when to load stats (#65632))
 			if err != nil {
 				return errors.AddStack(err)
 			}
@@ -463,7 +467,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	do := domain.GetDomain(ctx)
 	h := do.StatsHandle()
 	if h == nil {
-		return errors.New("plan replayer: hanlde is nil")
+		return errors.New("plan replayer: handle is nil")
 	}
 	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }
