@@ -49,3 +49,7 @@ go.work
 go.work.sum
 .cursor
 *__failpoint_stash__
+# Personal config files
+/*config.toml
+.cache
+.trae
