@@ -79,51 +79,16 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 }
 
 func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int, sel *logicalop.LogicalSelection) (base.LogicalPlan, bool) {
-	var isChanged bool
 	selChild := sel.Children()[0]
 	switch cc := selChild.(type) {
 	case *logicalop.LogicalJoin:
-		proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema())
-		if ok {
-			var pChild base.LogicalPlan
-			if proj != nil {
-				proj.SetChildren(cc)
-				pChild = proj
-			} else {
-				pChild = cc
-			}
-			if p != nil {
-				p.SetChild(childIdx, pChild)
-			} else {
-				p = pChild
-			}
-		}
-		_, changed := o.recursivePlan(cc)
-		return p, isChanged || ok || changed
+		return o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, cc)
 	case *logicalop.LogicalProjection:
 		if validProjForConvertAntiJoin(cc) {
 			projectionChild := cc.Children()[0]
 			join, ok := projectionChild.(*logicalop.LogicalJoin)
 			if ok {
-				proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
-				if ok {
-					var pChild base.LogicalPlan
-					if proj != nil {
-						// projection <- projection <- anti semi join
-						proj.SetChildren(join)
-						pChild = proj
-					} else {
-						// projection <- anti semi join
-						pChild = join
-					}
-					if p != nil {
-						p.SetChild(childIdx, pChild)
-					} else {
-						p = pChild
-					}
-				}
-				_, changed := o.recursivePlan(join)
-				return p, changed
+				return o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, join)
 			}
 			_, changed := o.recursivePlan(projectionChild)
 			return p, changed
@@ -133,6 +98,28 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 	}
 	_, changed := o.recursivePlan(selChild)
 	return p, changed
+}
+
+func (o *OuterJoinToSemiJoin) startConvertOuterJoinToSemiJoin(p base.LogicalPlan, childIdx int, sel *logicalop.LogicalSelection, join *logicalop.LogicalJoin) (base.LogicalPlan, bool) {
+	proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
+	if ok {
+		var pChild base.LogicalPlan
+		if proj != nil {
+			// projection <- projection <- anti semi join
+			proj.SetChildren(join)
+			pChild = proj
+		} else {
+			// projection <- anti semi join
+			pChild = join
+		}
+		if p != nil {
+			p.SetChild(childIdx, pChild)
+		} else {
+			p = pChild
+		}
+	}
+	_, changed := o.recursivePlan(join)
+	return p, ok || changed
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
