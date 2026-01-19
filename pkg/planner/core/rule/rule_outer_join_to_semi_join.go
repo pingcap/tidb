@@ -39,7 +39,7 @@ import (
 //
 // The rule is triggered if the `WHERE` clause checks for `IS NULL` on a column from the
 // inner table that is guaranteed to be non-null if a match had occurred. This guarantee
-// comes from two main patterns identified in the `CanConvertAntiJoin` function:
+// comes from two main patterns identified in the `canConvertAntiJoin` function:
 //
 //  1. The `IS NULL` check is on a column that is part of the join condition.
 //     SQL Example: `SELECT B.* FROM A RIGHT JOIN B ON A.id = B.a_id WHERE A.id IS NULL`
@@ -221,37 +221,40 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	expression.ExtractColumnsSetFromExpressions(&innerSchemaSet, func(c *expression.Column) bool {
 		return !outerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
-	if !validProj4ConvertAntiJoin(proj) {
+	if !validProjForConvertAntiJoin(proj) {
 		return nil, false
 	}
-	canConvertToAntiSemiJoin = joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
+	// Scenario 1: column in IsNull expression is from the inner side columns in the eq/other condition.
+	joinCondNRInnerCol := joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
+
+	// Scenario 2:
+	//  column in IsNull expression is from the inner side columns.
+	//  but it is not in the equal/other condition.
+	//  We need to check whether inner column is not null in the origin table schema.
+	//  If it is not null column, it can be directly converted into an anti-semi join.
+	innerSch := p.Children()[1^outerChildIdx].Schema()
+	// if IsNullColInnerSchIdx < 0, it means the is null column is not in the inner schema.
+	IsNullColInnerSchIdx := innerSch.ColumnIndex(isNullCol)
+	isNullColInInnerSch := IsNullColInnerSchIdx >= 0 &&
+		mysql.HasNotNullFlag(innerSch.Columns[IsNullColInnerSchIdx].RetType.GetFlag())
+
+	// meet either scenario can be converted to anti semi join.
+	canConvertToAntiSemiJoin = joinCondNRInnerCol || isNullColInInnerSch
 	// resultProj is to generate the NULL values for the columns of the inner table, which is the
 	// expected result for this kind of anti-join query.
 	if canConvertToAntiSemiJoin {
-		// Scenario 1: column in IsNull expression is from the inner side columns in the eq/other condition.
+		var parentNodeSchema *expression.Schema
 		if proj != nil {
-			resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, proj.Schema())
+			parentNodeSchema = proj.Schema()
 		} else {
-			resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, selectSch)
+			parentNodeSchema = selectSch
 		}
-	} else if innerSchemaSet.Has(int(isNullCol.UniqueID)) {
-		// Scenario 2:
-		//  column in IsNull expression is from the inner side columns.
-		//  but it is not in the equal/other condition.
-		//  We need to check whether inner column is not null in the origin table schema.
-		//  If it is not null column, it can be directly converted into an anti-semi join.
-		innerSch := p.Children()[1^outerChildIdx].Schema()
-		idx := innerSch.ColumnIndex(isNullCol)
-		if idx < 0 {
-			return nil, false
-		}
-		if mysql.HasNotNullFlag(innerSch.Columns[idx].RetType.GetFlag()) {
-			if proj != nil {
-				resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, proj.Schema())
-			} else {
-				resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, selectSch)
-			}
-			canConvertToAntiSemiJoin = true
+		if joinCondNRInnerCol {
+			// Scenario 1
+			resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, parentNodeSchema)
+		} else if isNullColInInnerSch {
+			// Scenario 2
+			resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, parentNodeSchema)
 		}
 	}
 
@@ -278,7 +281,7 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	return resultProj, canConvertToAntiSemiJoin
 }
 
-func validProj4ConvertAntiJoin(proj *logicalop.LogicalProjection) bool {
+func validProjForConvertAntiJoin(proj *logicalop.LogicalProjection) bool {
 	if proj == nil {
 		return true
 	}
@@ -334,11 +337,11 @@ func joinCondNullRejectsInnerCol(innerSchSet *intset.FastIntSet, isNullColumnID 
 	return false
 }
 
-// generateProject4ConvertAntiJoin is to generate projection and put it on the anti-semi join which is from outer join.
+// generateProjectForConvertAntiJoin is to generate projection and put it on the anti-semi join which is from outer join.
 // outer column will not be changed. inner column will output the null.
-func generateProject4ConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *intset.FastIntSet, selectSch *expression.Schema) (proj *logicalop.LogicalProjection) {
-	projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
-	for _, c := range selectSch.Columns {
+func generateProjectForConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *intset.FastIntSet, parentNodeSchema *expression.Schema) (proj *logicalop.LogicalProjection) {
+	projExprs := make([]expression.Expression, 0, len(parentNodeSchema.Columns))
+	for _, c := range parentNodeSchema.Columns {
 		if innerSchSet.Has(int(c.UniqueID)) {
 			projExprs = append(projExprs, expression.NewNull())
 		} else {
@@ -346,6 +349,6 @@ func generateProject4ConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *ints
 		}
 	}
 	proj = logicalop.LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
-	proj.SetSchema(selectSch.Clone())
+	proj.SetSchema(parentNodeSchema.Clone())
 	return
 }
