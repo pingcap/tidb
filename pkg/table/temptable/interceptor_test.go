@@ -424,7 +424,7 @@ func TestInterceptorOnGet(t *testing.T) {
 		{Key: kv.Key("un"), Value: []byte("non-exist-key")},
 	})
 
-	testOnGetSnapshotDataCase := func(i int, emptyRetriever bool, requireCommitTS bool) {
+	testOnGetSnapshotDataCase := func(i int, emptyRetriever bool, returnCommitTS bool) {
 		c := cases[i]
 		inter := interceptor
 		if emptyRetriever {
@@ -433,7 +433,7 @@ func TestInterceptorOnGet(t *testing.T) {
 		var entry kv.ValueEntry
 		var err error
 		var commitTS uint64
-		if requireCommitTS {
+		if returnCommitTS {
 			commitTS = mockCommitTS
 			entry, err = inter.OnGet(ctx, snap, c.Key, kv.WithReturnCommitTS())
 		} else {
@@ -486,11 +486,11 @@ func TestInterceptorOnGet(t *testing.T) {
 		Key: encodeTableKey(5, 'n'), Value: []byte("non-exist-key"),
 	})
 
-	testOnGetSessionDataCase := func(i int, requireCommitTS bool) {
+	testOnGetSessionDataCase := func(i int, returnCommitTS bool) {
 		c := cases[i]
 		var entry kv.ValueEntry
 		var err error
-		if requireCommitTS {
+		if returnCommitTS {
 			entry, err = interceptor.OnGet(ctx, snap, c.Key, kv.WithReturnCommitTS())
 		} else {
 			entry, err = interceptor.OnGet(ctx, snap, c.Key)
@@ -894,7 +894,7 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 		},
 	}
 
-	testBatchGetCase := func(i int, requireCommitTS bool) {
+	testBatchGetCase := func(i int, returnCommitTS bool) {
 		c := cases[i]
 		inter := interceptor
 		if c.nilSession {
@@ -902,7 +902,7 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 		}
 		var result map[string]kv.ValueEntry
 		var err error
-		if requireCommitTS {
+		if returnCommitTS {
 			result, err = inter.OnBatchGet(ctx, snap, c.keys, kv.WithReturnCommitTS())
 		} else {
 			result, err = inter.OnBatchGet(ctx, snap, c.keys)
@@ -913,7 +913,7 @@ func TestInterceptorOnBatchGet(t *testing.T) {
 		expected := make(map[string]kv.ValueEntry)
 		for k, v := range c.result {
 			var commitTS uint64
-			if requireCommitTS && slices.ContainsFunc(c.snapKeys, func(key kv.Key) bool {
+			if returnCommitTS && slices.ContainsFunc(c.snapKeys, func(key kv.Key) bool {
 				return key.Cmp(kv.Key(k)) == 0
 			}) {
 				commitTS = mockCommitTS

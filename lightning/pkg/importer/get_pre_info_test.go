@@ -258,8 +258,7 @@ func generateParquetData(t *testing.T) []byte {
 		ID   int64  `parquet:"name=id, type=INT64"`
 		Name string `parquet:"name=name, type=BYTE_ARRAY"`
 	}
-	pf, err := pqt_buf_src.NewBufferFile(make([]byte, 0))
-	require.NoError(t, err)
+	pf := pqt_buf_src.NewBufferFile()
 	pw, err := pqtwriter.NewParquetWriter(pf, new(parquetStruct), 4)
 	require.NoError(t, err)
 	for i := range 10 {
@@ -270,9 +269,7 @@ func generateParquetData(t *testing.T) []byte {
 	}
 	require.NoError(t, pw.WriteStop())
 	require.NoError(t, pf.Close())
-	bf, ok := pf.(pqt_buf_src.BufferFile)
-	require.True(t, ok)
-	return slices.Clone(bf.Bytes())
+	return slices.Clone(pf.Bytes())
 }
 
 func TestGetPreInfoReadFirstRow(t *testing.T) {

@@ -91,7 +91,7 @@ func BatchGetToGetOptions(options []BatchGetOption) []GetOption {
 
 // WithReturnCommitTS is used to indicate that the returned value should contain commit ts.
 func WithReturnCommitTS() tikvstore.GetOrBatchGetOption {
-	return tikvstore.WithRequireCommitTS()
+	return tikvstore.WithReturnCommitTS()
 }
 
 // Getter is the interface for the Get method.

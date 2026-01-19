@@ -119,7 +119,7 @@ type mockSnapshotInterceptor struct {
 func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
 	var opt kv.GetOptions
 	opt.Apply(options)
-	m.spy = []any{"OnGet", ctx, k, opt.RequireCommitTS()}
+	m.spy = []any{"OnGet", ctx, k, opt.ReturnCommitTS()}
 	if len(k) == 0 {
 		return kv.ValueEntry{}, fmt.Errorf("MockErr%s", m.spy[0])
 	}
@@ -129,7 +129,7 @@ func (m *mockSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k
 func (m *mockSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
 	var opt kv.BatchGetOptions
 	opt.Apply(options)
-	m.spy = []any{"OnBatchGet", ctx, keys, opt.RequireCommitTS()}
+	m.spy = []any{"OnBatchGet", ctx, keys, opt.ReturnCommitTS()}
 	if len(keys) == 0 {
 		return nil, fmt.Errorf("MockErr%s", m.spy[0])
 	}
