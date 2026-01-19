@@ -940,9 +940,9 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 	tk.MustExec("insert into t values(1, 1), (1, 2), (1, 3), (2, 2)")
 	tk.MustExec("analyze table t")
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/table/mockQueryBytesMaxUint64", `return(100000)`))
-	tk.MustQuery("explain select * from t where a = 1 and b = 2").Check(testkit.Rows(
-		"IndexReader_7 1.00 root  index:IndexRangeScan_6",
-		"└─IndexRangeScan_6 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t where a = 1 and b = 2").Check(testkit.Rows(
+		"IndexReader 1.00 root  index:IndexRangeScan",
+		"└─IndexRangeScan 1.00 cop[tikv] table:t, index:a(a, b) range:[1 2,1 2], keep order:false"))
 	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/table/mockQueryBytesMaxUint64"))
 
 	// Test issue 22466
@@ -953,10 +953,10 @@ func TestIndexEstimationCrossValidate(t *testing.T) {
 	// will be loaded at the next analyze line, this will trigger the bug.
 	tk.MustQuery("select * from t2 where b=2")
 	tk.MustExec("analyze table t2 index b")
-	tk.MustQuery("explain select * from t2 where b=2").Check(testkit.Rows(
-		"TableReader_8 1.00 root  data:Selection_7",
-		"└─Selection_7 1.00 cop[tikv]  eq(test.t2.b, 2)",
-		"  └─TableFullScan_6 5.00 cop[tikv] table:t2 keep order:false"))
+	tk.MustQuery("explain format = 'brief' select * from t2 where b=2").Check(testkit.Rows(
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(test.t2.b, 2)",
+		"  └─TableFullScan 5.00 cop[tikv] table:t2 keep order:false"))
 }
 
 func TestRangeStepOverflow(t *testing.T) {
@@ -1771,19 +1771,19 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// 1-1. use real-time stats.
 	// From the real-time stats, we are able to know the total count is 11.
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
-	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_8 1.00 root  data:Selection_7",
-		"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_6 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	testKit.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 2").Check(testkit.Rows(
+		"TableReader 1.00 root  data:Selection",
+		"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan 11.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// 1-2. ignore real-time stats.
 	// Use pseudo stats table. The total row count is 10000.
 	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
-	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_8 3.33 root  data:Selection_7",
-		"└─Selection_7 3.33 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_6 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+	testKit.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 2").Check(testkit.Rows(
+		"TableReader 3.33 root  data:Selection",
+		"└─Selection 3.33 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// 2. After ANALYZE.
@@ -1792,14 +1792,14 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 
 	// The execution plans are the same no matter we ignore the real-time stats or not.
 	analyzedPlan := []string{
-		"TableReader_8 2.73 root  data:Selection_7",
-		"└─Selection_7 2.73 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_6 11.00 cop[tikv] table:t keep order:false",
+		"TableReader 2.73 root  data:Selection",
+		"└─Selection 2.73 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan 11.00 cop[tikv] table:t keep order:false",
 	}
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
-	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
+	testKit.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
-	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
+	testKit.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 
 	// 3. Insert another 4 rows of data.
 	testKit.MustExec("insert into t values(3,2),(3,3),(3,4),(3,5)")
@@ -1810,16 +1810,16 @@ func TestIgnoreRealtimeStats(t *testing.T) {
 	// From the real-time stats, we are able to know the total count is 15.
 	// Selectivity is not changed: 15 * (2.73 / 11) = 3.72
 	testKit.MustExec("set @@tidb_opt_objective = 'moderate'")
-	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(
-		"TableReader_8 3.72 root  data:Selection_7",
-		"└─Selection_7 3.72 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
-		"  └─TableFullScan_6 15.00 cop[tikv] table:t keep order:false",
+	testKit.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 2").Check(testkit.Rows(
+		"TableReader 3.72 root  data:Selection",
+		"└─Selection 3.72 cop[tikv]  eq(test.t.a, 1), gt(test.t.b, 2)",
+		"  └─TableFullScan 15.00 cop[tikv] table:t keep order:false",
 	))
 
 	// 3-2. ignore real-time stats.
 	// The execution plan is the same as case 2.
 	testKit.MustExec("set @@tidb_opt_objective = 'determinate'")
-	testKit.MustQuery("explain select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
+	testKit.MustQuery("explain format = 'brief' select * from t where a = 1 and b > 2").Check(testkit.Rows(analyzedPlan...))
 }
 
 func TestSubsetIdxCardinality(t *testing.T) {
@@ -2212,12 +2212,12 @@ func TestIssue64137(t *testing.T) {
 	require.Equal(t, statsMeta[4], "2000")  // modify_count = 2000
 	require.Equal(t, statsMeta[5], "12000") // row_count = 10000+2000
 
-	tk.MustQuery(`explain select * from t where a=99999999`).Check(testkit.Rows(
-		`IndexReader_7 24.00 root  index:IndexRangeScan_6`, // out-of-range est for small NDV, result should close to zero
-		`└─IndexRangeScan_6 24.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
-	tk.MustQuery(`explain select * from t where a=1`).Check(testkit.Rows(
-		`IndexReader_7 12000.00 root  index:IndexRangeScan_6`, // in-range est for small NDV
-		`└─IndexRangeScan_6 12000.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a=99999999`).Check(testkit.Rows(
+		`IndexReader 24.00 root  index:IndexRangeScan`, // out-of-range est for small NDV, result should close to zero
+		`└─IndexRangeScan 24.00 cop[tikv] table:t, index:a(a) range:[99999999,99999999], keep order:false`))
+	tk.MustQuery(`explain format = 'brief' select * from t where a=1`).Check(testkit.Rows(
+		`IndexReader 12000.00 root  index:IndexRangeScan`, // in-range est for small NDV
+		`└─IndexRangeScan 12000.00 cop[tikv] table:t, index:a(a) range:[1,1], keep order:false`))
 }
 
 func TestUninitializedStats(t *testing.T) {
