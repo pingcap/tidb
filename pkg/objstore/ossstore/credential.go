@@ -111,5 +111,10 @@ func (r *credentialRefresher) close() {
 }
 
 func (r *credentialRefresher) GetCredentials(context.Context) (credentials.Credentials, error) {
-	return *r.cred.Load(), nil
+	cred := r.cred.Load()
+	if cred == nil {
+		// refreshOnce should be called before GetCredentials
+		return credentials.Credentials{}, errors.New("credentials not initialized")
+	}
+	return *cred, nil
 }
