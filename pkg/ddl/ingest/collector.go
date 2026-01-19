@@ -27,7 +27,7 @@ import (
 var tempIndexOpsCollectorInstance = newTempIndexOpsCollector()
 
 func init() {
-	prometheus.MustRegister(tempIndexOpsCollectorInstance.opsTotal)
+	prometheus.MustRegister(tempIndexOpsCollectorInstance.opsCounterVec)
 
 	metrics.DDLCommitTempIndexWrite = tempIndexOpsCollectorInstance.commitWrites
 	metrics.DDLAddOneTempIndexWrite = tempIndexOpsCollectorInstance.addWrite
@@ -45,20 +45,12 @@ const (
 )
 
 type tempIndexOpsCollector struct {
-	opsTotal *prometheus.CounterVec
+	opsCounterVec *prometheus.CounterVec
 
-	// write tracks temp-index writes scoped by connection.
-	// connID => *connWriteState
+	// write buffers temp-index writes by connection (connID => *connWriteState)
+	// so they can be flushed on commit (or dropped on rollback) before
+	// incrementing the counters.
 	write sync.Map
-
-	// read tracks scan/merge counters scoped by table.
-	// tableID => *scanMergeCounters
-	read sync.Map
-}
-
-type scanMergeCounters struct {
-	merge atomic.Uint64
-	scan  atomic.Uint64
 }
 
 type connWriteState struct {
@@ -79,7 +71,7 @@ type tableWriteCounters struct {
 
 func newTempIndexOpsCollector() *tempIndexOpsCollector {
 	return &tempIndexOpsCollector{
-		opsTotal: metricscommon.NewCounterVec(
+		opsCounterVec: metricscommon.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "tidb_ddl_temp_index_op_total",
 				Help: "Counter of temp index operations",
@@ -115,10 +107,10 @@ func (c *tempIndexOpsCollector) commitWrites(connID uint64) {
 		double := counters.pendingDoubleWrites.Swap(0)
 		tableIDLabel := strconv.FormatInt(tableID, 10)
 		if single > 0 {
-			c.opsTotal.WithLabelValues(labelSingleWrite, tableIDLabel).Add(float64(single))
+			c.opsCounterVec.WithLabelValues(labelSingleWrite, tableIDLabel).Add(float64(single))
 		}
 		if double > 0 {
-			c.opsTotal.WithLabelValues(labelDoubleWrite, tableIDLabel).Add(float64(double))
+			c.opsCounterVec.WithLabelValues(labelDoubleWrite, tableIDLabel).Add(float64(double))
 		}
 		return true
 	})
@@ -146,22 +138,16 @@ func (c *tempIndexOpsCollector) clearConn(connID uint64) {
 }
 
 func (c *tempIndexOpsCollector) addScanAndMerge(tableID int64, scanCnt, mergeCnt uint64) {
-	value, _ := c.read.LoadOrStore(tableID, &scanMergeCounters{})
-	counters, _ := value.(*scanMergeCounters)
-	counters.scan.Add(scanCnt)
-	counters.merge.Add(mergeCnt)
-
 	tableIDLabel := strconv.FormatInt(tableID, 10)
 	if scanCnt > 0 {
-		c.opsTotal.WithLabelValues(labelScan, tableIDLabel).Add(float64(scanCnt))
+		c.opsCounterVec.WithLabelValues(labelScan, tableIDLabel).Add(float64(scanCnt))
 	}
 	if mergeCnt > 0 {
-		c.opsTotal.WithLabelValues(labelMerge, tableIDLabel).Add(float64(mergeCnt))
+		c.opsCounterVec.WithLabelValues(labelMerge, tableIDLabel).Add(float64(mergeCnt))
 	}
 }
 
 func (c *tempIndexOpsCollector) clearTable(tableID int64) {
-	c.read.Delete(tableID)
 	c.write.Range(func(_, value any) bool {
 		state, _ := value.(*connWriteState)
 		state.byTable.Delete(tableID)
@@ -169,10 +155,10 @@ func (c *tempIndexOpsCollector) clearTable(tableID int64) {
 	})
 
 	tableIDLabel := strconv.FormatInt(tableID, 10)
-	c.opsTotal.DeleteLabelValues(labelSingleWrite, tableIDLabel)
-	c.opsTotal.DeleteLabelValues(labelDoubleWrite, tableIDLabel)
-	c.opsTotal.DeleteLabelValues(labelMerge, tableIDLabel)
-	c.opsTotal.DeleteLabelValues(labelScan, tableIDLabel)
+	c.opsCounterVec.DeleteLabelValues(labelSingleWrite, tableIDLabel)
+	c.opsCounterVec.DeleteLabelValues(labelDoubleWrite, tableIDLabel)
+	c.opsCounterVec.DeleteLabelValues(labelMerge, tableIDLabel)
+	c.opsCounterVec.DeleteLabelValues(labelScan, tableIDLabel)
 }
 
 func (c *tempIndexOpsCollector) getOrCreateConnWriteState(connID uint64) *connWriteState {
