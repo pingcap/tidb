@@ -215,6 +215,7 @@ go_test(
         "indexmerge_test.go",
         "integration_partition_test.go",
         "integration_test.go",
+        "lateral_join_test.go",
         "logical_plans_test.go",
         "main_test.go",
         "optimizer_test.go",
