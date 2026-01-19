@@ -51,3 +51,5 @@ go.work.sum
 *__failpoint_stash__
 # Personal config files
 /*config.toml
+.cache
+.trae
