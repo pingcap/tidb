@@ -13,7 +13,7 @@
       "select A.* from A left join B on A.id = B.a_id where B.non_null_col IS NULL",
       "select A.* from A left join B on A.id = B.a_id is null where B.non_null_col IS NULL",
       "select A.* from A left join B on A.id <=> B.a_id where B.id IS NULL",
-      "select A.* from A left join B on A.id = B.a_id where B.id is null and A.val > 30",
+      "select A.* from A left join B on A.id = B.a_id where B.id is null and A.val > 30 order by A.id",
 
       // GROUP 3: LEFT JOIN (Negative cases, should NOT be converted, equi-join on id)
       "select A.* from A left join B on A.id = B.a_id where B.nullable_col IS NULL",
@@ -25,7 +25,7 @@
       "select B.* from A right join B on A.id = B.a_id where A.id IS NULL",
       "select B.* from A right join B on A.id = B.a_id is null where A.id IS NULL",
       "select B.* from A right join B on A.id <=> B.a_id where A.id IS NULL",
-      "select B.* from A right join B on A.id = B.a_id where A.id is null and B.val > 100",
+      "select B.* from A right join B on A.id = B.a_id where A.id is null and B.val > 100 order by B.id",
       "select B.* from A right join B on A.val <=> B.val where A.id IS NULL",
       "select B.* from A right join B on A.val <=> B.val where A.id IS NOT NULL",
       "select B.* from A right join B on A.id = B.a_id and B.val > 100 where A.id is null",

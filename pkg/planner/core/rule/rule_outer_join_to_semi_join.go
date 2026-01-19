@@ -61,46 +61,56 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 	var isChanged bool
 	for idx, child := range p.Children() {
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
-			switch cc := sel.Children()[0].(type) {
-			case *logicalop.LogicalJoin:
-				proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema())
-				if ok {
-					if proj != nil {
-						proj.SetChildren(cc)
-						p.SetChild(idx, proj)
-					} else {
-						p.SetChild(idx, cc)
-					}
-					isChanged = true
-				}
-			case *logicalop.LogicalProjection:
-				if !validProjForConvertAntiJoin(cc) {
-					continue
-				}
-				join, ok := cc.Children()[0].(*logicalop.LogicalJoin)
-				if ok {
-					proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
-					if ok {
-						if proj != nil {
-							// projection <- projection <- anti semi join
-							proj.SetChildren(join)
-							cc.SetChildren(proj)
-							p.SetChild(idx, cc)
-						} else {
-							// projection <- anti semi join
-							cc.SetChildren(join)
-							p.SetChild(idx, cc)
-						}
-						isChanged = true
-					}
-				}
-			}
+			o.dealWithSelection(p, idx, sel)
+		} else {
+			_, changed := o.recursivePlan(child)
+			isChanged = isChanged || changed
+			continue
 		}
-		updatedChild := p.Children()[idx]
-		_, changed := o.recursivePlan(updatedChild)
-		isChanged = isChanged || changed
 	}
 	return p, isChanged
+}
+
+func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int, sel *logicalop.LogicalSelection) (base.LogicalPlan, bool) {
+	var isChanged bool
+	selChild := sel.Children()[0]
+	switch cc := selChild.(type) {
+	case *logicalop.LogicalJoin:
+		proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema())
+		if ok {
+			if proj != nil {
+				proj.SetChildren(cc)
+				p.SetChild(childIdx, proj)
+			} else {
+				p.SetChild(childIdx, cc)
+			}
+		}
+		_, changed := o.recursivePlan(cc)
+		isChanged = isChanged || ok || changed
+	case *logicalop.LogicalProjection:
+		if validProjForConvertAntiJoin(cc) {
+			projectionChild := cc.Children()[0]
+			join, ok := projectionChild.(*logicalop.LogicalJoin)
+			if ok {
+				proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
+				if ok {
+					if proj != nil {
+						// projection <- projection <- anti semi join
+						proj.SetChildren(join)
+						cc.SetChildren(proj)
+					} else {
+						// projection <- anti semi join
+						cc.SetChildren(join)
+					}
+					p.SetChild(childIdx, cc)
+				}
+				return o.recursivePlan(join)
+			}
+			return o.recursivePlan(projectionChild)
+		}
+		return o.recursivePlan(cc)
+	}
+	return o.recursivePlan(selChild)
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
@@ -253,12 +263,7 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 				args := expr.GetArgs()
 				p.EqualConditions[idx] = expression.NewFunctionInternal(ctx, expr.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0]).(*expression.ScalarFunction)
 			}
-			for idx, expr := range p.OtherConditions {
-				if sf, ok := expr.(*expression.ScalarFunction); ok {
-					args := sf.GetArgs()
-					p.OtherConditions[idx] = expression.NewFunctionInternal(ctx, sf.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0])
-				}
-			}
+			// it is no need for the other conditions because the arguments order does not matter.
 			args := p.Children()
 			p.SetChildren(args[1], args[0])
 			tmp := p.LeftConditions
