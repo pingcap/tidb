@@ -392,9 +392,11 @@ Currently, we only support projections with column mapping relationships, not tr
 */
 func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, selectSch *expression.Schema, proj *LogicalProjection) (resultProj *LogicalProjection, canConvertToAntiSemiJoin bool) {
 	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
-		// selectCond can only have one expression.
-		// The outer expression can definitely be pushed down, so selectCond must be the inner expression.
-		// If the inner expression are semantically similar, leaving only one and the other should be eliminable.
+		// This optimization only supports a single selection condition in selectCond.
+		// Any condition that refers only to the outer side of the join can be pushed below the join,
+		// so the remaining selection condition must be on the inner side.
+		// If multiple inner-side conditions were semantically equivalent, the optimizer should keep just one
+		// and eliminate the others, so we require exactly one selection condition here.
 		return nil, false
 	}
 	if _, ok := p.Self().(*LogicalApply); ok {
