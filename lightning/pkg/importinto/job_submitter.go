@@ -17,7 +17,6 @@ package importinto
 import (
 	"context"
 	"net/url"
-	"regexp"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/importsdk"
@@ -26,8 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
-
-var importSQLURLRegexp = regexp.MustCompile(`(?i)'(?:s3|ks3|azure|azblob)://[^']*'`)
 
 // ImportJob represents a submitted import job with its metadata.
 type ImportJob struct {
@@ -74,7 +71,12 @@ func (s *DefaultJobSubmitter) SubmitTable(ctx context.Context, tableMeta *import
 		return nil, errors.Annotate(err, "generate import SQL")
 	}
 
-	logger.Info("submitting import job", zap.String("sql", redactImportSQL(sql)))
+	sqlForLog, logErr := generateImportSQLForLog(tableMeta, options)
+	if logErr != nil {
+		logger.Info("submitting import job")
+	} else {
+		logger.Info("submitting import job", zap.String("sql", sqlForLog))
+	}
 	jobID, err := s.sdk.SubmitJob(ctx, sql)
 	if err != nil {
 		return nil, errors.Annotate(err, "submit job")
@@ -133,12 +135,31 @@ func (s *DefaultJobSubmitter) buildImportOptions(tableMeta *importsdk.TableMeta)
 	return opts
 }
 
-func redactImportSQL(sql string) string {
-	return importSQLURLRegexp.ReplaceAllStringFunc(sql, func(m string) string {
-		if len(m) <= 2 {
-			return m
+func generateImportSQLForLog(tableMeta *importsdk.TableMeta, options *importsdk.ImportOptions) (string, error) {
+	// Best-effort redaction: build a second SQL statement for logging purposes.
+	redactedMeta := *tableMeta
+	redactedOpts := *options
+
+	path := redactedMeta.WildcardPath
+	if redactedOpts.ResourceParameters != "" {
+		// Same logic as importsdk.sqlGenerator.GenerateImportSQL: append resource
+		// parameters to the wildcard path, then redact secrets from the full URL.
+		u, err := url.Parse(path)
+		if err == nil {
+			if u.RawQuery != "" {
+				u.RawQuery += "&" + redactedOpts.ResourceParameters
+			} else {
+				u.RawQuery = redactedOpts.ResourceParameters
+			}
+			path = u.String()
 		}
-		u := m[1 : len(m)-1]
-		return "'" + ast.RedactURL(u) + "'"
-	})
+		// Avoid adding ResourceParameters twice when re-generating SQL.
+		redactedOpts.ResourceParameters = ""
+	}
+	redactedMeta.WildcardPath = ast.RedactURL(path)
+	if redactedOpts.CloudStorageURI != "" {
+		redactedOpts.CloudStorageURI = ast.RedactURL(redactedOpts.CloudStorageURI)
+	}
+
+	return importsdk.NewSQLGenerator().GenerateImportSQL(&redactedMeta, &redactedOpts)
 }

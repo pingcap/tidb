@@ -116,14 +116,16 @@ func TestJobSubmitterSubmitTableLogRedaction(t *testing.T) {
 	logger, buffer := log.MakeTestLogger()
 	submitter := importinto.NewJobSubmitter(mockSDK, config.NewConfig(), groupKey, logger)
 
-	rawSQL := "IMPORT INTO `db`.`t1` FROM 's3://bucket/path/*.csv?access-key=ak&endpoint=http%3A%2F%2Fminio%3A9000&secret-access-key=sk'"
+	tableMeta := &importsdk.TableMeta{
+		Database:     "db",
+		Table:        "t1",
+		WildcardPath: "s3://bucket/path/*.csv?access-key=ak&endpoint=http%3A%2F%2Fminio%3A9000&secret-access-key=sk",
+	}
+	rawSQL := "IMPORT INTO `db`.`t1` FROM '" + tableMeta.WildcardPath + "'"
 	mockSDK.EXPECT().GenerateImportSQL(gomock.Any(), gomock.Any()).Return(rawSQL, nil)
 	mockSDK.EXPECT().SubmitJob(gomock.Any(), rawSQL).Return(int64(123), nil)
 
-	_, err := submitter.SubmitTable(context.Background(), &importsdk.TableMeta{
-		Database: "db",
-		Table:    "t1",
-	})
+	_, err := submitter.SubmitTable(context.Background(), tableMeta)
 	require.NoError(t, err)
 
 	out := buffer.String()
