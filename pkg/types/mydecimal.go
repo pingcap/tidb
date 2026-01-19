@@ -985,6 +985,8 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 // FromParquetArray sets the decimal value from Parquet byte array representation.
 // It assumes that the input buffer is disposable, which will be modified during
 // the conversion.
+// Note: The input buffer will be modified in-place. Callers must pass a disposable
+// copy if they need to preserve the original data.
 // For the data layout stored in parquet, please refer to
 // https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#decimal
 func (d *MyDecimal) FromParquetArray(buf []byte, scale int) error {

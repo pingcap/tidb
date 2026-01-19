@@ -71,8 +71,7 @@ func getInt32Setter(converted *convertedType, loc *time.Location) setter[int32] 
 	switch converted.converted {
 	case schema.ConvertedTypes.Decimal:
 		return func(val int32, d *types.Datum) error {
-			setParquetDecimalFromInt64(int64(val), d, converted.decimalMeta)
-			return nil
+			return setParquetDecimalFromInt64(int64(val), d, converted.decimalMeta)
 		}
 	case schema.ConvertedTypes.Date:
 		return func(val int32, d *types.Datum) error {
@@ -156,8 +155,7 @@ func getInt64Setter(converted *convertedType, loc *time.Location) setter[int64] 
 		}
 	case schema.ConvertedTypes.Decimal:
 		return func(val int64, d *types.Datum) error {
-			setParquetDecimalFromInt64(val, d, converted.decimalMeta)
-			return nil
+			return setParquetDecimalFromInt64(val, d, converted.decimalMeta)
 		}
 	}
 
