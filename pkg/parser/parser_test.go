@@ -8159,7 +8159,7 @@ func TestTableAffinityOption(t *testing.T) {
 
 func TestSplitPartition(t *testing.T) {
 	cases := []testCase{
-		{`create table t (id BIGINT, user_id BIGINT, action_type VARCHAR(20), PRIMARY KEY (id), INDEX idx_user_id (user_id)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx_user_id BETWEEN (1000) AND (100000) REGIONS 3`, true, "CREATE TABLE `t` (`id` BIGINT,`user_id` BIGINT,`action_type` VARCHAR(20),PRIMARY KEY(`id`),INDEX `idx_user_id`(`user_id`)) SPLIT PRIMARY KEY `PRIMARY` BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3"},
+		{`create table t (id BIGINT, user_id BIGINT, action_type VARCHAR(20), PRIMARY KEY (id), INDEX idx_user_id (user_id)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx_user_id BETWEEN (1000) AND (100000) REGIONS 3`, true, "CREATE TABLE `t` (`id` BIGINT,`user_id` BIGINT,`action_type` VARCHAR(20),PRIMARY KEY(`id`),INDEX `idx_user_id`(`user_id`)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3"},
 		{`alter table t SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4`, true, "ALTER TABLE `t` SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4"},
 		{`alter table t SPLIT INDEX ss BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT INDEX `ss` BETWEEN (0) AND (1000000) REGIONS 3"},
 		{`create table t (id BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4`, true, "CREATE TABLE `t` (`id` BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4"},

@@ -4181,9 +4181,6 @@ func (n *SplitIndexOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("PRIMARY KEY ")
 	} else {
 		ctx.WriteKeyWord("INDEX ")
-	}
-
-	if n.IndexName.L != "" {
 		ctx.WriteName(n.IndexName.String())
 		ctx.WritePlain(" ")
 	}
