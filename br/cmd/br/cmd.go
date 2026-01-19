@@ -21,7 +21,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version/build"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	tidbutils "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -31,7 +31,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func setTiDBGlueDBFilter(newFilter func(dbName ast.CIStr) bool) func() {
+func setTiDBGlueDBFilter(newFilter func(dbName pmodel.CIStr) bool) func() {
 	oldFilter := tidbGlue.InfoSchemaFilter
 	tidbGlue.InfoSchemaFilter = gluetidb.NewInfoSchemaFilter(newFilter)
 	return func() { tidbGlue.InfoSchemaFilter = oldFilter }
