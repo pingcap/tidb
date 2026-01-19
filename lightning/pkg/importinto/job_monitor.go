@@ -87,7 +87,6 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 
 	groupKey := jobs[0].GroupKey
 	finishedJobs := make(map[int64]struct{})
-	var firstError error
 	stats := &groupStats{}
 	progressEstimator := newJobProgressEstimator(m.logger)
 
@@ -114,30 +113,31 @@ func (m *DefaultJobMonitor) WaitForJobs(ctx context.Context, jobs []*ImportJob) 
 				continue
 			}
 
-			stats = m.processJobStatuses(ctx, statuses, jobMap, jobTotalSize, jobFinishedSize, finishedJobs, &firstError, progressEstimator)
+			newStats, err := m.processJobStatuses(ctx, statuses, jobMap, jobTotalSize, jobFinishedSize, finishedJobs, progressEstimator)
+			stats = newStats
 
 			// Fast-fail: return error immediately if any job failed.
 			if stats.failedCnt > 0 {
-				if firstError == nil {
-					firstError = errors.Errorf("job group %s has %d failed jobs", groupKey, stats.failedCnt)
+				if err == nil {
+					err = errors.Errorf("job group %s has %d failed jobs", groupKey, stats.failedCnt)
 				}
-				return firstError
+				return err
 			}
 
 			// Check if all jobs finished
 			if len(finishedJobs) == len(jobs) {
-				if firstError != nil {
-					m.logger.Error("all jobs completed but with errors", zap.Int("total", len(jobs)), zap.Error(firstError))
-					return firstError
+				if err != nil {
+					m.logger.Error("all jobs completed but with errors", zap.Int("total", len(jobs)), zap.Error(err))
+					return err
 				}
 				m.logger.Info("all jobs completed successfully", zap.Int("total", len(jobs)))
 				return nil
 			}
 
 			// Fast-fail: if we already detected an error, don't wait for remaining jobs
-			if firstError != nil {
+			if err != nil {
 				m.logger.Info("exiting early due to failure", zap.Int("finished", len(finishedJobs)), zap.Int("total", len(jobs)))
-				return firstError
+				return err
 			}
 		}
 	}
@@ -162,10 +162,10 @@ func (m *DefaultJobMonitor) processJobStatuses(
 	jobTotalSize map[int64]int64,
 	jobFinishedSize map[int64]int64,
 	finishedJobs map[int64]struct{},
-	firstError *error,
 	progressEstimator *jobProgressEstimator,
-) *groupStats {
+) (*groupStats, error) {
 	stats := &groupStats{}
+	var firstErr error
 	for _, status := range statuses {
 		job, ok := jobMap[status.JobID]
 		if !ok {
@@ -198,19 +198,19 @@ func (m *DefaultJobMonitor) processJobStatuses(
 			finishedJobs[status.JobID] = struct{}{}
 
 			// Set error if not success
-			if !status.IsFinished() && *firstError == nil {
+			if !status.IsFinished() && firstErr == nil {
 				if status.IsFailed() {
-					*firstError = errors.Errorf("job %d failed: %s", status.JobID, status.ResultMessage)
+					firstErr = errors.Errorf("job %d failed: %s", status.JobID, status.ResultMessage)
 				} else if status.IsCancelled() {
-					*firstError = errors.Errorf("job %d was cancelled", status.JobID)
+					firstErr = errors.Errorf("job %d was cancelled", status.JobID)
 				}
 			}
 
 			// Record completion in checkpoint
 			if err := m.recordCompletion(ctx, job, status); err != nil {
 				m.logger.Error("failed to record job completion", zap.Int64("jobID", job.JobID), zap.Error(err))
-				if *firstError == nil {
-					*firstError = err
+				if firstErr == nil {
+					firstErr = err
 				}
 				continue
 			}
@@ -232,7 +232,7 @@ func (m *DefaultJobMonitor) processJobStatuses(
 		m.progressUpdater.UpdateFinishedSize(finishedSize)
 	}
 
-	return stats
+	return stats, firstErr
 }
 
 func (m *DefaultJobMonitor) logJobCompletion(job *ImportJob, status *importsdk.JobStatus) {
