@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
@@ -3722,6 +3723,11 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 // GetDomain gets the associated domain for store.
 func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
+}
+
+// GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with the given schema filter.
+func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.GetOrCreateWithFilter(store, filter)
 }
 
 func getStartMode(ver int64) ddl.StartMode {
