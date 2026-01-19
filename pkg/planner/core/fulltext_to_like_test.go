@@ -42,7 +42,7 @@ func TestParseBooleanSearchString(t *testing.T) {
 		{
 			input: "apple*",
 			expected: []searchTerm{
-				{word: "apple", isPrefixMatch: true},
+				{word: "apple"},
 			},
 		},
 		{
@@ -71,7 +71,7 @@ func TestParseBooleanSearchString(t *testing.T) {
 		{
 			input: "+word1* -word2",
 			expected: []searchTerm{
-				{word: "word1", isRequired: true, isPrefixMatch: true},
+				{word: "word1", isRequired: true},
 				{word: "word2", isExcluded: true},
 			},
 		},
@@ -155,7 +155,6 @@ func TestParseBooleanSearchString(t *testing.T) {
 				require.Equal(t, expected.word, result[i].word, "Word should match")
 				require.Equal(t, expected.isRequired, result[i].isRequired, "isRequired should match")
 				require.Equal(t, expected.isExcluded, result[i].isExcluded, "isExcluded should match")
-				require.Equal(t, expected.isPrefixMatch, result[i].isPrefixMatch, "isPrefixMatch should match")
 				require.Equal(t, expected.isPhrase, result[i].isPhrase, "isPhrase should match")
 			}
 		})
@@ -177,11 +176,11 @@ func TestParseSearchTerm(t *testing.T) {
 		},
 		{
 			input:    "word*",
-			expected: searchTerm{word: "word", isPrefixMatch: true},
+			expected: searchTerm{word: "word"},
 		},
 		{
 			input:    "+word*",
-			expected: searchTerm{word: "word", isRequired: true, isPrefixMatch: true},
+			expected: searchTerm{word: "word", isRequired: true},
 		},
 		{
 			input:    "word",
@@ -193,7 +192,7 @@ func TestParseSearchTerm(t *testing.T) {
 		},
 		{
 			input:    "+*",
-			expected: searchTerm{word: "", isRequired: true, isPrefixMatch: true},
+			expected: searchTerm{word: "", isRequired: true},
 		},
 	}
 
@@ -203,7 +202,6 @@ func TestParseSearchTerm(t *testing.T) {
 			require.Equal(t, tt.expected.word, result.word, "Word should match")
 			require.Equal(t, tt.expected.isRequired, result.isRequired, "isRequired should match")
 			require.Equal(t, tt.expected.isExcluded, result.isExcluded, "isExcluded should match")
-			require.Equal(t, tt.expected.isPrefixMatch, result.isPrefixMatch, "isPrefixMatch should match")
 		})
 	}
 }

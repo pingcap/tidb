@@ -25,11 +25,13 @@ import (
 
 // searchTerm represents a single term in a Boolean fulltext search query
 type searchTerm struct {
-	word          string
-	isRequired    bool // Has '+' prefix
-	isExcluded    bool // Has '-' prefix
-	isPrefixMatch bool // Has '*' suffix
-	isPhrase      bool // Wrapped in quotes
+	word       string
+	isRequired bool // Has '+' prefix
+	isExcluded bool // Has '-' prefix
+	isPhrase   bool // Wrapped in quotes
+	// Note: Prefix wildcards ('*' suffix) are parsed but not used differently from regular terms
+	// because LIKE %term% already matches the term anywhere. Proper prefix matching would require
+	// REGEXP to enforce word-start boundaries, which we avoid for simplicity.
 }
 
 // parseBooleanSearchString parses a Boolean mode search string into individual terms
@@ -141,9 +143,8 @@ func parseSearchTerm(word string) searchTerm {
 		word = word[1:]
 	}
 
-	// Check for trailing wildcard
+	// Check for trailing wildcard and strip it (we don't use it differently, see struct comment)
 	if len(word) > 0 && word[len(word)-1] == '*' {
-		term.isPrefixMatch = true
 		word = word[:len(word)-1]
 	}
 
@@ -228,7 +229,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 		for _, term := range required {
 			var termColumnPreds []expression.Expression
 			for _, column := range columns {
-				pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
+				pred, err := er.buildLikePredicate(column, term.word)
 				if err != nil {
 					return nil, err
 				}
@@ -244,7 +245,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 		for _, term := range excluded {
 			var termColumnPreds []expression.Expression
 			for _, column := range columns {
-				pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
+				pred, err := er.buildLikePredicate(column, term.word)
 				if err != nil {
 					return nil, err
 				}
@@ -268,7 +269,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 			var allOptionalPreds []expression.Expression
 			for _, term := range optional {
 				for _, column := range columns {
-					pred, err := er.buildLikePredicate(column, term.word, false, term.isPrefixMatch)
+					pred, err := er.buildLikePredicate(column, term.word)
 					if err != nil {
 						return nil, err
 					}
@@ -304,7 +305,7 @@ func (er *expressionRewriter) convertMatchAgainstToLike(
 	for _, column := range columns {
 		var wordPredicates []expression.Expression
 		for _, word := range words {
-			pred, err := er.buildLikePredicate(column, word, false, false)
+			pred, err := er.buildLikePredicate(column, word)
 			if err != nil {
 				return nil, err
 			}
@@ -355,8 +356,6 @@ func escapeLikePattern(term string) string {
 func (er *expressionRewriter) buildLikePredicate(
 	column expression.Expression,
 	term string,
-	isNegated bool,
-	_ bool,
 ) (expression.Expression, error) {
 	// Escape special LIKE characters in the search term
 	escapedTerm := escapeLikePattern(term)
@@ -387,15 +386,6 @@ func (er *expressionRewriter) buildLikePredicate(
 	likeFunc, err := er.newFunction(ast.Like, types.NewFieldType(mysql.TypeTiny), column, patternConst, escapeConst)
 	if err != nil {
 		return nil, err
-	}
-
-	// Apply NOT if needed
-	if isNegated {
-		notFunc, err := er.newFunction(ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), likeFunc)
-		if err != nil {
-			return nil, err
-		}
-		return notFunc, nil
 	}
 
 	return likeFunc, nil
