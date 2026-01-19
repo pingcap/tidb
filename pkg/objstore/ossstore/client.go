@@ -63,7 +63,7 @@ func (c *client) CheckListObjects(ctx context.Context) error {
 
 func (c *client) CheckGetObject(ctx context.Context) error {
 	key := c.ObjectKey(storeapi.GenPermCheckObjectKey())
-	_, err := c.svc.GetObject(ctx, &oss.GetObjectRequest{
+	resp, err := c.svc.GetObject(ctx, &oss.GetObjectRequest{
 		Bucket: oss.Ptr(c.options.Bucket),
 		Key:    oss.Ptr(key),
 	})
@@ -72,6 +72,10 @@ func (c *client) CheckGetObject(ctx context.Context) error {
 		if svcErr.Code == noSuchKey {
 			return nil
 		}
+	}
+	if resp != nil && resp.Body != nil {
+		// shouldn't reach here normally as we are using UUID as the checking key
+		_ = resp.Body.Close()
 	}
 	return errors.Trace(err)
 }

@@ -16,6 +16,7 @@ package ossstore
 
 import (
 	"context"
+	"io"
 	"testing"
 
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
@@ -47,6 +48,16 @@ func CreateSuite(t *testing.T) *Suite {
 	return s
 }
 
+type mockReadCloser struct {
+	io.ReadCloser
+	closed bool
+}
+
+func (r *mockReadCloser) Close() error {
+	r.closed = true
+	return nil
+}
+
 func TestClientPermission(t *testing.T) {
 	s := CreateSuite(t)
 	ctx := context.Background()
@@ -76,6 +87,10 @@ func TestClientPermission(t *testing.T) {
 	t.Run("test get objects", func(t *testing.T) {
 		s.MockCli.EXPECT().GetObject(gomock.Any(), gomock.Any()).Return(&oss.GetObjectResult{}, nil)
 		require.NoError(t, s3like.CheckPermissions(ctx, cli, []storeapi.Permission{storeapi.GetObject}))
+		rd := &mockReadCloser{}
+		s.MockCli.EXPECT().GetObject(gomock.Any(), gomock.Any()).Return(&oss.GetObjectResult{Body: rd}, nil)
+		require.NoError(t, s3like.CheckPermissions(ctx, cli, []storeapi.Permission{storeapi.GetObject}))
+		require.True(t, rd.closed)
 		s.MockCli.EXPECT().GetObject(gomock.Any(), gomock.Any()).Return(nil, &oss.ServiceError{Code: "NoSuchKey"})
 		require.NoError(t, s3like.CheckPermissions(ctx, cli, []storeapi.Permission{storeapi.GetObject}))
 
