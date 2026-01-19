@@ -415,7 +415,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	}
 
 	sf, ok := selectCond[0].(*expression.ScalarFunction)
-	if !ok || sf == nil {
+	if !ok {
 		return nil, false
 	}
 	if sf.FuncName.L != ast.IsNull {
@@ -457,6 +457,9 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		//  If it is not null column, it can be directly converted into an anti-semi join.
 		innerSch := p.Children()[1^outerChildIdx].Schema()
 		idx := innerSch.ColumnIndex(isNullCol)
+		if idx < 0 {
+			return nil, false
+		}
 		if mysql.HasNotNullFlag(innerSch.Columns[idx].RetType.GetFlag()) {
 			if proj != nil {
 				resultProj = p.generateProject4ConvertAntiJoin(&innerSchemaSet, proj.Schema())
@@ -480,6 +483,9 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 			}
 			args := p.Children()
 			p.SetChildren(args[1], args[0])
+			tmp := p.LeftConditions
+			p.LeftConditions = p.RightConditions
+			p.RightConditions = tmp
 		}
 		p.JoinType = base.AntiSemiJoin
 		p.MergeSchema()
