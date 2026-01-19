@@ -263,7 +263,7 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 				args := expr.GetArgs()
 				p.EqualConditions[idx] = expression.NewFunctionInternal(ctx, expr.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0]).(*expression.ScalarFunction)
 			}
-			// it is no need for the other conditions because the arguments order does not matter.
+			// it is not needed for the other conditions because the arguments order does not matter.
 			args := p.Children()
 			p.SetChildren(args[1], args[0])
 			tmp := p.LeftConditions
