@@ -234,11 +234,11 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	innerSch := p.Children()[1^outerChildIdx].Schema()
 	// if isNullColInnerSchIdx < 0, it means the is null column is not in the inner schema.
 	isNullColInnerSchIdx := innerSch.ColumnIndex(isNullCol)
-	isNullColInInnerSch := isNullColInnerSchIdx >= 0 &&
+	isInnerNonNullCol := isNullColInnerSchIdx >= 0 &&
 		mysql.HasNotNullFlag(innerSch.Columns[isNullColInnerSchIdx].RetType.GetFlag())
 
 	// If either scenario is met, it can be converted to an anti-semi join.
-	canConvertToAntiSemiJoin = joinCondNRInnerCol || isNullColInInnerSch
+	canConvertToAntiSemiJoin = joinCondNRInnerCol || isInnerNonNullCol
 	if canConvertToAntiSemiJoin {
 		// resultProj is to generate the NULL values for the columns of the inner table, which is the
 		// expected result for this kind of anti-join query.
