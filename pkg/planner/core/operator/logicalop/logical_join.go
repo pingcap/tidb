@@ -467,7 +467,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		// Anti-semi join's first child is outer, the second child is inner. join condition is outer op inner
 		// right outer join's first child is inner, the second child is outer, join condition is inner op outer
 		// left outer join's  first child is outer, the second child is inner. join condition is outer op inner
-		// So we have to transfer it here.
+		// So we have to swap it here.
 		ctx := p.SCtx().GetExprCtx()
 		if p.JoinType == base.RightOuterJoin {
 			for idx, expr := range p.EqualConditions {
