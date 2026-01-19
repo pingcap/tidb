@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package s3store
+package s3like
 
 import (
 	"bytes"
@@ -32,7 +32,7 @@ import (
 
 // s3ObjectReader wrap GetObjectOutput.Body and add the `Seek` method.
 type s3ObjectReader struct {
-	storage   *S3Storage
+	storage   *Storage
 	name      string
 	reader    io.ReadCloser
 	pos       int64
@@ -163,17 +163,34 @@ func (r *s3ObjectReader) GetFileSize() (int64, error) {
 }
 
 type asyncWriter struct {
-	wd  *io.PipeWriter
-	wg  *sync.WaitGroup
-	err error
+	rd       *io.PipeReader
+	wd       *io.PipeWriter
+	wg       *sync.WaitGroup
+	uploader Uploader
+	err      error
+	name     string
 }
 
-// Write implement the io.Writer interface.
+func (s *asyncWriter) start(ctx context.Context) {
+	s.wg.Add(1)
+	go func() {
+		err := s.uploader.Upload(ctx, s.rd)
+		// like a channel we only let sender close the pipe in happy path
+		if err != nil {
+			log.Warn("upload to s3 failed", zap.String("filename", s.name), zap.Error(err))
+			_ = s.rd.CloseWithError(err)
+		}
+		s.err = err
+		s.wg.Done()
+	}()
+}
+
+// Write implement the objectio.Writer interface.
 func (s *asyncWriter) Write(_ context.Context, p []byte) (int, error) {
 	return s.wd.Write(p)
 }
 
-// Close implement the io.Closer interface.
+// Close implement the objectio.Writer interface.
 func (s *asyncWriter) Close(_ context.Context) error {
 	err := s.wd.Close()
 	if err != nil {

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -275,7 +276,7 @@ func TestSwitchMode(t *testing.T) {
 }
 
 // NewS3WithBucketAndPrefix creates a new S3Storage for testing.
-func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*s3store.S3Storage, func()) {
+func NewS3WithBucketAndPrefix(t *testing.T, bucketName, prefixName string) (*s3like.Storage, func()) {
 	backend := s3mem.New()
 	faker := gofakes3.New(backend)
 	ts := httptest.NewServer(faker.Server())
