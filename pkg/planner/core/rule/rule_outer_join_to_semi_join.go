@@ -97,5 +97,5 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*OuterJoinToSemiJoin) Name() string {
-	return "outer_join_semi_join"
+	return "outer_join_to_semi_join"
 }
