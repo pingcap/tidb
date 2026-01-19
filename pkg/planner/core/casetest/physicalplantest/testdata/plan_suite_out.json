@@ -2284,7 +2284,7 @@
       },
       {
         "SQL": "select max(a+1) from t;",
-        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([Column#40 true],0,1)->Projection->Projection->StreamAgg"
+        "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->TopN([plus(test.t.a, 1) true],0,1))->Projection->TopN([Column#41 true],0,1)->Projection->Projection->StreamAgg"
       },
       {
         "SQL": "select max(a), min(a) from t;",
@@ -2544,7 +2544,7 @@
       },
       {
         "SQL": "select count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#26)->HashAgg",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#28)->HashAgg",
         "Warning": ""
       },
       {
@@ -2554,7 +2554,7 @@
       },
       {
         "SQL": "select /*+ STREAM_AGG() */ count(t1.a) from t t1, t t2 where t1.a = t2.a*2 group by t1.a",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#26)->Sort->StreamAgg",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->IndexReader(Index(t.f)[[NULL,+inf]])->Projection}(test.t.a,Column#28)->Sort->StreamAgg",
         "Warning": ""
       },
       {
@@ -2569,17 +2569,17 @@
       },
       {
         "SQL": "select /*+ HASH_AGG() */ t1.a from t t1 where t1.a < any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#27, 0)])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t)->HashAgg)->HashAgg->Sel([ne(Column#29, 0)])}",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a != any(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([ne(Column#28, 0)])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([ne(Column#30, 0)])}",
         "Warning": ""
       },
       {
         "SQL": "select /*+ hash_agg() */ t1.a from t t1 where t1.a = all(select t2.b from t t2)",
-        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([or(and(le(Column#26, 1), if(ne(Column#27, 0), <nil>, 1)), eq(Column#28, 0))])}",
+        "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->TableReader(Table(t))->HashAgg->Sel([or(and(le(Column#28, 1), if(ne(Column#29, 0), <nil>, 1)), eq(Column#30, 0))])}",
         "Warning": ""
       },
       {
