@@ -105,7 +105,7 @@ func (o *OuterJoinToSemiJoin) startConvertOuterJoinToSemiJoin(p base.LogicalPlan
 	if ok {
 		var pChild base.LogicalPlan
 		if proj != nil {
-			// projection <- projection <- anti semi join
+			// projection <- anti semi join
 			proj.SetChildren(join)
 			pChild = proj
 		} else {
