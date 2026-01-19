@@ -146,7 +146,7 @@ WHERE NOT EXISTS (
 #### Scenario 2: IS NULL on a Non-Join NOT NULL Column
 
 If a column in the inner table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join,
-it implies that the join failed to find a match. This allows us to convert the join into ```ANTI SEMI JOIN```
+this implies that the join did not find a match. This allows us to convert the join into an `ANTI SEMI JOIN`,
 even if the column is not part of the join keys.
 
 ##### Table Schema:
