@@ -1182,7 +1182,7 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 	})
 }
 
-func TestAnalyzeDistsqlConcurrencyByUpgrade760To850(t *testing.T) {
+func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
@@ -1190,17 +1190,17 @@ func TestAnalyzeDistsqlConcurrencyByUpgrade760To850(t *testing.T) {
 	store, dom := session.CreateStoreAndBootstrap(t)
 	defer func() { require.NoError(t, store.Close()) }()
 
-	// Upgrade from 7.6.0 to 8.5+ or above.
-	ver760 := 190
+	// Upgrade from 7.5.0 to 8.5+ or above.
+	ver750 := 180
 	seV7 := session.CreateSessionAndSetID(t, store)
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	m := meta.NewMutator(txn)
-	err = m.FinishBootstrap(int64(ver760))
+	err = m.FinishBootstrap(int64(ver750))
 	require.NoError(t, err)
 	err = txn.Commit(context.Background())
 	require.NoError(t, err)
-	revertVersionAndVariables(t, seV7, ver760)
+	revertVersionAndVariables(t, seV7, ver750)
 	session.MustExec(t, seV7, fmt.Sprintf("delete from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBAnalyzeDistSQLScanConcurrency))
 	session.MustExec(t, seV7, "commit")
 	store.SetOption(session.StoreBootstrappedKey, nil)
