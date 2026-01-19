@@ -76,6 +76,7 @@ func (r *credentialRefresher) startRefresh() error {
 	if err := r.refreshOnce(); err != nil {
 		return errors.Trace(err)
 	}
+	// see struct comment for the refresh interval choice
 	const refreshInterval = 5 * time.Second
 	r.wg.Run(func() {
 		for {

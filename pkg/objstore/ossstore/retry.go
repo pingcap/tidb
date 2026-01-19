@@ -46,12 +46,14 @@ type retryer struct {
 }
 
 func (*retryer) GetRetryToken(context.Context, error) (releaseToken func(error) error, err error) {
+	// not needed for OSS SDK, just return a no-op function
 	return func(err error) error {
 		return nil
 	}, nil
 }
 
 func (*retryer) GetInitialToken() (releaseToken func(error) error) {
+	// not needed for OSS SDK, just return a no-op function
 	return func(err error) error {
 		return nil
 	}
