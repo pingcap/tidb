@@ -219,7 +219,7 @@
             "id": "HashAgg_14",
             "estRows": "1.00",
             "taskType": "root",
-            "operatorInfo": "funcs:count(Column#5)->Column#3",
+            "operatorInfo": "funcs:count(Column#6)->Column#4",
             "subOperators": [
               {
                 "id": "IndexReader_15",
@@ -231,7 +231,7 @@
                     "id": "HashAgg_6",
                     "estRows": "1.00",
                     "taskType": "cop[tikv]",
-                    "operatorInfo": "funcs:count(1)->Column#5",
+                    "operatorInfo": "funcs:count(1)->Column#6",
                     "subOperators": [
                       {
                         "id": "IndexFullScan_13",
