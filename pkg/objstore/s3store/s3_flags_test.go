@@ -12,15 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package objstore
+package s3store
 
 import (
-	"net"
 	"testing"
-	"time"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/dumpling/context"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/require"
 )
@@ -28,7 +25,7 @@ import (
 func TestS3ProfileFlag(t *testing.T) {
 	// Test defining S3 flags includes profile flag
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	// Test that the profile flag was defined
 	profileFlag := flags.Lookup("s3.profile")
@@ -49,7 +46,7 @@ func TestS3ProfileFlag(t *testing.T) {
 func TestS3BackendOptionsParseFromFlags(t *testing.T) {
 	// Create flag set with S3 flags
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	// Set various S3 flags including profile
 	testCases := []struct {
@@ -72,8 +69,8 @@ func TestS3BackendOptionsParseFromFlags(t *testing.T) {
 
 	// Parse flags into S3BackendOptions
 	options := &S3BackendOptions{}
-	err := options.parseFromFlags(flags)
-	require.NoError(t, err, "parseFromFlags should succeed")
+	err := options.ParseFromFlags(flags)
+	require.NoError(t, err, "ParseFromFlags should succeed")
 
 	// Verify all values were parsed correctly
 	require.Equal(t, "us-west-2", options.Region)
@@ -88,14 +85,14 @@ func TestS3BackendOptionsParseFromFlags(t *testing.T) {
 func TestS3BackendOptionsParseFromFlagsProfileEmpty(t *testing.T) {
 	// Test with empty profile
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	// Only set non-profile flags
 	err := flags.Set("s3.region", "us-east-1")
 	require.NoError(t, err)
 
 	options := &S3BackendOptions{}
-	err = options.parseFromFlags(flags)
+	err = options.ParseFromFlags(flags)
 	require.NoError(t, err)
 
 	require.Equal(t, "us-east-1", options.Region)
@@ -105,14 +102,14 @@ func TestS3BackendOptionsParseFromFlagsProfileEmpty(t *testing.T) {
 func TestS3BackendOptionsParseFromFlagsProfileSpecialChars(t *testing.T) {
 	// Test profile with special characters
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	specialProfile := "dev-profile_123"
 	err := flags.Set("s3.profile", specialProfile)
 	require.NoError(t, err)
 
 	options := &S3BackendOptions{}
-	err = options.parseFromFlags(flags)
+	err = options.ParseFromFlags(flags)
 	require.NoError(t, err)
 
 	require.Equal(t, specialProfile, options.Profile)
@@ -121,7 +118,7 @@ func TestS3BackendOptionsParseFromFlagsProfileSpecialChars(t *testing.T) {
 func TestS3BackendOptionsAWSCLIPrecedence(t *testing.T) {
 	// Test AWS CLI precedence behavior: command line flags override profile settings
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	// Set profile and some explicit overrides
 	err := flags.Set("s3.profile", "production")
@@ -133,7 +130,7 @@ func TestS3BackendOptionsAWSCLIPrecedence(t *testing.T) {
 	// Don't set s3.storage-class - should come from profile (if profile were real)
 
 	options := &S3BackendOptions{}
-	err = options.parseFromFlags(flags)
+	err = options.ParseFromFlags(flags)
 	require.NoError(t, err)
 
 	// Test Apply method respects precedence
@@ -156,7 +153,7 @@ func TestS3BackendOptionsAWSCLIPrecedence(t *testing.T) {
 func TestS3BackendOptionsNoProfile(t *testing.T) {
 	// Test that without profile, all flags work normally (existing behavior)
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	err := flags.Set("s3.region", "us-east-1")
 	require.NoError(t, err)
@@ -166,7 +163,7 @@ func TestS3BackendOptionsNoProfile(t *testing.T) {
 	require.NoError(t, err)
 
 	options := &S3BackendOptions{}
-	err = options.parseFromFlags(flags)
+	err = options.ParseFromFlags(flags)
 	require.NoError(t, err)
 
 	// Test Apply method without profile
@@ -184,13 +181,13 @@ func TestS3BackendOptionsNoProfile(t *testing.T) {
 func TestS3BackendOptionsProfileOnly(t *testing.T) {
 	// Test profile-only mode (no explicit overrides)
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	err := flags.Set("s3.profile", "development")
 	require.NoError(t, err)
 
 	options := &S3BackendOptions{}
-	err = options.parseFromFlags(flags)
+	err = options.ParseFromFlags(flags)
 	require.NoError(t, err)
 
 	// Test Apply method
@@ -208,7 +205,7 @@ func TestS3BackendOptionsProfileOnly(t *testing.T) {
 func TestS3BackendOptionsPartialOverride(t *testing.T) {
 	// Test partial override: some flags override profile, others don't
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	err := flags.Set("s3.profile", "staging")
 	require.NoError(t, err)
@@ -219,7 +216,7 @@ func TestS3BackendOptionsPartialOverride(t *testing.T) {
 	require.NoError(t, err)
 
 	options := &S3BackendOptions{}
-	err = options.parseFromFlags(flags)
+	err = options.ParseFromFlags(flags)
 	require.NoError(t, err)
 
 	// Test Apply method
@@ -336,9 +333,9 @@ func TestS3BackendOptionsProfilePartialCredentials(t *testing.T) {
 }
 
 func TestS3BackendOptionsFlagParsingWithProfile(t *testing.T) {
-	// Test that parseFromFlags works correctly with profile and no explicit credentials
+	// Test that ParseFromFlags works correctly with profile and no explicit credentials
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	defineS3Flags(flags)
+	DefineS3Flags(flags)
 
 	// Set only profile, no credentials
 	err := flags.Set("s3.profile", "production")
@@ -347,7 +344,7 @@ func TestS3BackendOptionsFlagParsingWithProfile(t *testing.T) {
 	require.NoError(t, err)
 
 	options := &S3BackendOptions{}
-	err = options.parseFromFlags(flags)
+	err = options.ParseFromFlags(flags)
 	require.NoError(t, err)
 
 	// Verify credentials are not required when profile is set
@@ -381,29 +378,4 @@ func TestS3ProfileAvoidAutoNewCred(t *testing.T) {
 	require.Equal(t, "us-west-2", s3Backend.Region)
 	require.Equal(t, "", s3Backend.AccessKey, "Should not have explicit access key when using profile")
 	require.Equal(t, "", s3Backend.SecretAccessKey, "Should not have explicit secret key when using profile")
-}
-
-func TestS3TidbRetryerNeverExhaustTokens(t *testing.T) {
-	retryer := newTidbRetryer()
-	ctx := context.Background()
-	// default retry.NewStandard only have 500 tokens
-	opErr := &net.DNSError{IsTimeout: true}
-	for range 10000 {
-		_, err := retryer.GetRetryToken(ctx, opErr)
-		require.NoError(t, err)
-	}
-}
-
-func TestS3TiDBRetryer(t *testing.T) {
-	retryer := newTidbRetryer()
-	// S3 will run for retryer.MaxAttempts() attempts, so will have MaxAttempts - 1
-	// retries and delay between retries
-	var totalDelay time.Duration
-	for i := 1; i < retryer.MaxAttempts(); i++ {
-		delay, _ := retryer.RetryDelay(i, nil)
-		totalDelay += delay
-	}
-	require.Greater(t, totalDelay, 7*time.Minute)
-	require.Less(t, totalDelay, 9*time.Minute)
-	t.Log(totalDelay)
 }

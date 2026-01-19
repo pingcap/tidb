@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -40,7 +41,7 @@ type FileScanner interface {
 type fileScanner struct {
 	sourcePath string
 	db         *sql.DB
-	store      objstore.Storage
+	store      storeapi.Storage
 	loader     *mydump.MDLoader
 	logger     log.Logger
 	config     *SDKConfig
@@ -52,7 +53,7 @@ func NewFileScanner(ctx context.Context, sourcePath string, db *sql.DB, cfg *SDK
 	if err != nil {
 		return nil, errors.Annotatef(ErrParseStorageURL, "source=%s, err=%v", sourcePath, err)
 	}
-	store, err := objstore.New(ctx, u, &objstore.Options{})
+	store, err := objstore.New(ctx, u, &storeapi.Options{})
 	if err != nil {
 		return nil, errors.Annotatef(ErrCreateExternalStorage, "source=%s, err=%v", sourcePath, err)
 	}

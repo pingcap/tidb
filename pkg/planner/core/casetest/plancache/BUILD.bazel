@@ -5,6 +5,7 @@ go_test(
     timeout = "short",
     srcs = ["plan_cache_test.go"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/planner/core",
         "//pkg/sessionctx",
