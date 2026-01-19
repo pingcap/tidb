@@ -59,14 +59,21 @@ func (o *OuterJoinToSemiJoin) Optimize(_ context.Context, p base.LogicalPlan) (b
 
 func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	var isChanged bool
+	if sel, ok := p.(*logicalop.LogicalSelection); ok {
+		p, changed := o.dealWithSelection(nil, 0, sel)
+		isChanged = isChanged || changed
+		return p, isChanged
+	}
 	for idx, child := range p.Children() {
+		var changed bool
 		sel, ok := child.(*logicalop.LogicalSelection)
 		if !ok {
-			_, changed := o.recursivePlan(child)
+			_, changed = o.recursivePlan(child)
 			isChanged = isChanged || changed
 			continue
 		}
-		o.dealWithSelection(p, idx, sel)
+		_, changed = o.dealWithSelection(p, idx, sel)
+		isChanged = isChanged || changed
 	}
 	return p, isChanged
 }
@@ -78,14 +85,20 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 	case *logicalop.LogicalJoin:
 		proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema())
 		if ok {
+			var pChild base.LogicalPlan
 			if proj != nil {
 				proj.SetChildren(cc)
-				p.SetChild(childIdx, proj)
+				pChild = proj
 			} else {
-				p.SetChild(childIdx, cc)
+				pChild = cc
+			}
+			if p != nil {
+				p.SetChild(childIdx, pChild)
+			} else {
+				p = pChild
 			}
 		}
-		p, changed := o.recursivePlan(cc)
+		_, changed := o.recursivePlan(cc)
 		return p, isChanged || ok || changed
 	case *logicalop.LogicalProjection:
 		if validProjForConvertAntiJoin(cc) {
@@ -104,13 +117,17 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 					}
 					p.SetChild(childIdx, cc)
 				}
-				return o.recursivePlan(join)
+				_, changed := o.recursivePlan(join)
+				return p, changed
 			}
-			return o.recursivePlan(projectionChild)
+			_, changed := o.recursivePlan(projectionChild)
+			return p, changed
 		}
-		return o.recursivePlan(cc)
+		_, changed := o.recursivePlan(cc)
+		return p, changed
 	}
-	return o.recursivePlan(selChild)
+	_, changed := o.recursivePlan(p)
+	return p, changed
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
