@@ -434,7 +434,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 	expression.ExtractColumnsSetFromExpressions(&innerSchemaSet, func(c *expression.Column) bool {
 		return !outerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
-	if !vaildProj4ConvertAntiJoin(proj) {
+	if !validProj4ConvertAntiJoin(proj) {
 		return nil, false
 	}
 	canConvertToAntiSemiJoin = joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
