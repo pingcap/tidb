@@ -89,7 +89,8 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 				}
 			}
 		}
-		_, changed := o.recursivePlan(child)
+		updatedChild := p.Children()[idx]
+		_, changed := o.recursivePlan(updatedChild)
 		isChanged = isChanged || changed
 	}
 	return p, isChanged

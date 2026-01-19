@@ -28,6 +28,7 @@
       "select B.* from A right join B on A.id = B.a_id where A.id is null and B.val > 100",
       "select B.* from A right join B on A.val <=> B.val where A.id IS NULL",
       "select B.* from A right join B on A.val <=> B.val where A.id IS NOT NULL",
+      "select B.* from A right join B on A.id = B.a_id and B.val > 100 where A.id is null",
 
       // GROUP 5: RIGHT JOIN (Negative cases, should NOT be converted, equi-join)
       "select B.* from A right join B on A.id = B.a_id where A.nullable_val IS NULL",
