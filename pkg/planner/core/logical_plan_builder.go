@@ -556,9 +556,18 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
+	// Check if right side is LATERAL
+	var isLateral bool
+	if rightSource, ok := joinNode.Right.(*ast.TableSource); ok {
+		isLateral = rightSource.Lateral
+	}
+
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown
-	// Add join reorder flag regardless of inner join or outer join.
-	b.optFlag = b.optFlag | rule.FlagJoinReOrder
+	// Don't enable join reorder for LATERAL (similar to StraightJoin)
+	// LATERAL has order dependencies: right side can reference left side
+	if !isLateral {
+		b.optFlag = b.optFlag | rule.FlagJoinReOrder
+	}
 	b.optFlag |= rule.FlagPredicateSimplification
 	b.optFlag |= rule.FlagEmptySelectionEliminator
 
@@ -567,9 +576,28 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
+	// For LATERAL: Push left side schema onto outerSchemas stack
+	// This makes left-side columns visible when building right-side subquery
+	if isLateral {
+		b.outerSchemas = append(b.outerSchemas, leftPlan.Schema())
+		b.outerNames = append(b.outerNames, leftPlan.OutputNames())
+	}
+
 	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right, false)
+
+	// For LATERAL: Pop outerSchemas from stack (ensure cleanup in error path)
+	if isLateral {
+		b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
+		b.outerNames = b.outerNames[:len(b.outerNames)-1]
+	}
+
 	if err != nil {
 		return nil, err
+	}
+
+	// For LATERAL: Build LogicalApply instead of LogicalJoin
+	if isLateral {
+		return b.buildLateralJoin(ctx, leftPlan, rightPlan, joinNode)
 	}
 
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
@@ -687,6 +715,73 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.AttachOnConds(onCondition)
 	}
 	return joinPlan, nil
+}
+
+// buildLateralJoin builds a LogicalApply for LATERAL derived tables.
+// LATERAL makes left-side columns available to the right-side subquery,
+// which is semantically equivalent to a correlated subquery.
+func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan base.LogicalPlan, joinNode *ast.Join) (base.LogicalPlan, error) {
+	// Extract correlated columns from right side that reference left side
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, leftPlan.Schema())
+
+	// Determine join type based on AST
+	var joinType base.JoinType
+	switch joinNode.Tp {
+	case ast.LeftJoin:
+		joinType = base.LeftOuterJoin
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+	case ast.RightJoin:
+		// LATERAL cannot be on the preserved side of RIGHT JOIN
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("LATERAL cannot be used with RIGHT JOIN")
+	case ast.CrossJoin:
+		// CROSS JOIN with LATERAL becomes INNER JOIN semantics
+		joinType = base.InnerJoin
+	default:
+		joinType = base.InnerJoin
+	}
+
+	// Build LogicalApply (leveraging existing correlated subquery infrastructure)
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
+
+	ap := logicalop.LogicalApply{
+		LogicalJoin: logicalop.LogicalJoin{JoinType: joinType},
+		CorCols:     corCols,
+		NoDecorrelate: false, // LATERAL can be decorrelated like correlated subqueries
+	}.Init(b.ctx, b.getSelectOffset())
+
+	ap.SetChildren(leftPlan, rightPlan)
+	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
+	ap.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len()))
+	copy(ap.OutputNames(), leftPlan.OutputNames())
+	copy(ap.OutputNames()[leftPlan.Schema().Len():], rightPlan.OutputNames())
+
+	// Handle ON conditions if present
+	if joinNode.On != nil {
+		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, ap, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if newPlan != ap {
+			return nil, errors.New("LATERAL ON condition doesn't support subqueries yet")
+		}
+		onCondition := expression.SplitCNFItems(onExpr)
+		ap.AttachOnConds(onCondition)
+	}
+
+	// Reset nullability for outer joins
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.Schema(), leftPlan.Schema().Len(), ap.Schema().Len())
+	}
+
+	// Merge handle maps (copied from buildJoin)
+	handleMap1 := b.handleHelper.popMap()
+	handleMap2 := b.handleHelper.popMap()
+	b.handleHelper.mergeAndPush(handleMap1, handleMap2)
+
+	// Set join hints if any
+	ap.LogicalJoin.SetPreferredJoinTypeAndOrder(b.TableHints())
+
+	return ap, nil
 }
 
 // buildUsingClause eliminate the redundant columns and ordering columns based

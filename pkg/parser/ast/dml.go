@@ -535,6 +535,11 @@ type TableSource struct {
 
 	// AsName is the alias name of the table source.
 	AsName CIStr
+
+	// Lateral indicates whether this is a LATERAL derived table.
+	// MySQL 8.0+ syntax: FROM t1, LATERAL (SELECT ...) AS dt
+	// LATERAL allows the derived table to reference columns from tables to its left.
+	Lateral bool
 }
 
 func (*TableSource) resultSet() {}
@@ -545,6 +550,11 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 	switch n.Source.(type) {
 	case *SelectStmt, *SetOprStmt:
 		needParen = true
+	}
+
+	// Output LATERAL keyword if this is a LATERAL derived table
+	if n.Lateral {
+		ctx.WriteKeyWord("LATERAL ")
 	}
 
 	if tn, tnCase := n.Source.(*TableName); tnCase {

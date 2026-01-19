@@ -184,6 +184,7 @@ import (
 	kill              "KILL"
 	lag               "LAG"
 	lastValue         "LAST_VALUE"
+	lateral           "LATERAL"
 	lead              "LEAD"
 	leading           "LEADING"
 	leave             "LEAVE"
@@ -10161,6 +10162,13 @@ TableFactor:
 	{
 		resultNode := $1.(*ast.SubqueryExpr).Query
 		$$ = &ast.TableSource{Source: resultNode, AsName: $2.(ast.CIStr)}
+	}
+|	"LATERAL" SubSelect TableAsNameOpt
+	{
+		resultNode := $2.(*ast.SubqueryExpr).Query
+		ts := &ast.TableSource{Source: resultNode, AsName: $3.(ast.CIStr)}
+		ts.Lateral = true
+		$$ = ts
 	}
 |	'(' TableRefs ')'
 	{
