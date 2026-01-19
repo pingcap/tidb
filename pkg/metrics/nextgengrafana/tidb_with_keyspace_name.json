@@ -362,7 +362,7 @@
           "gridPos": {
             "h": 7,
             "w": 12,
-            "x": 12,
+            "x": 0,
             "y": 46
           },
           "hiddenSeries": false,
@@ -16919,7 +16919,7 @@
             "h": 7,
             "w": 12,
             "x": 0,
-            "y": 46
+            "y": 53
           },
           "hiddenSeries": false,
           "id": 416,
