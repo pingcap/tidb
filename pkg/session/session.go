@@ -1506,7 +1506,7 @@ const (
 var keySQLToken = map[string]int{
 	"select": isSelectSQLToken,
 	"from":   coreSQLToken, "insert": coreSQLToken, "update": coreSQLToken, "delete": coreSQLToken, "replace": coreSQLToken,
-	// ignore prepare statement
+	// ignore prepare / execute statements
 	"explain": bypassSQLToken, "desc": bypassSQLToken, "analyze": bypassSQLToken,
 }
 
