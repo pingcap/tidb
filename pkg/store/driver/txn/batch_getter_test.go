@@ -83,7 +83,7 @@ func (s *mockBatchGetterStore) Get(_ context.Context, k kv.Key, options ...kv.Ge
 	opt.Apply(options)
 
 	var commitTS uint64
-	if opt.RequireCommitTS() {
+	if opt.ReturnCommitTS() {
 		commitTS = s.commitTSBase + uint64(k[0])
 	}
 

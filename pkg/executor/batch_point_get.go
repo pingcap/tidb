@@ -550,7 +550,7 @@ func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key, opt
 	var getOptions tikv.GetOptions
 	getOptions.Apply(options)
 
-	if getOptions.RequireCommitTS() {
+	if getOptions.ReturnCommitTS() {
 		return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
 	}
 
@@ -571,7 +571,7 @@ func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key, options 
 	var getOptions tikv.BatchGetOptions
 	getOptions.Apply(options)
 
-	if getOptions.RequireCommitTS() {
+	if getOptions.ReturnCommitTS() {
 		return nil, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
 	}
 

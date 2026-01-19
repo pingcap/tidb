@@ -174,7 +174,7 @@ func (r *mockedRetriever) Get(ctx context.Context, k kv.Key, options ...kv.GetOp
 	var opt kv.GetOptions
 	opt.Apply(options)
 	var commitTS uint64
-	if opt.RequireCommitTS() {
+	if opt.ReturnCommitTS() {
 		commitTS = r.commitTS
 	}
 	r.checkMethodInvokeAllowed("Get")
@@ -195,7 +195,7 @@ func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key, options .
 	var opt kv.BatchGetOptions
 	opt.Apply(options)
 	var commitTS uint64
-	if opt.RequireCommitTS() {
+	if opt.ReturnCommitTS() {
 		commitTS = r.commitTS
 	}
 
