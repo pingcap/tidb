@@ -379,7 +379,7 @@ func loadVariables(ctx sessionctx.Context, z *zip.Reader) error {
 			}
 			//nolint: errcheck,all_revive,revive
 			defer v.Close()
-			unLoadVars, err = config.LoadConfig(ctx, v)
+			unLoadVars, err = config.LoadConfigForPlanReplayerLoad(ctx, v)
 			if err != nil {
 				return errors.AddStack(err)
 			}

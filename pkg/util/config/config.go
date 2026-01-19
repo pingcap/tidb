@@ -31,8 +31,8 @@ var ignoredSystemVariablesForPlanReplayerLoad = map[string]struct{}{
 	vardef.InnodbLockWaitTimeout: {}, // It is unnecessary to load this variable for plan replayer.
 }
 
-// LoadConfig loads system variables from a toml reader. it is only for plan replayer and test.
-func LoadConfig(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, err error) {
+// LoadConfigForPlanReplayerLoad loads system variables from a toml reader. it is only for plan replayer and test.
+func LoadConfigForPlanReplayerLoad(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, err error) {
 	varMap := make(map[string]string)
 
 	_, err = toml.NewDecoder(v).Decode(&varMap)
