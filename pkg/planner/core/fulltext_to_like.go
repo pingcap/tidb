@@ -28,10 +28,10 @@ type searchTerm struct {
 	word       string
 	isRequired bool // Has '+' prefix
 	isExcluded bool // Has '-' prefix
-	isPhrase   bool // Wrapped in quotes
-	// Note: Prefix wildcards ('*' suffix) are parsed but not used differently from regular terms
-	// because LIKE %term% already matches the term anywhere. Proper prefix matching would require
-	// REGEXP to enforce word-start boundaries, which we avoid for simplicity.
+	// Note: Phrases (wrapped in quotes) and prefix wildcards ('*' suffix) are parsed but not
+	// treated differently from regular terms because LIKE %term% already matches the term anywhere.
+	// Proper phrase/prefix matching would require REGEXP to enforce word boundaries, which we
+	// avoid for simplicity.
 }
 
 // parseBooleanSearchString parses a Boolean mode search string into individual terms
@@ -61,7 +61,6 @@ func parseBooleanSearchString(text string) []searchTerm {
 						word:       phrase,
 						isRequired: phraseIsRequired,
 						isExcluded: phraseIsExcluded,
-						isPhrase:   true,
 					})
 				}
 				current.Reset()
@@ -114,7 +113,6 @@ func parseBooleanSearchString(text string) []searchTerm {
 					word:       phrase,
 					isRequired: phraseIsRequired,
 					isExcluded: phraseIsExcluded,
-					isPhrase:   true,
 				})
 			}
 		} else {

@@ -48,7 +48,7 @@ func TestParseBooleanSearchString(t *testing.T) {
 		{
 			input: `"exact phrase"`,
 			expected: []searchTerm{
-				{word: "exact phrase", isPhrase: true},
+				{word: "exact phrase"},
 			},
 		},
 		{
@@ -57,7 +57,7 @@ func TestParseBooleanSearchString(t *testing.T) {
 				{word: "database", isRequired: true},
 				{word: "mysql", isRequired: true},
 				{word: "oracle", isExcluded: true},
-				{word: "full text", isPhrase: true},
+				{word: "full text"},
 			},
 		},
 		{
@@ -78,7 +78,7 @@ func TestParseBooleanSearchString(t *testing.T) {
 		{
 			input: `"unclosed quote`,
 			expected: []searchTerm{
-				{word: "unclosed quote", isPhrase: true},
+				{word: "unclosed quote"},
 			},
 		},
 		{
@@ -91,37 +91,37 @@ func TestParseBooleanSearchString(t *testing.T) {
 		{
 			input: `+"required phrase"`,
 			expected: []searchTerm{
-				{word: "required phrase", isRequired: true, isPhrase: true},
+				{word: "required phrase", isRequired: true},
 			},
 		},
 		{
 			input: `-"excluded phrase"`,
 			expected: []searchTerm{
-				{word: "excluded phrase", isExcluded: true, isPhrase: true},
+				{word: "excluded phrase", isExcluded: true},
 			},
 		},
 		{
 			input: `+"required phrase" optional -"excluded phrase"`,
 			expected: []searchTerm{
-				{word: "required phrase", isRequired: true, isPhrase: true},
+				{word: "required phrase", isRequired: true},
 				{word: "optional"},
-				{word: "excluded phrase", isExcluded: true, isPhrase: true},
+				{word: "excluded phrase", isExcluded: true},
 			},
 		},
 		{
 			input: `+word1 +"required phrase" -word2 -"excluded phrase"`,
 			expected: []searchTerm{
 				{word: "word1", isRequired: true},
-				{word: "required phrase", isRequired: true, isPhrase: true},
+				{word: "required phrase", isRequired: true},
 				{word: "word2", isExcluded: true},
-				{word: "excluded phrase", isExcluded: true, isPhrase: true},
+				{word: "excluded phrase", isExcluded: true},
 			},
 		},
 		{
 			input: `abc"phrase"`,
 			expected: []searchTerm{
 				{word: "abc"},
-				{word: "phrase", isPhrase: true},
+				{word: "phrase"},
 			},
 		},
 		{
@@ -129,20 +129,20 @@ func TestParseBooleanSearchString(t *testing.T) {
 			expected: []searchTerm{
 				{word: "word1"},
 				{word: "abc"},
-				{word: "phrase", isPhrase: true},
+				{word: "phrase"},
 				{word: "word2"},
 			},
 		},
 		{
 			input: `+"unclosed`,
 			expected: []searchTerm{
-				{word: "unclosed", isRequired: true, isPhrase: true},
+				{word: "unclosed", isRequired: true},
 			},
 		},
 		{
 			input: `-"unclosed phrase`,
 			expected: []searchTerm{
-				{word: "unclosed phrase", isExcluded: true, isPhrase: true},
+				{word: "unclosed phrase", isExcluded: true},
 			},
 		},
 	}
@@ -155,7 +155,6 @@ func TestParseBooleanSearchString(t *testing.T) {
 				require.Equal(t, expected.word, result[i].word, "Word should match")
 				require.Equal(t, expected.isRequired, result[i].isRequired, "isRequired should match")
 				require.Equal(t, expected.isExcluded, result[i].isExcluded, "isExcluded should match")
-				require.Equal(t, expected.isPhrase, result[i].isPhrase, "isPhrase should match")
 			}
 		})
 	}
