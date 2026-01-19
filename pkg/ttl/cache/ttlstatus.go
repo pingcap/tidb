@@ -48,8 +48,8 @@ var (
 )
 
 // SelectFromTableStatusWithID returns an SQL statement to get the table status by table id for the specified job type.
-func SelectFromTableStatusWithID(jobType TTLJobType, tableID int64) (string, []any) {
-	if jobType == TTLJobTypeSoftDelete {
+func SelectFromTableStatusWithID(jobType session.TTLJobType, tableID int64) (string, []any) {
+	if jobType == session.TTLJobTypeSoftDelete {
 		return selectFromSoftDeleteTableStatus + " WHERE table_id = %?", []any{tableID}
 	}
 	return selectFromTTLTableStatus + " WHERE table_id = %?", []any{tableID}

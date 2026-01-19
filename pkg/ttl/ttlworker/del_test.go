@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -38,7 +39,7 @@ func newMockDeleteTask(tbl *cache.PhysicalTable, rows [][]types.Datum, expire ti
 	task := &ttlDeleteTask{
 		tbl:        tbl,
 		expire:     expire,
-		jobType:    cache.TTLJobTypeTTL,
+		jobType:    session.TTLJobTypeTTL,
 		rows:       rows,
 		statistics: &ttlStatistics{},
 	}

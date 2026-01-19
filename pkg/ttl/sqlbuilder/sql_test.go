@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
@@ -57,7 +58,8 @@ func TestEscape(t *testing.T) {
 	}
 
 	buildSelect := func(d []types.Datum) string {
-		b := sqlbuilder.NewSQLBuilder(tb, cache.TTLJobTypeTTL)
+		b := sqlbuilder.NewSQLBuilder(tb, session.TTLJobTypeTTL)
+
 		require.NoError(t, b.WriteSelectColumns(tb.KeyColumns))
 		require.NoError(t, b.WriteCommonCondition(tb.KeyColumns, ">", d))
 		require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -67,7 +69,8 @@ func TestEscape(t *testing.T) {
 	}
 
 	buildDelete := func(ds ...[]types.Datum) string {
-		b := sqlbuilder.NewSQLBuilder(tb, cache.TTLJobTypeTTL)
+		b := sqlbuilder.NewSQLBuilder(tb, session.TTLJobTypeTTL)
+
 		require.NoError(t, b.WriteDelete())
 		require.NoError(t, b.WriteInCondition(tb.KeyColumns, ds...))
 		require.NoError(t, b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -408,7 +411,8 @@ func TestSoftDeleteScanQueryGeneratorPaging(t *testing.T) {
 	}
 
 	expire := time.Unix(100, 0).In(time.UTC)
-	g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, tbl, expire, nil, nil)
+	g, err := sqlbuilder.NewScanQueryGenerator(session.TTLJobTypeSoftDelete, tbl, expire, nil, nil)
+
 	require.NoError(t, err)
 
 	// first batch
@@ -449,7 +453,7 @@ func TestSoftDeleteCleanupSQL(t *testing.T) {
 	}
 
 	expire := time.Unix(100, 0).In(time.UTC)
-	sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, 0)
+	sql, err := sqlbuilder.BuildDeleteSQL(tbl, session.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, 0)
 	require.NoError(t, err)
 	require.Contains(t, sql, "DELETE LOW_PRIORITY FROM `test`.`t`")
 	require.Contains(t, sql, "WHERE `id` IN (1)")
@@ -474,17 +478,17 @@ func TestSoftDeleteSQLActiveActiveSafety(t *testing.T) {
 	minCheckpointTS := uint64(123)
 	checkContains := func(t *testing.T, sql string) {
 		require.Contains(t, sql, fmt.Sprintf("LEAST(tidb_current_tso(), %d)", minCheckpointTS))
-		require.Contains(t, sql, ">= IFNULL(_tidb_origin_ts, _tidb_commit_ts)")
+		require.Contains(t, sql, "> IFNULL(_tidb_origin_ts, _tidb_commit_ts)")
 	}
 
 	t.Run("Cleanup", func(t *testing.T) {
-		sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, minCheckpointTS)
+		sql, err := sqlbuilder.BuildDeleteSQL(tbl, session.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, minCheckpointTS)
 		require.NoError(t, err)
 		checkContains(t, sql)
 	})
 
 	t.Run("Scan", func(t *testing.T) {
-		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, tbl, expire, nil, nil)
+		g, err := sqlbuilder.NewScanQueryGenerator(session.TTLJobTypeSoftDelete, tbl, expire, nil, nil)
 		require.NoError(t, err)
 		g.SetMinCheckpointTS(minCheckpointTS)
 		sql, err := g.NextSQL(nil, 10)
@@ -510,12 +514,12 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 	}
 
 	run := func(t *testing.T, pt *cache.PhysicalTable, expire time.Time, minCheckpointTS uint64, expectScan bool, expectDeleted bool) {
-		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, pt, expire, nil, nil)
+		g, err := sqlbuilder.NewScanQueryGenerator(session.TTLJobTypeSoftDelete, pt, expire, nil, nil)
 		require.NoError(t, err)
 		g.SetMinCheckpointTS(minCheckpointTS)
 		q, err := g.NextSQL(nil, 10)
 		require.NoError(t, err)
-		delSQL, err := sqlbuilder.BuildDeleteSQL(pt, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, minCheckpointTS)
+		delSQL, err := sqlbuilder.BuildDeleteSQL(pt, session.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, minCheckpointTS)
 		require.NoError(t, err)
 
 		tk.MustExec("set @@tidb_translate_softdelete_sql=0")
@@ -644,57 +648,57 @@ func TestSQLBuilder(t *testing.T) {
 	}
 
 	// test build select queries
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1`")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1'")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("c3")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3'")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	shLoc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(shLoc)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("c3")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3' AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteOrderBy(t1.KeyColumns, false))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` ASC")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteOrderBy(t1.KeyColumns, true))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` DESC")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteOrderBy(t1.KeyColumns, false))
 	must(b.WriteLimit(128))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` ORDER BY `id` ASC LIMIT 128")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("';``~?%\"\n")))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > '\\';``~?%\\\"\\n'")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t1.KeyColumns))
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1';'")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("a2\"")))
@@ -703,12 +707,12 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteLimit(128))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1\\';\\'' AND `id` <= 'a2\\\"' AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 128")
 
-	b = sqlbuilder.NewSQLBuilder(t2, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t2, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t2.KeyColumns))
 	must(b.WriteCommonCondition(t2.KeyColumns, ">", d("x1", 20)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) > ('x1', 20)")
 
-	b = sqlbuilder.NewSQLBuilder(t2, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t2, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t2.KeyColumns))
 	must(b.WriteCommonCondition(t2.KeyColumns, "<=", d("x2", 21)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -716,7 +720,7 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteLimit(100))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) <= ('x2', 21) AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b` ASC LIMIT 100")
 
-	b = sqlbuilder.NewSQLBuilder(t2, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t2, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(t2.KeyColumns))
 	must(b.WriteCommonCondition(t2.KeyColumns[0:1], "=", d("x3")))
 	must(b.WriteCommonCondition(t2.KeyColumns[1:2], ">", d(31)))
@@ -726,51 +730,51 @@ func TestSQLBuilder(t *testing.T) {
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE `a` = 'x3' AND `b` > 31 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b` ASC LIMIT 100")
 
 	// test build delete queries
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	_, err = b.Build()
 	require.EqualError(t, err, "expire condition not write")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t1.KeyColumns, d("a")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a') AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t1.KeyColumns, d("a"), d("b")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a', 'b') AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteLimit(100))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1)) AND `time` < FROM_UNIXTIME(0) LIMIT 100")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1), d("b", 2)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteLimit(100))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < FROM_UNIXTIME(0) LIMIT 100")
 
-	b = sqlbuilder.NewSQLBuilder(t1, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(t1, session.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1), d("b", 2)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < FROM_UNIXTIME(0)")
 
 	// test select partition table
-	b = sqlbuilder.NewSQLBuilder(tp, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(tp, session.TTLJobTypeTTL)
 	must(b.WriteSelectColumns(tp.KeyColumns))
 	must(b.WriteCommonCondition(tp.KeyColumns, ">", d("a1")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` > 'a1' AND `time` < FROM_UNIXTIME(0)")
 
-	b = sqlbuilder.NewSQLBuilder(tp, cache.TTLJobTypeTTL)
+	b = sqlbuilder.NewSQLBuilder(tp, session.TTLJobTypeTTL)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(tp.KeyColumns, d("a"), d("b")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
@@ -1038,7 +1042,8 @@ func TestScanQueryGenerator(t *testing.T) {
 	}
 
 	for i, c := range cases {
-		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeTTL, c.tbl, c.expire, c.rangeStart, c.rangeEnd)
+		g, err := sqlbuilder.NewScanQueryGenerator(session.TTLJobTypeTTL, c.tbl, c.expire, c.rangeStart, c.rangeEnd)
+
 		require.NoError(t, err, fmt.Sprintf("%d", i))
 		for j, p := range c.path {
 			msg := fmt.Sprintf("%d-%d", i, j)
@@ -1124,7 +1129,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		sql, err := sqlbuilder.BuildDeleteSQL(c.tbl, cache.TTLJobTypeTTL, c.rows, c.expire, 0)
+		sql, err := sqlbuilder.BuildDeleteSQL(c.tbl, session.TTLJobTypeTTL, c.rows, c.expire, 0)
 		require.NoError(t, err)
 		require.Equal(t, c.sql, sql)
 	}

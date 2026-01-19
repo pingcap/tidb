@@ -110,7 +110,7 @@ func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 type ttlDeleteTask struct {
 	jobID      string
 	scanID     int64
-	jobType    cache.TTLJobType
+	jobType    session.TTLJobType
 	tbl        *cache.PhysicalTable
 	expire     time.Time
 	rows       [][]types.Datum
@@ -148,7 +148,14 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		return
 	}
 
-	minCheckpointTS, err := refreshMinCheckpointTSO(ctx, t.jobType, rawSe, t.tbl)
+	minCheckpointTS, err := rawSe.GetMinActiveActiveCheckpointTS(
+		ctx,
+		t.jobType,
+		t.tbl.Schema.O,
+		t.tbl.Name.O,
+		t.tbl.TableInfo.IsActiveActive,
+	)
+
 	if err != nil {
 		t.statistics.IncErrorRows(t.jobType, len(leftRows))
 		t.taskLogger(logutil.Logger(ctx)).Warn("get ticdc min checkpoint ts failed", zap.Error(err))

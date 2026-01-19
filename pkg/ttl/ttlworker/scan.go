@@ -82,17 +82,17 @@ type ttlStatistics struct {
 	ErrorRows   atomic.Uint64
 }
 
-func (s *ttlStatistics) IncTotalRows(jobType string, cnt int) {
+func (s *ttlStatistics) IncTotalRows(jobType session.TTLJobType, cnt int) {
 	metrics.ExpiredRows(metrics.SQLTypeSelect, jobType, true).Add(float64(cnt))
 	s.TotalRows.Add(uint64(cnt))
 }
 
-func (s *ttlStatistics) IncSuccessRows(jobType string, cnt int) {
+func (s *ttlStatistics) IncSuccessRows(jobType session.TTLJobType, cnt int) {
 	metrics.ExpiredRows(metrics.SQLTypeDelete, jobType, true).Add(float64(cnt))
 	s.SuccessRows.Add(uint64(cnt))
 }
 
-func (s *ttlStatistics) IncErrorRows(jobType string, cnt int) {
+func (s *ttlStatistics) IncErrorRows(jobType session.TTLJobType, cnt int) {
 	metrics.ExpiredRows(metrics.SQLTypeDelete, jobType, false).Add(float64(cnt))
 	s.ErrorRows.Add(uint64(cnt))
 }
@@ -229,7 +229,7 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 	if t.ExpireTime.After(safeExpire) {
 		interval := t.tbl.TTLInfo.IntervalExprStr
 		timeunit := ast.TimeUnitType(t.tbl.TTLInfo.IntervalTimeUnit).String()
-		if t.JobType == cache.TTLJobTypeSoftDelete {
+		if t.JobType == session.TTLJobTypeSoftDelete {
 			interval = t.tbl.SoftdeleteInfo.Retention
 			timeunit = t.tbl.SoftdeleteInfo.RetentionUnit.String()
 		}
@@ -246,7 +246,14 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 	}
 	defer terror.Call(restoreSession)
 
-	minCheckpointTS, err := refreshMinCheckpointTSO(ctx, t.JobType, rawSess, t.tbl)
+	minCheckpointTS, err := rawSess.GetMinActiveActiveCheckpointTS(
+		ctx,
+		t.JobType,
+		t.tbl.Schema.O,
+		t.tbl.Name.O,
+		t.tbl.TableInfo.IsActiveActive,
+	)
+
 	if err != nil {
 		return err
 	}
