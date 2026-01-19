@@ -17,8 +17,12 @@ package rule
 import (
 	"context"
 
+	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // OuterJoinToSemiJoin is a logical optimization rule that rewrites a `LogicalJoin` (Outer Join)
@@ -59,7 +63,7 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 		if sel, ok := child.(*logicalop.LogicalSelection); ok {
 			switch cc := sel.Children()[0].(type) {
 			case *logicalop.LogicalJoin:
-				proj, ok := cc.CanConvertAntiJoin(sel.Conditions, sel.Schema(), nil)
+				proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema(), nil)
 				if ok {
 					if proj != nil {
 						proj.SetChildren(cc)
@@ -72,7 +76,7 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 			case *logicalop.LogicalProjection:
 				join, ok := cc.Children()[0].(*logicalop.LogicalJoin)
 				if ok {
-					proj, ok := join.CanConvertAntiJoin(sel.Conditions, sel.Schema(), cc)
+					proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema(), cc)
 					if ok {
 						if proj != nil {
 							// projection <- projection <- anti semi join
@@ -99,4 +103,249 @@ func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPla
 // Name implements base.LogicalOptRule.<1st> interface.
 func (*OuterJoinToSemiJoin) Name() string {
 	return "outer_join_to_semi_join"
+}
+
+// CanConvertAntiJoin is used in outer-join-to-semi-join rule.
+/*
+#### Scenario 1: IS NULL on the Join Condition Column
+
+- In this scenario, the IS NULL filter is applied directly to the join key from the inner table.
+
+##### Table Schema
+CREATE TABLE Table_A (id INT, name VARCHAR(50));
+CREATE TABLE Table_B (id INT, info VARCHAR(50));
+
+##### Plan
+```
+-- The optimizer rewrites the LEFT JOIN ... WHERE ... IS NULL pattern into an efficient
+-- Anti Semi Join to retrieve rows from Table A that have no match in Table B.
+SELECT Table_A.id, Table_A.name
+FROM
+	Table_A
+LEFT JOIN
+	Table_B ON Table_A.id = Table_B.id
+WHERE
+	Table_B.id IS NULL;
+
+=>
+
+SELECT Table_A.id, Table_A.name
+FROM
+	Table_A
+WHERE NOT EXISTS (
+	SELECT 1
+	FROM
+		Table_B
+	WHERE
+		Table_A.id = Table_B.id
+);
+```
+#### Scenario 2: IS NULL on a Non-Join NOT NULL Column
+
+If a column in the inner table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join,
+it implies that the join failed to find a match. This allows us to convert the join into ```ANTI SEMI JOIN```
+even if the column is not part of the join keys.
+
+##### Table Schema:
+
+CREATE TABLE Table_A (id INT,name VARCHAR(50));
+CREATE TABLE Table_B (
+	id INT,
+	status VARCHAR(20) NOT NULL -- Non-join column with NOT NULL constraint
+);
+
+##### Plan
+```
+-- Even though 'status' is not a join key, its NOT NULL constraint
+-- ensures that 'B.status IS NULL' only occurs when no match is found.
+SELECT A.* FROM Table_A A
+LEFT JOIN Table_B B ON A.id = B.id
+WHERE B.status IS NULL;
+
+=>
+SELECT A.* FROM Table_A A
+WHERE NOT EXISTS (
+	SELECT 1 FROM Table_B B WHERE A.id = B.id
+);
+```
+
+Additionally, we found that there may be a projection between select and join.
+	Select[isnull(col1)] <- Projection[col1,col2,col3,col4] <- left outer join[outer side: col1 col2, inner side: col3 col4]
+Currently, we only support projections with column mapping relationships, not transformation relationships.
+	Projection[null->col1,null->col2,col3,col4] <- anti semi join[outer side: col1 col2, inner side: col3 col4]
+*/
+func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expression, selectSch *expression.Schema,
+	proj *logicalop.LogicalProjection) (resultProj *logicalop.LogicalProjection, canConvertToAntiSemiJoin bool) {
+	if len(selectCond) != 1 || (len(p.EqualConditions) == 0 && len(p.OtherConditions) == 0) {
+		// This optimization only supports a single selection condition in selectCond.
+		// Any condition that refers only to the outer side of the join can be pushed below the join,
+		// so the remaining selection condition must be on the inner side.
+		// If multiple inner-side conditions were semantically equivalent, the optimizer should keep just one
+		// and eliminate the others, so we require exactly one selection condition here.
+		return nil, false
+	}
+	if _, ok := p.Self().(*logicalop.LogicalApply); ok {
+		// For now, we won't add complexity in the outer-join-to-semi-join rule.
+		// Additionally, existing user cases haven't been applied yet; they can be added later if needed.
+		return nil, false
+	}
+	var outerChildIdx int
+	switch p.JoinType {
+	case base.LeftOuterJoin:
+		outerChildIdx = 0
+	case base.RightOuterJoin:
+		outerChildIdx = 1
+	default:
+		return nil, false
+	}
+
+	sf, ok := selectCond[0].(*expression.ScalarFunction)
+	if !ok {
+		return nil, false
+	}
+	if sf.FuncName.L != ast.IsNull {
+		return nil, false
+	}
+	args := sf.GetArgs()
+	// Get the Column in the IsNull
+	isNullCol, ok := args[0].(*expression.Column)
+	if !ok {
+		return nil, false
+	}
+	outer := p.Children()[outerChildIdx]
+	outerSchema := outer.Schema()
+	innerSchemaSet := intset.NewFastIntSet()
+	// Obtain all the columns that meet the requirements in the eq condition and other condition.
+	// If the column that is isnull is an inner column in the eq/other condition,
+	// It can be directly converted into an anti semi join.
+	expression.ExtractColumnsSetFromExpressions(&innerSchemaSet, func(c *expression.Column) bool {
+		return !outerSchema.Contains(c)
+	}, expression.Column2Exprs(p.Schema().Columns)...)
+	if !validProj4ConvertAntiJoin(proj) {
+		return nil, false
+	}
+	canConvertToAntiSemiJoin = joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
+	// resultProj is to generate the NULL values for the columns of the inner table, which is the
+	// expected result for this kind of anti-join query.
+	if canConvertToAntiSemiJoin {
+		// Scenario 1: column in IsNull expression is from the inner side columns in the eq/other condition.
+		if proj != nil {
+			resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, proj.Schema())
+		} else {
+			resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, selectSch)
+		}
+	} else if innerSchemaSet.Has(int(isNullCol.UniqueID)) {
+		// Scenario 2:
+		//  column in IsNull expression is from the inner side columns.
+		//  but it is not in the equal/other condition.
+		//  We need to check whether inner column is not null in the origin table schema.
+		//  If it is not null column, it can be directly converted into an anti-semi join.
+		innerSch := p.Children()[1^outerChildIdx].Schema()
+		idx := innerSch.ColumnIndex(isNullCol)
+		if idx < 0 {
+			return nil, false
+		}
+		if mysql.HasNotNullFlag(innerSch.Columns[idx].RetType.GetFlag()) {
+			if proj != nil {
+				resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, proj.Schema())
+			} else {
+				resultProj = generateProject4ConvertAntiJoin(p, &innerSchemaSet, selectSch)
+			}
+			canConvertToAntiSemiJoin = true
+		}
+	}
+
+	if canConvertToAntiSemiJoin {
+		// Anti-semi join's first child is outer, the second child is inner. join condition is outer op inner
+		// right outer join's first child is inner, the second child is outer, join condition is inner op outer
+		// left outer join's  first child is outer, the second child is inner. join condition is outer op inner
+		// So we have to swap it here.
+		ctx := p.SCtx().GetExprCtx()
+		if p.JoinType == base.RightOuterJoin {
+			for idx, expr := range p.EqualConditions {
+				args := expr.GetArgs()
+				p.EqualConditions[idx] = expression.NewFunctionInternal(ctx, expr.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0]).(*expression.ScalarFunction)
+			}
+			args := p.Children()
+			p.SetChildren(args[1], args[0])
+			tmp := p.LeftConditions
+			p.LeftConditions = p.RightConditions
+			p.RightConditions = tmp
+		}
+		p.JoinType = base.AntiSemiJoin
+		p.MergeSchema()
+	}
+	return resultProj, canConvertToAntiSemiJoin
+}
+
+func validProj4ConvertAntiJoin(proj *logicalop.LogicalProjection) bool {
+	if proj == nil {
+		return true
+	}
+	// Sometimes there is a projection between select and join.
+	// We require that this projection does not make additional changes to any columns,
+	// then we can continue converting to a semi join.
+	//  Pass: Projection[col1,col2]
+	//  Fail: Projection[col2->ABC, col2+1->col2]
+	for idx, c := range proj.Schema().Columns {
+		if !c.Equals(proj.Exprs[idx]) {
+			return false
+		}
+	}
+	return true
+}
+
+// joinCondNullRejectsInnerCol checks whether the IS NULL column (above the join) is from the inner
+// side and appears in the join predicate that null-rejects it (excluding NullEQ; only GT/GE/LE/LT/NE in others).
+func joinCondNullRejectsInnerCol(innerSchSet *intset.FastIntSet, isNullColumnID int64, eq []*expression.ScalarFunction, other []expression.Expression) bool {
+	for _, s := range eq {
+		if s.FuncName.L == ast.NullEQ {
+			continue
+		}
+		col1, col2, ok := expression.IsColOpCol(s)
+		if ok {
+			if innerSchSet.Has(int(col1.UniqueID)) {
+				if isNullColumnID == col1.UniqueID {
+					return true
+				}
+			} else if innerSchSet.Has(int(col2.UniqueID)) {
+				if isNullColumnID == col2.UniqueID {
+					return true
+				}
+			}
+		}
+	}
+	for _, s := range other {
+		if sf, ok := s.(*expression.ScalarFunction); ok {
+			switch sf.FuncName.L {
+			case ast.GT, ast.GE, ast.LE, ast.LT, ast.NE:
+				col1, col2, ok := expression.IsColOpCol(sf)
+				if ok {
+					if innerSchSet.Has(int(col1.UniqueID)) && isNullColumnID == col1.UniqueID {
+						return true
+					} else if innerSchSet.Has(int(col2.UniqueID)) && isNullColumnID == col2.UniqueID {
+						return true
+					}
+				}
+			default:
+			}
+		}
+	}
+	return false
+}
+
+// generateProject4ConvertAntiJoin is to generate projection and put it on the anti-semi join which is from outer join.
+// outer column will not be changed. inner column will output the null.
+func generateProject4ConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *intset.FastIntSet, selectSch *expression.Schema) (proj *logicalop.LogicalProjection) {
+	projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
+	for _, c := range selectSch.Columns {
+		if innerSchSet.Has(int(c.UniqueID)) {
+			projExprs = append(projExprs, expression.NewNull())
+		} else {
+			projExprs = append(projExprs, c.Clone())
+		}
+	}
+	proj = logicalop.LogicalProjection{Exprs: projExprs}.Init(p.SCtx(), p.QueryBlockOffset())
+	proj.SetSchema(selectSch.Clone())
+	return
 }
