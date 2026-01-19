@@ -107,15 +107,20 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 			if ok {
 				proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
 				if ok {
+					var pChild base.LogicalPlan
 					if proj != nil {
 						// projection <- projection <- anti semi join
 						proj.SetChildren(join)
-						cc.SetChildren(proj)
+						pChild = proj
 					} else {
 						// projection <- anti semi join
-						cc.SetChildren(join)
+						pChild = join
 					}
-					p.SetChild(childIdx, cc)
+					if p != nil {
+						p.SetChild(childIdx, pChild)
+					} else {
+						p = pChild
+					}
 				}
 				_, changed := o.recursivePlan(join)
 				return p, changed
@@ -126,7 +131,7 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 		_, changed := o.recursivePlan(cc)
 		return p, changed
 	}
-	_, changed := o.recursivePlan(p)
+	_, changed := o.recursivePlan(selChild)
 	return p, changed
 }
 
