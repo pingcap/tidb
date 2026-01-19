@@ -486,7 +486,7 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 }
 
 // generateProject4ConvertAntiJoin is to generate projection and put it on the anti-semi join which is from outer join.
-// inner column will not be changed. outer column will output the null.
+// outer column will not be changed. inner column will output the null.
 func (p *LogicalJoin) generateProject4ConvertAntiJoin(innerSchSet *intset.FastIntSet, selectSch *expression.Schema) (proj *LogicalProjection) {
 	projExprs := make([]expression.Expression, 0, len(selectSch.Columns))
 	for _, c := range selectSch.Columns {
