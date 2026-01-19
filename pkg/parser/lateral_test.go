@@ -28,9 +28,9 @@ func TestLateralParsing(t *testing.T) {
 	p := parser.New()
 
 	testCases := []struct {
-		name        string
-		sql         string
-		expectError bool
+		name         string
+		sql          string
+		expectError  bool
 		checkLateral bool // whether to verify Lateral flag is set
 	}{
 		{
