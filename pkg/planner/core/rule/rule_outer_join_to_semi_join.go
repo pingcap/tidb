@@ -60,13 +60,13 @@ func (o *OuterJoinToSemiJoin) Optimize(_ context.Context, p base.LogicalPlan) (b
 func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	var isChanged bool
 	for idx, child := range p.Children() {
-		if sel, ok := child.(*logicalop.LogicalSelection); ok {
-			o.dealWithSelection(p, idx, sel)
-		} else {
+		sel, ok := child.(*logicalop.LogicalSelection)
+		if !ok {
 			_, changed := o.recursivePlan(child)
 			isChanged = isChanged || changed
 			continue
 		}
+		o.dealWithSelection(p, idx, sel)
 	}
 	return p, isChanged
 }
@@ -85,8 +85,8 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 				p.SetChild(childIdx, cc)
 			}
 		}
-		_, changed := o.recursivePlan(cc)
-		isChanged = isChanged || ok || changed
+		p, changed := o.recursivePlan(cc)
+		return p, isChanged || ok || changed
 	case *logicalop.LogicalProjection:
 		if validProjForConvertAntiJoin(cc) {
 			projectionChild := cc.Children()[0]
