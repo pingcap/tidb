@@ -1,3 +1,4 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 load("@bazel_gazelle//:def.bzl", "gazelle")
 
 exports_files([
@@ -22,4 +23,20 @@ package(default_visibility = ["//visibility:public"])
 xcode_version(
     name = "xcode_version",
     version = "10.0",
+)
+
+go_library(
+    name = "tidb_lib",
+    srcs = ["test_lateral_simple.go"],
+    importpath = "github.com/pingcap/tidb",
+    deps = [
+        "//pkg/parser",
+        "//pkg/parser/format",
+        "//pkg/types/parser_driver",
+    ],
+)
+
+go_binary(
+    name = "tidb",
+    embed = [":tidb_lib"],
 )
