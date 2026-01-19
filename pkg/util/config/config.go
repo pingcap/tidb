@@ -43,6 +43,7 @@ func LoadConfig(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, e
 	vars := ctx.GetSessionVars()
 	for name, value := range varMap {
 		if _, ok := ignoredSystemVariablesForPlanReplayerLoad[name]; ok {
+			logutil.BgLogger().Warn(fmt.Sprintf("ignore set variable %s:%s", name, value), zap.Error(err))
 			continue
 		}
 		sysVar := variable.GetSysVar(name)
