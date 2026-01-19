@@ -16637,10 +16637,10 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "(time() - tidb_owner_is_owner_since_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"ddl\"}) and (tidb_owner_is_owner_since_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"ddl\"} > 0)",
+              "expr": "((time() - tidb_owner_is_owner_since_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"ddl\"}) and (tidb_owner_is_owner_since_seconds{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\", type=\"ddl\"} > 0)) + on(instance) group_left(version) (0 * tidb_server_info{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", keyspace_name=~\"$keyspace_name\", instance=~\"$instance\"})",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}}",
+              "legendFormat": "{{instance}} ({{version}})",
               "refId": "A"
             }
           ],
