@@ -60,6 +60,7 @@ go_test(
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
+        "//pkg/testkit/testflag",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/memory",

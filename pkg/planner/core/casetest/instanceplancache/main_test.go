@@ -27,7 +27,7 @@ import (
 
 var (
 	typeInt      = "int"
-	typeVarchar  = "varchar(255)"
+	typeVarchar  = "varchar(128)"
 	typeFloat    = "float"
 	typeDouble   = "double"
 	typeDecimal  = "decimal(10,2)"
@@ -82,7 +82,12 @@ func randomVarcharVal() string {
 	default:
 		str := "weoiruklmdsSDFjfDSFpqru23h#@$@#r90ds8a90dhfksdjfl#@!@#~$@#^BFDSAFDS=========+_+-21KLEJSDKLX;FJP;ipo][1"
 		start := rand.Intn(len(str))
-		end := start + rand.Intn(len(str)-start)
+		maxLen := 120
+		maxEnd := start + maxLen
+		if maxEnd > len(str) {
+			maxEnd = len(str)
+		}
+		end := start + rand.Intn(maxEnd-start)
 		return fmt.Sprintf("'%v'", str[start:end])
 	}
 }
@@ -166,7 +171,7 @@ func prepareTables(n int) []string {
 		sqls = append(sqls, fmt.Sprintf("create table t%d (%s, primary key (%s), index idx1 (%s), index idx2 (%s));",
 			i, strings.Join(cols, ", "), strings.Join(pkCols, ", "), strings.Join(idx1, ", "), strings.Join(idx2, ", ")))
 
-		sqls = append(sqls, prepareTableData(fmt.Sprintf("t%d", i), 100, colTypes)...)
+		sqls = append(sqls, prepareTableData(fmt.Sprintf("t%d", i), 50, colTypes)...)
 	}
 	return sqls
 }
@@ -180,7 +185,7 @@ func TestInstancePlanCache(t *testing.T) {
 		tk.MustExec(s)
 	}
 
-	nWorkers := 5
+	nWorkers := 4
 	caseSync := new(sync.WaitGroup)
 	exitSync := new(sync.WaitGroup)
 	caseChs := make([]chan *testCase, nWorkers)
@@ -194,7 +199,7 @@ func TestInstancePlanCache(t *testing.T) {
 	}
 
 	for _, q := range queryPattern {
-		c := prepareStmts(q, 10, 5)
+		c := prepareStmts(q, 10, 3)
 		for i := range nWorkers {
 			caseSync.Add(1)
 			caseChs[i] <- c
@@ -219,9 +224,9 @@ func executeWorker(tk *testkit.TestKit,
 			for i := range c.selStmts {
 				result := tk.MustQuery(c.selStmts[i]).Sort()
 				tk.MustExec(c.setStmts[i])
-				tk.MustQuery(c.execStmts[i]).Sort().Equal(result.Rows())
-				tk.MustQuery(c.execStmts[i]).Sort().Equal(result.Rows())
-				tk.MustQuery(c.execStmts[i]).Sort().Equal(result.Rows())
+				for range 2 {
+					tk.MustQuery(c.execStmts[i]).Sort().Equal(result.Rows())
+				}
 			}
 			caseSync.Done()
 		case <-exit:

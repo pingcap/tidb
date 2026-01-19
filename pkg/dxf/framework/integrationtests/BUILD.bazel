@@ -37,6 +37,7 @@ go_test(
         "//pkg/store/driver",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testflag",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "//pkg/util/sqlexec",

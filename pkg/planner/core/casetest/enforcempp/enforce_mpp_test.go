@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -27,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/stretchr/testify/require"
@@ -113,6 +115,14 @@ func TestEnforceMPPWarning1(t *testing.T) {
 		}
 		enforceMPPSuiteData := GetEnforceMPPSuiteData()
 		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		if !testflag.Long() {
+			limit := 10
+			if len(input) < limit {
+				limit = len(input)
+			}
+			input = input[:limit]
+			output = output[:limit]
+		}
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
@@ -174,6 +184,11 @@ func TestEnforceMPPWarning2(t *testing.T) {
 		}
 		enforceMPPSuiteData := GetEnforceMPPSuiteData()
 		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		if !testflag.Long() && len(input) >= 6 {
+			// Keep only the core multi-distinct cases in non-long UT to save time.
+			input = input[2:6]
+			output = output[2:6]
+		}
 		for i, tt := range input {
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
@@ -437,21 +452,20 @@ func TestMPPSingleDistinct3Stage(t *testing.T) {
 //
 //	since it doesn't change the schema out (index ref is still the right), so by now it's fine. SEE case: EXPLAIN select count(distinct a), count(distinct b), sum(c) from t.
 func TestMPPMultiDistinct3Stage(t *testing.T) {
-	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+	run := func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test;")
 		testKit.MustExec("drop table if exists t")
 		testKit.MustExec("create table t(a int, b int, c int, d int);")
-		testKit.MustExec("alter table t set tiflash replica 1")
-		tb := external.GetTableByName(t, testKit, "test", "t")
-		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
+		testkit.SetTiFlashReplica(t, domain.GetDomain(testKit.Session()), "test", "t")
 		testKit.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=1")
 		defer testKit.MustExec("set @@session.tidb_opt_enable_three_stage_multi_distinct_agg=0")
 		testKit.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\";")
 		testKit.MustExec("set @@session.tidb_enforce_mpp=1")
 		testKit.MustExec("set @@session.tidb_allow_mpp=ON;")
-		// todo: current mock regionCache won't scale the regions among tiFlash nodes. The under layer still collect data from only one of the nodes.
-		testKit.MustExec("split table t BETWEEN (0) AND (5000) REGIONS 5;")
+		if testflag.Long() {
+			// todo: current mock regionCache won't scale the regions among tiFlash nodes. The under layer still collect data from only one of the nodes.
+			testKit.MustExec("split table t BETWEEN (0) AND (5000) REGIONS 5;")
+		}
 		testKit.MustExec("insert into t values(1000, 1000, 1000, 1),(1000, 1000, 1000, 1),(2000, 2000, 2000, 1),(2000, 2000, 2000, 1),(3000, 3000, 3000, 1),(3000, 3000, 3000, 1),(4000, 4000, 4000, 1),(4000, 4000, 4000, 1),(5000, 5000, 5000, 1),(5000, 5000, 5000, 1)")
 
 		var input []string
@@ -463,6 +477,10 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 		enforceMPPSuiteData := GetEnforceMPPSuiteData()
 		enforceMPPSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, tt := range input {
+			// In non-long mode, only validate planning (EXPLAIN) to avoid executing MPP queries.
+			if !testflag.Long() && !testdata.Record() && !strings.HasPrefix(strings.ToLower(tt), "explain") {
+				continue
+			}
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
 			})
@@ -479,6 +497,24 @@ func TestMPPMultiDistinct3Stage(t *testing.T) {
 			res.Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
+	}
+
+	if !testflag.Long() {
+		t.Run("on", func(t *testing.T) {
+			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+			t.Cleanup(func() {
+				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+			})
+			store := testkit.CreateMockStore(t)
+			tk := testkit.NewTestKit(t, store)
+			testkit.WithCascades(true)(tk)
+			run(t, tk, "on", "TestMPPMultiDistinct3Stage")
+		})
+		return
+	}
+
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		run(t, testKit, cascades, caller)
 	}, mockstore.WithMockTiFlash(1))
 }
 

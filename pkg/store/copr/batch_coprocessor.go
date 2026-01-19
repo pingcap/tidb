@@ -1304,8 +1304,19 @@ func (b *batchCopIterator) run(ctx context.Context) {
 		b.wg.Add(1)
 		boMaxSleep := CopNextMaxBackoff
 		failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
-			if value.(bool) {
-				boMaxSleep = 2
+			switch v := value.(type) {
+			case bool:
+				if v {
+					boMaxSleep = 200
+				}
+			case int:
+				if v > 0 {
+					boMaxSleep = v
+				}
+			case int64:
+				if v > 0 {
+					boMaxSleep = int(v)
+				}
 			}
 		})
 		bo := backoff.NewBackofferWithVars(ctx, boMaxSleep, b.vars)

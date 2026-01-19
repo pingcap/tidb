@@ -756,8 +756,17 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 
 	wg.Wait()
 
-	ts, _ := store.CurrentVersion(oracle.GlobalTxnScope)
-	flashbackTs := oracle.GetTimeFromTS(ts.Ver)
+	// This testcase runs in the `pkg/executor` test binary, make sure no pending DDL jobs from other
+	// testcases are visible at the flashback timestamp.
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select count(*) from mysql.tidb_ddl_job").Rows()
+		return rows[0][0].(string) == "0"
+	}, 10*time.Second, 100*time.Millisecond)
+
+	ts, err := store.GetOracle().GetTimestamp(context.Background(), &oracle.Option{})
+	require.NoError(t, err)
+	flashbackTs := oracle.GetTimeFromTS(ts)
+	flashbackTsStr := flashbackTs.Format(types.TimeFSPFormat)
 
 	injectSafeTS := oracle.GoTimeToTS(flashbackTs.Add(10 * time.Second))
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockFlashbackTest", `return(true)`)
@@ -765,5 +774,5 @@ func TestFlashbackClusterWithManyDBs(t *testing.T) {
 		fmt.Sprintf("return(%v)", injectSafeTS))
 
 	// this test will fail before the fix, because the DDL job KV entry is too large.
-	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTs))
+	tk.MustExec(fmt.Sprintf("flashback cluster to timestamp '%s'", flashbackTsStr))
 }

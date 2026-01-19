@@ -41,6 +41,7 @@ go_test(
         "//pkg/meta/autoid",
         "//pkg/parser/mysql",
         "//pkg/testkit",
+        "//pkg/testkit/testflag",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "@com_github_pingcap_errors//:errors",

@@ -50,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/arena"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -716,18 +717,20 @@ func TestConnExecutionTimeout(t *testing.T) {
 
 	tk.MustExec("use test;")
 	tk.MustExec("CREATE TABLE testTable2 (id bigint PRIMARY KEY,  age int)")
-	for i := range 10 {
+	for i := range 3 {
 		str := fmt.Sprintf("insert into testTable2 values(%d, %d)", i, i%80)
 		tk.MustExec(str)
 	}
 
-	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("0"))
+	sleepSQL := "0.2"
+	tk.MustQuery("select SLEEP(" + sleepSQL + ");").Check(testkit.Rows("0"))
+	tk.MustExec("set @@max_execution_time = 100;")
+	tk.MustQuery("select SLEEP(" + sleepSQL + ");").Check(testkit.Rows("1"))
 	tk.MustExec("set @@max_execution_time = 500;")
-	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("1"))
-	tk.MustExec("set @@max_execution_time = 1500;")
 	tk.MustExec("set @@tidb_expensive_query_time_threshold = 1;")
-	tk.MustQuery("select SLEEP(1);").Check(testkit.Rows("0"))
-	err := tk.QueryToErr("select * FROM testTable2 WHERE SLEEP(1);")
+	tk.MustQuery("select SLEEP(" + sleepSQL + ");").Check(testkit.Rows("0"))
+	tk.MustExec("set @@max_execution_time = 100;")
+	err := tk.QueryToErr("select * FROM testTable2 WHERE SLEEP(" + sleepSQL + ");")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 	// Test executor stats when execution time exceeded.
 	tk.MustExec("set @@tidb_slow_log_threshold=300")
@@ -743,18 +746,18 @@ func TestConnExecutionTimeout(t *testing.T) {
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
 	tk.MustExec("set @@max_execution_time = 0;")
-	tk.MustQuery("select * FROM testTable2 WHERE SLEEP(1);").Check(testkit.Rows())
-	err = tk.QueryToErr("select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	tk.MustQuery("select * FROM testTable2 WHERE SLEEP(" + sleepSQL + ");").Check(testkit.Rows())
+	err = tk.QueryToErr("select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE SLEEP(" + sleepSQL + ");")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
-	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP(1);")
+	err = cc.handleQuery(context.Background(), "select * FROM testTable2 WHERE SLEEP("+sleepSQL+");")
 	require.NoError(t, err)
 
-	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE  SLEEP(1);")
+	err = cc.handleQuery(context.Background(), "select /*+ MAX_EXECUTION_TIME(100)*/  * FROM testTable2 WHERE SLEEP("+sleepSQL+");")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
-	err = cc.handleQuery(context.Background(), "select /*+ set_var(max_execution_time=100) */ age, sleep(1) from testTable2 union all select age, 1 from testTable2")
+	err = cc.handleQuery(context.Background(), "select /*+ set_var(max_execution_time=100) */ age, sleep("+sleepSQL+") from testTable2 union all select age, 1 from testTable2")
 	require.Equal(t, "[executor:3024]Query execution was interrupted, maximum statement execution time exceeded", err.Error())
 	// Killed because of max execution time, reset Killed to 0.
 	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.MaxExecTimeExceeded)
@@ -1083,6 +1086,16 @@ func TestTiFlashFallback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/internal/mpp/ReduceCopNextMaxBackoff"))
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff"))
 	}()
+
+	if !testflag.Long() {
+		tk.MustExec("set @@tidb_allow_batch_cop=0; set @@tidb_allow_mpp=0;")
+		require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", "return(\"requestTiFlashError\")"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult"))
+		}()
+		testFallbackWork(t, tk, cc, "select sum(a) from t")
+		return
+	}
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
 	// test COM_STMT_EXECUTE

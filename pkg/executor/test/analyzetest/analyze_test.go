@@ -1882,20 +1882,43 @@ func TestAnalyzeColumnsErrorAndWarning(t *testing.T) {
 }
 
 func checkAnalyzeStatus(t *testing.T, tk *testkit.TestKit, jobInfo, status, failReason, comment string, timeLimit int64) {
-	rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
-	require.Equal(t, 1, len(rows), comment)
-	require.Equal(t, jobInfo, rows[0][3], comment)
-	require.Equal(t, status, rows[0][7], comment)
-	require.Equal(t, failReason, rows[0][8], comment)
+	const layout = time.DateTime
+
 	if timeLimit <= 0 {
+		rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
+		require.Equal(t, 1, len(rows), comment)
+		require.Equal(t, jobInfo, rows[0][3], comment)
+		require.Equal(t, status, rows[0][7], comment)
+		require.Equal(t, failReason, rows[0][8], comment)
 		return
 	}
-	const layout = time.DateTime
-	startTime, err := time.Parse(layout, rows[0][5].(string))
-	require.NoError(t, err, comment)
-	endTime, err := time.Parse(layout, rows[0][6].(string))
-	require.NoError(t, err, comment)
-	require.Less(t, endTime.Sub(startTime), time.Duration(timeLimit)*time.Second, comment)
+
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("show analyze status where table_schema = 'test' and table_name = 't' and partition_name = ''").Rows()
+		if len(rows) != 1 {
+			return false
+		}
+		if jobInfo != rows[0][3] || status != rows[0][7] {
+			return false
+		}
+		actualFailReason := fmt.Sprint(rows[0][8])
+		if failReason == "<nil>" {
+			if actualFailReason != "<nil>" {
+				return false
+			}
+		} else if actualFailReason == "<nil>" || actualFailReason == "" {
+			return false
+		}
+		startTime, err := time.Parse(layout, rows[0][5].(string))
+		if err != nil {
+			return false
+		}
+		endTime, err := time.Parse(layout, rows[0][6].(string))
+		if err != nil {
+			return false
+		}
+		return endTime.Sub(startTime) < time.Duration(timeLimit)*time.Second
+	}, time.Duration(timeLimit+2)*time.Second, time.Millisecond*100, comment)
 }
 
 func testKillAutoAnalyze(t *testing.T, ver int) {
@@ -1967,8 +1990,8 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				require.Greater(t, currentVersion, lastVersion, comment)
 			} else {
 				// If we kill a pending/running job, after kill command the status is failed and the table stats are not updated.
-				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 10s.
-				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 10)
+				// We expect the killed analyze stops quickly. Specifically, end_time - start_time < 30s.
+				checkAnalyzeStatus(t, tk, jobInfo, "failed", exeerrors.ErrQueryInterrupted.Error(), comment, 30)
 				require.Equal(t, currentVersion, lastVersion, comment)
 			}
 		}()

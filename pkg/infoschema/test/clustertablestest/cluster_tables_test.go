@@ -916,10 +916,11 @@ func TestMDLViewWithNoPrivilege(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
-	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
+	// Use EXPLAIN to validate privilege checks without triggering cluster table execution.
+	tk.MustQuery("explain select * from mysql.tidb_mdl_view;")
 	tk.MustExec("create user 'test'@'%' identified by '';")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
-	_, err := tk.Exec("select * from mysql.tidb_mdl_view;")
+	_, err := tk.Exec("explain select * from mysql.tidb_mdl_view;")
 	require.ErrorContains(t, err, "view lack rights")
 }
 
@@ -932,7 +933,8 @@ func TestMDLViewWithPrivilege(t *testing.T) {
 	tk.MustExec("grant all privileges on *.* to 'test'@'%';")
 	tk.MustExec("flush privileges;")
 	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "test", Hostname: "%"}, nil, nil, nil))
-	tk.MustQuery("select * from mysql.tidb_mdl_view;").Check(testkit.Rows())
+	// Use EXPLAIN to validate privilege checks without triggering cluster table execution.
+	tk.MustQuery("explain select * from mysql.tidb_mdl_view;")
 }
 
 func TestQuickBinding(t *testing.T) {
@@ -1890,6 +1892,9 @@ func TestUnusedIndexView(t *testing.T) {
 }
 
 func TestMDLViewIDConflict(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("classic mode doesn't run multiple add-index DDL jobs concurrently; this case is covered by nextgen")
+	}
 	save := privileges.SkipWithGrant
 	privileges.SkipWithGrant = true
 	defer func() {

@@ -68,6 +68,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
+		goleak.IgnoreTopFunction("net.(*netFD).connect.func2"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
 		goleak.Cleanup(testutil.CheckIngestLeakageForTest),
 	}

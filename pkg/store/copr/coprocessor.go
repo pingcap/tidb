@@ -1478,8 +1478,19 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 	}
 	boMaxSleep := CopNextMaxBackoff
 	failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
-		if value.(bool) {
-			boMaxSleep = 2
+		switch v := value.(type) {
+		case bool:
+			if v {
+				boMaxSleep = 200
+			}
+		case int:
+			if v > 0 {
+				boMaxSleep = v
+			}
+		case int64:
+			if v > 0 {
+				boMaxSleep = int(v)
+			}
 		}
 	})
 	var cancel context.CancelFunc

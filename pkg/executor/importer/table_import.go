@@ -55,6 +55,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/promutil"
@@ -893,6 +894,9 @@ func VerifyChecksum(ctx context.Context, plan *Plan, localChecksum verify.KVChec
 	})
 
 	remoteChecksum, err := getRemoteChecksumFn()
+	if ctx.Err() != nil {
+		return exeerrors.ErrQueryInterrupted.GenWithStackByArgs()
+	}
 	if err != nil {
 		if plan.Checksum != config.OpLevelOptional {
 			return err

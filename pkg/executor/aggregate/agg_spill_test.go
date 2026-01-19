@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/memory"
@@ -361,7 +362,7 @@ func fallBackActionTest(t *testing.T, fileNamePrefixForTest string) {
 	require.Less(t, 0, newRootExceedAction.GetTriggeredNum())
 }
 
-func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, fileNamePrefixForTest string) {
+func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggExec, dataSource *testutil.MockDataSource, fileNamePrefixForTest string, maxCloseDelay time.Duration) {
 	if aggExec == nil {
 		aggExec = buildHashAggExecutor(t, ctx, dataSource, fileNamePrefixForTest)
 	}
@@ -377,7 +378,9 @@ func randomFailTest(t *testing.T, ctx *mock.Context, aggExec *aggregate.HashAggE
 	once := sync.Once{}
 
 	go func() {
-		time.Sleep(time.Duration(rand.Int31n(300)) * time.Millisecond)
+		if maxCloseDelay > 0 {
+			time.Sleep(time.Duration(rand.Int63n(int64(maxCloseDelay))))
+		}
 		once.Do(func() {
 			require.False(t, aggExec.IsInvalidMemoryUsageTrackingForTest())
 			aggExec.Close()
@@ -419,8 +422,16 @@ func TestGetCorrectResult(t *testing.T) {
 	ctx := mock.NewContext()
 	initCtx(ctx, newRootExceedAction, -1, 1024)
 
-	rowNum := 100000
-	ndv := 50000
+	rowNum := 20000
+	ndv := 10000
+	repeat := 2
+	hardLimitBytesNum := int64(2000000)
+	if testflag.Long() {
+		rowNum = 100000
+		ndv = 50000
+		repeat = 5
+		hardLimitBytesNum = int64(6000000)
+	}
 	col0, col1 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col0, col1)
@@ -430,7 +441,6 @@ func TestGetCorrectResult(t *testing.T) {
 	require.NoError(t, err)
 	defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/slowSomePartialWorkers"))
 
-	hardLimitBytesNum := int64(6000000)
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 256)
 
 	finished := atomic.Bool{}
@@ -450,7 +460,7 @@ func TestGetCorrectResult(t *testing.T) {
 	}()
 
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
-	for range 5 {
+	for range repeat {
 		executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
 		executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
 	}
@@ -467,7 +477,11 @@ func TestFallBackAction(t *testing.T) {
 	})
 	testFuncName := util.GetFunctionName()
 
-	for range 50 {
+	repeat := 5
+	if testflag.Long() {
+		repeat = 50
+	}
+	for range repeat {
 		fallBackActionTest(t, testFuncName)
 	}
 	util.CheckNoLeakFiles(t, testFuncName)
@@ -481,7 +495,18 @@ func TestRandomFail(t *testing.T) {
 	testFuncName := util.GetFunctionName()
 
 	newRootExceedAction := new(testutil.MockActionOnExceed)
-	hardLimitBytesNum := int64(5000000)
+	hardLimitBytesNum := int64(2000000)
+	rowNum := 20000 + rand.Intn(10000)
+	ndv := 10000 + rand.Intn(5000)
+	repeat := 5
+	maxCloseDelay := 50 * time.Millisecond
+	if testflag.Long() {
+		hardLimitBytesNum = int64(5000000)
+		rowNum = 100000 + rand.Intn(100000)
+		ndv = 50000 + rand.Intn(50000)
+		repeat = 30
+		maxCloseDelay = 300 * time.Millisecond
+	}
 
 	ctx := mock.NewContext()
 	initCtx(ctx, newRootExceedAction, hardLimitBytesNum, 32)
@@ -490,8 +515,6 @@ func TestRandomFail(t *testing.T) {
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/enableAggSpillIntest")
 	failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError", `return(true)`)
 	defer failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/ChunkInDiskError")
-	rowNum := 100000 + rand.Intn(100000)
-	ndv := 50000 + rand.Intn(50000)
 	col1, col2 := generateData(rowNum, ndv)
 	opt := getMockDataSourceParameters(ctx)
 	dataSource := buildMockDataSource(opt, col1, col2)
@@ -514,9 +537,9 @@ func TestRandomFail(t *testing.T) {
 
 	// Test is successful when all sqls are not hung
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
-	for range 30 {
-		randomFailTest(t, ctx, nil, dataSource, testFuncName)
-		randomFailTest(t, ctx, aggExec, dataSource, testFuncName)
+	for range repeat {
+		randomFailTest(t, ctx, nil, dataSource, testFuncName, maxCloseDelay)
+		randomFailTest(t, ctx, aggExec, dataSource, testFuncName, maxCloseDelay)
 	}
 
 	finishChan.Store(true)

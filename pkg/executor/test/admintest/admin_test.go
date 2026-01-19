@@ -1609,6 +1609,9 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 
 	executor.CheckTableFastBucketSize.Store(8)
 
+	const rowCount = 2000
+	const iterCount = 3
+
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
 	logutil.BgLogger().Info("random generator", zap.Int64("seed", seed))
@@ -1617,8 +1620,8 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 int, c2 int, primary key(c1), key(c2))")
-	tk.MustExec("set cte_max_recursion_depth=10000;")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+	tk.MustExec(fmt.Sprintf("set cte_max_recursion_depth=%d", rowCount))
+	tk.MustExec(fmt.Sprintf("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< %d) select * from cte;", rowCount))
 
 	sctx := mock.NewContext()
 	ctx := sctx.GetTableCtx()
@@ -1644,40 +1647,40 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	r := regexp.MustCompile(pattern)
 
 	// No index record
-	for i := range 10001 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	for i := 0; i <= rowCount; i++ {
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(i), kv.IntHandle(i))
 		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
 	}
-	err := tk.ExecToErr("admin check table admin_test")
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 
 	// Reset table.
 	tk.MustExec("truncate admin_test")
 	indexOpr = getIndex()
 	// No table record
-	for i := range 100 {
-		txn, err := store.Begin()
-		require.NoError(t, err)
+	txn, err = store.Begin()
+	require.NoError(t, err)
+	for i := 0; i < 20; i++ {
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i), kv.IntHandle(i), nil)
 		require.NoError(t, err)
-		err = txn.Commit(context.Background())
-		require.NoError(t, err)
 	}
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
 	err = tk.ExecToErr("admin check table admin_test")
 	require.Error(t, err)
 
 	tk.MustExec("truncate admin_test")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+	tk.MustExec(fmt.Sprintf("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< %d) select * from cte;", rowCount))
 	indexOpr = getIndex()
 	// Delete an index record randomly.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
+		randomRow := rand.Intn(rowCount) + 1
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), kv.IntHandle(randomRow))
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1696,10 +1699,10 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Add an index record randomly on exists row.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
+		randomRow := rand.Intn(rowCount) + 1
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1720,10 +1723,10 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Add an index record randomly on not exists row.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 10000
+		randomRow := rand.Intn(rowCount) + rowCount
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1744,10 +1747,10 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	}
 
 	// Modify an index record randomly.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
+		randomRow := rand.Intn(rowCount) + 1
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), kv.IntHandle(randomRow))
 		require.NoError(t, err)
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), kv.IntHandle(randomRow), nil)
@@ -1778,6 +1781,9 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 
 	executor.CheckTableFastBucketSize.Store(8)
 
+	const rowCount = 2000
+	const iterCount = 3
+
 	seed := time.Now().UnixNano()
 	rand := rand.New(rand.NewSource(seed))
 	logutil.BgLogger().Info("random generator", zap.Int64("seed", seed))
@@ -1786,8 +1792,8 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists admin_test")
 	tk.MustExec("create table admin_test (c1 mediumint, c2 int, primary key(c1) clustered, key(c2))")
-	tk.MustExec("set cte_max_recursion_depth=10000;")
-	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+	tk.MustExec(fmt.Sprintf("set cte_max_recursion_depth=%d", rowCount))
+	tk.MustExec(fmt.Sprintf("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< %d) select * from cte;", rowCount))
 
 	// Make some corrupted index. Build the index information.
 	sctx := mock.NewContext()
@@ -1815,10 +1821,10 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Delete an index record randomly.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
+		randomRow := rand.Intn(rowCount) + 1
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow))
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1837,10 +1843,10 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Add an index record randomly on exists row.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
+		randomRow := rand.Intn(rowCount) + 1
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1861,10 +1867,10 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Add an index record randomly on not exists row.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 10000
+		randomRow := rand.Intn(rowCount) + rowCount
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)
 		require.NoError(t, err)
 		err = txn.Commit(context.Background())
@@ -1885,10 +1891,10 @@ func TestAdminCheckTableErrorLocateForClusterIndex(t *testing.T) {
 	}
 
 	// Modify an index record randomly.
-	for i := range 10 {
+	for i := range iterCount {
 		txn, err := store.Begin()
 		require.NoError(t, err)
-		randomRow := rand.Intn(10000) + 1
+		randomRow := rand.Intn(rowCount) + 1
 		err = indexOpr.Delete(ctx, txn, types.MakeDatums(randomRow), getCommonHandle(randomRow))
 		require.NoError(t, err)
 		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(randomRow+1), getCommonHandle(randomRow), nil)

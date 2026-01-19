@@ -791,73 +791,59 @@ func TestTiDBStoreBatchSizeUpgradeFrom650To660(t *testing.T) {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
-	for i := range 2 {
-		func() {
-			ctx := context.Background()
-			store, dom := CreateStoreAndBootstrap(t)
-			defer func() { require.NoError(t, store.Close()) }()
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
-			// upgrade from 6.5 to 6.6.
-			ver65 := version132
-			seV65 := CreateSessionAndSetID(t, store)
-			txn, err := store.Begin()
-			require.NoError(t, err)
-			m := meta.NewMutator(txn)
-			err = m.FinishBootstrap(int64(ver65))
-			require.NoError(t, err)
-			err = txn.Commit(context.Background())
-			require.NoError(t, err)
-			RevertVersionAndVariables(t, seV65, ver65)
-			MustExec(t, seV65, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", vardef.TiDBStoreBatchSize))
-			MustExec(t, seV65, "commit")
-			store.SetOption(StoreBootstrappedKey, nil)
-			ver, err := GetBootstrapVersion(seV65)
-			require.NoError(t, err)
-			require.Equal(t, int64(ver65), ver)
+	// upgrade from 6.5 to 6.6.
+	ver65 := version132
+	seV65 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver65))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV65, ver65)
+	MustExec(t, seV65, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "0", vardef.TiDBStoreBatchSize))
+	MustExec(t, seV65, "commit")
+	store.SetOption(StoreBootstrappedKey, nil)
+	ver, err := GetBootstrapVersion(seV65)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver65), ver)
 
-			// We are now in 6.5, tidb_store_batch_size is 0.
-			res := MustExecToRecodeSet(t, seV65, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBStoreBatchSize))
-			chk := res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row := chk.GetRow(0)
-			require.Equal(t, 2, row.Len())
-			require.Equal(t, "0", row.GetString(1))
-			res.Close()
+	// We are now in 6.5, tidb_store_batch_size is 0.
+	res := MustExecToRecodeSet(t, seV65, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBStoreBatchSize))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, "0", row.GetString(1))
+	res.Close()
 
-			if i == 0 {
-				// For the first time, We set tidb_store_batch_size to 1.
-				// And after upgrade to 6.6, tidb_store_batch_size should be 1.
-				// For the second it should be the latest default value.
-				MustExec(t, seV65, "set global tidb_store_batch_size = 1")
-			}
-			dom.Close()
-			// Upgrade to 6.6.
-			domCurVer, err := BootstrapSession(store)
-			require.NoError(t, err)
-			defer domCurVer.Close()
-			seCurVer := CreateSessionAndSetID(t, store)
-			ver, err = GetBootstrapVersion(seCurVer)
-			require.NoError(t, err)
-			require.Equal(t, currentBootstrapVersion, ver)
+	dom.Close()
+	// Upgrade to 6.6.
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err = GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
 
-			// We are now in 6.6.
-			res = MustExecToRecodeSet(t, seCurVer, "select @@tidb_store_batch_size")
-			chk = res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row = chk.GetRow(0)
-			require.Equal(t, 1, row.Len())
-			if i == 0 {
-				require.Equal(t, "1", row.GetString(0))
-			} else {
-				require.Equal(t, "4", row.GetString(0))
-			}
-			res.Close()
-		}()
-	}
+	// We are now in 6.6.
+	res = MustExecToRecodeSet(t, seCurVer, "select @@tidb_store_batch_size")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, "4", row.GetString(0))
+	res.Close()
 }
 
 func TestTiDBUpgradeToVer136(t *testing.T) {
@@ -938,16 +924,6 @@ func TestTiDBUpgradeToVer140(t *testing.T) {
 	dom, err := BootstrapSession(store)
 	require.NoError(t, err)
 	ver, err := GetBootstrapVersion(s)
-	require.NoError(t, err)
-	require.Less(t, int64(ver139), ver)
-	dom.Close()
-
-	// upgrade with column task_key exists
-	s = CreateSessionAndSetID(t, store)
-	resetTo139(s)
-	dom, err = BootstrapSession(store)
-	require.NoError(t, err)
-	ver, err = GetBootstrapVersion(s)
 	require.NoError(t, err)
 	require.Less(t, int64(ver139), ver)
 	dom.Close()

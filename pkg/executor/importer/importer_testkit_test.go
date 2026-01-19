@@ -127,7 +127,7 @@ func TestVerifyChecksum(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/afterHandleChecksumRequest", `sleep(1000)`))
 
-	ctx2, cancel := context.WithTimeout(ctx, time.Second)
+	ctx2, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
 	defer cancel()
 	err = importer.VerifyChecksum(ctx2, plan2, localChecksum, logutil.BgLogger(), func() (*local.RemoteChecksum, error) {
 		return importer.RemoteChecksumTableBySQL(ctx2, tk.Session(), plan, logutil.BgLogger())

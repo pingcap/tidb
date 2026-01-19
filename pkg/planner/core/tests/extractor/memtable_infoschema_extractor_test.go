@@ -16,6 +16,7 @@ package extractor_test
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,6 +97,77 @@ func (cp colPredicates) enumerateAll() (res []string) {
 		res = append(res, fmt.Sprintf("(%s)", strings.Join(comb, " or ")))
 	}
 	return
+}
+
+func (cp colPredicates) baselinePredicate() string {
+	if len(cp.values) == 0 {
+		return ""
+	}
+
+	if cp.isInteger {
+		return fmt.Sprintf("%s = %s", cp.colName, cp.values[0])
+	}
+	return fmt.Sprintf("%s = '%s'", cp.colName, cp.values[0])
+}
+
+func (cp colPredicates) pairwiseSamplePredicates() []string {
+	if len(cp.values) == 0 {
+		return nil
+	}
+
+	v0 := cp.values[0]
+	v1 := v0
+	if len(cp.values) > 1 {
+		v1 = cp.values[1]
+	}
+
+	formatValues := func(values []string) []string {
+		res := make([]string, 0, len(values))
+		for _, v := range values {
+			if cp.isInteger {
+				res = append(res, v)
+			} else {
+				res = append(res, fmt.Sprintf("'%s'", v))
+			}
+		}
+		return res
+	}
+
+	values := []string{v0}
+	if v1 != v0 {
+		values = append(values, v1)
+	}
+	formattedValues := formatValues(values)
+	inList := strings.Join(formattedValues, ",")
+
+	preds := make([]string, 0, 5)
+	preds = append(preds, fmt.Sprintf("%s = %s", cp.colName, formattedValues[0]))
+	if !cp.isInteger {
+		preds = append(preds, fmt.Sprintf("lower(%s) = %s", cp.colName, formattedValues[0]))
+	}
+	preds = append(preds, fmt.Sprintf("%s in (%s)", cp.colName, inList))
+	if !cp.isInteger {
+		preds = append(preds, fmt.Sprintf("lower(%s) in (%s)", cp.colName, inList))
+	}
+	eqs := make([]string, 0, len(formattedValues))
+	for _, v := range formattedValues {
+		eqs = append(eqs, fmt.Sprintf("%s = %s", cp.colName, v))
+	}
+	preds = append(preds, fmt.Sprintf("(%s)", strings.Join(eqs, " or ")))
+
+	uniq := make([]string, 0, len(preds))
+	seen := make(map[string]struct{}, len(preds))
+	for _, p := range preds {
+		if p == "" {
+			continue
+		}
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		uniq = append(uniq, p)
+	}
+	return uniq
 }
 
 type testCase struct {
@@ -325,26 +397,57 @@ func testMemtableInfoschemaExtractor(t *testing.T, tcs []testCase) {
 	countSQL := 0
 	for _, tc := range tcs {
 		names := tc.prepareData(tk)
-		conditions := []string{}
-		for i := len(names) - 1; i >= 0; i-- {
-			all := names[i].enumerateAll()
-			if len(conditions) == 0 {
-				conditions = all
-			} else {
-				newConditions := []string{}
-				for _, a := range all {
-					for _, b := range conditions {
-						newConditions = append(newConditions, fmt.Sprintf("%s and %s", a, b))
-					}
+
+		baselines := make([]string, 0, len(names))
+		allPredicates := make([][]string, 0, len(names))
+		pairwisePredicates := make([][]string, 0, len(names))
+		for _, cp := range names {
+			baselines = append(baselines, cp.baselinePredicate())
+			allPredicates = append(allPredicates, cp.enumerateAll())
+			pairwisePredicates = append(pairwisePredicates, cp.pairwiseSamplePredicates())
+		}
+
+		executed := make(map[string]struct{})
+		runQuery := func(where []string) {
+			conds := make([]string, 0, len(where))
+			for _, c := range where {
+				if c != "" {
+					conds = append(conds, c)
 				}
-				conditions = newConditions
+			}
+			if len(conds) == 0 {
+				return
+			}
+			sql := fmt.Sprintf("select * from information_schema.%s where %s", tc.memTableName, strings.Join(conds, " and "))
+			if _, ok := executed[sql]; ok {
+				return
+			}
+			executed[sql] = struct{}{}
+			tk.MustQuery(sql)
+			countSQL++
+		}
+
+		// Vary each column predicate with baselines for other columns.
+		for i := range allPredicates {
+			for _, pred := range allPredicates[i] {
+				where := slices.Clone(baselines)
+				where[i] = pred
+				runQuery(where)
 			}
 		}
 
-		countSQL += len(conditions)
-		for _, c := range conditions {
-			sql := fmt.Sprintf("select * from information_schema.%s where %s", tc.memTableName, c)
-			tk.MustQuery(sql)
+		// Also cover interactions between columns for representative predicate shapes.
+		for i := range pairwisePredicates {
+			for j := i + 1; j < len(pairwisePredicates); j++ {
+				for _, a := range pairwisePredicates[i] {
+					for _, b := range pairwisePredicates[j] {
+						where := slices.Clone(baselines)
+						where[i] = a
+						where[j] = b
+						runQuery(where)
+					}
+				}
+			}
 		}
 
 		tc.cleanData(tk)

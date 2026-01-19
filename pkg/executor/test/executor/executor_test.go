@@ -65,6 +65,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -2536,8 +2537,12 @@ func TestIssue48756(t *testing.T) {
 			require.Len(t, warnings, 1)
 			require.Equal(t, "Warning", warnings[0][0], "generates a warning")
 			require.Equal(t, "1292", warnings[0][1], "expected error code")
-			require.Equal(t, "Incorrect time value: '120120519090607'", warnings[0][2],
-				"expected error message")
+			msg := fmt.Sprint(warnings[0][2])
+			require.Contains(t, msg, "Incorrect time value:", "expected error message prefix")
+			require.True(t,
+				strings.Contains(msg, "120120519090607") || strings.Contains(msg, "1 1:1:1.000002"),
+				"unexpected error message: %s", msg,
+			)
 		})
 	}
 }
@@ -2566,18 +2571,40 @@ func TestQueryWithKill(t *testing.T) {
 	tk.MustExec("create table tkq (a int key, b int, index idx_b(b));")
 	tk.MustExec("insert into tkq values (1,1);")
 	var wg sync.WaitGroup
-	ch := make(chan context.CancelFunc, 1024)
-	testDuration := time.Second * 10
-	for range 10 {
+
+	workerCount := 4
+	testDuration := time.Second
+	if testflag.Long() {
+		workerCount = 10
+		testDuration = 10 * time.Second
+	}
+
+	testCtx, stop := context.WithTimeout(context.Background(), testDuration)
+	defer stop()
+
+	ch := make(chan context.CancelFunc, workerCount*32)
+	for range workerCount {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			tk := testkit.NewTestKit(t, store)
 			tk.MustExec("use test;")
-			start := time.Now()
 			for {
-				ctx, cancel := context.WithCancel(context.Background())
-				ch <- cancel
+				select {
+				case <-testCtx.Done():
+					return
+				default:
+				}
+
+				ctx, cancel := context.WithCancel(testCtx)
+				select {
+				case ch <- cancel:
+				case <-testCtx.Done():
+					cancel()
+					return
+				default:
+					cancel()
+				}
 				rs, err := tk.ExecWithContext(ctx, "select a from tkq where b = 1;")
 				if err == nil {
 					require.NotNil(t, rs)
@@ -2594,9 +2621,7 @@ func TestQueryWithKill(t *testing.T) {
 				if rs != nil {
 					rs.Close()
 				}
-				if time.Since(start) > testDuration {
-					return
-				}
+				cancel()
 			}
 		}()
 	}
@@ -2611,7 +2636,7 @@ func TestQueryWithKill(t *testing.T) {
 					time.Sleep(time.Duration(rand.Intn(1000)) * time.Nanosecond)
 				}
 				cancel()
-			case <-time.After(time.Second):
+			case <-testCtx.Done():
 				return
 			}
 		}

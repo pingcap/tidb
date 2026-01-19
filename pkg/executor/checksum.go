@@ -160,6 +160,11 @@ func (e *ChecksumTableExec) handleChecksumRequest(req *kv.Request) (resp *tipb.C
 			err = err1
 		}
 		failpoint.Inject("afterHandleChecksumRequest", nil)
+		if err == nil {
+			if err1 := e.Ctx().GetSessionVars().SQLKiller.HandleSignal(); err1 != nil {
+				err = err1
+			}
+		}
 	}()
 
 	resp = &tipb.ChecksumResponse{}

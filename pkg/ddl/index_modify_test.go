@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -389,14 +390,17 @@ func TestAnalyzeStuck(t *testing.T) {
 	}
 
 	oldCumulativeTimeout := ddl.DefaultCumulativeTimeout
+	oldAnalyzeCheckInterval := ddl.DefaultAnalyzeCheckInterval
 	defer func() {
 		ddl.DefaultCumulativeTimeout = oldCumulativeTimeout
+		ddl.DefaultAnalyzeCheckInterval = oldAnalyzeCheckInterval
 	}()
-	ddl.DefaultCumulativeTimeout = 2 * time.Second
+	ddl.DefaultAnalyzeCheckInterval = 200 * time.Millisecond
+	ddl.DefaultCumulativeTimeout = 100 * time.Millisecond
 
 	// enable failpoint to simulate analyze stuck
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeAnalyzeTable", func() {
-		time.Sleep(ddl.DefaultCumulativeTimeout + 10*time.Second)
+		time.Sleep(ddl.DefaultAnalyzeCheckInterval + 200*time.Millisecond)
 	})
 
 	done := make(chan error, 1)
@@ -616,8 +620,20 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 	done := make(chan error, 1)
 	start := -20
 	num := defaultBatchSize
-	// Add some discrete rows.
 	goCnt := 10
+	maxRows := 1000
+	step := 20
+	tickerInterval := indexModifyLease / 5
+	if !testflag.Long() {
+		goCnt = 4
+		if num > 200 {
+			num = 200
+		}
+		maxRows = 200
+		step = 5
+		tickerInterval = indexModifyLease / 2
+	}
+	// Add some discrete rows.
 	errCh := make(chan error, goCnt)
 	for i := range goCnt {
 		base := (i % 8) << 60
@@ -641,7 +657,7 @@ func testAddIndexWithSplitTable(t *testing.T, createSQL, splitTableSQL string) {
 	addIdxSQL := "alter table test_add_index add index idx(a)"
 	testddlutil.SessionExecInGoroutine(store, "test", addIdxSQL, done)
 
-	ticker := time.NewTicker(indexModifyLease / 5)
+	ticker := time.NewTicker(tickerInterval)
 	defer ticker.Stop()
 	num = 0
 LOOP:
@@ -656,10 +672,9 @@ LOOP:
 			// When the server performance is particularly poor,
 			// the adding index operation can not be completed.
 			// So here is a limit to the number of rows inserted.
-			if num >= 1000 {
+			if num >= maxRows {
 				break
 			}
-			step := 20
 			// delete, insert and update some data
 			for i := num; i < num+step; i++ {
 				sql := fmt.Sprintf("delete from test_add_index where a = %d", i+1)

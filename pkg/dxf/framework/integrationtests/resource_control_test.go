@@ -28,6 +28,7 @@ import (
 	mockDispatch "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/mock"
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
@@ -193,6 +194,18 @@ func (c *resourceCtrlCaseContext) waitTasks() {
 }
 
 func TestResourceControl(t *testing.T) {
+	if !testflag.Long() {
+		c := newResourceCtrlCaseContext(t, 2, map[int64]map[proto.Step]int{
+			1: {proto.StepOne: 2},
+			2: {proto.StepOne: 2},
+		})
+		c.runTaskAsync("a", []int{2, 2})
+		c.waitTotalSubtaskCount(4)
+		c.continueAllSubtasks()
+		c.waitTasks()
+		return
+	}
+
 	t.Run("fully-utilized", func(t *testing.T) {
 		// we have 4 16c nodes, and we have 4 tasks of required slots 4, each task have 4 subtasks,
 		// so the resource can run all subtasks concurrently.

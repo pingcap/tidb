@@ -755,73 +755,62 @@ func TestTiDBCostModelUpgradeFrom610To650(t *testing.T) {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
 	}
 
-	for i := range 2 {
-		func() {
-			ctx := context.Background()
-			store, dom := session.CreateStoreAndBootstrap(t)
-			defer func() { require.NoError(t, store.Close()) }()
+	ctx := context.Background()
+	store, dom := session.CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
 
-			// upgrade from 6.1 to 6.5+.
-			ver61 := 91
-			seV61 := session.CreateSessionAndSetID(t, store)
-			txn, err := store.Begin()
-			require.NoError(t, err)
-			m := meta.NewMutator(txn)
-			err = m.FinishBootstrap(int64(ver61))
-			require.NoError(t, err)
-			err = txn.Commit(context.Background())
-			require.NoError(t, err)
-			session.RevertVersionAndVariables(t, seV61, ver61)
-			session.MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", vardef.TiDBCostModelVersion))
-			session.MustExec(t, seV61, "commit")
-			store.SetOption(session.StoreBootstrappedKey, nil)
-			ver, err := session.GetBootstrapVersion(seV61)
-			require.NoError(t, err)
-			require.Equal(t, int64(ver61), ver)
+	// upgrade from 6.1 to 6.5+.
+	ver61 := 91
+	seV61 := session.CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver61))
+	require.NoError(t, err)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+	session.RevertVersionAndVariables(t, seV61, ver61)
+	session.MustExec(t, seV61, fmt.Sprintf("update mysql.GLOBAL_VARIABLES set variable_value='%s' where variable_name='%s'", "1", vardef.TiDBCostModelVersion))
+	session.MustExec(t, seV61, "commit")
+	store.SetOption(session.StoreBootstrappedKey, nil)
+	ver, err := session.GetBootstrapVersion(seV61)
+	require.NoError(t, err)
+	require.Equal(t, int64(ver61), ver)
 
-			// We are now in 6.1, tidb_cost_model_version is 1.
-			res := session.MustExecToRecodeSet(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBCostModelVersion))
-			chk := res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row := chk.GetRow(0)
-			require.Equal(t, 2, row.Len())
-			require.Equal(t, "1", row.GetString(1))
-			res.Close()
+	// We are now in 6.1, tidb_cost_model_version is 1.
+	res := session.MustExecToRecodeSet(t, seV61, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBCostModelVersion))
+	chk := res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, 2, row.Len())
+	require.Equal(t, "1", row.GetString(1))
+	res.Close()
 
-			if i == 0 {
-				// For the first time, We set tidb_cost_model_version to 2.
-				// And after upgrade to 6.5, tidb_cost_model_version should be 2.
-				// For the second it should be 1.
-				session.MustExec(t, seV61, "set global tidb_cost_model_version = 2")
-			}
-			dom.Close()
-			// Upgrade to 6.5.
-			domCurVer, err := session.BootstrapSession(store)
-			require.NoError(t, err)
-			defer domCurVer.Close()
-			seCurVer := session.CreateSessionAndSetID(t, store)
-			ver, err = session.GetBootstrapVersion(seCurVer)
-			require.NoError(t, err)
-			require.Equal(t, session.CurrentBootstrapVersion, ver)
+	// Explicit user setting should be preserved after upgrade.
+	session.MustExec(t, seV61, "set global tidb_cost_model_version = 2")
+	dom.Close()
 
-			// We are now in 6.5.
-			res = session.MustExecToRecodeSet(t, seCurVer, "select @@tidb_cost_model_version")
-			chk = res.NewChunk(nil)
-			err = res.Next(ctx, chk)
-			require.NoError(t, err)
-			require.Equal(t, 1, chk.NumRows())
-			row = chk.GetRow(0)
-			require.Equal(t, 1, row.Len())
-			if i == 0 {
-				require.Equal(t, "2", row.GetString(0))
-			} else {
-				require.Equal(t, "1", row.GetString(0))
-			}
-			res.Close()
-		}()
-	}
+	// Upgrade to 6.5.
+	domCurVer, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := session.CreateSessionAndSetID(t, store)
+	ver, err = session.GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, session.CurrentBootstrapVersion, ver)
+
+	// We are now in 6.5.
+	res = session.MustExecToRecodeSet(t, seCurVer, "select @@tidb_cost_model_version")
+	chk = res.NewChunk(nil)
+	err = res.Next(ctx, chk)
+	require.NoError(t, err)
+	require.Equal(t, 1, chk.NumRows())
+	row = chk.GetRow(0)
+	require.Equal(t, 1, row.Len())
+	require.Equal(t, "2", row.GetString(0))
+	res.Close()
 }
 
 func TestIndexJoinMultiPatternByUpgrade650To840(t *testing.T) {

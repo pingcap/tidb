@@ -371,6 +371,7 @@ go_test(
         "//pkg/testkit",
         "//pkg/testkit/external",
         "//pkg/testkit/testfailpoint",
+        "//pkg/testkit/testflag",
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
         "//pkg/types",

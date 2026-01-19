@@ -118,6 +118,8 @@ func TestConversion(t *testing.T) {
 	err = h.LoadStatsFromJSON(context.Background(), is, jsonTbl, 0)
 	wg.Wait()
 	require.NoError(t, err)
+	h.Clear()
+	require.Nil(t, h.Update(context.Background(), is))
 	loadTblInStorage := h.GetPhysicalTableStats(tableInfo.Meta().ID, tableInfo.Meta())
 	requireTableEqual(t, loadTblInStorage, tbl)
 }

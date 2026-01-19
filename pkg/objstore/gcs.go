@@ -421,6 +421,13 @@ func NewGCSStorage(ctx context.Context, gcs *backuppb.GCS, opts *storeapi.Option
 		clientOps = append(clientOps, option.WithoutAuthentication())
 	} else {
 		if gcs.CredentialsBlob == "" {
+			if intest.InTest && !mustReportCredErr && !opts.SendCredentials {
+				endpoint := gcs.GetEndpoint()
+				if strings.Contains(endpoint, "127.0.0.1") || strings.Contains(endpoint, "localhost") {
+					clientOps = append(clientOps, option.WithoutAuthentication())
+					goto skipHandleCred
+				}
+			}
 			creds, err := google.FindDefaultCredentials(ctx, storage.ScopeReadWrite)
 			if err != nil {
 				if intest.InTest && !mustReportCredErr {

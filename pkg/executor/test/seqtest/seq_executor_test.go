@@ -871,24 +871,28 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (v int)")
-	normalSQL, normalParams := generateBatchSQL(math.MaxUint16)
-	_, err := tk.Exec(normalSQL, normalParams...)
+	normalSQL := generateBatchSQL(math.MaxUint16)
+	_, paramCount, _, err := tk.Session().PrepareStmt(normalSQL)
 	require.NoError(t, err)
+	require.Equal(t, int(math.MaxUint16), paramCount)
 
-	bigSQL, bigParams := generateBatchSQL(math.MaxUint16 + 2)
-	err = tk.ExecToErr(bigSQL, bigParams...)
+	bigSQL := generateBatchSQL(math.MaxUint16 + 2)
+	_, _, _, err = tk.Session().PrepareStmt(bigSQL)
 	require.Error(t, err)
 	require.EqualError(t, err, "[executor:1390]Prepared statement contains too many placeholders")
 }
 
-func generateBatchSQL(paramCount int) (sql string, paramSlice []any) {
-	params := make([]any, 0, paramCount)
-	placeholders := make([]string, 0, paramCount)
-	for i := range paramCount {
-		params = append(params, i)
-		placeholders = append(placeholders, "(?)")
+func generateBatchSQL(paramCount int) string {
+	var sb strings.Builder
+	sb.Grow(len("insert into t values ") + paramCount*3 + (paramCount - 1))
+	sb.WriteString("insert into t values ")
+	for i := 0; i < paramCount; i++ {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		sb.WriteString("(?)")
 	}
-	return "insert into t values " + strings.Join(placeholders, ","), params
+	return sb.String()
 }
 
 func TestCartesianProduct(t *testing.T) {

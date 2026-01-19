@@ -855,8 +855,16 @@ func readDataAndSendTask(ctx sessionctx.Context, handler *tableResultHandler, me
 	for {
 		failpoint.Inject("mockKillRunningV2AnalyzeJob", func() {
 			dom := domain.GetDomain(ctx)
-			for _, id := range handleutil.GlobalAutoAnalyzeProcessList.All() {
-				dom.SysProcTracker().KillSysProcess(id)
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				ids := handleutil.GlobalAutoAnalyzeProcessList.All()
+				if len(ids) > 0 || time.Now().After(deadline) {
+					for _, id := range ids {
+						dom.SysProcTracker().KillSysProcess(id)
+					}
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
 		})
 		if err := ctx.GetSessionVars().SQLKiller.HandleSignal(); err != nil {

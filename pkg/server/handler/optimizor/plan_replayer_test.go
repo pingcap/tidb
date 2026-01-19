@@ -183,6 +183,8 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 		config.AllowAllFiles = true
 	}))
 	require.NoError(t, err, "Error connecting")
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -359,6 +361,8 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 		config.AllowAllFiles = true
 	}))
 	require.NoError(t, err, "Error connecting")
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -376,13 +380,19 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 	tk.MustExec("admin reload bindings")
 	// 3-3. check whether binding takes effect
-	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
-	rows := tk.MustQuery("select @@last_plan_from_binding")
-	require.True(t, rows.Next(), "unexpected data")
-	var count int64
-	err = rows.Scan(&count)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), count)
+	require.Eventually(t, func() bool {
+		tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
+		rows := tk.MustQuery("select @@last_plan_from_binding")
+		defer func() { _ = rows.Close() }()
+		if !rows.Next() {
+			return false
+		}
+		var count int64
+		if err := rows.Scan(&count); err != nil {
+			return false
+		}
+		return count == 1
+	}, 30*time.Second, 200*time.Millisecond)
 }
 
 func TestIssue43192(t *testing.T) {

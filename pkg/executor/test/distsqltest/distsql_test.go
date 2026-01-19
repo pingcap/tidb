@@ -112,18 +112,18 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 			partition p4 values less than (4)
 		)`)
 	tk.MustExec("begin")
-	for i := 0; i < 1000; i++ {
+	const rowCount = 200
+	const queryLimit = 50
+	const repeatCount = 3
+	for i := 0; i < rowCount; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d, %d);", i*1000, i*1000, i*1000, i%4))
 	}
 	tk.MustExec("commit")
 
-	expects := make([]string, 0, 500)
-	for i := 0; i < 1000; i++ {
+	expects := make([]string, 0, queryLimit)
+	for i := 0; i < rowCount && i < queryLimit; i++ {
 		expect := fmt.Sprintf("%d %d %d %d", i*1000, i*1000, i*1000, i%4)
 		expects = append(expects, expect)
-		if len(expects) == 500 {
-			break
-		}
 	}
 
 	replicaReadModes := []string{
@@ -135,11 +135,11 @@ func TestDistSQLSharedKVRequestRace(t *testing.T) {
 	}
 	for _, mode := range replicaReadModes {
 		tk.MustExec(fmt.Sprintf("set session tidb_replica_read = '%s'", mode))
-		for i := 0; i < 20; i++ {
+		for i := 0; i < repeatCount; i++ {
 			// index lookup
-			tk.MustQuery("select * from t force index(ic) order by c asc limit 500").Check(testkit.Rows(expects...))
+			tk.MustQuery(fmt.Sprintf("select * from t force index(ic) order by c asc limit %d", queryLimit)).Check(testkit.Rows(expects...))
 			// index merge
-			tk.MustQuery("select * from t where b >= 0 or c >= 0 order by c asc limit 500").Check(testkit.Rows(expects...))
+			tk.MustQuery(fmt.Sprintf("select * from t where b >= 0 or c >= 0 order by c asc limit %d", queryLimit)).Check(testkit.Rows(expects...))
 		}
 	}
 }

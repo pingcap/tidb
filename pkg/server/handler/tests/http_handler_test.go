@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
@@ -1295,6 +1296,11 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
+	rounds := 3
+	if testflag.Long() {
+		rounds = 100
+	}
+
 	testUpdateLabels := func() {
 		labels := map[string]string{}
 		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
@@ -1311,20 +1317,26 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 		require.Equal(t, newLabels, labels)
 	}
 	done := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(time.Millisecond)
+		defer ticker.Stop()
 		for {
 			select {
 			case <-done:
 				return
-			default:
+			case <-ticker.C:
 				config.GetGlobalConfig().GetTiKVConfig()
 			}
 		}
 	}()
-	for range 100 {
+	for i := 0; i < rounds; i++ {
 		testUpdateLabels()
 	}
 	close(done)
+	wg.Wait()
 
 	// reset the global variable
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -1557,7 +1569,6 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
-	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
@@ -1566,6 +1577,11 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 
 	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
 	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
+
+	rounds := 10
+	if testflag.Long() {
+		rounds = 100
+	}
 
 	testUpdateLabels := func() {
 		labels := map[string]string{}
@@ -1586,24 +1602,24 @@ func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
 		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
 	}
 
-	done := make(chan struct{})
+	require.Eventually(t, func() bool {
+		return ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()) == nil
+	}, 5*time.Second, 50*time.Millisecond)
+
+	start := make(chan struct{})
 	var wg sync.WaitGroup
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				testStoreTopology()
-			}
+		<-start
+		for i := 0; i < rounds; i++ {
+			testStoreTopology()
 		}
 	}()
-	for range 100 {
+	close(start)
+	for i := 0; i < rounds; i++ {
 		testUpdateLabels()
 	}
-	close(done)
 	wg.Wait()
 
 	// reset the global variable

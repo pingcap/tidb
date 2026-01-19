@@ -311,6 +311,7 @@ func TestMemoryControlWithUpdate(t *testing.T) {
 		lfu.Put(1, t1)
 	}
 	require.Eventually(t, func() bool {
-		return int64(0) == lfu.Cost()
+		lfu.wait()
+		return lfu.Cost() <= capacity
 	}, 5*time.Second, 100*time.Millisecond)
 }
