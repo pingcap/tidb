@@ -69,11 +69,12 @@ type WalkOption struct {
 	// ListCount is the number of entries per page.
 	//
 	// In cloud storages such as S3 and GCS, the files listed and sent in pages.
-	// Typically a page contains 1000 files, and if a folder has 3000 descendant
+	// Typically, a page contains 1000 files, and if a folder has 3000 descendant
 	// files, one would need 3 requests to retrieve all of them. This parameter
-	// controls this size. Note that both S3 and GCS limits the maximum to 1000.
+	// controls this size. Note that both S3, GCS and OSS limits the maximum to
+	// 1000.
 	//
-	// Typically you want to leave this field unassigned (zero) to use the
+	// Typically, you want to leave this field unassigned (zero) to use the
 	// default value (1000) to minimize the number of requests, unless you want
 	// to reduce the possibility of timeout on an extremely slow connection, or
 	// perform testing.
@@ -153,10 +154,8 @@ type Storage interface {
 	// function; the argument `size` is the size in byte of the file determined
 	// by path.
 	WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error
-
 	// URI returns the base path as a URI
 	URI() string
-
 	// Create opens a file writer by path. path is relative path to storage base
 	// path. The old file under same path will be overwritten. Currently only s3
 	// implemented WriterOption.
