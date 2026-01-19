@@ -27,6 +27,10 @@ import (
 	"go.uber.org/zap"
 )
 
+var blackSystemVariableForPlanReplayerLoad = map[string]struct{}{
+	"innodb_lock_wait_timeout": {}, // It is unncessary to load this variable for plan replayer.
+}
+
 // LoadConfig loads system variables from a toml reader. it is only for plan replayer and test.
 func LoadConfig(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, err error) {
 	varMap := make(map[string]string)
@@ -38,6 +42,9 @@ func LoadConfig(ctx sessionctx.Context, v io.ReadCloser) (unLoadVars []string, e
 	unLoadVars = make([]string, 0)
 	vars := ctx.GetSessionVars()
 	for name, value := range varMap {
+		if _, ok := blackSystemVariableForPlanReplayerLoad[name]; ok {
+			continue
+		}
 		sysVar := variable.GetSysVar(name)
 		if sysVar == nil {
 			unLoadVars = append(unLoadVars, name)
