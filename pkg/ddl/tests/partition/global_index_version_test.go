@@ -20,9 +20,13 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -228,4 +232,221 @@ func TestGlobalIndexVersionConstants(t *testing.T) {
 	require.Equal(t, uint8(0), model.GlobalIndexVersionLegacy)
 	require.Equal(t, uint8(1), model.GlobalIndexVersionV1)
 	require.Equal(t, uint8(2), model.GlobalIndexVersionV2)
+}
+
+// indexKeyValue stores a key-value pair from an index
+type indexKeyValue struct {
+	key   kv.Key
+	value []byte
+}
+
+// TestGlobalIndexNonUniqueNonClusteredKeyValueFormat verifies the key and value format
+// for non-unique global indexes on non-clustered tables across V0, V1, and V2 versions.
+// - V0: partition ID is NOT in the key, only in the value
+// - V1: partition ID is in BOTH the key AND the value
+// - V2: partition ID is ONLY in the key (not in the value)
+func TestGlobalIndexNonUniqueNonClusteredKeyValueFormat(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Create three identical partitioned tables for V0, V1, and V2
+	for _, version := range []string{"v0", "v1", "v2"} {
+		tk.MustExec("CREATE TABLE tp_" + version + ` (
+			a INT,
+			b INT,
+			PRIMARY KEY (a) NONCLUSTERED
+		) PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (100),
+			PARTITION p1 VALUES LESS THAN (200)
+		)`)
+	}
+
+	// Insert initial data into all tables
+	for _, version := range []string{"v0", "v1", "v2"} {
+		tk.MustExec("INSERT INTO tp_" + version + " (a, b) VALUES (1, 10), (2, 20), (3, 30), (101, 10), (102, 20)")
+	}
+
+	// Create global indexes with different versions
+	// V0
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/SetGlobalIndexVersion", "return(0)"))
+	tk.MustExec("CREATE INDEX idx_b ON tp_v0(b) GLOBAL")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/SetGlobalIndexVersion"))
+
+	// V1
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/SetGlobalIndexVersion", "return(1)"))
+	tk.MustExec("CREATE INDEX idx_b ON tp_v1(b) GLOBAL")
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/SetGlobalIndexVersion"))
+
+	// V2 (default)
+	tk.MustExec("CREATE INDEX idx_b ON tp_v2(b) GLOBAL")
+
+	// Perform some updates and deletes on all tables
+	for _, version := range []string{"v0", "v1", "v2"} {
+		tk.MustExec("UPDATE tp_" + version + " SET b = 25 WHERE a = 2")
+		tk.MustExec("DELETE FROM tp_" + version + " WHERE a = 3")
+		tk.MustExec("INSERT INTO tp_" + version + " (a, b) VALUES (4, 40), (103, 30)")
+	}
+
+	// Verify index versions
+	dom := domain.GetDomain(tk.Session())
+	for _, tc := range []struct {
+		tableName       string
+		expectedVersion uint8
+	}{
+		{"tp_v0", model.GlobalIndexVersionLegacy},
+		{"tp_v1", model.GlobalIndexVersionV1},
+		{"tp_v2", model.GlobalIndexVersionV2},
+	} {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tc.tableName))
+		require.NoError(t, err)
+		var idx *model.IndexInfo
+		for _, i := range tbl.Meta().Indices {
+			if i.Name.O == "idx_b" {
+				idx = i
+				break
+			}
+		}
+		require.NotNil(t, idx, "Index idx_b not found on %s", tc.tableName)
+		require.Equal(t, tc.expectedVersion, idx.GlobalIndexVersion,
+			"Table %s should have index version %d", tc.tableName, tc.expectedVersion)
+	}
+
+	// Collect key-values from all three indexes
+	kvsByVersion := make(map[string][]indexKeyValue)
+	for _, version := range []string{"v0", "v1", "v2"} {
+		tableName := "tp_" + version
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(tableName))
+		require.NoError(t, err)
+
+		var idx *model.IndexInfo
+		for _, i := range tbl.Meta().Indices {
+			if i.Name.O == "idx_b" {
+				idx = i
+				break
+			}
+		}
+		require.NotNil(t, idx)
+
+		require.NoError(t, sessiontxn.NewTxn(context.Background(), tk.Session()))
+		txn, err := tk.Session().Txn(true)
+		require.NoError(t, err)
+
+		prefix := tablecodec.EncodeTableIndexPrefix(tbl.Meta().ID, idx.ID)
+		it, err := txn.Iter(prefix, nil)
+		require.NoError(t, err)
+
+		var kvs []indexKeyValue
+		for it.Valid() {
+			if !it.Key().HasPrefix(prefix) {
+				break
+			}
+			kvs = append(kvs, indexKeyValue{
+				key:   it.Key().Clone(),
+				value: append([]byte(nil), it.Value()...),
+			})
+			err = it.Next()
+			require.NoError(t, err)
+		}
+		it.Close()
+		err = txn.Rollback()
+		require.NoError(t, err)
+
+		kvsByVersion[version] = kvs
+	}
+
+	// Verify same number of entries in each index
+	require.Equal(t, len(kvsByVersion["v0"]), len(kvsByVersion["v1"]),
+		"V0 and V1 should have the same number of index entries")
+	require.Equal(t, len(kvsByVersion["v1"]), len(kvsByVersion["v2"]),
+		"V1 and V2 should have the same number of index entries")
+
+	// Get partition IDs for each table
+	partIDsByVersion := make(map[string][]int64)
+	colsLenByVersion := make(map[string]int)
+	for _, version := range []string{"v0", "v1", "v2"} {
+		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp_"+version))
+		require.NoError(t, err)
+		partInfo := tbl.Meta().GetPartitionInfo()
+		require.NotNil(t, partInfo)
+		partIDsByVersion[version] = []int64{
+			partInfo.Definitions[0].ID, // p0: a < 100
+			partInfo.Definitions[1].ID, // p1: 100 <= a < 200
+		}
+		for _, idx := range tbl.Meta().Indices {
+			if idx.Name.O == "idx_b" {
+				colsLenByVersion[version] = len(idx.Columns)
+				break
+			}
+		}
+	}
+
+	// Verify key format: V1 and V2 should have partition ID in key, V0 should not
+	for i, kvV0 := range kvsByVersion["v0"] {
+		kvV1 := kvsByVersion["v1"][i]
+		kvV2 := kvsByVersion["v2"][i]
+
+		// V0: partition ID should NOT be decodable from key
+		_, errV0 := tablecodec.DecodePartitionIDFromGlobalIndexKey(kvV0.key, colsLenByVersion["v0"])
+		require.Error(t, errV0, "V0 key should not have partition ID in key (entry %d)", i)
+
+		// V1: partition ID should be in key
+		pidV1, errV1 := tablecodec.DecodePartitionIDFromGlobalIndexKey(kvV1.key, colsLenByVersion["v1"])
+		require.NoError(t, errV1, "V1 key should have partition ID in key (entry %d)", i)
+		v1PartIDs := partIDsByVersion["v1"]
+		require.True(t, pidV1 == v1PartIDs[0] || pidV1 == v1PartIDs[1],
+			"V1 partition ID should be valid: got %d, expected one of %v", pidV1, v1PartIDs)
+
+		// V2: partition ID should be in key
+		pidV2, errV2 := tablecodec.DecodePartitionIDFromGlobalIndexKey(kvV2.key, colsLenByVersion["v2"])
+		require.NoError(t, errV2, "V2 key should have partition ID in key (entry %d)", i)
+		v2PartIDs := partIDsByVersion["v2"]
+		require.True(t, pidV2 == v2PartIDs[0] || pidV2 == v2PartIDs[1],
+			"V2 partition ID should be valid: got %d, expected one of %v", pidV2, v2PartIDs)
+	}
+
+	// Verify value format: V0 and V1 should have partition ID in value, V2 should NOT
+	for i, kvV0 := range kvsByVersion["v0"] {
+		kvV1 := kvsByVersion["v1"][i]
+		kvV2 := kvsByVersion["v2"][i]
+
+		// Split index values
+		segsV0 := tablecodec.SplitIndexValue(kvV0.value)
+		segsV1 := tablecodec.SplitIndexValue(kvV1.value)
+		segsV2 := tablecodec.SplitIndexValue(kvV2.value)
+
+		// V0: partition ID should be in value
+		require.NotNil(t, segsV0.PartitionID, "V0 value should have partition ID (entry %d)", i)
+		_, pidV0Val, err := codec.DecodeInt(segsV0.PartitionID)
+		require.NoError(t, err)
+		v0PartIDs := partIDsByVersion["v0"]
+		require.True(t, pidV0Val == v0PartIDs[0] || pidV0Val == v0PartIDs[1],
+			"V0 value partition ID should be valid: got %d, expected one of %v", pidV0Val, v0PartIDs)
+
+		// V1: partition ID should be in value
+		require.NotNil(t, segsV1.PartitionID, "V1 value should have partition ID (entry %d)", i)
+		_, pidV1Val, err := codec.DecodeInt(segsV1.PartitionID)
+		require.NoError(t, err)
+		v1PartIDs := partIDsByVersion["v1"]
+		require.True(t, pidV1Val == v1PartIDs[0] || pidV1Val == v1PartIDs[1],
+			"V1 value partition ID should be valid: got %d, expected one of %v", pidV1Val, v1PartIDs)
+
+		// V2: partition ID should NOT be in value
+		require.Nil(t, segsV2.PartitionID, "V2 value should NOT have partition ID (entry %d)", i)
+	}
+
+	// Verify that V1 has partition ID in both key and value (same partition ID)
+	for i, kvV1 := range kvsByVersion["v1"] {
+		pidFromKey, err := tablecodec.DecodePartitionIDFromGlobalIndexKey(kvV1.key, colsLenByVersion["v1"])
+		require.NoError(t, err)
+
+		segs := tablecodec.SplitIndexValue(kvV1.value)
+		require.NotNil(t, segs.PartitionID)
+		_, pidFromValue, err := codec.DecodeInt(segs.PartitionID)
+		require.NoError(t, err)
+
+		require.Equal(t, pidFromKey, pidFromValue,
+			"V1 entry %d: partition ID in key (%d) should match partition ID in value (%d)",
+			i, pidFromKey, pidFromValue)
+	}
 }
