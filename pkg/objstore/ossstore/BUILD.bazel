@@ -1,0 +1,55 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "ossstore",
+    srcs = [
+        "client.go",
+        "credential.go",
+        "interface.go",
+        "logger.go",
+        "retry.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/ossstore",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/s3like",
+        "//pkg/objstore/storeapi",
+        "//pkg/util",
+        "//pkg/util/logutil",
+        "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss",
+        "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss/credentials",
+        "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss/retry",
+        "@com_github_aliyun_credentials_go//credentials/providers",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_pingcap_log//:log",
+        "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "ossstore_test",
+    timeout = "short",
+    srcs = [
+        "client_test.go",
+        "credential_test.go",
+    ],
+    embed = [":ossstore"],
+    flaky = True,
+    shard_count = 7,
+    deps = [
+        "//pkg/objstore/ossstore/mock",
+        "//pkg/objstore/s3like",
+        "//pkg/objstore/storeapi",
+        "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss",
+        "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss/credentials",
+        "@com_github_aliyun_credentials_go//credentials/providers",
+        "@com_github_aws_smithy_go//:smithy-go",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_pingcap_kvproto//pkg/brpb",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
+        "@org_uber_go_zap//:zap",
+    ],
+)
