@@ -556,10 +556,10 @@ func (t *TraceBuf) Record(_ context.Context, event Event) {
 	t.events = append(t.events, event)
 }
 
-func (r *TraceBuf) markBits(idx int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.bits |= 1 << idx
+func (t *TraceBuf) markBits(idx int) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.bits |= 1 << idx
 }
 
 const maxEvents = 4096
