@@ -223,7 +223,6 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	expression.ExtractColumnsSetFromExpressions(&innerSchemaSet, func(c *expression.Column) bool {
 		return !outerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
-	parentNodeSchema := selectSch
 	// Scenario 1: column in IsNull expression is from the inner side columns in the eq/other condition.
 	joinCondNRInnerCol := joinCondNullRejectsInnerCol(&innerSchemaSet, isNullCol.UniqueID, p.EqualConditions, p.OtherConditions)
 
@@ -240,13 +239,10 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 
 	// meet either scenario can be converted to anti-semi join.
 	canConvertToAntiSemiJoin = joinCondNRInnerCol || isNullColInInnerSch
-	// resultProj is to generate the NULL values for the columns of the inner table, which is the
-	// expected result for this kind of anti-join query.
 	if canConvertToAntiSemiJoin {
-		resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, parentNodeSchema)
-	}
-
-	if canConvertToAntiSemiJoin {
+		// resultProj is to generate the NULL values for the columns of the inner table, which is the
+		// expected result for this kind of anti-join query.
+		resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, selectSch)
 		// Anti-semi join's first child is outer, the second child is inner. join condition is outer op inner
 		// right outer join's first child is inner, the second child is outer, join condition is inner op outer
 		// left outer join's  first child is outer, the second child is inner. join condition is outer op inner
