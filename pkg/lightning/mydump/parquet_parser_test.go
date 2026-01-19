@@ -588,13 +588,10 @@ func TestBinaryToDecimalStr(t *testing.T) {
 	appendCases(16, []int{8, 12, 16, 32})
 
 	// Extra carry/edge patterns (kept to small scales).
-	for _, tc := range []testCase{
-		{negMinN(16), 0},
-		{negMinN(16), 8},
-	} {
-		tcs = append(tcs, tc)
-	}
-
+	tcs = append(tcs,
+		testCase{negMinN(16), 0},
+		testCase{negMinN(16), 8},
+	)
 	for i, tc := range tcs {
 		rawCopy := append([]byte(nil), tc.rawBytes...)
 		expected := parquetArrayToStr(tc.rawBytes, tc.scale)
