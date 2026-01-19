@@ -211,7 +211,7 @@ func TestFTSSyntax(t *testing.T) {
 	tk.MustQuery("select * from t where match(title) against ('hello' in boolean mode)")
 	// Test MATCH...AGAINST with 'error' fallback mode - should fail
 	tk.MustExec("set @@tidb_opt_fulltext_search_fallback='error'")
-	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `This version of TiDB doesn't yet support 'MATCH...AGAINST without fulltext index'`)
+	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `fulltext search not supported`)
 	tk.MustExec("set @@tidb_opt_fulltext_search_fallback='like'")
 	tk.MustContainErrMsg("select * from t where fts_match_word(title, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(45.67, body)", `match against a non-constant string`)

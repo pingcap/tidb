@@ -47,7 +47,7 @@ select id, title from articles where match(title) against('');
 id	title
 set @@tidb_opt_fulltext_search_fallback='error';
 select id, title from articles where match(title) against('MySQL');
-Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST without fulltext index'
+Error 1235 (42000): This version of TiDB doesn't yet support 'MATCH...AGAINST (fulltext search not supported, set tidb_opt_fulltext_search_fallback='like' to use LIKE fallback)'
 set @@tidb_opt_fulltext_search_fallback='like';
 select id, title from articles where match(title) against('MySQL');
 id	title

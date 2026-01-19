@@ -15,12 +15,9 @@
 package core
 
 import (
-	"slices"
 	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
@@ -152,76 +149,6 @@ func parseSearchTerm(word string) searchTerm {
 
 	term.word = word
 	return term
-}
-
-// hasFulltextIndex checks if a fulltext index exists for the given columns
-func hasFulltextIndex(is infoschema.InfoSchema, columnNames []*ast.ColumnName) (bool, error) {
-	if len(columnNames) == 0 {
-		return false, nil
-	}
-
-	// All columns in a MATCH clause must be from the same table
-	// Get the schema and table from the first column
-	schema := columnNames[0].Schema
-	tableName := columnNames[0].Table
-
-	// If schema is not specified, we cannot determine the table
-	// In this case, we'll need to check later during execution
-	if tableName.L == "" {
-		return false, nil
-	}
-
-	// Get the table from info schema
-	tbl, err := is.TableByName(nil, schema, tableName)
-	if err != nil {
-		// Table not found, cannot check for fulltext index
-		return false, nil
-	}
-
-	tblInfo := tbl.Meta()
-	if tblInfo == nil {
-		return false, nil
-	}
-
-	// Extract column names from the MATCH clause
-	matchColumns := make([]string, len(columnNames))
-	for i, col := range columnNames {
-		matchColumns[i] = col.Name.L // Use lowercase for case-insensitive comparison
-	}
-	// Sort once outside the loop for efficiency
-	slices.Sort(matchColumns)
-
-	// Check each index to see if it's a fulltext index covering the exact columns
-	for _, idx := range tblInfo.Indices {
-		// Check if this is a fulltext index
-		if idx.Tp != ast.IndexTypeFulltext {
-			continue
-		}
-
-		// Check if the index is in a usable state
-		if idx.State != model.StatePublic {
-			continue
-		}
-
-		// Check if the index covers the exact set of columns
-		if len(idx.Columns) != len(matchColumns) {
-			continue
-		}
-
-		// Extract index column names and sort
-		idxColumns := make([]string, len(idx.Columns))
-		for i, col := range idx.Columns {
-			idxColumns[i] = col.Name.L
-		}
-		slices.Sort(idxColumns)
-
-		// Check if the columns match (order doesn't matter for MATCH...AGAINST)
-		if slices.Equal(matchColumns, idxColumns) {
-			return true, nil
-		}
-	}
-
-	return false, nil
 }
 
 // convertMatchAgainstToLike converts a MATCH...AGAINST expression to LIKE predicates

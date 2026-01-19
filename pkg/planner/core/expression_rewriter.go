@@ -2220,24 +2220,14 @@ func (er *expressionRewriter) patternLikeOrIlikeToExpression(v *ast.PatternLikeO
 }
 
 func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
-	// Check if a fulltext index exists for the given columns
-	var hasIndex bool
-	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.is != nil {
-		var err error
-		hasIndex, err = hasFulltextIndex(er.planCtx.builder.is, v.ColumnNames)
-		if err != nil {
-			er.err = err
-			return
-		}
-	}
+	// TODO: Check if a fulltext index exists for the given columns.
+	// This is currently not implemented because:
+	// 1. Column expressions at this point in rewriting don't have easy access to table metadata
+	// 2. Native fulltext search via MATCH...AGAINST is not yet supported in TiDB
+	// 3. Fulltext indexes in TiDB/TiFlash are used via fts_match_word() function, not MATCH...AGAINST
+	// When native MATCH...AGAINST support is added, we should error here if a fulltext index exists.
 
-	// If a fulltext index exists, TiDB doesn't support it yet
-	if hasIndex {
-		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST with fulltext index (native fulltext search not supported)")
-		return
-	}
-
-	// No fulltext index exists - check fallback mode
+	// Check fallback mode
 	var fallbackMode string
 	if er.planCtx != nil && er.planCtx.builder != nil && er.planCtx.builder.ctx != nil {
 		fallbackMode = er.planCtx.builder.ctx.GetSessionVars().FulltextSearchFallback
@@ -2246,7 +2236,7 @@ func (er *expressionRewriter) matchAgainstToExpression(v *ast.MatchAgainst) {
 	}
 
 	if fallbackMode == "error" {
-		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST without fulltext index")
+		er.err = expression.ErrNotSupportedYet.GenWithStackByArgs("MATCH...AGAINST (fulltext search not supported, set tidb_opt_fulltext_search_fallback='like' to use LIKE fallback)")
 		return
 	}
 
