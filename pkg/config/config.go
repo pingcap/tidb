@@ -357,6 +357,7 @@ func (c *Config) GetTiKVConfig() *tikvcfg.Config {
 		TxnScope:              c.Labels["zone"],
 		ZoneLabel:             c.Labels["zone"],
 		EnableAsyncBatchGet:   c.Performance.EnableAsyncBatchGet,
+		EnableAsync2PC:        c.Performance.EnableAsync2PC,
 	}
 }
 
@@ -797,6 +798,9 @@ type Performance struct {
 
 	// EnableAsyncBatchGet indicates whether to use async API when sending batch-get requests.
 	EnableAsyncBatchGet bool `toml:"enable-async-batch-get" json:"enable-async-batch-get"`
+
+	// EnableAsync2PC indicates whether to use async API for 2PC prewrite and commit.
+	EnableAsync2PC bool `toml:"enable-async-2pc" json:"enable-async-2pc"`
 }
 
 // PlanCache is the PlanCache section of the config.
@@ -1076,6 +1080,7 @@ var defaultConf = Config{
 		// Deprecated: Stats are always initialized concurrently.
 		ConcurrentlyInitStats: true,
 		EnableAsyncBatchGet:   true,
+		EnableAsync2PC:        true,
 	},
 	ProxyProtocol: ProxyProtocol{
 		Networks:      "",
