@@ -400,6 +400,8 @@ func (p *LogicalJoin) CanConvertAntiJoin(selectCond []expression.Expression, sel
 		return nil, false
 	}
 	if _, ok := p.Self().(*LogicalApply); ok {
+		// For now, we won't add complexity in the outer-join-to-semi-join rule.
+		// Additionally, existing user cases haven't been applied yet; they can be added later if needed.
 		return nil, false
 	}
 	var outerChildIdx int
