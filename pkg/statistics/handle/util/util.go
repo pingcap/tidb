@@ -173,7 +173,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
-	// sync load_innodb_lock_wait_timeout
+	// sync innodb_lock_wait_timeout
 	val, err = sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.InnodbLockWaitTimeout)
 	if err != nil {
 		return err
