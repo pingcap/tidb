@@ -587,13 +587,13 @@ func NewParquetParser(
 		if colTypes[i].decimalMeta.IsSet {
 			if colTypes[i].decimalMeta.Scale < 0 ||
 				colTypes[i].decimalMeta.Scale > int32(mysql.MaxDecimalScale) {
-				return nil, errors.Errorf("parquet decimal scale %d exceeds TiDB max %d",
-					colTypes[i].decimalMeta.Scale, mysql.MaxDecimalScale)
+				return nil, errors.Errorf("parquet decimal scale %d exceeds TiDB max %d for column %s",
+					colTypes[i].decimalMeta.Scale, mysql.MaxDecimalScale, colNames[i])
 			}
 			if colTypes[i].decimalMeta.Precision < 0 ||
 				colTypes[i].decimalMeta.Precision > int32(mysql.MaxDecimalWidth) {
-				return nil, errors.Errorf("parquet decimal precision %d exceeds TiDB max %d",
-					colTypes[i].decimalMeta.Precision, mysql.MaxDecimalWidth)
+				return nil, errors.Errorf("parquet decimal precision %d exceeds TiDB max %d for column %s",
+					colTypes[i].decimalMeta.Precision, mysql.MaxDecimalWidth, colNames[i])
 			}
 		}
 	}

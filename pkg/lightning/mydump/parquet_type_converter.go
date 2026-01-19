@@ -26,13 +26,13 @@ import (
 
 type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
-var zeroDecimal types.MyDecimal
+var zeroMyDecimal = types.MyDecimal{}
 
 func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
 	// reuse existing decimal
 	if d.Kind() == types.KindMysqlDecimal {
 		dec := d.GetMysqlDecimal()
-		*dec = zeroDecimal
+		*dec = zeroMyDecimal
 		return dec
 	}
 

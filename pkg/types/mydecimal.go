@@ -1033,7 +1033,7 @@ func (d *MyDecimal) FromParquetArray(buf []byte, scale int) error {
 		wordIdx++
 	}
 
-	for idx := 0; idx < wordIdx/2; idx++ {
+	for idx := range wordIdx / 2 {
 		d.wordBuf[idx], d.wordBuf[wordIdx-idx-1] =
 			d.wordBuf[wordIdx-idx-1], d.wordBuf[idx]
 	}
