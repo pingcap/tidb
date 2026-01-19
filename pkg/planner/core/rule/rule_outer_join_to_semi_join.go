@@ -253,6 +253,12 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 				args := expr.GetArgs()
 				p.EqualConditions[idx] = expression.NewFunctionInternal(ctx, expr.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0]).(*expression.ScalarFunction)
 			}
+			for idx, expr := range p.OtherConditions {
+				if sf, ok := expr.(*expression.ScalarFunction); ok {
+					args := sf.GetArgs()
+					p.OtherConditions[idx] = expression.NewFunctionInternal(ctx, sf.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0])
+				}
+			}
 			args := p.Children()
 			p.SetChildren(args[1], args[0])
 			tmp := p.LeftConditions
