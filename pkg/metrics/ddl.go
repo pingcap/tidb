@@ -86,11 +86,6 @@ var (
 	DDLCleanMDLInfoHist     prometheus.Observer
 	RetryableErrorCount     *prometheus.CounterVec
 
-	CreateDDLInstance = "create_ddl_instance"
-	CreateDDL         = "create_ddl"
-	DDLOwner          = "owner"
-	DDLCounter        *prometheus.CounterVec
-
 	BackfillTotalCounter  *prometheus.CounterVec
 	BackfillProgressGauge *prometheus.GaugeVec
 	DDLJobTableDuration   *prometheus.HistogramVec
@@ -161,14 +156,6 @@ func InitDDLMetrics() {
 			Help:      "Bucketed histogram of processing time (s) of ddl worker operations",
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblAction, LblResult})
-
-	DDLCounter = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "ddl",
-			Name:      "worker_operation_total",
-			Help:      "Counter of creating ddl/worker and isowner.",
-		}, []string{LblType})
 
 	BackfillTotalCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{

@@ -491,11 +491,6 @@ var MetricTableMap = map[string]MetricTableDef{
 		PromQL:  "tidb_ddl_waiting_jobs{$LABEL_CONDITIONS}",
 		Labels:  []string{"instance", "type"},
 	},
-	"tidb_ddl_meta_opm": {
-		Comment: "TiDB different ddl worker numbers",
-		PromQL:  "increase(tidb_ddl_worker_operation_total{$LABEL_CONDITIONS}[$RANGE_DURATION])",
-		Labels:  []string{"instance", "type"},
-	},
 	"tidb_ddl_worker_duration": {
 		Comment:  "The quantile of TiDB ddl worker duration",
 		PromQL:   "histogram_quantile($QUANTILE, sum(increase(tidb_ddl_worker_operation_duration_seconds_bucket{$LABEL_CONDITIONS}[$RANGE_DURATION])) by (le, type, action, result,instance))",
