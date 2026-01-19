@@ -304,7 +304,7 @@ func joinCondNullRejectsInnerCol(innerSchSet *intset.FastIntSet, isNullColumnID 
 	return false
 }
 
-func vaildProj4ConvertAntiJoin(proj *LogicalProjection) bool {
+func validProj4ConvertAntiJoin(proj *LogicalProjection) bool {
 	if proj == nil {
 		return true
 	}
