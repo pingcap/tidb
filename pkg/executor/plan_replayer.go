@@ -454,7 +454,7 @@ func loadStats(ctx sessionctx.Context, f *zip.File) error {
 	if h == nil {
 		return errors.New("plan replayer: hanlde is nil")
 	}
-	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 1)
+	return h.LoadStatsFromJSON(context.Background(), ctx.GetInfoSchema().(infoschema.InfoSchema), jsonTbl, 0)
 }
 
 // Update updates the data of the corresponding table.
