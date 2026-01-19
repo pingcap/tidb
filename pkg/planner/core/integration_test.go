@@ -1294,16 +1294,16 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 		testKit.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 		rows = [][]any{
-			{"HashAgg_6", "root", "funcs:sum(Column#4)->Column#3"},
-			{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#4"},
+			{"HashAgg_6", "root", "funcs:sum(Column#5)->Column#4"},
+			{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#5"},
 			{"  └─TableReader_12", "root", "data:TableFullScan_11"},
 			{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
 		testKit.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 		rows = [][]any{
-			{"HashAgg_6", "root", "funcs:group_concat(Column#4 separator \",\")->Column#3"},
-			{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#4"},
+			{"HashAgg_6", "root", "funcs:group_concat(Column#5 separator \",\")->Column#4"},
+			{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#5"},
 			{"  └─TableReader_10", "root", "data:TableFullScan_9"},
 			{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
@@ -1566,7 +1566,7 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 		rows = [][]any{
 			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
 			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.b)->Column#4"},
+			{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.b)->Column#5"},
 			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
 		testKit.MustQuery("explain select unhex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
@@ -2008,7 +2008,7 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 		// Projection to tiflash.
 		rows = [][]any{
-			{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#4"},
+			{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#5"},
 			{"└─TableReader_6", "root", "data:TableFullScan_5"},
 			{"  └─TableFullScan_5", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
@@ -2100,8 +2100,8 @@ func TestIssue46556(t *testing.T) {
 		tk.MustExec(`CREATE definer='root'@'localhost' VIEW v0(c0) AS SELECT NULL FROM t0 GROUP BY NULL;`)
 		tk.MustExec(`SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0;`) // no error
 		tk.MustQuery(`explain format='brief' SELECT t0.c0 FROM t0 NATURAL JOIN v0 WHERE v0.c0 LIKE v0.c0`).Check(
-			testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#5, test.t0.c0)]`,
-				`├─Projection(Build) 0.00 root  <nil>->Column#5`,
+			testkit.Rows(`HashJoin 0.00 root  inner join, equal:[eq(Column#7, test.t0.c0)]`,
+				`├─Projection(Build) 0.00 root  <nil>->Column#7`,
 				`│ └─TableDual 0.00 root  rows:0`,
 				`└─TableReader(Probe) 9990.00 root  data:Selection`,
 				`  └─Selection 9990.00 cop[tikv]  not(isnull(test.t0.c0))`,
@@ -2229,7 +2229,7 @@ func TestIssue54213(t *testing.T) {
   PRIMARY KEY (object_id),
   KEY ab (a,b))`)
 		tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
-			testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#6",
+			testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#7",
 				"└─Limit 1.00 root  offset:0, count:100",
 				"  └─IndexReader 1.25 root  index:Limit",
 				"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
