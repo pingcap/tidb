@@ -217,9 +217,9 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	outer := p.Children()[outerChildIdx]
 	outerSchema := outer.Schema()
 	innerSchemaSet := intset.NewFastIntSet()
-	// Obtain all the columns that meet the requirements in the eq condition and other condition.
-	// If the column that is isnull is an inner column in the eq/other condition,
-	// It can be directly converted into an anti-semi join.
+	// Identify all columns from the inner side of the join (columns that are not in the outer schema).
+	// If the column referenced in the IS NULL predicate is one of these inner-side columns used in
+	// equal/other join conditions, the outer join can be safely rewritten as an anti-semi join.
 	expression.ExtractColumnsSetFromExpressions(&innerSchemaSet, func(c *expression.Column) bool {
 		return !outerSchema.Contains(c)
 	}, expression.Column2Exprs(p.Schema().Columns)...)
