@@ -268,4 +268,3 @@ func TestRedactTiFlash(t *testing.T) {
 		"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
 		"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 }
-
