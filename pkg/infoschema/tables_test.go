@@ -19,8 +19,8 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/stretchr/testify/require"
     "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/stretchr/testify/require"
 )
 
 func TestIsTiFlashStore(t *testing.T) {
@@ -92,7 +92,7 @@ func TestIsTiFlashWriteNode(t *testing.T) {
 }
 
 func TestIssue62639(t *testing.T) {
-	// 
+	// prepare a database table for testing
 	colInfo := []columnInfo{  
         {name: "COL1", tp: mysql.TypeVarchar, size: 64},  
         {name: "COL2", tp: mysql.TypeLong, size: 11},  
