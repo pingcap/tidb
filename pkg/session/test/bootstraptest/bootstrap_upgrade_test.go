@@ -1205,7 +1205,7 @@ func TestAnalyzeDistsqlConcurrencyByUpgrade750To850(t *testing.T) {
 	session.MustExec(t, seV7, "commit")
 	store.SetOption(session.StoreBootstrappedKey, nil)
 
-	// We are now in 7.6.0, check tidb_analyze_distsql_scan_concurrency should not exist.
+	// We are now in 7.5.0, check tidb_analyze_distsql_scan_concurrency should not exist.
 	res := session.MustExecToRecodeSet(t, seV7, fmt.Sprintf("select * from mysql.GLOBAL_VARIABLES where variable_name='%s'", vardef.TiDBAnalyzeDistSQLScanConcurrency))
 	chk := res.NewChunk(nil)
 	err = res.Next(ctx, chk)
