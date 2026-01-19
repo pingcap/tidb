@@ -33,6 +33,9 @@ import (
 // GlobalMPPFailedStoreProber mpp failed store probe
 var GlobalMPPFailedStoreProber *MPPFailedStoreProber
 
+// GlobalMPPInfoManager manages all stores' information
+var GlobalMPPInfoManager *MppInfoManager
+
 const (
 	// DetectPeriod detect period
 	DetectPeriod = 3 * time.Second
@@ -71,6 +74,42 @@ type MPPFailedStoreProber struct {
 	detectTimeoutLimit   time.Duration
 	maxRecoveryTimeLimit time.Duration
 	maxObsoletTimeLimit  time.Duration
+}
+
+// Currently, it only contains cpuCount info.
+// More info can be added in the future when needed
+type MPPInfo struct {
+	Address         string
+	LogicalCpuCount uint64
+}
+
+// TODO(x) test this struct in ut
+// MppInfoManager manages info for all tiflash nodes
+type MppInfoManager struct {
+	cachedStores map[string]*MPPInfo
+	lock         sync.Mutex
+}
+
+func (t *MppInfoManager) Add(mppInfo *MPPInfo) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	t.cachedStores[mppInfo.Address] = mppInfo
+}
+
+func (t *MppInfoManager) Delete(address string) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	delete(t.cachedStores, address)
+}
+
+func (t *MppInfoManager) Get(address string) *MPPInfo {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	ret, ok := t.cachedStores[address]
+	if !ok {
+		return nil
+	}
+	return ret
 }
 
 func (t *MPPStoreState) detect(ctx context.Context, detectPeriod time.Duration, detectTimeoutLimit time.Duration) {
@@ -162,6 +201,9 @@ func (t *MPPFailedStoreProber) Add(ctx context.Context, address string, tikvClie
 	state.lock.lastLookupTime = time.Now()
 	logutil.Logger(ctx).Debug("add mpp store to failed list", zap.String("address", address))
 	t.failedMPPStores.Store(address, &state)
+
+	// When we find a failed store, info of this store should also be uncached
+	GlobalMPPInfoManager.Delete(address)
 }
 
 // IsRecovery check whether the store is recovery
@@ -266,5 +308,9 @@ func init() {
 		detectTimeoutLimit:   DetectTimeoutLimit,
 		maxRecoveryTimeLimit: MaxRecoveryTimeLimit,
 		maxObsoletTimeLimit:  MaxObsoletTimeLimit,
+	}
+
+	GlobalMPPInfoManager = &MppInfoManager{
+		cachedStores: make(map[string]*MPPInfo),
 	}
 }
