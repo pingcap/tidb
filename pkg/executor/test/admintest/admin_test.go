@@ -2300,6 +2300,46 @@ func TestFastAdminCheckWithError(t *testing.T) {
 	tk.MustExecToErr("admin check table admin_test")
 }
 
+func TestFastAdminCheckQuickPassSkipBucketed(t *testing.T) {
+	store, domain := testkit.CreateMockStoreAndDomain(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+
+	// If this failpoint is hit, it means we entered the bucketed refinement path.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/executor/mockFastCheckTableBucketedCalled", "return(true)")
+
+	// Consistent case: should exit from global checksum quick pass and not enter bucketed refinement.
+	tk.MustExec("admin check table t")
+
+	// Inconsistent case: should fall back to bucketed refinement (failpoint triggers).
+	sctx := mock.NewContext()
+	sctx.Store = store
+	ctx := sctx.GetTableCtx()
+	is := domain.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	idxInfo := tblInfo.Indices[0]
+	indexOpr, err := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+	require.NoError(t, err)
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	err = indexOpr.Delete(ctx, txn, types.MakeDatums(1), kv.IntHandle(1))
+	require.NoError(t, err)
+	require.NoError(t, txn.Commit(context.Background()))
+
+	err = tk.ExecToErr("admin check table t")
+	require.Error(t, err)
+	require.EqualError(t, err, "mock fast check table bucketed called")
+}
+
 func TestAdminCheckTableWithEnumAndPointGet(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

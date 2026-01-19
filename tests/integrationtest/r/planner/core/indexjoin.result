@@ -1221,3 +1221,63 @@ Sort_13	8000.00	root		Column#20, planner__core__indexjoin.t5602f14e.col_55, plan
           └─TableFullScan_37	10000.00	cop[tikv]	table:t8e1f515f	keep order:false, stats:pseudo
 select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
 r0	r1	r2
+drop table if exists t_inner_pk;
+drop table if exists t_outer_pk;
+create table t_inner_pk (
+a int,
+b int,
+data char(100),
+primary key (a, b)
+);
+create table t_outer_pk (
+a int,
+val int,
+key(val)
+);
+insert into t_inner_pk select 1, n, 'padding' from (
+with recursive x as (
+select 1 as n
+union all
+select n + 1 from x where n < 100
+)
+select n from x
+) t;
+insert into t_outer_pk values (1, 100);
+analyze table t_inner_pk;
+analyze table t_outer_pk;
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	100.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	100.00	root		
+  ├─IndexRangeScan(Build)	100.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a)], keep order:false
+  └─TableRowIDScan(Probe)	100.00	cop[tikv]	table:i	keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b = 1
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	1.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) eq(planner__core__indexjoin.t_inner_pk.b, 1)], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:i	keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b > 50
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	51.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	51.00	root		
+  ├─IndexRangeScan(Build)	51.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) gt(planner__core__indexjoin.t_inner_pk.b, 50)], keep order:false
+  └─TableRowIDScan(Probe)	51.00	cop[tikv]	table:i	keep order:false
