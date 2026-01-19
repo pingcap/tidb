@@ -221,7 +221,7 @@ func (o *DefaultJobOrchestrator) cancelJobWithRetry(ctx context.Context, jobID i
 		backoff = cancelJobRetryBaseBackoff
 	)
 
-	for attempt := 0; attempt < cancelJobMaxRetry; attempt++ {
+	for attempt := range cancelJobMaxRetry {
 		if ctx.Err() != nil {
 			return errors.Trace(ctx.Err())
 		}
