@@ -154,13 +154,12 @@ type Storage interface {
 	// function; the argument `size` is the size in byte of the file determined
 	// by path.
 	WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error
-	// URI returns the base path as a URI
 
+	// URI returns the base path as a URI
 	URI() string
 	// Create opens a file writer by path. path is relative path to storage base
 	// path. The old file under same path will be overwritten. Currently only s3
 	// implemented WriterOption.
-
 	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
