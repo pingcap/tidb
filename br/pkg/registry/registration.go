@@ -589,7 +589,7 @@ func (r *Registry) checkForTableConflicts(
 	curRestoreID uint64,
 ) error {
 	// function to handle conflict when found
-	handleConflict := func(dbName, tableName string) error {
+	handleTableConflict := func(dbName, tableName string) error {
 		log.Warn("table already covered by another restore task",
 			zap.Uint64("existing_restore_id", regInfo.restoreID),
 			zap.Uint64("current_restore_id", curRestoreID),
@@ -606,13 +606,25 @@ func (r *Registry) checkForTableConflicts(
 				"because it is already being restored by task (restoreId: %d, time range: %d->%d, cmd: %s)",
 			dbName, tableName, curRestoreID, regInfo.restoreID, regInfo.StartTS, regInfo.RestoredTS, regInfo.Cmd)
 	}
+	handleSchemaConflict := func(dbName string) error {
+		log.Warn("schema already covered by another restore task",
+			zap.Uint64("existing_restore_id", regInfo.restoreID),
+			zap.Uint64("current_restore_id", curRestoreID),
+			zap.String("database", dbName),
+			zap.Strings("filter_strings", regInfo.FilterStrings),
+		)
+		return nil
+	}
 
 	// Use PiTRTableTracker if available for PiTR task
 	if tracker != nil && len(tracker.GetDBNameToTableName()) > 0 {
 		for dbName, tableNames := range tracker.GetDBNameToTableName() {
+			if utils.MatchSchema(f, dbName, regInfo.WithSysTable) {
+				return handleSchemaConflict(dbName)
+			}
 			for tableName := range tableNames {
 				if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-					return handleConflict(dbName, tableName)
+					return handleTableConflict(dbName, tableName)
 				}
 			}
 		}
@@ -623,7 +635,7 @@ func (r *Registry) checkForTableConflicts(
 			tableName := table.Info.Name.O
 
 			if utils.MatchTable(f, dbName, tableName, regInfo.WithSysTable) {
-				return handleConflict(dbName, tableName)
+				return handleTableConflict(dbName, tableName)
 			}
 		}
 	}
