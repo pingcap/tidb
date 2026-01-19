@@ -21,6 +21,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -452,6 +453,130 @@ func TestSoftDeleteCleanupSQL(t *testing.T) {
 	require.Contains(t, sql, "DELETE LOW_PRIORITY FROM `test`.`t`")
 	require.Contains(t, sql, "WHERE `id` IN (1)")
 	require.Contains(t, sql, "AND `_tidb_softdelete_time` < FROM_UNIXTIME(100)")
+}
+
+func TestSoftDeleteSQLActiveActiveSafety(t *testing.T) {
+	expire := time.UnixMilli(100000).In(time.UTC)
+
+	tblInfo := &model.TableInfo{Name: ast.NewCIStr("t"), IsActiveActive: true}
+	tbl := &cache.PhysicalTable{
+		Schema:    ast.NewCIStr("test"),
+		TableInfo: tblInfo,
+		KeyColumns: []*model.ColumnInfo{{
+			Name:      ast.NewCIStr("id"),
+			FieldType: *types.NewFieldType(mysql.TypeLonglong),
+		}},
+		KeyColumnTypes:       []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
+		SoftDeleteTimeColumn: model.NewExtraSoftDeleteTimeColInfo(),
+	}
+
+	checkContains := func(t *testing.T, sql string) {
+		require.Contains(t, sql, "LEAST(tidb_current_tso()")
+		require.Contains(t, sql, fmt.Sprintf("FROM %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		require.Contains(t, sql, ">= IFNULL(_tidb_origin_ts, _tidb_commit_ts)")
+	}
+
+	t.Run("Cleanup", func(t *testing.T) {
+		sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire)
+		require.NoError(t, err)
+		checkContains(t, sql)
+	})
+
+	t.Run("Scan", func(t *testing.T) {
+		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, tbl, expire, nil, nil)
+		require.NoError(t, err)
+		sql, err := g.NextSQL(nil, 10)
+		require.NoError(t, err)
+		checkContains(t, sql)
+	})
+}
+
+func TestActiveActiveSafetySQLExecutable(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(fmt.Sprintf("create database if not exists %s", sqlbuilder.TiCDCProgressDB))
+	// Use smaller column sizes to avoid key length limitations in tests.
+	tk.MustExec(fmt.Sprintf("create table if not exists %s.%s (changefeed_id varchar(64), upstreamID varchar(64), database_name varchar(64), table_name varchar(64), checkpoint_ts bigint unsigned, primary key(changefeed_id, upstreamID, database_name, table_name))", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+
+	preparePhysicalTable := func(t *testing.T) *cache.PhysicalTable {
+		is := domain.GetDomain(tk.Session()).InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		require.NoError(t, err)
+		pt, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""), false, true)
+		require.NoError(t, err)
+		return pt
+	}
+
+	run := func(t *testing.T, pt *cache.PhysicalTable, expire time.Time, expectScan bool, expectDeleted bool) {
+		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, pt, expire, nil, nil)
+		require.NoError(t, err)
+		q, err := g.NextSQL(nil, 10)
+		require.NoError(t, err)
+		delSQL, err := sqlbuilder.BuildDeleteSQL(pt, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire)
+		require.NoError(t, err)
+
+		tk.MustExec("set @@tidb_translate_softdelete_sql=0")
+		tk.MustExec("begin")
+		if expectScan {
+			tk.MustQuery(q).Check(testkit.Rows("1"))
+		} else {
+			tk.MustQuery(q).Check(testkit.Rows())
+		}
+		tk.MustExec(delSQL)
+		tk.MustExec("commit")
+		if expectDeleted {
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("0"))
+		} else {
+			tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+		}
+	}
+
+	t.Run("LocalTombstone", func(t *testing.T) {
+		tk.MustExec(fmt.Sprintf("delete from %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(id int primary key, v int) active_active='on' softdelete retention 1 day softdelete_job_enable='ON'")
+		tk.MustExec("set @@tidb_translate_softdelete_sql=1")
+		tk.MustExec("insert into t (id, v) values (1, 10)")
+		tk.MustExec("delete from t where id=1")
+		tk.MustExec("set @@tidb_translate_softdelete_sql=0")
+		tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
+		tk.MustQuery("select _tidb_origin_ts is null from t where id=1").Check(testkit.Rows("1"))
+		tk.MustExec("update t set _tidb_softdelete_time = _tidb_softdelete_time - interval 7 day")
+
+		pt := preparePhysicalTable(t)
+		expire := time.Now().UTC()
+
+		// No progress
+		run(t, pt, expire, false, false)
+		// Deleted
+		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		run(t, pt, expire, true, true)
+	})
+
+	t.Run("UpstreamTombstone", func(t *testing.T) {
+		tk.MustExec(fmt.Sprintf("delete from %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(id int primary key, v int) active_active='on' softdelete retention 1 day softdelete_job_enable='ON'")
+
+		// Create an "upstream" tombstone by simulating CDC write
+		tk.MustExec("set @@tidb_translate_softdelete_sql=0")
+		tk.MustExec("insert into t (id, v, _tidb_origin_ts, _tidb_softdelete_time) values (1, 10, tidb_current_tso(), now())")
+		tk.MustQuery("select _tidb_origin_ts is null from t where id=1").Check(testkit.Rows("0"))
+		tk.MustExec("update t set _tidb_softdelete_time = _tidb_softdelete_time - interval 7 day")
+
+		pt := preparePhysicalTable(t)
+		expire := time.Now().UTC()
+
+		// No progress
+		tk.MustExec(fmt.Sprintf("insert into %s.%s values ('cf','1','test','t', 1)", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		run(t, pt, expire, false, false)
+		// Deleted
+		tk.MustExec(fmt.Sprintf("delete from %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		run(t, pt, expire, true, true)
+	})
 }
 
 func TestSQLBuilder(t *testing.T) {

@@ -32,6 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
 
+// TiCDCProgressDB is the database storing TiCDC progress table.
+const TiCDCProgressDB = "tidb_cdc"
+
+// TiCDCProgressTable is the table storing TiCDC progress checkpoints for hard-delete safety.
+const TiCDCProgressTable = "ticdc_progress_table"
+
 // SQLGenerator is the interface for SQL generators.
 type SQLGenerator interface {
 	NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error)
@@ -198,6 +204,33 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 	b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
 	b.restoreCtx.WritePlain(")")
 	b.hasWriteExpireCond = true
+	return nil
+}
+
+// WriteActiveActiveSafetyCondition writes safety condition for Active-Active softdelete cleanup.
+// It ensures: LEAST(current_tso, min_checkpoint_ts) >= IFNULL(_tidb_origin_ts, _tidb_commit_ts).
+// The min_checkpoint_ts is queried from `tidb_cdc`.`ticdc_progress_table` for the table.
+func (b *SQLBuilder) WriteActiveActiveSafetyCondition() error {
+	switch b.state {
+	case writeSelOrDel:
+		b.restoreCtx.WritePlain(" WHERE ")
+		b.state = writeWhere
+	case writeWhere:
+		b.restoreCtx.WritePlain(" AND ")
+	default:
+		return errors.Errorf("invalid state: %v", b.state)
+	}
+
+	b.restoreCtx.WritePlainf(`LEAST(tidb_current_tso(),
+IFNULL((SELECT MIN(checkpoint_ts) FROM %s.%s WHERE database_name = '%s' AND table_name = '%s'), 0))
+>= IFNULL(%s, %s)
+`,
+		TiCDCProgressDB,
+		TiCDCProgressTable,
+		sqlescape.EscapeString(b.tbl.Schema.O),
+		sqlescape.EscapeString(b.tbl.Name.O),
+		model.ExtraOriginTSName.O,
+		model.ExtraCommitTSName.O)
 	return nil
 }
 
@@ -461,6 +494,12 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 		return "", err
 	}
 
+	if g.jobType == cache.TTLJobTypeSoftDelete && g.tbl.TableInfo.IsActiveActive {
+		if err := b.WriteActiveActiveSafetyCondition(); err != nil {
+			return "", err
+		}
+	}
+
 	if err := b.WriteOrderBy(g.tbl.KeyColumns, false); err != nil {
 		return "", err
 	}
@@ -494,6 +533,12 @@ func BuildDeleteSQL(
 
 	if err := b.WriteExpireCondition(expire); err != nil {
 		return "", err
+	}
+
+	if jobType == cache.TTLJobTypeSoftDelete && tbl.TableInfo.IsActiveActive {
+		if err := b.WriteActiveActiveSafetyCondition(); err != nil {
+			return "", err
+		}
 	}
 
 	if err := b.WriteLimit(len(rows)); err != nil {
