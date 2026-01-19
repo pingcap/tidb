@@ -9,7 +9,7 @@
       "select A.* from A left join B on A.id = B.a_id and B.val > 100 where B.id is not null",
 
       // GROUP 2: LEFT JOIN to ANTI SEMI JOIN (Positive cases, equi-join on id)
-      "select A.* from A left join B on A.id = B.a_id where B.id IS NULL",
+      "select A.* from A left join B on A.id = B.a_id where B.id IS NULL order by A.id",
       "select A.* from A left join B on A.id = B.a_id where B.non_null_col IS NULL",
       "select A.* from A left join B on A.id = B.a_id is null where B.non_null_col IS NULL",
       "select A.* from A left join B on A.id <=> B.a_id where B.id IS NULL",
