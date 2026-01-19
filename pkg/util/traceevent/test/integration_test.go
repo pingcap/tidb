@@ -60,35 +60,26 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	se, err := session.CreateSession(store)
 	require.NoError(t, err)
 
-	// Enable trace events and install a recorder to capture events
-	prevMode := traceevent.CurrentMode()
-	_, err = traceevent.SetMode("full")
-	require.NoError(t, err)
-	defer func() {
-		_, _ = traceevent.SetMode(prevMode)
-	}()
-
 	// Enable all categories for this test
 	var conf traceevent.FlightRecorderConfig
 	conf.Initialize()
-	conf.EnabledCategories = []string{"*"}
-	err = traceevent.StartLogFlightRecorder(&conf)
+	conf.EnabledCategories = []string{"-", "general"}
+	eventCh := make(chan []traceevent.Event, 1)
+	fr, err := traceevent.StartHTTPFlightRecorder(eventCh, &conf)
 	require.NoError(t, err)
-	fr := traceevent.GetFlightRecorder()
 	defer fr.Close()
 
-	recorder := traceevent.NewRingBufferSink(100)
-	prevSink := traceevent.CurrentSink()
-	traceevent.SetSink(recorder)
-	defer traceevent.SetSink(prevSink)
+	traceBuf := traceevent.NewTraceBuf()
+	ctx := traceevent.WithTraceBuf(context.Background(), traceBuf)
 
 	// Create a test table
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	_, err = se.ExecuteInternal(ctx, "create table test.t2 (id int primary key, value varchar(100))")
 	require.NoError(t, err)
 
-	// Clear the recorder and reset prev trace ID
-	recorder.DiscardOrFlush()
+	// Clear the traceBuf and reset prev trace ID
+	traceBuf.DiscardOrFlush(ctx)
+	drainEvents(eventCh)
 	se.GetSessionVars().PrevTraceID = nil
 
 	// Execute first statement
@@ -105,8 +96,9 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.NotEmpty(t, firstTraceID, "First statement should generate a trace ID")
 	t.Logf("First statement trace ID: %s", hex.EncodeToString(firstTraceID))
 
-	// Clear the recorder to capture only the second statement's events
-	recorder.DiscardOrFlush()
+	// Clear the traceBuf to capture only the second statement's events
+	traceBuf.DiscardOrFlush(ctx)
+	drainEvents(eventCh)
 
 	// Execute second statement in the same session
 	stmt2, err := session.ParseWithParams4Test(ctx, se, "insert into test.t2 values (2, 'second')")
@@ -125,8 +117,11 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	// Verify that the trace IDs are different
 	require.NotEqual(t, firstTraceID, secondTraceID, "Each statement should have a unique trace ID")
 
+	// Flush the traceBuf to send the second statement's events to the channel
+	traceBuf.DiscardOrFlush(ctx)
+
 	// Check recorded events for prev_trace_id field
-	events := recorder.Snapshot()
+	events := <-eventCh
 	require.NotEmpty(t, events, "Should have recorded trace events")
 
 	// Look for stmt.start events and verify prev_trace_id matches first statement
