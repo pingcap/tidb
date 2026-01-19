@@ -273,7 +273,7 @@ func validProjForConvertAntiJoin(proj *logicalop.LogicalProjection) bool {
 	// We require that this projection does not make additional changes to any columns,
 	// then we can continue converting to a semi join.
 	//  Pass: Projection[col1,col2]
-	//  Fail: Projection[col2->ABC, col2+1->col2]
+	//  Fail: Projection[col2->col2_renamed, col2+1->col2_incremented]
 	for idx, c := range proj.Schema().Columns {
 		if !c.Equals(proj.Exprs[idx]) {
 			return false
