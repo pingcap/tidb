@@ -7,19 +7,19 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
 // brInfoSchemaFilter implements issyncer.Filter and encapsulates BR-specific
 // filtering logic based on database names.
 type brInfoSchemaFilter struct {
-	allow func(ast.CIStr) bool
+	allow func(pmodel.CIStr) bool
 }
 
 // NewInfoSchemaFilter builds a BR-specific filter from a DB-name predicate.
 // It returns nil if the predicate is nil so the default loading behavior is used.
-func NewInfoSchemaFilter(allow func(ast.CIStr) bool) issyncer.Filter {
+func NewInfoSchemaFilter(allow func(pmodel.CIStr) bool) issyncer.Filter {
 	if allow == nil {
 		return nil
 	}
