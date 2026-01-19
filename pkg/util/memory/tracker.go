@@ -1106,8 +1106,10 @@ func (m *memArbitrator) intoBigBudget() {
 
 	{ // internal session stats
 		delta := int64(0)
-		if oriCtx := root.entry.ctx.Load(); oriCtx != nil && oriCtx.arbitrateHelper.(*memArbitrator).isInternal {
-			delta--
+		if oriCtx := root.entry.ctx.Load(); oriCtx != nil {
+			if oriHelper, ok := oriCtx.arbitrateHelper.(*memArbitrator); ok && oriHelper.isInternal {
+				delta--
+			}
 		}
 		if m.isInternal {
 			delta++
@@ -1235,7 +1237,7 @@ func (t *Tracker) DetachMemArbitrator() bool {
 			}
 		}
 
-		if oriState == memArbitratorStateIntoBigBudget { // wait for initBigBudget to finish
+		if oriState == memArbitratorStateIntoBigBudget { // wait for intoBigBudget to finish
 			m.budget.useBig.Lock()
 
 			globalArbitrator.metrics.pools.intoBig.Add(-1)
