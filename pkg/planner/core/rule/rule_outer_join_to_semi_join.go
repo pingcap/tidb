@@ -108,7 +108,7 @@ func (*OuterJoinToSemiJoin) Name() string {
 	return "outer_join_to_semi_join"
 }
 
-// CanConvertAntiJoin is used in outer-join-to-semi-join rule.
+// canConvertAntiJoin is used in outer-join-to-semi-join rule.
 /*
 #### Scenario 1: IS NULL on the Join Condition Column
 
