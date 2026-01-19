@@ -28,7 +28,7 @@ import (
 )
 
 var ignoredSystemVariablesForPlanReplayerLoad = map[string]struct{}{
-	"innodb_lock_wait_timeout": {}, // It is unncessary to load this variable for plan replayer.
+	vardef.InnodbLockWaitTimeout: {}, // It is unnecessary to load this variable for plan replayer.
 }
 
 // LoadConfig loads system variables from a toml reader. it is only for plan replayer and test.
