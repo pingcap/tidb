@@ -197,7 +197,7 @@
       },
       {
         "SQL": "select c from t order by t.a + t.b limit 1",
-        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#14],0,1)->Projection"
+        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#15],0,1)->Projection"
       },
       {
         "SQL": "select c from t  limit 1",
