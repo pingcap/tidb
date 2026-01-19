@@ -31,9 +31,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"go.uber.org/zap"
 )
 
@@ -740,6 +742,22 @@ func (tm *TableMappingManager) ReplaceTemporaryIDs(
 
 	tm.tempIDCounter = InitialTempId
 	return nil
+}
+
+func (tm *TableMappingManager) ReuseExistingDatabaseIDs(infoschema infoschema.InfoSchema) {
+	for dbID, dbReplace := range tm.DBReplaceMap {
+		if dbReplace.FilteredOut || dbReplace.DbID > 0 {
+			continue
+		}
+		if dbInfo, exists := infoschema.SchemaByName(ast.NewCIStr(dbReplace.Name)); exists {
+			dbReplace.DbID = dbInfo.ID
+			dbReplace.Reused = true
+			log.Info("reuse existing database id",
+				zap.String("db-name", dbReplace.Name),
+				zap.Int64("upstream-db-id", dbID),
+				zap.Int64("downstream-db-id", dbReplace.DbID))
+		}
+	}
 }
 
 func (tm *TableMappingManager) ApplyFilterToDBReplaceMap(tracker *utils.PiTRIdTracker) {

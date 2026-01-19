@@ -53,6 +53,7 @@ type DBReplace struct {
 	DbID        DownstreamID
 	TableMap    map[UpstreamID]*TableReplace
 	FilteredOut bool
+	Reused      bool
 }
 
 // SchemasReplace specifies schemas information mapping from up-stream cluster to down-stream cluster.
@@ -147,7 +148,7 @@ func (sr *SchemasReplace) rewriteKeyForDB(key []byte, cf string) ([]byte, error)
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbID)
 	}
-	if dbMap.FilteredOut {
+	if dbMap.FilteredOut || dbMap.Reused {
 		return nil, nil
 	}
 
@@ -172,7 +173,7 @@ func (sr *SchemasReplace) rewriteDBInfo(value []byte) ([]byte, error) {
 		}
 		return nil, errors.Annotatef(berrors.ErrInvalidArgument, "failed to find db id:%v in maps", dbInfo.ID)
 	}
-	if dbMap.FilteredOut {
+	if dbMap.FilteredOut || dbMap.Reused {
 		return nil, nil
 	}
 
