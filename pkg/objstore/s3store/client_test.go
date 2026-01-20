@@ -24,6 +24,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
+	"github.com/aws/smithy-go/middleware"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
@@ -371,6 +373,33 @@ func TestContentMD5OptionForS3Compatible(t *testing.T) {
 			})
 		}
 	})
+}
+
+func TestWithContentMD5StripsChecksumHeaders(t *testing.T) {
+	stack := middleware.NewStack("test", smithyhttp.NewStackRequest)
+	var opts s3.Options
+	withContentMD5(&opts)
+	for _, opt := range opts.APIOptions {
+		require.NoError(t, opt(stack))
+	}
+
+	req := smithyhttp.NewStackRequest().(*smithyhttp.Request)
+	req.Header.Set("X-Amz-Checksum-Crc32", "AAAA")
+	req.Header.Set("X-Amz-Trailer", "x-amz-checksum-crc32")
+	req.Header.Set("X-Amz-Sdk-Checksum-Algorithm", "CRC32")
+	req.Header.Set("Content-Md5", "keep")
+
+	_, _, err := stack.Build.HandleMiddleware(context.Background(), req, middleware.HandlerFunc(
+		func(ctx context.Context, input any) (any, middleware.Metadata, error) {
+			return input, middleware.Metadata{}, nil
+		},
+	))
+	require.NoError(t, err)
+
+	require.Empty(t, req.Header.Get("X-Amz-Checksum-Crc32"))
+	require.Empty(t, req.Header.Get("X-Amz-Trailer"))
+	require.Empty(t, req.Header.Get("X-Amz-Sdk-Checksum-Algorithm"))
+	require.Equal(t, "keep", req.Header.Get("Content-Md5"))
 }
 
 func TestClientCopyObject(t *testing.T) {
