@@ -60,7 +60,7 @@ func TestGenPlanWithSCtx(t *testing.T) {
 	sctx.GetSessionVars().StreamAggCostFactor = 1
 
 	check("select * from t1, t2 where t1.a=t2.a and t2.b=1",
-		"inl_hash_join", "IndexHashJoin")
+		"inl_join", "IndexJoin")
 
 	sctx.GetSessionVars().IndexJoinCostFactor = 100000
 	sctx.GetSessionVars().HashJoinCostFactor = 100000

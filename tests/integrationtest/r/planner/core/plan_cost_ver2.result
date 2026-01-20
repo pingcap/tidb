@@ -212,7 +212,7 @@ select @@tidb_index_join_double_read_penalty_cost_rate;
 0
 explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	estCost	task	access object	operator info
-IndexJoin_12	12487.50	5277413.38	root		inner join, inner:IndexReader_33, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+IndexJoin_12	12487.50	5402038.63	root		inner join, inner:IndexReader_33, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
 ├─IndexReader_30(Build)	9990.00	150622.56	root		index:IndexFullScan_29
 │ └─IndexFullScan_29	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 └─IndexReader_33(Probe)	12487.50	23.02	root		index:Selection_32
@@ -221,7 +221,7 @@ IndexJoin_12	12487.50	5277413.38	root		inner join, inner:IndexReader_33, outer k
 set tidb_index_join_double_read_penalty_cost_rate=0.5;
 explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	estCost	task	access object	operator info
-IndexJoin_12	12487.50	250791653.38	root		inner join, inner:IndexReader_33, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+IndexJoin_12	12487.50	250916278.63	root		inner join, inner:IndexReader_33, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
 ├─IndexReader_30(Build)	9990.00	150622.56	root		index:IndexFullScan_29
 │ └─IndexFullScan_29	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 └─IndexReader_33(Probe)	12487.50	23.02	root		index:Selection_32
@@ -230,7 +230,7 @@ IndexJoin_12	12487.50	250791653.38	root		inner join, inner:IndexReader_33, outer
 set tidb_index_join_double_read_penalty_cost_rate=1;
 explain format='verbose' select /*+ tidb_inlj(t1, t2) */ * from t1, t2 where t1.a=t2.a;
 id	estRows	estCost	task	access object	operator info
-IndexJoin_12	12487.50	496305893.38	root		inner join, inner:IndexReader_33, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
+IndexJoin_12	12487.50	496430518.63	root		inner join, inner:IndexReader_33, outer key:planner__core__plan_cost_ver2.t1.a, inner key:planner__core__plan_cost_ver2.t2.a, equal cond:eq(planner__core__plan_cost_ver2.t1.a, planner__core__plan_cost_ver2.t2.a)
 ├─IndexReader_30(Build)	9990.00	150622.56	root		index:IndexFullScan_29
 │ └─IndexFullScan_29	9990.00	1626372.00	cop[tikv]	table:t1, index:a(a)	keep order:false, stats:pseudo
 └─IndexReader_33(Probe)	12487.50	23.02	root		index:Selection_32

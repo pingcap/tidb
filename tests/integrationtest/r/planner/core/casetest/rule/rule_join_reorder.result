@@ -528,7 +528,7 @@ MergeJoin	root		inner join
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ no_hash_join(t1) */ * from t1, t2 where t1.a=t2.a;
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
 ├─TableReader(Build)	root		data:Selection
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a))
 │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -549,7 +549,7 @@ MergeJoin	root		inner join, left key:planner__core__casetest__rule__rule_join_re
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ no_hash_join(t1) */ * from t1, t2 where t1.a=t2.a and t1.b=t2.b;
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a), eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)
+IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a), eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.b)
 ├─TableReader(Build)	root		data:Selection
 │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
 │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -570,7 +570,7 @@ MergeJoin	root		left outer join, left side:Sort, left key:planner__core__casetes
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ no_hash_join(t2) */ * from t1 left join t2 on t1.a=t2.a;
 id	task	access object	operator info
-IndexHashJoin	root		left outer join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+IndexJoin	root		left outer join, inner:IndexLookUp, left side:TableReader, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
@@ -589,7 +589,7 @@ MergeJoin	root		right outer join, left side:Sort, left key:planner__core__casete
     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ no_hash_join(t2) */ * from t1 right join t2 on t1.a=t2.a;
 id	task	access object	operator info
-IndexHashJoin	root		right outer join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+IndexJoin	root		right outer join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t2.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 └─IndexLookUp(Probe)	root		
@@ -4641,7 +4641,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
-  │ └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+  │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─IndexReader(Build)	root		index:IndexFullScan
   │   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   │   └─IndexReader(Probe)	root		index:Selection
@@ -4750,7 +4750,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#11
 explain format='plan_tree' select /*+ straight_join() */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
@@ -5144,7 +5144,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
-  │ └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+  │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─IndexReader(Build)	root		index:IndexFullScan
   │   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   │   └─IndexReader(Probe)	root		index:Selection
@@ -5160,7 +5160,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
-  │ └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+  │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─IndexReader(Build)	root		index:IndexFullScan
   │   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   │   └─IndexReader(Probe)	root		index:Selection
@@ -5178,7 +5178,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
-  │ └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+  │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─IndexReader(Build)	root		index:IndexFullScan
   │   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   │   └─IndexReader(Probe)	root		index:Selection
@@ -5196,7 +5196,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
-  │ └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+  │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─IndexReader(Build)	root		index:IndexFullScan
   │   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   │   └─IndexReader(Probe)	root		index:Selection
@@ -5215,7 +5215,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
-  │ └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+  │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─IndexReader(Build)	root		index:IndexFullScan
   │   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   │   └─IndexReader(Probe)	root		index:Selection
@@ -5233,7 +5233,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:StreamAgg
   ├─StreamAgg(Build)	root		funcs:min(planner__core__casetest__rule__rule_join_reorder.t1.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t1.a)->planner__core__casetest__rule__rule_join_reorder.t1.a
-  │ └─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+  │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   │   ├─IndexReader(Build)	root		index:IndexFullScan
   │   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   │   └─IndexReader(Probe)	root		index:Selection
@@ -5250,8 +5250,8 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
-│ ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a), eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+│ ├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a), eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)
 │ │ ├─Selection(Build)	root		not(isnull(Column))
 │ │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
 │ │ │   └─TableReader	root		data:Selection
@@ -5275,7 +5275,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+└─IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)]
   │ ├─Selection(Build)	root		not(isnull(Column))
   │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
@@ -5296,8 +5296,8 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
-│ ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a), eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+│ ├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a), eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)
 │ │ ├─Selection(Build)	root		not(isnull(Column))
 │ │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
 │ │ │   └─TableReader	root		data:Selection
@@ -5320,8 +5320,8 @@ Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LE
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
-│ ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a), eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+│ ├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:Column, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a), eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)
 │ │ ├─Selection(Build)	root		not(isnull(Column))
 │ │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
 │ │ │   └─TableReader	root		data:Selection
@@ -5345,7 +5345,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
 │ ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
 │ │ ├─Selection(Build)	root		not(isnull(Column))
 │ │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
@@ -5368,7 +5368,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+└─IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
   │ ├─Selection(Build)	root		not(isnull(Column))
   │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
@@ -5389,7 +5389,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
 │ ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
 │ │ ├─Selection(Build)	root		not(isnull(Column))
 │ │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
@@ -5411,7 +5411,7 @@ Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LE
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
 │ ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
 │ │ ├─Selection(Build)	root		not(isnull(Column))
 │ │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
@@ -5434,7 +5434,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a in (select t3.a from t3);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+└─IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t3.a)]
   │ ├─StreamAgg(Build)	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.a)->planner__core__casetest__rule__rule_join_reorder.t3.a
   │ │ └─IndexReader	root		index:StreamAgg
@@ -5453,8 +5453,8 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
     └─TableRowIDScan(Probe)	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
 │ ├─StreamAgg(Build)	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.a)->planner__core__casetest__rule__rule_join_reorder.t3.a
 │ │ └─IndexReader	root		index:StreamAgg
 │ │   └─StreamAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, 
@@ -5484,8 +5484,8 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t1, t3@sel_2) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
 │ ├─StreamAgg(Build)	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.a)->planner__core__casetest__rule__rule_join_reorder.t3.a
 │ │ └─IndexReader	root		index:StreamAgg
 │ │   └─StreamAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, 
@@ -5515,8 +5515,8 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
         └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 join t2 on t1.a=t2.a where t1.a in (select t3.a from t3);
 id	task	access object	operator info
-IndexHashJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
-├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+IndexJoin	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t1.a, inner key:planner__core__casetest__rule__rule_join_reorder.t2.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)
+├─IndexJoin(Build)	root		inner join, inner:IndexLookUp, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
 │ ├─StreamAgg(Build)	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.a)->planner__core__casetest__rule__rule_join_reorder.t3.a
 │ │ └─IndexReader	root		index:StreamAgg
 │ │   └─StreamAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.a, 
@@ -5806,7 +5806,7 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
 explain format='plan_tree' select /*+ leading(t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
@@ -5822,7 +5822,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
@@ -5841,7 +5841,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t1, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
@@ -5857,7 +5857,7 @@ ScalarSubQuery	root		Output: ScalarQueryCol#14
 explain format='plan_tree' select /*+ leading(t2@sel_2, t1) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
@@ -5876,7 +5876,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t2@sel_2, t3) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
@@ -5895,7 +5895,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t1, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection
@@ -5914,7 +5914,7 @@ Warning	1815	leading hint is inapplicable, check if the leading hint table is va
 explain format='plan_tree' select /*+ leading(t3, t2@sel_2) */ t1.a, (select min(t2.a) from t2) from t1 join t3 on t1.a = t3.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, ScalarQueryCol#14(<nil>)->Column
-└─IndexHashJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
+└─IndexJoin	root		inner join, inner:IndexReader, outer key:planner__core__casetest__rule__rule_join_reorder.t3.a, inner key:planner__core__casetest__rule__rule_join_reorder.t1.a, equal cond:eq(planner__core__casetest__rule__rule_join_reorder.t3.a, planner__core__casetest__rule__rule_join_reorder.t1.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t3, index:a(a)	keep order:false
   └─IndexReader(Probe)	root		index:Selection

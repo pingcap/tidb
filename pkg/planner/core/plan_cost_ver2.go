@@ -751,6 +751,9 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	probeRowsTot := probeRowsOne * buildRows
 	probeRowSize := getAvgRowSize(probe.StatsInfo(), probe.Schema().Columns)
 	buildFilters, probeFilters := p.LeftConditions, p.RightConditions
+	if p.InnerChildIdx == 0 {
+		buildFilters, probeFilters = p.RightConditions, p.LeftConditions
+	}
 	probeConcurrency := float64(p.SCtx().GetSessionVars().IndexLookupJoinConcurrency())
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
@@ -775,14 +778,30 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 		return costusage.ZeroCostVer2, err
 	}
 
+	// IndexJoin family uses OuterHashKeys/InnerHashKeys as the execution-time hash key set.
+	// Note: for non-equi/range index join (e.g. only CompareFilters), hash keys can be empty.
+	// When join keys exist, they must be prefixes of the hash keys. Outer/Inner hash keys should be aligned.
+	intest.Assert(len(p.OuterHashKeys) == len(p.InnerHashKeys), "outer/inner hash keys should be aligned")
+	intest.Assert(len(p.OuterJoinKeys) == len(p.InnerJoinKeys), "outer/inner join keys should be aligned")
+	intest.Assert(len(p.OuterJoinKeys) <= len(p.OuterHashKeys), "OuterJoinKeys should be prefix of OuterHashKeys")
+	intest.Assert(len(p.InnerJoinKeys) <= len(p.InnerHashKeys), "InnerJoinKeys should be prefix of InnerHashKeys")
+	outerHashKeyCnt := float64(len(p.OuterHashKeys))
+	innerHashKeyCnt := float64(len(p.InnerHashKeys))
+
 	var hashTableCost costusage.CostVer2
 	switch indexJoinType {
 	case 1: // IndexHashJoin
-		hashTableCost = hashBuildCostVer2(option, buildRows, buildRowSize, float64(len(p.RightJoinKeys)), cpuFactor, memFactor)
+		// IndexHashJoin builds a hash table from the outer rows, then probes it with the
+		// fetched inner rows. The hash key set is p.OuterHashKeys/p.InnerHashKeys (p.OuterJoinKeys is
+		// only the prefix used for index ranges).
+		hashTableCost = costusage.SumCostVer2(
+			hashBuildCostVer2(option, buildRows, buildRowSize, outerHashKeyCnt, cpuFactor, memFactor),
+			hashProbeCostVer2(option, probeRowsTot, innerHashKeyCnt, cpuFactor),
+		)
 	case 2: // IndexMergeJoin
 		hashTableCost = costusage.NewZeroCostVer2(costusage.TraceCost(option))
 	default: // IndexJoin
-		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, float64(len(p.LeftJoinKeys)), cpuFactor, memFactor)
+		hashTableCost = hashBuildCostVer2(option, probeRowsTot, probeRowSize, innerHashKeyCnt, cpuFactor, memFactor)
 	}
 
 	// IndexJoin executes a batch of rows at a time, so the actual cost of this part should be

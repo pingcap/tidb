@@ -650,6 +650,60 @@ func TestIndexLookUpRowsLimit(t *testing.T) {
 	})
 }
 
+func TestIndexHashJoinCostVer2HasProbeCostAndCorrectHashKeyCount(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_cost_model_version=2")
+		tk.MustExec("drop table if exists t1, t2")
+		tk.MustExec("create table t1(a int, b int, key(a))")
+		tk.MustExec("create table t2(a int, b int, key idx_a(a))")
+		tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("insert into t2 values (1,1),(2,2),(3,3),(4,4),(5,5)")
+		tk.MustExec("analyze table t1, t2")
+
+		rs := tk.MustQuery("explain format='cost_trace' select /*+ inl_hash_join(t1, t2), use_index(t2, idx_a) */ * from t1 join t2 on t1.a=t2.a and t1.b=t2.b").Rows()
+		var indexHashJoinFormula string
+		for _, row := range rs {
+			id, ok := row[0].(string)
+			require.True(t, ok)
+			if strings.Contains(id, "IndexHashJoin") {
+				indexHashJoinFormula = row[3].(string)
+				break
+			}
+		}
+		require.NotEmpty(t, indexHashJoinFormula)
+		require.Contains(t, indexHashJoinFormula, "hashprobe(")
+
+		// Ensure IndexHashJoin uses the full hash key set (a,b) instead of a 0/1-key fallback.
+		extractHashKeyKeyCounts := func(formula string) []int {
+			var counts []int
+			remain := formula
+			for {
+				idx := strings.Index(remain, "hashkey(")
+				if idx < 0 {
+					break
+				}
+				remain = remain[idx+len("hashkey("):]
+				parts := strings.SplitN(remain, "*", 3)
+				if len(parts) < 3 {
+					continue
+				}
+				// hashkey(<rows>*<nKeys>*<factor>)
+				nKeys, err := strconv.Atoi(parts[1])
+				require.NoError(t, err)
+				counts = append(counts, nKeys)
+			}
+			return counts
+		}
+		hashKeyCounts := extractHashKeyKeyCounts(indexHashJoinFormula)
+		require.GreaterOrEqual(t, len(hashKeyCounts), 2)
+		require.Contains(t, hashKeyCounts, 2)
+		for _, nKeys := range hashKeyCounts {
+			require.Greater(t, nKeys, 0)
+		}
+	})
+}
+
 func TestMergeJoinCostWithOtherConds(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test")
