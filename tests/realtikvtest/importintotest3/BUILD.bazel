@@ -4,6 +4,7 @@ go_test(
     name = "importintotest3_test",
     timeout = "moderate",
     srcs = [
+        "cleanup_on_error_test.go",
         "cross_ks_test.go",
         "extra_param_test.go",
         "file_compression_test.go",
