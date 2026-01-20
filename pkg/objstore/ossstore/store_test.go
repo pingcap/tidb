@@ -327,3 +327,9 @@ func TestStore(t *testing.T) {
 		require.EqualValues(t, filesInDir["b"], gotFiles)
 	})
 }
+
+func TestCanUseInternalEndpoint(t *testing.T) {
+	require.False(t, canUseInternalEndpoint("", "cn-hangzhou"))
+	require.False(t, canUseInternalEndpoint("cn-beijing", "cn-hangzhou"))
+	require.True(t, canUseInternalEndpoint("cn-hangzhou", "cn-hangzhou"))
+}
