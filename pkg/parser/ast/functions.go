@@ -495,8 +495,23 @@ func (n *FuncCallExpr) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(", ")
 			}
-			if err := argv.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args %d", i)
+			// For non-prepared plan cache: skip param collection for the format argument
+			// of date_format, str_to_date, time_format, from_unixtime (2nd argument).
+			// These format strings should not be parameterized.
+			skipFormatArg := i == 1 && (n.FnName.L == DateFormat || n.FnName.L == StrToDate ||
+				n.FnName.L == TimeFormat || n.FnName.L == FromUnixTime)
+			if skipFormatArg {
+				oldSkip := ctx.SkipCollectingParams
+				ctx.SkipCollectingParams = true
+				if err := argv.Restore(ctx); err != nil {
+					ctx.SkipCollectingParams = oldSkip
+					return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args %d", i)
+				}
+				ctx.SkipCollectingParams = oldSkip
+			} else {
+				if err := argv.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore FuncCallExpr.Args %d", i)
+				}
 			}
 		}
 	}

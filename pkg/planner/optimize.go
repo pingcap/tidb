@@ -73,7 +73,7 @@ func getPlanFromNonPreparedPlanCache(ctx context.Context, sctx sessionctx.Contex
 		return nil, nil, false, nil
 	}
 
-	paramSQL, paramsVals, err := core.GetParamSQLFromAST(stmt)
+	paramSQL, paramsVals, err := core.GetParamSQLFromASTWithoutMutation(stmt)
 	if err != nil {
 		return nil, nil, false, err
 	}

@@ -752,6 +752,12 @@ type SelectField struct {
 
 // Restore implements Node interface.
 func (n *SelectField) Restore(ctx *format.RestoreCtx) error {
+	// For non-prepared plan cache: skip param collection in select fields
+	// to keep output field names corresponding to literal values.
+	oldSkip := ctx.SkipCollectingParams
+	ctx.SkipCollectingParams = true
+	defer func() { ctx.SkipCollectingParams = oldSkip }()
+
 	if n.WildCard != nil {
 		if err := n.WildCard.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SelectField.WildCard")
@@ -919,6 +925,12 @@ type GroupByClause struct {
 
 // Restore implements Node interface.
 func (n *GroupByClause) Restore(ctx *format.RestoreCtx) error {
+	// For non-prepared plan cache: skip param collection in GROUP BY clause
+	// to avoid breaking the full_group_by check.
+	oldSkip := ctx.SkipCollectingParams
+	ctx.SkipCollectingParams = true
+	defer func() { ctx.SkipCollectingParams = oldSkip }()
+
 	ctx.WriteKeyWord("GROUP BY ")
 	for i, v := range n.Items {
 		if i != 0 {
@@ -990,6 +1002,12 @@ type OrderByClause struct {
 
 // Restore implements Node interface.
 func (n *OrderByClause) Restore(ctx *format.RestoreCtx) error {
+	// For non-prepared plan cache: skip param collection in ORDER BY clause
+	// to avoid breaking the full_group_by check.
+	oldSkip := ctx.SkipCollectingParams
+	ctx.SkipCollectingParams = true
+	defer func() { ctx.SkipCollectingParams = oldSkip }()
+
 	ctx.WriteKeyWord("ORDER BY ")
 	for i, item := range n.Items {
 		if i != 0 {
@@ -3000,6 +3018,12 @@ type Limit struct {
 
 // Restore implements Node interface.
 func (n *Limit) Restore(ctx *format.RestoreCtx) error {
+	// For non-prepared plan cache: skip param collection in LIMIT clause
+	// to generate different plans for queries with different limit values.
+	oldSkip := ctx.SkipCollectingParams
+	ctx.SkipCollectingParams = true
+	defer func() { ctx.SkipCollectingParams = oldSkip }()
+
 	ctx.WriteKeyWord("LIMIT ")
 	if n.Offset != nil {
 		if err := n.Offset.Restore(ctx); err != nil {
