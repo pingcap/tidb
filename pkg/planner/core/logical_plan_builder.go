@@ -4429,11 +4429,9 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 
 			if cte.cteClass == nil {
-				// Wrap seed in a projection if it has NULL type columns that need casting
-				seedLP := b.buildProjection4CTESeed(cte.seedLP, cte.recurLP)
 				cte.cteClass = &logicalop.CTEClass{
 					IsDistinct:               cte.isDistinct,
-					SeedPartLogicalPlan:      seedLP,
+					SeedPartLogicalPlan:      cte.seedLP,
 					RecursivePartLogicalPlan: cte.recurLP,
 					IDForStorage:             cte.storageID,
 					OptFlag:                  cte.optFlag,
@@ -7519,31 +7517,15 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 		return nil, plannererrors.ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}
 	exprs := make([]expression.Expression, len(seed.Schema().Columns))
-
-	// For recursive CTEs, we must use the WIDER/longer type from both seed and recursive parts.
-	// This is similar to how regular UNION handles type inference.
-	// For example, if seed has '' (varchar(0)) and recur has varchar(10), we use varchar(10).
-	resSchema := getResultCTESchemaWithRecur(seed.Schema(), recur.Schema(), b.ctx.GetSessionVars())
-
-	// Build column references to recur's output schema with CORRECT Index values.
-	// We must create new Column objects with Index set to the position in recur's schema,
-	// because recur.Schema().Columns may have incorrect Index values (e.g., when recur
-	// is a Projection with ScalarFunction expressions, buildSchemaByExprs creates columns
-	// with Index=0 for all non-Column expressions).
+	resSchema := getResultCTESchema(seed.Schema(), b.ctx.GetSessionVars())
 	for i, col := range recur.Schema().Columns {
-		// Create a new column reference with the correct Index
-		newCol := &expression.Column{
-			UniqueID: col.UniqueID,
-			RetType:  col.RetType,
-			Index:    i, // CRITICAL: Set Index to position in recur's output schema
-		}
 		if !resSchema.Columns[i].RetType.Equal(col.RetType) {
-			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), col, resSchema.Columns[i].RetType)
 		} else {
-			exprs[i] = newCol
+			exprs[i] = col
 		}
 	}
-
+	b.optFlag |= rule.FlagEliminateProjection
 	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(resSchema)
 	proj.SetChildren(recur)

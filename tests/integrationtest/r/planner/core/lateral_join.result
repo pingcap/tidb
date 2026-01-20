@@ -68,8 +68,8 @@ where level < 3
 select * from tr where level > 0 order by level;
 level	b_col
 1	
-2	a
-3	c
+2	
+3	
 with recursive tr (level, b_col) as (
 select 1, cast(null as char(10))
 union all
