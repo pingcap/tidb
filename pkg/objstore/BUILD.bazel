@@ -29,6 +29,7 @@ go_library(
         "//br/pkg/utils/iter",
         "//pkg/objstore/compressedio",
         "//pkg/objstore/objectio",
+        "//pkg/objstore/ossstore",
         "//pkg/objstore/recording",
         "//pkg/objstore/s3like",
         "//pkg/objstore/s3store",
