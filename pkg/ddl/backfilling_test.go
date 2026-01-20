@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -108,34 +107,7 @@ func (c *testReadIndexBackendCtx) Register(indexIDs []int64, uniques []bool, tbl
 	return c.registerFn(indexIDs, uniques, tbl)
 }
 
-func (*testReadIndexBackendCtx) FinishAndUnregisterEngines(_ ingest.UnregisterOpt) error { return nil }
-func (*testReadIndexBackendCtx) IngestIfQuotaExceeded(context.Context, int, int) error   { return nil }
-func (*testReadIndexBackendCtx) Ingest(context.Context) error                            { return nil }
-func (*testReadIndexBackendCtx) NextStartKey() kv.Key                                    { return nil }
-func (*testReadIndexBackendCtx) TotalKeyCount() int                                      { return 0 }
-func (*testReadIndexBackendCtx) AddChunk(int, kv.Key)                                    {}
-func (*testReadIndexBackendCtx) UpdateChunk(int, int, bool)                              {}
-func (*testReadIndexBackendCtx) FinishChunk(int, int)                                    {}
-func (*testReadIndexBackendCtx) AdvanceWatermark(bool) error                             { return nil }
-func (*testReadIndexBackendCtx) GetImportTS() uint64                                     { return 0 }
-func (c *testReadIndexBackendCtx) GetLocalBackend() *local.Backend                       { return c.localBackend }
-func (*testReadIndexBackendCtx) CollectRemoteDuplicateRows(int64, table.Table) error     { return nil }
-func (*testReadIndexBackendCtx) GetDiskUsage() uint64                                    { return 0 }
-func (*testReadIndexBackendCtx) Close()                                                  {}
-
-type testReadIndexEngine struct{}
-
-func (*testReadIndexEngine) Flush() error { return nil }
-func (*testReadIndexEngine) Close(bool)   {}
-func (*testReadIndexEngine) CreateWriter(int, *backend.LocalWriterConfig) (ingest.Writer, error) {
-	return &testReadIndexWriter{}, nil
-}
-
-type testReadIndexWriter struct{}
-
-func (*testReadIndexWriter) WriteRow(context.Context, []byte, []byte, kv.Handle) error { return nil }
-func (*testReadIndexWriter) LockForWrite() func()                                      { return func() {} }
-func (*testReadIndexWriter) WrittenBytes() int64                                       { return 0 }
+func (c *testReadIndexBackendCtx) GetLocalBackend() *local.Backend { return c.localBackend }
 
 func TestRegisterReadIndexEnginesRetryOnLockHeld(t *testing.T) {
 	origCleanup := cleanupAllLocalEnginesForReadIndex
@@ -156,13 +128,13 @@ func TestRegisterReadIndexEnginesRetryOnLockHeld(t *testing.T) {
 			if atomic.AddInt32(&registerCalls, 1) == 1 {
 				return nil, errors.New("lock held by current process")
 			}
-			return []ingest.Engine{&testReadIndexEngine{}}, nil
+			return nil, nil
 		},
 	}
 
 	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
 	require.NoError(t, err)
-	require.Len(t, engines, 1)
+	require.Nil(t, engines)
 	require.Equal(t, int32(2), registerCalls)
 	require.Equal(t, int32(1), cleanupCalls)
 }

@@ -84,6 +84,15 @@ var cleanupAllLocalEnginesForReadIndex = func(backend *local.Backend) error {
 	return backend.CleanupAllLocalEngines(context.Background())
 }
 
+type readIndexLocalBackendGetter interface {
+	GetLocalBackend() *local.Backend
+}
+
+type readIndexEngineRegistrar interface {
+	readIndexLocalBackendGetter
+	Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error)
+}
+
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
@@ -476,7 +485,10 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 	)
 }
 
-func cleanupReadIndexLocalEngines(jobID, subtaskID int64, backendCtx ingest.BackendCtx) {
+func cleanupReadIndexLocalEngines(jobID, subtaskID int64, backendCtx readIndexLocalBackendGetter) {
+	if backendCtx == nil {
+		return
+	}
 	backend := backendCtx.GetLocalBackend()
 	if backend == nil {
 		return
@@ -502,7 +514,7 @@ func cleanupReadIndexLocalEngines(jobID, subtaskID int64, backendCtx ingest.Back
 func registerReadIndexEngines(
 	wctx *workerpool.Context,
 	jobID int64,
-	backendCtx ingest.BackendCtx,
+	backendCtx readIndexEngineRegistrar,
 	indexIDs []int64,
 	uniques []bool,
 	tbl table.Table,
