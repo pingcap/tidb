@@ -80,7 +80,22 @@ create table t6 (id int primary key, name varchar(50)) softdelete_job_interval =
 Error 8200 (HY000): Unsupported having SOFTDELETE options but SOFTDELETE = 'OFF'
 create table t6 (id int primary key, name varchar(50)) softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
 Error 8200 (HY000): Unsupported must sepecify SOFTDELETE = RETENTION xxx
+insert into t4 values (0, 's');
 alter table t4 softdelete retention 30 DAY;
+set @@tidb_translate_softdelete_sql = true;
+insert into t4 values (1, 's');
+set @@tidb_translate_softdelete_sql = false;
+select *,_tidb_softdelete_time from t4;
+id	name	_tidb_softdelete_time
+0	s	NULL
+1	s	NULL
+insert into t4(id,name,_tidb_softdelete_time) values (2, 's', '2013-08-05 18:19:03');
+select *,_tidb_softdelete_time from t4;
+id	name	_tidb_softdelete_time
+0	s	NULL
+1	s	NULL
+2	s	2013-08-05 18:19:03.000000
+set @@tidb_translate_softdelete_sql = default;
 show create table t4;
 Table	Create Table
 t4	CREATE TABLE `t4` (
@@ -88,10 +103,6 @@ t4	CREATE TABLE `t4` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
-insert into t4 values (0, 's');
-select * from t4;
-id	name
-0	s
 alter table t4 drop column _tidb_softdelete_time;
 Error 8200 (HY000): Unsupported can not drop internal columns
 alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
