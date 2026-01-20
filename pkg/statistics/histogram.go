@@ -719,7 +719,7 @@ func (hg *Histogram) TotalRowCount() float64 {
 // topNCount is the TopN total count to include in the histogram row count (pass 0 to exclude TopN).
 func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uint64) (float64, bool) {
 	histRowCount := hg.NotNullCount() + float64(hg.NullCount) + float64(topNCount)
-	// Calculate the percentage or NULLs in the original row count
+	// Calculate the percentage of NULLs in the original row count
 	// Assume that 50% of the newly added rows are NULLs
 	nullsRatio := (float64(hg.NullCount) / histRowCount) * 0.5
 	// Calculate the percent of topN in the original row count
