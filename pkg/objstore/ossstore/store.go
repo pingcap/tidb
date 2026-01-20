@@ -133,8 +133,8 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 
 	if opts.AccessRecording != nil {
 		ossOptFns = append(ossOptFns, func(o *oss.Options) {
+			// nolint:bodyclose
 			o.ResponseHandlers = append(o.ResponseHandlers, func(resp *http.Response) error {
-				// nolint:bodyclose
 				opts.AccessRecording.RecRequest(resp.Request)
 				return nil
 			})
