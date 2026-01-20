@@ -599,18 +599,15 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		// Set flag to allow ORDER BY/LIMIT in LATERAL subqueries within recursive CTEs
 		saveBuildingLateral := b.buildingLateralSubquery
 		b.buildingLateralSubquery = true
+		// Use a single defer to ensure consistent cleanup in all paths (success and error)
 		defer func() {
+			b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
+			b.outerNames = b.outerNames[:len(b.outerNames)-1]
 			b.buildingLateralSubquery = saveBuildingLateral
 		}()
 	}
 
 	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right, false)
-
-	// For LATERAL: Pop outerSchemas from stack (ensure cleanup in error path)
-	if isLateral {
-		b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
-		b.outerNames = b.outerNames[:len(b.outerNames)-1]
-	}
 
 	if err != nil {
 		return nil, err
@@ -7489,7 +7486,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 	}
 	exprs := make([]expression.Expression, len(seed.Schema().Columns))
 
-	// For recursive CTEs, we must use the WIDER type from both seed and recursive parts.
+	// For recursive CTEs, we must use the WIDER/longer type from both seed and recursive parts.
 	// This is similar to how regular UNION handles type inference.
 	// For example, if seed has '' (varchar(0)) and recur has varchar(10), we use varchar(10).
 	resSchema := getResultCTESchemaWithRecur(seed.Schema(), recur.Schema(), b.ctx.GetSessionVars())
@@ -7520,7 +7517,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 }
 
 // getResultCTESchemaWithRecur creates the result schema for a recursive CTE by using
-// the WIDER type from both seed and recursive parts. This is similar to how regular
+// the wider/longer type from both seed and recursive parts. This is similar to how regular
 // UNION handles type inference. For example, if seed has ” (varchar(0)) and recur
 // has varchar(10), the result schema will use varchar(10) to prevent truncation.
 // Special case: if seed type is NULL, use the recursive part's type directly.
@@ -7533,16 +7530,16 @@ func getResultCTESchemaWithRecur(seedSchema, recurSchema *expression.Schema, sva
 		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.
 		col.CleanHashCode()
 
-		// Use the wider type from both seed and recur schemas
+		// Use the wider/longer type from both seed and recur schemas
 		if i < len(recurSchema.Columns) {
 			recurTp := recurSchema.Columns[i].RetType
 			seedTp := col.RetType
-			// Special case: if seed type is NULL, use recur type directly
+			// Special case: if seed type is NULL, use recursive type directly
 			// This handles cases like: WITH RECURSIVE cte AS (SELECT 1, NULL UNION ALL SELECT n+1, val FROM ...)
 			if seedTp.GetType() == mysql.TypeNull {
 				col.RetType = recurTp.Clone()
 			} else {
-				// Use unionJoinFieldType to get the wider type that can hold both
+				// Use unionJoinFieldType to get the wider/longer type that can hold both
 				widerTp := unionJoinFieldType(seedTp, recurTp)
 				col.RetType = widerTp.Clone()
 			}
