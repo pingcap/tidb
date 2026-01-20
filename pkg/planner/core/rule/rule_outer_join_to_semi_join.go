@@ -82,22 +82,27 @@ func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int
 	selChild := sel.Children()[0]
 	switch cc := selChild.(type) {
 	case *logicalop.LogicalJoin:
-		return o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, cc)
+		newP, changed := o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, cc)
+		return ensureSelectionRoot(newP, sel), changed
 	case *logicalop.LogicalProjection:
 		if validProjForConvertAntiJoin(cc) {
 			projectionChild := cc.Children()[0]
 			join, ok := projectionChild.(*logicalop.LogicalJoin)
 			if ok {
-				return o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, join)
+				newP, changed := o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, join)
+				return ensureSelectionRoot(newP, sel), changed
 			}
-			_, changed := o.recursivePlan(projectionChild)
-			return p, changed
+			newChild, changed := o.recursivePlan(projectionChild)
+			resetChildIfChanged(cc, projectionChild, newChild)
+			return ensureSelectionRoot(p, sel), changed
 		}
-		_, changed := o.recursivePlan(cc)
-		return p, changed
+		newChild, changed := o.recursivePlan(cc)
+		resetChildIfChanged(sel, cc, newChild)
+		return ensureSelectionRoot(p, sel), changed
 	}
-	_, changed := o.recursivePlan(selChild)
-	return p, changed
+	newChild, changed := o.recursivePlan(selChild)
+	resetChildIfChanged(sel, selChild, newChild)
+	return ensureSelectionRoot(p, sel), changed
 }
 
 func (o *OuterJoinToSemiJoin) startConvertOuterJoinToSemiJoin(p base.LogicalPlan, childIdx int, sel *logicalop.LogicalSelection, join *logicalop.LogicalJoin) (base.LogicalPlan, bool) {
@@ -120,6 +125,19 @@ func (o *OuterJoinToSemiJoin) startConvertOuterJoinToSemiJoin(p base.LogicalPlan
 	}
 	_, changed := o.recursivePlan(join)
 	return p, ok || changed
+}
+
+func ensureSelectionRoot(p base.LogicalPlan, sel *logicalop.LogicalSelection) base.LogicalPlan {
+	if p == nil {
+		return sel
+	}
+	return p
+}
+
+func resetChildIfChanged(parent, oldChild, newChild base.LogicalPlan) {
+	if newChild != oldChild {
+		parent.SetChildren(newChild)
+	}
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
