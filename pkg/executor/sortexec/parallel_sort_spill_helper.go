@@ -236,7 +236,11 @@ func (p *parallelSortSpillHelper) spillImpl(merger *multiWayMerger) error {
 				if row.IsEmpty() {
 					break
 				}
-				spilledRowChannel <- row
+				select {
+				case spilledRowChannel <- row:
+				case <-p.finishCh:
+					return
+				}
 			}
 		},
 		func(r any) {
