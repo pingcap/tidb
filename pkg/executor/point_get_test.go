@@ -375,3 +375,14 @@ func TestWithTiDBSnapshot(t *testing.T) {
 
 	tk.MustQuery("select * from xx").Check(testkit.Rows("1", "7"))
 }
+
+func TestPointGetCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists xx")
+	tk.MustExec(`create table xx (id int key primary key, v int)`)
+	tk.MustExec(`insert into xx values (1, 1), (7, 7)`)
+	tk.MustQuery(`select * from xx where id = 1`).Check(testkit.Rows("1 1"))
+	tk.MustQuery(`select * from xx where id = 1`).Check(testkit.Rows("1 1"))
+}

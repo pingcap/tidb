@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/kvcache"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -231,11 +232,34 @@ func (e *BatchPointGetExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+func (e *BatchPointGetExec) batchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
+	if e.Ctx().GetSessionVars().ConnectionID == 0 {
+		return e.batchGetter.BatchGet(ctx, keys)
+	}
+	cacheHits := make(map[string][]byte, len(keys))
+	cacheMisses := make([]kv.Key, 0, len(keys))
+	for _, key := range keys {
+		if v, ok := kvcache.GlobalKVCache.Get(key); ok {
+			cacheHits[string(key)] = v
+		} else {
+			cacheMisses = append(cacheMisses, key)
+		}
+	}
+	missValues, err := e.batchGetter.BatchGet(ctx, cacheMisses)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range missValues {
+		kvcache.GlobalKVCache.Put([]byte(k), v)
+		cacheHits[k] = v
+	}
+	return cacheHits, nil
+}
+
 func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string][]byte
 	var indexKeys []kv.Key
 	var err error
-	batchGetter := e.batchGetter
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows
@@ -290,7 +314,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 
 		// Fetch all handles.
-		handleVals, err = batchGetter.BatchGet(ctx, toFetchIndexKeys)
+		handleVals, err = e.batchGet(ctx, toFetchIndexKeys)
 		if err != nil {
 			return err
 		}
@@ -416,7 +440,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		}
 	}
 	// Fetch all values.
-	values, err = batchGetter.BatchGet(ctx, keys)
+	values, err = e.batchGet(ctx, keys)
 	if err != nil {
 		return err
 	}
