@@ -635,7 +635,7 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 			if skewRatio > 0 {
 				// Dilute the skewRatio to avoid overestimation.
 				// TODO: Evaluate usage feedback to determine if this needs to be adjusted,
-				// or if this variable needs to be detached from it's use in out-of-range estimation.
+				// or if this variable needs to be detached from its use in out-of-range estimation.
 				skewRatio = max(skewRatio*0.1, 0.05)
 			}
 			return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
