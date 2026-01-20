@@ -463,7 +463,17 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			clonedNames := make([]*types.FieldName, len(p.OutputNames()))
 			for i, name := range p.OutputNames() {
 				if name.Hidden {
-					clonedNames[i] = name
+					// Clone hidden names too to prevent unintended mutations
+					clonedNames[i] = &types.FieldName{
+						DBName:            name.DBName,
+						OrigTblName:       name.OrigTblName,
+						OrigColName:       name.OrigColName,
+						TblName:           name.TblName,
+						ColName:           name.ColName,
+						NotExplicitUsable: name.NotExplicitUsable,
+						Redundant:         name.Redundant,
+						Hidden:            name.Hidden,
+					}
 					continue
 				}
 				// Clone the field name and update table name
