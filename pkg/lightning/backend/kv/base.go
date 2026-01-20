@@ -143,23 +143,25 @@ func NewBaseKVEncoder(config *encode.EncodingConfig) (*BaseKVEncoder, error) {
 
 	var autoRandomColID int64
 	autoIDFn := func(id int64) int64 { return id }
-	if meta.ContainsAutoRandomBits() {
-		col := common.GetAutoRandomColumn(meta)
-		autoRandomColID = col.ID
+	if !config.UseIdentityAutoRowID {
+		if meta.ContainsAutoRandomBits() {
+			col := common.GetAutoRandomColumn(meta)
+			autoRandomColID = col.ID
 
-		shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
-		shard := rand.New(rand.NewSource(config.AutoRandomSeed)).Int63()
-		autoIDFn = func(id int64) int64 {
-			return shardFmt.Compose(shard, id)
-		}
-	} else if meta.ShardRowIDBits > 0 {
-		rd := rand.New(rand.NewSource(config.AutoRandomSeed)) // nolint:gosec
-		mask := int64(1)<<meta.ShardRowIDBits - 1
-		shift := autoid.RowIDBitLength - meta.ShardRowIDBits - 1
-		autoIDFn = func(id int64) int64 {
-			rd.Seed(id)
-			shardBits := (int64(rd.Uint32()) & mask) << shift
-			return shardBits | id
+			shardFmt := autoid.NewShardIDFormat(&col.FieldType, meta.AutoRandomBits, meta.AutoRandomRangeBits)
+			shard := rand.New(rand.NewSource(config.AutoRandomSeed)).Int63()
+			autoIDFn = func(id int64) int64 {
+				return shardFmt.Compose(shard, id)
+			}
+		} else if meta.ShardRowIDBits > 0 {
+			rd := rand.New(rand.NewSource(config.AutoRandomSeed)) // nolint:gosec
+			mask := int64(1)<<meta.ShardRowIDBits - 1
+			shift := autoid.RowIDBitLength - meta.ShardRowIDBits - 1
+			autoIDFn = func(id int64) int64 {
+				rd.Seed(id)
+				shardBits := (int64(rd.Uint32()) & mask) << shift
+				return shardBits | id
+			}
 		}
 	}
 

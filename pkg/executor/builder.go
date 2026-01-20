@@ -3823,6 +3823,15 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if len(v.Schema().Columns) == 0 && len(v.GetTablePlan().Schema().Columns) > 0 {
 		v.SetSchema(v.GetTablePlan().Schema())
 	}
+
+	sctx := b.ctx.GetSessionVars().StmtCtx
+	switch v.StoreType {
+	case kv.TiKV:
+		sctx.IsTiKV.Store(true)
+	case kv.TiFlash:
+		sctx.IsTiFlash.Store(true)
+	}
+
 	useMPP := useMPPExecution(b.ctx, v)
 	useTiFlashBatchCop := v.ReadReqType == plannercore.BatchCop
 	useTiFlash := useMPP || useTiFlashBatchCop
@@ -3851,7 +3860,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 
 	ret.tableSplit = v.TableSplit
 	ret.ranges = ts.Ranges
-	sctx := b.ctx.GetSessionVars().StmtCtx
 	sctx.TableIDs = append(sctx.TableIDs, ts.Table.ID)
 
 	if !b.ctx.GetSessionVars().StmtCtx.UseDynamicPartitionPrune() {
@@ -3873,9 +3881,6 @@ func (b *executorBuilder) buildTableReader(v *plannercore.PhysicalTableReader) e
 	if err != nil {
 		b.err = err
 		return nil
-	}
-	if v.StoreType == kv.TiFlash {
-		sctx.IsTiFlash.Store(true)
 	}
 
 	if len(partitions) == 0 {
@@ -4034,6 +4039,8 @@ func buildNoRangeIndexReader(b *executorBuilder, v *plannercore.PhysicalIndexRea
 	}
 	paging := b.ctx.GetSessionVars().EnablePaging
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	e := &IndexReaderExecutor{
 		indexReaderExecutorContext: newIndexReaderExecutorContext(b.ctx),
 		BaseExecutorV2:             exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID()),
@@ -4139,20 +4146,77 @@ func buildTableReq(b *executorBuilder, schemaLen int, plans []base.PhysicalPlan)
 	return tableReq, tbl, err
 }
 
+func buildIndexLookUpPushDownDAGReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan, planUnNatureOrders map[int]int) (dagReq *tipb.DAGRequest, err error) {
+	indexReq, err := builder.ConstructDAGReqForUnNatureOrderPlans(ctx, plans, planUnNatureOrders, kv.TiKV)
+	if err != nil {
+		return nil, err
+	}
+
+	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
+	intermediateOutputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
+	if err != nil {
+		return nil, err
+	}
+
+	var intermediateOutputIndex uint32
+	found := false
+	for i, e := range indexReq.Executors {
+		if e.Tp == tipb.ExecType_TypeIndexLookUp {
+			intermediateOutputIndex = uint32(i)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return nil, errors.New("IndexLookUp executor not found")
+	}
+
+	indexReq.IntermediateOutputChannels = []*tipb.IntermediateOutputChannel{
+		{
+			ExecutorIdx:   intermediateOutputIndex,
+			OutputOffsets: intermediateOutputOffsets,
+		},
+	}
+
+	outputOffsetsLen := plans[len(plans)-1].Schema().Len()
+	indexReq.OutputOffsets = make([]uint32, outputOffsetsLen)
+	for i := range outputOffsetsLen {
+		indexReq.OutputOffsets[i] = uint32(i)
+	}
+	return indexReq, nil
+}
+
 // buildIndexReq is designed to create a DAG for index request.
-// If len(ByItems) != 0 means index request should return related columns
-// to sort result rows in TiDB side for partition tables.
 func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleLen int, plans []base.PhysicalPlan) (dagReq *tipb.DAGRequest, err error) {
 	indexReq, err := builder.ConstructDAGReq(ctx, plans, kv.TiKV)
 	if err != nil {
 		return nil, err
 	}
 
-	indexReq.OutputOffsets = []uint32{}
 	idxScan := plans[0].(*plannercore.PhysicalIndexScan)
-	if len(idxScan.ByItems) != 0 {
-		schema := idxScan.Schema()
-		for _, item := range idxScan.ByItems {
+	outputOffsets, err := buildIndexScanOutputOffsets(idxScan, columns, handleLen)
+	if err != nil {
+		return nil, err
+	}
+	indexReq.OutputOffsets = outputOffsets
+	return indexReq, nil
+}
+
+// buildIndexReqOutputOffsets builds the output offsets for indexScan rows
+// If len(ByItems) != 0 means index request should return related columns
+// to sort result rows in TiDB side for partition tables.
+func buildIndexScanOutputOffsets(p *plannercore.PhysicalIndexScan, columns []*model.IndexColumn, handleLen int) ([]uint32, error) {
+	estCap := len(p.ByItems) + handleLen
+	needExtraOutputCol := p.NeedExtraOutputCol()
+	if needExtraOutputCol {
+		estCap++
+	}
+
+	outputOffsets := make([]uint32, 0, estCap)
+	if len(p.ByItems) != 0 {
+		schema := p.Schema()
+		for _, item := range p.ByItems {
 			c, ok := item.Expr.(*expression.Column)
 			if !ok {
 				return nil, errors.Errorf("Not support non-column in orderBy pushed down")
@@ -4160,7 +4224,7 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 			find := false
 			for i, schemaColumn := range schema.Columns {
 				if schemaColumn.ID == c.ID {
-					indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(i))
+					outputOffsets = append(outputOffsets, uint32(i))
 					find = true
 					break
 				}
@@ -4171,15 +4235,15 @@ func buildIndexReq(ctx sessionctx.Context, columns []*model.IndexColumn, handleL
 		}
 	}
 
-	for i := 0; i < handleLen; i++ {
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+i))
+	for i := range handleLen {
+		outputOffsets = append(outputOffsets, uint32(len(columns)+i))
 	}
 
-	if idxScan.NeedExtraOutputCol() {
+	if needExtraOutputCol {
 		// need add one more column for pid or physical table id
-		indexReq.OutputOffsets = append(indexReq.OutputOffsets, uint32(len(columns)+handleLen))
+		outputOffsets = append(outputOffsets, uint32(len(columns)+handleLen))
 	}
-	return indexReq, err
+	return outputOffsets, nil
 }
 
 func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIndexLookUpReader) (*IndexLookUpExecutor, error) {
@@ -4190,7 +4254,14 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	} else {
 		handleLen = 1
 	}
-	indexReq, err := buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+
+	var indexReq *tipb.DAGRequest
+	var err error
+	if v.IndexLookUpPushDown {
+		indexReq, err = buildIndexLookUpPushDownDAGReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans, v.IndexPlansUnNatureOrders)
+	} else {
+		indexReq, err = buildIndexReq(b.ctx, is.Index.Columns, handleLen, v.IndexPlans)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -4212,6 +4283,8 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 	if err != nil {
 		return nil, err
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexLookUpExecutor{
 		indexLookUpExecutorContext: newIndexLookUpExecutorContext(b.ctx),
@@ -4238,6 +4311,7 @@ func buildNoRangeIndexLookUpReader(b *executorBuilder, v *plannercore.PhysicalIn
 		PushedLimit:                v.PushedLimit,
 		idxNetDataSize:             v.GetAvgTableRowSize(),
 		avgRowSize:                 v.GetAvgTableRowSize(),
+		indexLookUpPushDown:        v.IndexLookUpPushDown,
 	}
 
 	if v.ExtraHandleCol != nil {
@@ -4367,6 +4441,8 @@ func buildNoRangeIndexMergeReader(b *executorBuilder, v *plannercore.PhysicalInd
 	if err != nil {
 		return nil, err
 	}
+
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 
 	e := &IndexMergeReaderExecutor{
 		BaseExecutor:             exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
@@ -5455,6 +5531,8 @@ func (b *executorBuilder) buildBatchPointGet(plan *plannercore.BatchPointGetPlan
 		}
 	}
 
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
+
 	decoder := NewRowDecoder(b.ctx, plan.Schema(), plan.TblInfo)
 	e := &BatchPointGetExec{
 		BaseExecutor:       exec.NewBaseExecutor(b.ctx, plan.Schema(), plan.ID()),
@@ -5659,6 +5737,7 @@ func (b *executorBuilder) buildTableSample(v *plannercore.PhysicalTableSample) *
 		b.err = err
 		return nil
 	}
+	b.ctx.GetSessionVars().StmtCtx.IsTiKV.Store(true)
 	e := &TableSampleExecutor{
 		BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 		table:        v.TableInfo,

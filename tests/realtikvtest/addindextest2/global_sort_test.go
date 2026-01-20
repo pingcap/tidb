@@ -16,6 +16,7 @@ package addindextest
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -44,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -67,17 +69,54 @@ func genStorageURI(t *testing.T) (host string, port uint16, uri string) {
 		fmt.Sprintf("gs://sorted/addindex?endpoint=%s&access-key=aaaaaa&secret-access-key=bbbbbb", gcsEndpoint)
 }
 
-func checkFileCleaned(t *testing.T, jobID int64, sortStorageURI string) {
+func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
 	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
 	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
-	prefix := strconv.Itoa(int(jobID))
-	dataFiles, statFiles, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+	for _, id := range []int64{jobID, taskID} {
+		prefix := strconv.Itoa(int(id))
+		files, err := external.GetAllFileNames(context.Background(), extStore, prefix)
+		require.NoError(t, err)
+		require.Greater(t, jobID, int64(0))
+		require.Equal(t, 0, len(files))
+	}
+}
+
+// check the file under dir or partitioned dir have files with keyword
+func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
+	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	require.Greater(t, jobID, int64(0))
-	require.Equal(t, 0, len(dataFiles))
-	require.Equal(t, 0, len(statFiles))
+	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	require.NoError(t, err)
+	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, dir)
+	require.NoError(t, err)
+	filteredFiles := make([]string, 0)
+	for _, f := range dataFiles {
+		if strings.Contains(f, keyword) {
+			filteredFiles = append(filteredFiles, f)
+		}
+	}
+	require.Greater(t, len(filteredFiles), 0)
+}
+
+func checkExternalFields(t *testing.T, tk *testkit.TestKit) {
+	// fetch subtask meta from tk, and check fields with `external:"true"` tag
+	rs := tk.MustQuery("select meta from mysql.tidb_background_subtask").Rows()
+	for _, r := range rs {
+		var subtaskMeta ddl.BackfillSubTaskMeta
+		require.NoError(t, json.Unmarshal([]byte(r[0].(string)), &subtaskMeta))
+		testutils.AssertExternalField(t, &subtaskMeta)
+	}
+}
+
+func getTaskID(t *testing.T, tk *testkit.TestKit) int64 {
+	rs := tk.MustQuery("select id from mysql.tidb_global_task").Rows()
+	require.Len(t, rs, 1)
+	// convert string to int64
+	id, err := strconv.ParseInt(rs[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	return id
 }
 
 func checkDataAndShowJobs(t *testing.T, tk *testkit.TestKit, count int) {
@@ -136,18 +175,25 @@ func TestGlobalSortBasic(t *testing.T) {
 	tk.MustExec("alter table t add index idx(a);")
 	checkDataAndShowJobs(t, tk, size)
 	<-scheduler.WaitCleanUpFinished
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, 0, cloudStorageURI)
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return()")
 	tk.MustExec("alter table t add index idx1(a);")
 	checkDataAndShowJobs(t, tk, size)
 	<-scheduler.WaitCleanUpFinished
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	checkFileCleaned(t, jobID, 0, cloudStorageURI)
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/skipCleanup", "return()"))
 	tk.MustExec("alter table t add unique index idx2(a);")
-	checkDataAndShowJobs(t, tk, size)
-	<-scheduler.WaitCleanUpFinished
-	checkFileCleaned(t, jobID, cloudStorageURI)
+	tk.MustExec("admin check table t;")
+	checkExternalFields(t, tk)
+	taskID := getTaskID(t, tk)
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/ingest")
+	checkFileExist(t, cloudStorageURI, strconv.Itoa(int(taskID)), "/plan/merge-sort")
+
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/skipCleanup"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/forceMergeSort"))
 }
 
 func TestGlobalSortMultiSchemaChange(t *testing.T) {

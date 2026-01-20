@@ -16,6 +16,7 @@ package storage
 
 import (
 	"context"
+	goerrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -293,27 +294,55 @@ func (mgr *TaskManager) getTopTasks(ctx context.Context, states ...proto.TaskSta
 
 // GetTaskExecInfoByExecID implements the scheduler.TaskManager interface.
 func (mgr *TaskManager) GetTaskExecInfoByExecID(ctx context.Context, execID string) ([]*TaskExecInfo, error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx,
-		`select `+basicTaskColumns+`, max(st.concurrency)
-			from mysql.tidb_global_task t join mysql.tidb_background_subtask st
-				on t.id = st.task_key and t.step = st.step
-			where t.state in (%?, %?, %?) and st.state in (%?, %?) and st.exec_id = %?
-			group by t.id
+	var res []*TaskExecInfo
+	err := mgr.WithNewSession(func(se sessionctx.Context) error {
+		// as the task will not go into next step when there are subtasks in those
+		// states, so their steps will be current step of their corresponding task,
+		// so we don't need to query by step here.
+		rs, err := sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select st.task_key, max(st.concurrency) from mysql.tidb_background_subtask st
+			where st.exec_id = %? and st.state in (%?, %?)
+			group by st.task_key`,
+			execID, proto.SubtaskStatePending, proto.SubtaskStateRunning)
+		if err != nil {
+			return err
+		}
+		if len(rs) == 0 {
+			return nil
+		}
+		maxSubtaskCon := make(map[int64]int, len(rs))
+		var taskIDsBuf strings.Builder
+		for i, r := range rs {
+			taskIDStr := r.GetString(0)
+			taskID, err2 := strconv.ParseInt(taskIDStr, 10, 0)
+			if err2 != nil {
+				return errors.Trace(err2)
+			}
+			maxSubtaskCon[taskID] = int(r.GetInt64(1))
+			if i > 0 {
+				taskIDsBuf.WriteString(",")
+			}
+			taskIDsBuf.WriteString(taskIDStr)
+		}
+		rs, err = sqlexec.ExecSQL(ctx, se.GetSQLExecutor(),
+			`select `+basicTaskColumns+` from mysql.tidb_global_task t
+			where t.id in (`+taskIDsBuf.String()+`) and t.state in (%?, %?, %?)
 			order by priority asc, create_time asc, id asc`,
-		proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing,
-		proto.SubtaskStatePending, proto.SubtaskStateRunning, execID)
-	if err != nil {
-		return nil, err
-	}
-
-	res := make([]*TaskExecInfo, 0, len(rs))
-	for _, r := range rs {
-		res = append(res, &TaskExecInfo{
-			TaskBase:           row2TaskBasic(r),
-			SubtaskConcurrency: int(r.GetInt64(9)),
-		})
-	}
-	return res, nil
+			proto.TaskStateRunning, proto.TaskStateReverting, proto.TaskStatePausing)
+		if err != nil {
+			return err
+		}
+		res = make([]*TaskExecInfo, 0, len(rs))
+		for _, r := range rs {
+			taskBase := row2TaskBasic(r)
+			res = append(res, &TaskExecInfo{
+				TaskBase:           taskBase,
+				SubtaskConcurrency: maxSubtaskCon[taskBase.ID],
+			})
+		}
+		return nil
+	})
+	return res, err
 }
 
 // GetTasksInStates gets the tasks in the states(order by priority asc, create_time acs, id asc).
@@ -755,14 +784,17 @@ func (*TaskManager) splitSubtasks(subtasks []*proto.Subtask) [][]*proto.Subtask 
 	return res
 }
 
-func serializeErr(err error) []byte {
-	if err == nil {
+func serializeErr(inErr error) []byte {
+	if inErr == nil {
 		return nil
 	}
-	originErr := errors.Cause(err)
-	tErr, ok := originErr.(*errors.Error)
-	if !ok {
-		tErr = errors.Normalize(originErr.Error())
+	var tErr *errors.Error
+	if goerrors.As(inErr, &tErr) {
+		// we want to keep the original message to have more context info
+		tErr = errors.Normalize(errors.GetErrStackMsg(inErr), errors.RFCCodeText(string(tErr.RFCCode())),
+			errors.MySQLErrorCode(int(tErr.Code())))
+	} else {
+		tErr = errors.Normalize(inErr.Error())
 	}
 	errBytes, err := tErr.MarshalJSON()
 	if err != nil {

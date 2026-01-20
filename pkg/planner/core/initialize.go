@@ -250,11 +250,16 @@ func (p PhysicalUnionScan) Init(ctx base.PlanContext, stats *property.StatsInfo,
 }
 
 // Init initializes PhysicalIndexLookUpReader.
-func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int) *PhysicalIndexLookUpReader {
+func (p PhysicalIndexLookUpReader) Init(ctx base.PlanContext, offset int, tryPushDownIndexLookUp bool) *PhysicalIndexLookUpReader {
 	p.BasePhysicalPlan = physicalop.NewBasePhysicalPlan(ctx, plancodec.TypeIndexLookUp, &p, offset)
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
-	p.IndexPlans = flattenPushDownPlan(p.indexPlan)
 	p.schema = p.tablePlan.Schema()
+	p.SetStats(p.tablePlan.StatsInfo())
+	if tryPushDownIndexLookUp {
+		p.tryPushDownLookUp(ctx)
+	}
+	p.TablePlans = flattenListPushDownPlan(p.tablePlan)
+	p.IndexPlans, p.IndexPlansUnNatureOrders = flattenTreePushDownPlan(p.indexPlan)
+	setTableScanToTableRowIDScan(p.tablePlan)
 	return &p
 }
 
@@ -273,11 +278,11 @@ func (p PhysicalIndexMergeReader) Init(ctx base.PlanContext, offset int) *Physic
 	}
 	p.PartialPlans = make([][]base.PhysicalPlan, 0, len(p.partialPlans))
 	for _, partialPlan := range p.partialPlans {
-		tempPlans := flattenPushDownPlan(partialPlan)
+		tempPlans := flattenListPushDownPlan(partialPlan)
 		p.PartialPlans = append(p.PartialPlans, tempPlans)
 	}
 	if p.tablePlan != nil {
-		p.TablePlans = flattenPushDownPlan(p.tablePlan)
+		p.TablePlans = flattenListPushDownPlan(p.tablePlan)
 		p.schema = p.tablePlan.Schema()
 		p.HandleCols = p.TablePlans[0].(*PhysicalTableScan).HandleCols
 	} else {
@@ -342,7 +347,7 @@ func (p PhysicalTableReader) Init(ctx base.PlanContext, offset int) *PhysicalTab
 	if p.tablePlan == nil {
 		return &p
 	}
-	p.TablePlans = flattenPushDownPlan(p.tablePlan)
+	p.TablePlans = flattenListPushDownPlan(p.tablePlan)
 	p.schema = p.tablePlan.Schema()
 	p.adjustReadReqType(ctx)
 	if p.ReadReqType == BatchCop || p.ReadReqType == MPP {
@@ -437,23 +442,72 @@ func (p PhysicalExchangeReceiver) Init(ctx base.PlanContext, stats *property.Sta
 	return &p
 }
 
-func flattenTreePlan(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
+// flattenPlanWithPreorderTraversal flattens a plan tree to a list with preorder traversal.
+func flattenPlanWithPreorderTraversal(plan base.PhysicalPlan, plans []base.PhysicalPlan) []base.PhysicalPlan {
 	plans = append(plans, plan)
 	for _, child := range plan.Children() {
-		plans = flattenTreePlan(child, plans)
+		plans = flattenPlanWithPreorderTraversal(child, plans)
 	}
 	return plans
 }
 
-// flattenPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
-func flattenPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
+// flattenListPushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+// It is used to flatten the plan tree that all parents have only one child.
+func flattenListPushDownPlan(p base.PhysicalPlan) []base.PhysicalPlan {
 	plans := make([]base.PhysicalPlan, 0, 5)
-	plans = flattenTreePlan(p, plans)
+	plans = flattenPlanWithPreorderTraversal(p, plans)
 	for i := 0; i < len(plans)/2; i++ {
 		j := len(plans) - i - 1
 		plans[i], plans[j] = plans[j], plans[i]
 	}
 	return plans
+}
+
+// flattenPlanWithPostorderTraversal flattens a plan tree to a list with postorder traversal.
+// The unNatureOrdersMaps the childPlanIndex => parentPlanIndex for those plans whose parent's index
+// is not equal to the child's index + 1.
+func flattenPlanWithPostorderTraversal(plan base.PhysicalPlan, plans []base.PhysicalPlan, unNatureOrdersMap map[int]int) ([]base.PhysicalPlan, map[int]int) {
+	//nolint: prealloc
+	var unNatureOrderChildren []int
+	children := plan.Children()
+	if len(children) > 1 && unNatureOrdersMap == nil {
+		unNatureOrdersMap = make(map[int]int)
+		unNatureOrderChildren = make([]int, 0, len(children))
+	}
+	for _, child := range children {
+		plans, unNatureOrdersMap = flattenPlanWithPostorderTraversal(child, plans, unNatureOrdersMap)
+		unNatureOrderChildren = append(unNatureOrderChildren, len(plans)-1)
+	}
+	plans = append(plans, plan)
+	for _, childIndex := range unNatureOrderChildren {
+		if parentIndex := len(plans) - 1; parentIndex != childIndex+1 {
+			unNatureOrdersMap[childIndex] = parentIndex
+		}
+	}
+	return plans, unNatureOrdersMap
+}
+
+// flattenTreePushDownPlan converts a plan tree to a list, whose head is the leaf node like table scan.
+// The returned list follows the order of depth-first search with post-order traversal.
+// That is: left child first, then right child, then parent.
+// For example, a DAG:
+//
+//	         A
+//	        /
+//	       B
+//	     /   \
+//	    C     D
+//	   /     / \
+//	  E     F   G
+//	 /
+//	H
+//
+// Its order should be: [H, E, C, F, G, D, B, A]
+// This function also returns a map which records the childPlanIndex => parentPlanIndex if
+// the child's index + 1 is not equal to the parent's index.
+// This function should NOT be used by TiFlash
+func flattenTreePushDownPlan(p base.PhysicalPlan) ([]base.PhysicalPlan, map[int]int) {
+	return flattenPlanWithPostorderTraversal(p, make([]base.PhysicalPlan, 0, 5), nil)
 }
 
 // Init only assigns type and context.

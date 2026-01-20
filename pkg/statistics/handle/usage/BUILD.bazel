@@ -39,10 +39,10 @@ go_test(
         "predicate_column_test.go",
         "session_stats_collect_test.go",
     ],
-    embed = [":usage"],
     flaky = True,
-    shard_count = 10,
+    shard_count = 13,
     deps = [
+        ":usage",
         "//pkg/meta/model",
         "//pkg/parser/model",
         "//pkg/statistics/handle/usage/indexusage",

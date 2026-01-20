@@ -93,6 +93,8 @@ type AccessPath struct {
 
 	// Maybe added in model.IndexInfo better, but the cache of model.IndexInfo may lead side effect
 	IsUkShardIndexPath bool
+	// Whether to use the index lookup push down optimization for this access path.
+	IsIndexLookUpPushDown bool
 }
 
 // Clone returns a deep copy of the original AccessPath.
