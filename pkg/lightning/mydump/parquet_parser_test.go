@@ -384,7 +384,9 @@ func TestParquetAurora(t *testing.T) {
 		for j := range row {
 			switch v := expectedValues[j].(type) {
 			case int64:
-				assert.Equal(t, row[j].GetInt64(), v)
+				s, err := row[j].ToString()
+				require.NoError(t, err)
+				require.Equal(t, strconv.Itoa(int(v)), s)
 			case string:
 				s, err := row[j].ToString()
 				require.NoError(t, err)
