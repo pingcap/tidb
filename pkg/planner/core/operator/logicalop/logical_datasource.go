@@ -710,9 +710,9 @@ func (ds *DataSource) AppendTableCol(col *expression.Column) {
 }
 
 // CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
-// It will go thourgh each partial index to see whether it's condition constraints are all satisfied by the pushed down conditions.
+// It will go through each partial index to see whether it's condition constraints are all satisfied by the pushed down conditions.
 // Detailed checking can be found in the comment of `CheckConstraints`.
-// And we specially impelement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
+// And we specially implement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
 // It's a special handler now, and it's not easy to extend to other constraints.
 func (ds *DataSource) CheckPartialIndexes() {
 	var columnNames types.NameSlice

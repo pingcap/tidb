@@ -158,10 +158,16 @@ type AccessPath struct {
 	GroupByColIdxs []int
 
 	PreMatchExprs []expression.Expression
-	// PreMatchNotAlwaysValid indicates whether this index path is always valid.
-	// It's designed for the partial index with condition. We only check the IS NULL currently.
-	// e.g. for partial index idx(b) where a IS NULL, if the filter is b = ? and a IS NULL/a > 0, then the index path is valid.
-	// We add this field to make the plan cache usable for the partial index with limited cases.
+	// PreMatchNotAlwaysValid indicates that this index path is not guaranteed to be valid
+	// for all parameter values when a partial index condition is involved.
+	// It's designed for partial indexes with a WHERE condition (for example, idx(b) WHERE a IS NOT NULL)
+	// and tracks whether that condition is always satisfied by the current filter.
+	// e.g. for partial index idx(b) WHERE a IS NOT NULL:
+	//   - if the filter is "b = ? AND a > 0", the partial index condition is always satisfied,
+	//     so PreMatchNotAlwaysValid is false (the index path is always valid);
+	//   - if the filter is "b = ?" or "b = ? AND a IS NULL", the partial index condition may not hold,
+	//     so PreMatchNotAlwaysValid is true (the index path is not always valid).
+	// We add this field to make the plan cache usable for partial indexes in these limited cases.
 	PreMatchNotAlwaysValid bool
 }
 

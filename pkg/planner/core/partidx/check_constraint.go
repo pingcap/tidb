@@ -150,8 +150,8 @@ func implIsNotNull(rangerctx *context.RangerContext, targetCol *expression.Colum
 }
 
 // AlwaysMeetConstraints checks whether the filters always meet the constraints from the predefined predicates in index meta.
-// This check is only applied to the pre condition that is single IS NULL.
-// e.g. for partial index idx(b) where a IS NULL, if the filter is b = ? and a is null/a > 10, then we can guarantee that a IS NULL is always true.
+// This check is only applied to the pre condition that is single IS NOT NULL.
+// e.g. for partial index idx(b) where a IS NOT NULL, if the filter is b = ? and a is not null/a > 10, then we can guarantee that a IS NOT NULL is always true.
 // Because the `IsNullRejected` has correctness issues. So we implement a simpler version here.
 func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []expression.Expression) bool {
 	if len(prePredicates) != 1 {
@@ -169,7 +169,7 @@ func AlwaysMeetConstraints(sctx planctx.PlanContext, prePredicates, filters []ex
 	if !ok {
 		return false
 	}
-	// When the index is chosen, the givenfilters can not be empty.
+	// When the index is chosen, the given filters can not be empty.
 	for _, filter := range filters {
 		sf, ok := filter.(*expression.ScalarFunction)
 		if !ok {
