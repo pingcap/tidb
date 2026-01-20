@@ -88,6 +88,10 @@ t4	CREATE TABLE `t4` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+insert into t4 values (0, 's');
+select * from t4;
+id	name
+0	s
 alter table t4 drop column _tidb_softdelete_time;
 Error 8200 (HY000): Unsupported can not drop internal columns
 alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
