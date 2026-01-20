@@ -722,7 +722,7 @@ func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uin
 	// Calculate the percentage or NULLs in the original row count
 	// Assume that 50% of the newly added rows are NULLs
 	nullsRatio := (float64(hg.NullCount) / histRowCount) * 0.5
-	// Calcuate the percent of topN in the original row count
+	// Calculate the percent of topN in the original row count
 	// Assume that 50% of the newly added rows are topN
 	topNRatio := (float64(topNCount) / histRowCount) * 0.5
 	addedRows := math.Abs(float64(realtimeRowCount) - histRowCount)
