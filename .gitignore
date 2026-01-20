@@ -48,4 +48,5 @@ coverage.dat
 go.work
 go.work.sum
 .cursor
+.codex
 *__failpoint_stash__
