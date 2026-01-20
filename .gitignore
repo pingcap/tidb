@@ -48,6 +48,7 @@ coverage.dat
 go.work
 go.work.sum
 .cursor
+.codex
 *__failpoint_stash__
 # Personal config files
 /*config.toml
