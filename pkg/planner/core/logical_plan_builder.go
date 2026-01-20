@@ -742,6 +742,16 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 // LATERAL makes left-side columns available to the right-side subquery,
 // which is semantically equivalent to a correlated subquery.
 func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan base.LogicalPlan, joinNode *ast.Join) (base.LogicalPlan, error) {
+	// NATURAL JOIN and USING clauses are not supported with LATERAL derived tables.
+	// These clauses match columns by name between two tables, but LATERAL subqueries
+	// define their own output column names which typically don't match the left-side table.
+	if joinNode.NaturalJoin {
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("NATURAL JOIN is not supported with LATERAL")
+	}
+	if joinNode.Using != nil {
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("USING clause is not supported with LATERAL")
+	}
+
 	// Extract correlated columns from right side that reference left side
 	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, leftPlan.Schema())
 
