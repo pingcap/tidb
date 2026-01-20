@@ -1241,23 +1241,32 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
 
-	if tblInfo.TiFlashReplica == nil {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
-	} else if !tblInfo.TiFlashReplica.Available {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
-	} else {
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
-	}
-
 	// consider hypo TiFlash replicas
+	isHypoTiFlashReplica := false
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
 		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
 		originalTableName := tblInfo.Name.L
 		if hypoReplicas[dbName.L] != nil {
 			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
-				publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+				isHypoTiFlashReplica = true
 			}
 		}
+	}
+
+	if tblInfo.TiFlashReplica == nil {
+		if isHypoTiFlashReplica {
+			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
+		}
+	} else if !tblInfo.TiFlashReplica.Available {
+		if isHypoTiFlashReplica {
+			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
+		}
+	} else {
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 	}
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
