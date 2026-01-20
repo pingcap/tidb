@@ -72,11 +72,10 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	// OSS credential through assume role need refresh periodically, if we do
 	// send them out to TiKV, they also need to be refreshed, not sure how this
 	// works for BR now, we can add it later.
-	if !opts.SendCredentials {
-		backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
-	} else {
+	if opts.SendCredentials {
 		return nil, errors.New("sending OSS credentials to TiKV is not supported")
 	}
+	backend.AccessKey, backend.SecretAccessKey, backend.SessionToken = "", "", ""
 
 	var ossOptFns []func(*oss.Options)
 	if qs.ForcePathStyle {
@@ -135,6 +134,7 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	if opts.AccessRecording != nil {
 		ossOptFns = append(ossOptFns, func(o *oss.Options) {
 			o.ResponseHandlers = append(o.ResponseHandlers, func(resp *http.Response) error {
+				// nolint:bodyclose
 				opts.AccessRecording.RecRequest(resp.Request)
 				return nil
 			})
