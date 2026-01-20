@@ -468,8 +468,13 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 				}
 				// Clone the field name and update table name
 				// For derived tables (subqueries), clear DBName to avoid confusion with actual tables
+				// For base tables with aliases, preserve DBName for proper metadata and DEFAULT() resolution
+				dbName := ast.NewCIStr("")
+				if isTableName {
+					dbName = name.DBName
+				}
 				clonedNames[i] = &types.FieldName{
-					DBName:            ast.NewCIStr(""), // Clear DBName for derived table
+					DBName:            dbName,
 					OrigTblName:       name.OrigTblName,
 					OrigColName:       name.OrigColName,
 					TblName:           x.AsName,
@@ -563,6 +568,25 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	}
 }
 
+// containsLateralTableSource checks if a ResultSetNode contains a LATERAL table source.
+// This handles parenthesized forms like (LATERAL (...) AS dt) where the parser creates
+// nested Join nodes: Join{Right: Join{Left: TableSource{Lateral:true}}}
+func containsLateralTableSource(node ast.ResultSetNode) bool {
+	switch n := node.(type) {
+	case *ast.TableSource:
+		return n.Lateral
+	case *ast.Join:
+		// For parenthesized single table refs, the parser creates Join{Left: TableSource, Right: nil}
+		if n.Right == nil {
+			return containsLateralTableSource(n.Left)
+		}
+		// Check both sides for nested LATERAL
+		return containsLateralTableSource(n.Left) || containsLateralTableSource(n.Right)
+	default:
+		return false
+	}
+}
+
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.LogicalPlan, error) {
 	// We will construct a "Join" node for some statements like "INSERT",
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
@@ -572,10 +596,10 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	}
 
 	// Check if right side is LATERAL
-	var isLateral bool
-	if rightSource, ok := joinNode.Right.(*ast.TableSource); ok {
-		isLateral = rightSource.Lateral
-	}
+	// Detect LATERAL - check if right side contains a LATERAL table source
+	// This handles both direct TableSource and parenthesized forms like (LATERAL (...) AS dt)
+	// When parenthesized, the parser creates: Join{Right: Join{Left: TableSource{Lateral:true}}}
+	isLateral := containsLateralTableSource(joinNode.Right)
 
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown
 	// Don't enable join reorder for LATERAL (similar to StraightJoin)
@@ -594,8 +618,16 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// For LATERAL: Push left side schema onto outerSchemas stack
 	// This makes left-side columns visible when building right-side subquery
 	if isLateral {
-		b.outerSchemas = append(b.outerSchemas, leftPlan.Schema())
-		b.outerNames = append(b.outerNames, leftPlan.OutputNames())
+		// For USING/NATURAL joins, use FullSchema/FullNames which include redundant columns
+		// that were merged (e.g., both t1.a and t2.a from JOIN ... USING(a))
+		outerSchema := leftPlan.Schema()
+		outerNames := leftPlan.OutputNames()
+		if join, ok := leftPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+			outerSchema = join.FullSchema
+			outerNames = join.FullNames
+		}
+		b.outerSchemas = append(b.outerSchemas, outerSchema)
+		b.outerNames = append(b.outerNames, outerNames)
 		// Set flag to allow ORDER BY/LIMIT in LATERAL subqueries within recursive CTEs
 		saveBuildingLateral := b.buildingLateralSubquery
 		b.buildingLateralSubquery = true
@@ -656,7 +688,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		lFullSchema, rFullSchema *expression.Schema
 		lFullNames, rFullNames   types.NameSlice
 	)
+	// Check for LogicalJoin or LogicalApply (which embeds LogicalJoin)
+	// LogicalApply is used for LATERAL joins and correlated subqueries
 	if left, ok := leftPlan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+		lFullSchema = left.FullSchema
+		lFullNames = left.FullNames
+	} else if left, ok := leftPlan.(*logicalop.LogicalApply); ok && left.FullSchema != nil {
 		lFullSchema = left.FullSchema
 		lFullNames = left.FullNames
 	} else {
@@ -664,6 +701,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		lFullNames = leftPlan.OutputNames()
 	}
 	if right, ok := rightPlan.(*logicalop.LogicalJoin); ok && right.FullSchema != nil {
+		rFullSchema = right.FullSchema
+		rFullNames = right.FullNames
+	} else if right, ok := rightPlan.(*logicalop.LogicalApply); ok && right.FullSchema != nil {
 		rFullSchema = right.FullSchema
 		rFullNames = right.FullNames
 	} else {
@@ -780,6 +820,7 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 		LogicalJoin:   logicalop.LogicalJoin{JoinType: joinType},
 		CorCols:       corCols,
 		NoDecorrelate: false, // Allow decorrelation; optimizer will decide if safe
+		IsLateral:     true,  // Mark as LATERAL join to prevent unsafe elimination in PruneColumns
 	}.Init(b.ctx, b.getSelectOffset())
 
 	ap.SetChildren(leftPlan, rightPlan)

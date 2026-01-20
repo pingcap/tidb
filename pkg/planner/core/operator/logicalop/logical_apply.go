@@ -37,6 +37,10 @@ type LogicalApply struct {
 	CorCols []*expression.CorrelatedColumn `hash64-equals:"true"`
 	// NoDecorrelate is from /*+ no_decorrelate() */ hint.
 	NoDecorrelate bool `hash64-equals:"true"`
+	// IsLateral indicates this Apply came from a LATERAL join (not a scalar correlated subquery).
+	// LATERAL joins may return multiple rows per left row, so they cannot be eliminated
+	// based solely on column pruning (unlike scalar subqueries with MaxOneRow guarantee).
+	IsLateral bool `hash64-equals:"true"`
 }
 
 // Init initializes LogicalApply.
@@ -76,7 +80,10 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) (base.
 	leftCols, rightCols := la.ExtractUsedCols(parentUsedCols)
 	allowEliminateApply := fixcontrol.GetBoolWithDefault(la.SCtx().GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45822, true)
 	var err error
-	if allowEliminateApply && rightCols == nil && la.JoinType == base.LeftOuterJoin {
+	// IMPORTANT: We can only eliminate Apply for scalar correlated subqueries (which have MaxOneRow guarantee).
+	// For LATERAL joins (IsLateral=true), the subquery may return multiple rows per left row, so eliminating
+	// the Apply would change result multiplicity (wrong COUNT(*), aggregate results, etc.).
+	if allowEliminateApply && !la.IsLateral && rightCols == nil && la.JoinType == base.LeftOuterJoin {
 		resultPlan := la.Children()[0]
 		// reEnter the new child's column pruning, returning child[0] as a new child here.
 		return resultPlan.PruneColumns(parentUsedCols)
