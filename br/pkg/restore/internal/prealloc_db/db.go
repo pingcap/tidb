@@ -80,15 +80,12 @@ func (db *DB) ExecDDL(ctx context.Context, ddlJob *model.Job) error {
 	dbInfo := ddlJob.BinlogInfo.DBInfo
 	switch ddlJob.Type {
 	case model.ActionCreateSchema:
-		err = db.se.CreateDatabase(ctx, dbInfo)
-		if err != nil {
-			if infoschema.ErrDatabaseExists.Equal(err) {
-				err = nil
-			} else {
-				log.Error("create database failed", zap.Stringer("db", dbInfo.Name), zap.Error(err))
-			}
+		err = db.se.CreateDatabaseOnExistError(ctx, dbInfo)
+		if err != nil && !infoschema.ErrDatabaseExists.Equal(err) {
+			log.Error("create database failed", zap.Stringer("db", dbInfo.Name), zap.Error(err))
+			return errors.Trace(err)
 		}
-		return errors.Trace(err)
+		return nil
 	case model.ActionCreateTable:
 		infoCloned := tableInfo.Clone()
 		err = db.se.CreateTable(ctx, ast.NewCIStr(ddlJob.SchemaName), infoCloned)
@@ -141,7 +138,7 @@ func (db *DB) CreatePlacementPolicy(ctx context.Context, policy *model.PolicyInf
 }
 
 // CreateDatabase executes a CREATE DATABASE SQL.
-func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportPolicy bool, policyMap *sync.Map) error {
+func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportPolicy bool, policyMap *sync.Map) (bool, error) {
 	log.Info("create database", zap.Stringer("name", schema.Name))
 
 	if !supportPolicy {
@@ -152,15 +149,18 @@ func (db *DB) CreateDatabase(ctx context.Context, schema *model.DBInfo, supportP
 
 	if schema.PlacementPolicyRef != nil {
 		if err := db.ensurePlacementPolicy(ctx, schema.PlacementPolicyRef.Name, policyMap); err != nil {
-			return errors.Trace(err)
+			return false, errors.Trace(err)
 		}
 	}
 
-	err := db.se.CreateDatabase(ctx, schema)
-	if err != nil && !infoschema.ErrDatabaseExists.Equal(err) {
+	err := db.se.CreateDatabaseOnExistError(ctx, schema)
+	if err != nil {
+		if infoschema.ErrDatabaseExists.Equal(err) {
+			return true, nil
+		}
 		log.Error("create database failed", zap.Stringer("db", schema.Name), zap.Error(err))
 	}
-	return errors.Trace(err)
+	return false, errors.Trace(err)
 }
 
 func (db *DB) restoreSequence(ctx context.Context, table *metautil.Table) error {

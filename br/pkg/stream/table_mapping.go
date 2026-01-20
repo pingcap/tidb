@@ -597,7 +597,7 @@ func (tm *TableMappingManager) MergeBaseDBReplace(baseMap map[UpstreamID]*DBRepl
 				existingDBReplace.Name = baseDBReplace.Name
 			}
 			// update the reused flag of the db replace, maybe it is reused in snapshot restore.
-			if existingDBReplace.Reused == false && baseDBReplace.Reused == true {
+			if baseDBReplace.Reused {
 				existingDBReplace.Reused = true
 			}
 		}

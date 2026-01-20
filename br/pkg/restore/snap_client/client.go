@@ -54,7 +54,6 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -1014,11 +1013,11 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 	if len(rc.dbPool) == 0 {
 		log.Info("create databases sequentially")
 		for _, db := range dbs {
-			err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
-				if !infoschema.ErrDatabaseExists.Equal(err) {
-					return errors.Trace(err)
-				}
+				return errors.Trace(err)
+			}
+			if exists {
 				db.SetReusedByPITR()
 			}
 		}
@@ -1032,11 +1031,11 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
-				if !infoschema.ErrDatabaseExists.Equal(err) {
-					return errors.Trace(err)
-				}
+				return errors.Trace(err)
+			}
+			if exists {
 				db.SetReusedByPITR()
 			}
 			return nil
