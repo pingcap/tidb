@@ -26,7 +26,12 @@ type logPrinter struct {
 
 func newLogPrinter(logger *zap.Logger) *logPrinter {
 	return &logPrinter{
-		logger: logger,
+		// skip 3 levels to reach the original caller
+		// top: this logger
+		// top-1: standardLogger.printf of OSS
+		// top-2: standardLogger.Info/Error/Debug/Warn of OSS
+		// top-3: the actual caller in OSS SDK
+		logger: logger.WithOptions(zap.AddCallerSkip(3)),
 	}
 }
 

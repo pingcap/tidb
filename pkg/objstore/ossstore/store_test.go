@@ -328,6 +328,27 @@ func TestStore(t *testing.T) {
 	})
 }
 
+func TestInternalEndpoint(t *testing.T) {
+	t.Skip("this test requires real oss credentials, skip for normal ci")
+	ctx := context.Background()
+	s3Be := &backuppb.S3{
+		Bucket: "tidbx-gsort",
+		Prefix: "test-prefix",
+	}
+	_, err := NewOSSStorage(ctx, s3Be,
+		&storeapi.Options{
+			AccessRecording: &recording.AccessStats{},
+			CheckPermissions: []storeapi.Permission{
+				storeapi.AccessBuckets,
+				storeapi.ListObjects,
+				storeapi.GetObject,
+				storeapi.PutAndDeleteObject,
+			},
+		},
+	)
+	require.NoError(t, err)
+}
+
 func TestCanUseInternalEndpoint(t *testing.T) {
 	require.False(t, canUseInternalEndpoint("", "cn-hangzhou"))
 	require.False(t, canUseInternalEndpoint("cn-beijing", "cn-hangzhou"))
