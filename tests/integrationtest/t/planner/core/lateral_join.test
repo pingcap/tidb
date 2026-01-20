@@ -1,0 +1,110 @@
+# TestLateralJoinBasic
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2), (3);
+insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd'), (3, 'e');
+
+## Basic LATERAL join with comma syntax
+select * from t1, lateral (select b from t2 where t2.a = t1.a limit 1) as lat order by t1.a;
+
+## LATERAL with ORDER BY in subquery
+select * from t1, lateral (select b from t2 where t2.a = t1.a order by b limit 1) as lat order by t1.a;
+
+## LATERAL with aggregate in subquery
+select * from t1, lateral (select count(*) as cnt from t2 where t2.a = t1.a) as lat order by t1.a;
+
+# TestLateralJoinLeftJoin
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+insert into t1 values (1), (2), (3), (4);
+insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');
+
+## LEFT JOIN LATERAL - all rows from t1 preserved
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a limit 1) as lat on true order by t1.a;
+
+## LEFT JOIN LATERAL - no matches should return NULL
+select * from t1 left join lateral (select b from t2 where t2.a = t1.a and t2.a = 99) as lat on true order by t1.a;
+
+# TestLateralJoinExplain
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b varchar(10));
+
+## Verify Apply operator is used for LATERAL
+--replace_column 1 <id> 2 <estRows> 3 <task> 4 <access_object> 5 <operator_info>
+explain format='brief' select * from t1, lateral (select b from t2 where t2.a = t1.a) as lat;
+
+## Verify Apply operator for LEFT JOIN LATERAL
+--replace_column 1 <id> 2 <estRows> 3 <task> 4 <access_object> 5 <operator_info>
+explain format='brief' select * from t1 left join lateral (select b from t2 where t2.a = t1.a) as lat on true;
+
+# TestLateralJoinWithRecursiveCTE
+drop table if exists t2;
+create table t2 (a int, b varchar(10));
+insert into t2 values (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');
+
+## Recursive CTE with LATERAL join - empty string seed
+with recursive tr (level, b_col) as (
+    select 1, ''
+    union all
+    select level + 1, lat.result_col
+    from tr, lateral (select b as result_col from t2 where a = level order by b limit 1) as lat
+    where level < 3
+)
+select * from tr where level > 0 order by level;
+
+## Recursive CTE with LATERAL join - NULL seed
+with recursive tr (level, b_col) as (
+    select 1, cast(null as char(10))
+    union all
+    select level + 1, lat.result_col
+    from tr, lateral (select b as result_col from t2 where a = level order by b limit 1) as lat
+    where level < 3
+)
+select * from tr where level > 0 order by level;
+
+# TestLateralJoinMultipleTables
+drop table if exists t1, t2, t3;
+create table t1 (a int);
+create table t2 (a int, b int);
+create table t3 (b int, c varchar(10));
+insert into t1 values (1), (2);
+insert into t2 values (1, 10), (1, 20), (2, 30);
+insert into t3 values (10, 'x'), (20, 'y'), (30, 'z');
+
+## LATERAL with multiple left-side tables
+select * from t1, t2, lateral (select c from t3 where t3.b = t2.b limit 1) as lat
+where t1.a = t2.a order by t1.a, t2.b;
+
+# TestLateralJoinNested
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b int);
+insert into t1 values (1), (2);
+insert into t2 values (1, 100), (1, 200), (2, 300);
+
+## Nested subquery in LATERAL
+select * from t1, lateral (
+    select sum(b) as total from t2 where t2.a = t1.a
+) as lat order by t1.a;
+
+# TestLateralJoinNoCorrelation
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (b int);
+insert into t1 values (1), (2);
+insert into t2 values (10), (20);
+
+## LATERAL without correlation (should still work)
+select * from t1, lateral (select b from t2 limit 1) as lat order by t1.a;
+
+# TestLateralJoinRightJoinError
+drop table if exists t1, t2;
+create table t1 (a int);
+create table t2 (a int, b int);
+
+## RIGHT JOIN with LATERAL should error
+--error 3809
+select * from t1 right join lateral (select b from t2 where t2.a = t1.a) as lat on true;
