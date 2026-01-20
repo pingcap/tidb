@@ -109,6 +109,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"from_base64",
 		"from_days",
 		"from_unixtime",
+		"ftsMysqlMatchAgainst",
 		"fts_match_prefix",
 		"fts_match_word",
 		"ge",
