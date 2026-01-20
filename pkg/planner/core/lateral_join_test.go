@@ -473,10 +473,8 @@ func findLogicalApply(p base.LogicalPlan) bool {
 	}
 
 	for _, child := range p.Children() {
-		if logicalChild, ok := child.(base.LogicalPlan); ok {
-			if findLogicalApply(logicalChild) {
-				return true
-			}
+		if findLogicalApply(child) {
+			return true
 		}
 	}
 
@@ -494,10 +492,8 @@ func findFirstLogicalApply(p base.LogicalPlan) *logicalop.LogicalApply {
 	}
 
 	for _, child := range p.Children() {
-		if logicalChild, ok := child.(base.LogicalPlan); ok {
-			if apply := findFirstLogicalApply(logicalChild); apply != nil {
-				return apply
-			}
+		if apply := findFirstLogicalApply(child); apply != nil {
+			return apply
 		}
 	}
 
@@ -516,9 +512,7 @@ func countLogicalApply(p base.LogicalPlan) int {
 	}
 
 	for _, child := range p.Children() {
-		if logicalChild, ok := child.(base.LogicalPlan); ok {
-			count += countLogicalApply(logicalChild)
-		}
+		count += countLogicalApply(child)
 	}
 
 	return count
