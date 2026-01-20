@@ -800,9 +800,10 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 		ap.Schema().Columns[leftLen+i].Index = leftLen + i
 	}
 
-	// Clone output names to avoid sharing FieldName structs that might be mutated later
-	// For LATERAL, we must ensure the right-side (LATERAL subquery) output has NO DBName
-	// to prevent confusion with actual database tables
+	// Clone output names to avoid sharing FieldName structs that might be mutated later.
+	// Clear DBName for the right-side (derived table) outputs to prevent confusion with
+	// actual database tables. This is consistent with buildResultSetNode behavior for all
+	// aliased derived tables (see line ~470).
 	outputNames := make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len())
 	for i, name := range leftPlan.OutputNames() {
 		outputNames[i] = &types.FieldName{
@@ -818,7 +819,7 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	}
 	for i, name := range rightPlan.OutputNames() {
 		outputNames[leftPlan.Schema().Len()+i] = &types.FieldName{
-			DBName:            ast.NewCIStr(""), // CRITICAL: Clear DBName for derived table outputs
+			DBName:            ast.NewCIStr(""), // Clear DBName for derived table
 			OrigTblName:       name.OrigTblName,
 			OrigColName:       name.OrigColName,
 			TblName:           name.TblName,
