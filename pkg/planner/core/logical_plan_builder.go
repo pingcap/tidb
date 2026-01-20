@@ -833,6 +833,7 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	// Handle ON conditions if present
 	if joinNode.On != nil {
+		b.curClause = onClause
 		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, ap, nil, false)
 		if err != nil {
 			return nil, err
