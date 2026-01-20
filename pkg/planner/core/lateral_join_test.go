@@ -94,7 +94,8 @@ func TestLateralJoinPlanBuilding(t *testing.T) {
 			if tc.expectError {
 				require.Error(t, err, "Expected error for: %s", tc.sql)
 				if tc.expectedErrorCode != 0 {
-					require.Equal(t, tc.expectedErrorCode, int(plannererrors.ErrInvalidLateralJoin.Code()))
+					require.True(t, plannererrors.ErrInvalidLateralJoin.Equal(err),
+						"Expected ErrInvalidLateralJoin error, got: %v", err)
 				}
 				return
 			}
@@ -314,7 +315,8 @@ func TestLateralJoinErrorPaths(t *testing.T) {
 			if tc.expectError {
 				require.Error(t, err, "Expected error for: %s", tc.sql)
 				if tc.expectedErrorCode != 0 {
-					require.Equal(t, tc.expectedErrorCode, int(plannererrors.ErrInvalidLateralJoin.Code()))
+					require.True(t, plannererrors.ErrInvalidLateralJoin.Equal(err),
+						"Expected ErrInvalidLateralJoin error, got: %v", err)
 				}
 			} else {
 				require.NoError(t, err, "Unexpected error for: %s", tc.sql)
