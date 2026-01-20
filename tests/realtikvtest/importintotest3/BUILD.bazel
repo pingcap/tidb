@@ -28,6 +28,7 @@ go_test(
         "//pkg/planner/core",
         "//pkg/sessionctx/vardef",
         "//pkg/store",
+        "//pkg/store/driver/error",
         "//pkg/testkit",
         "//pkg/testkit/testfailpoint",
         "//tests/realtikvtest",

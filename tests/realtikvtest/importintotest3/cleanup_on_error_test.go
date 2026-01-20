@@ -41,7 +41,7 @@ func (s *mockGCSSuite) TestCleanupOnDataEngineImportError() {
 		}
 	})
 	s.tk.MustQuery(fmt.Sprintf("IMPORT INTO t FROM '%s'", dataPath))
-	s.GreaterOrEqual(enterCnt.Load(), 2, "the import should retry on data engine import error")
+	s.GreaterOrEqual(enterCnt.Load(), int32(2), "the import should retry on data engine import error")
 
 	s.tk.MustQuery("select * from t;").Sort().Check(testkit.Rows("1 a", "2 b"))
 }
