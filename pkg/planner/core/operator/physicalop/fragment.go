@@ -50,7 +50,7 @@ type Fragment struct {
 	// following field are filled during getPlanFragment.
 	TableScan         *PhysicalTableScan          // result physical table scan
 	ExchangeReceivers []*PhysicalExchangeReceiver // data receivers
-	CTEReaders        []*PhysicalCTE              // CTE consumers, to be replaced by CTESource during task generation.
+	CTEReaders        []*PhysicalCTE
 
 	// following fields are filled after scheduling.
 	Sink base.MPPSink // data exporter
