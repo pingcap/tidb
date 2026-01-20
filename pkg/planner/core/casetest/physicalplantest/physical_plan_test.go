@@ -327,10 +327,7 @@ func TestMPPHintsScope(t *testing.T) {
 		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 		testKit.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
 		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
-		testKit.MustExec("alter table t set tiflash replica 1")
-		tb := external.GetTableByName(t, testKit, "test", "t")
-		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
+		testKit.MustExec("alter table t set hypo tiflash replica 1")
 
 		var input []string
 		var output []struct {

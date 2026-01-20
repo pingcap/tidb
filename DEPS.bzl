@@ -10718,13 +10718,13 @@ def go_deps():
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
-        sha256 = "5f2921ccdf7252ffbe26046948c6044ab0917e500a34710e0ba6664260d6a460",
-        strip_prefix = "golang.org/x/crypto@v0.46.0",
+        sha256 = "8745746a80c1ebff91e1d773b6c28c4aa4f074d6aa938b7a51330d52ed22a0c0",
+        strip_prefix = "golang.org/x/crypto@v0.47.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.46.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.46.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.46.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.46.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
         ],
     )
     go_repository(
@@ -10809,13 +10809,13 @@ def go_deps():
         name = "org_golang_x_net",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/net",
-        sha256 = "cf5206797e66bbe72fc13542d53a57d069a563cebb6d045c07a870eb4fd888c9",
-        strip_prefix = "golang.org/x/net@v0.48.0",
+        sha256 = "c07a4d56c3db52dc2b29c65b134f96c2cb071e8a50e4f488ac7facb46005cc85",
+        strip_prefix = "golang.org/x/net@v0.49.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/net/org_golang_x_net-v0.48.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/net/org_golang_x_net-v0.48.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/net/org_golang_x_net-v0.48.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/net/org_golang_x_net-v0.48.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
         ],
     )
     go_repository(
@@ -10887,26 +10887,26 @@ def go_deps():
         name = "org_golang_x_term",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/term",
-        sha256 = "00cec8beae98bb5a15c9ee9e8e705b7cab9c50269e7858bff98df0533b317363",
-        strip_prefix = "golang.org/x/term@v0.38.0",
+        sha256 = "443bb1f87ad11a7d2da8fea4e58272e86f3d70895f38e13a992536dc431fc52d",
+        strip_prefix = "golang.org/x/term@v0.39.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/term/org_golang_x_term-v0.38.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/term/org_golang_x_term-v0.38.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/term/org_golang_x_term-v0.38.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/term/org_golang_x_term-v0.38.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_text",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/text",
-        sha256 = "bc6c70d37c37bc625a83abd48ee32372b459a8c559a1cf5f25dfbf7c7941f81b",
-        strip_prefix = "golang.org/x/text@v0.32.0",
+        sha256 = "f01cdf85f6a597aa4526d68b5c2e5a3470a6f162b96bb9867af37f059b96db5a",
+        strip_prefix = "golang.org/x/text@v0.33.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/text/org_golang_x_text-v0.32.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/text/org_golang_x_text-v0.32.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/text/org_golang_x_text-v0.32.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/text/org_golang_x_text-v0.32.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
         ],
     )
     go_repository(

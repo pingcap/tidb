@@ -23,6 +23,13 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
+const (
+	// OSSProvider is the provider name for Alibaba Cloud OSS.
+	OSSProvider = "oss-sdk"
+	// KS3SDKProvider is the provider name for KingSoft Cloud KS3.
+	KS3SDKProvider = "ks3-sdk"
+)
+
 var (
 	// ErrNoSuchBucket is the error returned when the bucket does not exist.
 	ErrNoSuchBucket = goerrors.New("no such bucket")

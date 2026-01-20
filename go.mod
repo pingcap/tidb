@@ -14,6 +14,7 @@ require (
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.2.3
+	github.com/aliyun/credentials-go v1.4.7
 	github.com/apache/arrow-go/v18 v18.5.0
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
@@ -143,12 +144,12 @@ require (
 	go.uber.org/multierr v1.11.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/exp v0.0.0-20250408133849-7e4ce0ab07d0
-	golang.org/x/net v0.48.0
+	golang.org/x/net v0.49.0
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/sync v0.19.0
 	golang.org/x/sys v0.40.0
-	golang.org/x/term v0.38.0
-	golang.org/x/text v0.32.0
+	golang.org/x/term v0.39.0
+	golang.org/x/text v0.33.0
 	golang.org/x/time v0.14.0
 	golang.org/x/tools v0.40.0
 	google.golang.org/api v0.230.0
@@ -183,7 +184,6 @@ require (
 	github.com/alibabacloud-go/tea v1.3.11 // indirect
 	github.com/alibabacloud-go/tea-utils/v2 v2.0.7 // indirect
 	github.com/alibabacloud-go/tea-xml v1.1.3 // indirect
-	github.com/aliyun/credentials-go v1.4.7 // indirect
 	github.com/andybalholm/brotli v1.2.0 // indirect
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.0 // indirect
@@ -362,7 +362,7 @@ require (
 	go.opentelemetry.io/otel/sdk v1.38.0 // indirect
 	go.opentelemetry.io/otel/trace v1.38.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.7.0 // indirect
-	golang.org/x/crypto v0.46.0 // indirect
+	golang.org/x/crypto v0.47.0 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/mod v0.31.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect

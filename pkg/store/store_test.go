@@ -870,18 +870,17 @@ func TestSetAssertion(t *testing.T) {
 
 func TestInitStorage(t *testing.T) {
 	require.NoError(t, Register(config.StoreTypeUniStore, mockstore.EmbedUnistoreDriver{}))
+	bak := *config.GetGlobalConfig()
+	config.GetGlobalConfig().Path = t.TempDir()
+	t.Cleanup(func() {
+		config.StoreGlobalConfig(&bak)
+	})
 	if kerneltype.IsClassic() {
 		storage := MustInitStorage("")
 		defer storage.Close()
 		require.Nil(t, GetSystemStorage())
 	} else {
-		bak := *config.GetGlobalConfig()
-		config.GetGlobalConfig().Path = t.TempDir()
 		config.GetGlobalConfig().KeyspaceName = keyspace.System
-		t.Cleanup(func() {
-			config.StoreGlobalConfig(&bak)
-		})
-
 		storage := MustInitStorage(keyspace.System)
 		require.NotNil(t, GetSystemStorage())
 		defer storage.Close()
