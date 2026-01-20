@@ -828,6 +828,40 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 	}
 	ap.SetOutputNames(outputNames)
 
+	// Set FullSchema and FullNames for USING clause handling (consistent with buildJoin).
+	// Even though LATERAL typically doesn't use USING, LogicalApply extends LogicalJoin
+	// which has these fields, so we should set them for correctness.
+	var lFullSchema, rFullSchema *expression.Schema
+	var lFullNames, rFullNames types.NameSlice
+	if left, ok := leftPlan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+		lFullSchema = left.FullSchema
+		lFullNames = left.FullNames
+	} else {
+		lFullSchema = leftPlan.Schema()
+		lFullNames = leftPlan.OutputNames()
+	}
+	// For LATERAL, right side is always a derived table (never a LogicalJoin with FullSchema)
+	rFullSchema = rightPlan.Schema()
+	rFullNames = rightPlan.OutputNames()
+
+	ap.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+
+	// Clear NotNull flag for the inner side (right side) of FullSchema if it's a LEFT JOIN
+	// (consistent with buildJoin behavior at line 681-682)
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.FullSchema, lFullSchema.Len(), ap.FullSchema.Len())
+	}
+
+	ap.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	for _, lName := range lFullNames {
+		name := *lName
+		ap.FullNames = append(ap.FullNames, &name)
+	}
+	for _, rName := range rFullNames {
+		name := *rName
+		ap.FullNames = append(ap.FullNames, &name)
+	}
+
 	// Handle ON conditions if present
 	if joinNode.On != nil {
 		b.curClause = onClause
