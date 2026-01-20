@@ -1417,7 +1417,7 @@ func createMockInfoSchemaWithDBs(dbNameToID map[string]int64) infoschema.InfoSch
 			},
 			State: model.StatePublic,
 		}
-		
+
 		dbInfo := &model.DBInfo{
 			ID:   id,
 			Name: ast.NewCIStr(name),
@@ -1426,13 +1426,13 @@ func createMockInfoSchemaWithDBs(dbNameToID map[string]int64) infoschema.InfoSch
 		tableInfo.DBID = id
 		dbInfos = append(dbInfos, dbInfo)
 	}
-	
+
 	// Create InfoSchema with all tables from all databases
 	allTables := make([]*model.TableInfo, 0, len(dbInfos))
 	for _, dbInfo := range dbInfos {
 		allTables = append(allTables, dbInfo.Deprecated.Tables...)
 	}
-	
+
 	// MockInfoSchema creates a single "test" database, so we need a wrapper
 	// to override SchemaByName to return the correct database
 	return &mockInfoSchemaWrapper{

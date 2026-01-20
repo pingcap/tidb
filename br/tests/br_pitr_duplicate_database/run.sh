@@ -40,7 +40,6 @@ trap cleanup_and_exit EXIT
 
 setup_test_environment() {
     run_br log start --task-name $TASK_NAME -s "$LOG_BACKUP_DIR"
-
     
     run_sql "create database if not exists $DB3;"
     run_sql "create database if not exists $DB4;"
@@ -123,8 +122,8 @@ test_database_created_in_log_restore_and_restore_twice_the_same_database() {
 test_database_created_in_snapshot_restore() {
     echo "Test Case 3: test_database_created_in_snapshot_restore"
 
-    run_sql "create database $DB1 collate = 'utf8mb4_general_ci';"
-    run_sql "show create database $DB1;"
+    run_sql "create database $DB3 collate = 'utf8mb4_general_ci';"
+    run_sql "show create database $DB3;"
     check_contains "COLLATE utf8mb4_general_ci"
 
     run_br restore point --filter "$DB3.t1" --full-backup-storage "$BACKUP_DIR" -s "$LOG_BACKUP_DIR"

@@ -384,7 +384,7 @@ func TestRegistryTableConflicts(t *testing.T) {
 	// Try to create a second registration but CheckTablesWithRegisteredTasks should detect conflict
 	err = r.CheckTablesWithRegisteredTasks(ctx, restoreID1+1, tracker, nil, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "cannot be restored by current task")
+	require.Contains(t, err.Error(), "cannot be restored concurrently by current task")
 
 	// But a different table should be allowed
 	tracker = utils.NewPiTRIdTracker()
