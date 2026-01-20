@@ -245,7 +245,6 @@ import (
 	replace           "REPLACE"
 	require           "REQUIRE"
 	restrict          "RESTRICT"
-	returning         "RETURNING"
 	revoke            "REVOKE"
 	right             "RIGHT"
 	rlike             "RLIKE"
@@ -590,6 +589,7 @@ import (
 	restore                    "RESTORE"
 	restores                   "RESTORES"
 	resume                     "RESUME"
+	returning                  "RETURNING"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
 	role                       "ROLE"
@@ -1386,6 +1386,7 @@ import (
 	TableAliasRefList                      "table alias reference list"
 	TableAsName                            "table alias name"
 	TableAsNameOpt                         "table alias name optional"
+	TableAsNameOptDelete                   "table alias name optional for delete"
 	TableElement                           "table definition element"
 	TableElementList                       "table definition element list"
 	TableElementListOpt                    "table definition element list optional"
@@ -1683,6 +1684,7 @@ import (
 %precedence lowerThenOrder
 %precedence order
 %precedence returning
+%precedence higherThanReturning
 %precedence lowerThanFunction
 %precedence function
 %precedence constraint
@@ -5300,7 +5302,7 @@ DoStmt:
  *
  *******************************************************************/
 DeleteWithoutUsingStmt:
-	"DELETE" TableOptimizerHintsOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOpt IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause ReturningClause
+	"DELETE" TableOptimizerHintsOpt PriorityOpt QuickOptional IgnoreOptional "FROM" TableName PartitionNameListOpt TableAsNameOptDelete IndexHintListOpt WhereClauseOptional OrderByOptional LimitClause ReturningClause
 	{
 		// Single Table
 		tn := $7.(*ast.TableName)
@@ -7324,6 +7326,7 @@ UnReservedKeyword:
 |	"PERCENT"
 |	"PAUSE"
 |	"RESUME"
+|	"RETURNING"
 |	"OFF"
 |	"OPTIONAL"
 |	"REQUIRED"
@@ -10201,6 +10204,13 @@ PartitionNameListOpt:
 
 TableAsNameOpt:
 	%prec empty
+	{
+		$$ = ast.CIStr{}
+	}
+|	TableAsName
+
+TableAsNameOptDelete:
+	%prec higherThanReturning
 	{
 		$$ = ast.CIStr{}
 	}
