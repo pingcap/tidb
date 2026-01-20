@@ -20,7 +20,6 @@ import (
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	tikvstore "github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -29,10 +28,6 @@ import (
 type mockTxn struct {
 	opts  map[int]any
 	valid bool
-}
-
-func (t *mockTxn) SetAssertion(_ []byte, _ AssertionOp) error {
-	return nil
 }
 
 // Commit always returns a retryable error.
@@ -167,9 +162,6 @@ func (t *mockTxn) RollbackMemDBToCheckpoint(_ *tikv.MemDBCheckpoint) {
 
 func (t *mockTxn) ClearDiskFullOpt() {
 	// TODO nothing
-}
-
-func (t *mockTxn) UpdateMemBufferFlags(_ []byte, _ ...tikvstore.FlagsOp) {
 }
 
 func (t *mockTxn) SetMemoryFootprintChangeHook(func(uint64)) {

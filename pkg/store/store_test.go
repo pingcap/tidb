@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/stretchr/testify/require"
-	kv2 "github.com/tikv/client-go/v2/kv"
 )
 
 const (
@@ -760,112 +759,6 @@ func TestRegister(t *testing.T) {
 	require.NoError(t, err)
 	err = Register(config.StoreTypeMockTiKV, &brokenStore{})
 	require.ErrorContains(t, err, "already registered")
-}
-
-func TestSetAssertion(t *testing.T) {
-	store, err := mockstore.NewMockStore()
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	mustHaveAssertion := func(key []byte, assertion kv.AssertionOp) {
-		f, err1 := txn.GetMemBuffer().GetFlags(key)
-		require.NoError(t, err1)
-		if assertion == kv.AssertExist {
-			require.True(t, f.HasAssertExists())
-			require.False(t, f.HasAssertUnknown())
-		} else if assertion == kv.AssertNotExist {
-			require.True(t, f.HasAssertNotExists())
-			require.False(t, f.HasAssertUnknown())
-		} else if assertion == kv.AssertUnknown {
-			require.True(t, f.HasAssertUnknown())
-		} else if assertion == kv.AssertNone {
-			require.False(t, f.HasAssertionFlags())
-		} else {
-			require.FailNow(t, "unreachable")
-		}
-	}
-
-	testUnchangeable := func(key []byte, expectAssertion kv.AssertionOp) {
-		err = txn.SetAssertion(key, kv.AssertExist)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.AssertNotExist)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.AssertUnknown)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-		err = txn.SetAssertion(key, kv.AssertNone)
-		require.NoError(t, err)
-		mustHaveAssertion(key, expectAssertion)
-	}
-
-	k1 := []byte("k1")
-	err = txn.SetAssertion(k1, kv.AssertExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k1, kv.AssertExist)
-	testUnchangeable(k1, kv.AssertExist)
-
-	k2 := []byte("k2")
-	err = txn.SetAssertion(k2, kv.AssertNotExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k2, kv.AssertNotExist)
-	testUnchangeable(k2, kv.AssertNotExist)
-
-	k3 := []byte("k3")
-	err = txn.SetAssertion(k3, kv.AssertUnknown)
-	require.NoError(t, err)
-	mustHaveAssertion(k3, kv.AssertUnknown)
-	testUnchangeable(k3, kv.AssertUnknown)
-
-	k4 := []byte("k4")
-	err = txn.SetAssertion(k4, kv.AssertNone)
-	require.NoError(t, err)
-	mustHaveAssertion(k4, kv.AssertNone)
-	err = txn.SetAssertion(k4, kv.AssertExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k4, kv.AssertExist)
-	testUnchangeable(k4, kv.AssertExist)
-
-	k5 := []byte("k5")
-	err = txn.Set(k5, []byte("v5"))
-	require.NoError(t, err)
-	mustHaveAssertion(k5, kv.AssertNone)
-	err = txn.SetAssertion(k5, kv.AssertNotExist)
-	require.NoError(t, err)
-	mustHaveAssertion(k5, kv.AssertNotExist)
-	testUnchangeable(k5, kv.AssertNotExist)
-
-	k6 := []byte("k6")
-	err = txn.SetAssertion(k6, kv.AssertNotExist)
-	require.NoError(t, err)
-	err = txn.GetMemBuffer().SetWithFlags(k6, []byte("v6"), kv.SetPresumeKeyNotExists)
-	require.NoError(t, err)
-	mustHaveAssertion(k6, kv.AssertNotExist)
-	testUnchangeable(k6, kv.AssertNotExist)
-	flags, err := txn.GetMemBuffer().GetFlags(k6)
-	require.NoError(t, err)
-	require.True(t, flags.HasPresumeKeyNotExists())
-	err = txn.GetMemBuffer().DeleteWithFlags(k6, kv.SetNeedLocked)
-	mustHaveAssertion(k6, kv.AssertNotExist)
-	testUnchangeable(k6, kv.AssertNotExist)
-	flags, err = txn.GetMemBuffer().GetFlags(k6)
-	require.NoError(t, err)
-	require.True(t, flags.HasPresumeKeyNotExists())
-	require.True(t, flags.HasNeedLocked())
-
-	k7 := []byte("k7")
-	lockCtx := kv2.NewLockCtx(txn.StartTS(), 2000, time.Now())
-	err = txn.LockKeys(context.Background(), lockCtx, k7)
-	require.NoError(t, err)
-	mustHaveAssertion(k7, kv.AssertNone)
-
-	require.NoError(t, txn.Rollback())
 }
 
 func TestInitStorage(t *testing.T) {

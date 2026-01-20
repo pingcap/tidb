@@ -260,7 +260,6 @@ type LockCtx = tikvstore.LockCtx
 // This is not thread safe.
 type Transaction interface {
 	RetrieverMutator
-	AssertionProto
 	FairLockingController
 	// Size returns sum of keys and values length.
 	Size() int
@@ -332,19 +331,10 @@ type Transaction interface {
 
 	// RollbackMemDBToCheckpoint rollbacks the transaction's memDB to the specified checkpoint.
 	RollbackMemDBToCheckpoint(*tikv.MemDBCheckpoint)
-
-	// UpdateMemBufferFlags updates the flags of a node in the mem buffer.
-	UpdateMemBufferFlags(key []byte, flags ...tikvstore.FlagsOp)
 	// IsPipelined returns whether the transaction is used for pipelined DML.
 	IsPipelined() bool
 	// MayFlush flush the pipelined memdb if the keys or size exceeds threshold, no effect for standard DML.
 	MayFlush() error
-}
-
-// AssertionProto is an interface defined for the assertion protocol.
-type AssertionProto interface {
-	// SetAssertion sets an assertion for an operation on the key.
-	SetAssertion(key []byte, assertion AssertionOp) error
 }
 
 // FairLockingController is the interface that defines fair locking related operations.

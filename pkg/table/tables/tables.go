@@ -530,16 +530,16 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.AssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.AssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.AssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -923,15 +923,15 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.AssertExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertExist); err != nil {
 				failpoint.Return(nil, err)
 			}
 		}
 	})
 	if setPresume && !txn.IsPessimistic() {
-		err = txn.SetAssertion(key, kv.AssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.AssertNotExist)
+		err = setAssertion(txn, key, kv.AssertNotExist)
 	}
 	if err != nil {
 		return nil, err
@@ -1236,15 +1236,15 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if ctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.AssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.AssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.AssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err

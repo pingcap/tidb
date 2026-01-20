@@ -390,19 +390,16 @@ func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
 
 // SetAssertion sets an assertion for the key operation.
 func (txn *tikvTxn) SetAssertion(key []byte, assertion kv.AssertionOp) error {
-	f, err := txn.GetUnionStore().GetMemBuffer().GetFlags(key)
+	memBuf := txn.GetUnionStore().GetMemBuffer()
+	f, err := memBuf.GetFlags(key)
 	if err != nil && !tikverr.IsErrNotFound(err) {
 		return err
 	}
 	if err == nil && f.HasAssertionFlags() {
 		return nil
 	}
-	txn.UpdateMemBufferFlags(key, getTiKVAssertionOp(assertion))
+	memBuf.UpdateFlags(key, getTiKVAssertionOp(assertion))
 	return nil
-}
-
-func (txn *tikvTxn) UpdateMemBufferFlags(key []byte, flags ...tikvstore.FlagsOp) {
-	txn.GetUnionStore().GetMemBuffer().UpdateFlags(key, flags...)
 }
 
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {

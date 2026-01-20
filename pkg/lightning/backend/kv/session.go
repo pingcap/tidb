@@ -258,11 +258,6 @@ func (*transaction) GetTableInfo(_ int64) *model.TableInfo {
 func (*transaction) CacheTableInfo(_ int64, _ *model.TableInfo) {
 }
 
-// SetAssertion implements the kv.Transaction interface.
-func (*transaction) SetAssertion(_ []byte, _ kv.AssertionOp) error {
-	return nil
-}
-
 // IsPipelined implements the kv.Transaction interface.
 func (*transaction) IsPipelined() bool {
 	return false

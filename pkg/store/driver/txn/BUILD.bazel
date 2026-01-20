@@ -48,6 +48,7 @@ go_test(
     name = "txn_test",
     timeout = "short",
     srcs = [
+        "assertion_test.go",
         "batch_getter_test.go",
         "driver_test.go",
         "main_test.go",
@@ -55,15 +56,17 @@ go_test(
     ],
     embed = [":txn"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 6,
     deps = [
         "//pkg/kv",
+        "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",
         "//pkg/util/mock",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//kv",
         "@org_uber_go_goleak//:goleak",
     ],
 )
