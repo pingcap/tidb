@@ -36,8 +36,6 @@ type PhysicalExchangeReceiver struct {
 
 	Tasks []*kv.MPPTask
 	frags []*Fragment
-
-	IsCTEReader bool
 }
 
 // Clone implment op.PhysicalPlan interface.
@@ -49,8 +47,6 @@ func (p *PhysicalExchangeReceiver) Clone(newCtx base.PlanContext) (base.Physical
 		return nil, errors.Trace(err)
 	}
 	np.BasePhysicalPlan = *base
-
-	np.IsCTEReader = p.IsCTEReader
 	return np, nil
 }
 
@@ -120,11 +116,6 @@ func (p *PhysicalExchangeReceiver) ToPB(ctx *base.BuildPBContext, _ kv.StoreType
 	ecExec := &tipb.ExchangeReceiver{
 		EncodedTaskMeta: encodedTask,
 		FieldTypes:      fieldTypes,
-	}
-	if p.IsCTEReader {
-		encodedTaskShallowCopy := make([][]byte, len(p.Tasks))
-		copy(encodedTaskShallowCopy, encodedTask)
-		ecExec.OriginalCtePrdocuerTaskMeta = encodedTaskShallowCopy
 	}
 	executorID := p.ExplainID().String()
 	return &tipb.Executor{

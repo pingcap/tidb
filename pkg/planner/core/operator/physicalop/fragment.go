@@ -133,7 +133,6 @@ type tasksAndFrags struct {
 type cteGroupInFragment struct {
 	CTEStorage  *PhysicalCTEStorage
 	StorageSink *PhysicalCTESink
-	CTEReader   []*PhysicalCTE
 
 	StorageTasks     []*kv.MPPTask
 	StorageFragments []*Fragment
@@ -358,11 +357,6 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			}
 			p = ch
 		}
-		if cte, ok := p.(*PhysicalCTE); ok {
-			if group, ok := e.CTEGroups[cte.CTE.IDForStorage]; ok && group != nil {
-				group.CTEReader = append(group.CTEReader, cte)
-			}
-		}
 	case *PhysicalHashJoin:
 		stack = append(stack, x.Children()[1-x.InnerChildIdx])
 		err := e.untwistPlanAndRemoveUnionAll(stack, forest)
@@ -393,7 +387,6 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 			e.CTEGroups[cteStorage.CTE.IDForStorage] = &cteGroupInFragment{
 				CTEStorage:  cteStorage,
 				StorageSink: cteSink,
-				CTEReader:   make([]*PhysicalCTE, 0, 3),
 			}
 		}
 		stack = append(stack, x.Children()[lastChildIdx])
@@ -515,15 +508,6 @@ func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv
 			frag.Sink.AppendTargetTasks(tasks)
 		}
 	}
-	addedReaders := make(map[int]struct{}, len(f.CTEReaders))
-	for _, cteR := range f.CTEReaders {
-		storageID := cteR.CTE.IDForStorage
-		if _, ok := addedReaders[storageID]; ok {
-			continue
-		}
-		addedReaders[storageID] = struct{}{}
-		e.addReaderTasksForCTEStorage(storageID, tasks...)
-	}
 	f.Sink.SetSelfTasks(tasks)
 	f.flipCTEReader(f.Sink)
 	return tasks, nil
@@ -572,21 +556,6 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 	}
 	cteReader.SetChildren(source)
 	return nil
-}
-
-func (e *mppTaskGenerator) addReaderTasksForCTEStorage(storageID int, tasks ...*kv.MPPTask) {
-	group := e.CTEGroups[storageID]
-	if group == nil {
-		return
-	}
-	for _, frag := range group.StorageFragments {
-		frag.Sink.AppendTargetTasks(tasks)
-		// CTE producer needs the original task metas of each consumer fragment so that the
-		// local coordinator can prune them by address later.
-		if sender, ok := frag.Sink.(*PhysicalExchangeSender); ok {
-			sender.TargetCTEReaderTasks = append(sender.TargetCTEReaderTasks, tasks)
-		}
-	}
 }
 
 // single physical table means a table without partitions or a single partition in a partition table.

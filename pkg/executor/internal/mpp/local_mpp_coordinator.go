@@ -220,10 +220,6 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 		if err != nil {
 			return errors.Trace(err)
 		}
-		err = c.fixTaskForCTEStorageAndReader(dagReq.RootExecutor, mppTask.Meta)
-		if err != nil {
-			return err
-		}
 		zoneHelper.isRoot = pf.IsRoot
 		zoneHelper.currentTaskZone = zoneHelper.allTiFlashZoneInfo[mppTask.Meta.GetAddress()]
 		zoneHelper.fillSameZoneFlagForExchange(dagReq.RootExecutor)
@@ -269,93 +265,6 @@ func (c *localMppCoordinator) appendMPPDispatchReq(pf *physicalop.Fragment, allT
 	return nil
 }
 
-// fixTaskForCTEStorageAndReader fixes the upstream/downstream tasks for the producers and consumers.
-// After we split the fragments. A CTE producer in the fragment will holds all the task address of the consumers.
-// For example, the producer has two task on node_1 and node_2. As we know that each consumer also has two task on the same nodes(node_1 and node_2)
-// We need to prune address of node_2 for producer's task on node_1 since we just want the producer task on the node_1 only send to the consumer tasks on the node_1.
-// And the same for the task on the node_2.
-// And the same for the consumer task. We need to prune the unnecessary task address of its producer tasks(i.e. the downstream tasks).
-func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor, meta kv.MPPTaskMeta) error {
-	children := make([]*tipb.Executor, 0, 2)
-	switch exec.Tp {
-	case tipb.ExecType_TypeTableScan, tipb.ExecType_TypePartitionTableScan, tipb.ExecType_TypeIndexScan:
-	case tipb.ExecType_TypeSelection:
-		children = append(children, exec.Selection.Child)
-	case tipb.ExecType_TypeAggregation, tipb.ExecType_TypeStreamAgg:
-		children = append(children, exec.Aggregation.Child)
-	case tipb.ExecType_TypeTopN:
-		children = append(children, exec.TopN.Child)
-	case tipb.ExecType_TypeLimit:
-		children = append(children, exec.Limit.Child)
-	case tipb.ExecType_TypeExchangeSender:
-		children = append(children, exec.ExchangeSender.Child)
-		if len(exec.ExchangeSender.UpstreamCteTaskMeta) == 0 {
-			break
-		}
-		actualUpStreamTasks := make([][]byte, 0, len(exec.ExchangeSender.UpstreamCteTaskMeta))
-		actualTIDs := make([]int64, 0, len(exec.ExchangeSender.UpstreamCteTaskMeta))
-		for _, tasksFromOneConsumer := range exec.ExchangeSender.UpstreamCteTaskMeta {
-			for _, taskBytes := range tasksFromOneConsumer.EncodedTasks {
-				taskMeta := &mpp.TaskMeta{}
-				err := taskMeta.Unmarshal(taskBytes)
-				if err != nil {
-					return err
-				}
-				if taskMeta.Address != meta.GetAddress() {
-					continue
-				}
-				actualUpStreamTasks = append(actualUpStreamTasks, taskBytes)
-				actualTIDs = append(actualTIDs, taskMeta.TaskId)
-			}
-		}
-		logutil.BgLogger().Warn("refine tunnel for cte producer task", zap.String("the final tunnel", fmt.Sprintf("up stream consumer tasks: %v", actualTIDs)))
-		exec.ExchangeSender.EncodedTaskMeta = actualUpStreamTasks
-	case tipb.ExecType_TypeExchangeReceiver:
-		if len(exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta) == 0 {
-			break
-		}
-		exec.ExchangeReceiver.EncodedTaskMeta = [][]byte{}
-		actualTIDs := make([]int64, 0, 4)
-		for _, taskBytes := range exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta {
-			taskMeta := &mpp.TaskMeta{}
-			err := taskMeta.Unmarshal(taskBytes)
-			if err != nil {
-				return err
-			}
-			if taskMeta.Address != meta.GetAddress() {
-				continue
-			}
-			exec.ExchangeReceiver.EncodedTaskMeta = append(exec.ExchangeReceiver.EncodedTaskMeta, taskBytes)
-			actualTIDs = append(actualTIDs, taskMeta.TaskId)
-		}
-		logutil.BgLogger().Warn("refine tunnel for cte consumer task", zap.String("the final tunnel", fmt.Sprintf("down stream producer task: %v", actualTIDs)))
-	case tipb.ExecType_TypeCTESink:
-		children = append(children, exec.CteSink.Child)
-	case tipb.ExecType_TypeCTESource:
-	case tipb.ExecType_TypeJoin:
-		children = append(children, exec.Join.Children...)
-	case tipb.ExecType_TypeProjection:
-		children = append(children, exec.Projection.Child)
-	case tipb.ExecType_TypeWindow:
-		children = append(children, exec.Window.Child)
-	case tipb.ExecType_TypeSort:
-		children = append(children, exec.Sort.Child)
-	case tipb.ExecType_TypeExpand:
-		children = append(children, exec.Expand.Child)
-	case tipb.ExecType_TypeExpand2:
-		children = append(children, exec.Expand2.Child)
-	default:
-		return errors.Errorf("unknown new tipb protocol %d", exec.Tp)
-	}
-	for _, child := range children {
-		err := c.fixTaskForCTEStorageAndReader(child, meta)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // taskZoneInfoHelper used to help reset exchange executor's same zone flags
 type taskZoneInfoHelper struct {
 	allTiFlashZoneInfo map[string]string
@@ -384,15 +293,6 @@ func (h *taskZoneInfoHelper) tryQuickFillWithUncertainZones(exec *tipb.Executor,
 	}
 	if h.isRoot && exec.Tp == tipb.ExecType_TypeExchangeSender {
 		sameZoneFlags = append(sameZoneFlags, len(h.tidbZone) == 0 || h.currentTaskZone == h.tidbZone)
-		return true, sameZoneFlags
-	}
-
-	// For CTE exchange nodes, data is passed locally, set all to true
-	if (exec.Tp == tipb.ExecType_TypeExchangeSender && len(exec.ExchangeSender.UpstreamCteTaskMeta) != 0) ||
-		(exec.Tp == tipb.ExecType_TypeExchangeReceiver && len(exec.ExchangeReceiver.OriginalCtePrdocuerTaskMeta) != 0) {
-		for range slots {
-			sameZoneFlags = append(sameZoneFlags, true)
-		}
 		return true, sameZoneFlags
 	}
 

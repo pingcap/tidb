@@ -45,19 +45,11 @@ type PhysicalCTE struct {
 	CTE       *logicalop.CTEClass
 	CteAsName ast.CIStr
 	CteName   ast.CIStr
-
-	ReaderReceiver *PhysicalExchangeReceiver
-	StorageSender  *PhysicalExchangeSender
 }
 
 // ExhaustPhysicalPlans4LogicalCTE will be called by LogicalCTE in logicalOp pkg.
 func ExhaustPhysicalPlans4LogicalCTE(p *logicalop.LogicalCTE, prop *property.PhysicalProperty) ([]base.PhysicalPlan, bool, error) {
 	pcte := PhysicalCTE{CTE: p.Cte}.Init(p.SCtx(), p.StatsInfo())
-	if prop.IsFlashProp() {
-		pcte.StorageSender = PhysicalExchangeSender{
-			ExchangeType: tipb.ExchangeType_Broadcast,
-		}.Init(p.SCtx(), p.StatsInfo())
-	}
 	pcte.SetSchema(p.Schema())
 	pcte.SetChildrenReqProps([]*property.PhysicalProperty{prop.CloneEssentialFields()})
 	return []base.PhysicalPlan{(*PhysicalCTEStorage)(pcte)}, true, nil
@@ -122,20 +114,6 @@ func (p *PhysicalCTE) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) 
 	}
 	cloned.CteAsName, cloned.CteName = p.CteAsName, p.CteName
 	cloned.CTE = p.CTE
-	if p.StorageSender != nil {
-		clonedSender, err := p.StorageSender.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-		cloned.StorageSender = clonedSender.(*PhysicalExchangeSender)
-	}
-	if p.ReaderReceiver != nil {
-		clonedReceiver, err := p.ReaderReceiver.Clone(newCtx)
-		if err != nil {
-			return nil, err
-		}
-		cloned.ReaderReceiver = clonedReceiver.(*PhysicalExchangeReceiver)
-	}
 	return cloned, nil
 }
 
@@ -291,7 +269,6 @@ func findBestTask4LogicalCTE(super base.LogicalPlan, prop *property.PhysicalProp
 	pcte := PhysicalCTE{SeedPlan: p.Cte.SeedPartPhysicalPlan, RecurPlan: p.Cte.RecursivePartPhysicalPlan, CTE: p.Cte, CteAsName: p.CteAsName, CteName: p.CteName}.Init(p.SCtx(), p.StatsInfo())
 	pcte.SetSchema(p.Schema())
 	if prop.IsFlashProp() && prop.CTEProducerStatus == property.AllCTECanMpp {
-		pcte.ReaderReceiver = PhysicalExchangeReceiver{IsCTEReader: true}.Init(p.SCtx(), p.StatsInfo())
 		if prop.MPPPartitionTp != property.AnyType {
 			return base.InvalidTask, nil
 		}
