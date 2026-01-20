@@ -429,13 +429,14 @@ func TestFlushStatsDelta(t *testing.T) {
 	require.Len(t, rows, 1, "stats_meta should have entry for the table")
 	modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
 	require.NoError(t, err)
-	require.Equal(t, modifyCnt, int64(5), "modify_count should increase by 5 after inserting 5 rows and flushing")
+	require.Equal(t, int64(5), modifyCnt, "modify_count should be 5 after inserting 5 rows and flushing")
 
-	tk.MustExec("insert into t values (1,1), (2,2)")
+	// Insert 2 more rows and flush again
+	tk.MustExec("insert into t values (6,6), (7,7)")
 	tk.MustExec("flush stats_delta")
 	rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
 	require.Len(t, rows, 1, "stats_meta should have entry for the table")
 	modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
 	require.NoError(t, err)
-	require.Equal(t, modifyCnt, int64(7), "modify_count should increase by 5 after inserting 5 rows and flushing")
+	require.Equal(t, int64(7), modifyCnt, "modify_count should be 7 after inserting 2 more rows and flushing")
 }
