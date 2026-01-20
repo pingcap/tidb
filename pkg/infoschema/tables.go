@@ -2764,7 +2764,7 @@ func GetTiFlashServerInfo(store kv.Storage) ([]ServerInfo, error) {
 }
 
 // FetchClusterServerInfoWithoutPrivilegeCheck fetches cluster server information
-func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) ([][]types.Datum, error) {
+func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *variable.SessionVars, serversInfo []ServerInfo, serverInfoType diagnosticspb.ServerInfoType, recordWarningInStmtCtx bool) [][]types.Datum {
 	type result struct {
 		idx  int
 		rows [][]types.Datum
@@ -2813,7 +2813,7 @@ func FetchClusterServerInfoWithoutPrivilegeCheck(ctx context.Context, vars *vari
 	for _, result := range results {
 		finalRows = append(finalRows, result.rows...)
 	}
-	return finalRows, nil
+	return finalRows
 }
 
 func serverInfoItemToRows(items []*diagnosticspb.ServerInfoItem, tp, addr string) [][]types.Datum {

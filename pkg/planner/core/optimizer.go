@@ -20,6 +20,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -645,24 +646,42 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 		mppInfo := copr.GlobalMPPInfoManager.Get(info.Address)
 		if mppInfo == nil {
 			uncachedServersInfo = append(uncachedServersInfo, info)
+			continue
 		}
 		minLogicalCores = min(minLogicalCores, mppInfo.LogicalCpuCount)
 	}
 
 	if len(uncachedServersInfo) > 0 {
-		rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), uncachedServersInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-		if err != nil {
-			return false, 0
+		ch := make(chan [][]types.Datum, len(uncachedServersInfo))
+		waitWg := &sync.WaitGroup{}
+		waitWg.Add(len(uncachedServersInfo))
+		for i := range uncachedServersInfo {
+			go func(info []infoschema.ServerInfo) {
+				defer waitWg.Done()
+				rows := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), uncachedServersInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
+				for i, row := range rows {
+					if row[4].GetString() == "cpu-logical-cores" {
+						logicalCpus, err := strconv.Atoi(row[5].GetString())
+						if err == nil && logicalCpus > 0 {
+							copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
+								Address:         uncachedServersInfo[i].Address,
+								LogicalCpuCount: uint64(logicalCpus),
+							})
+						}
+					}
+				}
+				ch <- rows
+			}(uncachedServersInfo[i : i+1])
 		}
-		for i, row := range rows {
-			if row[4].GetString() == "cpu-logical-cores" {
-				logicalCpus, err := strconv.Atoi(row[5].GetString())
-				if err == nil && logicalCpus > 0 {
-					minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
-					copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
-						Address:         uncachedServersInfo[i].Address,
-						LogicalCpuCount: uint64(logicalCpus),
-					})
+		close(ch)
+
+		for rows := range ch {
+			for _, row := range rows {
+				if row[4].GetString() == "cpu-logical-cores" {
+					logicalCpus, err := strconv.Atoi(row[5].GetString())
+					if err == nil && logicalCpus > 0 {
+						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+					}
 				}
 			}
 		}
