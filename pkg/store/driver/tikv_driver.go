@@ -222,6 +222,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 	)
 
 	s, err = tikv.NewKVStore(uuid, pdClient, spkv, &injectTraceClient{Client: rpcClient},
+		tikv.WithPool(newStorePool(config.GetGlobalConfig().CommitterConcurrency)),
 		tikv.WithPDHTTPClient("tikv-driver", etcdAddrs, pdhttp.WithTLSConfig(tlsConfig), pdhttp.WithMetrics(metrics.PDAPIRequestCounter, metrics.PDAPIExecutionHistogram)))
 	if err != nil {
 		return nil, errors.Trace(err)
