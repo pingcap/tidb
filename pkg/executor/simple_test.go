@@ -16,6 +16,7 @@ package executor_test
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -405,4 +406,36 @@ func TestRefreshStatsConcurrently(t *testing.T) {
 	checkFullIndex("t1")
 	checkFullIndex("t2")
 	checkFullIndex("t_partition")
+}
+
+func TestFlushStatsDelta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	// Get table ID for later query
+	ctx := context.Background()
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	// Insert some rows to generate stats delta
+	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5)")
+	tk.MustExec("flush stats_delta")
+	rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, rows, 1, "stats_meta should have entry for the table")
+	modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, modifyCnt, int64(5), "modify_count should increase by 5 after inserting 5 rows and flushing")
+
+	tk.MustExec("insert into t values (1,1), (2,2)")
+	tk.MustExec("flush stats_delta")
+	rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, rows, 1, "stats_meta should have entry for the table")
+	modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, modifyCnt, int64(7), "modify_count should increase by 5 after inserting 5 rows and flushing")
 }
