@@ -367,7 +367,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		}
 	}
 
-	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)
