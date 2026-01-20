@@ -80,7 +80,7 @@ func onSoftDeleteInfoChange(jobCtx *jobContext, job *model.Job) (ver int64, err 
 	}
 	if columnInfo == nil {
 		softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
-		softDeleteCol.ID = allocateConstraintID(tblInfo)
+		softDeleteCol.ID = AllocateColumnID(tblInfo)
 		softDeleteCol.State = model.StateNone
 		softDeleteCol.Offset = len(tblInfo.Columns)
 		tblInfo.Columns = append(tblInfo.Columns, softDeleteCol)
