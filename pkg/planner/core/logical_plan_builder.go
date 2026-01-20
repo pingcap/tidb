@@ -458,13 +458,28 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		for _, name := range p.OutputNames() {
-			if name.Hidden {
-				continue
+		// Clone output names before modifying to avoid mutating shared structs
+		if x.AsName.L != "" {
+			clonedNames := make([]*types.FieldName, len(p.OutputNames()))
+			for i, name := range p.OutputNames() {
+				if name.Hidden {
+					clonedNames[i] = name
+					continue
+				}
+				// Clone the field name and update table name
+				// For derived tables (subqueries), clear DBName to avoid confusion with actual tables
+				clonedNames[i] = &types.FieldName{
+					DBName:            ast.NewCIStr(""), // Clear DBName for derived table
+					OrigTblName:       name.OrigTblName,
+					OrigColName:       name.OrigColName,
+					TblName:           x.AsName,
+					ColName:           name.ColName,
+					NotExplicitUsable: name.NotExplicitUsable,
+					Redundant:         name.Redundant,
+					Hidden:            name.Hidden,
+				}
 			}
-			if x.AsName.L != "" {
-				name.TblName = x.AsName
-			}
+			p.SetOutputNames(clonedNames)
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
 		var plannerSelectBlockAsName []ast.HintTable
@@ -581,6 +596,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	if isLateral {
 		b.outerSchemas = append(b.outerSchemas, leftPlan.Schema())
 		b.outerNames = append(b.outerNames, leftPlan.OutputNames())
+		// Set flag to allow ORDER BY/LIMIT in LATERAL subqueries within recursive CTEs
+		saveBuildingLateral := b.buildingLateralSubquery
+		b.buildingLateralSubquery = true
+		defer func() {
+			b.buildingLateralSubquery = saveBuildingLateral
+		}()
 	}
 
 	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right, false)
@@ -756,9 +777,48 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 
 	ap.SetChildren(leftPlan, rightPlan)
 	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
-	ap.SetOutputNames(make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len()))
-	copy(ap.OutputNames(), leftPlan.OutputNames())
-	copy(ap.OutputNames()[leftPlan.Schema().Len():], rightPlan.OutputNames())
+
+	// CRITICAL FIX: After MergeSchema, update the Index values for right-side columns.
+	// MergeSchema clones columns but preserves their original Index values (positions in the
+	// original child schema). For LATERAL joins, when a projection above the Apply references
+	// a column from the right side, it uses the Column's Index field to determine which
+	// position to read from the input row. Without this fix, right-side columns would still
+	// have Index=0,1,... instead of their new positions (leftLen+0, leftLen+1, ...) in the
+	// merged schema, causing incorrect data to be read.
+	leftLen := leftPlan.Schema().Len()
+	for i := range rightPlan.Schema().Len() {
+		ap.Schema().Columns[leftLen+i].Index = leftLen + i
+	}
+
+	// Clone output names to avoid sharing FieldName structs that might be mutated later
+	// For LATERAL, we must ensure the right-side (LATERAL subquery) output has NO DBName
+	// to prevent confusion with actual database tables
+	outputNames := make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len())
+	for i, name := range leftPlan.OutputNames() {
+		outputNames[i] = &types.FieldName{
+			DBName:            name.DBName,
+			OrigTblName:       name.OrigTblName,
+			OrigColName:       name.OrigColName,
+			TblName:           name.TblName,
+			ColName:           name.ColName,
+			NotExplicitUsable: name.NotExplicitUsable,
+			Redundant:         name.Redundant,
+			Hidden:            name.Hidden,
+		}
+	}
+	for i, name := range rightPlan.OutputNames() {
+		outputNames[leftPlan.Schema().Len()+i] = &types.FieldName{
+			DBName:            ast.NewCIStr(""), // CRITICAL: Clear DBName for derived table outputs
+			OrigTblName:       name.OrigTblName,
+			OrigColName:       name.OrigColName,
+			TblName:           name.TblName,
+			ColName:           name.ColName,
+			NotExplicitUsable: name.NotExplicitUsable,
+			Redundant:         name.Redundant,
+			Hidden:            name.Hidden,
+		}
+	}
+	ap.SetOutputNames(outputNames)
 
 	// Handle ON conditions if present
 	if joinNode.On != nil {
@@ -3817,9 +3877,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		b.popTableHints()
 	}()
 	if b.buildingRecursivePartForCTE {
-		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
-			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")
+		// Check for DISTINCT
+		if sel.Distinct {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SELECT DISTINCT in recursive query block of Common Table Expression")
 		}
+
+		// Check for ORDER BY and LIMIT - allow them only within LATERAL subqueries
+		if (sel.OrderBy != nil || sel.Limit != nil) && !b.buildingLateralSubquery {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)")
+		}
+
 		if sel.GroupBy != nil {
 			return nil, plannererrors.ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
@@ -4299,15 +4366,31 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 					limitEnd = x.Offset + x.Count
 				case *logicalop.LogicalTableDual:
 					// Beg and End will both be 0.
+				case *logicalop.LogicalSort:
+					// When there's ORDER BY + LIMIT, we get a LogicalSort wrapping a LogicalLimit
+					// Extract the limit from the child plan
+					if len(x.Children()) > 0 {
+						if limitChild, ok := x.Children()[0].(*logicalop.LogicalLimit); ok {
+							limitBeg = limitChild.Offset
+							limitEnd = limitChild.Offset + limitChild.Count
+						} else {
+							// Sort without Limit child - treat as no limit
+							hasLimit = false
+						}
+					} else {
+						hasLimit = false
+					}
 				default:
 					return nil, errors.Errorf("invalid type for limit plan: %v", cte.limitLP)
 				}
 			}
 
 			if cte.cteClass == nil {
+				// Wrap seed in a projection if it has NULL type columns that need casting
+				seedLP := b.buildProjection4CTESeed(cte.seedLP, cte.recurLP)
 				cte.cteClass = &logicalop.CTEClass{
 					IsDistinct:               cte.isDistinct,
-					SeedPartLogicalPlan:      cte.seedLP,
+					SeedPartLogicalPlan:      seedLP,
 					RecursivePartLogicalPlan: cte.recurLP,
 					IDForStorage:             cte.storageID,
 					OptFlag:                  cte.optFlag,
@@ -4320,8 +4403,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 			var p base.LogicalPlan
 			lp := logicalop.LogicalCTE{CteAsName: tn.Name, CteName: tn.Name, Cte: cte.cteClass, SeedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
-			prevSchema := cte.seedLP.Schema().Clone()
-			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+			prevSchema := cte.cteClass.SeedPartLogicalPlan.Schema().Clone()
+			lp.SetSchema(getResultCTESchema(cte.cteClass.SeedPartLogicalPlan.Schema(), b.ctx.GetSessionVars()))
 
 			// If current CTE query contain another CTE which 'containRecursiveForbiddenOperator' is true, current CTE 'containRecursiveForbiddenOperator' will be true
 			if b.buildingCTE {
@@ -7292,21 +7375,32 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 
 func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.CommonTableExpression) (base.LogicalPlan, error) {
 	outPutNames := p.OutputNames()
-	for _, name := range outPutNames {
-		name.TblName = def.Name
-		if name.DBName.String() == "" {
-			name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	// Clone output names to avoid mutating shared structs (important for LATERAL subqueries)
+	clonedNames := make([]*types.FieldName, len(outPutNames))
+	for i, name := range outPutNames {
+		clonedNames[i] = &types.FieldName{
+			DBName:            name.DBName,
+			OrigTblName:       name.OrigTblName,
+			OrigColName:       name.OrigColName,
+			TblName:           def.Name, // Set to CTE name
+			ColName:           name.ColName,
+			NotExplicitUsable: name.NotExplicitUsable,
+			Redundant:         name.Redundant,
+			Hidden:            name.Hidden,
+		}
+		if clonedNames[i].DBName.String() == "" {
+			clonedNames[i].DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 		}
 	}
 	if len(def.ColNameList) > 0 {
-		if len(def.ColNameList) != len(p.OutputNames()) {
+		if len(def.ColNameList) != len(clonedNames) {
 			return nil, dbterror.ErrViewWrongList
 		}
 		for i, n := range def.ColNameList {
-			outPutNames[i].ColName = n
+			clonedNames[i].ColName = n
 		}
 	}
-	p.SetOutputNames(outPutNames)
+	p.SetOutputNames(clonedNames)
 	return p, nil
 }
 
@@ -7382,19 +7476,68 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 		return nil, plannererrors.ErrWrongNumberOfColumnsInSelect.GenWithStackByArgs()
 	}
 	exprs := make([]expression.Expression, len(seed.Schema().Columns))
-	resSchema := getResultCTESchema(seed.Schema(), b.ctx.GetSessionVars())
+
+	// For recursive CTEs, we must use the WIDER type from both seed and recursive parts.
+	// This is similar to how regular UNION handles type inference.
+	// For example, if seed has '' (varchar(0)) and recur has varchar(10), we use varchar(10).
+	resSchema := getResultCTESchemaWithRecur(seed.Schema(), recur.Schema(), b.ctx.GetSessionVars())
+
+	// Build column references to recur's output schema with CORRECT Index values.
+	// We must create new Column objects with Index set to the position in recur's schema,
+	// because recur.Schema().Columns may have incorrect Index values (e.g., when recur
+	// is a Projection with ScalarFunction expressions, buildSchemaByExprs creates columns
+	// with Index=0 for all non-Column expressions).
 	for i, col := range recur.Schema().Columns {
+		// Create a new column reference with the correct Index
+		newCol := &expression.Column{
+			UniqueID: col.UniqueID,
+			RetType:  col.RetType,
+			Index:    i, // CRITICAL: Set Index to position in recur's output schema
+		}
 		if !resSchema.Columns[i].RetType.Equal(col.RetType) {
-			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), col, resSchema.Columns[i].RetType)
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
 		} else {
-			exprs[i] = col
+			exprs[i] = newCol
 		}
 	}
-	b.optFlag |= rule.FlagEliminateProjection
+
 	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(resSchema)
 	proj.SetChildren(recur)
 	return proj, nil
+}
+
+// getResultCTESchemaWithRecur creates the result schema for a recursive CTE by using
+// the WIDER type from both seed and recursive parts. This is similar to how regular
+// UNION handles type inference. For example, if seed has ” (varchar(0)) and recur
+// has varchar(10), the result schema will use varchar(10) to prevent truncation.
+// Special case: if seed type is NULL, use the recursive part's type directly.
+func getResultCTESchemaWithRecur(seedSchema, recurSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
+	res := seedSchema.Clone()
+	for i, col := range res.Columns {
+		col.RetType = col.RetType.Clone()
+		col.UniqueID = svar.AllocPlanColumnID()
+		col.RetType.DelFlag(mysql.NotNullFlag)
+		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.
+		col.CleanHashCode()
+
+		// Use the wider type from both seed and recur schemas
+		if i < len(recurSchema.Columns) {
+			recurTp := recurSchema.Columns[i].RetType
+			seedTp := col.RetType
+			// Special case: if seed type is NULL, use recur type directly
+			// This handles cases like: WITH RECURSIVE cte AS (SELECT 1, NULL UNION ALL SELECT n+1, val FROM ...)
+			if seedTp.GetType() == mysql.TypeNull {
+				col.RetType = recurTp.Clone()
+			} else {
+				// Use unionJoinFieldType to get the wider type that can hold both
+				widerTp := unionJoinFieldType(seedTp, recurTp)
+				col.RetType = widerTp.Clone()
+			}
+			col.RetType.DelFlag(mysql.NotNullFlag)
+		}
+	}
+	return res
 }
 
 // The recursive part/CTE's schema is nullable, and the UID should be unique.
@@ -7408,4 +7551,53 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.CleanHashCode()
 	}
 	return res
+}
+
+// buildProjection4CTESeed creates a projection for the CTE seed part if any columns have NULL type.
+// This is needed when the seed has NULL literals that need to be cast to the proper type from the recursive part.
+// Returns the original seed if no projection is needed.
+func (b *PlanBuilder) buildProjection4CTESeed(seed, recur base.LogicalPlan) base.LogicalPlan {
+	if recur == nil {
+		return seed
+	}
+	if seed.Schema().Len() != recur.Schema().Len() {
+		return seed
+	}
+
+	// Check if any seed column has NULL type
+	needsProjection := false
+	for _, col := range seed.Schema().Columns {
+		if col.RetType.GetType() == mysql.TypeNull {
+			needsProjection = true
+			break
+		}
+	}
+	if !needsProjection {
+		return seed
+	}
+
+	// Build projection for seed, casting NULL columns to recur's type
+	exprs := make([]expression.Expression, len(seed.Schema().Columns))
+	resSchema := getResultCTESchemaWithRecur(seed.Schema(), recur.Schema(), b.ctx.GetSessionVars())
+
+	for i, col := range seed.Schema().Columns {
+		newCol := &expression.Column{
+			UniqueID: col.UniqueID,
+			RetType:  col.RetType,
+			Index:    i,
+		}
+		// If seed column is NULL type, cast to the target type from result schema
+		if col.RetType.GetType() == mysql.TypeNull && i < len(resSchema.Columns) {
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
+		} else if !resSchema.Columns[i].RetType.Equal(col.RetType) {
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
+		} else {
+			exprs[i] = newCol
+		}
+	}
+
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
+	proj.SetSchema(resSchema)
+	proj.SetChildren(seed)
+	return proj
 }

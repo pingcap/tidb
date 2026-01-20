@@ -523,3 +523,167 @@ func countLogicalApply(p base.LogicalPlan) int {
 
 	return count
 }
+
+// TestRecursiveCTEWithLateralOrderByLimit tests that ORDER BY and LIMIT are allowed
+// within LATERAL subqueries in recursive CTEs
+func TestRecursiveCTEWithLateralOrderByLimit(t *testing.T) {
+	s := coretestsdk.CreatePlannerSuiteElems()
+	defer s.Close()
+	ctx := context.Background()
+
+	testCases := []struct {
+		name        string
+		sql         string
+		expectError bool
+		errorMsg    string
+	}{
+		{
+			name: "Recursive CTE with LATERAL ORDER BY - should work",
+			sql: `
+WITH RECURSIVE hierarchy AS (
+  SELECT a, b FROM t WHERE a = 1
+  UNION ALL
+  SELECT n.a, n.b
+  FROM hierarchy h
+  CROSS JOIN LATERAL (
+    SELECT a, b FROM t WHERE a = h.a + 1
+    ORDER BY b DESC
+    LIMIT 3
+  ) AS n
+  WHERE h.a < 5
+)
+SELECT * FROM hierarchy`,
+			expectError: false,
+		},
+		{
+			name: "Recursive CTE with LATERAL LIMIT only - should work",
+			sql: `
+WITH RECURSIVE cte AS (
+  SELECT a FROM t WHERE a = 1
+  UNION ALL
+  SELECT n.a
+  FROM cte c
+  CROSS JOIN LATERAL (
+    SELECT a FROM t WHERE a = c.a + 1
+    LIMIT 5
+  ) AS n
+)
+SELECT * FROM cte`,
+			expectError: false,
+		},
+		{
+			name: "Recursive CTE with LATERAL ORDER BY only - should work",
+			sql: `
+WITH RECURSIVE cte AS (
+  SELECT a, b FROM t WHERE a = 1
+  UNION ALL
+  SELECT n.a, n.b
+  FROM cte c
+  CROSS JOIN LATERAL (
+    SELECT a, b FROM t WHERE a = c.a + 1
+    ORDER BY b ASC
+  ) AS n
+)
+SELECT * FROM cte`,
+			expectError: false,
+		},
+		{
+			name: "Recursive CTE with non-LATERAL ORDER BY - should fail",
+			sql: `
+WITH RECURSIVE cte AS (
+  SELECT a FROM t WHERE a = 1
+  UNION ALL
+  (SELECT t.a FROM t, cte WHERE t.a = cte.a + 1 ORDER BY t.a)
+)
+SELECT * FROM cte`,
+			expectError: true,
+			errorMsg:    "ORDER BY / LIMIT in recursive query block",
+		},
+		{
+			name: "Recursive CTE with non-LATERAL LIMIT - should fail",
+			sql: `
+WITH RECURSIVE cte AS (
+  SELECT a FROM t WHERE a = 1
+  UNION ALL
+  (SELECT t.a FROM t, cte WHERE t.a = cte.a + 1 LIMIT 10)
+)
+SELECT * FROM cte`,
+			expectError: true,
+			errorMsg:    "ORDER BY / LIMIT in recursive query block",
+		},
+		{
+			name: "Recursive CTE with LEFT JOIN LATERAL and ORDER BY/LIMIT - should work",
+			sql: `
+WITH RECURSIVE hierarchy AS (
+  SELECT a, b FROM t WHERE a = 1
+  UNION ALL
+  SELECT n.a, n.b
+  FROM hierarchy h
+  LEFT JOIN LATERAL (
+    SELECT a, b FROM t WHERE a = h.a + 1
+    ORDER BY b DESC
+    LIMIT 2
+  ) AS n ON true
+)
+SELECT * FROM hierarchy`,
+			expectError: false,
+		},
+		{
+			name: "Recursive CTE with multiple LATERAL joins with ORDER BY/LIMIT - should work",
+			sql: `
+WITH RECURSIVE cte AS (
+  SELECT a FROM t WHERE a = 1
+  UNION ALL
+  SELECT n2.a
+  FROM cte c
+  CROSS JOIN LATERAL (
+    SELECT a FROM t WHERE a = c.a + 1
+    ORDER BY a
+    LIMIT 2
+  ) AS n1
+  CROSS JOIN LATERAL (
+    SELECT a FROM t WHERE a = n1.a + 1
+    ORDER BY a DESC
+    LIMIT 1
+  ) AS n2
+)
+SELECT * FROM cte`,
+			expectError: false,
+		},
+		{
+			name: "Recursive CTE with non-LATERAL subquery with ORDER BY - should fail",
+			sql: `
+WITH RECURSIVE cte AS (
+  SELECT a FROM t WHERE a = 1
+  UNION ALL
+  SELECT a FROM (
+    SELECT a FROM t, cte WHERE t.a = cte.a + 1
+    ORDER BY a
+  ) AS sub
+)
+SELECT * FROM cte`,
+			expectError: true,
+			errorMsg:    "ORDER BY / LIMIT in recursive query block",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			stmt, err := s.GetParser().ParseOneStmt(tc.sql, "", "")
+			require.NoError(t, err, "Failed to parse SQL: %s", tc.sql)
+
+			nodeW := resolve.NewNodeW(stmt)
+			p, err := BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+
+			if tc.expectError {
+				require.Error(t, err, "Expected error for: %s", tc.sql)
+				if tc.errorMsg != "" {
+					require.Contains(t, err.Error(), tc.errorMsg, "Error message mismatch")
+				}
+			} else {
+				require.NoError(t, err, "Unexpected error for: %s\nError: %v", tc.sql, err)
+				require.NotNil(t, p, "Plan should not be nil")
+			}
+		})
+	}
+}
