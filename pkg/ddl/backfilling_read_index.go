@@ -80,6 +80,10 @@ type readIndexSummary struct {
 	mu         sync.Mutex
 }
 
+var cleanupAllLocalEnginesForReadIndex = func(backend *local.Backend) error {
+	return backend.CleanupAllLocalEngines(context.Background())
+}
+
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
@@ -171,28 +175,7 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 		if retErr == nil {
 			return
 		}
-		backend := bCtx.GetLocalBackend()
-		if backend == nil {
-			return
-		}
-		func() {
-			defer func() {
-				if p := recover(); p != nil {
-					logutil.DDLLogger().Warn("read index executor cleanup engines panicked",
-						zap.Any("panic", p),
-						zap.Int64("job ID", r.job.ID),
-						zap.Int64("subtask ID", subtask.ID),
-					)
-				}
-			}()
-			if cleanupErr := backend.CleanupAllLocalEngines(context.Background()); cleanupErr != nil {
-				logutil.DDLLogger().Warn("read index executor cleanup engines failed",
-					zap.Error(cleanupErr),
-					zap.Int64("job ID", r.job.ID),
-					zap.Int64("subtask ID", subtask.ID),
-				)
-			}
-		}()
+		cleanupReadIndexLocalEngines(r.job.ID, subtask.ID, bCtx)
 	}()
 
 	pipe, err := r.buildLocalStorePipeline(wctx, bCtx, sm, concurrency)
@@ -412,38 +395,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 		}
 		idxNames.WriteString(index.Name.O)
 	}
-	engines, err := backendCtx.Register(indexIDs, uniques, r.ptbl)
-	if err != nil && strings.Contains(err.Error(), "lock held by current process") {
-		// A stale Pebble directory lock can be left behind by a previously failed attempt.
-		// Best-effort cleanup to unblock subsequent retries.
-		if backend := backendCtx.GetLocalBackend(); backend != nil {
-			tidblogutil.Logger(wctx).Warn("register ingest engine got lock held, cleanup and retry",
-				zap.Error(err),
-				zap.Int64("job ID", r.job.ID),
-				zap.Int64s("index IDs", indexIDs),
-			)
-			func() {
-				defer func() {
-					if p := recover(); p != nil {
-						tidblogutil.Logger(wctx).Warn("cleanup engines panicked",
-							zap.Any("panic", p),
-							zap.Int64("job ID", r.job.ID),
-							zap.Int64s("index IDs", indexIDs),
-						)
-					}
-				}()
-				if cleanupErr := backend.CleanupAllLocalEngines(context.Background()); cleanupErr != nil {
-					tidblogutil.Logger(wctx).Warn("cleanup engines failed",
-						zap.Error(cleanupErr),
-						zap.Int64("job ID", r.job.ID),
-						zap.Int64s("index IDs", indexIDs),
-					)
-					return
-				}
-				engines, err = backendCtx.Register(indexIDs, uniques, r.ptbl)
-			}()
-		}
-	}
+	engines, err := registerReadIndexEngines(wctx, r.job.ID, backendCtx, indexIDs, uniques, r.ptbl)
 	if err != nil {
 		tidblogutil.Logger(wctx).Error("cannot register new engine",
 			zap.Error(err),
@@ -522,6 +474,73 @@ func (r *readIndexStepExecutor) buildExternalStorePipeline(
 		rowCntCollector,
 		r.backend.GetTiKVCodec(),
 	)
+}
+
+func cleanupReadIndexLocalEngines(jobID, subtaskID int64, backendCtx ingest.BackendCtx) {
+	backend := backendCtx.GetLocalBackend()
+	if backend == nil {
+		return
+	}
+	defer func() {
+		if p := recover(); p != nil {
+			logutil.DDLLogger().Warn("read index executor cleanup engines panicked",
+				zap.Any("panic", p),
+				zap.Int64("job ID", jobID),
+				zap.Int64("subtask ID", subtaskID),
+			)
+		}
+	}()
+	if cleanupErr := cleanupAllLocalEnginesForReadIndex(backend); cleanupErr != nil {
+		logutil.DDLLogger().Warn("read index executor cleanup engines failed",
+			zap.Error(cleanupErr),
+			zap.Int64("job ID", jobID),
+			zap.Int64("subtask ID", subtaskID),
+		)
+	}
+}
+
+func registerReadIndexEngines(
+	wctx *workerpool.Context,
+	jobID int64,
+	backendCtx ingest.BackendCtx,
+	indexIDs []int64,
+	uniques []bool,
+	tbl table.Table,
+) ([]ingest.Engine, error) {
+	engines, err := backendCtx.Register(indexIDs, uniques, tbl)
+	if err == nil || !strings.Contains(err.Error(), "lock held by current process") {
+		return engines, err
+	}
+
+	// A stale Pebble directory lock can be left behind by a previously failed attempt.
+	// Best-effort cleanup to unblock subsequent retries.
+	backend := backendCtx.GetLocalBackend()
+	if backend == nil {
+		return engines, err
+	}
+	tidblogutil.Logger(wctx).Warn("register ingest engine got lock held, cleanup and retry",
+		zap.Error(err),
+		zap.Int64("job ID", jobID),
+		zap.Int64s("index IDs", indexIDs),
+	)
+	defer func() {
+		if p := recover(); p != nil {
+			tidblogutil.Logger(wctx).Warn("cleanup engines panicked",
+				zap.Any("panic", p),
+				zap.Int64("job ID", jobID),
+				zap.Int64s("index IDs", indexIDs),
+			)
+		}
+	}()
+	if cleanupErr := cleanupAllLocalEnginesForReadIndex(backend); cleanupErr != nil {
+		tidblogutil.Logger(wctx).Warn("cleanup engines failed",
+			zap.Error(cleanupErr),
+			zap.Int64("job ID", jobID),
+			zap.Int64s("index IDs", indexIDs),
+		)
+		return engines, err
+	}
+	return backendCtx.Register(indexIDs, uniques, tbl)
 }
 
 type distTaskRowCntCollector struct {

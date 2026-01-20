@@ -17,7 +17,9 @@ package ddl
 import (
 	"bytes"
 	"context"
+	"errors"
 	"math"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression/exprstatic"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/lightning/backend"
+	"github.com/pingcap/tidb/pkg/lightning/backend/local"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
@@ -90,6 +94,93 @@ func TestPickBackfillType(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, tp, model.ReorgTypeIngest)
 	ingest.LitInitialized = false
+}
+
+type testReadIndexBackendCtx struct {
+	localBackend *local.Backend
+	registerFn   func(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error)
+}
+
+func (c *testReadIndexBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error) {
+	if c.registerFn == nil {
+		return nil, nil
+	}
+	return c.registerFn(indexIDs, uniques, tbl)
+}
+
+func (*testReadIndexBackendCtx) FinishAndUnregisterEngines(_ ingest.UnregisterOpt) error { return nil }
+func (*testReadIndexBackendCtx) IngestIfQuotaExceeded(context.Context, int, int) error   { return nil }
+func (*testReadIndexBackendCtx) Ingest(context.Context) error                            { return nil }
+func (*testReadIndexBackendCtx) NextStartKey() kv.Key                                    { return nil }
+func (*testReadIndexBackendCtx) TotalKeyCount() int                                      { return 0 }
+func (*testReadIndexBackendCtx) AddChunk(int, kv.Key)                                    {}
+func (*testReadIndexBackendCtx) UpdateChunk(int, int, bool)                              {}
+func (*testReadIndexBackendCtx) FinishChunk(int, int)                                    {}
+func (*testReadIndexBackendCtx) AdvanceWatermark(bool) error                             { return nil }
+func (*testReadIndexBackendCtx) GetImportTS() uint64                                     { return 0 }
+func (c *testReadIndexBackendCtx) GetLocalBackend() *local.Backend                       { return c.localBackend }
+func (*testReadIndexBackendCtx) CollectRemoteDuplicateRows(int64, table.Table) error     { return nil }
+func (*testReadIndexBackendCtx) GetDiskUsage() uint64                                    { return 0 }
+func (*testReadIndexBackendCtx) Close()                                                  {}
+
+type testReadIndexEngine struct{}
+
+func (*testReadIndexEngine) Flush() error { return nil }
+func (*testReadIndexEngine) Close(bool)   {}
+func (*testReadIndexEngine) CreateWriter(int, *backend.LocalWriterConfig) (ingest.Writer, error) {
+	return &testReadIndexWriter{}, nil
+}
+
+type testReadIndexWriter struct{}
+
+func (*testReadIndexWriter) WriteRow(context.Context, []byte, []byte, kv.Handle) error { return nil }
+func (*testReadIndexWriter) LockForWrite() func()                                      { return func() {} }
+func (*testReadIndexWriter) WrittenBytes() int64                                       { return 0 }
+
+func TestRegisterReadIndexEnginesRetryOnLockHeld(t *testing.T) {
+	origCleanup := cleanupAllLocalEnginesForReadIndex
+	var cleanupCalls int32
+	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
+		atomic.AddInt32(&cleanupCalls, 1)
+		return nil
+	}
+	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
+
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+
+	var registerCalls int32
+	backendCtx := &testReadIndexBackendCtx{
+		localBackend: &local.Backend{},
+		registerFn: func([]int64, []bool, table.Table) ([]ingest.Engine, error) {
+			if atomic.AddInt32(&registerCalls, 1) == 1 {
+				return nil, errors.New("lock held by current process")
+			}
+			return []ingest.Engine{&testReadIndexEngine{}}, nil
+		},
+	}
+
+	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
+	require.NoError(t, err)
+	require.Len(t, engines, 1)
+	require.Equal(t, int32(2), registerCalls)
+	require.Equal(t, int32(1), cleanupCalls)
+}
+
+func TestCleanupReadIndexLocalEngines(t *testing.T) {
+	origCleanup := cleanupAllLocalEnginesForReadIndex
+	var cleanupCalls int32
+	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
+		atomic.AddInt32(&cleanupCalls, 1)
+		return nil
+	}
+	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
+
+	cleanupReadIndexLocalEngines(1, 2, &testReadIndexBackendCtx{localBackend: &local.Backend{}})
+	require.Equal(t, int32(1), cleanupCalls)
+
+	cleanupReadIndexLocalEngines(1, 2, &testReadIndexBackendCtx{localBackend: nil})
+	require.Equal(t, int32(1), cleanupCalls)
 }
 
 func assertStaticExprContextEqual(t *testing.T, sctx sessionctx.Context, exprCtx *exprstatic.ExprContext, warnHandler contextutil.WarnHandler) {
