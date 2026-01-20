@@ -329,6 +329,9 @@ func (c *localMppCoordinator) fixTaskForCTEStorageAndReader(exec *tipb.Executor,
 			actualTIDs = append(actualTIDs, taskMeta.TaskId)
 		}
 		logutil.BgLogger().Warn("refine tunnel for cte consumer task", zap.String("the final tunnel", fmt.Sprintf("down stream producer task: %v", actualTIDs)))
+	case tipb.ExecType_TypeCTESink:
+		children = append(children, exec.CteSink.Child)
+	case tipb.ExecType_TypeCTESource:
 	case tipb.ExecType_TypeJoin:
 		children = append(children, exec.Join.Children...)
 	case tipb.ExecType_TypeProjection:
@@ -454,6 +457,9 @@ func (h *taskZoneInfoHelper) fillSameZoneFlagForExchange(exec *tipb.Executor) {
 		exec.ExchangeSender.SameZoneFlag = h.inferSameZoneFlag(exec, exec.ExchangeSender.EncodedTaskMeta)
 	case tipb.ExecType_TypeExchangeReceiver:
 		exec.ExchangeReceiver.SameZoneFlag = h.inferSameZoneFlag(exec, exec.ExchangeReceiver.EncodedTaskMeta)
+	case tipb.ExecType_TypeCTESink:
+		children = append(children, exec.CteSink.Child)
+	case tipb.ExecType_TypeCTESource:
 	case tipb.ExecType_TypeJoin:
 		children = append(children, exec.Join.Children...)
 	case tipb.ExecType_TypeProjection:

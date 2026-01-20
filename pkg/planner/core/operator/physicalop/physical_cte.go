@@ -29,7 +29,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
@@ -315,4 +317,177 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 	default:
 		return true
 	}
+}
+
+// PhysicalCTESink is used for representing CTE sink in TiFlash MPP.
+// It corresponds to tipb.CTESink.
+type PhysicalCTESink struct {
+	BasePhysicalPlan
+
+	IDForStorage int
+
+	// TargetTasks are kept for base.MPPSink interface compatibility.
+	TargetTasks []*kv.MPPTask
+	Tasks       []*kv.MPPTask
+
+	CompressionMode vardef.ExchangeCompressionMode
+
+	CteSinkNum   uint32
+	CteSourceNum uint32
+}
+
+// Init only assigns type and context.
+func (p PhysicalCTESink) Init(ctx base.PlanContext, stats *property.StatsInfo) *PhysicalCTESink {
+	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESink, &p, 0)
+	p.SetStats(stats)
+	return &p
+}
+
+// GetCompressionMode returns the compression mode.
+func (p *PhysicalCTESink) GetCompressionMode() vardef.ExchangeCompressionMode {
+	return p.CompressionMode
+}
+
+// GetSelfTasks returns mpp tasks for current PhysicalCTESink.
+func (p *PhysicalCTESink) GetSelfTasks() []*kv.MPPTask {
+	return p.Tasks
+}
+
+// SetSelfTasks sets mpp tasks for current PhysicalCTESink.
+func (p *PhysicalCTESink) SetSelfTasks(tasks []*kv.MPPTask) {
+	p.Tasks = tasks
+}
+
+// SetTargetTasks sets mpp tasks for current PhysicalCTESink.
+func (p *PhysicalCTESink) SetTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = tasks
+}
+
+// AppendTargetTasks appends mpp tasks for current PhysicalCTESink.
+func (p *PhysicalCTESink) AppendTargetTasks(tasks []*kv.MPPTask) {
+	p.TargetTasks = append(p.TargetTasks, tasks...)
+}
+
+// Clone implements base.PhysicalPlan interface.
+func (p *PhysicalCTESink) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	np := new(PhysicalCTESink)
+	np.SetSCtx(newCtx)
+	base, err := p.BasePhysicalPlan.CloneWithSelf(newCtx, np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.BasePhysicalPlan = *base
+	np.IDForStorage = p.IDForStorage
+	np.CompressionMode = p.CompressionMode
+	np.CteSinkNum = p.CteSinkNum
+	np.CteSourceNum = p.CteSourceNum
+	return np, nil
+}
+
+// MemoryUsage returns the memory usage of PhysicalCTESink.
+func (p *PhysicalCTESink) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfInt + size.SizeOfInt32*2 +
+		size.SizeOfSlice*2 + int64(cap(p.TargetTasks)+cap(p.Tasks))*size.SizeOfPointer
+	return
+}
+
+// ToPB generates the pb structure.
+func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	childPb, err := p.Children()[0].ToPB(ctx, storeType)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
+		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fieldTypes = append(fieldTypes, pbType)
+	}
+
+	cteSink := &tipb.CTESink{
+		CteId:        uint32(p.IDForStorage),
+		CteSourceNum: p.CteSourceNum,
+		CteSinkNum:   p.CteSinkNum,
+		Child:        childPb,
+		FieldTypes:   fieldTypes,
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{
+		Tp:         tipb.ExecType_TypeCTESink,
+		CteSink:    cteSink,
+		ExecutorId: &executorID,
+	}, nil
+}
+
+// PhysicalCTESource is used for representing CTE source in TiFlash MPP.
+// It corresponds to tipb.CTESource.
+type PhysicalCTESource struct {
+	PhysicalSchemaProducer
+
+	IDForStorage int
+
+	CteSinkNum   uint32
+	CteSourceNum uint32
+}
+
+// Init only assigns type, context and schema.
+func (p PhysicalCTESource) Init(ctx base.PlanContext, stats *property.StatsInfo, schema *expression.Schema) *PhysicalCTESource {
+	p.BasePhysicalPlan = NewBasePhysicalPlan(ctx, plancodec.TypePhysicalCTESource, &p, 0)
+	p.SetStats(stats)
+	p.SetSchema(schema)
+	return &p
+}
+
+// Clone implements base.PhysicalPlan interface.
+func (p *PhysicalCTESource) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error) {
+	np := new(PhysicalCTESource)
+	np.SetSCtx(newCtx)
+	base, err := p.PhysicalSchemaProducer.CloneWithSelf(newCtx, np)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	np.PhysicalSchemaProducer = *base
+	np.IDForStorage = p.IDForStorage
+	np.CteSinkNum = p.CteSinkNum
+	np.CteSourceNum = p.CteSourceNum
+	return np, nil
+}
+
+// MemoryUsage returns the memory usage of PhysicalCTESource.
+func (p *PhysicalCTESource) MemoryUsage() (sum int64) {
+	if p == nil {
+		return
+	}
+	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfInt + size.SizeOfInt32*2
+	return
+}
+
+// ToPB generates the pb structure.
+func (p *PhysicalCTESource) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType) (*tipb.Executor, error) {
+	fieldTypes := make([]*tipb.FieldType, 0, len(p.Schema().Columns))
+	for _, column := range p.Schema().Columns {
+		pbType, err := expression.ToPBFieldTypeWithCheck(column.RetType, storeType)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		fieldTypes = append(fieldTypes, pbType)
+	}
+	cteSource := &tipb.CTESource{
+		CteId:        uint32(p.IDForStorage),
+		CteSourceNum: p.CteSourceNum,
+		CteSinkNum:   p.CteSinkNum,
+		FieldTypes:   fieldTypes,
+	}
+	executorID := p.ExplainID().String()
+	return &tipb.Executor{
+		Tp:         tipb.ExecType_TypeCTESource,
+		CteSource:  cteSource,
+		ExecutorId: &executorID,
+	}, nil
 }
