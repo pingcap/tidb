@@ -111,6 +111,27 @@ func TestExplainExploreBasic(t *testing.T) {
 	tk.MustExecToErr("explain explore SELECT A FROM", "")
 }
 
+func TestExplainExploreIndexHints(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b))`)
+
+	rows := tk.MustQuery(`explain explore select * from t where a=1 and b=1`).Rows()
+	hasIndexA, hasIndexB := false, false
+	for _, row := range rows {
+		plan := row[2].(string)
+		if strings.Contains(plan, "index:a") {
+			hasIndexA = true
+		}
+		if strings.Contains(plan, "index:b") {
+			hasIndexB = true
+		}
+	}
+	require.True(t, hasIndexA, "expected index a plan in explain explore output")
+	require.True(t, hasIndexB, "expected index b plan in explain explore output")
+}
+
 func TestIsSimplePointPlan(t *testing.T) {
 	require.True(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         Projection_4    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
