@@ -199,6 +199,9 @@ func getTiDBKeyFlags(flag tikvstore.KeyFlags) kv.KeyFlags {
 	return v
 }
 
+// NOTE: assertion flags are intentionally excluded here.
+// Assertion ops are separated from kv.FlagsOp in TiDB, and should only be applied via
+// MemBuffer.UpdateAssertionFlags (see getTiKVAssertionOp) to avoid accidental misuse.
 func getTiKVFlagsOp(op kv.FlagsOp) tikvstore.FlagsOp {
 	switch op {
 	case kv.SetPresumeKeyNotExists:
