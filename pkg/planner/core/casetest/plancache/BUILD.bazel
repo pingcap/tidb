@@ -45,9 +45,9 @@ go_test(
         "//pkg/types/parser_driver",
         "//pkg/util/benchdaily",
         "//pkg/util/mock",
-        "@io_bazel_rules_go//go/tools/bazel",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
+        "@io_bazel_rules_go//go/runfiles:go_default_library",
         "@org_uber_go_goleak//:goleak",
     ],
 )

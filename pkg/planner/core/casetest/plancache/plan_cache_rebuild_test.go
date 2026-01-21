@@ -25,7 +25,7 @@ import (
 	"testing"
 	"unsafe"
 
-	"github.com/bazelbuild/rules_go/go/tools/bazel"
+	"github.com/bazelbuild/rules_go/go/runfiles"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -514,10 +514,12 @@ func TestFastPointGetClone(t *testing.T) {
 }
 
 func readPlanCloneUtils() ([]byte, error) {
-	path, err := bazel.Runfile("pkg/planner/core/plan_clone_utils.go")
+	rf, err := runfiles.New()
 	if err != nil {
-		path = filepath.Join("..", "..", "plan_clone_utils.go")
+		path := filepath.Join("..", "..", "plan_clone_utils.go")
+		return os.ReadFile(path)
 	}
+	path := rf.Rlocation("pkg/planner/core/plan_clone_utils.go")
 	return os.ReadFile(path)
 }
 
