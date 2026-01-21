@@ -38,6 +38,7 @@ import (
 	. "github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	. "github.com/pingcap/tidb/pkg/objstore/s3like"
 	. "github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/s3store/mock"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -731,31 +732,6 @@ func TestOpenReadSlowly(t *testing.T) {
 	require.Equal(t, []byte("ABCDEFGHIJKLMNOPQRSTUVWXYZ"), res)
 }
 
-func TestPutAndDeleteObjectCheck(t *testing.T) {
-	s := CreateS3Suite(t)
-	ctx := context.Background()
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	require.NoError(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}))
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "mock put error")
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "mock del error")
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, &smithy.GenericAPIError{Code: "AccessDenied", Message: "AccessDenied", Fault: smithy.FaultUnknown})
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "AccessDenied")
-
-	s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock put error"))
-	s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, errors.New("mock del error"))
-	require.ErrorContains(t, PutAndDeleteObjectCheck(ctx, s.MockS3, &backuppb.S3{}), "mock put error")
-}
-
 // TestOpenSeek checks that Seek is implemented correctly.
 func TestOpenSeek(t *testing.T) {
 	s := CreateS3Suite(t)
@@ -1351,9 +1327,18 @@ func TestSendCreds(t *testing.T) {
 
 func TestObjectLock(t *testing.T) {
 	s := CreateS3Suite(t)
+
+	options := &backuppb.S3{
+		Region:       "us-west-2",
+		Bucket:       "bucket",
+		Prefix:       "prefix/",
+		Acl:          "acl",
+		Sse:          "sse",
+		StorageClass: "sc",
+	}
 	// resp is nil
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil, nil)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp is not nil, but resp.ObjectLockConfiguration is nil
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1361,7 +1346,7 @@ func TestObjectLock(t *testing.T) {
 			ObjectLockConfiguration: nil,
 		}, nil,
 	)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp.ObjectLockConfiguration is not nil, but resp.ObjectLockConfiguration.ObjectLockEnabled is empty
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1369,7 +1354,7 @@ func TestObjectLock(t *testing.T) {
 			ObjectLockConfiguration: &types.ObjectLockConfiguration{},
 		}, nil,
 	)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp.ObjectLockConfiguration.ObjectLockEnabled is illegal string
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1379,7 +1364,7 @@ func TestObjectLock(t *testing.T) {
 			},
 		}, nil,
 	)
-	require.Equal(t, false, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, false, IsObjectLockEnabled(s.MockS3, options))
 
 	// resp.ObjectLockConfiguration.ObjectLockEnabled is enabled
 	s.MockS3.EXPECT().GetObjectLockConfiguration(gomock.Any(), gomock.Any(), gomock.Any()).Return(
@@ -1389,7 +1374,7 @@ func TestObjectLock(t *testing.T) {
 			},
 		}, nil,
 	)
-	require.Equal(t, true, s.Storage.IsObjectLockEnabled())
+	require.Equal(t, true, IsObjectLockEnabled(s.MockS3, options))
 }
 
 func TestS3StorageBucketRegion(t *testing.T) {
@@ -1457,7 +1442,7 @@ func TestS3StorageBucketRegion(t *testing.T) {
 				&backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}},
 				&storeapi.Options{})
 			require.NoError(t, err)
-			ss, ok := es.(*S3Storage)
+			ss, ok := es.(*Storage)
 			require.True(t, ok)
 			require.Equal(t, region, ss.GetOptions().Region)
 		}(ca.name, ca.expectRegion, ca.s3)
@@ -1518,7 +1503,7 @@ func TestS3ReadFileRetryable(t *testing.T) {
 		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
 		Return(nil, expectedErr)
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3store/read-s3-body-failed", "2*return(true)")
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/objstore/s3like/read-s3-body-failed", "2*return(true)")
 	_, err := s.Storage.ReadFile(ctx, "file")
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), errMsg))
@@ -1537,7 +1522,7 @@ func TestOpenRangeMismatchErrorMsg(t *testing.T) {
 			}, nil
 		})
 	reader, err := s.Storage.Open(ctx, "test", &storeapi.ReaderOption{StartOffset: &start, EndOffset: &end})
-	require.ErrorContains(t, err, "expected range: bytes=10-29, got: bytes 10-20/20")
+	require.ErrorContains(t, err, "expected range: [10,30), got: bytes 10-20/20")
 	require.Nil(t, reader)
 
 	s.MockS3.EXPECT().

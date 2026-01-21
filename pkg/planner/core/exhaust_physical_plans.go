@@ -914,17 +914,7 @@ func buildDataSource2IndexScanByIndexJoinProp(
 	if indexJoinResult == nil {
 		return base.InvalidTask
 	}
-	rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
-	maxOneRow := false
-	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
-		l := len(indexJoinResult.chosenAccess)
-		if l == 0 {
-			maxOneRow = true
-		} else {
-			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
-			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
-		}
-	}
+	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 	var innerTask base.Task
 	if !prop.IsSortItemEmpty() && matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
 		innerTask = constructDS2IndexScanTask(ds, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
@@ -973,13 +963,13 @@ func buildDataSource2TableScanByIndexJoinProp(
 			return base.InvalidTask
 		}
 		// prepare the range info with outer join keys, it shows like: [xxx] decided by:
-		rangeInfo := indexJoinPathRangeInfo(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
+		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(ds.SCtx(), prop.IndexJoinProp.OuterJoinKeys, indexJoinResult)
 		// construct the inner task with chosen path and ranges, note: it only for this leaf datasource.
 		// like the normal way, we need to check whether the chosen path is matched with the prop, if so, we will set the `keepOrder` to true.
 		if matchProperty(ds, indexJoinResult.chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
+			innerTask = constructDS2TableScanTask(ds, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -994,11 +984,13 @@ func buildDataSource2TableScanByIndexJoinProp(
 		if !ok {
 			return base.InvalidTask
 		}
+		// For IntHandle (integer primary key), it's always a unique match.
+		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(ds.SCtx().GetExprCtx().GetEvalCtx(), newOuterJoinKeys)
 		if !prop.IsSortItemEmpty() && matchProperty(ds, chosenPath, prop) == property.PropMatched {
-			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt)
+			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, true, prop.SortItems[0].Desc, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		} else {
-			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt)
+			innerTask = constructDS2TableScanTask(ds, localRanges, rangeInfo, false, false, prop.IndexJoinProp.AvgInnerRowCnt, maxOneRow)
 		}
 	}
 	// since there is a possibility that inner task can't be built and the returned value is nil, we just return base.InvalidTask.
@@ -1074,14 +1066,14 @@ func buildIndexJoinInner2TableScan(
 		if indexJoinResult == nil {
 			return nil
 		}
-		rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, avgInnerRowCnt)
+		rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(p.SCtx(), outerJoinKeys, indexJoinResult)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, indexJoinResult.chosenRanges.Range(), rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
 		}
 		ranges = indexJoinResult.chosenRanges
 	} else {
@@ -1094,14 +1086,16 @@ func buildIndexJoinInner2TableScan(
 		if !ok {
 			return nil
 		}
+		// For IntHandle (integer primary key), it's always a unique match.
+		maxOneRow := true
 		rangeInfo := indexJoinIntPKRangeInfo(p.SCtx().GetExprCtx().GetEvalCtx(), outerJoinKeys)
-		innerTask = constructInnerTableScanTask(p, prop, wrapper, localRanges, rangeInfo, false, false, avgInnerRowCnt)
+		innerTask = constructInnerTableScanTask(p, prop, wrapper, localRanges, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 		// The index merge join's inner plan is different from index join, so we
 		// should construct another inner plan for it.
 		// Because we can't keep order for union scan, if there is a union scan in inner task,
 		// we can't construct index merge join.
 		if !wrapper.hasDitryWrite {
-			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, localRanges, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt)
+			innerTask2 = constructInnerTableScanTask(p, prop, wrapper, localRanges, rangeInfo, true, !prop.IsSortItemEmpty() && prop.SortItems[0].Desc, avgInnerRowCnt, maxOneRow)
 		}
 	}
 	var (
@@ -1152,17 +1146,7 @@ func buildIndexJoinInner2IndexScan(
 		return nil
 	}
 	joins = make([]base.PhysicalPlan, 0, 3)
-	rangeInfo := indexJoinPathRangeInfo(p.SCtx(), outerJoinKeys, indexJoinResult)
-	maxOneRow := false
-	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
-		l := len(indexJoinResult.chosenAccess)
-		if l == 0 {
-			maxOneRow = true
-		} else {
-			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
-			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
-		}
-	}
+	rangeInfo, maxOneRow := indexJoinPathGetRangeInfoAndMaxOneRow(p.SCtx(), outerJoinKeys, indexJoinResult)
 	innerTask := constructInnerIndexScanTask(p, prop, wrapper, indexJoinResult.chosenPath, indexJoinResult.chosenRanges.Range(), indexJoinResult.chosenRemained, indexJoinResult.idxOff2KeyOff, rangeInfo, false, false, avgInnerRowCnt, maxOneRow)
 	failpoint.Inject("MockOnlyEnableIndexHashJoin", func(val failpoint.Value) {
 		if val.(bool) && !p.SCtx().GetSessionVars().InRestrictedSQL && innerTask != nil {
@@ -1198,8 +1182,9 @@ func constructInnerTableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	maxOneRow bool,
 ) base.Task {
-	copTask := constructDS2TableScanTask(wrapper.ds, ranges, rangeInfo, keepOrder, desc, rowCount)
+	copTask := constructDS2TableScanTask(wrapper.ds, ranges, rangeInfo, keepOrder, desc, rowCount, maxOneRow)
 	if copTask == nil {
 		return nil
 	}
@@ -1214,6 +1199,7 @@ func constructDS2TableScanTask(
 	keepOrder bool,
 	desc bool,
 	rowCount float64,
+	maxOneRow bool,
 ) base.Task {
 	// If `ds.TableInfo.GetPartitionInfo() != nil`,
 	// it means the data source is a partition table reader.
@@ -1253,9 +1239,15 @@ func constructDS2TableScanTask(
 		// i.e, rowCount equals to `countAfterAccess * selectivity`.
 		countAfterAccess = rowCount / selectivity
 	}
+	// Only apply the 1-row limit when we can guarantee at most one row per outer row.
+	// For CommonHandle, this requires matching ALL primary key columns with equality conditions.
+	// For prefix scans (e.g., only matching first column of a composite PK), we trust the statistical estimation.
+	finalRowCount := countAfterAccess
+	if maxOneRow {
+		finalRowCount = math.Min(1.0, countAfterAccess)
+	}
 	ts.SetStats(&property.StatsInfo{
-		// TableScan as inner child of IndexJoin can return at most 1 tuple for each outer row.
-		RowCount:     math.Min(1.0, countAfterAccess),
+		RowCount:     finalRowCount,
 		StatsVersion: ds.StatsInfo().StatsVersion,
 		// NDV would not be used in cost computation of IndexJoin, set leave it as default nil.
 	})

@@ -4,6 +4,7 @@ go_library(
     name = "issyncer",
     srcs = [
         "deferfn.go",
+        "filter.go",
         "loader.go",
         "mdl_check.go",
         "syncer.go",
@@ -53,7 +54,7 @@ go_test(
     ],
     embed = [":issyncer"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "//pkg/infoschema",
         "//pkg/kv",
