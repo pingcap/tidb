@@ -25,10 +25,10 @@ import (
 	"golang.org/x/tools/go/analysis/passes/inspect"
 )
 
-// Analyzer restricts assertion-related transaction APIs to the table layer and txn driver layer.
+// Analyzer restricts assertion-related MemBuffer APIs to the table layer.
 var Analyzer = &analysis.Analyzer{
 	Name:     "assertionapi",
-	Doc:      "Restrict txn assertion API usage to pkg/table/tables and pkg/store/driver/txn",
+	Doc:      "Restrict txn assertion API usage (UpdateAssertionFlags) to pkg/table/tables",
 	Requires: []*analysis.Analyzer{inspect.Analyzer},
 	Run:      run,
 }
@@ -44,14 +44,14 @@ func run(pass *analysis.Pass) (any, error) {
 
 		ast.Inspect(f, func(n ast.Node) bool {
 			sel, ok := n.(*ast.SelectorExpr)
-			if !ok || sel.Sel == nil || sel.Sel.Name != "SetAssertion" {
+			if !ok || sel.Sel == nil || sel.Sel.Name != "UpdateAssertionFlags" {
 				return true
 			}
-			if !isTxnAssertionSetAssertion(pass, sel) {
+			if !isKVUpdateAssertionFlags(pass, sel) {
 				return true
 			}
 
-			pass.Reportf(sel.Sel.Pos(), "txn assertion API (SetAssertion) is restricted to pkg/table/tables and pkg/store/driver/txn")
+			pass.Reportf(sel.Sel.Pos(), "txn assertion API (UpdateAssertionFlags) is restricted to pkg/table/tables")
 			return true
 		})
 	}
@@ -60,10 +60,10 @@ func run(pass *analysis.Pass) (any, error) {
 
 func isAllowedFile(filename string) bool {
 	f := filepath.ToSlash(filename)
-	return strings.Contains(f, "pkg/table/tables/") || strings.Contains(f, "pkg/store/driver/txn/")
+	return strings.Contains(f, "pkg/table/tables/")
 }
 
-func isTxnAssertionSetAssertion(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
+func isKVUpdateAssertionFlags(pass *analysis.Pass, sel *ast.SelectorExpr) bool {
 	selection := pass.TypesInfo.Selections[sel]
 	if selection == nil {
 		// No type information; be conservative and don't fail the build on potentially unrelated identifiers.
@@ -78,9 +78,9 @@ func isTxnAssertionSetAssertion(pass *analysis.Pass, sel *ast.SelectorExpr) bool
 		return false
 	}
 
-	// Match: SetAssertion([]byte, kv.AssertionOp) error
+	// Match: UpdateAssertionFlags(kv.Key, kv.AssertionOp)
 	//
-	// Note: method expressions like `T.SetAssertion` have an extra first parameter (the receiver),
+	// Note: method expressions like `T.UpdateAssertionFlags` have an extra first parameter (the receiver),
 	// so we match both forms.
 	params := sig.Params()
 	var keyIdx, opIdx int
@@ -92,7 +92,7 @@ func isTxnAssertionSetAssertion(pass *analysis.Pass, sel *ast.SelectorExpr) bool
 	default:
 		return false
 	}
-	if !isByteSlice(params.At(keyIdx).Type()) {
+	if !isKVKey(params.At(keyIdx).Type()) {
 		return false
 	}
 	if !isKVAssertionOp(params.At(opIdx).Type()) {
@@ -101,13 +101,16 @@ func isTxnAssertionSetAssertion(pass *analysis.Pass, sel *ast.SelectorExpr) bool
 	return true
 }
 
-func isByteSlice(t types.Type) bool {
-	s, ok := t.(*types.Slice)
+func isKVKey(t types.Type) bool {
+	n, ok := t.(*types.Named)
 	if !ok {
 		return false
 	}
-	b, ok := s.Elem().(*types.Basic)
-	return ok && b.Kind() == types.Byte
+	obj := n.Obj()
+	if obj == nil || obj.Pkg() == nil {
+		return false
+	}
+	return obj.Name() == "Key" && obj.Pkg().Path() == kvPkgPath
 }
 
 func isKVAssertionOp(t types.Type) bool {
