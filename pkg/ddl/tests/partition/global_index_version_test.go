@@ -168,8 +168,8 @@ func TestGlobalIndexVersion0(t *testing.T) {
 		"Global index should have version %d", model.GlobalIndexVersionLegacy)
 }
 
-// TestGlobalIndexVersion1 tests that global indexes are created with version V1.
-func TestGlobalIndexVersion1(t *testing.T) {
+// TestGlobalIndexVersion2 tests that global indexes are created with version V2.
+func TestGlobalIndexVersion2(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
