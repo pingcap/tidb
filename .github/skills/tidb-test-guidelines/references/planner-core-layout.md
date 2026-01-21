@@ -50,3 +50,8 @@ Keep optimizer tests organized and discoverable by forcing them into `pkg/planne
 
 - Use behavior-based names; never name tests after issue IDs only.
 - Merge overlapping functionality into a single test only if it does not make runtime too long.
+
+## Planner/core-specific rules
+
+- For optimizer cases, always place new tests under `pkg/planner/core/casetest/<type>` and keep testdata in `pkg/planner/core/casetest/<type>/testdata`.
+- Avoid adding new optimizer cases directly under `pkg/planner/core` or `pkg/planner/core/tests` unless extending an existing suite.
