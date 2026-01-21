@@ -40,7 +40,7 @@ const (
 	defaultRegion = "cn-hangzhou"
 	// ECS RAM role credential provider name, see
 	// https://github.com/aliyun/credentials-go/blob/7d2a3e68402630904f518531e80b370b3649c6a1/credentials/providers/ecs_ram_role.go#L238
-	ecsRamRoleProviderName = "ecs_ram_role"
+	ecsRAMRoleProviderName = "ecs_ram_role"
 	// the URL to get region ID from ECS metadata service, Aliyun SDK doesn't
 	// provider this API, so we have to write our own, see
 	// https://github.com/aliyun/aliyun_assist_client/blob/feb283504ee5a11484067af9762f1008baa664b0/common/metaserver/prop.go#L34-L37
@@ -127,7 +127,7 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 		}
 		// the default provider concatenates the provider names with `/`, see
 		// https://github.com/aliyun/credentials-go/blob/7d2a3e68402630904f518531e80b370b3649c6a1/credentials/providers/default.go#L101
-		if strings.Contains(cred.ProviderName, ecsRamRoleProviderName) {
+		if strings.Contains(cred.ProviderName, ecsRAMRoleProviderName) {
 			httpCli := &http.Client{}
 			ecsRegionID, err = httputil.GetText(httpCli, regionIDMetaURL)
 			if err != nil {
@@ -188,7 +188,7 @@ func NewOSSStorage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opt
 	ossCfg = ossCfg.WithUseInternalEndpoint(useInternalEndpoint)
 
 	logger.Info("succeed to get bucket region", zap.String("bucketRegion", detectedBucketRegion),
-		zap.Bool("useInternalEndpoint", useInternalEndpoint))
+		zap.String("ecsRegion", ecsRegionID), zap.Bool("useInternalEndpoint", useInternalEndpoint))
 
 	qs.Prefix = storeapi.NewPrefix(qs.Prefix).String()
 	bucketPrefix := storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix)
