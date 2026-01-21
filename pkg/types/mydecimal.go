@@ -1030,7 +1030,6 @@ func (d *MyDecimal) FromParquetArray(buf []byte, scale int) (err error) {
 			}
 		}
 
-		// This shouldn't happen.
 		if wordIdx >= wordBufLen {
 			return ErrOverflow
 		}
