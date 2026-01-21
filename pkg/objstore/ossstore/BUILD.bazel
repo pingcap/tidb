@@ -19,6 +19,7 @@ go_library(
         "//pkg/objstore/s3like",
         "//pkg/objstore/storeapi",
         "//pkg/util",
+        "//pkg/util/httputil",
         "//pkg/util/logutil",
         "@com_github_alibabacloud_go_tea//tea",
         "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss",
@@ -42,7 +43,7 @@ go_test(
     ],
     embed = [":ossstore"],
     flaky = True,
-    shard_count = 8,
+    shard_count = 10,
     deps = [
         "//dumpling/context",
         "//pkg/objstore/ossstore/mock",
