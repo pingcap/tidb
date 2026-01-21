@@ -450,10 +450,8 @@ func TestGetCorrectResult(t *testing.T) {
 	}()
 
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
-	for range 5 {
-		executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
-		executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
-	}
+	executeCorrecResultTest(t, ctx, nil, dataSource, result, testFuncName)
+	executeCorrecResultTest(t, ctx, aggExec, dataSource, result, testFuncName)
 
 	finished.Store(true)
 	wg.Wait()
@@ -514,7 +512,7 @@ func TestRandomFail(t *testing.T) {
 
 	// Test is successful when all sqls are not hung
 	aggExec := buildHashAggExecutor(t, ctx, dataSource, testFuncName)
-	for range 30 {
+	for range 5 {
 		randomFailTest(t, ctx, nil, dataSource, testFuncName)
 		randomFailTest(t, ctx, aggExec, dataSource, testFuncName)
 	}

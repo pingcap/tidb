@@ -15,6 +15,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/codec",
         "//pkg/util/logutil",
+        "//pkg/util/redact",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/deadlock",
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",

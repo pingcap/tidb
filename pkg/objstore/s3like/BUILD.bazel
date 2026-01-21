@@ -1,18 +1,48 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "s3like",
-    srcs = ["retry.go"],
+    srcs = [
+        "interface.go",
+        "io.go",
+        "permission.go",
+        "retry.go",
+        "store.go",
+    ],
     importpath = "github.com/pingcap/tidb/pkg/objstore/s3like",
     visibility = ["//visibility:public"],
     deps = [
+        "//br/pkg/errors",
         "//br/pkg/logutil",
         "//pkg/metrics",
+        "//pkg/objstore/compressedio",
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/recording",
+        "//pkg/objstore/storeapi",
+        "//pkg/util/injectfailpoint",
+        "//pkg/util/prefetch",
         "@com_github_aliyun_alibabacloud_oss_go_sdk_v2//oss/retry",
         "@com_github_aws_aws_sdk_go_v2//aws",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
+        "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_pingcap_log//:log",
+        "@com_github_spf13_pflag//:pflag",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "s3like_test",
+    timeout = "short",
+    srcs = ["permission_test.go"],
+    flaky = True,
+    deps = [
+        ":s3like",
+        "//pkg/objstore/s3like/mock",
+        "//pkg/objstore/storeapi",
+        "@com_github_pingcap_errors//:errors",
+        "@com_github_stretchr_testify//require",
+        "@org_uber_go_mock//gomock",
     ],
 )
