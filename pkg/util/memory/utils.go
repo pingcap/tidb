@@ -17,7 +17,10 @@ package memory
 import (
 	"container/list"
 	"math/bits"
+	"runtime"
+	"runtime/debug"
 	"runtime/metrics"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -252,22 +255,28 @@ func intoRatio(x float64) (zMilli int64) {
 
 type cpuCacheLinePad cpu.CacheLinePad
 
-// efficient method to read runtime mem stats (No `LastGC`) without STW
+// RuntimeMemStats represents the runtime memory statistics
+type RuntimeMemStats struct {
+	HeapAlloc, HeapInuse, TotalFree, MemOffHeap,
+	LastGC int64
+}
+
+// SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW and approximate `LastGC`
 //
 //go:norace
-func runtimeMemStats() RuntimeMemStats {
+func SampleRuntimeMemStats() RuntimeMemStats {
 	metrics.Read(heapSample) // It is safe to execute multiple Read calls concurrently because their arguments share no underlying memory.
-	res := RuntimeMemStats{
+	return RuntimeMemStats{
 		HeapAlloc: int64(heapSample[0].Value.Uint64()),
 		HeapInuse: int64(heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64()), // inuse = alloc + unused
 		TotalFree: int64(heapSample[5].Value.Uint64()),
+		MemOffHeap: int64(heapSample[4].Value.Uint64()) -
+			int64(heapSample[0].Value.Uint64()) -
+			int64(heapSample[1].Value.Uint64()) -
+			int64(heapSample[2].Value.Uint64()) -
+			int64(heapSample[3].Value.Uint64()),
+		LastGC: gcStats.cache.lastGC.Load(),
 	}
-	res.MemOffHeap = int64(heapSample[4].Value.Uint64()) -
-		int64(heapSample[0].Value.Uint64()) -
-		int64(heapSample[1].Value.Uint64()) -
-		int64(heapSample[2].Value.Uint64()) -
-		int64(heapSample[3].Value.Uint64())
-	return res
 }
 
 var heapSample = []metrics.Sample{
@@ -283,8 +292,73 @@ var heapSample = []metrics.Sample{
 	{Name: "/gc/heap/frees:bytes"},
 }
 
+var gcStats = struct {
+	sync.Cond
+	cache struct {
+		debug.GCStats
+		lastGC atomic.Int64
+		sync.Mutex
+	}
+	sync.Mutex
+	updating bool
+}{}
+
+func fetchGCStats() {
+	{
+		gcStats.Lock()
+
+		if gcStats.updating {
+			for gcStats.updating {
+				gcStats.Cond.Wait()
+			}
+			gcStats.Unlock()
+			return
+		}
+		gcStats.updating = true
+
+		gcStats.Unlock()
+	}
+
+	{
+		gcStats.cache.Lock()
+
+		debug.ReadGCStats(&gcStats.cache.GCStats)
+		gcStats.cache.lastGC.Store(gcStats.cache.GCStats.LastGC.UnixNano())
+
+		gcStats.cache.Unlock()
+	}
+
+	{
+		gcStats.Lock()
+
+		gcStats.updating = false
+		gcStats.Cond.Broadcast()
+
+		gcStats.Unlock()
+	}
+}
+
+// LastGC returns the last GC time in unix nano seconds
+func LastGC() int64 {
+	fetchGCStats()
+	return gcStats.cache.lastGC.Load()
+}
+
+// IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
+func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
+	return RuntimeMemStats{
+		HeapAlloc:  int64(s.HeapAlloc),
+		HeapInuse:  int64(s.HeapInuse),
+		TotalFree:  int64(s.TotalAlloc - s.Alloc),
+		MemOffHeap: int64(s.Sys - s.HeapSys),
+		LastGC:     int64(s.LastGC),
+	}
+}
+
 func init() {
-	runtimeMemStats()
+	gcStats.Cond.L = &gcStats.Mutex
+	fetchGCStats()
+	SampleRuntimeMemStats()
 	for i := range heapSample {
 		if heapSample[i].Value.Kind() != metrics.KindUint64 {
 			panic("unexpected metric kind")

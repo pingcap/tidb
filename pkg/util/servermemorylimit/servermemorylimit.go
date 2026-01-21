@@ -73,7 +73,7 @@ func (smqh *Handle) Run() {
 	for {
 		select {
 		case <-ticker.C:
-			memory.HandleGlobalMemArbitratorRuntime(memory.ReadMemStats())
+			memory.HandleGlobalMemArbitratorRuntime()
 			killSessIfNeeded(sessionToBeKilled, memory.ServerMemoryLimit.Load(), sm)
 		case <-smqh.exitCh:
 			return

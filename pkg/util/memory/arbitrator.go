@@ -2210,11 +2210,6 @@ func (m *MemArbitrator) refreshRuntimeMemStats() {
 	atomic.AddInt64(&m.execMetrics.Action.UpdateRuntimeMemStats, 1)
 }
 
-// RuntimeMemStats represents the runtime memory statistics
-type RuntimeMemStats struct {
-	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, LastGC int64
-}
-
 func (m *MemArbitrator) trySetRuntimeMemStats(s RuntimeMemStats) bool {
 	if m.heapController.TryLock() {
 		m.doSetRuntimeMemStats(s)
@@ -2583,7 +2578,6 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 		zap.Int64("heap-inuse", m.heapController.heapInuse.Load()),
 		zap.Int64("heap-alloc", m.heapController.heapAlloc.Load()),
 		zap.Int64("mem-off-heap", m.heapController.memOffHeap.Load()),
-		zap.Int64("mem-inuse", m.heapController.memInuse.Load()),
 		zap.Int64("hard-limit", m.limit()),
 		zap.Int64("quota-allocated", m.allocated()),
 		zap.Int64("quota-softlimit", m.softLimit()),
@@ -2715,7 +2709,7 @@ func (m *MemArbitrator) isMemSafe() bool {
 }
 
 func (m *MemArbitrator) isMemNoRisk() bool {
-	return m.heapController.memInuse.Load() < m.memRisk()
+	return m.isMemSafe() && m.heapController.heapAlloc.Load() < m.memRisk()
 }
 
 func (m *MemArbitrator) calcMemRisk() *RuntimeMemStateV1 {

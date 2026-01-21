@@ -199,7 +199,7 @@ func doReportGlobalMemArbitratorCounter(oriExecMetrics, newExecMetrics *execMetr
 }
 
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
-func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
+func HandleGlobalMemArbitratorRuntime() {
 	m := GlobalMemArbitrator()
 	if m == nil {
 		if globalArbitrator.metrics.reset.Load() {
@@ -207,7 +207,8 @@ func HandleGlobalMemArbitratorRuntime(s *runtime.MemStats) {
 		}
 		return
 	}
-	m.HandleRuntimeStats(intoRuntimeMemStats(s))
+	fetchGCStats()
+	m.HandleRuntimeStats(SampleRuntimeMemStats())
 	reportGlobalMemArbitratorMetrics()
 }
 
@@ -490,7 +491,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 			Warn:  logutil.BgLogger().Warn,
 			Error: logutil.BgLogger().Error,
 			UpdateRuntimeMemStats: func() {
-				m.SetRuntimeMemStats(runtimeMemStats())
+				m.SetRuntimeMemStats(SampleRuntimeMemStats())
 			},
 			GC: func() {
 				runtime.GC() //nolint: revive
@@ -604,14 +605,4 @@ func (m *runtimeMemStateRecorder) Load() (*RuntimeMemStateV1, error) {
 		return nil, fmt.Errorf("failed to unmarshal mem state: %w", err)
 	}
 	return &memState, nil
-}
-
-func intoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
-	return RuntimeMemStats{
-		HeapAlloc:  int64(s.HeapAlloc),
-		HeapInuse:  int64(s.HeapInuse),
-		TotalFree:  int64(s.TotalAlloc - s.Alloc),
-		MemOffHeap: int64(s.Sys - s.HeapSys),
-		LastGC:     int64(s.LastGC),
-	}
 }
