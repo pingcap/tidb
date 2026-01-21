@@ -488,7 +488,7 @@ func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) {
 	var minDatum, maxDatum types.Datum
 	// isUnsigned indicates whether the handle is unsigned.
 	// Now we just cast the unsigned int to int and then store the int value inside the Datum.
-	// We wrap the uint64/int64 with Datum here to keep us untouched with Datum's ineternal representation.
+	// We wrap the uint64/int64 with Datum here to keep us untouched with Datum's internal representation.
 	if isUnsigned {
 		minDatum = types.NewUintDatum(0)
 		maxDatum = types.NewUintDatum(math.MaxUint64)
