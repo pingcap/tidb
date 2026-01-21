@@ -326,7 +326,7 @@ replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 	// Local override for reproducing/debugging.
-	github.com/tikv/client-go/v2 => github.com/fzzf678/client-go/v2 v2.0.8-0.20260121091945-a01f7efe062c
+	github.com/tikv/client-go/v2 => github.com/fzzf678/client-go/v2 v2.0.8-0.20260121122605-568e1cf7688f
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
