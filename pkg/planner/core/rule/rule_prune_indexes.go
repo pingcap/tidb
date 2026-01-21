@@ -190,7 +190,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 	maxToKeep := max(threshold, defaultMaxIndexes)
 	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, needPruning, req)
 
-	failpoint.InjectCall("InjectCheckForIndexPrune", paths)
+	failpoint.InjectCall("InjectCheckForIndexPrune", result)
 
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
