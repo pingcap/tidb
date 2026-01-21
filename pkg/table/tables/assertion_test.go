@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package txn_test
+package tables_test
 
 import (
 	"context"
@@ -21,22 +21,10 @@ import (
 
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/stretchr/testify/require"
 	kv2 "github.com/tikv/client-go/v2/kv"
 )
-
-func setAssertion(txn kv.Transaction, key []byte, assertion kv.AssertionOp) error {
-	memBuf := txn.GetMemBuffer()
-	f, err := memBuf.GetFlags(key)
-	if err != nil && !kv.IsErrNotFound(err) {
-		return err
-	}
-	if err == nil && f.HasAssertionFlags() {
-		return nil
-	}
-	memBuf.UpdateAssertionFlags(key, assertion)
-	return nil
-}
 
 func TestSetAssertion(t *testing.T) {
 	store, err := mockstore.NewMockStore()
@@ -47,6 +35,11 @@ func TestSetAssertion(t *testing.T) {
 
 	txn, err := store.Begin()
 	require.NoError(t, err)
+
+	mustSetAssertion := func(key []byte, assertion kv.AssertionOp) {
+		err = tables.SetAssertionForTest(txn, key, assertion)
+		require.NoError(t, err)
+	}
 
 	mustHaveAssertion := func(key []byte, assertion kv.AssertionOp) {
 		f, err1 := txn.GetMemBuffer().GetFlags(key)
@@ -68,44 +61,35 @@ func TestSetAssertion(t *testing.T) {
 	}
 
 	testUnchangeable := func(key []byte, expectAssertion kv.AssertionOp) {
-		err = setAssertion(txn, key, kv.AssertExist)
-		require.NoError(t, err)
+		mustSetAssertion(key, kv.AssertExist)
 		mustHaveAssertion(key, expectAssertion)
-		err = setAssertion(txn, key, kv.AssertNotExist)
-		require.NoError(t, err)
+		mustSetAssertion(key, kv.AssertNotExist)
 		mustHaveAssertion(key, expectAssertion)
-		err = setAssertion(txn, key, kv.AssertUnknown)
-		require.NoError(t, err)
+		mustSetAssertion(key, kv.AssertUnknown)
 		mustHaveAssertion(key, expectAssertion)
-		err = setAssertion(txn, key, kv.AssertNone)
-		require.NoError(t, err)
+		mustSetAssertion(key, kv.AssertNone)
 		mustHaveAssertion(key, expectAssertion)
 	}
 
 	k1 := []byte("k1")
-	err = setAssertion(txn, k1, kv.AssertExist)
-	require.NoError(t, err)
+	mustSetAssertion(k1, kv.AssertExist)
 	mustHaveAssertion(k1, kv.AssertExist)
 	testUnchangeable(k1, kv.AssertExist)
 
 	k2 := []byte("k2")
-	err = setAssertion(txn, k2, kv.AssertNotExist)
-	require.NoError(t, err)
+	mustSetAssertion(k2, kv.AssertNotExist)
 	mustHaveAssertion(k2, kv.AssertNotExist)
 	testUnchangeable(k2, kv.AssertNotExist)
 
 	k3 := []byte("k3")
-	err = setAssertion(txn, k3, kv.AssertUnknown)
-	require.NoError(t, err)
+	mustSetAssertion(k3, kv.AssertUnknown)
 	mustHaveAssertion(k3, kv.AssertUnknown)
 	testUnchangeable(k3, kv.AssertUnknown)
 
 	k4 := []byte("k4")
-	err = setAssertion(txn, k4, kv.AssertNone)
-	require.NoError(t, err)
+	mustSetAssertion(k4, kv.AssertNone)
 	mustHaveAssertion(k4, kv.AssertNone)
-	err = setAssertion(txn, k4, kv.AssertExist)
-	require.NoError(t, err)
+	mustSetAssertion(k4, kv.AssertExist)
 	mustHaveAssertion(k4, kv.AssertExist)
 	testUnchangeable(k4, kv.AssertExist)
 
@@ -113,14 +97,12 @@ func TestSetAssertion(t *testing.T) {
 	err = txn.Set(k5, []byte("v5"))
 	require.NoError(t, err)
 	mustHaveAssertion(k5, kv.AssertNone)
-	err = setAssertion(txn, k5, kv.AssertNotExist)
-	require.NoError(t, err)
+	mustSetAssertion(k5, kv.AssertNotExist)
 	mustHaveAssertion(k5, kv.AssertNotExist)
 	testUnchangeable(k5, kv.AssertNotExist)
 
 	k6 := []byte("k6")
-	err = setAssertion(txn, k6, kv.AssertNotExist)
-	require.NoError(t, err)
+	mustSetAssertion(k6, kv.AssertNotExist)
 	err = txn.GetMemBuffer().SetWithFlags(k6, []byte("v6"), kv.SetPresumeKeyNotExists)
 	require.NoError(t, err)
 	mustHaveAssertion(k6, kv.AssertNotExist)
@@ -129,6 +111,7 @@ func TestSetAssertion(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, flags.HasPresumeKeyNotExists())
 	err = txn.GetMemBuffer().DeleteWithFlags(k6, kv.SetNeedLocked)
+	require.NoError(t, err)
 	mustHaveAssertion(k6, kv.AssertNotExist)
 	testUnchangeable(k6, kv.AssertNotExist)
 	flags, err = txn.GetMemBuffer().GetFlags(k6)
