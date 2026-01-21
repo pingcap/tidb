@@ -59,48 +59,85 @@ func (o *OuterJoinToSemiJoin) Optimize(_ context.Context, p base.LogicalPlan) (b
 
 func (o *OuterJoinToSemiJoin) recursivePlan(p base.LogicalPlan) (base.LogicalPlan, bool) {
 	var isChanged bool
+	if sel, ok := p.(*logicalop.LogicalSelection); ok {
+		p, changed := o.dealWithSelection(nil, 0, sel)
+		isChanged = isChanged || changed
+		return p, isChanged
+	}
 	for idx, child := range p.Children() {
-		if sel, ok := child.(*logicalop.LogicalSelection); ok {
-			switch cc := sel.Children()[0].(type) {
-			case *logicalop.LogicalJoin:
-				proj, ok := canConvertAntiJoin(cc, sel.Conditions, sel.Schema())
-				if ok {
-					if proj != nil {
-						proj.SetChildren(cc)
-						p.SetChild(idx, proj)
-					} else {
-						p.SetChild(idx, cc)
-					}
-					isChanged = true
-				}
-			case *logicalop.LogicalProjection:
-				if !validProjForConvertAntiJoin(cc) {
-					continue
-				}
-				join, ok := cc.Children()[0].(*logicalop.LogicalJoin)
-				if ok {
-					proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
-					if ok {
-						if proj != nil {
-							// projection <- projection <- anti semi join
-							proj.SetChildren(join)
-							cc.SetChildren(proj)
-							p.SetChild(idx, cc)
-						} else {
-							// projection <- anti semi join
-							cc.SetChildren(join)
-							p.SetChild(idx, cc)
-						}
-						isChanged = true
-					}
-				}
-			}
+		var changed bool
+		sel, ok := child.(*logicalop.LogicalSelection)
+		if !ok {
+			_, changed = o.recursivePlan(child)
+			isChanged = isChanged || changed
+			continue
 		}
-		updatedChild := p.Children()[idx]
-		_, changed := o.recursivePlan(updatedChild)
+		_, changed = o.dealWithSelection(p, idx, sel)
 		isChanged = isChanged || changed
 	}
 	return p, isChanged
+}
+
+func (o *OuterJoinToSemiJoin) dealWithSelection(p base.LogicalPlan, childIdx int, sel *logicalop.LogicalSelection) (base.LogicalPlan, bool) {
+	selChild := sel.Children()[0]
+	switch cc := selChild.(type) {
+	case *logicalop.LogicalJoin:
+		newP, changed := o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, cc)
+		return ensureSelectionRoot(newP, sel), changed
+	case *logicalop.LogicalProjection:
+		if validProjForConvertAntiJoin(cc) {
+			projectionChild := cc.Children()[0]
+			join, ok := projectionChild.(*logicalop.LogicalJoin)
+			if ok {
+				newP, changed := o.startConvertOuterJoinToSemiJoin(p, childIdx, sel, join)
+				return ensureSelectionRoot(newP, sel), changed
+			}
+			newChild, changed := o.recursivePlan(projectionChild)
+			resetChildIfChanged(cc, projectionChild, newChild)
+			return ensureSelectionRoot(p, sel), changed
+		}
+		newChild, changed := o.recursivePlan(cc)
+		resetChildIfChanged(sel, cc, newChild)
+		return ensureSelectionRoot(p, sel), changed
+	}
+	newChild, changed := o.recursivePlan(selChild)
+	resetChildIfChanged(sel, selChild, newChild)
+	return ensureSelectionRoot(p, sel), changed
+}
+
+func (o *OuterJoinToSemiJoin) startConvertOuterJoinToSemiJoin(p base.LogicalPlan, childIdx int, sel *logicalop.LogicalSelection, join *logicalop.LogicalJoin) (base.LogicalPlan, bool) {
+	proj, ok := canConvertAntiJoin(join, sel.Conditions, sel.Schema())
+	if ok {
+		var pChild base.LogicalPlan
+		if proj != nil {
+			// projection <- anti semi join
+			proj.SetChildren(join)
+			pChild = proj
+		} else {
+			// anti semi join only
+			pChild = join
+		}
+		if p != nil {
+			p.SetChild(childIdx, pChild)
+		} else {
+			p = pChild
+		}
+	}
+	_, changed := o.recursivePlan(join)
+	return p, ok || changed
+}
+
+func ensureSelectionRoot(p base.LogicalPlan, sel *logicalop.LogicalSelection) base.LogicalPlan {
+	if p == nil {
+		return sel
+	}
+	return p
+}
+
+func resetChildIfChanged(parent, oldChild, newChild base.LogicalPlan) {
+	if newChild != oldChild {
+		parent.SetChildren(newChild)
+	}
 }
 
 // Name implements base.LogicalOptRule.<1st> interface.
@@ -145,9 +182,9 @@ WHERE NOT EXISTS (
 ```
 #### Scenario 2: IS NULL on a Non-Join NOT NULL Column
 
-If a column in the inner table is defined as `NOT NULL` in the schema, but is filtered as `IS NULL` after the join,
-this implies that the join did not find a match. This allows us to convert the join into an `ANTI SEMI JOIN`,
-even if the column is not part of the join keys.
+If a column in the inner table is defined as `NOT NULL` in the schema but is filtered as `IS NULL` after the join,
+and that column comes from the null-supplied side of the outer join, this indicates that the join did not find a match.
+This allows us to convert the join into an `ANTI SEMI JOIN`, even if the column is not part of the join keys.
 
 ##### Table Schema:
 
@@ -242,7 +279,7 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	if canConvertToAntiSemiJoin {
 		// resultProj is to generate the NULL values for the columns of the inner table, which is the
 		// expected result for this kind of anti-join query.
-		resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, selectSch)
+		resultProj = generateProjectForConvertAntiJoin(p, &innerSchemaSet, outerSchema, selectSch)
 		// Anti-semi join's first child is outer, the second child is inner. join condition is outer op inner
 		// right outer join's first child is inner, the second child is outer, join condition is inner op outer
 		// left outer join's  first child is outer, the second child is inner. join condition is outer op inner
@@ -253,12 +290,7 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 				args := expr.GetArgs()
 				p.EqualConditions[idx] = expression.NewFunctionInternal(ctx, expr.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0]).(*expression.ScalarFunction)
 			}
-			for idx, expr := range p.OtherConditions {
-				if sf, ok := expr.(*expression.ScalarFunction); ok {
-					args := sf.GetArgs()
-					p.OtherConditions[idx] = expression.NewFunctionInternal(ctx, sf.FuncName.L, expr.GetType(ctx.GetEvalCtx()), args[1], args[0])
-				}
-			}
+			// it is not needed for the other conditions because the arguments order does not matter.
 			args := p.Children()
 			p.SetChildren(args[1], args[0])
 			tmp := p.LeftConditions
@@ -329,7 +361,17 @@ func joinCondNullRejectsInnerCol(innerSchSet *intset.FastIntSet, isNullColumnID 
 
 // generateProjectForConvertAntiJoin is to generate projection and put it on the anti-semi join which is from outer join.
 // outer column will not be changed. inner column will output the null.
-func generateProjectForConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *intset.FastIntSet, parentNodeSchema *expression.Schema) (proj *logicalop.LogicalProjection) {
+func generateProjectForConvertAntiJoin(p *logicalop.LogicalJoin, innerSchSet *intset.FastIntSet, outerSchema, parentNodeSchema *expression.Schema) (proj *logicalop.LogicalProjection) {
+	isAllFromOuterSide := true
+	for _, c := range parentNodeSchema.Columns {
+		if !outerSchema.Contains(c) {
+			isAllFromOuterSide = false
+			break
+		}
+	}
+	if isAllFromOuterSide {
+		return nil
+	}
 	projExprs := make([]expression.Expression, 0, len(parentNodeSchema.Columns))
 	for _, c := range parentNodeSchema.Columns {
 		if innerSchSet.Has(int(c.UniqueID)) {
