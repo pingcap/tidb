@@ -283,14 +283,13 @@ func BenchmarkTraceEventEnabled(b *testing.B) {
 	ctx := context.Background()
 	var conf FlightRecorderConfig
 	conf.Initialize()
-	conf.EnabledCategories = []string{"*"}
+	conf.EnabledCategories = []string{"txn_lifecycle"}
 	err := StartLogFlightRecorder(&conf)
 	require.NoError(b, err)
 	fr := GetFlightRecorder()
 	defer fr.Close()
 
 	prevMode := CurrentMode()
-	Enable(TxnLifecycle)
 	_, _ = SetMode(ModeFull)
 	b.Cleanup(func() {
 		_, _ = SetMode(prevMode)

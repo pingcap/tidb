@@ -18,7 +18,6 @@ import (
 	"context"
 	"runtime/trace"
 	"strconv"
-	"sync/atomic"
 	"time"
 
 	"github.com/opentracing/basictracer-go"
@@ -149,41 +148,6 @@ func StartRegion(ctx context.Context, regionType string) Region {
 	return ret
 }
 
-// enabledCategories stores the currently enabled category mask.
-var enabledCategories atomic.Uint64
-
-// Enable enables trace events for the specified categories.
-func Enable(categories TraceCategory) {
-	for {
-		current := enabledCategories.Load()
-		next := current | uint64(categories)
-		if enabledCategories.CompareAndSwap(current, next) {
-			return
-		}
-	}
-}
-
-// Disable disables trace events for the specified categories.
-func Disable(categories TraceCategory) {
-	for {
-		current := enabledCategories.Load()
-		next := current &^ uint64(categories)
-		if enabledCategories.CompareAndSwap(current, next) {
-			return
-		}
-	}
-}
-
-// SetCategories sets the enabled categories to exactly the specified value.
-func SetCategories(categories TraceCategory) {
-	enabledCategories.Store(uint64(categories))
-}
-
-// GetEnabledCategories returns the currently enabled categories.
-func GetEnabledCategories() TraceCategory {
-	return TraceCategory(enabledCategories.Load())
-}
-
 // IsEnabled delegates to traceevent.IsEnabled
 // This implementation here is just used to avoid nil pointer.
 var IsEnabled = func(_ TraceCategory) bool { return false }
@@ -233,10 +197,6 @@ const (
 const AllCategories = traceCategorySentinel - 1
 
 const defaultEnabledCategories = 0
-
-func init() {
-	enabledCategories.Store(uint64(defaultEnabledCategories))
-}
 
 // String returns the string representation of a TraceCategory.
 func (c TraceCategory) String() string {

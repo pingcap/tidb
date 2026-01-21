@@ -2823,6 +2823,9 @@ func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte
 	startTS := se.sessionVars.TxnCtx.StartTS
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
 	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
+	if traceBuf := traceevent.GetTraceBuf(ctx); traceBuf != nil {
+		traceBuf.SetTraceID(traceID)
+	}
 	ctx = trace.ContextWithTraceID(ctx, traceID)
 	se.currentCtx = ctx
 	// Store trace ID for next statement

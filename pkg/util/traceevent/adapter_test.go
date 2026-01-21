@@ -33,9 +33,9 @@ func TestTraceControlExtractor(t *testing.T) {
 
 	// Test with nil context (no sink)
 	t.Run("NoSink", func(t *testing.T) {
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
-		tracing.SetCategories(tracing.TiKVRequest)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
+		fr.SetCategories(tracing.TiKVRequest)
 
 		ctx := context.Background()
 		flags := handleTraceControlExtractor(ctx)
@@ -49,11 +49,11 @@ func TestTraceControlExtractor(t *testing.T) {
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
 
 		// Enable only TiKVRequest
-		tracing.SetCategories(tracing.TiKVRequest)
+		fr.SetCategories(tracing.TiKVRequest)
 
 		flags := handleTraceControlExtractor(ctx)
 		require.False(t, flags.Has(trace.FlagImmediateLog), "immediate log should not be set when keep=false")
@@ -68,11 +68,11 @@ func TestTraceControlExtractor(t *testing.T) {
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
 
 		// Enable only TiKVRequest
-		tracing.SetCategories(tracing.TiKVRequest)
+		fr.SetCategories(tracing.TiKVRequest)
 
 		flags := handleTraceControlExtractor(ctx)
 		require.True(t, flags.Has(trace.FlagImmediateLog), "immediate log should be set when keep=true")
@@ -85,10 +85,10 @@ func TestTraceControlExtractor(t *testing.T) {
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
 
-		tracing.SetCategories(tracing.TiKVRequest)
+		fr.SetCategories(tracing.TiKVRequest)
 
 		flags := handleTraceControlExtractor(ctx)
 		require.True(t, flags.Has(trace.FlagTiKVCategoryRequest))
@@ -102,10 +102,10 @@ func TestTraceControlExtractor(t *testing.T) {
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
 
-		tracing.SetCategories(tracing.TiKVWriteDetails)
+		fr.SetCategories(tracing.TiKVWriteDetails)
 
 		flags := handleTraceControlExtractor(ctx)
 		require.False(t, flags.Has(trace.FlagTiKVCategoryRequest))
@@ -119,10 +119,10 @@ func TestTraceControlExtractor(t *testing.T) {
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
 
-		tracing.SetCategories(tracing.TiKVReadDetails)
+		fr.SetCategories(tracing.TiKVReadDetails)
 
 		flags := handleTraceControlExtractor(ctx)
 		require.False(t, flags.Has(trace.FlagTiKVCategoryRequest))
@@ -138,11 +138,11 @@ func TestTraceControlExtractor(t *testing.T) {
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
 
 		// Enable all three TiKV categories
-		tracing.SetCategories(tracing.TiKVRequest | tracing.TiKVWriteDetails | tracing.TiKVReadDetails)
+		fr.SetCategories(tracing.TiKVRequest | tracing.TiKVWriteDetails | tracing.TiKVReadDetails)
 
 		flags := handleTraceControlExtractor(ctx)
 		require.True(t, flags.Has(trace.FlagImmediateLog), "immediate log should be set")
@@ -157,10 +157,10 @@ func TestTraceControlExtractor(t *testing.T) {
 		ctx := tracing.WithTraceBuf(context.Background(), tr)
 
 		// Save old categories and restore after test
-		oldCategories := tracing.GetEnabledCategories()
-		defer tracing.SetCategories(oldCategories)
+		oldCategories := GetEnabledCategories()
+		defer fr.SetCategories(oldCategories)
 
-		tracing.SetCategories(tracing.TiKVRequest)
+		fr.SetCategories(tracing.TiKVRequest)
 
 		var wg sync.WaitGroup
 		// Run multiple concurrent extractors

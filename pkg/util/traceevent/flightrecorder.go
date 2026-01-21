@@ -58,7 +58,8 @@ func WithTraceBuf(ctx context.Context, trace *TraceBuf) context.Context {
 	return tracing.WithTraceBuf(ctx, trace)
 }
 
-func getTraceBuf(ctx context.Context) *TraceBuf {
+// GetTraceBuf returns the TraceBuf bind with this context.
+func GetTraceBuf(ctx context.Context) *TraceBuf {
 	val := tracing.GetTraceBuf(ctx)
 	if val == nil {
 		// For background job and internal session, it might be missing?
@@ -384,7 +385,7 @@ func CheckFlightRecorderDumpTrigger(ctx context.Context, triggerName string, che
 	if flightRecorder == nil {
 		return
 	}
-	traceBuf := getTraceBuf(ctx)
+	traceBuf := GetTraceBuf(ctx)
 	if traceBuf == nil {
 		return
 	}

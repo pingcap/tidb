@@ -108,10 +108,6 @@ func init() {
 	RegisterWithClientGo()
 }
 
-// Enable enables trace events for the specified categories.
-// Multiple categories can be combined with bitwise OR.
-var Enable = tracing.Enable
-
 // IsEnabled returns whether the specified category is enabled.
 func IsEnabled(category tracing.TraceCategory) bool {
 	if kerneltype.IsClassic() && !intest.InTest {
@@ -238,7 +234,7 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		return
 	}
 
-	traceBuf := getTraceBuf(ctx)
+	traceBuf := GetTraceBuf(ctx)
 	if traceBuf == nil {
 		return
 	}
@@ -279,11 +275,6 @@ func GenerateTraceID(ctx context.Context, startTS uint64, stmtCount uint64) []by
 	binary.BigEndian.PutUint64(traceID[0:8], startTS)
 	binary.BigEndian.PutUint64(traceID[8:16], stmtCount)
 	binary.BigEndian.PutUint32(traceID[16:20], rand.Uint32())
-	if traceBuf := getTraceBuf(ctx); traceBuf != nil {
-		traceBuf.mu.Lock()
-		traceBuf.traceID = traceID
-		traceBuf.mu.Unlock()
-	}
 	return traceID
 }
 
