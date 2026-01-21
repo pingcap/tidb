@@ -44,6 +44,7 @@ func TestMain(m *testing.M) {
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
 		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
+		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/statistics/handle/usage/collector.(*globalCollector[...]).StartWorker.func1"),
 	}
 
 	callback := func(i int) int {

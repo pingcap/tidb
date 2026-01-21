@@ -296,26 +296,23 @@ func runPreparedPlanCacheGroupByParamProjection(t *testing.T, tk *testkit.TestKi
 func runPreparedPlanCacheRedactExplain(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec("use test")
 	preparedCache := tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache").Rows()[0][0]
-	execInfo := tk.MustQuery("select @@session.tidb_enable_collect_execution_info").Rows()[0][0]
+	execInfo := tk.MustQuery("select @@global.tidb_enable_collect_execution_info").Rows()[0][0]
 	advancedJoinHint := tk.MustQuery("select @@session.tidb_opt_advanced_join_hint").Rows()[0][0]
 	redactLog := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0]
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_prepared_plan_cache=%v", preparedCache))
-		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_collect_execution_info=%v", execInfo))
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_collect_execution_info=%v", execInfo))
 		tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_advanced_join_hint=%v", advancedJoinHint))
 		tk.MustExec(fmt.Sprintf("set global tidb_redact_log='%v'", redactLog))
 	}()
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
+	tk.MustExec("set @@global.tidb_enable_collect_execution_info=0")
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
-	t1Name := "t_redact_left"
-	t2Name := "t_redact_right"
-	tk.MustExec(fmt.Sprintf("drop table if exists %s", t1Name))
-	tk.MustExec(fmt.Sprintf("drop table if exists %s", t2Name))
-	tk.MustExec(fmt.Sprintf("create table %s(a int)", t1Name))
-	tk.MustExec(fmt.Sprintf("create table %s(a int, b int, c int, index idx(a, b))", t2Name))
-	tk.MustExec(fmt.Sprintf("prepare stmt1 from 'select /*+ inl_join(%s) */ * from %s join %s on %s.a = %s.a where %s.b in (?, ?, ?)'",
-		t2Name, t1Name, t2Name, t1Name, t2Name, t2Name))
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("create table t2(a int, b int, c int, index idx(a, b))")
+	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (?, ?, ?)'")
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
