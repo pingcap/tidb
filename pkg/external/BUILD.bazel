@@ -24,7 +24,7 @@ go_test(
     embed = [":external"],
     flaky = True,
     deps = [
-        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
