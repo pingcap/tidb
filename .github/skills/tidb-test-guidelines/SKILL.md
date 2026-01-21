@@ -44,3 +44,4 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - When moving benchmarks between packages, update any `TestBenchDaily` wrappers that list them and keep `Makefile` `bench-daily` entries aligned with the new package location.
 - For planner/core plan cache benchmarks, keep them registered in `pkg/planner/core/casetest/plancache/plan_cache_test.go` `TestBenchDaily` after moving their definitions.
 - When updating tests in any other directory, also update this skill: add or extend a case map under `references/` and add guidance in this `SKILL.md` so future changes stay consistent.
+- When tests read source files under Bazel, use `go/runfiles` and ensure the target file is exported via `exports_files()` in its owning `BUILD.bazel`.
