@@ -144,7 +144,8 @@ func allConstants(ctx expression.BuildContext, expr expression.Expression) bool 
 // has problems with IN list. For example, constant in (outer-table.col1, inner-table.col2)
 // is not null rejecting since constant in (outer-table.col1, NULL) is not false/unknown.
 func isNullRejectedInList(ctx base.PlanContext, expr *expression.ScalarFunction,
-	innerSchema *expression.Schema, skipPlanCacheCheck bool) bool {
+	innerSchema *expression.Schema, skipPlanCacheCheck bool,
+) bool {
 	for i, arg := range expr.GetArgs() {
 		if i > 0 {
 			newArgs := make([]expression.Expression, 0, 2)
@@ -273,47 +274,6 @@ func containsOpaqueInfoFunc(e expression.Expression) bool {
 	}
 }
 
-// tryNullifyInnerAndFold substitutes every column that belongs to `inner` with NULL,
-// then folds the expression, and applies 3VL on the folded result.
-// This is the semantic core of "null-rejecting" detection for outer-to-inner join elimination:
-// if P(outer, NULL) can never be TRUE (i.e., folds to NULL or FALSE), then P is null-rejecting.
-func tryNullifyInnerAndFold(
-	ctx base.PlanContext,
-	inner *expression.Schema,
-	pred expression.Expression,
-	skipPlanCacheCheck bool,
-) (decided bool, reject bool) {
-	// Guard: bail out if the predicate mentions any non-inner column.
-	hasNonInner := false
-	for _, c := range expression.ExtractColumns(pred) {
-		if !inner.Contains(c) {
-			hasNonInner = true
-			break
-		}
-	}
-	// Only enter the expensive path when "only referencing inner columns"; if info functions appear at this point,
-	// directly abandon giving conclusions through folding (more conservative).
-	if !hasNonInner {
-		if containsOpaqueInfoFunc(pred) {
-			return false, false
-		}
-	}
-	buildCtx := ctx.GetNullRejectCheckExprCtx()
-	folded, err := expression.EvaluateExprWithNull(buildCtx, inner, pred, skipPlanCacheCheck)
-	if err != nil || folded == nil {
-		return false, false
-	}
-
-	if hasNonInner {
-		// Do not trust a constant produced by folding when outer columns exist.
-		// Example: (outer AND inner!=NULL) IS FALSE  → still depends on outer.
-		return false, false
-	}
-
-	// Safe: the predicate was over inner-only columns, so P(NULL) is a real constant.
-	return judgeFoldedConstant(ctx, folded)
-}
-
 // +------------------------+
 // | Constant?             |--Yes--> NULL/FALSE? → true
 // +------------------------+                     TRUE → false
@@ -395,10 +355,6 @@ func isNullRejectedExpr(
 		// continue to fallback
 	}
 
-	// (5) Fallback: inner→NULL substitution + fold; we already know inner cols exist.
-	if decided, reject := tryNullifyInnerAndFold(ctx, innerSchema, predicate, skipPlanCacheCheck); decided {
-		return reject
-	}
 	return false // conservative default
 }
 

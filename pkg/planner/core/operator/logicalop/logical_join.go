@@ -150,6 +150,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
 	p.allJoinLeaf = getAllJoinLeaf(p)
@@ -260,6 +261,39 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
 	return ret, newnChild, err
+}
+
+// simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
+func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
+	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {
+		return
+	}
+
+	innerTable := p.children[0]
+	outerTable := p.children[1]
+	if p.JoinType == base.LeftOuterJoin {
+		innerTable, outerTable = outerTable, innerTable
+	}
+
+	if p.JoinType == base.InnerJoin {
+		return
+	}
+	// then simplify embedding outer join.
+	canBeSimplified := false
+	for _, expr := range predicates {
+		// avoid the case where the expr only refers to the schema of outerTable
+		if expression.ExprFromSchema(expr, outerTable.Schema()) {
+			continue
+		}
+		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
+		if isOk {
+			canBeSimplified = true
+			break
+		}
+	}
+	if canBeSimplified {
+		p.JoinType = base.InnerJoin
+	}
 }
 
 // PruneColumns implements the base.LogicalPlan.<2nd> interface.
@@ -1232,7 +1266,8 @@ func (p *LogicalJoin) pushDownTopNToChild(topN *LogicalTopN, idx int) (base.Logi
 // If the currentPlan at the top of query plan, return new root plan (selection)
 // Else return nil
 func addCandidateSelection(currentPlan base.LogicalPlan, currentChildIdx int, parentPlan base.LogicalPlan,
-	candidatePredicates []expression.Expression) (newRoot base.LogicalPlan) {
+	candidatePredicates []expression.Expression,
+) (newRoot base.LogicalPlan) {
 	// generate a new selection for candidatePredicates
 	selection := LogicalSelection{Conditions: candidatePredicates}.Init(currentPlan.SCtx(), currentPlan.QueryBlockOffset())
 	// add selection above of p
@@ -1333,7 +1368,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 	rightSchema *expression.Schema,
 	deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
-	rightCond []expression.Expression, otherCond []expression.Expression) {
+	rightCond []expression.Expression, otherCond []expression.Expression,
+) {
 	ctx := p.SCtx()
 	for _, expr := range conditions {
 		// For queries like `select a in (select a from s where s.b = t.b) from t`,
@@ -1424,7 +1460,8 @@ func (p *LogicalJoin) ExtractOnCondition(
 // children of join, whatever the join type is; if false, push it down to inner child of outer join,
 // and both children of non-outer-join.
 func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []expression.Expression,
-	rightCond []expression.Expression, filterCond bool) (_, _ []expression.Expression) {
+	rightCond []expression.Expression, filterCond bool,
+) (_, _ []expression.Expression) {
 	switch p.JoinType {
 	case base.LeftOuterJoin, base.LeftOuterSemiJoin, base.AntiLeftOuterSemiJoin:
 		if filterCond {
@@ -1456,7 +1493,8 @@ func (p *LogicalJoin) pushDownConstExpr(expr expression.Expression, leftCond []e
 
 func (p *LogicalJoin) extractOnCondition(conditions []expression.Expression, deriveLeft bool,
 	deriveRight bool) (eqCond []*expression.ScalarFunction, leftCond []expression.Expression,
-	rightCond []expression.Expression, otherCond []expression.Expression) {
+	rightCond []expression.Expression, otherCond []expression.Expression,
+) {
 	child := p.Children()
 	rightSchema := child[1].Schema()
 	leftSchema := child[0].Schema()
@@ -1965,7 +2003,8 @@ func setPreferredJoinTypeFromOneSide(preferJoinType uint, isLeft bool) (resJoinT
 func DeriveOtherConditions(
 	p *LogicalJoin, leftSchema *expression.Schema, rightSchema *expression.Schema,
 	deriveLeft bool, deriveRight bool) (
-	leftCond []expression.Expression, rightCond []expression.Expression) {
+	leftCond []expression.Expression, rightCond []expression.Expression,
+) {
 	isOuterSemi := (p.JoinType == base.LeftOuterSemiJoin) || (p.JoinType == base.AntiLeftOuterSemiJoin)
 	ctx := p.SCtx()
 	exprCtx := ctx.GetExprCtx()
