@@ -7575,7 +7575,7 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 
 // getResultCTESchemaWithRecur creates the result schema for a recursive CTE by using
 // the wider/longer type from both seed and recursive parts. This is similar to how regular
-// UNION handles type inference. For example, if seed has ” (varchar(0)) and recur
+// UNION handles type inference. For example, if seed has ' ' (empty string - varchar(0)) and recur
 // has varchar(10), the result schema will use varchar(10) to prevent truncation.
 // Special case: if seed type is NULL, use the recursive part's type directly.
 func getResultCTESchemaWithRecur(seedSchema, recurSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
