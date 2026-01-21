@@ -14,13 +14,14 @@ Define placement rules for optimizer tests under `pkg/planner/core`, with casete
 
 Planner/core and non-core packages are peers. Place tests in their owning package directory when the code is not part of `planner/core`:
 
+- **Planner core (core capabilities, logical and physical optimization)**: `pkg/planner/core`.
 - **Cardinality**: `pkg/planner/cardinality`
 - **Functional dependencies**: `pkg/planner/funcdep`
 - **Memo**: `pkg/planner/memo`
 - **Plan context**: `pkg/planner/planctx`
 - **Planner utilities**: `pkg/planner/util`
 - **Index advisor**: `pkg/planner/indexadvisor`
-- **Implementation**: `pkg/planner/implementation`
+- **Implementation (interface definitions)**: `pkg/planner/implementation`
 - **Cascades (old/base/pattern/memo/task/rule)**: `pkg/planner/cascades/...`
 
 ## Common casetest types

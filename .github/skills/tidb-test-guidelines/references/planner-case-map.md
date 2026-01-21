@@ -3,6 +3,7 @@
 ## Table of contents
 
 - Overview
+- Planner package map
 - Cardinality
 - Functional dependencies
 - Memo
@@ -27,6 +28,18 @@ Placement rules (planner/core and non-core packages are peers):
 
 - **Planner/core optimizer casetests**: `pkg/planner/core/casetest/<type>`
 - **Non-core planner packages**: place tests in their owning package directory (for example, `pkg/planner/cardinality`, `pkg/planner/funcdep`, `pkg/planner/memo`, `pkg/planner/util`).
+
+## Planner package map
+
+- `pkg/planner/cardinality`
+- `pkg/planner/cascades`
+- `pkg/planner/funcdep`
+- `pkg/planner/implementation`
+- `pkg/planner/indexadvisor`
+- `pkg/planner/memo`
+- `pkg/planner/planctx`
+- `pkg/planner/property`
+- `pkg/planner/util`
 
 ## Cardinality
 
@@ -105,6 +118,8 @@ Placement rules (planner/core and non-core packages are peers):
 
 ## Cascades base/pattern/memo/task/rule
 
+- Root tests:
+  - `pkg/planner/cascades/cascades_test.go`
 - Base tests:
   - `pkg/planner/cascades/base/base_test.go`
   - `pkg/planner/cascades/base/hash_equaler_test.go`
