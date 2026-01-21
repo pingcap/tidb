@@ -76,11 +76,12 @@ type MPPFailedStoreProber struct {
 	maxObsoletTimeLimit  time.Duration
 }
 
+// MPPInfo is a structure to store some information.
 // Currently, it only contains cpuCount info.
 // More info can be added in the future when needed
 type MPPInfo struct {
 	Address         string
-	LogicalCpuCount uint64
+	LogicalCPUCount uint64
 }
 
 // MppInfoManager manages info for all tiflash nodes
@@ -89,18 +90,21 @@ type MppInfoManager struct {
 	lock         sync.Mutex
 }
 
+// Add adds mppInfo
 func (t *MppInfoManager) Add(mppInfo *MPPInfo) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	t.cachedStores[mppInfo.Address] = mppInfo
 }
 
+// Delete deletes related info
 func (t *MppInfoManager) Delete(address string) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	delete(t.cachedStores, address)
 }
 
+// Get gets related info
 func (t *MppInfoManager) Get(address string) *MPPInfo {
 	t.lock.Lock()
 	defer t.lock.Unlock()

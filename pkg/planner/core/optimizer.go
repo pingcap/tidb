@@ -649,7 +649,7 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			uncachedServersInfo = append(uncachedServersInfo, info)
 			continue
 		}
-		minLogicalCores = min(minLogicalCores, mppInfo.LogicalCpuCount)
+		minLogicalCores = min(minLogicalCores, mppInfo.LogicalCPUCount)
 	}
 
 	if len(uncachedServersInfo) > 0 {
@@ -672,7 +672,7 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 						if err == nil && logicalCpus > 0 {
 							copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
 								Address:         info[0].Address,
-								LogicalCpuCount: uint64(logicalCpus),
+								LogicalCPUCount: uint64(logicalCpus),
 							})
 						}
 					}
