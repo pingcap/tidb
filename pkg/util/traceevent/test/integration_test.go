@@ -159,10 +159,6 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 func TestTraceControlIntegration(t *testing.T) {
 	// Test that the extractor still propagates enabled categories even without a Trace sink.
 	// First, enable TiKVRequest category (since defaultEnabledCategories is now 0)
-	prevCategories := tracing.GetEnabledCategories()
-	tracing.Enable(tracing.TiKVRequest)
-	defer tracing.SetCategories(prevCategories)
-
 	var conf traceevent.FlightRecorderConfig
 	conf.Initialize()
 	conf.EnabledCategories = []string{"tikv_request"}
