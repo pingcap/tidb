@@ -321,7 +321,7 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 	// be a little more bias to index join keys here. (heuristic)
 	indexJoinKeyCoverDiff := 0
 	if current.idxOff2KeyOff != nil && best.idxOff2KeyOff != nil {
-		curCover, bestCover := 0, 0
+		var curCover, bestCover int
 		for _, off := range current.idxOff2KeyOff {
 			if off != -1 {
 				curCover++
