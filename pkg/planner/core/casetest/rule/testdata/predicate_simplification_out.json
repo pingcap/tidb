@@ -32,6 +32,7 @@
           "            └─Selection 0.01 cop[tikv]  eq(test.t5.c2, \"production\")",
           "              └─TableRangeScan 12.50 cop[tikv] table:t5 range: decided by [eq(test.t5.c1, test.t1.id) eq(test.t5.c2, production)], keep order:false, stats:pseudo"
         ],
+        "Result": null,
         "LastPlanFromCache": [
           "0"
         ],
@@ -53,6 +54,7 @@
           "          └─Selection 8000.00 cop[tikv]  eq(test.t7c899916.col_44, cast(\"[17764220206423580415]\", json BINARY)), ne(test.t7c899916.col_44, cast(\"[5725396597060626308,5860284933591136807,11766074999769332834,11...(len:83)\", json BINARY))",
           "            └─TableFullScan 10000.00 cop[tikv] table:t7c899916 keep order:false, stats:pseudo"
         ],
+        "Result": null,
         "LastPlanFromCache": [
           "0"
         ],
@@ -63,6 +65,7 @@
         "Plan": [
           "TableDual 0.00 root  rows:0"
         ],
+        "Result": null,
         "LastPlanFromCache": [
           "0"
         ],
@@ -74,6 +77,7 @@
           "Projection 0.00 root  1->Column#48, Column#46, Column#47, test.tad03b424.col_41",
           "└─TableDual 0.00 root  rows:0"
         ],
+        "Result": null,
         "LastPlanFromCache": [
           "0"
         ],
@@ -94,6 +98,9 @@
           "└─Selection(Probe) 1.00 cop[tikv]  or(and(eq(test.t6.a, 1), and(eq(test.t6.b, 1), eq(test.t6.c, 1))), and(eq(test.t6.a, 2), and(eq(test.t6.b, 2), eq(test.t6.c, 2))))",
           "  └─TableRowIDScan 1.25 cop[tikv] table:t6 keep order:false, stats:pseudo"
         ],
+        "Result": [
+          "1 1 1 1"
+        ],
         "LastPlanFromCache": [
           "1"
         ],
@@ -109,6 +116,7 @@
           "    └─Selection 1.00 cop[tikv]  or(eq(test.issue64263.column_2, 1), eq(test.issue64263.column_4, 121092106))",
           "      └─TableRowIDScan 10.00 cop[tikv] table:ISSUE64263 keep order:false, stats:pseudo"
         ],
+        "Result": null,
         "LastPlanFromCache": [
           "1"
         ],
@@ -125,8 +133,88 @@
           "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
           "    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
+        "Result": null,
         "LastPlanFromCache": [
           "1"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from t6 where (a > 1) is null",
+        "Plan": [
+          "IndexLookUp 10.00 root  ",
+          "├─IndexRangeScan(Build) 10.00 cop[tikv] table:t6, index:a(a, b) range:[NULL,NULL], keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 10.00 cop[tikv] table:t6 keep order:false, stats:pseudo"
+        ],
+        "Result": null,
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from (select ps_t1.id from ps_t2 right join ps_t1 using(id) left join ps_t3 on (ps_t2.c0 = ps_t3.c1)) q",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#13",
+          "└─HashJoin 15609.38 root  right outer join, left side:HashJoin, equal:[eq(test.ps_t2.id, test.ps_t1.id)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:ps_t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.ps_t2.c0, test.ps_t3.c1)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.ps_t3.c1))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:ps_t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:ps_t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ],
+        "LastPlanFromCache": [
+          "0"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select count(*) from (select ps_t1.id from ps_t2 right join ps_t1 using(id) left join ps_t3 on (ps_t2.c0 = ps_t3.c1) where (ps_t2.c2 >= '2024-01-12 08:50:00') union all select ps_t1.id from ps_t2 right join ps_t1 using(id) left join ps_t3 on (ps_t2.c0 = ps_t3.c1) where not (ps_t2.c2 >= '2024-01-12 08:50:00') union all select ps_t1.id from ps_t2 right join ps_t1 using(id) left join ps_t3 on (ps_t2.c0 = ps_t3.c1) where ((ps_t2.c2 >= '2024-01-12 08:50:00') is null)) u",
+        "Plan": [
+          "HashAgg 1.00 root  funcs:count(1)->Column#38",
+          "└─Union 22901.04 root  ",
+          "  ├─HashJoin 5208.33 root  inner join, equal:[eq(test.ps_t2.id, test.ps_t1.id)]",
+          "  │ ├─HashJoin(Build) 4166.67 root  left outer join, left side:TableReader, equal:[eq(test.ps_t2.c0, test.ps_t3.c1)]",
+          "  │ │ ├─TableReader(Build) 3333.33 root  data:Selection",
+          "  │ │ │ └─Selection 3333.33 cop[tikv]  ge(test.ps_t2.c2, 2024-01-12 08:50:00.000000)",
+          "  │ │ │   └─TableFullScan 10000.00 cop[tikv] table:ps_t2 keep order:false, stats:pseudo",
+          "  │ │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │ │   └─Selection 9990.00 cop[tikv]  not(isnull(test.ps_t3.c1))",
+          "  │ │     └─TableFullScan 10000.00 cop[tikv] table:ps_t3 keep order:false, stats:pseudo",
+          "  │ └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:ps_t1 keep order:false, stats:pseudo",
+          "  ├─HashJoin 5192.71 root  inner join, equal:[eq(test.ps_t2.id, test.ps_t1.id)]",
+          "  │ ├─HashJoin(Build) 4154.17 root  left outer join, left side:TableReader, equal:[eq(test.ps_t2.c0, test.ps_t3.c1)]",
+          "  │ │ ├─TableReader(Build) 3323.33 root  data:Selection",
+          "  │ │ │ └─Selection 3323.33 cop[tikv]  lt(test.ps_t2.c2, 2024-01-12 08:50:00.000000)",
+          "  │ │ │   └─TableFullScan 10000.00 cop[tikv] table:ps_t2 keep order:false, stats:pseudo",
+          "  │ │ └─TableReader(Probe) 9990.00 root  data:Selection",
+          "  │ │   └─Selection 9990.00 cop[tikv]  not(isnull(test.ps_t3.c1))",
+          "  │ │     └─TableFullScan 10000.00 cop[tikv] table:ps_t3 keep order:false, stats:pseudo",
+          "  │ └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:ps_t1 keep order:false, stats:pseudo",
+          "  └─HashJoin 12500.00 root  left outer join, left side:Selection, equal:[eq(test.ps_t2.c0, test.ps_t3.c1)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.ps_t3.c1))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:ps_t3 keep order:false, stats:pseudo",
+          "    └─Selection(Probe) 10000.00 root  isnull(test.ps_t2.c2)",
+          "      └─MergeJoin 12500.00 root  right outer join, left side:TableReader, left key:test.ps_t2.id, right key:test.ps_t1.id",
+          "        ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "        │ └─TableFullScan 10000.00 cop[tikv] table:ps_t2 keep order:true, stats:pseudo",
+          "        └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "          └─TableFullScan 10000.00 cop[tikv] table:ps_t1 keep order:true, stats:pseudo"
+        ],
+        "Result": [
+          "1"
+        ],
+        "LastPlanFromCache": [
+          "0"
         ],
         "Warning": null
       }

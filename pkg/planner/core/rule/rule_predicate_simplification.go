@@ -201,6 +201,7 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	simplifiedPredicate := predicates
 	exprCtx := sctx.GetExprCtx()
 	simplifiedPredicate = PushDownNot(sctx.GetExprCtx(), simplifiedPredicate)
+	simplifiedPredicate = rewriteIsNullComparePredicates(sctx, simplifiedPredicate)
 	// In some scenarios, we need to perform constant propagation,
 	// while in others, we merely aim to achieve simplification.
 	// Thus, we utilize a switch to govern this particular logic.
@@ -223,6 +224,40 @@ func applyPredicateSimplificationHelper(sctx base.PlanContext, predicates []expr
 	simplifiedPredicate = pruneEmptyORBranches(sctx, simplifiedPredicate)
 	simplifiedPredicate = constraint.DeleteTrueExprs(exprCtx, sctx.GetSessionVars().StmtCtx, simplifiedPredicate)
 	return simplifiedPredicate
+}
+
+func rewriteIsNullComparePredicates(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
+	for i, expr := range predicates {
+		if rewritten := rewriteIsNullComparePredicate(sctx, expr); rewritten != expr {
+			predicates[i] = rewritten
+		}
+	}
+	return predicates
+}
+
+func rewriteIsNullComparePredicate(sctx base.PlanContext, expr expression.Expression) expression.Expression {
+	sf, ok := expr.(*expression.ScalarFunction)
+	if !ok || sf.FuncName.L != ast.IsNull || len(sf.GetArgs()) != 1 {
+		return expr
+	}
+	compare, ok := sf.GetArgs()[0].(*expression.ScalarFunction)
+	if !ok || len(compare.GetArgs()) != 2 {
+		return expr
+	}
+	switch compare.FuncName.L {
+	case ast.EQ, ast.NE, ast.LT, ast.GT, ast.LE, ast.GE:
+	default:
+		return expr
+	}
+	col, ok := compare.GetArgs()[0].(*expression.Column)
+	if !ok {
+		return expr
+	}
+	con, ok := compare.GetArgs()[1].(*expression.Constant)
+	if !ok || con.Value.IsNull() {
+		return expr
+	}
+	return expression.NewFunctionInternal(sctx.GetExprCtx(), ast.IsNull, sf.RetType, col)
 }
 
 func mergeInAndNotEQLists(sctx base.PlanContext, predicates []expression.Expression) []expression.Expression {
