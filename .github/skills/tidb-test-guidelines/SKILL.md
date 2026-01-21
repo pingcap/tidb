@@ -42,3 +42,9 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - When updating tests in any other directory, also update this skill: add or extend a case map under `references/` and add guidance in this `SKILL.md` so future changes stay consistent.
 - When tests read source files under Bazel, use `go/runfiles` and ensure the target file is exported via `exports_files()` in its owning `BUILD.bazel`.
 - For Bazel runfiles, be ready to include the workspace prefix (from `TEST_WORKSPACE`) in the runfile path if needed.
+- Validation (Bazel): run `make bazel_prepare` first; then check the package `BUILD.bazel` for `@com_github_pingcap_failpoint//:failpoint` dependency.
+  - If present, run:
+    - `make bazel-failpoint-enable`
+    - `bazel test --norun_validations --define gotags=deadlock,intest --remote_cache=https://cache.hawkingrei.com/bazelcache --noremote_upload_local_results //path/to/package/...`
+    - `make bazel-failpoint-disable`
+  - If absent, run `bazel test` directly against the package path.

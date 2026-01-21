@@ -344,6 +344,10 @@ failpoint-disable: tools/bin/failpoint-ctl
 bazel-failpoint-enable:
 	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
 
+.PHONY: bazel_failpoint-disable
+bazel_failpoint-disable:
+	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go
 	cd tools/check; \
