@@ -519,7 +519,10 @@ func readPlanCloneUtils() ([]byte, error) {
 		path := filepath.Join("..", "..", "plan_clone_utils.go")
 		return os.ReadFile(path)
 	}
-	path := rf.Rlocation("pkg/planner/core/plan_clone_utils.go")
+	path, err := rf.Rlocation("pkg/planner/core/plan_clone_utils.go")
+	if err != nil {
+		return nil, err
+	}
 	return os.ReadFile(path)
 }
 
