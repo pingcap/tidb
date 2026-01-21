@@ -482,7 +482,7 @@ func detachCondAndBuildRangeForPath(
 }
 
 // fixTiCIIndexRangesForIntHandle fixes the TiCI index ranges for int handle.
-// For normal index range, it's min value is NULL or the MinNotNull, and max value is MaxValue.
+// For normal index range, its min value is NULL or the MinNotNull, and max value is MaxValue.
 // But for TiCI index range which directly uses table's int pk range, we should set the min value to the min int value and max value to max int value.
 func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) {
 	var minDatum, maxDatum types.Datum
