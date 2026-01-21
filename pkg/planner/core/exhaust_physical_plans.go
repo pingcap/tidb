@@ -130,8 +130,12 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 			} else if sortColsFromRight && !sortColsFromLeft {
 				keepProbeOrder = true
 			}
-			// If sort columns from both sides or neither - can't preserve order, but still continue
-			// to generate regular hash joins (keepProbeOrder remains false)
+			// If sort columns come from both sides or neither, hash join cannot satisfy this ORDER BY.
+			// Don't return hash joins here - the planner will try separately with empty property
+			// and add Sort on top if needed. This ensures hash join still competes.
+			if !keepProbeOrder {
+				return
+			}
 		}
 	}
 
