@@ -616,7 +616,7 @@ func NewBackend(
 
 	tikvCodec := pdCliForTiKV.GetCodec()
 	rpcCli = tikvclient.NewRPCClient(tikvclient.WithSecurity(tls.ToTiKVSecurityConfig()), tikvclient.WithCodec(tikvCodec))
-	tikvCli, err = tikvclient.NewKVStore("lightning-local-backend", pdCliForTiKV, spkv, rpcCli)
+	tikvCli, err = tikvclient.NewKVStore(uuid.New().String(), pdCliForTiKV, spkv, rpcCli)
 	if err != nil {
 		return nil, common.ErrCreateKVClient.Wrap(err).GenWithStackByArgs()
 	}
