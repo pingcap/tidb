@@ -6806,7 +6806,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		r := tracing.StartRegion(traceCtx, "ddl.DoDDLJobWrapper")
 		defer r.End()
 		if v := tracing.GetTraceBuf(traceCtx); v != nil {
-			if traceBuf, ok := v.(*traceevent.TraceBuf); ok && traceBuf != nil
+			if traceBuf, ok := v.(*traceevent.TraceBuf); ok && traceBuf != nil {
 				traceID = traceBuf.GetTraceID()
 			}
 		}
