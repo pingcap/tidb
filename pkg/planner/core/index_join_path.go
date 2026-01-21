@@ -310,6 +310,10 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 	} else if cmpResult == -1 {
 		return false
 	}
+	return indexJoinPathCmp4UnComparableOnes(best, current)
+}
+
+func indexJoinPathCmp4UnComparableOnes(best, current *indexJoinPathResult) (currentIsBetter bool) {
 	// indexJoinCoverNumResult: in the index join case, if you can tell from index A is better than B by normal rules
 	// like accessResult, eqOrInResult, then do it. But if two indexes is not comparable, we can take one more condition
 	// into consideration here: if A's access col cover more index join keys, it has high potential to be better.
@@ -319,6 +323,15 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 	// since they two covers different index columns group, it's un-comparable and hard to see which one is better. Instead
 	// of returning "no winner" and return cmpResult == 0 and letting ndv division outside to make the decision, we could
 	// be a little more bias to index join keys here. (heuristic)
+	//
+	// 1: only care for the eq condition related group ndv, it's more accurate than range condition appended.
+	// 2: when eqUsedColsNDV is in the same level, consider more about usedColsLen and indexJoinKeyCoverDiff.
+	if !isNDVClose(current.eqUsedColsNDV, best.eqUsedColsNDV) {
+		return current.eqUsedColsNDV > best.eqUsedColsNDV // if two NDV are NOT close, return the bigger, meaning the smaller of EQ rows. (the better)
+	}
+	if current.usedColsLen != best.usedColsLen { // if two NDV are quite close, and usedColsLen are different, return the longer one.
+		return current.usedColsLen > best.usedColsLen
+	}
 	indexJoinKeyCoverDiff := 0
 	if current.idxOff2KeyOff != nil && best.idxOff2KeyOff != nil {
 		var curCover, bestCover int
@@ -334,14 +347,6 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 		}
 		indexJoinKeyCoverDiff = curCover - bestCover
 	}
-	// 1: only care for the eq condition related group ndv, it's more accurate than range condition appended.
-	// 2: when eqUsedColsNDV is in the same level, consider more about usedColsLen and indexJoinKeyCoverDiff.
-	if !isNDVClose(current.eqUsedColsNDV, best.eqUsedColsNDV) {
-		return current.eqUsedColsNDV > best.eqUsedColsNDV // if two NDV are NOT close, return the bigger, meaning the smaller of EQ rows. (the better)
-	}
-	if current.usedColsLen != best.usedColsLen { // if two NDV are quite close, and usedColsLen are different, return the longer one.
-		return current.usedColsLen > best.usedColsLen
-	}
 	if indexJoinKeyCoverDiff != 0 { // if two NDV are quite close, and indexJoinKeyCoverDiff do exist. return the one covers more.
 		return indexJoinKeyCoverDiff > 0
 	}
@@ -351,27 +356,41 @@ func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPath
 /*
 Simple NDV closeness rule:
 
-	close if |a-b| < 200 OR |a-b|/max(a,b) < 0.5
+	close if:
+	  1) max(a,b) <= 20, OR
+	  2) |a-b| < 200 AND min(a,b) >= 20, OR
+	  3) |a-b|/max(a,b) < 0.2
 
 Examples:
   - (1, 2)       → close
+  - (10, 15)     → close
   - (100, 200)   → close
   - (100001, 100020) → close
+  - (150, 10)    → not close
+  - (19, 40)     → not close
+  - (20, 40)     → close
   - (1000, 2000) → not close
   - (1e6, 2e6)   → not close
   - (100, 500)   → not close
   - (1000, 5000) → not close
+  - (1000, 1249) → close (diff/max≈0.199, both 0.5 and 0.2)
+  - (1000, 1300) → close with 0.5, not close with 0.2 (diff/max≈0.231)
 */
 func isNDVClose(lhs, rhs float64) bool {
 	if lhs == 0 || rhs == 0 {
 		return lhs == rhs
 	}
+	const ndvFloor = 20
+	minVal := math.Min(lhs, rhs)
 	diff := math.Abs(lhs - rhs)
 	maxVal := math.Max(lhs, rhs)
-	if diff < 200 {
+	if maxVal <= ndvFloor {
 		return true
 	}
-	return diff/maxVal < 0.5
+	if diff < 200 && minVal >= ndvFloor {
+		return true
+	}
+	return diff/maxVal < 0.2
 }
 
 // indexJoinPathConstructResult constructs the index join path result.
