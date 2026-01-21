@@ -24,6 +24,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -40,15 +42,15 @@ var (
 )
 
 type externalStorage struct {
-	opts     *objstore.Options
+	opts     *storeapi.Options
 	backend  *backuppb.StorageBackend
 	basePath string
 
 	mu      sync.Mutex
-	storage objstore.Storage
+	storage storeapi.Storage
 }
 
-func (w *externalStorage) getStorage(ctx context.Context) (objstore.Storage, error) {
+func (w *externalStorage) getStorage(ctx context.Context) (storeapi.Storage, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -89,7 +91,7 @@ func (w *externalStorage) FileExists(ctx context.Context, name string) (bool, er
 	return s.FileExists(ctx, name)
 }
 
-func (w *externalStorage) Open(ctx context.Context, path string, option *objstore.ReaderOption) (objstore.FileReader, error) {
+func (w *externalStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return nil, err
@@ -97,7 +99,7 @@ func (w *externalStorage) Open(ctx context.Context, path string, option *objstor
 	return s.Open(ctx, path, option)
 }
 
-func (w *externalStorage) WalkDir(ctx context.Context, opt *objstore.WalkOption, fn func(path string, size int64) error) error {
+func (w *externalStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return err
@@ -105,7 +107,7 @@ func (w *externalStorage) WalkDir(ctx context.Context, opt *objstore.WalkOption,
 	return s.WalkDir(ctx, opt, fn)
 }
 
-func (w *externalStorage) Create(ctx context.Context, path string, option *objstore.WriterOption) (objstore.FileWriter, error) {
+func (w *externalStorage) Create(ctx context.Context, path string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return nil, err
@@ -159,11 +161,11 @@ func (w *externalStorage) Close() {
 
 type fileWriter struct {
 	ctx    context.Context
-	writer objstore.FileWriter
+	writer objectio.Writer
 }
 
-// NewFileWriter creates a new io.WriteCloser from objstore.FileWriter.
-func NewFileWriter(ctx context.Context, writer objstore.FileWriter) io.WriteCloser {
+// NewFileWriter creates a new io.WriteCloser from storeapi.FileWriter.
+func NewFileWriter(ctx context.Context, writer objectio.Writer) io.WriteCloser {
 	return &fileWriter{ctx: ctx, writer: writer}
 }
 
@@ -176,7 +178,7 @@ func (w *fileWriter) Close() error {
 }
 
 // CreateExternalStorage creates a global external storage.
-func CreateExternalStorage(rawURL, namespace string, opts *objstore.Options) error {
+func CreateExternalStorage(rawURL, namespace string, opts *storeapi.Options) error {
 	u, err := objstore.ParseRawURL(rawURL)
 	if err != nil {
 		return errors.Trace(err)
@@ -202,7 +204,7 @@ func CreateExternalStorage(rawURL, namespace string, opts *objstore.Options) err
 }
 
 // GetExternalStorage returns the global external storage.
-func GetExternalStorage() objstore.Storage {
+func GetExternalStorage() storeapi.Storage {
 	globalMu.RLock()
 	defer globalMu.RUnlock()
 	return globalExternalStorage

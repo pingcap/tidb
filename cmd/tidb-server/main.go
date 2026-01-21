@@ -1143,7 +1143,9 @@ func setupSEM() {
 
 func setupExternalStorage(namespace string) {
 	cfg := config.GetGlobalConfig()
-	path := cfg.ExternalStoragePath
+	// Use cloud_storage_uri system variable, fallback to TempDir if not set
+	cloudStorageURI := variable.GetSysVar(vardef.TiDBCloudStorageURI)
+	path := cloudStorageURI.Value
 	if len(path) == 0 {
 		path = cfg.TempDir
 	}

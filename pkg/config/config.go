@@ -327,8 +327,6 @@ type Config struct {
 	InMemSlowQueryRecentNum int `toml:"in-mem-slow-query-recent-num" json:"in-mem-slow-query-recent-num"`
 	// MeteringConfigURI is the URI for metering configuration.
 	MeteringStorageURI string `toml:"metering-storage-uri" json:"metering-storage-uri"`
-	// ExternalStoragePath is the path to the external storage for storing temporary files.
-	ExternalStoragePath string `toml:"external-storage-path" json:"external-storage-path"`
 }
 
 // UpdateTempStoragePath is to update the `TempStoragePath` if port/statusPort was changed
