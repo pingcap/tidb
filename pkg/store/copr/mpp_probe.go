@@ -83,7 +83,6 @@ type MPPInfo struct {
 	LogicalCpuCount uint64
 }
 
-// TODO(x) test this struct in ut
 // MppInfoManager manages info for all tiflash nodes
 type MppInfoManager struct {
 	cachedStores map[string]*MPPInfo
