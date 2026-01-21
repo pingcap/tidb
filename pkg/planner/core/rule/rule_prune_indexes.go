@@ -64,22 +64,24 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 // 2. Have consecutive column matches from the index start (enabling index prefix usage)
 // 3. Support single-scan (covering index without table lookups)
 // 4. Have different consecutive column orderings (e.g., if interesting columns are A, B, keep both (A,B) and (B,A))
+// The threshold controls the behavior:
+// threshold = -1: disable pruning (handled by caller)
+// threshold = 0: only prune indexes with no interesting columns (score == 0)
+// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
 func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, interestingColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
 
-	// Build column ID maps and calculate totals
-	req := buildColumnRequirements(interestingColumns)
-
 	totalPathCount := len(paths)
 
-	// If totalPathCount <= threshold, we should keep all indexes with score > 0
-	// Only prune indexes with score > 0 when we have more index paths than the threshold
-	// threshold = -1: disable pruning (handled by caller)
-	// threshold = 0: only prune indexes with no interesting columns (score == 0)
-	// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
-	needPruning := totalPathCount > threshold && threshold >= 0
+	// If totalPathCount <= threshold or we disabled the prune, return directly.
+	if threshold < 0 || threshold > totalPathCount {
+		return paths
+	}
+
+	// Build column ID maps and calculate totals
+	req := buildColumnRequirements(interestingColumns)
 
 	preferredIndexes := make([]indexWithScore, 0, totalPathCount)
 	tablePaths := make([]*util.AccessPath, 0, 1)
@@ -188,7 +190,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 	// Build final result by sorting and selecting top indexes
 	maxToKeep := max(threshold, defaultMaxIndexes)
-	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, needPruning, req)
+	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, threshold, req)
 
 	failpoint.InjectCall("InjectCheckForIndexPrune", result)
 
@@ -378,7 +380,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, needPruning bool, req columnRequirements) []*util.AccessPath {
+func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep, threshold int, req columnRequirements) []*util.AccessPath {
 	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexMergeIndexPaths)+len(preferredIndexes))
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
@@ -388,10 +390,6 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 	result = append(result, mvIndexPaths...)
 	// CRITICAL: Always include indexes specified in IndexMerge hints - index merge needs them to build partial paths
 	result = append(result, indexMergeIndexPaths...)
-
-	if maxToKeep <= 0 {
-		return result
-	}
 
 	added := make(map[*util.AccessPath]struct{}, len(tablePaths)+len(mvIndexPaths)+len(indexMergeIndexPaths))
 	for _, path := range tablePaths {
@@ -406,8 +404,8 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 
 	preferredScored := scoreAndSort(preferredIndexes, req)
 
-	// If we don't need pruning, skip two-phase selection and keep all indexes with score > 0
-	if !needPruning {
+	// Prune all the path with 0 score.
+	if threshold == 0 {
 		for _, entry := range preferredScored {
 			if _, ok := added[entry.info.path]; !ok {
 				result = append(result, entry.info.path)
