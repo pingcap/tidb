@@ -388,20 +388,6 @@ func (txn *tikvTxn) extractKeyExistsErr(errExist *tikverr.ErrKeyExist) error {
 	return ExtractKeyExistsErrFromIndex(key, value, tblInfo, indexID)
 }
 
-// SetAssertion sets an assertion for the key operation.
-func (txn *tikvTxn) SetAssertion(key []byte, assertion kv.AssertionOp) error {
-	memBuf := txn.GetUnionStore().GetMemBuffer()
-	f, err := memBuf.GetFlags(key)
-	if err != nil && !tikverr.IsErrNotFound(err) {
-		return err
-	}
-	if err == nil && f.HasAssertionFlags() {
-		return nil
-	}
-	memBuf.UpdateFlags(key, getTiKVAssertionOp(assertion))
-	return nil
-}
-
 func (txn *tikvTxn) generateWriteConflictForLockedWithConflict(lockCtx *kv.LockCtx) error {
 	if lockCtx.MaxLockedWithConflictTS != 0 {
 		failpoint.Inject("lockedWithConflictOccurs", func() {})

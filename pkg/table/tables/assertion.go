@@ -18,18 +18,15 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 )
 
-// Keep the interface local to the table layer so other packages don't directly
-// depend on assertion APIs.
-type assertionSetter interface {
-	SetAssertion(key []byte, assertion kv.AssertionOp) error
-}
-
 func setAssertion(txn kv.Transaction, key []byte, assertion kv.AssertionOp) error {
-	if s, ok := txn.(assertionSetter); ok {
-		return s.SetAssertion(key, assertion)
+	memBuf := txn.GetMemBuffer()
+	f, err := memBuf.GetFlags(key)
+	if err != nil && !kv.IsErrNotFound(err) {
+		return err
 	}
-	// Optional capability: some Transaction implementations (e.g. Lightning's
-	// in-memory txn) don't support assertions, and table writes should keep
-	// working in those cases.
+	if err == nil && f.HasAssertionFlags() {
+		return nil
+	}
+	memBuf.UpdateAssertionFlags(key, assertion)
 	return nil
 }

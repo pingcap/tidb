@@ -203,6 +203,8 @@ type MemBuffer interface {
 	SetWithFlags(Key, []byte, ...FlagsOp) error
 	// UpdateFlags updates the flags associated with key.
 	UpdateFlags(Key, ...FlagsOp)
+	// UpdateAssertionFlags updates the assertion flags associated with key.
+	UpdateAssertionFlags(Key, AssertionOp)
 	// DeleteWithFlags delete key with the given KeyFlags
 	DeleteWithFlags(Key, ...FlagsOp) error
 

@@ -171,6 +171,14 @@ func (*MemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
+func (*MemBuf) GetFlags(_ kv.Key) (kv.KeyFlags, error) {
+	return 0, kv.ErrNotExist
+}
+
+func (*MemBuf) UpdateFlags(_ kv.Key, _ ...kv.FlagsOp) {}
+
+func (*MemBuf) UpdateAssertionFlags(_ kv.Key, _ kv.AssertionOp) {}
+
 // GetLocal implements the kv.MemBuffer interface.
 func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	return kv.GetValue(ctx, mb, key)
