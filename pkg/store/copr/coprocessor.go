@@ -2186,7 +2186,7 @@ func (worker *copIteratorWorker) handleCopCache(task *copTask, resp *copResponse
 	// Cache not hit or cache hit but not valid: update the cache if the response can be cached.
 	if cacheKey != nil && resp.pbResp.CanBeCached && resp.pbResp.CacheLastVersion > 0 {
 		if resp.detail != nil {
-			if worker.store.coprCache.CheckResponseAdmission(len(resp.pbResp.Data), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
+			if worker.store.coprCache.CheckResponseAdmission(resp.pbResp.Data.Size(), resp.detail.TimeDetail.ProcessTime, task.pagingTaskIdx) {
 				data := slices.Clone(resp.pbResp.Data)
 
 				newCacheValue := coprCacheValue{

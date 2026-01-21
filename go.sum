@@ -603,8 +603,8 @@ github.com/jmespath/go-jmespath v0.4.0 h1:BEgLn5cpjn8UN1mAw4NjwDrS35OdebyEtFe+9Y
 github.com/jmespath/go-jmespath v0.4.0/go.mod h1:T8mJZnbsbmF+m6zOOFylbeCJqk5+pHWvzYPziyZiYoo=
 github.com/jmespath/go-jmespath/internal/testify v1.5.1 h1:shLQSRRSCCPj3f2gpwzGwWFoC7ycTf1rcQZHOlsJ6N8=
 github.com/jmespath/go-jmespath/internal/testify v1.5.1/go.mod h1:L3OGu8Wl2/fWfCI6z80xFu9LTZmf1ZRjMHUOPmWr69U=
-github.com/joechenrh/client-go/v2 v2.0.0-20260121055946-5d74e186f070 h1:HYd4DVlZwwDxekG90WJqd486smT/D1pN/8gXEyNMc54=
-github.com/joechenrh/client-go/v2 v2.0.0-20260121055946-5d74e186f070/go.mod h1:LUxgYTGmotPqEFpwLPMHfi0KiX44qR9hPmQ768ekWZ8=
+github.com/joechenrh/client-go/v2 v2.0.0-20260121073659-bf570941427d h1:k4l4HOFginqFCRDCcNMyNFjudbOs5d/5v3sogss8ybw=
+github.com/joechenrh/client-go/v2 v2.0.0-20260121073659-bf570941427d/go.mod h1:LUxgYTGmotPqEFpwLPMHfi0KiX44qR9hPmQ768ekWZ8=
 github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877 h1:O7syWuYGzre3s73s+NkgB8e0ZvsIVhT/zxNU7V1gHK8=
 github.com/johannesboyne/gofakes3 v0.0.0-20230506070712-04da935ef877/go.mod h1:AxgWC4DDX54O2WDoQO1Ceabtn6IbktjU/7bigor+66g=
 github.com/joho/sqltocsv v0.0.0-20210428211105-a6d6801d59df h1:Zrb0IbuLOGHL7nrO2WrcuNWgDTlzFv3zY69QMx4ggQE=
