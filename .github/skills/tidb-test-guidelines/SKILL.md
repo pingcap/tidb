@@ -31,7 +31,7 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 
 ## Reference files
 
-- **Planner case map**: `references/planner-case-map.md`
+- **Package case maps**: `references/<pkg>-case-map.md` for each top-level directory under `pkg/`
 - **Planner core placement guide**: `references/planner-guide.md`
 
 ## Notes
@@ -39,7 +39,9 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - Apply the same rules (placement, shard_count, naming) to other packages beyond `pkg/planner`.
 - Use existing testdata patterns (`*_in.json`, `*_out.json`, `*_xut.json`) in the same directory when extending suites. When tests use testdata, run with `-record --tags=intest` as needed.
 - When moving benchmarks between packages, update any `TestBenchDaily` wrappers that list them and keep `Makefile` `bench-daily` entries aligned with the new package location.
+- When updating tests in any `pkg/*` package, ask AI to update the corresponding case map under `references/`.
 - When updating tests in any other directory, also update this skill: add or extend a case map under `references/` and add guidance in this `SKILL.md` so future changes stay consistent.
+- Prefer unit tests over `tests/integrationtest` for end-to-end coverage unless you need to avoid union-storage executor differences or require full workflow validation.
 - When tests read source files under Bazel, use `go/runfiles` and ensure the target file is exported via `exports_files()` in its owning `BUILD.bazel`.
 - For Bazel runfiles, be ready to include the workspace prefix (from `TEST_WORKSPACE`) in the runfile path if needed.
 - Validation (Bazel): run `make bazel_prepare` first; then check the package `BUILD.bazel` for `@com_github_pingcap_failpoint//:failpoint` dependency.
