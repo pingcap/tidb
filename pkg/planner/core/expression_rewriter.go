@@ -1727,7 +1727,6 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 		er.ctxStackAppend(fn, types.EmptyName)
-		er.ctxNameStk[len(er.ctxNameStk)-1] = types.EmptyName
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false
