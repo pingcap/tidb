@@ -6640,7 +6640,7 @@ Field:
 	}
 
 FieldAsNameOpt:
-	/* EMPTY */ %prec empty
+	/* EMPTY */ %prec higherThanReturning
 	{
 		$$ = ""
 	}

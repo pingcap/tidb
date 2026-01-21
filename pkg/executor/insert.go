@@ -80,6 +80,16 @@ func (e *InsertExec) addRecord(ctx context.Context, row []types.Datum, dupKeyChe
 	return nil
 }
 
+func (e *InsertExec) addRecordWithAutoIDHint(
+	ctx context.Context, row []types.Datum, reserveAutoIDCount int, dupKeyCheck table.DupKeyCheckMode,
+) error {
+	if err := e.InsertValues.addRecordWithAutoIDHint(ctx, row, reserveAutoIDCount, dupKeyCheck); err != nil {
+		return err
+	}
+	e.appendReturningRow(row)
+	return nil
+}
+
 func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	defer trace.StartRegion(ctx, "InsertExec").End()
 	logutil.Eventf(ctx, "insert %d rows into table `%s`", len(rows), stringutil.StringerFunc(func() string {
