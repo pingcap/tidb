@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -38,13 +39,34 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 )
 
+const (
+	// eventChannelBufferSize is the buffer size for event channels.
+	// A larger buffer prevents event drops when multiple flushes happen quickly.
+	eventChannelBufferSize = 100
+)
+
+// drainEvents removes all pending events from the channel.
+// It keeps draining until the channel is empty, handling the case where
+// DiscardOrFlush sends events asynchronously.
 func drainEvents(eventCh <-chan []traceevent.Event) {
 	for {
 		select {
 		case <-eventCh:
+			// Continue draining
 		default:
 			return
 		}
+	}
+}
+
+// waitForEvent waits for an event to arrive on the channel with a timeout.
+// This provides explicit synchronization between DiscardOrFlush and event consumption.
+func waitForEvent(eventCh <-chan []traceevent.Event, timeout time.Duration) ([]traceevent.Event, bool) {
+	select {
+	case events := <-eventCh:
+		return events, true
+	case <-time.After(timeout):
+		return nil, false
 	}
 }
 
@@ -64,7 +86,7 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	var conf traceevent.FlightRecorderConfig
 	conf.Initialize()
 	conf.EnabledCategories = []string{"-", "general"}
-	eventCh := make(chan []traceevent.Event, 1)
+	eventCh := make(chan []traceevent.Event, eventChannelBufferSize)
 	fr, err := traceevent.StartHTTPFlightRecorder(eventCh, &conf)
 	require.NoError(t, err)
 	defer fr.Close()
@@ -121,7 +143,9 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	traceBuf.DiscardOrFlush(ctx)
 
 	// Check recorded events for prev_trace_id field
-	events := <-eventCh
+	// Use waitForEvent for explicit synchronization with timeout
+	events, ok := waitForEvent(eventCh, 5*time.Second)
+	require.True(t, ok, "Should receive events within timeout")
 	require.NotEmpty(t, events, "Should have recorded trace events")
 
 	// Look for stmt.start events and verify prev_trace_id matches first statement
@@ -208,7 +232,7 @@ func TestTraceControlIntegration(t *testing.T) {
 }
 
 func TestFlightRecorder(t *testing.T) {
-	eventCh := make(chan []tracing.Event, 1024)
+	eventCh := make(chan []tracing.Event, eventChannelBufferSize)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
