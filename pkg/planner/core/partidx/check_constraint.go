@@ -23,10 +23,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/ranger/context"
 )
 
-// PreCondChecker is used to check whether the filters can meet the constraints from the predefined predicates in partial index's meta.
-type PreCondChecker struct {
-}
-
 // CheckConstraints checks whether the filters can meet the constraints from the predefined predicates in index meta.
 // If the prePredicates has comparison filters like =, >, <, >=, <=, IN, IS NULL, IS NOT NULL on single column, we can try our best to match them.
 // If the prePredicates has other filters like `sin(a) > 0`, we can only try to match them exactly.
@@ -206,7 +202,7 @@ func checkIsNullRejected(sctx planctx.PlanContext, targetCol *expression.Column,
 	if filter.FuncName.L == ast.IsNull {
 		col, ok := filter.GetArgs()[0].(*expression.Column)
 		if ok && col.Equal(sctx.GetExprCtx().GetEvalCtx(), targetCol) {
-			return true
+			return false
 		}
 	}
 	if _, ok := expression.CompareOpMap[filter.FuncName.L]; ok {

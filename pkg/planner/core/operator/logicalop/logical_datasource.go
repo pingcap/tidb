@@ -750,7 +750,7 @@ func (ds *DataSource) CheckPartialIndexes() {
 		// A special handler for plan cache.
 		// We only do it for single IS NOT NULL constraint now.
 		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
-			path.PreMatchNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+			path.PartIdxCondNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
 		}
 	}
 	// 1. No partial index,

@@ -421,7 +421,7 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
 
 		// The failpoint will check whether all partial indexes are pruned.
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/core/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
 			for _, path := range paths {
 				if path.Index != nil && path.Index.ConditionExprString != "" {
 					require.True(t, false, "Partial index should be pruned")
@@ -432,7 +432,7 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 
 		// idx1 is pruned because a is not referenced as interesting one.
 		// idx2 is kept though its constraint is not matched.
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/core/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
 			idx2Found := false
 			for _, path := range paths {
 				if path.Index != nil && path.Index.Name.L == "idx1" {
@@ -448,7 +448,7 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 
 		// idx2 is pruned because b is not referenced as interesting one.
 		// idx1 is kept though its constraint is not matched.
-		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
+		require.NoError(t, failpoint.EnableCall("github.com/pingcap/pkg/planner/core/rule/InjectCheckForIndexPrune", func(paths []util.AccessPath) {
 			idx1Found := false
 			for _, path := range paths {
 				if path.Index != nil && path.Index.Name.L == "idx2" {
@@ -461,6 +461,6 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 			require.True(t, idx1Found, "Partial index idx1 should not be pruned")
 		}))
 		tk.MustQuery("explain select * from t where a is null").CheckNotContain("idx1")
-		failpoint.Disable("github.com/pingcap/pkg/planner/rule/InjectCheckForIndexPrune")
+		failpoint.Disable("github.com/pingcap/pkg/planner/core/rule/InjectCheckForIndexPrune")
 	})
 }
