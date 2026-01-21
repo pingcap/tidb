@@ -28,6 +28,13 @@ type setter[T parquet.ColumnTypes] func(T, *types.Datum) error
 
 var zeroMyDecimal = types.MyDecimal{}
 
+const (
+	// maximumDecimalBytes is the maximum byte length allowed to be parsed directly.
+	// It guarantees the value can be stored in MyDecimal wordbuf without overflow.
+	// That is: floor(log256(10^81-1))
+	maximumDecimalBytes = 33
+)
+
 func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
 	// reuse existing decimal
 	if d.Kind() == types.KindMysqlDecimal {
@@ -39,6 +46,109 @@ func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
 	dec := new(types.MyDecimal)
 	d.SetMysqlDecimal(dec)
 	return dec
+}
+
+func setDatumFromDecimalByte(d *types.Datum, val []byte, scale int) error {
+	// Truncate leading zeros in two's complement representation.
+	negative := (val[0] & 0x80) != 0
+	start := 0
+	for ; start < len(val); start++ {
+		if negative && val[start] != 0xff || !negative && val[start] != 0x00 {
+			break
+		}
+	}
+	start = max(start-1, 0)
+	val = val[start:]
+
+	// If the length or scale is too large, fallback to string parsing.
+	if len(val) >= maximumDecimalBytes || scale > 81 {
+		s := getStringFromParquetByte(val, scale)
+		d.SetBytesAsString(s, "utf8mb4_bin", 0)
+		return nil
+	}
+
+	dec := initializeMyDecimal(d)
+	return dec.FromParquetArray(val, scale)
+}
+
+func getStringFromParquetByte(rawBytes []byte, scale int) []byte {
+	base := uint64(1_000_000_000)
+	baseDigits := 9
+
+	negative := (rawBytes[0] & 0x80) != 0
+	if negative {
+		for i := range rawBytes {
+			rawBytes[i] = ^rawBytes[i]
+		}
+		for i := len(rawBytes) - 1; i >= 0; i-- {
+			rawBytes[i]++
+			if rawBytes[i] != 0 {
+				break
+			}
+		}
+	}
+
+	var (
+		s          = make([]byte, 0, 64)
+		n          int
+		nDigits    int
+		startIndex = 0
+		endIndex   = len(rawBytes)
+	)
+
+	for startIndex < endIndex && rawBytes[startIndex] == 0 {
+		startIndex++
+	}
+
+	// Convert base-256 bytes to base-10 string representation.
+	for startIndex < endIndex {
+		var rem uint64
+		for i := startIndex; i < endIndex; i++ {
+			v := (rem << 8) | uint64(rawBytes[i])
+			q := v / base
+			rem = v % base
+			rawBytes[i] = byte(q)
+			if q == 0 && i == startIndex {
+				startIndex++
+			}
+		}
+
+		for range baseDigits {
+			s = append(s, byte(48+rem%10))
+			n++
+			nDigits++
+			rem /= 10
+			if nDigits == scale {
+				s = append(s, '.')
+				n++
+			}
+			if startIndex == endIndex && rem == 0 {
+				break
+			}
+		}
+	}
+
+	for nDigits < scale+1 {
+		s = append(s, '0')
+		n++
+		nDigits++
+		if nDigits == scale {
+			s = append(s, '.')
+			n++
+		}
+	}
+
+	if negative {
+		s = append(s, '-')
+	}
+
+	// Reverse the string.
+	for i := range len(s) / 2 {
+		j := len(s) - 1 - i
+		s[i], s[j] = s[j], s[i]
+	}
+
+	return s
 }
 
 func setParquetDecimalFromInt64(
@@ -224,8 +334,7 @@ func getByteArraySetter(converted *convertedType) setter[parquet.ByteArray] {
 		}
 	case schema.ConvertedTypes.Decimal:
 		return func(val parquet.ByteArray, d *types.Datum) error {
-			dec := initializeMyDecimal(d)
-			return dec.FromParquetArray(val, int(converted.decimalMeta.Scale))
+			return setDatumFromDecimalByte(d, val, int(converted.decimalMeta.Scale))
 		}
 	}
 
@@ -242,8 +351,7 @@ func getFixedLenByteArraySetter(converted *convertedType) setter[parquet.FixedLe
 		}
 	case schema.ConvertedTypes.Decimal:
 		return func(val parquet.FixedLenByteArray, d *types.Datum) error {
-			dec := initializeMyDecimal(d)
-			return dec.FromParquetArray(val, int(converted.decimalMeta.Scale))
+			return setDatumFromDecimalByte(d, val, int(converted.decimalMeta.Scale))
 		}
 	}
 

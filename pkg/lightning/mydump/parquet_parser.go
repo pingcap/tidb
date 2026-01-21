@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -582,19 +581,6 @@ func NewParquetParser(
 
 		if _, ok := unsupportedParquetTypes[colTypes[i].converted]; ok {
 			return nil, errors.Errorf("unsupported parquet logical type %s", colTypes[i].converted.String())
-		}
-
-		if colTypes[i].decimalMeta.IsSet {
-			if colTypes[i].decimalMeta.Scale < 0 ||
-				colTypes[i].decimalMeta.Scale > int32(mysql.MaxDecimalScale) {
-				return nil, errors.Errorf("parquet decimal scale %d exceeds TiDB max %d for column %s",
-					colTypes[i].decimalMeta.Scale, mysql.MaxDecimalScale, colNames[i])
-			}
-			if colTypes[i].decimalMeta.Precision < 0 ||
-				colTypes[i].decimalMeta.Precision > int32(mysql.MaxDecimalWidth) {
-				return nil, errors.Errorf("parquet decimal precision %d exceeds TiDB max %d for column %s",
-					colTypes[i].decimalMeta.Precision, mysql.MaxDecimalWidth, colNames[i])
-			}
 		}
 	}
 

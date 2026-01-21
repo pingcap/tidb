@@ -503,9 +503,9 @@ func TestBasicReadFile(t *testing.T) {
 	}
 }
 
-// This is the previous implementation used to convert decimal to string.
-// We use it to generate expected results for testing.
-func parquetArrayToStr(rawBytes []byte, scale int) string {
+// getStringFromParquetByteOld is the previous implementation used to convert
+// parquet byte to string. It's only used to generate expected results in tests.
+func getStringFromParquetByteOld(rawBytes []byte, scale int) string {
 	negative := rawBytes[0] > 127
 	if negative {
 		for i := range rawBytes {
@@ -596,10 +596,16 @@ func TestBinaryToDecimalStr(t *testing.T) {
 	)
 	for i, tc := range tcs {
 		rawCopy := append([]byte(nil), tc.rawBytes...)
-		expected := parquetArrayToStr(tc.rawBytes, tc.scale)
+		rawCopy2 := append([]byte(nil), tc.rawBytes...)
+		expected := getStringFromParquetByteOld(tc.rawBytes, tc.scale)
 
+		// test string conversion
+		strNew := getStringFromParquetByte(rawCopy, tc.scale)
+		require.Equal(t, expected, string(strNew))
+
+		// test MyDecimal conversion
 		var dec types.MyDecimal
-		err := dec.FromParquetArray(rawCopy, tc.scale)
+		err := dec.FromParquetArray(rawCopy2, tc.scale)
 		require.NoError(t, err)
 		require.Equal(t, expected, dec.String(),
 			"raw=%x scale=%d idx=%d", tc.rawBytes, tc.scale, i)
