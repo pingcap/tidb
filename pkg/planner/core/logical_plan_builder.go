@@ -3724,9 +3724,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, plannererrors.ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
-	if sel.SelectStmtOpts != nil {
+	// Handle STRAIGHT_JOIN - both keyword and hint forms
+	straightJoinFromKeyword := sel.SelectStmtOpts != nil && sel.SelectStmtOpts.StraightJoin
+	straightJoinFromHint := false
+	if hints := b.TableHints(); hints != nil {
+		straightJoinFromHint = hints.StraightJoinOrder
+	}
+	if straightJoinFromKeyword || straightJoinFromHint {
 		origin := b.inStraightJoin
-		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
+		b.inStraightJoin = true
 		defer func() { b.inStraightJoin = origin }()
 	}
 
