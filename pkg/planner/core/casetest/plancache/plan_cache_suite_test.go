@@ -255,46 +255,73 @@ func TestNonPreparedPlanCacheInternalSQL(t *testing.T) {
 }
 
 func TestPreparedPlanCachePlanSelectionRegressions(t *testing.T) {
-	runPreparedPlanCacheGroupByParamProjection(t)
-	runPreparedPlanCacheRedactExplain(t)
-	runPreparedPlanCacheIndexHintRangeScan(t)
-	runPreparedPlanCacheInvalidRange(t)
-	runPreparedPlanCacheLeftJoinRangeScan(t)
-	runPreparedPlanCacheInlJoinRangeScan(t)
-	runPreparedPlanCachePointGetSafety(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dbName := "test_pc_prepared_selection"
+	tk.MustExec(fmt.Sprintf("drop database if exists %s", dbName))
+	tk.MustExec(fmt.Sprintf("create database %s", dbName))
+	tk.MustExec("use " + dbName)
+
+	runPreparedPlanCacheGroupByParamProjection(t, tk, dbName)
+	runPreparedPlanCacheRedactExplain(t, tk, dbName)
+	runPreparedPlanCacheIndexHintRangeScan(t, tk, dbName)
+	runPreparedPlanCacheInvalidRange(t, tk, dbName)
+	runPreparedPlanCacheLeftJoinRangeScan(t, tk, dbName)
+	runPreparedPlanCacheInlJoinRangeScan(t, tk, dbName)
+	runPreparedPlanCachePointGetSafety(t, tk, dbName)
 }
 
 func TestPreparedPlanCacheWarningRegressions(t *testing.T) {
-	runPreparedPlanCacheDisableEnable(t)
-	runPreparedPlanCacheLimitWarning(t)
-	runPreparedPlanCacheTypeConversionWarning(t)
-	runPreparedPlanCacheIndexRangeTypeWarning(t)
-	runPreparedPlanCacheConvFunction(t)
-	runPreparedPlanCacheForUpdateInTxn(t)
-}
-
-func runPreparedPlanCacheGroupByParamProjection(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	dbName := "test_pc_prepared_warning"
+	tk.MustExec(fmt.Sprintf("drop database if exists %s", dbName))
+	tk.MustExec(fmt.Sprintf("create database %s", dbName))
+	tk.MustExec("use " + dbName)
 
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table test(id int, col int)`)
-	tk.MustExec(`prepare stmt from "select id, ? as col1 from test where col=? group by id,col1"`)
+	runPreparedPlanCacheDisableEnable(t, tk, dbName)
+	runPreparedPlanCacheLimitWarning(t, tk, dbName)
+	runPreparedPlanCacheTypeConversionWarning(t, tk, dbName)
+	runPreparedPlanCacheIndexRangeTypeWarning(t, tk, dbName)
+	runPreparedPlanCacheConvFunction(t, tk, dbName)
+	runPreparedPlanCacheForUpdateInTxn(t, tk, dbName)
+}
+
+func runPreparedPlanCacheGroupByParamProjection(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	tableName := "t_group_by_param"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s(id int, col int)", tableName))
+	tk.MustExec(fmt.Sprintf(`prepare stmt from "select id, ? as col1 from %s where col=? group by id,col1"`, tableName))
 	tk.MustExec(`set @a=100, @b=100`)
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows()) // no error
 	tk.MustQuery(`execute stmt using @a,@b`).Check(testkit.Rows())
+	tk.MustExec(`deallocate prepare stmt`)
 }
 
-func runPreparedPlanCacheRedactExplain(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+func runPreparedPlanCacheRedactExplain(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	preparedCache := tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache").Rows()[0][0]
+	execInfo := tk.MustQuery("select @@session.tidb_enable_collect_execution_info").Rows()[0][0]
+	advancedJoinHint := tk.MustQuery("select @@session.tidb_opt_advanced_join_hint").Rows()[0][0]
+	redactLog := tk.MustQuery("select @@global.tidb_redact_log").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_prepared_plan_cache=%v", preparedCache))
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_collect_execution_info=%v", execInfo))
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_advanced_join_hint=%v", advancedJoinHint))
+		tk.MustExec(fmt.Sprintf("set global tidb_redact_log='%v'", redactLog))
+	}()
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0")
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1(a int)")
-	tk.MustExec("create table t2(a int, b int, c int, index idx(a, b))")
-	tk.MustExec("prepare stmt1 from 'select /*+ inl_join(t2) */ * from t1 join t2 on t1.a = t2.a where t2.b in (?, ?, ?)'")
+	t1Name := "t_redact_left"
+	t2Name := "t_redact_right"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", t1Name))
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", t2Name))
+	tk.MustExec(fmt.Sprintf("create table %s(a int)", t1Name))
+	tk.MustExec(fmt.Sprintf("create table %s(a int, b int, c int, index idx(a, b))", t2Name))
+	tk.MustExec(fmt.Sprintf("prepare stmt1 from 'select /*+ inl_join(%s) */ * from %s join %s on %s.a = %s.a where %s.b in (?, ?, ?)'",
+		t2Name, t1Name, t2Name, t1Name, t2Name, t2Name))
 	tk.MustExec("set @a = 10, @b = 20, @c = 30, @d = 40, @e = 50, @f = 60")
 	tk.MustExec("execute stmt1 using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
@@ -313,14 +340,15 @@ func runPreparedPlanCacheRedactExplain(t *testing.T) {
 		"  ├─Selection_29(Build) 37.46 cop[tikv]  not(isnull(test.t2.a))",
 		"  │ └─IndexRangeScan_27 37.50 cop[tikv] table:t2, index:idx(a, b) range: decided by [eq(test.t2.a, test.t1.a) in(test.t2.b, ‹40›, ‹50›, ‹60›)], keep order:false, stats:pseudo",
 		"  └─TableRowIDScan_28(Probe) 37.46 cop[tikv] table:t2 keep order:false, stats:pseudo"))
+	tk.MustExec(`deallocate prepare stmt1`)
 }
 
-func runPreparedPlanCacheIndexHintRangeScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key (a))")
-	tk.MustExec(`prepare st from "select /*+ use_index(t, a) */ a from t where a=? and a=?"`)
+func runPreparedPlanCacheIndexHintRangeScan(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	tableName := "t_index_hint_range"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, key (a))", tableName))
+	tk.MustExec(fmt.Sprintf(`prepare st from "select /*+ use_index(%s, a) */ a from %s where a=? and a=?"`, tableName, tableName))
 	tk.MustExec(`set @a=1`)
 	tk.MustExec(`execute st using @a, @a`)
 	tkProcess := tk.Session().ShowProcess()
@@ -332,14 +360,15 @@ func runPreparedPlanCacheIndexHintRangeScan(t *testing.T) {
 	tk.MustExec(`execute st using @a, @a`)
 	tk.MustExec(`execute st using @a, @a`)
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec(`deallocate prepare st`)
 }
 
-func runPreparedPlanCacheInvalidRange(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key(a))")
-	tk.MustExec("prepare st from 'select * from t where a>? and a<?'")
+func runPreparedPlanCacheInvalidRange(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	tableName := "t_invalid_range"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, key(a))", tableName))
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s where a>? and a<?'", tableName))
 	tk.MustExec("set @l=100, @r=10")
 	tk.MustExec("execute st using @l, @r")
 
@@ -353,26 +382,35 @@ func runPreparedPlanCacheInvalidRange(t *testing.T) {
 	tk.MustExec("execute st using @l, @r")
 	tk.MustExec("execute st using @l, @r")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare st")
 }
 
-func runPreparedPlanCacheDisableEnable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t(a int)`)
+func runPreparedPlanCacheDisableEnable(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	origVal := tk.MustQuery("select @@session.tidb_enable_prepared_plan_cache").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_enable_prepared_plan_cache=%v", origVal))
+	}()
+	tableName := "t_prepared_toggle"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf(`create table %s(a int)`, tableName))
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec(`prepare s from "select * from t"`)
+	tk.MustExec(fmt.Sprintf(`prepare s from "select * from %s"`, tableName))
 	tk.MustExec(`set @@tidb_enable_prepared_plan_cache=0`)
 	tk.MustExec(`execute s`) // no error
+	tk.MustExec(`deallocate prepare s`)
 }
 
-func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int)")
-	tk.MustExec("create table t2 (a int, b int, key(b, a))")
-	tk.MustExec("prepare st from 'select * from t1 left join t2 on t1.a=t2.a where t2.b in (?)'")
+func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	t1Name := "t_left_join_outer"
+	t2Name := "t_left_join_inner"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", t1Name))
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", t2Name))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, b int)", t1Name))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, b int, key(b, a))", t2Name))
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s left join %s on %s.a=%s.a where %s.b in (?)'",
+		t1Name, t2Name, t1Name, t2Name, t2Name))
 	tk.MustExec("set @b=1")
 	tk.MustExec("execute st using @b")
 
@@ -394,17 +432,25 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T) {
 	tk.MustExec("execute st using @b")
 	tk.MustExec("execute st using @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare st")
 }
 
-func runPreparedPlanCacheInlJoinRangeScan(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
+func runPreparedPlanCacheInlJoinRangeScan(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	advancedJoinHint := tk.MustQuery("select @@session.tidb_opt_advanced_join_hint").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_advanced_join_hint=%v", advancedJoinHint))
+	}()
 	tk.MustExec(`set @@tidb_opt_advanced_join_hint=0`)
-	tk.MustExec("CREATE TABLE `item` (`id` int, `vid` varbinary(16), `sid` int)")
-	tk.MustExec("CREATE TABLE `lv` (`item_id` int, `sid` int, KEY (`sid`,`item_id`))")
+	itemName := "t_inlj_item"
+	lvName := "t_inlj_lv"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", itemName))
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", lvName))
+	tk.MustExec(fmt.Sprintf("CREATE TABLE %s (`id` int, `vid` varbinary(16), `sid` int)", itemName))
+	tk.MustExec(fmt.Sprintf("CREATE TABLE %s (`item_id` int, `sid` int, KEY (`sid`,`item_id`))", lvName))
 
-	tk.MustExec("prepare stmt from 'SELECT /*+ TIDB_INLJ(lv, item) */ * FROM lv LEFT JOIN item ON lv.sid = item.sid AND lv.item_id = item.id WHERE item.sid = ? AND item.vid IN (?, ?)'")
+	tk.MustExec(fmt.Sprintf("prepare stmt from 'SELECT /*+ TIDB_INLJ(%s, %s) */ * FROM %s LEFT JOIN %s ON %s.sid = %s.sid AND %s.item_id = %s.id WHERE %s.sid = ? AND %s.vid IN (?, ?)'",
+		lvName, itemName, lvName, itemName, lvName, itemName, lvName, itemName, itemName, itemName))
 	tk.MustExec("set @a=1, @b='1', @c='3'")
 	tk.MustExec("execute stmt using @a, @b, @c")
 
@@ -426,14 +472,19 @@ func runPreparedPlanCacheInlJoinRangeScan(t *testing.T) {
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("deallocate prepare stmt")
 }
 
-func runPreparedPlanCacheLimitWarning(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key(a))")
-	tk.MustExec(`prepare st from 'select * from t limit ?'`)
+func runPreparedPlanCacheLimitWarning(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	fixControl := tk.MustQuery("select @@session.tidb_opt_fix_control").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.tidb_opt_fix_control='%v'", fixControl))
+	}()
+	tableName := "t_limit_warning"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, key(a))", tableName))
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from %s limit ?'`, tableName))
 	tk.MustExec(`set @a=100000`)
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 skip prepared plan-cache: limit count is too large`))
@@ -445,14 +496,15 @@ func runPreparedPlanCacheLimitWarning(t *testing.T) {
 	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1105 force plan-cache: may use risky cached plan: limit count is too large`))
 	tk.MustExec(`execute st using @a`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+	tk.MustExec(`deallocate prepare st`)
 }
 
-func runPreparedPlanCacheTypeConversionWarning(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key(a))")
-	tk.MustExec("prepare st from 'select a from t where a in (?, ?)'")
+func runPreparedPlanCacheTypeConversionWarning(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	tableName := "t_type_convert"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, key(a))", tableName))
+	tk.MustExec(fmt.Sprintf("prepare st from 'select a from %s where a in (?, ?)'", tableName))
 	tk.MustExec("set @a=1.0, @b=2.0")
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '1.0' may be converted to INT"))
@@ -477,14 +529,15 @@ func runPreparedPlanCacheTypeConversionWarning(t *testing.T) {
 			{"IndexReader"},
 			{"└─IndexRangeScan"}, // range scan not full scan
 		})
+	tk.MustExec("deallocate prepare st")
 }
 
-func runPreparedPlanCacheIndexRangeTypeWarning(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, key(a));")
-	tk.MustExec("prepare st from 'select * from t use index(a) where a < ?'")
+func runPreparedPlanCacheIndexRangeTypeWarning(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	tableName := "t_range_type"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, key(a))", tableName))
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s use index(a) where a < ?'", tableName))
 	tk.MustExec("set @a1=1.1")
 	tk.MustExec("execute st using @a1")
 
@@ -496,6 +549,7 @@ func runPreparedPlanCacheIndexRangeTypeWarning(t *testing.T) {
 
 	tk.MustExec("execute st using @a1")
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: '1.1' may be converted to INT"))
+	tk.MustExec("deallocate prepare st")
 }
 
 func TestPlanCacheWithLimit(t *testing.T) {
@@ -979,14 +1033,14 @@ func TestPlanCacheSubquerySPMEffective(t *testing.T) {
 	}
 }
 
-func runPreparedPlanCachePointGetSafety(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, c int, unique key(a, b))")
+func runPreparedPlanCachePointGetSafety(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	tableName := "t_point_get_safety"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf("create table %s (a int, b int, c int, unique key(a, b))", tableName))
 
 	// should use BatchPointGet
-	tk.MustExec("prepare st from 'select * from t where a=1 and b in (?, ?)'")
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s where a=1 and b in (?, ?)'", tableName))
 	tk.MustExec("set @a=1, @b=2")
 	tk.MustExec("execute st using @a, @b")
 	tkProcess := tk.Session().ShowProcess()
@@ -998,7 +1052,7 @@ func runPreparedPlanCachePointGetSafety(t *testing.T) {
 	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: Batch/PointGet plans may be over-optimized"))
 
 	// should use PointGet: unsafe PointGet
-	tk.MustExec("prepare st from 'select * from t where a=1 and b>=? and b<=?'")
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s where a=1 and b>=? and b<=?'", tableName))
 	tk.MustExec("set @a=1, @b=1")
 	tk.MustExec("execute st using @a, @b")
 	tkProcess = tk.Session().ShowProcess()
@@ -1010,7 +1064,7 @@ func runPreparedPlanCachePointGetSafety(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0")) // cannot hit
 
 	// safe PointGet
-	tk.MustExec("prepare st from 'select * from t where a=1 and b=? and c<?'")
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s where a=1 and b=? and c<?'", tableName))
 	tk.MustExec("set @a=1, @b=1")
 	tk.MustExec("execute st using @a, @b")
 	tkProcess = tk.Session().ShowProcess()
@@ -1021,6 +1075,7 @@ func runPreparedPlanCachePointGetSafety(t *testing.T) {
 	require.Contains(t, rows[1][0], "Point_Get")
 	tk.MustExec("execute st using @a, @b")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1")) // can hit
+	tk.MustExec("deallocate prepare st")
 }
 
 func TestNonPreparedPlanExplainWarning(t *testing.T) {
@@ -1308,18 +1363,19 @@ func TestPlanCacheBindingIgnore(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
 }
 
-func runPreparedPlanCacheConvFunction(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (v varchar(16))`)
-	tk.MustExec(`insert into t values ('156')`)
-	tk.MustExec(`prepare stmt7 from 'select * from t where v = conv(?, 16, 8)'`)
+func runPreparedPlanCacheConvFunction(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	tableName := "t_conv_fn"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf(`create table %s (v varchar(16))`, tableName))
+	tk.MustExec(fmt.Sprintf(`insert into %s values ('156')`, tableName))
+	tk.MustExec(fmt.Sprintf(`prepare stmt7 from 'select * from %s where v = conv(?, 16, 8)'`, tableName))
 	tk.MustExec(`set @arg=0x6E`)
 	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
 	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows("156"))
 	tk.MustExec(`set @arg=0x70`)
 	tk.MustQuery(`execute stmt7 using @arg`).Check(testkit.Rows()) // empty
+	tk.MustExec(`deallocate prepare stmt7`)
 }
 
 func TestBuiltinFuncFlen(t *testing.T) {
@@ -1712,17 +1768,20 @@ func TestInstancePlanCacheAcrossSession(t *testing.T) {
 	tk2.MustQueryWithContext(ctx, `select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
-func runPreparedPlanCacheForUpdateInTxn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec(`use test`)
-	tk.MustExec(`create table t (pk int, a int, primary key(pk))`)
+func runPreparedPlanCacheForUpdateInTxn(t *testing.T, tk *testkit.TestKit, dbName string) {
+	tk.MustExec("use " + dbName)
+	autocommit := tk.MustQuery("select @@session.autocommit").Rows()[0][0]
+	defer func() {
+		tk.MustExec(fmt.Sprintf("set @@session.autocommit=%v", autocommit))
+	}()
+	tableName := "t_for_update"
+	tk.MustExec(fmt.Sprintf("drop table if exists %s", tableName))
+	tk.MustExec(fmt.Sprintf(`create table %s (pk int, a int, primary key(pk))`, tableName))
 	tk.MustExec(`set autocommit=on`)
 	tk.MustQuery(`select @@autocommit`).Check(testkit.Rows("1"))
 	tk.MustExec(`set @pk=1`)
 
-	tk.MustExec(`prepare st from 'select * from t where pk=? for update'`)
+	tk.MustExec(fmt.Sprintf(`prepare st from 'select * from %s where pk=? for update'`, tableName))
 	tk.MustExec(`execute st using @pk`)
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
@@ -1731,6 +1790,7 @@ func runPreparedPlanCacheForUpdateInTxn(t *testing.T) {
 	tk.MustExec(`execute st using @pk`)
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0")) // can't reuse since it's in txn now.
 	tk.MustExec(`commit`)
+	tk.MustExec(`deallocate prepare st`)
 }
 
 func TestNonPreparedPlanSupportsHints(t *testing.T) {

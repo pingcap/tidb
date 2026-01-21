@@ -13,7 +13,9 @@ go_test(
         "plan_cache_test.go",
         "plan_cacheable_checker_test.go",
     ],
-    data = glob(["testdata/**"]),
+    data = glob(["testdata/**"]) + [
+        "//pkg/planner/core:plan_clone_utils.go",
+    ],
     flaky = True,
     shard_count = 48,
     deps = [
@@ -43,6 +45,7 @@ go_test(
         "//pkg/types/parser_driver",
         "//pkg/util/benchdaily",
         "//pkg/util/mock",
+        "@io_bazel_rules_go//go/tools/bazel",
         "@com_github_pingcap_errors//:errors",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",

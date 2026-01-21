@@ -19,11 +19,13 @@ import (
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"unsafe"
 
+	"github.com/bazelbuild/rules_go/go/tools/bazel"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -457,8 +459,7 @@ type visit struct {
 }
 
 func TestFastPointGetClone(t *testing.T) {
-	codeFile := "plan_clone_utils.go"
-	codeData, err := os.ReadFile(codeFile)
+	codeData, err := readPlanCloneUtils()
 	require.NoError(t, err)
 	codeLines := strings.Split(string(codeData), "\n")
 	beginPrefix := `func FastClonePointGetForPlanCache(`
@@ -510,6 +511,14 @@ func TestFastPointGetClone(t *testing.T) {
 			t.Fatal(errMsg)
 		}
 	}
+}
+
+func readPlanCloneUtils() ([]byte, error) {
+	path, err := bazel.Runfile("pkg/planner/core/plan_clone_utils.go")
+	if err != nil {
+		path = filepath.Join("..", "..", "plan_clone_utils.go")
+	}
+	return os.ReadFile(path)
 }
 
 func BenchmarkPointGetCloneFast(b *testing.B) {
