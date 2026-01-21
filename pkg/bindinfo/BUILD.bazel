@@ -17,6 +17,7 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
+        "//pkg/meta/model",
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
@@ -65,7 +66,7 @@ go_test(
     data = glob(["testdata/**"]),
     embed = [":bindinfo"],
     flaky = True,
-    shard_count = 48,
+    shard_count = 49,
     deps = [
         "//pkg/parser",
         "//pkg/parser/ast",
