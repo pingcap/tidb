@@ -66,7 +66,7 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte, inNetwor
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
 	item.ExecCount++
-	item.NetworkInBytes = inNetworkBytes
+	item.NetworkInBytes += inNetworkBytes
 	// Count more data here.
 }
 
@@ -83,7 +83,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 
 	item.SumDurationNs += uint64(ns)
 	item.DurationCount++
-	item.NetworkOutBytes = outNetworkBytes
+	item.NetworkOutBytes += outNetworkBytes
 	// Count more data here.
 }
 
