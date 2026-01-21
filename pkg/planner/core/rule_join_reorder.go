@@ -51,7 +51,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	// Join reorder may distribute/push down conditions during constructing the new join tree.
 	// For volatile or side-effect expressions, moving them can change evaluation times/orders
 	// thus may change query results, so we skip reordering through Selection in such cases.
-	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderSel &&
+	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
 		!slices.ContainsFunc(selection.Conditions, expression.IsMutableEffectsExpr) {
 		child := selection.Children()[0]
 		if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {

@@ -4,7 +4,7 @@ create table t2(id int not null primary key, name varchar(100));
 create table t3(id int not null primary key, name varchar(100));
 create table t4(id int not null primary key, name varchar(100));
 create table t5(id int not null primary key, name varchar(100));
-set @@tidb_opt_join_reorder_sel = 0;
+set @@tidb_opt_join_reorder_through_sel = 0;
 explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t3.id, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t2.name
@@ -35,7 +35,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 1;
+set @@tidb_opt_join_reorder_through_sel = 1;
 explain format = 'plan_tree' select /*+ leading(t1, t2) */ * from t1 inner join t3 on t1.id=t3.id left join t4 on t4.id=t3.id join t2 on t1.id=t2.id where t3.name like 'test3' or t4.name like 'test4';
 id	task	access object	operator info
 Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder2.t1.name, planner__core__join_reorder2.t3.id, planner__core__join_reorder2.t3.name, planner__core__join_reorder2.t4.id, planner__core__join_reorder2.t4.name, planner__core__join_reorder2.t2.id, planner__core__join_reorder2.t2.name
@@ -66,7 +66,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t3	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 0;
+set @@tidb_opt_join_reorder_through_sel = 0;
 explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub
 inner join t4 on sub.id=t4.id;
@@ -84,7 +84,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 1;
+set @@tidb_opt_join_reorder_through_sel = 1;
 explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub
 inner join t4 on sub.id=t4.id;
@@ -102,7 +102,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t4	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 0;
+set @@tidb_opt_join_reorder_through_sel = 0;
 explain format = 'plan_tree' select * from t1 where exists (
 select 1
 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id
@@ -124,7 +124,7 @@ HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__join_r
 │         └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 1;
+set @@tidb_opt_join_reorder_through_sel = 1;
 explain format = 'plan_tree' select * from t1 where exists (
 select 1
 from t2 inner join t3 on t2.id=t3.id left join t4 on t4.id=t3.id join t5 on t2.id=t5.id
@@ -146,7 +146,7 @@ HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__join_r
 │         └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 0;
+set @@tidb_opt_join_reorder_through_sel = 0;
 explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub
 inner join t4 on sub.id=t4.id;
@@ -164,7 +164,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 1;
+set @@tidb_opt_join_reorder_through_sel = 1;
 explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or rand() < 0.5) sub
 inner join t4 on sub.id=t4.id;
@@ -182,7 +182,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 0;
+set @@tidb_opt_join_reorder_through_sel = 0;
 explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub
 inner join t4 on sub.id=t4.id;
@@ -200,7 +200,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 1;
+set @@tidb_opt_join_reorder_through_sel = 1;
 explain format = 'plan_tree' select /*+ leading(t1@sel_2, t4, t2@sel_2, t3@sel_2) */ * from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3' or sleep(0) = 0) sub
 inner join t4 on sub.id=t4.id;
@@ -218,7 +218,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
         │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
         └─TableReader(Probe)	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 0;
+set @@tidb_opt_join_reorder_through_sel = 0;
 explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from
 (select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1
@@ -242,7 +242,7 @@ Projection	root		planner__core__join_reorder2.t1.id, planner__core__join_reorder
           │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
           └─TableReader(Probe)	root		data:TableFullScan
             └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set @@tidb_opt_join_reorder_sel = 1;
+set @@tidb_opt_join_reorder_through_sel = 1;
 explain format = 'plan_tree' select /*+ leading(t1@sel_3, t5, t4@sel_2, t2@sel_3, t3@sel_3) */ * from
 (select sub1.id, sub1.n1, sub1.n2, sub1.n3, t4.name as n4 from
 (select t1.id, t1.name as n1, t2.name as n2, t3.name as n3 from t1 inner join t2 on t1.id=t2.id left join t3 on t2.id=t3.id where t2.name like 'test2' or t3.name like 'test3') sub1
