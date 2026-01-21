@@ -257,14 +257,14 @@ func (c *pdClient) tryScatterRegions(ctx context.Context, regionInfo []*RegionIn
 	return nil, nil
 }
 
-func (c *pdClient) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (c *pdClient) GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	store, ok := c.storeCache[storeID]
 	if ok {
 		return store, nil
 	}
-	store, err := c.client.GetStore(ctx, storeID)
+	store, err := c.client.GetStore(ctx, storeID, opts...)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

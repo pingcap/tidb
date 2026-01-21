@@ -782,7 +782,7 @@ func (pd *MockPD) PutStore(ctx context.Context, store *metapb.Store) error {
 }
 
 // GetStore implements gRPC PDServer.
-func (pd *MockPD) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
+func (pd *MockPD) GetStore(ctx context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	pd.rm.mu.RLock()
 	defer pd.rm.mu.RUnlock()
 	return proto.Clone(pd.rm.stores[storeID]).(*metapb.Store), nil
