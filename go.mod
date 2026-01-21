@@ -384,10 +384,10 @@ require (
 
 replace (
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
-	github.com/pingcap/kvproto => github.com/joechenrh/kvproto v0.0.0-20260121030748-2c532738bb63
+	// github.com/pingcap/kvproto => github.com/joechenrh/kvproto v0.0.0-20260121030748-2c532738bb63
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
-	github.com/pingcap/tipb => github.com/joechenrh/tipb v0.0.0-20260120141748-7445eec6d584
-	github.com/tikv/client-go/v2 => github.com/joechenrh/client-go/v2 v2.0.0-20260121032127-bc605d5c9eb6
+	// github.com/pingcap/tipb => github.com/joechenrh/tipb v0.0.0-20260120141748-7445eec6d584
+	github.com/tikv/client-go/v2 => github.com/joechenrh/client-go/v2 v2.0.0-20260121055946-5d74e186f070
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
 	// Please remove these dependencies.
