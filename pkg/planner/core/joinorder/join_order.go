@@ -1,26 +1,44 @@
 package joinorder
 
 import (
+	"cmp"
+	"maps"
 	"slices"
 
+	"github.com/cockroachdb/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/hint"
+	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
-type JoinOrder struct{}
+// todo:
+// 1. check all conditions should be handled
+// 2. handle only inner join situation
+// 3. handle other conditions as edge
+// 4. quick fix for old implementation
+// 5. refactor functions that duplicated with old implementation
+// 6. handle right outer join
+
+type JoinOrder struct {
+	ctx   base.PlanContext
+	group *joinGroup
+}
 
 // A joinGroup is a subtree of the original plan tree. It's the unit for join order.
 // root is the root of the subtree, if root is not a join, then the joinGroup only contains one vertex.
 // vertexes are the leaf nodes of the subtree, it may have its children, but they are considered as a vertex in this subtree.
 type joinGroup struct {
-	root     base.LogicalPlan
+	root base.LogicalPlan
+	// All vertexes in this join group.
+	// A vertex means a leaf node in this join group tree,
+	// it may have its own children, but they are considered as a single unit in this join group.
 	vertexes []base.LogicalPlan
 
 	// All leading hints for this join group.
-	groupHints []*hint.PlanHints
+	leadingHints []*hint.PlanHints
 	// Join method hints for each vertex in this join group.
 	// Key is the planID of the vertex.
 	// This is for restore join method hints after join reorder.
@@ -31,9 +49,9 @@ type joinGroup struct {
 	allInnerJoin bool
 }
 
-func (g *joinGroup) merge(other *joinGroup) { {
+func (g *joinGroup) merge(other *joinGroup) {
 	g.vertexes = append(g.vertexes, other.vertexes...)
-	g.groupHints = append(g.groupHints, other.groupHints...)
+	g.leadingHints = append(g.leadingHints, other.leadingHints...)
 	maps.Copy(g.vertexHints, other.vertexHints)
 	g.allInnerJoin = g.allInnerJoin && other.allInnerJoin
 }
@@ -89,22 +107,29 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroup {
 	}
 
 	resJoinGroup := &joinGroup{
-		root:        p,
-		vertexes:    []base.LogicalPlan{},
-		vertexHints: vertexHints,
-		allInnerJoin:  join.JoinType == base.InnerJoin,
+		root:         p,
+		vertexes:     []base.LogicalPlan{},
+		vertexHints:  vertexHints,
+		allInnerJoin: join.JoinType == base.InnerJoin,
 	}
 	if join.PreferJoinOrder {
-		resJoinGroup.groupHints = []*hint.PlanHints{join.HintInfo}
+		resJoinGroup.leadingHints = []*hint.PlanHints{join.HintInfo}
 	}
+
+	var leftJoinGroup, rightJoinGroup *joinGroup
 	if !leftHasHint {
-		leftJoinGroup := extractGroup(join.Children()[0])
-		resJoinGroup.merge(leftJoinGroup)
+		leftJoinGroup = extractJoinGroup(join.Children()[0])
+	} else {
+		leftJoinGroup = makeSingleGroup(join.Children()[0])
 	}
+	resJoinGroup.merge(leftJoinGroup)
+
 	if !rightHasHint {
-		rightJoinGroup := extractGroup(join.Children()[1])
-		resJoinGroup.merge(rightJoinGroup)
+		rightJoinGroup = extractJoinGroup(join.Children()[1])
+	} else {
+		rightJoinGroup = makeSingleGroup(join.Children()[1])
 	}
+	resJoinGroup.merge(rightJoinGroup)
 	return resJoinGroup
 }
 
@@ -115,14 +140,17 @@ func makeSingleGroup(p base.LogicalPlan) *joinGroup {
 	}
 }
 
-func (j *JoinOrder) optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
+func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
+	if p == nil {
+		return nil, nil
+	}
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p, nil
 	}
 
 	var err error
 	joinGroup := extractJoinGroup(p)
-	if len(joinGroup.vertexes) == 0 {
+	if len(joinGroup.vertexes) <= 0 {
 		return nil, errors.Errorf("join group has no vertexes, p: %v", p)
 	}
 
@@ -130,7 +158,7 @@ func (j *JoinOrder) optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, err
 	if len(joinGroup.vertexes) == 1 {
 		newChildren := make([]base.LogicalPlan, 0, len(p.Children()))
 		for _, child := range p.Children() {
-			newChild, err := j.optimizeRecursive(child)
+			newChild, err := optimizeRecursive(child)
 			if err != nil {
 				return nil, err
 			}
@@ -142,24 +170,25 @@ func (j *JoinOrder) optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, err
 
 	// Multiple vertexes, starts to reorder.
 	for i, v := range joinGroup.vertexes {
-		if joinGroup.vertexes[i], err = j.optimizeRecursive(v); err != nil {
+		// Make sure the vertexes are all optimized.
+		if joinGroup.vertexes[i], err = optimizeRecursive(v); err != nil {
 			return nil, err
 		}
 	}
-	if p, err = j.optimizeForJoinGroup(joinGroup); err != nil {
+	// gjt todo set children?
+	if p, err = j.optimizeForJoinGroup(p.SCtx(), joinGroup); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func (j *JoinOrder) optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (base.LogicalPlan, error) {
+func (j *JoinOrder) optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
-	var p base.LogicalPlan
 	useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 	if useGreedy {
 		joinOrderGreedy := newJoinOrderGreedy(ctx, group)
-		if p, err = joinOrderGreedy.optimize(); err != nil {}
+		if p, err = joinOrderGreedy.optimize(); err != nil {
 			return nil, err
 		}
 	} else {
@@ -172,8 +201,8 @@ func (j *JoinOrder) optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup)
 	// Ensure the schema is not changed after join reorder.
 	if !p.Schema().Equal(originalSchema) {
 		proj := logicalop.LogicalProjection{
-			Exprs: expression.Columns2Exprs(originalSchema.Columns),
-		}.Init(p.SCtx(), p.SelectBlockOffset())
+			Exprs: expression.Column2Exprs(originalSchema.Columns),
+		}.Init(p.SCtx(), p.QueryBlockOffset())
 		proj.SetSchema(originalSchema)
 		proj.SetChildren(p)
 		return proj, nil
@@ -181,61 +210,303 @@ func (j *JoinOrder) optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup)
 	return p, nil
 }
 
+type joinOrderDP struct {
+	JoinOrder
+}
+
+func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
+	panic("not implement yet")
+}
+
 type joinOrderGreedy struct {
-	ctx   base.PlanContext
-	group *joinGroup
+	JoinOrder
 }
 
 func newJoinOrderGreedy(ctx base.PlanContext, group *joinGroup) *joinOrderGreedy {
 	return &joinOrderGreedy{
-		ctx:   ctx,
-		group: group,
+		JoinOrder: JoinOrder{
+			ctx:   ctx,
+			group: group,
+		},
 	}
 }
 
-func (j *joinOrderGreedy) buildJoinByHint(nodes []*Node) (*Node, []*Node) {
-	// todo implement join order by hint
-	return nil, nodes
+// buildJoinByHint builds a join tree according to the leading hints.
+func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*Node) (*Node, []*Node, error) {
+	if len(j.group.leadingHints) == 0 {
+		return nil, nodes, nil
+	}
+
+	leadingHint, hasDifferent := checkAndGenerateLeadingHint(j.group.leadingHints)
+	if hasDifferent {
+		j.ctx.GetSessionVars().StmtCtx.SetHintWarning(
+			"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
+	}
+
+	checker := func(leftPlan, rightPlan *Node) (*Node, error) {
+		checkResult, err := detector.CheckConnection(leftPlan, rightPlan)
+		if err != nil {
+			return nil, err
+		}
+		if !checkResult.Connected() {
+			return nil, nil
+		}
+		return detector.MakeJoin(checkResult)
+	}
+
+	return buildLeadingTreeFromList(j.ctx, leadingHint, nodes, checker)
 }
 
-func (j *joinOrderGreedy) optimize(group *joinGroup) (base.LogicalPlan, error) {
+func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
+	group := j.group
 	detector := newConflictDetector()
-	nodes := detector.Build(group)
-	joinTreeWithHint, nodes = j.buildJoinByHint(nodes)
+	nodes, err := detector.Build(group)
+	if err != nil {
+		return nil, err
+	}
+	nodeWithHint, nodes, err := j.buildJoinByHint(detector, nodes)
+	if err != nil {
+		return nil, err
+	}
+	if len(nodes) < 1 {
+		return nodeWithHint.p, nil
+	}
 
-	slices.SortFunc(nodes, func(a, b *node) int {
-		if a.GetCost() < b.GetCost() {
-			return -1
-		} else if a.GetCost() > b.GetCost() {
-			return 1
-		}
-		return 0
+	slices.SortFunc(nodes, func(a, b *Node) int {
+		return cmp.Compare(a.cumCost, b.cumCost)
 	})
 
 	var curJoinTree *Node
-	if joinTreeWithHint != nil {
-		curJoinTree = joinTreeWithHint
+	if nodeWithHint != nil {
+		curJoinTree = nodeWithHint
 	} else {
 		curJoinTree = nodes[0]
 		nodes = nodes[1:]
 	}
 	var bushyJoinTreeNodes []*Node
-	for len(nodes) > 1 {
-		var nextNode *Node
+	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
+	var disableCartesian = cartesianFactor <= 0
+	for len(nodes) >= 1 {
+		var bestNode *Node
+		var bestIdx int
 		for idx, iterNode := range nodes {
-			if detector.CheckConnection(curJoinTree, iterNode) {
-				nextNode = iterNode
-				nodes = append(nodes[:idx], nodes[idx+1:]...)
+			checkResult, err := detector.CheckConnection(curJoinTree, iterNode)
+			if err != nil {
+				return nil, err
+			}
+			if !checkResult.Connected() {
+				continue
+			}
+			newNode, err := detector.MakeJoin(checkResult)
+			if err != nil {
+				return nil, err
+			}
+			if newNode == nil {
+				continue
+			}
+			if checkResult.NoEQEdge() {
+				if disableCartesian {
+					continue
+				}
+				newNode.cumCost = newNode.cumCost * cartesianFactor
+			}
+			if bestNode == nil || newNode.cumCost < bestNode.cumCost {
+				bestNode = newNode
+				bestIdx = idx
+			}
+		}
+		if bestNode == nil {
+			bushyJoinTreeNodes = append(bushyJoinTreeNodes, curJoinTree)
+			curJoinTree = nodes[0]
+			if len(nodes) >= 1 {
+				nodes = nodes[1:]
+			}
+		} else {
+			curJoinTree = bestNode
+			nodes = append(nodes[:bestIdx], nodes[bestIdx+1:]...)
+		}
+	}
+	if len(bushyJoinTreeNodes) > 0 {
+		return makeBushyTree(j.ctx, bushyJoinTreeNodes)
+	}
+	return curJoinTree.p, nil
+}
+
+func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPlan, error) {
+	if len(cartesianNodes) <= 0 {
+		return nil, nil
+	}
+
+	var resNodes []*Node
+	for len(cartesianNodes) > 0 {
+		for i := 0; i < len(cartesianNodes); i += 2 {
+			if i+1 >= len(cartesianNodes) {
+				resNodes = append(resNodes, cartesianNodes[i])
+				break
+			}
+			newJoin, err := newCartesianJoin(ctx, cartesianNodes[i].p, cartesianNodes[i+1].p)
+			if err != nil {
+				return nil, err
+			}
+			resNodes = append(resNodes, &Node{p: newJoin})
+		}
+		cartesianNodes = resNodes
+		resNodes = resNodes[:0]
+	}
+	return cartesianNodes[0].p, nil
+}
+
+// gjt todo refactor these functions to avoid code duplication.
+func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
+	leadingHintNum := len(hintInfo)
+	var leadingHintInfo *h.PlanHints
+	hasDiffLeadingHint := false
+	if leadingHintNum > 0 {
+		leadingHintInfo = hintInfo[0]
+		// One join group has one leading hint at most. Check whether there are different join order hints.
+		for i := 1; i < leadingHintNum; i++ {
+			if hintInfo[i] != hintInfo[i-1] {
+				hasDiffLeadingHint = true
 				break
 			}
 		}
-		if nextNode == nil {
-			bushyJoinTreeNodes = append(bushyJoinTreeNodes, curJoinTree)
-			curJoinTree = nodes[0]
-			nodes = nodes[1:]
-		} else {
-			curJoinTree = detector.NewNode(curJoinTree, nextNode)
+		if hasDiffLeadingHint {
+			leadingHintInfo = nil
 		}
 	}
-	return makeBushyTree(bushyJoinTreeNodes), nil
+	return leadingHintInfo, hasDiffLeadingHint
+}
+
+type checkAndMakeJoinFunc func(leftPlan, rightPlan *Node) (*Node, error)
+
+func buildLeadingTreeFromList(
+	ctx base.PlanContext, leadingList *ast.LeadingList, availableGroups []*Node, checker checkAndMakeJoinFunc,
+) (*Node, []*Node, error) {
+	if leadingList == nil || len(leadingList.Items) == 0 {
+		return nil, availableGroups, nil
+	}
+
+	var (
+		currentJoin     *Node
+		remainingGroups = availableGroups
+		err             error
+		ok              bool
+	)
+
+	for i, item := range leadingList.Items {
+		switch element := item.(type) {
+		case *ast.HintTable:
+			// find and remove the plan node that matches ast.HintTable from remainingGroups
+			var tableNode *Node
+			tableNode, remainingGroups, ok = findAndRemovePlanByAstHint(ctx, remainingGroups, element)
+			if !ok {
+				return nil, availableGroups, nil
+			}
+
+			if i == 0 {
+				currentJoin = tableNode
+			} else {
+				currentJoin, err = checker(currentJoin, tableNode)
+				if err != nil {
+					return nil, availableGroups, err
+				}
+				if currentJoin == nil {
+					return nil, availableGroups, nil
+				}
+			}
+		case *ast.LeadingList:
+			// recursively handle nested lists
+			var nestedJoin *Node
+			nestedJoin, remainingGroups, ok = buildLeadingTreeFromList(element, remainingGroups, checker)
+			if !ok {
+				return nil, availableGroups, nil
+			}
+
+			if i == 0 {
+				currentJoin = nestedJoin
+			} else {
+				currentJoin, ok = checker(currentJoin, nestedJoin)
+				if err != nil {
+					return nil, availableGroups, err
+				}
+				if currentJoin == nil {
+					return nil, availableGroups, nil
+				}
+			}
+		default:
+			ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+			return nil, availableGroups, nil
+		}
+	}
+
+	return currentJoin, remainingGroups, nil
+}
+
+func findAndRemovePlanByAstHint(
+	ctx base.PlanContext, plans []*Node, astTbl *ast.HintTable,
+) (*Node, []*Node, bool) {
+	var queryBlockNames []ast.HintTable
+	if p := ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+		queryBlockNames = *p
+	}
+
+	// Step 1: Direct match by table name
+	for i, joinGroup := range plans {
+		plan := joinGroup.p
+		tableAlias := util.ExtractTableAlias(plan, plan.QueryBlockOffset())
+		if tableAlias != nil {
+			// Match db/table (supports astTbl.DBName == "*")
+			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
+			tableMatch := astTbl.TableName.L == tableAlias.TblName.L
+
+			// Match query block names
+			// Use SelectOffset to match query blocks
+			qbMatch := true
+			if astTbl.QBName.L != "" {
+				expectedOffset := extractSelectOffset(astTbl.QBName.L)
+				if expectedOffset > 0 {
+					qbMatch = tableAlias.SelectOffset == expectedOffset
+				} else {
+					// If QBName cannot be parsed, ignore the QB match.
+					qbMatch = true
+				}
+			}
+			if dbMatch && tableMatch && qbMatch {
+				newPlans := append(plans[:i], plans[i+1:]...)
+				return joinGroup, newPlans, true
+			}
+		}
+	}
+
+	// Step 2: Match by query-block alias (subquery name)
+	// Only execute this step if no direct table name match was found
+	groupIdx := -1
+	for i, joinGroup := range plans {
+		plan := joinGroup.p
+		blockOffset := plan.QueryBlockOffset()
+		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
+			blockName := queryBlockNames[blockOffset]
+			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
+			tableMatch := astTbl.TableName.L == blockName.TableName.L
+			if dbMatch && tableMatch {
+				// this can happen when multiple join groups are from the same block, for example:
+				//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
+				// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
+				// TODO: currently we skip this case for simplification, we can support it in the future.
+				if groupIdx != -1 {
+					groupIdx = -1
+					break
+				}
+				groupIdx = i
+			}
+		}
+	}
+
+	if groupIdx != -1 {
+		matched := plans[groupIdx]
+		newPlans := append(plans[:groupIdx], plans[groupIdx+1:]...)
+		return matched, newPlans, true
+	}
+
+	return nil, plans, false
 }
