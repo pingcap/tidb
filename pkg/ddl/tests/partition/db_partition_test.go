@@ -3813,3 +3813,47 @@ func TestGlobalIndexCheck(t *testing.T) {
 	tk.MustExec(`insert into t values(1,1,'AA'),(2,2,'BB'),(3,3,'CC'),(4,4,'DD')`)
 	tk.MustContainErrMsg(`insert into t values(2,1,'AA')`, "[kv:1062]Duplicate entry '2' for key 't.PRIMARY'")
 }
+
+// Test for issue 64176.
+func TestExchangeTiDBRowID(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, primary key (a) nonclustered)`)
+	tk.MustExec(`create table tp (a int, b int, primary key (a) nonclustered) partition by hash (a) partitions 2`)
+
+	tk.MustExec(`insert into t values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into tp values (2,2),(4,4),(6,6)`)
+	tk.MustExec(`insert into t select a + 8, b + 8 from t`)
+
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3"))
+
+	tk.MustExec(`alter table tp exchange partition p0 with table t`)
+	tk.MustExec(`insert into t values (8,8)`)
+	// This failed before, since it will use _tidb_rowid = 4
+	tk.MustExec(`insert into tp values (8,8)`)
+
+	tk.MustQuery(`select *, _tidb_rowid from tp`).Sort().Check(testkit.Rows(""+
+		"10 10 4",
+		"12 12 5",
+		"14 14 6",
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+	tk.MustQuery(`select *, _tidb_rowid from t`).Sort().Check(testkit.Rows(""+
+		"2 2 1",
+		"4 4 2",
+		"6 6 3",
+		"8 8 30001"))
+}
