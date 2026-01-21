@@ -947,23 +947,23 @@ func decodeIndexKvOldCollation(key, value []byte, hdStatus HandleStatus, buf []b
 		return resultValues, nil
 	}
 	var handle kv.Handle
-	if len(b) > 0 {
-		// non-unique index
-		handle, err = decodeHandleInIndexKey(b)
-		if err != nil {
-			return nil, err
-		}
-		resultValues, err = reEncodeHandleTo(handle, hdStatus == HandleIsUnsigned, buf, resultValues)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-	} else {
+	if len(b) == 0 {
 		// In unique int handle index.
 		handle = DecodeIntHandleInIndexValue(value)
 		resultValues, err = reEncodeHandleTo(handle, hdStatus == HandleIsUnsigned, buf, resultValues)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
+		return resultValues, nil
+	}
+	// non-unique index
+	handle, err = decodeHandleInIndexKey(b)
+	if err != nil {
+		return nil, err
+	}
+	resultValues, err = reEncodeHandleTo(handle, hdStatus == HandleIsUnsigned, buf, resultValues)
+	if err != nil {
+		return nil, errors.Trace(err)
 	}
 	// For V2+ non-unique global indexes, the partition ID is in the key (inside the handle).
 	// We need to append it to the result values for callers that expect it.
@@ -1974,25 +1974,13 @@ func decodeIndexKvForClusteredIndexVersion1(key, value []byte, colsLen int, hdSt
 		return nil, err
 	}
 	resultValues = append(resultValues, handleBytes...)
-	// For global indexes, append the partition ID to result values.
-	// For V2+ non-unique indexes, partition ID is in the key (inside handle).
-	// For unique indexes or V0/V1 indexes, partition ID is in the value.
-	// Note: V1/V2 global indexes don't support clustered tables, so this path
-	// is typically not hit for V2 global indexes. Added for future compatibility.
+	// GlobalIndexVersion V1/V2 are only for non-clustered/IntHandle, so no handling needed
 	if segs.PartitionID != nil {
 		_, pid, err := codec.DecodeInt(segs.PartitionID)
 		if err != nil {
 			return nil, err
 		}
 		datum := types.NewIntDatum(pid)
-		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
-		if err != nil {
-			return nil, err
-		}
-		resultValues = append(resultValues, pidBytes)
-	} else if ph, ok := handle.(kv.PartitionHandle); ok {
-		// For V2+ non-unique global indexes, extract partition ID from the handle.
-		datum := types.NewIntDatum(ph.PartitionID)
 		pidBytes, err := codec.EncodeValue(time.UTC, nil, datum)
 		if err != nil {
 			return nil, err
