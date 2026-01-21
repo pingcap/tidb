@@ -1355,6 +1355,13 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 			}
 		}
 
+		if n.SelectIntoOpt != nil && n.SelectIntoOpt.Tp == SelectIntoVars {
+			ctx.WritePlain(" ")
+			if err := n.SelectIntoOpt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
+			}
+		}
+
 		if n.From != nil {
 			ctx.WriteKeyWord(" FROM ")
 			if ctx.Flags.HasRestoreForNonPrepPlanCache() && len(n.From.OriginalText()) > 0 {
@@ -1480,7 +1487,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.SelectIntoOpt != nil {
+	if n.SelectIntoOpt != nil && n.SelectIntoOpt.Tp != SelectIntoVars {
 		ctx.WritePlain(" ")
 		if err := n.SelectIntoOpt.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
@@ -1610,6 +1617,14 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 			}
 			n.LockInfo.Tables[i] = node.(*TableName)
 		}
+	}
+
+	if n.SelectIntoOpt != nil {
+		node, ok := n.SelectIntoOpt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SelectIntoOpt = node.(*SelectIntoOption)
 	}
 
 	return v.Leave(n)
@@ -3710,27 +3725,42 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
+	Variables  []*ColumnNameOrUserVar
 }
 
 // Restore implements Node interface.
 func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
-	if n.Tp != SelectIntoOutfile {
-		// only support SELECT/TABLE/VALUES ... INTO OUTFILE statement now
+	switch n.Tp {
+	case SelectIntoOutfile:
+		ctx.WriteKeyWord("INTO OUTFILE ")
+		ctx.WriteString(n.FileName)
+		if n.FieldsInfo != nil {
+			if err := n.FieldsInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+			}
+		}
+		if n.LinesInfo != nil {
+			if err := n.LinesInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+			}
+		}
+	case SelectIntoDumpfile:
+		ctx.WriteKeyWord("INTO DUMPFILE ")
+		ctx.WriteString(n.FileName)
+	case SelectIntoVars:
+		ctx.WriteKeyWord("INTO ")
+		for i, v := range n.Variables {
+			if i != 0 {
+				ctx.WritePlain(",")
+			}
+			if err := v.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.Variables")
+			}
+		}
+	default:
 		return errors.New("Unsupported SelectionInto type")
 	}
 
-	ctx.WriteKeyWord("INTO OUTFILE ")
-	ctx.WriteString(n.FileName)
-	if n.FieldsInfo != nil {
-		if err := n.FieldsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
-		}
-	}
-	if n.LinesInfo != nil {
-		if err := n.LinesInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
-		}
-	}
 	return nil
 }
 
@@ -3739,6 +3769,14 @@ func (n *SelectIntoOption) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
+	}
+	n = newNode.(*SelectIntoOption)
+	for i, variable := range n.Variables {
+		node, ok := variable.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Variables[i] = node.(*ColumnNameOrUserVar)
 	}
 	return v.Leave(n)
 }
