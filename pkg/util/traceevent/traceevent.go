@@ -270,7 +270,7 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 // The random suffix distinguishes different statement executions.
 // This function should be called ONCE per statement execution, not per retry.
 // If no transaction has started, start_ts will be 0.
-func GenerateTraceID(ctx context.Context, startTS uint64, stmtCount uint64) []byte {
+func GenerateTraceID(startTS uint64, stmtCount uint64) []byte {
 	traceID := make([]byte, 20)
 	binary.BigEndian.PutUint64(traceID[0:8], startTS)
 	binary.BigEndian.PutUint64(traceID[8:16], stmtCount)

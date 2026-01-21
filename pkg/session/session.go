@@ -2822,7 +2822,7 @@ func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte
 	// The trace ID is generated from transaction start_ts and statement count
 	startTS := se.sessionVars.TxnCtx.StartTS
 	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
-	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
+	traceID := traceevent.GenerateTraceID(startTS, stmtCount)
 	if traceBuf := traceevent.GetTraceBuf(ctx); traceBuf != nil {
 		traceBuf.SetTraceID(traceID)
 	}
