@@ -690,13 +690,13 @@ Error 3575 (HY000): Recursive Common Table Expression 'cte' can contain neither 
 with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;
 Error 3575 (HY000): Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
 with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
 with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
 with recursive cte(n) as (select 1 union select distinct  * from cte) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union (select * from cte limit 2)) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
 with recursive cte(n) as (select 1 union select * from cte, cte c1) select * from cte;
 Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;
