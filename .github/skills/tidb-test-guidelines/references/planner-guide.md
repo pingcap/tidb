@@ -1,14 +1,27 @@
-# Planner/Core Placement Guide
+# Planner Core Placement Guide
 
 ## Purpose
 
-Keep optimizer tests organized and discoverable by forcing them into `pkg/planner/core/casetest/<type>`.
+Define placement rules for optimizer tests under `pkg/planner/core`, with casetests grouped by type.
 
-## Preferred layout (optimized paths)
+## Preferred layout
 
-- **All new optimizer test cases**: `pkg/planner/core/casetest/<type>`
+- **Planner/core optimizer casetests**: `pkg/planner/core/casetest/<type>`
 - **Testdata for optimizer cases**: `pkg/planner/core/casetest/<type>/testdata`
 - **Avoid** adding new optimizer cases directly under `pkg/planner/core` or `pkg/planner/core/tests` unless there is a strong, existing test suite to extend.
+
+## Other planner packages
+
+Planner/core and non-core packages are peers. Place tests in their owning package directory when the code is not part of `planner/core`:
+
+- **Cardinality**: `pkg/planner/cardinality`
+- **Functional dependencies**: `pkg/planner/funcdep`
+- **Memo**: `pkg/planner/memo`
+- **Plan context**: `pkg/planner/planctx`
+- **Planner utilities**: `pkg/planner/util`
+- **Index advisor**: `pkg/planner/indexadvisor`
+- **Implementation**: `pkg/planner/implementation`
+- **Cascades (old/base/pattern/memo/task/rule)**: `pkg/planner/cascades/...`
 
 ## Common casetest types
 
@@ -51,7 +64,7 @@ Keep optimizer tests organized and discoverable by forcing them into `pkg/planne
 - Use behavior-based names; never name tests after issue IDs only.
 - Merge overlapping functionality into a single test only if it does not make runtime too long.
 
-## Planner/core-specific rules
+## Planner-specific rules
 
 - For optimizer cases, always place new tests under `pkg/planner/core/casetest/<type>` and keep testdata in `pkg/planner/core/casetest/<type>/testdata`.
 - Avoid adding new optimizer cases directly under `pkg/planner/core` or `pkg/planner/core/tests` unless extending an existing suite.

@@ -1,4 +1,4 @@
-# TiDB Optimizer Test Case Map (pkg/planner)
+# TiDB Planner Test Case Map (pkg/planner)
 
 ## Table of contents
 
@@ -22,6 +22,11 @@
 ## Overview
 
 This map lists existing `_test.go` files and `testdata` files under `pkg/planner` to help place new optimizer test cases and reuse existing fixtures.
+
+Placement rules (planner/core and non-core packages are peers):
+
+- **Planner/core optimizer casetests**: `pkg/planner/core/casetest/<type>`
+- **Non-core planner packages**: place tests in their owning package directory (for example, `pkg/planner/cardinality`, `pkg/planner/funcdep`, `pkg/planner/memo`, `pkg/planner/util`).
 
 ## Cardinality
 
@@ -384,7 +389,7 @@ This map lists existing `_test.go` files and `testdata` files under `pkg/planner
   - `pkg/planner/core/casetest/instanceplancache/dml_test.go`
   - `pkg/planner/core/casetest/instanceplancache/concurrency_test.go`
   - `pkg/planner/core/casetest/instanceplancache/builtin_func_test.go`
-- MPP (planner/core root integration):
+- MPP (planner root integration):
   - `pkg/planner/core/integration_partition_test.go`
 - Vector search:
   - `pkg/planner/core/casetest/vectorsearch/main_test.go`

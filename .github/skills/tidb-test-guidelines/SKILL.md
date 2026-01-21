@@ -9,7 +9,7 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 
 1) Identify the target package and existing coverage using `rg --files -g '*_test.go'` and `rg --files -g '*.json'`.
 2) Check `BUILD.bazel` for `shard_count` in the target directory; keep test count <= 50 per directory.
-3) For optimizer cases, place new tests under `pkg/planner/core/casetest/<type>` (see `references/planner-core-layout.md`).
+3) For optimizer cases, place new tests under `pkg/planner/core/casetest/<type>` (see `references/planner-guide.md`).
 4) Reuse existing fixtures and testdata; add new files only when necessary.
 5) Name tests descriptively; avoid issue-id-only names (e.g., `TestIssue123456`).
 6) Merge same-functionality cases into a single test only if runtime remains reasonable.
@@ -31,8 +31,8 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 
 ## Reference files
 
-- **Optimizer case map**: `references/optimizer-case-map.md`
-- **Planner/core placement guide**: `references/planner-core-layout.md`
+- **Planner case map**: `references/planner-case-map.md`
+- **Planner core placement guide**: `references/planner-guide.md`
 
 ## Notes
 
