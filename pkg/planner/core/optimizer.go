@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
+	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -657,14 +658,20 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 		waitWg.Add(len(uncachedServersInfo))
 		for i := range uncachedServersInfo {
 			go func(info []infoschema.ServerInfo) {
-				defer waitWg.Done()
+				defer func() {
+					if r := recover(); r != nil {
+						log.Warn(util.GetRecoverError(r).Error())
+					}
+					waitWg.Done()
+				}()
+
 				rows := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), uncachedServersInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-				for i, row := range rows {
+				for _, row := range rows {
 					if row[4].GetString() == "cpu-logical-cores" {
 						logicalCpus, err := strconv.Atoi(row[5].GetString())
 						if err == nil && logicalCpus > 0 {
 							copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
-								Address:         uncachedServersInfo[i].Address,
+								Address:         info[0].Address,
 								LogicalCpuCount: uint64(logicalCpus),
 							})
 						}
@@ -673,6 +680,7 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 				ch <- rows
 			}(uncachedServersInfo[i : i+1])
 		}
+		waitWg.Wait()
 		close(ch)
 
 		for rows := range ch {
