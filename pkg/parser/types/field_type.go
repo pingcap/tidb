@@ -58,6 +58,8 @@ type IHasher interface {
 type FieldType struct {
 	// tp is type of the field
 	tp byte
+	// subType is used to simulate/support additional data types on top of the original (base) data type, such as ARRAY, XML, etc.
+	subType byte
 	// flag represent NotNull, Unsigned, PriKey flags etc.
 	flag uint
 	// flen represent size of bytes of the field
@@ -82,6 +84,7 @@ func (ft *FieldType) DeepCopy() *FieldType {
 	}
 	ret := &FieldType{
 		tp:      ft.tp,
+		subType: ft.subType,
 		flag:    ft.flag,
 		flen:    ft.flen,
 		decimal: ft.decimal,
@@ -103,6 +106,7 @@ func (ft *FieldType) DeepCopy() *FieldType {
 // Hash64 implements the cascades/base.Hasher.<0th> interface.
 func (ft *FieldType) Hash64(h IHasher) {
 	h.HashByte(ft.tp)
+	h.HashByte(ft.subType)
 	h.HashUint64(uint64(ft.flag))
 	h.HashInt(ft.flen)
 	h.HashInt(ft.decimal)
@@ -134,6 +138,7 @@ func (ft *FieldType) Equals(other any) bool {
 		return false
 	}
 	ok := ft.tp == ft2.tp &&
+		ft.subType == ft2.subType &&
 		ft.flag == ft2.flag &&
 		ft.flen == ft2.flen &&
 		ft.decimal == ft2.decimal &&
@@ -335,6 +340,16 @@ func (ft *FieldType) IsArray() bool {
 	return ft.array
 }
 
+// SetSubType sets the subtype of the FieldType.
+func (ft *FieldType) SetSubType(subType byte) {
+	ft.subType = subType
+}
+
+// GetSubType returns the subtype of the FieldType.
+func (ft *FieldType) GetSubType() byte {
+	return ft.subType
+}
+
 // ArrayType return the type of the array.
 func (ft *FieldType) ArrayType() *FieldType {
 	if !ft.array {
@@ -394,6 +409,7 @@ func (ft *FieldType) Equal(other *FieldType) bool {
 	flenEqual := ft.flen == other.flen || (ft.EvalType() == ETReal && ft.decimal == UnspecifiedLength) || ft.EvalType() == ETJson
 	ignoreDecimal := ft.EvalType() == ETInt || ft.EvalType() == ETString
 	partialEqual := tpEqual &&
+		ft.subType == other.subType &&
 		(ignoreDecimal || ft.decimal == other.decimal) &&
 		ft.charset == other.charset &&
 		ft.collate == other.collate &&
@@ -413,7 +429,7 @@ func (ft *FieldType) PartialEqual(other *FieldType, unsafe bool) bool {
 		return ft.Equal(other)
 	}
 
-	partialEqual := ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
+	partialEqual := ft.subType == other.subType && ft.charset == other.charset && ft.collate == other.collate && mysql.HasUnsignedFlag(ft.flag) == mysql.HasUnsignedFlag(other.flag)
 	if !partialEqual || len(ft.elems) != len(other.elems) {
 		return false
 	}
@@ -484,6 +500,10 @@ func (ft *FieldType) CompactStr() string {
 	}
 
 	switch ft.GetType() {
+	case mysql.TypeJSON:
+		if ft.subType == mysql.SubTypeArray {
+			ts = "array"
+		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
 		es := make([]string, 0, len(ft.elems))
@@ -741,6 +761,7 @@ func HasCharset(ft *FieldType) bool {
 // for json
 type jsonFieldType struct {
 	Tp               byte
+	SubType          byte
 	Flag             uint
 	Flen             int
 	Decimal          int
@@ -757,6 +778,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 	err := json.Unmarshal(data, &r)
 	if err == nil {
 		ft.tp = r.Tp
+		ft.subType = r.SubType
 		ft.flag = r.Flag
 		ft.flen = r.Flen
 		ft.decimal = r.Decimal
@@ -773,6 +795,7 @@ func (ft *FieldType) UnmarshalJSON(data []byte) error {
 func (ft *FieldType) MarshalJSON() ([]byte, error) {
 	var r jsonFieldType
 	r.Tp = ft.tp
+	r.SubType = ft.subType
 	r.Flag = ft.flag
 	r.Flen = ft.flen
 	r.Decimal = ft.decimal

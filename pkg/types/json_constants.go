@@ -244,6 +244,10 @@ var (
 	ErrInvalidJSONPathArrayCell = dbterror.ClassJSON.NewStd(mysql.ErrInvalidJSONPathArrayCell)
 	// ErrUnsupportedSecondArgumentType means unsupported second argument type in json_objectagg
 	ErrUnsupportedSecondArgumentType = dbterror.ClassJSON.NewStd(mysql.ErrUnsupportedSecondArgumentType)
+	// ErrInvalidValueOfType means invalid value for the specified type.
+	ErrInvalidValueOfType = dbterror.ClassTypes.NewStd(mysql.ErrInvalidValueOfType)
+	// ErrInvalidArrayValue means invalid ARRAY value.
+	ErrInvalidArrayValue = ErrInvalidValueOfType.FastGenByArgs("ARRAY")
 )
 
 // json_contains_path function type choices

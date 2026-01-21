@@ -49,6 +49,11 @@ const (
 	TypeTiDBVectorFloat32 byte = 0xe1
 )
 
+const (
+	SubTypeUnspecified byte = 0
+	SubTypeArray       byte = 1
+)
+
 // Flag information.
 const (
 	NotNullFlag        uint = 1 << 0  /* Field can't be NULL */

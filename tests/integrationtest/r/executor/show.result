@@ -597,6 +597,7 @@ aes_decrypt
 aes_encrypt
 and
 any_value
+array_element
 ascii
 asin
 atan

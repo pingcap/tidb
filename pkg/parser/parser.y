@@ -13421,6 +13421,15 @@ StringType:
 		tp.SetCollate(charset.CollationBin)
 		$$ = tp
 	}
+|	"ARRAY"
+	{
+		tp := types.NewFieldType(mysql.TypeJSON)
+		tp.SetDecimal(0)
+		tp.SetCharset(charset.CharsetBin)
+		tp.SetCollate(charset.CollationBin)
+		tp.SetSubType(mysql.SubTypeArray)
+		$$ = tp
+	}
 |	"LONG" Varchar OptCharsetWithOptBinary
 	{
 		tp := types.NewFieldType(mysql.TypeMediumBlob)

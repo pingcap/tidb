@@ -358,6 +358,9 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
+	// Array functions
+	ArrayElementAt = "array_element"
+
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"
 	VecL1Distance           = "vec_l1_distance"

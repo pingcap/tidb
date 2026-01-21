@@ -960,6 +960,9 @@ var funcs = map[string]functionClass{
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 
+	// array functions
+	ast.ArrayElementAt: &arrayElementFunctionClass{baseFunctionClass{ast.ArrayElementAt, 2, -1}},
+
 	// vector functions (TiDB extension)
 	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},
 	ast.VecL1Distance:           &vecL1DistanceFunctionClass{baseFunctionClass{ast.VecL1Distance, 2, 2}},

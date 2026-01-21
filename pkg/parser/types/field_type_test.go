@@ -300,6 +300,19 @@ func TestFieldTypeEqual(t *testing.T) {
 	require.Equal(t, true, ft1.Equal(ft2))
 }
 
+func TestFieldTypeSubType(t *testing.T) {
+	ft := NewFieldType(mysql.TypeJSON)
+	ft.SetSubType(mysql.SubTypeArray)
+
+	copied := ft.DeepCopy()
+	require.Equal(t, mysql.SubTypeArray, copied.GetSubType())
+
+	base := NewFieldType(mysql.TypeJSON)
+	require.False(t, ft.Equal(base))
+	require.False(t, ft.Equals(base))
+	require.False(t, ft.PartialEqual(base, true))
+}
+
 func TestCompactStr(t *testing.T) {
 	cases := []struct {
 		t     byte   // Field Type
