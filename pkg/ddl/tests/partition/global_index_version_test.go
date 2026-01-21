@@ -105,17 +105,24 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
 		"Global index should have version %d", model.GlobalIndexVersionLegacy)
 
-	// Create a non-global index and verify it has version 0
+	// Create a non-global index and unique global index and verify they have version 0
 	tk.MustExec("CREATE INDEX idx_a ON tp(a)")
+	tk.MustExec(`CREATE UNIQUE INDEX idx_ab ON tp(a,b) GLOBAL`)
 
 	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
 	require.NoError(t, err)
 	tblInfo = tbl.Meta()
 
+	globalIdx = nil
 	var localIdx *model.IndexInfo
 	for _, idx := range tblInfo.Indices {
 		if idx.Name.O == "idx_a" {
 			localIdx = idx
+		}
+		if idx.Name.O == "idx_ab" {
+			globalIdx = idx
+		}
+		if localIdx != nil && globalIdx != nil {
 			break
 		}
 	}
@@ -123,9 +130,41 @@ func TestGlobalIndexVersion0(t *testing.T) {
 	require.False(t, localIdx.Global, "Index should not be global")
 	require.Equal(t, uint8(0), localIdx.GlobalIndexVersion,
 		"Local index should have version 0")
+
+	require.NotNil(t, globalIdx, "Global index idx_ab not found")
+	require.True(t, globalIdx.Global, "Index should be global")
+	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
+		"Global index should have version %d", model.GlobalIndexVersionLegacy)
+
+	// Verify that clustered tables get V0 global indexes
+	tk.MustExec(`CREATE TABLE tpc (
+		a INT,
+		b INT,
+		PRIMARY KEY (a) CLUSTERED
+	) PARTITION BY RANGE (a) (
+		PARTITION p0 VALUES LESS THAN (100),
+		PARTITION p1 VALUES LESS THAN (200)
+	)`)
+	tk.MustExec(`CREATE INDEX idx_b ON tpc(b) GLOBAL`)
+
+	tbl, err = dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tpc"))
+	require.NoError(t, err)
+	tblInfo = tbl.Meta()
+
+	globalIdx = nil
+	for _, idx := range tblInfo.Indices {
+		if idx.Name.O == "idx_b" {
+			globalIdx = idx
+			break
+		}
+	}
+	require.NotNil(t, globalIdx, "Global index idx_b not found")
+	require.True(t, globalIdx.Global, "Index should be global")
+	require.Equal(t, model.GlobalIndexVersionLegacy, globalIdx.GlobalIndexVersion,
+		"Global index should have version %d", model.GlobalIndexVersionLegacy)
 }
 
-// TestGlobalIndexVersion1 tests that global indexes are created with the previous version.
+// TestGlobalIndexVersion1 tests that global indexes are created with version V1.
 func TestGlobalIndexVersion1(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
