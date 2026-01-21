@@ -17,6 +17,7 @@ package sqlbuilder_test
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -448,7 +449,7 @@ func TestSoftDeleteCleanupSQL(t *testing.T) {
 	}
 
 	expire := time.Unix(100, 0).In(time.UTC)
-	sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire)
+	sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, 0)
 	require.NoError(t, err)
 	require.Contains(t, sql, "DELETE LOW_PRIORITY FROM `test`.`t`")
 	require.Contains(t, sql, "WHERE `id` IN (1)")
@@ -470,14 +471,14 @@ func TestSoftDeleteSQLActiveActiveSafety(t *testing.T) {
 		SoftDeleteTimeColumn: model.NewExtraSoftDeleteTimeColInfo(),
 	}
 
+	minCheckpointTS := uint64(123)
 	checkContains := func(t *testing.T, sql string) {
-		require.Contains(t, sql, "LEAST(tidb_current_tso()")
-		require.Contains(t, sql, fmt.Sprintf("FROM %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
+		require.Contains(t, sql, fmt.Sprintf("LEAST(tidb_current_tso(), %d)", minCheckpointTS))
 		require.Contains(t, sql, ">= IFNULL(_tidb_origin_ts, _tidb_commit_ts)")
 	}
 
 	t.Run("Cleanup", func(t *testing.T) {
-		sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire)
+		sql, err := sqlbuilder.BuildDeleteSQL(tbl, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, minCheckpointTS)
 		require.NoError(t, err)
 		checkContains(t, sql)
 	})
@@ -485,6 +486,7 @@ func TestSoftDeleteSQLActiveActiveSafety(t *testing.T) {
 	t.Run("Scan", func(t *testing.T) {
 		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, tbl, expire, nil, nil)
 		require.NoError(t, err)
+		g.SetMinCheckpointTS(minCheckpointTS)
 		sql, err := g.NextSQL(nil, 10)
 		require.NoError(t, err)
 		checkContains(t, sql)
@@ -507,12 +509,13 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 		return pt
 	}
 
-	run := func(t *testing.T, pt *cache.PhysicalTable, expire time.Time, expectScan bool, expectDeleted bool) {
+	run := func(t *testing.T, pt *cache.PhysicalTable, expire time.Time, minCheckpointTS uint64, expectScan bool, expectDeleted bool) {
 		g, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeSoftDelete, pt, expire, nil, nil)
 		require.NoError(t, err)
+		g.SetMinCheckpointTS(minCheckpointTS)
 		q, err := g.NextSQL(nil, 10)
 		require.NoError(t, err)
-		delSQL, err := sqlbuilder.BuildDeleteSQL(pt, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire)
+		delSQL, err := sqlbuilder.BuildDeleteSQL(pt, cache.TTLJobTypeSoftDelete, [][]types.Datum{{types.NewDatum(int64(1))}}, expire, minCheckpointTS)
 		require.NoError(t, err)
 
 		tk.MustExec("set @@tidb_translate_softdelete_sql=0")
@@ -548,10 +551,14 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 		expire := time.Now().UTC()
 
 		// No progress
-		run(t, pt, expire, false, false)
+		run(t, pt, expire, 0, false, false)
 		// Deleted
 		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
-		run(t, pt, expire, true, true)
+		var checkpointTS uint64
+		row := tk.MustQuery(fmt.Sprintf("select min(checkpoint_ts) from %s.%s where database_name='test' and table_name='t'", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable)).Rows()
+		checkpointTS, err := strconv.ParseUint(row[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		run(t, pt, expire, checkpointTS, true, true)
 	})
 
 	t.Run("UpstreamTombstone", func(t *testing.T) {
@@ -571,11 +578,14 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 
 		// No progress
 		tk.MustExec(fmt.Sprintf("insert into %s.%s values ('cf','1','test','t', 1)", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
-		run(t, pt, expire, false, false)
+		run(t, pt, expire, 1, false, false)
 		// Deleted
 		tk.MustExec(fmt.Sprintf("delete from %s.%s", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
 		tk.MustExec(fmt.Sprintf("insert into %s.%s select 'cf','1','test','t', cast(IFNULL(_tidb_origin_ts, _tidb_commit_ts) as unsigned)+1 from test.t where id=1", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable))
-		run(t, pt, expire, true, true)
+		row := tk.MustQuery(fmt.Sprintf("select min(checkpoint_ts) from %s.%s where database_name='test' and table_name='t'", sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable)).Rows()
+		checkpointTS, err := strconv.ParseUint(row[0][0].(string), 10, 64)
+		require.NoError(t, err)
+		run(t, pt, expire, checkpointTS, true, true)
 	})
 }
 
@@ -1114,7 +1124,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		sql, err := sqlbuilder.BuildDeleteSQL(c.tbl, cache.TTLJobTypeTTL, c.rows, c.expire)
+		sql, err := sqlbuilder.BuildDeleteSQL(c.tbl, cache.TTLJobTypeTTL, c.rows, c.expire, 0)
 		require.NoError(t, err)
 		require.Equal(t, c.sql, sql)
 	}

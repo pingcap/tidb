@@ -147,6 +147,14 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		)
 		return
 	}
+
+	minCheckpointTS, err := refreshMinCheckpointTSO(ctx, t.jobType, rawSe, t.tbl)
+	if err != nil {
+		t.statistics.IncErrorRows(t.jobType, len(leftRows))
+		t.taskLogger(logutil.Logger(ctx)).Warn("get ticdc min checkpoint ts failed", zap.Error(err))
+		return
+	}
+
 	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := vardef.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
@@ -158,7 +166,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			leftRows = leftRows[maxBatch:]
 		}
 
-		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, t.jobType, delBatch, t.expire)
+		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, t.jobType, delBatch, t.expire, minCheckpointTS)
 		if err != nil {
 			t.statistics.IncErrorRows(t.jobType, len(delBatch))
 			t.taskLogger(logutil.Logger(ctx)).Warn(

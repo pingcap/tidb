@@ -295,7 +295,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				endIndex = len(leftRows)
 			}
 			delBatch := leftRows[startIndex:endIndex]
-			sql, err := sqlbuilder.BuildDeleteSQL(tb, cache.TTLJobTypeRunawayGC, delBatch, expiredTime)
+			sql, err := sqlbuilder.BuildDeleteSQL(tb, cache.TTLJobTypeRunawayGC, delBatch, expiredTime, 0)
 			if err != nil {
 				logutil.BgLogger().Error(
 					"build delete SQL failed when deleting system table",

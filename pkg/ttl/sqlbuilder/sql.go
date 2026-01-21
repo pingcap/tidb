@@ -209,8 +209,8 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 
 // WriteActiveActiveSafetyCondition writes safety condition for Active-Active softdelete cleanup.
 // It ensures: LEAST(current_tso, min_checkpoint_ts) >= IFNULL(_tidb_origin_ts, _tidb_commit_ts).
-// The min_checkpoint_ts is queried from `tidb_cdc`.`ticdc_progress_table` for the table.
-func (b *SQLBuilder) WriteActiveActiveSafetyCondition() error {
+// The min_checkpoint_ts is queried and cached from `tidb_cdc`.`ticdc_progress_table` for the table.
+func (b *SQLBuilder) WriteActiveActiveSafetyCondition(minCheckpointTS uint64) error {
 	switch b.state {
 	case writeSelOrDel:
 		b.restoreCtx.WritePlain(" WHERE ")
@@ -221,16 +221,14 @@ func (b *SQLBuilder) WriteActiveActiveSafetyCondition() error {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
-	b.restoreCtx.WritePlainf(`LEAST(tidb_current_tso(),
-IFNULL((SELECT MIN(checkpoint_ts) FROM %s.%s WHERE database_name = '%s' AND table_name = '%s'), 0))
->= IFNULL(%s, %s)
-`,
-		TiCDCProgressDB,
-		TiCDCProgressTable,
-		sqlescape.EscapeString(b.tbl.Schema.O),
-		sqlescape.EscapeString(b.tbl.Name.O),
+	// tidb_current_tso just read session variable tidb_current_ts
+	// thus it does not need to be cached
+	b.restoreCtx.WritePlainf(
+		"LEAST(tidb_current_tso(), %d) >= IFNULL(%s, %s)",
+		minCheckpointTS,
 		model.ExtraOriginTSName.O,
-		model.ExtraCommitTSName.O)
+		model.ExtraCommitTSName.O,
+	)
 	return nil
 }
 
@@ -354,12 +352,18 @@ type ScanQueryGenerator struct {
 	tbl           *cache.PhysicalTable
 	jobType       cache.TTLJobType
 	expire        time.Time
+	minCheckpoint uint64
 	keyRangeStart []types.Datum
 	keyRangeEnd   []types.Datum
 	stack         [][]types.Datum
 	limit         int
 	firstBuild    bool
 	exhausted     bool
+}
+
+// SetMinCheckpointTS sets the cached minimum checkpoint ts for Active-Active safety condition.
+func (g *ScanQueryGenerator) SetMinCheckpointTS(minCheckpointTS uint64) {
+	g.minCheckpoint = minCheckpointTS
 }
 
 // NewScanQueryGenerator creates a new ScanQueryGenerator.
@@ -495,7 +499,7 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	}
 
 	if g.jobType == cache.TTLJobTypeSoftDelete && g.tbl.TableInfo.IsActiveActive {
-		if err := b.WriteActiveActiveSafetyCondition(); err != nil {
+		if err := b.WriteActiveActiveSafetyCondition(g.minCheckpoint); err != nil {
 			return "", err
 		}
 	}
@@ -517,7 +521,9 @@ func BuildDeleteSQL(
 	tbl *cache.PhysicalTable,
 	jobType cache.TTLJobType,
 	rows [][]types.Datum,
-	expire time.Time) (string, error) {
+	expire time.Time,
+	minCheckpointTS uint64,
+) (string, error) {
 	if len(rows) == 0 {
 		return "", errors.New("Cannot build delete SQL with empty rows")
 	}
@@ -536,7 +542,7 @@ func BuildDeleteSQL(
 	}
 
 	if jobType == cache.TTLJobTypeSoftDelete && tbl.TableInfo.IsActiveActive {
-		if err := b.WriteActiveActiveSafetyCondition(); err != nil {
+		if err := b.WriteActiveActiveSafetyCondition(minCheckpointTS); err != nil {
 			return "", err
 		}
 	}
