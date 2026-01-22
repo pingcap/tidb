@@ -367,8 +367,14 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 
 func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
 	now := time.Now()
+	var logs []slowLogBlock
+
+	loopCnt := 0
 	defer func() {
 		logutil.BgLogger().Info("lance test get batch log for reversed scan done", zap.Duration("duration", time.Since(now)))
+		logutil.BgLogger().Info(
+			"lance test get batch log for reversed scan loop",
+			zap.Int("loopCnt", loopCnt), zap.Int("len(logs)", len(logs)))
 	}()
 	// reader maybe change when read previous file.
 	inputReader := reader
@@ -379,12 +385,13 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, rea
 		}
 	}()
 	var line string
-	var logs []slowLogBlock
 	var log []string
 	var err error
 	hasStartFlag := false
 	scanPreviousFile := false
+	now3 := time.Now()
 	for {
+		loopCnt++
 		if isCtxDone(ctx) {
 			return nil, ctx.Err()
 		}
@@ -426,6 +433,7 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, rea
 			}
 		}
 	}
+	logutil.BgLogger().Info("lance test time spent in loop of getBatchLogForReversedScan", zap.Duration("duration", time.Since(now3)))
 	return decomposeToSlowLogTasks(logs, num), err
 }
 
