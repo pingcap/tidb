@@ -604,6 +604,12 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 					ID:       col.ID,
 					OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
 				}
+			} else {
+				// Defensive fallback: in the unexpected case where a cluster table reports
+				// no metadata columns, synthesize a handle-like column to avoid nil pointer
+				// dereferences in callers that assume a non-nil result.
+				resultColumn = dataSource.NewExtraHandleSchemaCol()
+				resultColumnInfo = model.NewExtraHandleColInfo()
 			}
 		}
 	} else {
