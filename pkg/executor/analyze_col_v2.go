@@ -735,8 +735,6 @@ workLoop:
 						Value:   &val,
 						Ordinal: j,
 					})
-					// tmp memory usage
-					// deltaSize := val.MemUsage() + 4 // content of SampleItem is copied
 					var deltaSize int64 = 8 + 4 // 8 is size of reference, 4 is size of Ordinal
 					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
@@ -789,12 +787,10 @@ workLoop:
 							continue workLoop
 						}
 					}
-					tmpValue := types.NewBytesDatum(b)
+					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
-						Value: &tmpValue,
+						Value: &tmp,
 					})
-					// tmp memory usage
-					// deltaSize := sampleItems[len(sampleItems)-1].Value.MemUsage()
 					var deltaSize int64 = 8
 					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)

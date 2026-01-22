@@ -66,10 +66,9 @@ type ReservoirRowSampleCollector struct {
 
 // ReservoirRowSampleItem is the item for the ReservoirRowSampleCollector. The weight is needed for the sampling algorithm.
 type ReservoirRowSampleItem struct {
-	Handle       kv.Handle
-	Columns      []types.Datum
-	ColumnsBytes [][]byte
-	Weight       int64
+	Handle  kv.Handle
+	Columns []types.Datum
+	Weight  int64
 }
 
 // EmptyReservoirSampleItemSize = (24 + 16 + 8) now.
@@ -293,41 +292,6 @@ func (s *baseCollector) ToProto() *tipb.RowSampleCollector {
 		TotalSize:  s.TotalSizes,
 	}
 	return collector
-}
-
-func (s *baseCollector) FromProtoNative(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {
-	s.Count = pbCollector.Count
-	s.NullCount = pbCollector.NullCounts
-	s.FMSketches = make([]*FMSketch, 0, len(pbCollector.FmSketch))
-	for _, pbSketch := range pbCollector.FmSketch {
-		s.FMSketches = append(s.FMSketches, FMSketchFromProto(pbSketch))
-	}
-	s.TotalSizes = pbCollector.TotalSize
-	sampleNum := len(pbCollector.Samples)
-	s.Samples = make(WeightedRowSampleHeap, 0, sampleNum)
-	// consume mandatory memory at the beginning, including all empty ReservoirRowSampleItems and all empty Datums of all sample rows, if exceeds, fast fail
-	if len(pbCollector.Samples) > 0 {
-		rowLen := len(pbCollector.Samples[0].Row)
-		// 8 is the size of reference
-		initMemSize := int64(sampleNum) * (int64(rowLen)*types.EmptyDatumSize + EmptyReservoirSampleItemSize + 8)
-		s.MemSize += initMemSize
-		memTracker.Consume(initMemSize)
-	}
-	bufferedMemSize := int64(0)
-	for _, pbSample := range pbCollector.Samples {
-		rowLen := len(pbSample.Row)
-		// data := make([]types.Datum, 0, rowLen)
-		// for _, col := range pbSample.Row {
-		// 	data = append(data, types.NewBytesDatum(col))
-		// }
-		// Directly copy the weight.
-		sampleItem := &ReservoirRowSampleItem{ColumnsBytes: pbSample.Row, Weight: pbSample.Weight}
-		s.Samples = append(s.Samples, sampleItem)
-		deltaSize := sampleItem.MemUsage() - EmptyReservoirSampleItemSize - int64(rowLen)*types.EmptyDatumSize
-		memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-		s.MemSize += deltaSize
-	}
-	memTracker.Consume(bufferedMemSize)
 }
 
 func (s *baseCollector) FromProto(pbCollector *tipb.RowSampleCollector, memTracker *memory.Tracker) {

@@ -139,8 +139,8 @@ func SampleCollectorFromProto(collector *tipb.SampleCollector) *SampleCollector 
 	for _, val := range collector.Samples {
 		// When store the histogram bucket boundaries to kv, we need to limit the length of the value.
 		if len(val) <= MaxSampleValueLength {
-			tmpValue := types.NewBytesDatum(val)
-			item := &SampleItem{Value: &tmpValue}
+			tmp := types.NewBytesDatum(val)
+			item := &SampleItem{Value: &tmp}
 			s.Samples = append(s.Samples, item)
 		}
 	}
