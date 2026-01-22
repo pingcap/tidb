@@ -168,14 +168,14 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 	// to the underlying slice, GC can't free them which lead to memory leak eventually.
 	// TODO: Refactor the proto to avoid copying here.
 	if len(c.Samples) < int(c.MaxSampleSize) {
-		newItem := &SampleItem{}
+		newItem := &SampleItem{Value: &types.Datum{}}
 		d.Copy(newItem.Value)
 		c.Samples = append(c.Samples, newItem)
 	} else {
 		shouldAdd := int64(fastrand.Uint64N(uint64(c.seenValues))) < c.MaxSampleSize
 		if shouldAdd {
 			idx := int(fastrand.Uint32N(uint32(c.MaxSampleSize)))
-			newItem := &SampleItem{}
+			newItem := &SampleItem{Value: &types.Datum{}}
 			d.Copy(newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
 			c.Samples = slices.Delete(c.Samples, idx, idx+1)
