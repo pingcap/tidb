@@ -67,17 +67,19 @@ func TestConsume(t *testing.T) {
 	require.Equal(t, int64(100), tracker.BytesConsumed())
 
 	waitGroup := sync.WaitGroup{}
-
+	waitGroup.Add(10)
 	for range 10 {
-		waitGroup.Go(func() {
+		go func() {
+			defer waitGroup.Done()
 			tracker.Consume(10)
-		})
+		}()
 	}
-
+	waitGroup.Add(10)
 	for range 10 {
-		waitGroup.Go(func() {
+		go func() {
+			defer waitGroup.Done()
 			tracker.Consume(-10)
-		})
+		}()
 	}
 
 	waitGroup.Wait()
@@ -119,19 +121,21 @@ func TestRelease(t *testing.T) {
 		time.Sleep(time.Millisecond * 5)
 	}
 	waitGroup := sync.WaitGroup{}
+	waitGroup.Add(10)
 	for range 10 {
-		waitGroup.Go(func() {
+		go func() {
+			defer waitGroup.Done()
 			tracker.Consume(10)
-		})
+		}()
 	}
 	waitGroup.Wait()
-
+	waitGroup.Add(10)
 	for range 10 {
-		waitGroup.Go(func() {
+		go func() {
+			defer waitGroup.Done()
 			tracker.Release(10)
-		})
+		}()
 	}
-
 	waitGroup.Wait()
 	// finalizer func is called async, need to wait for it to be called
 	for {
