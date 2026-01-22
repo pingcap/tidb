@@ -92,6 +92,12 @@ func (b *Builder) ApplyDiff(m meta.Reader, diff *model.SchemaDiff) ([]int64, err
 		return nil, applyCreateOrAlterResourceGroup(b, m, diff)
 	case model.ActionDropResourceGroup:
 		return applyDropResourceGroup(b, m, diff), nil
+	case model.ActionCreateMaskingPolicy:
+		return nil, applyCreateMaskingPolicy(b, m, diff)
+	case model.ActionAlterMaskingPolicy:
+		return applyAlterMaskingPolicy(b, m, diff)
+	case model.ActionDropMaskingPolicy:
+		return applyDropMaskingPolicy(b, diff.SchemaID), nil
 	case model.ActionTruncateTablePartition, model.ActionTruncateTable:
 		return applyTruncateTableOrPartition(b, m, diff)
 	case model.ActionDropTable, model.ActionDropTablePartition:
@@ -981,6 +987,8 @@ func (b *Builder) InitWithOldInfoSchema(oldSchema InfoSchema) error {
 	b.infoSchema.ruleBundleMap = maps.Clone(oldIS.ruleBundleMap)
 	b.infoSchema.policyMap = oldIS.ClonePlacementPolicies()
 	b.infoSchema.resourceGroupMap = oldIS.CloneResourceGroups()
+	b.infoSchema.maskingPolicyMap = oldIS.CloneMaskingPoliciesByName()
+	b.infoSchema.maskingPolicyTableColumnMap = oldIS.CloneMaskingPoliciesByTableColumn()
 	b.infoSchema.temporaryTableIDs = maps.Clone(oldIS.temporaryTableIDs)
 	b.infoSchema.referredForeignKeyMap = maps.Clone(oldIS.referredForeignKeyMap)
 
@@ -1030,8 +1038,8 @@ func (b *Builder) sortAllTablesByID() {
 	}
 }
 
-// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, all placement rules, and schema version.
-func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, schemaVersion int64) error {
+// InitWithDBInfos initializes an empty new InfoSchema with a slice of DBInfo, misc metadata, and schema version.
+func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, maskingPolicies []*model.MaskingPolicyInfo, schemaVersion int64) error {
 	info := b.infoSchema
 	info.schemaMetaVersion = schemaVersion
 
@@ -1064,7 +1072,7 @@ func (b *Builder) InitWithDBInfos(dbInfos []*model.DBInfo, policies []*model.Pol
 	}
 
 	// initMisc depends on the tables and schemas, so it should be called after createSchemaTablesForDB
-	b.initMisc(policies, resourceGroups)
+	b.initMisc(policies, resourceGroups, maskingPolicies)
 
 	err := b.initVirtualTables(schemaVersion)
 	if err != nil {
