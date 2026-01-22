@@ -1059,6 +1059,8 @@ func TestIndexUsageWithData(t *testing.T) {
 	// Some bad tests will set the global variable to 0, and they don't set it back. So even if the default value for this variable is 1,
 	// we'll need to set it to 1 here.
 	tk.MustExec("set global tidb_enable_collect_execution_info=1;")
+	// Enable sync stats loading to ensure statistics are loaded when queries execute (required for index usage reporting)
+	tk.MustExec("set session tidb_stats_load_sync_wait = 60000")
 	tk.RefreshSession()
 
 	insertDataAndScanToT := func(indexName string) {
@@ -1089,10 +1091,12 @@ func TestIndexUsageWithData(t *testing.T) {
 		logutil.BgLogger().Info("execute with plan",
 			zap.String("sql", sql),
 			zap.String("plan", tk.MustQuery("explain "+sql).String()))
+		tk.Session().ReportUsageStats()
 	}
 
 	checkIndexUsage := func(startQuery time.Time, endQuery time.Time, percentageAccess2050 bool) {
 		require.Eventually(t, func() bool {
+			tk.Session().ReportUsageStats()
 			rows := tk.MustQuery("select QUERY_TOTAL,PERCENTAGE_ACCESS_20_50,PERCENTAGE_ACCESS_100,LAST_ACCESS_TIME from information_schema.tidb_index_usage where table_schema = 'test'").Rows()
 			if len(rows) != 1 {
 				return false

@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -361,6 +362,10 @@ func TestSemiJoinDuplicateKeys(t *testing.T) {
 }
 
 func TestSemiAndAntiSemiJoinSpill(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	var leftCols = []*expression.Column{

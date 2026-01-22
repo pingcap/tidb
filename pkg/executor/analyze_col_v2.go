@@ -684,8 +684,10 @@ func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *
 	colLen := len(e.colsInfo)
 	bufferedMemSize := int64(0)
 	bufferedReleaseSize := int64(0)
-	defer e.memTracker.Consume(bufferedMemSize)
-	defer e.memTracker.Release(bufferedReleaseSize)
+	defer func() {
+		e.memTracker.Consume(bufferedMemSize)
+		e.memTracker.Release(bufferedReleaseSize)
+	}()
 
 workLoop:
 	for {

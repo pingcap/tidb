@@ -23,12 +23,13 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -58,7 +59,7 @@ const (
 // with only one file for data and stat.
 type OneFileWriter struct {
 	// storage related.
-	store    storage.ExternalStorage
+	store    storeapi.Storage
 	kvStore  *KeyValueStore
 	kvBuffer *membuf.Buffer
 
@@ -73,8 +74,8 @@ type OneFileWriter struct {
 	rnd            *rand.Rand
 	dataFile       string
 	statFile       string
-	dataWriter     storage.ExternalFileWriter
-	statWriter     storage.ExternalFileWriter
+	dataWriter     objectio.Writer
+	statWriter     objectio.Writer
 
 	onClose OnWriterCloseFunc
 	closed  bool
@@ -89,7 +90,7 @@ type OneFileWriter struct {
 	// below fields are only used when onDup is OnDuplicateKeyRecord.
 	recordedDupCnt int
 	dupFile        string
-	dupWriter      storage.ExternalFileWriter
+	dupWriter      objectio.Writer
 	dupKVStore     *KeyValueStore
 
 	minKey []byte
@@ -109,7 +110,7 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 	}
 
 	dataFile := filepath.Join(w.getPartitionedPrefix(), "one-file")
-	dataWriter, err := w.store.Create(ctx, dataFile, &storage.WriterOption{
+	dataWriter, err := w.store.Create(ctx, dataFile, &storeapi.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    w.partSize,
 	})
@@ -117,7 +118,7 @@ func (w *OneFileWriter) lazyInitWriter(ctx context.Context) (err error) {
 		return err
 	}
 	statFile := filepath.Join(w.getPartitionedPrefix()+statSuffix, "one-file")
-	statWriter, err := w.store.Create(ctx, statFile, &storage.WriterOption{
+	statWriter, err := w.store.Create(ctx, statFile, &storeapi.WriterOption{
 		Concurrency: maxUploadWorkersPerThread,
 		PartSize:    MinUploadPartSize,
 	})
@@ -141,7 +142,7 @@ func (w *OneFileWriter) lazyInitDupFile(ctx context.Context) error {
 	}
 
 	dupFile := filepath.Join(w.getPartitionedPrefix()+dupSuffix, "one-file")
-	dupWriter, err := w.store.Create(ctx, dupFile, &storage.WriterOption{
+	dupWriter, err := w.store.Create(ctx, dupFile, &storeapi.WriterOption{
 		// too many duplicates will cause duplicate resolution part very slow,
 		// we temporarily use 1 as we don't expect too many duplicates, if there
 		// are, it will be slow anyway.
@@ -212,6 +213,7 @@ func (w *OneFileWriter) handleDupAndWrite(ctx context.Context, idxKey, idxVal []
 			}
 		case engineapi.OnDuplicateKeyError:
 			return common.ErrFoundDuplicateKeys.FastGenByArgs(idxKey, idxVal)
+			// default is OnDuplicateKeyRemove, we will not write for duplicates.
 		}
 	} else {
 		return w.onNextPivot(ctx, idxKey, idxVal)

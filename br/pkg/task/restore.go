@@ -29,7 +29,6 @@ import (
 	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -38,7 +37,6 @@ import (
 	snapclient "github.com/pingcap/tidb/br/pkg/restore/snap_client"
 	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
@@ -50,6 +48,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -58,6 +58,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -948,8 +949,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 
 		restoreStartTs := cfg.RestoreStartTS
 		if restoreStartTs == 0 {
-			log.Warn("restoreStartTS is not set, skip building blocklist")
-			return
+			log.Warn("restoreStartTS is not set, the blocklist will block from 0 to restoreCommitTs")
 		}
 		// Convert map to slice for function call
 		tableIdsSlice := make([]int64, 0, len(downstreamTableIds))
@@ -961,7 +961,7 @@ func RunRestore(c context.Context, g glue.Glue, cmdName string, cfg *RestoreConf
 			restoreErr = err
 			return
 		}
-		logTaskStorage, err := storage.Create(c, logTaskBackend, false)
+		logTaskStorage, err := objstore.Create(c, logTaskBackend, false)
 		if err != nil {
 			restoreErr = err
 			return
@@ -1128,7 +1128,7 @@ func hasCheckpointPersisted(ctx context.Context, cfg *RestoreConfig) (bool, erro
 type SnapshotRestoreConfig struct {
 	*RestoreConfig
 	piTRTaskInfo           *PiTRTaskInfo
-	logRestoreStorage      storage.ExternalStorage
+	logRestoreStorage      storeapi.Storage
 	logTableHistoryManager *stream.LogBackupTableHistoryManager
 	tableMappingManager    *stream.TableMappingManager
 }
@@ -1184,8 +1184,8 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 	if cfg.UpstreamClusterID == 0 {
 		cfg.UpstreamClusterID = backupMeta.ClusterId
 	}
-	schemaVersionPair := snapclient.SchemaVersionPairT{}
 	if loadStatsPhysical || loadSysTablePhysical {
+		schemaVersionPair := snapclient.SchemaVersionPairT{}
 		upstreamClusterVersion := version.NormalizeBackupVersion(backupMeta.ClusterVersion)
 		if upstreamClusterVersion == nil {
 			log.Warn("The cluster version from backupmeta is invalid. Fallback to logically load system tables.",
@@ -1459,6 +1459,10 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 			log.Info("The system tables schema is not compatible. Fallback to logically load system tables.")
 			loadSysTablePhysical = false
 		}
+		if client.GetCheckPrivilegeTableRowsCollateCompatiblity() && canLoadSysTablePhysical {
+			log.Info("The system tables schema match so no need to set sys check collation")
+			client.SetCheckPrivilegeTableRowsCollateCompatiblity(false)
+		}
 	}
 
 	// preallocate the table id, because any ddl job or database creation(include checkpoint) also allocates the global ID
@@ -1515,11 +1519,16 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		if cfg.piTRTaskInfo != nil {
 			logRestoredTS = cfg.piTRTaskInfo.RestoreTS
 		}
-		sets, restoreSchedulersConfigFromCheckpoint, err := client.InitCheckpoint(
-			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, logRestoredTS, hash, cpEnabledAndExists)
+		sets, restoreSchedulersConfigFromCheckpoint, newRestoreStartTS, err := client.InitCheckpoint(
+			ctx, cfg.snapshotCheckpointMetaManager, schedulersConfig, cfg.RestoreStartTS, logRestoredTS, hash, cpEnabledAndExists)
 		if err != nil {
 			return errors.Trace(err)
 		}
+		log.Info("try to reuse restore start timestamp for blocklist",
+			zap.Uint64("new restore start ts", newRestoreStartTS),
+			zap.Uint64("old restore start ts", cfg.RestoreStartTS),
+		)
+		cfg.RestoreStartTS = newRestoreStartTS
 		if restoreSchedulersConfigFromCheckpoint != nil {
 			// The last range rule will be dropped when the last restore quits.
 			restoreSchedulersConfigFromCheckpoint.RuleID = schedulersConfig.RuleID
@@ -1746,7 +1755,6 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		LogProgress:         cfg.LogProgress,
 		ChecksumConcurrency: cfg.ChecksumConcurrency,
 		StatsConcurrency:    cfg.StatsConcurrency,
-		SchemaVersionPair:   schemaVersionPair,
 		RestoreTS:           restoreTS,
 
 		KvClient:   mgr.GetStorage().GetClient(),

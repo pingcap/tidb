@@ -592,12 +592,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	switch joinNode.Tp {
 	case ast.LeftJoin:
 		// left outer join need to be checked elimination
-		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
 		joinPlan.JoinType = base.LeftOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), leftPlan.Schema().Len(), joinPlan.Schema().Len())
 	case ast.RightJoin:
 		// right outer join need to be checked elimination
-		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
 		joinPlan.JoinType = base.RightOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
 	default:
@@ -1744,12 +1744,12 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		_, leftArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
-		_, rightArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
-		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !leftArgIsColumn || !rightArgIsColumn {
+		sf := eqCond.(*expression.ScalarFunction)
+		_, _, ok := expression.IsColOpCol(sf)
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !ok {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
-			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+			joinPlan.EqualConditions = append(joinPlan.EqualConditions, sf)
 		}
 	}
 	return joinPlan, nil

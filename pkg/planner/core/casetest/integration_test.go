@@ -535,7 +535,7 @@ func TestIssue63290(t *testing.T) {
 
 		// Cartesian Join t1 and t3 first, then join t2.
 		tk.MustQuery(`explain format='plan_tree' select /*+ set_var(tidb_opt_cartesian_join_order_threshold=100) */ 1 from t1, t2, t3 where t1.a = t2.a and t2.b = t3.b`).Check(testkit.Rows(
-			`Projection root  1->Column#13`,
+			`Projection root  1->Column`,
 			`└─IndexHashJoin root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a), eq(test.t3.b, test.t2.b)`,
 			`  ├─HashJoin(Build) root  CARTESIAN inner join`,
 			`  │ ├─IndexReader(Build) root  index:IndexFullScan`,
