@@ -149,7 +149,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 	outerTK := testkit.NewTestKit(t, store)
 	outerTK.MustExec("create table test.t (id int);")
 
-	t.Run("SEM enabled, forbid set S3 external ID", func(t *testing.T) {
+	t.Run("SEM enabled, forbid set external ID for S3 like store", func(t *testing.T) {
 		for i, fns := range semTestPatternFns {
 			t.Run(fmt.Sprint(i), func(t *testing.T) {
 				tk := testkit.NewTestKit(t, store)
@@ -157,7 +157,9 @@ func TestNextGenS3ExternalID(t *testing.T) {
 				t.Cleanup(func() {
 					fns[1](t, tk)
 				})
-				tk.MustMatchErrMsg("IMPORT INTO test.t FROM 's3://bucket?EXTERNAL-ID=abc'", `(?i).*Feature 'IMPORT INTO .*external.*' is not supported when security enhanced mode is enabled`)
+				for _, schema := range []string{"s3", "oss"} {
+					tk.MustMatchErrMsg(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket?EXTERNAL-ID=abc'", schema), `(?i).*Feature 'IMPORT INTO .*external.*' is not supported when security enhanced mode is enabled`)
+				}
 			})
 		}
 	})
