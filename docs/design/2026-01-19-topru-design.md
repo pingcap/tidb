@@ -149,7 +149,7 @@ type ExecutionContext struct {
 type StatementStats struct {
     data     StatementStatsMap
     finished *atomic.Bool
-    mu       sync.Mutex // Could consider changing to RWMutex, but tick/finish paths both have write operations
+    mu       sync.Mutex // Protects StatementStats; RWMutex was considered, but tick/finish paths both perform writes
 
     execCtx *ExecutionContext // Currently executing statement
     // finishedRUIncrements caches RU increments from the finish path,
@@ -212,7 +212,7 @@ func (m *aggregator) ruAggregate() {
     if len(incr.Data) > 0 || incr.OthersRU > 0 {
         m.collectors.Range(func(c, _ any) bool {
             if rc, ok := c.(RUCollector); ok {
-                rc.CollectRUIncrements(incr.Data, incr.OthersRU)
+                rc.CollectRUIncrements(incr)
             }
             return true
         })
@@ -355,7 +355,7 @@ type ruRecord struct {
 // collecting extension
 type collecting struct {
     records   map[string]*record  // CPU data (key: sql+plan)
-    ruRecords map[string]*record  // New: RU data (key: user+sql+plan)
+    ruRecords map[string]*ruRecord  // New: RU data (key: user+sql+plan)
     // ...
 }
 ```
@@ -400,8 +400,6 @@ type ReportData struct {
 - TopRURecord and TopSQLRecord are parallel, carrying RU and CPU dimension data respectively
 - SQLMetas and PlanMetas are shared between TopSQL and TopRU to avoid duplicate transmission
 - Protocol evolution commitment: only add new fields, do not modify/reuse existing field numbers, do not change existing field semantics
-
-For detailed protocol discussion, refer to: TiDB TopRU Protocol Discussion Document
 
 ## Performance and Risk Analysis
 
