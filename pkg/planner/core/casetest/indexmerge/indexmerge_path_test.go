@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package indexmerge
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
@@ -63,13 +63,13 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	tk.Session().GetSessionVars().PlanID.Store(0)
 	tk.Session().GetSessionVars().PlanColumnID.Store(0)
 	nodeW := resolve.NewNodeW(stmt)
-	err = core.Preprocess(context.Background(), tk.Session(), nodeW, core.WithPreprocessorReturn(&core.PreprocessorReturn{InfoSchema: is}))
+	err = plannercore.Preprocess(context.Background(), tk.Session(), nodeW, plannercore.WithPreprocessorReturn(&plannercore.PreprocessorReturn{InfoSchema: is}))
 	require.NoError(t, err)
 	require.NoError(t, sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup())
-	builder, _ := core.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
+	builder, _ := plannercore.NewPlanBuilder().Init(tk.Session().GetPlanCtx(), is, hint.NewQBHintHandler(nil))
 	p, err := builder.Build(context.TODO(), nodeW)
 	require.NoError(t, err)
-	logicalP, err := core.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
+	logicalP, err := plannercore.LogicalOptimizeTest(context.TODO(), builder.GetOptFlag(), p.(base.LogicalPlan))
 	require.NoError(t, err)
 
 	ds, ok := logicalP.(*logicalop.DataSource)
@@ -80,14 +80,14 @@ func TestCollectFilters4MVIndexMutations(t *testing.T) {
 	cnfs := ds.AllConds
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
-	idxCols, ok := core.PrepareIdxColsAndUnwrapArrayType(
+	idxCols, ok := plannercore.PrepareIdxColsAndUnwrapArrayType(
 		tbl.Meta(),
 		tbl.Meta().FindIndexByName("a_domains_b"),
 		ds.TblColsByID,
 		true,
 	)
 	require.True(t, ok)
-	accessFilters, _, mvColOffset, mvFilterMutations := core.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
+	accessFilters, _, mvColOffset, mvFilterMutations := plannercore.CollectFilters4MVIndexMutations(tk.Session().GetPlanCtx(), cnfs, idxCols)
 
 	// assert mv col access filters.
 	require.Equal(t, len(accessFilters), 3)
