@@ -237,8 +237,8 @@ github.com/fsnotify/fsnotify v1.7.0/go.mod h1:40Bi/Hjc2AVfZrqy+aj+yEI+/bRxZnMJyT
 github.com/fsouza/fake-gcs-server v1.44.0 h1:Lw/mrvs45AfCUPVpry6qFkZnZPqe9thpLQHW+ZwHRLs=
 github.com/fsouza/fake-gcs-server v1.44.0/go.mod h1:M02aKoTv9Tnlf+gmWnTok1PWVCUHDntVbHxpd0krTfo=
 github.com/fzipp/gocyclo v0.3.1/go.mod h1:DJHO6AUmbdqj2ET4Z9iArSuwWgYDRryYt2wASxc7x3E=
-github.com/fzzf678/client-go/v2 v2.0.8-0.20260121122605-568e1cf7688f h1:NPNxJ87DpDw7nz6UGwODwvo8ck1FUSc0IaIIVJ2sh/g=
-github.com/fzzf678/client-go/v2 v2.0.8-0.20260121122605-568e1cf7688f/go.mod h1:iVLG2tuDVyBd9BN6e9JNFtUeEQarvKN7pTcW+pb3nFw=
+github.com/fzzf678/client-go/v2 v2.0.8-0.20260122072153-401a32c50674 h1:hHJhfBbRcl16JFbtPsde0rzfF7Dm3swFX2dO5hHF6Lk=
+github.com/fzzf678/client-go/v2 v2.0.8-0.20260122072153-401a32c50674/go.mod h1:iVLG2tuDVyBd9BN6e9JNFtUeEQarvKN7pTcW+pb3nFw=
 github.com/getsentry/sentry-go v0.27.0 h1:Pv98CIbtB3LkMWmXi4Joa5OOcwbmnX88sF5qbK3r3Ps=
 github.com/getsentry/sentry-go v0.27.0/go.mod h1:lc76E2QywIyW8WuBnwl8Lc4bkmQH4+w1gwTf25trprY=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
