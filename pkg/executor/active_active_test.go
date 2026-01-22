@@ -15,17 +15,26 @@
 package executor_test
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
 	"io"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/prometheus/client_golang/prometheus"
 	promtestutils "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func TestActiveActiveDMLMetrics(t *testing.T) {
@@ -35,6 +44,7 @@ func TestActiveActiveDMLMetrics(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (id int primary key, v int) active_active='on' softdelete retention 7 day")
+	tk.MustExec("create table t2(id int primary key, v int) active_active='on' softdelete retention 7 day")
 
 	type counterWithVal struct {
 		counter prometheus.Counter
@@ -79,6 +89,12 @@ func TestActiveActiveDMLMetrics(t *testing.T) {
 			name:                  "update _tidb_origin_ts",
 			sql:                   "update t set v = v + 1, _tidb_origin_ts = 111 where id in (1, 3, 4)",
 			unsafeOriginTsRowsInc: 3,
+			unsafeOriginTsStmtInc: 1,
+		},
+		{
+			name:                  "update join",
+			sql:                   "update t join t2 on t.id = t2.id set t._tidb_origin_ts=100, t2._tidb_origin_ts=200 where t.id in (1, 2)",
+			unsafeOriginTsRowsInc: 4,
 			unsafeOriginTsStmtInc: 1,
 		},
 		{
@@ -128,7 +144,9 @@ func TestActiveActiveDMLMetrics(t *testing.T) {
 			// prepare, clean table t and insert some prepared rows
 			tk.MustExec("set @@tidb_translate_softdelete_sql = 'OFF'")
 			tk.MustExec("delete from t")
+			tk.MustExec("delete from t2")
 			tk.MustExec("insert into t (id, v, _tidb_origin_ts) values (1, 10, NULL),(2, 20, 200),(3, 30, NULL),(4, 40, 400)")
+			tk.MustExec("insert into t2 (id, v, _tidb_origin_ts) values (1, 11, NULL),(2, 21, 201),(3, 31, NULL),(4, 41, 401)")
 			if !c.disableRewrite {
 				tk.MustExec("set @@tidb_translate_softdelete_sql = 'ON'")
 			}
@@ -151,6 +169,93 @@ func TestActiveActiveDMLMetrics(t *testing.T) {
 			checkCounterInc(c.unsafeOriginTsRowsInc, unsafeOriginTsRows)
 			checkCounterInc(c.unsafeOriginTsStmtInc, unsafeOriginTsStmt)
 			checkCounterInc(c.hardDeleteInc, hardDelete)
+		})
+	}
+}
+
+type blockGetClient struct {
+	t *testing.T
+	tikv.Client
+	batchGetCalled atomic.Bool
+}
+
+func (c *blockGetClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	switch req.Type {
+	case tikvrpc.CmdBatchGet:
+		c.batchGetCalled.Store(true)
+	case tikvrpc.CmdGet:
+		require.Nil(c.t, ctx.Value("blockGet"), "unexpected CmdGet request issued")
+		if ctx.Value("blockGet") != nil {
+			require.FailNow(c.t, "unexpected CmdGet request issued")
+		}
+	default:
+	}
+	return c.Client.SendRequest(ctx, addr, req, timeout)
+}
+
+// TestActiveActiveInsertPrefetchCache tests that in active-active table, the insert will prefetch
+// the existing rows by BatchGet to reduce performance overhead.
+func TestActiveActiveInsertPrefetchCache(t *testing.T) {
+	var hijacked *blockGetClient
+	store := testkit.CreateMockStore(t,
+		mockstore.WithClientHijacker(func(c tikv.Client) tikv.Client {
+			hijacked = &blockGetClient{t: t, Client: c}
+			return hijacked
+		}),
+	)
+	require.NotNil(t, hijacked)
+
+	tk := testkit.NewTestKit(t, store)
+	getLastCommitTS := func() uint64 {
+		type txnInfo struct {
+			CommitTS uint64 `json:"commit_ts"`
+		}
+		var lastTxn txnInfo
+		require.NoError(t, json.Unmarshal([]byte(tk.Session().GetSessionVars().LastTxnInfo), &lastTxn))
+		require.NotZero(t, lastTxn.CommitTS)
+		return lastTxn.CommitTS
+	}
+
+	blockGetCtx := context.WithValue(
+		kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers),
+		"blockGet", "enable",
+	)
+
+	for _, clustered := range []string{"CLUSTERED", "NONCLUSTERED"} {
+		t.Run(clustered, func(t *testing.T) {
+			tk.MustExec("use test")
+			tk.MustExec("drop table if exists t")
+			tk.MustExec(fmt.Sprintf(
+				"create table t (id int primary key %s, v bigint unsigned) "+
+					"softdelete retention 1 day active_active='on'",
+				clustered,
+			))
+			tk.MustExec("set @@tidb_translate_softdelete_sql = 'ON'")
+			// normal insert
+			hijacked.batchGetCalled.Store(false)
+			tk.MustExecWithContext(blockGetCtx, "insert into t values (1, 10)")
+			require.True(t, hijacked.batchGetCalled.Load())
+			tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
+
+			// insert on duplicate key update
+			hijacked.batchGetCalled.Store(false)
+			tk.MustExecWithContext(blockGetCtx, "insert into t values (1, 100) on duplicate key update v = v+values(v)")
+			require.True(t, hijacked.batchGetCalled.Load())
+			commitTS1 := getLastCommitTS()
+			tk.MustQuery("select * from t").Check(testkit.Rows("1 110"))
+
+			// insert on duplicate key update with _tidb_commit_ts
+			hijacked.batchGetCalled.Store(false)
+			tk.MustExecWithContext(blockGetCtx, "insert into t values (1, 10) on duplicate key update v = _tidb_commit_ts")
+			require.True(t, hijacked.batchGetCalled.Load())
+			commitTS2 := getLastCommitTS()
+			tk.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("1 %d", commitTS1)))
+
+			// insert on duplicate key update when @@tidb_translate_softdelete_sql = 'OFF'
+			tk.MustExec("set @@tidb_translate_softdelete_sql = 'OFF'")
+			tk.MustExecWithContext(blockGetCtx, "insert into t values (1, 10) on duplicate key update v = _tidb_commit_ts*2")
+			require.True(t, hijacked.batchGetCalled.Load())
+			tk.MustQuery("select * from t").Check(testkit.Rows(fmt.Sprintf("1 %d", commitTS2*2)))
 		})
 	}
 }

@@ -9648,7 +9648,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_executor_write_unsafe_origin_ts_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) ",
+              "expr": "sum(rate(tidb_executor_write_unsafe_origin_ts_rows_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) ",
               "hide": false,
               "interval": "",
               "legendFormat": "write origin ts rows",
@@ -9656,7 +9656,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_executor_soft_delete_table_hard_delete_stmt_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) ",
+              "expr": "sum(rate(tidb_executor_active_active_table_hard_delete_stmt_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) ",
               "format": "time_series",
               "hide": false,
               "interval": "",

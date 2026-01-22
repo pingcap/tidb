@@ -151,7 +151,7 @@ func (e *InsertExec) exec(ctx context.Context, rows [][]types.Datum) error {
 	return txn.MayFlush()
 }
 
-func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) (map[string]kv.ValueEntry, error) {
+func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, fetchCommitTS bool) (map[string]kv.ValueEntry, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchUniqueIndices")
 	defer r.End()
 
@@ -177,10 +177,14 @@ func prefetchUniqueIndices(ctx context.Context, txn kv.Transaction, rows []toBeC
 			batchKeys = append(batchKeys, k.newKey)
 		}
 	}
+
+	if fetchCommitTS {
+		return txn.BatchGet(ctx, batchKeys, kv.WithReturnCommitTS())
+	}
 	return txn.BatchGet(ctx, batchKeys)
 }
 
-func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string]kv.ValueEntry) error {
+func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, values map[string]kv.ValueEntry, fetchCommitTS bool) error {
 	r, ctx := tracing.StartRegionEx(ctx, "prefetchConflictedOldRows")
 	defer r.End()
 
@@ -202,22 +206,28 @@ func prefetchConflictedOldRows(ctx context.Context, txn kv.Transaction, rows []t
 			}
 		}
 	}
-	_, err := txn.BatchGet(ctx, batchKeys)
+
+	var err error
+	if fetchCommitTS {
+		_, err = txn.BatchGet(ctx, batchKeys, kv.WithReturnCommitTS())
+	} else {
+		_, err = txn.BatchGet(ctx, batchKeys)
+	}
 	return err
 }
 
-func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow) error {
+func (e *InsertValues) prefetchDataCache(ctx context.Context, txn kv.Transaction, rows []toBeCheckedRow, fetchCommitTS bool) error {
 	// Temporary table need not to do prefetch because its all data are stored in the memory.
 	if e.Table.Meta().TempTableType != model.TempTableNone {
 		return nil
 	}
 
 	defer tracing.StartRegion(ctx, "prefetchDataCache").End()
-	values, err := prefetchUniqueIndices(ctx, txn, rows)
+	values, err := prefetchUniqueIndices(ctx, txn, rows, fetchCommitTS)
 	if err != nil {
 		return err
 	}
-	return prefetchConflictedOldRows(ctx, txn, rows, values)
+	return prefetchConflictedOldRows(ctx, txn, rows, values, fetchCommitTS)
 }
 
 // updateDupRow updates a duplicate row to a new row.
@@ -267,7 +277,7 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
-	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows, e.needExtraCommitTS); err != nil {
 		return err
 	}
 	if e.stats != nil {

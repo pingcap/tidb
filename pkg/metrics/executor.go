@@ -158,7 +158,7 @@ func InitExecutorMetrics() {
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
-			Name:      "soft_delete_table_hard_delete_stmt_total",
+			Name:      "active_active_table_hard_delete_stmt_total",
 			Help:      "hard delete statement count for a soft delete table",
 		})
 
@@ -166,7 +166,7 @@ func InitExecutorMetrics() {
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
-			Name:      "write_unsafe_origin_ts_rows",
+			Name:      "write_unsafe_origin_ts_rows_total",
 			Help:      "rows written with unsafe _tidb_origin_ts column",
 		})
 

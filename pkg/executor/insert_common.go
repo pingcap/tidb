@@ -1244,7 +1244,7 @@ func (e *InsertValues) batchCheckAndInsert(
 	// Fill cache using BatchGet, the following Get requests don't need to visit TiKV.
 	// Temporary table need not to do prefetch because its all data are stored in the memory.
 	if e.Table.Meta().TempTableType == model.TempTableNone {
-		if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows); err != nil {
+		if _, err = prefetchUniqueIndices(ctx, txn, toBeCheckedRows, false); err != nil {
 			return err
 		}
 	}
@@ -1739,6 +1739,22 @@ func recordUnsafeActiveActiveOriginTS(
 	stats *ActiveActiveStats,
 ) {
 	if originTSOffset < 0 {
+		return
+	}
+
+	if originTSOffset >= len(newRows) {
+		logutil.BgLogger().Error(
+			"origin TS offset is out of range in recordUnsafeActiveActiveOriginTS",
+			zap.Int("offset", originTSOffset),
+			zap.Int("rowLen", len(newRows)),
+			zap.Int64("tableID", tblInfo.ID),
+			zap.Uint64("connID", vars.ConnectionID),
+			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Int64("tableID", tblInfo.ID),
+			zap.Stringer("table", tblInfo.Name),
+			zap.Stringer("handle", redact.Stringer(vars.EnableRedactLog, handle)),
+		)
+		intest.Assert(false, "originTSOffset %d is out of range %d", originTSOffset, len(newRows))
 		return
 	}
 
