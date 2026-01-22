@@ -36,6 +36,7 @@ var (
 	_ DDLNode = &CreateViewStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
+	_ DDLNode = &CreateMaskingPolicyStmt{}
 	_ DDLNode = &CreateResourceGroupStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &FlashBackDatabaseStmt{}
@@ -1757,6 +1758,91 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
+// MaskingPolicyState represents the optional ENABLE/DISABLE state of a masking policy.
+type MaskingPolicyState struct {
+	Enabled  bool
+	Explicit bool
+}
+
+// CreateMaskingPolicyStmt is a statement to create a masking policy.
+type CreateMaskingPolicyStmt struct {
+	ddlNode
+
+	OrReplace          bool
+	IfNotExists        bool
+	PolicyName         CIStr
+	Table              *TableName
+	Column             *ColumnName
+	Expr               ExprNode
+	MaskingPolicyState MaskingPolicyState
+}
+
+// Restore implements Node interface.
+func (n *CreateMaskingPolicyStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE ")
+	if n.OrReplace {
+		ctx.WriteKeyWord("OR REPLACE ")
+	}
+	ctx.WriteKeyWord("MASKING POLICY ")
+	if n.IfNotExists {
+		ctx.WriteKeyWord("IF NOT EXISTS ")
+	}
+	ctx.WriteName(n.PolicyName.O)
+	ctx.WriteKeyWord(" ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaskingPolicyStmt.Table")
+	}
+	ctx.WritePlain(" (")
+	if err := n.Column.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaskingPolicyStmt.Column")
+	}
+	ctx.WritePlain(") ")
+	ctx.WriteKeyWord("AS ")
+	if err := n.Expr.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaskingPolicyStmt.Expr")
+	}
+	if n.MaskingPolicyState.Explicit {
+		ctx.WritePlain(" ")
+		if n.MaskingPolicyState.Enabled {
+			ctx.WriteKeyWord("ENABLE")
+		} else {
+			ctx.WriteKeyWord("DISABLE")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateMaskingPolicyStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateMaskingPolicyStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	if n.Column != nil {
+		node, ok := n.Column.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Column = node.(*ColumnName)
+	}
+	if n.Expr != nil {
+		node, ok := n.Expr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Expr = node.(ExprNode)
+	}
+	return v.Leave(n)
+}
+
 // CreateResourceGroupStmt is a statement to create a policy.
 type CreateResourceGroupStmt struct {
 	ddlNode
@@ -3272,6 +3358,10 @@ const (
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
 	AlterTableRemoveTTL
+	AlterTableAddMaskingPolicy
+	AlterTableEnableMaskingPolicy
+	AlterTableDisableMaskingPolicy
+	AlterTableDropMaskingPolicy
 )
 
 // LockType is the type for AlterTableSpec.
@@ -3344,34 +3434,38 @@ type AlterTableSpec struct {
 	NoWriteToBinlog bool
 	OnAllPartitions bool
 
-	Tp               AlterTableType
-	Name             string
-	IndexName        CIStr
-	Constraint       *Constraint
-	Options          []*TableOption
-	OrderByList      []*AlterOrderItem
-	NewTable         *TableName
-	NewColumns       []*ColumnDef
-	NewConstraints   []*Constraint
-	OldColumnName    *ColumnName
-	NewColumnName    *ColumnName
-	Position         *ColumnPosition
-	LockType         LockType
-	Algorithm        AlgorithmType
-	Comment          string
-	FromKey          CIStr
-	ToKey            CIStr
-	Partition        *PartitionOptions
-	PartitionNames   []CIStr
-	PartDefinitions  []*PartitionDefinition
-	WithValidation   bool
-	Num              uint64
-	Visibility       IndexVisibility
-	TiFlashReplica   *TiFlashReplicaSpec
-	Writeable        bool
-	Statistics       *StatisticsSpec
-	AttributesSpec   *AttributesSpec
-	StatsOptionsSpec *StatsOptionsSpec
+	Tp                  AlterTableType
+	Name                string
+	IndexName           CIStr
+	Constraint          *Constraint
+	Options             []*TableOption
+	OrderByList         []*AlterOrderItem
+	NewTable            *TableName
+	NewColumns          []*ColumnDef
+	NewConstraints      []*Constraint
+	OldColumnName       *ColumnName
+	NewColumnName       *ColumnName
+	Position            *ColumnPosition
+	LockType            LockType
+	Algorithm           AlgorithmType
+	Comment             string
+	FromKey             CIStr
+	ToKey               CIStr
+	Partition           *PartitionOptions
+	PartitionNames      []CIStr
+	PartDefinitions     []*PartitionDefinition
+	WithValidation      bool
+	Num                 uint64
+	Visibility          IndexVisibility
+	TiFlashReplica      *TiFlashReplicaSpec
+	Writeable           bool
+	Statistics          *StatisticsSpec
+	MaskingPolicyName   CIStr
+	MaskingPolicyColumn *ColumnName
+	MaskingPolicyExpr   ExprNode
+	MaskingPolicyState  MaskingPolicyState
+	AttributesSpec      *AttributesSpec
+	StatsOptionsSpec    *StatsOptionsSpec
 }
 
 type TiFlashReplicaSpec struct {
@@ -3460,6 +3554,35 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		ctx.WriteName(n.Statistics.StatsName)
+	case AlterTableAddMaskingPolicy:
+		ctx.WriteKeyWord("ADD MASKING POLICY ")
+		ctx.WriteName(n.MaskingPolicyName.O)
+		ctx.WritePlain(" ON (")
+		if err := n.MaskingPolicyColumn.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.MaskingPolicyColumn")
+		}
+		ctx.WritePlain(") ")
+		ctx.WriteKeyWord("AS ")
+		if err := n.MaskingPolicyExpr.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.MaskingPolicyExpr")
+		}
+		if n.MaskingPolicyState.Explicit {
+			ctx.WritePlain(" ")
+			if n.MaskingPolicyState.Enabled {
+				ctx.WriteKeyWord("ENABLE")
+			} else {
+				ctx.WriteKeyWord("DISABLE")
+			}
+		}
+	case AlterTableEnableMaskingPolicy:
+		ctx.WriteKeyWord("ENABLE MASKING POLICY ")
+		ctx.WriteName(n.MaskingPolicyName.O)
+	case AlterTableDisableMaskingPolicy:
+		ctx.WriteKeyWord("DISABLE MASKING POLICY ")
+		ctx.WriteName(n.MaskingPolicyName.O)
+	case AlterTableDropMaskingPolicy:
+		ctx.WriteKeyWord("DROP MASKING POLICY ")
+		ctx.WriteName(n.MaskingPolicyName.O)
 	case AlterTableOption:
 		switch {
 		case len(n.Options) == 2 && n.Options[0].Tp == TableOptionCharset && n.Options[1].Tp == TableOptionCollate:
@@ -4011,6 +4134,20 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Position = node.(*ColumnPosition)
+	}
+	if n.MaskingPolicyColumn != nil {
+		node, ok := n.MaskingPolicyColumn.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.MaskingPolicyColumn = node.(*ColumnName)
+	}
+	if n.MaskingPolicyExpr != nil {
+		node, ok := n.MaskingPolicyExpr.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.MaskingPolicyExpr = node.(ExprNode)
 	}
 	if n.Partition != nil {
 		node, ok := n.Partition.Accept(v)
