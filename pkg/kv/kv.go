@@ -384,8 +384,9 @@ func (t StoreType) Name() string {
 // KeyRanges wrap the ranges for partitioned table cases.
 // We might send ranges from different in the one request.
 type KeyRanges struct {
-	ranges        [][]KeyRange
-	rowCountHints [][]int
+	ranges          [][]KeyRange
+	rowCountHints   [][]int
+	rangeVersionMap map[string]uint64 // map from range key to version, used for tici lookup.
 
 	isPartitioned bool
 }
@@ -397,7 +398,7 @@ func NewPartitionedKeyRanges(ranges [][]KeyRange) *KeyRanges {
 
 // NewNonPartitionedKeyRanges constructs a new RequestRange for a non-partitioned table.
 func NewNonPartitionedKeyRanges(ranges []KeyRange) *KeyRanges {
-	return NewNonParitionedKeyRangesWithHint(ranges, nil)
+	return NewNonParitionedKeyRangesWithHint(ranges, nil, nil)
 }
 
 // NewPartitionedKeyRangesWithHints constructs a new RequestRange for partitioned table with row count hint.
@@ -410,10 +411,11 @@ func NewPartitionedKeyRangesWithHints(ranges [][]KeyRange, hints [][]int) *KeyRa
 }
 
 // NewNonParitionedKeyRangesWithHint constructs a new RequestRange for a non partitioned table with rou count hint.
-func NewNonParitionedKeyRangesWithHint(ranges []KeyRange, hints []int) *KeyRanges {
+func NewNonParitionedKeyRangesWithHint(ranges []KeyRange, rangeVersionMap map[string]uint64, hints []int) *KeyRanges {
 	rr := &KeyRanges{
-		ranges:        [][]KeyRange{ranges},
-		isPartitioned: false,
+		ranges:          [][]KeyRange{ranges},
+		rangeVersionMap: rangeVersionMap,
+		isPartitioned:   false,
 	}
 	if hints != nil {
 		rr.rowCountHints = [][]int{hints}
@@ -531,6 +533,11 @@ func (rr *KeyRanges) TotalRangeNum() int {
 		ret += len(r)
 	}
 	return ret
+}
+
+// GetRangeVersionMap returns range version map
+func (rr *KeyRanges) GetRangeVersionMap() map[string]uint64 {
+	return rr.rangeVersionMap
 }
 
 // Request represents a kv request.

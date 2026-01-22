@@ -39,6 +39,11 @@ func (k Key) Next() Key {
 	return buf
 }
 
+// AsString converts Key to string without copy
+func (k Key) AsString() string {
+	return *(*string)(unsafe.Pointer(&k))
+}
+
 // PrefixNext returns the next prefix key.
 //
 // Assume there are keys like:
