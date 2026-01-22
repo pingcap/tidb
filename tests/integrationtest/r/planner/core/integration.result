@@ -3953,7 +3953,7 @@ create table t(a int, b int);
 set session tidb_isolation_read_engines='tiflash,tidb';
 create view v0 (a, avg_b) as select a, avg(b) from t group by a;
 select * from v0;
-Error 1815 (HY000): Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'.
+Error 1815 (HY000): Internal : No access path for table 't' is found with 'tidb_isolation_read_engines' = 'tiflash,tidb', valid values can be 'tikv'. Please check tiflash replica.
 set session tidb_isolation_read_engines='tikv,tiflash,tidb';
 select * from v0;
 a	avg_b
