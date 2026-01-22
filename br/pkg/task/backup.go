@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/backup"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/conn"
+	connutil "github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
@@ -60,10 +61,24 @@ const (
 	flagReplicaReadLabel = "replica-read-label"
 	flagTableConcurrency = "table-concurrency"
 
+	flagParquetEnable                = "export-parquet"
+	flagParquetOutput                = "parquet-output"
+	flagParquetOutputPrefix          = "parquet-output-prefix"
+	flagParquetRowGroupSize          = "parquet-row-group-size"
+	flagParquetCompression           = "parquet-compression"
+	flagParquetWriteIcebergManifest  = "parquet-write-iceberg-manifest"
+	flagParquetIcebergWarehouse      = "parquet-iceberg-warehouse"
+	flagParquetIcebergNamespace      = "parquet-iceberg-namespace"
+	flagParquetIcebergTable          = "parquet-iceberg-table"
+	flagParquetIcebergManifestPrefix = "parquet-iceberg-manifest-prefix"
+	flagParquetOnly                  = "parquet-only"
+
 	flagGCTTL = "gcttl"
 
-	defaultBackupConcurrency = 4
-	maxBackupConcurrency     = 256
+	defaultBackupConcurrency   = 4
+	maxBackupConcurrency       = 256
+	defaultParquetRowGroupSize = 8192
+	maxParquetRowGroupSize     = 1_000_000
 )
 
 const (
@@ -78,6 +93,75 @@ const (
 type CompressionConfig struct {
 	CompressionType  backuppb.CompressionType `json:"compression-type" toml:"compression-type"`
 	CompressionLevel int32                    `json:"compression-level" toml:"compression-level"`
+}
+
+// ParquetExportConfig controls the optional SST-to-Parquet conversion.
+type ParquetExportConfig struct {
+	Enable                bool   `json:"enable" toml:"enable"`
+	Output                string `json:"output" toml:"output"`
+	OutputPrefix          string `json:"output-prefix" toml:"output-prefix"`
+	RowGroupSize          uint64 `json:"row-group-size" toml:"row-group-size"`
+	Compression           string `json:"compression" toml:"compression"`
+	WriteIcebergManifest  bool   `json:"write-iceberg-manifest" toml:"write-iceberg-manifest"`
+	IcebergWarehouse      string `json:"iceberg-warehouse" toml:"iceberg-warehouse"`
+	IcebergNamespace      string `json:"iceberg-namespace" toml:"iceberg-namespace"`
+	IcebergTable          string `json:"iceberg-table" toml:"iceberg-table"`
+	IcebergManifestPrefix string `json:"iceberg-manifest-prefix" toml:"iceberg-manifest-prefix"`
+	Only                  bool   `json:"only" toml:"only"`
+}
+
+// shouldRun returns true when the Parquet export flow is enabled.
+func (p *ParquetExportConfig) shouldRun() bool {
+	return p != nil && p.Enable
+}
+
+// normalize applies defaults and cleans up user-facing options.
+func (p *ParquetExportConfig) normalize() {
+	if p.Only {
+		p.Enable = true
+	}
+	if p.RowGroupSize == 0 {
+		p.RowGroupSize = defaultParquetRowGroupSize
+	}
+	if p.OutputPrefix == "" {
+		p.OutputPrefix = "parquet"
+	}
+	p.OutputPrefix = strings.Trim(p.OutputPrefix, "/")
+	if p.OutputPrefix == "" {
+		p.OutputPrefix = "parquet"
+	}
+	if p.Compression == "" {
+		p.Compression = "snappy"
+	}
+	p.Compression = strings.ToLower(strings.TrimSpace(p.Compression))
+	if p.IcebergManifestPrefix == "" {
+		p.IcebergManifestPrefix = "manifest"
+	}
+}
+
+// validate checks configuration sanity before running the export.
+func (p *ParquetExportConfig) validate() error {
+	if !p.shouldRun() {
+		return nil
+	}
+	if p.Output == "" {
+		return errors.Annotate(berrors.ErrInvalidArgument, "parquet output storage must be specified when --export-parquet is enabled")
+	}
+	if p.RowGroupSize == 0 || p.RowGroupSize > maxParquetRowGroupSize {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "parquet row group size must be between 1 and %d", maxParquetRowGroupSize)
+	}
+	switch p.Compression {
+	case "snappy", "zstd", "gzip", "brotli", "lz4raw", "lz4", "none", "uncompressed":
+	default:
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"unsupported parquet compression codec %q (supported: snappy|zstd|gzip|brotli|lz4raw|lz4|none|uncompressed)", p.Compression)
+	}
+	if p.WriteIcebergManifest {
+		if p.IcebergWarehouse == "" || p.IcebergNamespace == "" || p.IcebergTable == "" {
+			return errors.Annotate(berrors.ErrInvalidArgument, "iceberg warehouse, namespace and table are required when writing manifests")
+		}
+	}
+	return nil
 }
 
 // BackupConfig is the configuration specific for backup tasks.
@@ -96,6 +180,7 @@ type BackupConfig struct {
 	ReplicaReadLabel map[string]string `json:"replica-read-label" toml:"replica-read-label"`
 	TableConcurrency uint              `json:"table-concurrency" toml:"table-concurrency"`
 	CompressionConfig
+	Parquet ParquetExportConfig `json:"parquet" toml:"parquet"`
 
 	// for ebs-based backup
 	FullBackupType          FullBackupType `json:"full-backup-type" toml:"full-backup-type"`
@@ -160,6 +245,29 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 	_ = flags.MarkHidden(flagUseCheckpoint)
 
 	flags.String(flagReplicaReadLabel, "", "specify the label of the stores to be used for backup, e.g. 'label_key:label_value'")
+
+	flags.Bool(flagParquetEnable, false,
+		"also convert the finished backup into Parquet files via the TiKV backup RPC; defaults to storing the Parquet files in the same storage as --storage")
+	flags.String(flagParquetOutput, "",
+		"optional destination storage for Parquet output; leave empty to reuse --storage")
+	flags.String(flagParquetOutputPrefix, "parquet",
+		"path prefix for Parquet files under the destination storage")
+	flags.Uint64(flagParquetRowGroupSize, defaultParquetRowGroupSize,
+		"row group size used by the Parquet exporter")
+	flags.String(flagParquetCompression, "snappy",
+		"compression codec for Parquet exporter (snappy|zstd|gzip|brotli|lz4raw|lz4|none|uncompressed)")
+	flags.Bool(flagParquetWriteIcebergManifest, false,
+		"emit Iceberg manifest files referencing the generated Parquet files")
+	flags.String(flagParquetIcebergWarehouse, "",
+		"Iceberg warehouse URI used when --parquet-write-iceberg-manifest is set")
+	flags.String(flagParquetIcebergNamespace, "",
+		"Iceberg namespace used when --parquet-write-iceberg-manifest is set")
+	flags.String(flagParquetIcebergTable, "",
+		"Iceberg table name used when --parquet-write-iceberg-manifest is set")
+	flags.String(flagParquetIcebergManifestPrefix, "manifest",
+		"manifest file prefix when --parquet-write-iceberg-manifest is set")
+	flags.Bool(flagParquetOnly, false,
+		"skip generating new SST backups and only run the Parquet exporter against the destination specified by --storage")
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
@@ -189,6 +297,50 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 		return errors.Trace(err)
 	}
 	cfg.UseCheckpoint, err = flags.GetBool(flagUseCheckpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.Enable, err = flags.GetBool(flagParquetEnable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.Output, err = flags.GetString(flagParquetOutput)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.OutputPrefix, err = flags.GetString(flagParquetOutputPrefix)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.RowGroupSize, err = flags.GetUint64(flagParquetRowGroupSize)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.Compression, err = flags.GetString(flagParquetCompression)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.WriteIcebergManifest, err = flags.GetBool(flagParquetWriteIcebergManifest)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.IcebergWarehouse, err = flags.GetString(flagParquetIcebergWarehouse)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.IcebergNamespace, err = flags.GetString(flagParquetIcebergNamespace)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.IcebergTable, err = flags.GetString(flagParquetIcebergTable)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.IcebergManifestPrefix, err = flags.GetString(flagParquetIcebergManifestPrefix)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.Parquet.Only, err = flags.GetBool(flagParquetOnly)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -278,6 +430,26 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 	cfg.ReplicaReadLabel, err = parseReplicaReadLabelFlag(flags)
 	if err != nil {
 		return errors.Trace(err)
+	}
+
+	if cfg.Parquet.Output != "" && !cfg.Parquet.Enable {
+		log.Warn("parquet export enabled because parquet output is set",
+			zap.String("parquet-output", cfg.Parquet.Output),
+		)
+		cfg.Parquet.Enable = true
+	}
+	if cfg.Parquet.Enable && cfg.Parquet.Output == "" && cfg.Storage != "" {
+		log.Warn("parquet output not set; falling back to --storage",
+			zap.String("storage", cfg.Storage),
+		)
+		cfg.Parquet.Output = cfg.Storage
+	}
+	cfg.Parquet.normalize()
+	if err := cfg.Parquet.validate(); err != nil {
+		return errors.Trace(err)
+	}
+	if cfg.Parquet.Only && len(cfg.PD) == 0 {
+		return errors.Annotate(berrors.ErrInvalidArgument, "--pd must be specified when --parquet-only is set")
 	}
 
 	return nil
@@ -406,6 +578,35 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 
 	isIncrementalBackup := cfg.LastBackupTS > 0
 	skipChecksum := !cfg.Checksum || isIncrementalBackup
+	skipStats := cfg.IgnoreStats
+	// For backup, Domain is not needed if user ignores stats.
+	// Domain loads all table info into memory. By skipping Domain, we save
+	// lots of memory (about 500MB for 40K 40 fields YCSB tables).
+	needDomain := !skipStats
+	if cfg.Parquet.Only {
+		needDomain = false
+	}
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer mgr.Close()
+
+	if cfg.Parquet.Only {
+		if cfg.Storage == "" {
+			return errors.Annotate(berrors.ErrInvalidArgument, "--storage must be specified when --parquet-only is set")
+		}
+		inputBackend, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if err := cfg.runParquetExport(ctx, mgr, inputBackend); err != nil {
+			return err
+		}
+		summary.SetSuccessStatus(true)
+		return nil
+	}
+
 	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
@@ -415,16 +616,6 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		log.Info("since noop external storage is used, turn off checkpoint mode")
 		cfg.UseCheckpoint = false
 	}
-	skipStats := cfg.IgnoreStats
-	// For backup, Domain is not needed if user ignores stats.
-	// Domain loads all table info into memory. By skipping Domain, we save
-	// lots of memory (about 500MB for 40K 40 fields YCSB tables).
-	needDomain := !skipStats
-	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer mgr.Close()
 	// after version check, check the cluster whether support checkpoint mode
 	if cfg.UseCheckpoint {
 		err = version.CheckCheckpointSupport()
@@ -755,7 +946,65 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
 	g.Record("Size", archiveSize)
 	// Set task summary to success status.
+	if err := cfg.runParquetExport(ctx, mgr, client.GetStorageBackend()); err != nil {
+		return err
+	}
 	summary.SetSuccessStatus(true)
+	return nil
+}
+
+// runParquetExport invokes TiKV to convert SST backup files to Parquet output.
+func (cfg *BackupConfig) runParquetExport(ctx context.Context, mgr *conn.Mgr, inputBackend *backuppb.StorageBackend) error {
+	if !cfg.Parquet.shouldRun() {
+		return nil
+	}
+	outputBackend, err := objstore.ParseBackend(cfg.Parquet.Output, &cfg.BackendOptions)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	stores, err := conn.GetAllTiKVStoresWithRetry(ctx, mgr.GetPDClient(), connutil.SkipTiFlash)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if len(stores) == 0 {
+		return errors.Annotate(berrors.ErrPDInvalidResponse, "no available TiKV stores for parquet export")
+	}
+	store := stores[0]
+	cli, err := mgr.GetBackupClient(ctx, store.Id)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	req := &backuppb.ParquetExportRequest{
+		InputStorage:          inputBackend,
+		OutputStorage:         outputBackend,
+		BackupMeta:            metautil.MetaFile,
+		OutputPrefix:          cfg.Parquet.OutputPrefix,
+		RowGroupSize:          cfg.Parquet.RowGroupSize,
+		Compression:           cfg.Parquet.Compression,
+		WriteIcebergManifest:  cfg.Parquet.WriteIcebergManifest,
+		IcebergWarehouse:      cfg.Parquet.IcebergWarehouse,
+		IcebergNamespace:      cfg.Parquet.IcebergNamespace,
+		IcebergTable:          cfg.Parquet.IcebergTable,
+		IcebergManifestPrefix: cfg.Parquet.IcebergManifestPrefix,
+	}
+	log.Info("starting parquet export via backup RPC",
+		zap.String("tikv", store.Address),
+		zap.String("output", cfg.Parquet.Output),
+		zap.String("prefix", cfg.Parquet.OutputPrefix),
+		zap.Uint64("row-group-size", cfg.Parquet.RowGroupSize),
+		zap.String("compression", cfg.Parquet.Compression))
+	resp, err := cli.ParquetExport(ctx, req)
+	if err != nil {
+		return errors.Annotate(err, "parquet export")
+	}
+	if respErr := resp.GetError(); respErr != nil && respErr.GetMsg() != "" {
+		return errors.Annotatef(berrors.ErrInvalidArgument, "parquet export failed: %s", respErr.GetMsg())
+	}
+	log.Info("parquet export finished",
+		zap.String("tikv", store.Address),
+		zap.Uint64("files", resp.GetFileCount()),
+		zap.Uint64("rows", resp.GetTotalRows()),
+		zap.Uint64("bytes", resp.GetTotalBytes()))
 	return nil
 }
 

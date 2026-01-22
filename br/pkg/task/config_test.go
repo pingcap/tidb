@@ -85,6 +85,69 @@ func TestConfigureRestoreClient(t *testing.T) {
 	require.Equal(t, uint(128), client.GetBatchDdlSize())
 }
 
+func TestParquetConfigValidate(t *testing.T) {
+	cfg := &BackupConfig{}
+	cfg.Parquet.normalize()
+	require.False(t, cfg.Parquet.shouldRun())
+
+	cfg.Storage = "local:///tmp/backup"
+	cfg.Parquet.Enable = true
+	cfg.Parquet.normalize()
+	require.True(t, cfg.Parquet.shouldRun())
+	require.Equal(t, uint64(defaultParquetRowGroupSize), cfg.Parquet.RowGroupSize)
+	require.Equal(t, "parquet", cfg.Parquet.OutputPrefix)
+	require.Equal(t, "snappy", cfg.Parquet.Compression)
+	require.Equal(t, "manifest", cfg.Parquet.IcebergManifestPrefix)
+	err := cfg.Parquet.validate()
+	require.Error(t, err)
+
+	cfg.Parquet.Output = "local:///tmp/parquet"
+	cfg.Parquet.normalize()
+	err = cfg.Parquet.validate()
+	require.NoError(t, err)
+
+	cfg.Parquet.Compression = "ZSTD"
+	cfg.Parquet.normalize()
+	require.Equal(t, "zstd", cfg.Parquet.Compression)
+
+	cfg.Parquet.Compression = "invalid"
+	err = cfg.Parquet.validate()
+	require.Error(t, err)
+
+	cfg.Parquet.Compression = "snappy"
+	cfg.Parquet.RowGroupSize = maxParquetRowGroupSize + 1
+	err = cfg.Parquet.validate()
+	require.Error(t, err)
+
+	cfg.Parquet.RowGroupSize = defaultParquetRowGroupSize
+	cfg.Parquet.WriteIcebergManifest = true
+	err = cfg.Parquet.validate()
+	require.Error(t, err)
+
+	cfg.Parquet.IcebergWarehouse = "s3://warehouse"
+	cfg.Parquet.IcebergNamespace = "analytics"
+	cfg.Parquet.IcebergTable = "orders"
+	err = cfg.Parquet.validate()
+	require.NoError(t, err)
+
+	cfg.Parquet = ParquetExportConfig{Only: true}
+	cfg.Parquet.normalize()
+	require.True(t, cfg.Parquet.Enable)
+	require.True(t, cfg.Parquet.shouldRun())
+	require.Equal(t, "parquet", cfg.Parquet.OutputPrefix)
+
+	cfg.Parquet.OutputPrefix = "///"
+	cfg.Parquet.normalize()
+	require.Equal(t, "parquet", cfg.Parquet.OutputPrefix)
+	cfg.Parquet.OutputPrefix = "///foo//bar///"
+	cfg.Parquet.normalize()
+	require.Equal(t, "foo//bar", cfg.Parquet.OutputPrefix)
+
+	cfg.Parquet.Output = "local:///tmp/parquet"
+	err = cfg.Parquet.validate()
+	require.NoError(t, err)
+}
+
 func TestAdjustRestoreConfigForStreamRestore(t *testing.T) {
 	restoreCfg := RestoreConfig{}
 

@@ -82,6 +82,21 @@ mc mb minio/mybucket
 bin/br backup full --pd pd0:2379 --storage "s3://mybucket/full" \
     --s3.endpoint="$S3_ENDPOINT"
 
+# Optional: export Parquet after backup (Lakehouse/AI pipelines).
+bin/br backup full --pd pd0:2379 --storage "s3://mybucket/full" \
+    --export-parquet \
+    --parquet-output "s3://mybucket/parquet" \
+    --parquet-output-prefix "parquet" \
+    --parquet-compression "zstd"
+
+# Optional: run Parquet export only, without generating new SSTs.
+bin/br backup full --pd pd0:2379 --storage "s3://mybucket/full" \
+    --parquet-only \
+    --parquet-output "s3://mybucket/parquet"
+
+Note: `--export-parquet` and `--parquet-only` run the Parquet conversion
+synchronously via the TiKV backup RPC, so the command returns after the export completes.
+
 # Drop database and restore!
 mysql -uroot -htidb -P4000 -E -e "DROP DATABASE test; SHOW DATABASES;" && \
 bin/br restore full --pd pd0:2379 --storage "s3://mybucket/full" \
