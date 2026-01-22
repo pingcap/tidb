@@ -270,13 +270,14 @@ func isDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *h.PlanHints) b
 	if derivedTableAlias == "" {
 		return false
 	}
+	derivedDBName := queryBlockNames[blockOffset].DBName.L
 
 	// Check if this alias appears in the LEADING hint
-	return containsTableInLeadingList(leadingHint.LeadingList, derivedTableAlias)
+	return containsTableInLeadingList(leadingHint.LeadingList, derivedDBName, derivedTableAlias)
 }
 
 // containsTableInLeadingList recursively searches for a table name in the LEADING hint structure
-func containsTableInLeadingList(leadingList *ast.LeadingList, tableName string) bool {
+func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName string) bool {
 	if leadingList == nil {
 		return false
 	}
@@ -285,12 +286,14 @@ func containsTableInLeadingList(leadingList *ast.LeadingList, tableName string) 
 		switch element := item.(type) {
 		case *ast.HintTable:
 			// Direct table reference in LEADING hint
-			if element.TableName.L == tableName {
+			dbMatch := element.DBName.L == "" || element.DBName.L == dbName
+			tableMatch := element.TableName.L == tableName
+			if dbMatch && tableMatch {
 				return true
 			}
 		case *ast.LeadingList:
 			// Nested structure, recursively check
-			if containsTableInLeadingList(element, tableName) {
+			if containsTableInLeadingList(element, dbName, tableName) {
 				return true
 			}
 		}
