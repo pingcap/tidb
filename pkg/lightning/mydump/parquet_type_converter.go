@@ -20,6 +20,7 @@ import (
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 )
@@ -49,6 +50,11 @@ func initializeMyDecimal(d *types.Datum) *types.MyDecimal {
 }
 
 func setDatumFromDecimalByte(d *types.Datum, val []byte, scale int) error {
+	// Typically it shouldn't happen.
+	if len(val) == 0 {
+		return errors.New("invalid parquet decimal byte array")
+	}
+
 	// Truncate leading zeros in two's complement representation.
 	negative := (val[0] & 0x80) != 0
 	start := 0
@@ -57,6 +63,7 @@ func setDatumFromDecimalByte(d *types.Datum, val []byte, scale int) error {
 			break
 		}
 	}
+	// Keep at least one byte.
 	start = max(start-1, 0)
 	val = val[start:]
 
