@@ -200,6 +200,7 @@ import (
 	longblobType      "LONGBLOB"
 	longtextType      "LONGTEXT"
 	lowPriority       "LOW_PRIORITY"
+	masking           "MASKING"
 	match             "MATCH"
 	maxValue          "MAXVALUE"
 	mediumblobType    "MEDIUMBLOB"
@@ -891,6 +892,7 @@ import (
 	nodeState                  "NODE_STATE"
 	optimistic                 "OPTIMISTIC"
 	pessimistic                "PESSIMISTIC"
+	policies                   "POLICIES"
 	region                     "REGION"
 	regions                    "REGIONS"
 	reset                      "RESET"
@@ -1005,6 +1007,7 @@ import (
 	CreateIndexStmt            "CREATE INDEX statement"
 	CreateBindingStmt          "CREATE BINDING statement"
 	CreatePolicyStmt           "CREATE PLACEMENT POLICY statement"
+	CreateMaskingPolicyStmt    "CREATE MASKING POLICY statement"
 	CreateProcedureStmt        "CREATE PROCEDURE statement"
 	AddQueryWatchStmt          "ADD QUERY WATCH statement"
 	CreateResourceGroupStmt    "CREATE RESOURCE GROUP statement"
@@ -1129,6 +1132,7 @@ import (
 	AlterTableSpec                         "Alter table specification"
 	AlterTableSpecList                     "Alter table specification list"
 	AlterTableSpecListOpt                  "Alter table specification list optional"
+	MaskingPolicyStateOpt                  "Optional masking policy state"
 	AlterSequenceOption                    "Alter sequence option"
 	AlterSequenceOptionList                "Alter sequence option list"
 	ArrayKwdOpt                            "Array options"
@@ -2431,6 +2435,38 @@ AlterTableSpec:
 			Tp:          ast.AlterTableAddStatistics,
 			IfNotExists: $3.(bool),
 			Statistics:  statsSpec,
+		}
+	}
+|	"ADD" "MASKING" "POLICY" PolicyName "ON" '(' Identifier ')' "AS" Expression MaskingPolicyStateOpt
+	{
+		state := $11.(*ast.MaskingPolicyState)
+		$$ = &ast.AlterTableSpec{
+			Tp:                 ast.AlterTableAddMaskingPolicy,
+			MaskingPolicyName:  ast.NewCIStr($4),
+			MaskingPolicyColumn: &ast.ColumnName{Name: ast.NewCIStr($7)},
+			MaskingPolicyExpr:  $10,
+			MaskingPolicyState: *state,
+		}
+	}
+|	"ENABLE" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableEnableMaskingPolicy,
+			MaskingPolicyName: ast.NewCIStr($4),
+		}
+	}
+|	"DISABLE" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableDisableMaskingPolicy,
+			MaskingPolicyName: ast.NewCIStr($4),
+		}
+	}
+|	"DROP" "MASKING" "POLICY" PolicyName
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:                ast.AlterTableDropMaskingPolicy,
+			MaskingPolicyName: ast.NewCIStr($4),
 		}
 	}
 |	AttributesOpt
@@ -7471,6 +7507,7 @@ TiDBKeyword:
 |	"SPLIT"
 |	"OPTIMISTIC"
 |	"PESSIMISTIC"
+|	"POLICIES"
 |	"WIDTH"
 |	"REGIONS"
 |	"REGION"
@@ -11903,6 +11940,17 @@ ShowStmt:
 			User: $4.(*auth.UserIdentity),
 		}
 	}
+|	"SHOW" "MASKING" "POLICIES" "FOR" TableName WhereClauseOptional
+	{
+		stmt := &ast.ShowStmt{
+			Tp:    ast.ShowMaskingPolicies,
+			Table: $5.(*ast.TableName),
+		}
+		if $6 != nil {
+			stmt.Where = $6.(ast.ExprNode)
+		}
+		$$ = stmt
+	}
 |	"SHOW" "TABLE" TableName PartitionNameListOpt "REGIONS" WhereClauseOptional
 	{
 		stmt := &ast.ShowStmt{
@@ -12648,6 +12696,7 @@ Statement:
 |	CreateRoleStmt
 |	CreateBindingStmt
 |	CreatePolicyStmt
+|	CreateMaskingPolicyStmt
 |	CreateProcedureStmt
 |	CreateResourceGroupStmt
 |	AddQueryWatchStmt
@@ -15934,6 +15983,43 @@ CreatePolicyStmt:
 			IfNotExists:      $5.(bool),
 			PolicyName:       ast.NewCIStr($6),
 			PlacementOptions: $7.([]*ast.PlacementOption),
+		}
+	}
+
+MaskingPolicyStateOpt:
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  true,
+			Explicit: false,
+		}
+	}
+|	"ENABLE"
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  true,
+			Explicit: true,
+		}
+	}
+|	"DISABLE"
+	{
+		$$ = &ast.MaskingPolicyState{
+			Enabled:  false,
+			Explicit: true,
+		}
+	}
+
+CreateMaskingPolicyStmt:
+	"CREATE" OrReplace "MASKING" "POLICY" IfNotExists PolicyName "ON" TableName '(' Identifier ')' "AS" Expression MaskingPolicyStateOpt
+	{
+		state := $14.(*ast.MaskingPolicyState)
+		$$ = &ast.CreateMaskingPolicyStmt{
+			OrReplace:           $2.(bool),
+			IfNotExists:         $5.(bool),
+			PolicyName:          ast.NewCIStr($6),
+			Table:               $8.(*ast.TableName),
+			Column:              &ast.ColumnName{Name: ast.NewCIStr($10)},
+			Expr:                $13,
+			MaskingPolicyState:  *state,
 		}
 	}
 
