@@ -293,30 +293,32 @@ var heapSample = []metrics.Sample{
 }
 
 var gcStats = struct {
-	sync.Cond
+	cond struct {
+		sync.Cond
+		sync.Mutex
+		updating bool
+	}
 	cache struct {
 		debug.GCStats
 		lastGC atomic.Int64
 		sync.Mutex
 	}
-	sync.Mutex
-	updating bool
 }{}
 
 func fetchGCStats() {
 	{
-		gcStats.Lock()
+		gcStats.cond.Lock()
 
-		if gcStats.updating {
-			for gcStats.updating {
-				gcStats.Cond.Wait()
+		if gcStats.cond.updating {
+			for gcStats.cond.updating {
+				gcStats.cond.Wait()
 			}
-			gcStats.Unlock()
+			gcStats.cond.Unlock()
 			return
 		}
-		gcStats.updating = true
+		gcStats.cond.updating = true
 
-		gcStats.Unlock()
+		gcStats.cond.Unlock()
 	}
 
 	{
@@ -329,12 +331,12 @@ func fetchGCStats() {
 	}
 
 	{
-		gcStats.Lock()
+		gcStats.cond.Lock()
 
-		gcStats.updating = false
-		gcStats.Cond.Broadcast()
+		gcStats.cond.updating = false
+		gcStats.cond.Broadcast()
 
-		gcStats.Unlock()
+		gcStats.cond.Unlock()
 	}
 }
 
@@ -356,7 +358,7 @@ func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
 }
 
 func init() {
-	gcStats.Cond.L = &gcStats.Mutex
+	gcStats.cond.L = &gcStats.cond.Mutex
 	fetchGCStats()
 	SampleRuntimeMemStats()
 	for i := range heapSample {
