@@ -224,7 +224,9 @@ func IsNullRejected(
 	predicate expression.Expression,
 	skipPlanCacheCheck bool,
 ) bool {
-	predicate = expression.PushDownNot(ctx.GetNullRejectCheckExprCtx(), predicate)
+	// NOTE: We do NOT call PushDownNot here because it can change semantics
+	// (e.g., not(X) → not(istrue_with_null(X))) which breaks null-rejection detection.
+	// The structural analysis in isNullRejectingByStructure handles NOT directly.
 	if expression.ContainOuterNot(predicate) {
 		return false
 	}
