@@ -26,12 +26,23 @@ import (
 // 3VL has three truth values: TRUE, FALSE, UNKNOWN (result from any NULL participation).
 // Basic rules:
 //   - Comparisons/pattern/regex with a NULL operand → UNKNOWN (i.e., result is NULL), except NULL-safe <=>.
-//   - AND: FALSE dominates; TRUE ∧ UNKNOWN = UNKNOWN; UNKNOWN ∧ UNKNOWN = UNKNOWN.
-//   - OR:  TRUE dominates; FALSE ∨ UNKNOWN = UNKNOWN; UNKNOWN ∨ UNKNOWN = UNKNOWN.
-//   - NOT: NOT UNKNOWN = UNKNOWN.
+//   - AND: FALSE dominates; TRUE ∧ UNKNOWN = UNKNOWN; UNKNOWN ∧ UNKNOWN = UNKNOWN; UNKNOWN ∧ FALSE = FALSE.
+//   - OR:  TRUE dominates; FALSE ∨ UNKNOWN = UNKNOWN; UNKNOWN ∨ UNKNOWN = UNKNOWN; TRUE ∨ UNKNOWN = TRUE.
+//   - NOT: NOT UNKNOWN = UNKNOWN; NOT FALSE = TRUE.
 //
 // In this file, "NULL propagation" means: if any relevant argument is NULL, the function yields NULL (UNKNOWN).
 // We call such functions NullPreserving.
+//
+// This implementation follows a two-set framework for null-rejection analysis:
+//   - NonTrue(E): variables x where x=U ⇒ E ∈ {F,U} (null-rejected)
+//   - MustNull(E): variables x where x=U ⇒ E = U (must-NULL evidence)
+// Key rules:
+//   - NonTrue(A AND B) = NonTrue(A) ∪ NonTrue(B)
+//   - NonTrue(A OR B) = NonTrue(A) ∩ NonTrue(B)
+//   - NonTrue(NOT A) = MustNull(A)
+//   - MustNull(A AND B) = MustNull(A) ∩ MustNull(B)
+//   - MustNull(A OR B) = MustNull(A) ∩ MustNull(B)
+//   - MustNull(NULL Preserving F(args...)) = ⋃ MustNull(arg_i)
 
 // NullBehavior describes how a function interacts with SQL 3VL and NULL propagation.
 // Function null-behavior traits (centralized, easy to extend):
@@ -72,9 +83,11 @@ var fnTraits = map[string]NullBehavior{
 	ast.NullEQ:     NullSafeEq,
 
 	// Boolean connectives (may hide NULL via short-circuit)
+	// Note: AND/OR can hide NULL due to short-circuit evaluation (F AND U = F, T OR U = T)
 	ast.LogicAnd: NullHiding,
 	ast.LogicOr:  NullHiding,
-	ast.LogicXor: NullHiding,
+	// XOR is NULL-preserving: NULL XOR anything = NULL (no short-circuit)
+	ast.LogicXor: NullPreserving,
 
 	// Truth predicates & NULL tests – they *handle* NULL explicitly
 	ast.IsFalsity:          NullHiding,
@@ -113,30 +126,68 @@ var fnTraits = map[string]NullBehavior{
 	// N-ary math helpers that propagate NULL if any arg is NULL
 	ast.Greatest: NullPreserving,
 	ast.Least:    NullPreserving,
+
+	// Time/date functions that propagate NULL if any arg is NULL
+	ast.FromUnixTime:  NullPreserving,
+	ast.TimestampDiff: NullPreserving,
+
+	// JSON functions that propagate NULL if any arg is NULL
+	ast.JSONExtract: NullPreserving,
 }
 
-func traitOf(name string) NullBehavior           { return fnTraits[name] }
+// traitOf returns the NullBehavior trait for a function name.
+// Uses switch for hot-path functions to avoid map lookup overhead.
+func traitOf(name string) NullBehavior {
+	// Fast path: check frequently used functions via switch (avoid map allocation)
+	switch name {
+	case ast.EQ, ast.NE, ast.GT, ast.GE, ast.LT, ast.LE:
+		return NullPreserving
+	case ast.Like, ast.Ilike, ast.RegexpLike, ast.Regexp:
+		return NullPreserving
+	case ast.LogicAnd, ast.LogicOr:
+		return NullHiding
+	case ast.LogicXor:
+		return NullPreserving
+	case ast.NullEQ:
+		return NullSafeEq
+	case ast.IsNull, ast.IsFalsity, ast.IsTruthWithNull, ast.IsTruthWithoutNull:
+		return NullHiding
+	case ast.Cast, ast.Convert, ast.UnaryPlus, ast.UnaryMinus:
+		return NullTransparentWrapper
+	case ast.UnaryNot:
+		return 0 // NOT has special handling, not in fnTraits
+	default:
+		return fnTraits[name]
+	}
+}
+
 func has(t NullBehavior, flag NullBehavior) bool { return t&flag != 0 }
 
 // allConstants returns true if `expr` is composed only of constants (and
 // scalar functions whose arguments are all constants). It also guards against
 // expressions that are unsafe to treat as constants for plan cache.
+// Optimized: early type check before recursive calls.
 func allConstants(ctx expression.BuildContext, expr expression.Expression) bool {
-	if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
-		return false // expression contains non-deterministic parameter
-	}
 	switch v := expr.(type) {
+	case *expression.Constant:
+		return true
 	case *expression.ScalarFunction:
+		// Check plan cache safety first (cheaper than recursion)
+		if expression.MaybeOverOptimized4PlanCache(ctx, expr) {
+			return false
+		}
 		for _, arg := range v.GetArgs() {
 			if !allConstants(ctx, arg) {
 				return false
 			}
 		}
 		return true
-	case *expression.Constant:
-		return true
+	case *expression.Column, *expression.CorrelatedColumn:
+		return false
+	default:
+		// For unknown types, check plan cache safety
+		return !expression.MaybeOverOptimized4PlanCache(ctx, expr)
 	}
-	return false
 }
 
 // isNullRejectedInList checks null filter for IN list using OR logic.
@@ -201,14 +252,30 @@ func IsNullRejected(
 	}
 }
 
-// New: whether the predicate references at least one inner-side column.
+// referencesAnyInner checks whether the predicate references at least one inner-side column.
+// Optimized: avoids slice allocation by using visitor pattern.
 func referencesAnyInner(e expression.Expression, inner *expression.Schema) bool {
-	for _, c := range expression.ExtractColumns(e) {
-		if inner.Contains(c) {
-			return true
+	return containsColumnFromSchema(e, inner)
+}
+
+// containsColumnFromSchema recursively checks if expression contains any column from schema.
+// This avoids the allocation overhead of ExtractColumns when we only need a boolean check.
+func containsColumnFromSchema(e expression.Expression, sch *expression.Schema) bool {
+	switch x := e.(type) {
+	case *expression.Column:
+		return sch.Contains(x)
+	case *expression.ScalarFunction:
+		for _, arg := range x.GetArgs() {
+			if containsColumnFromSchema(arg, sch) {
+				return true
+			}
 		}
+		return false
+	case *expression.CorrelatedColumn:
+		return sch.Contains(&x.Column)
+	default:
+		return false
 	}
-	return false
 }
 
 // judgeFoldedConstant examines an already-folded expression `e`.
@@ -242,9 +309,8 @@ func tryConstTree(ctx base.PlanContext, pred expression.Expression) (decided boo
 // These functions (like collation/charset/coercibility) should not be used as "NULL propagation" evidence
 // to drive outer join elimination, otherwise expressions like `where collation(t2.c) = 'utf8mb4_bin'`
 // would be incorrectly judged as allowing LEFT JOIN to be converted to INNER JOIN.
-// Approach: The structural judgment phase relies on isNullPropagatingWRTInner
-// (treating them as "potentially masking NULL"),
-// while in the fallback (inner-only case) we do another contains check as a safety net.
+// Approach: The structural judgment phase in isNullPropagatingWRTInner treats them as
+// "potentially masking NULL" (returning false), which is the conservative choice.
 var opaqueInfoFuncSet = map[string]struct{}{
 	ast.Collation:    {},
 	ast.Charset:      {},
@@ -256,52 +322,30 @@ func isOpaqueInfoFuncName(name string) bool {
 	return ok
 }
 
-// containsOpaqueInfoFunc: whether "info functions" appear in the expression tree
-func containsOpaqueInfoFunc(e expression.Expression) bool {
-	switch x := e.(type) {
-	case *expression.ScalarFunction:
-		if isOpaqueInfoFuncName(x.FuncName.L) {
-			return true
-		}
-		for _, a := range x.GetArgs() {
-			if containsOpaqueInfoFunc(a) {
-				return true
-			}
-		}
-		return false
-	default:
-		return false
-	}
-}
-
+// Decision flow for isNullRejectedExpr:
+//
 // +------------------------+
-// | Constant?             |--Yes--> NULL/FALSE? → true
-// +------------------------+                     TRUE → false
+// | Constant?             |--Yes--> NULL/FALSE? → true (null-rejecting)
+// +------------------------+         TRUE? → false (not null-rejecting)
 //            |
 //            No
 //            v
 // +------------------------+
 // | All-constant tree?     |--Yes--> Fold → NULL/FALSE? → true
-// +------------------------+                     TRUE → false
+// +------------------------+                 TRUE? → false
 //            |
 //            No
 //            v
 // +------------------------+
-// | Ref inner columns?     |--No--> false
+// | Ref inner columns?     |--No--> false (not null-rejecting)
 // +------------------------+
 //            |
 //            Yes
 //            v
 // +------------------------+
-// | Structural decision?   |--Yes--> return decision
+// | Structural analysis    |--NullRejecting--> true
+// | (NonTrue/MustNull)     |--NotNullRejecting/Undecided--> false (conservative)
 // +------------------------+
-//            |
-//            No
-//            v
-// +------------------------+
-// | Replace inner→NULL &   |
-// | constant fold          |--Fold→ NULL/FALSE? → true
-// +------------------------+         else → false
 
 // isNullRejectedExpr decides whether `predicate` is null-rejecting w.r.t. the `innerSchema`.
 // Strategy (fast → slow):
@@ -309,26 +353,18 @@ func containsOpaqueInfoFunc(e expression.Expression) bool {
 //  2. Whole constant tree: FoldConstant, then judge under 3VL (TRUE/FALSE/UNKNOWN).
 //     (Must run before the inner-column check; constant predicates don't depend on columns.)
 //  3. Quick bailout: if the predicate does NOT reference any inner column → false.
-//  4. Structural decision: syntactic rules (comparisons/LIKE/REGEXP/<=>/AND/OR/NOT ...).
-//  5. Fallback: replace inner columns with NULL, fold, then apply 3VL
-//     (NULL/FALSE ⇒ reject; TRUE ⇒ not reject).
+//  4. Structural decision: syntactic rules using NonTrue/MustNull framework
+//     (comparisons/LIKE/REGEXP/<=>/AND/OR/NOT/IS NULL/IS NOT NULL ...).
+//     If undecided, return false conservatively.
 func isNullRejectedExpr(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
 	predicate expression.Expression,
-	skipPlanCacheCheck bool,
+	_ bool, // skipPlanCacheCheck - kept for API compatibility
 ) bool {
-	sc := ctx.GetSessionVars().StmtCtx
-
-	// (1) Literal constant fast-path
+	// (1) Literal constant fast-path - check type first to avoid method calls
 	if c, ok := predicate.(*expression.Constant); ok {
-		if c.Value.IsNull() { // WHERE NULL
-			return true
-		}
-		if b, err := c.Value.ToBool(sc.TypeCtxOrDefault()); err == nil {
-			return b == 0 // WHERE 0 ⇒ reject, WHERE 1 ⇒ not reject
-		}
-		return false
+		return evaluateConstantPredicate(ctx, c)
 	}
 
 	// (2) Whole constant expression tree (no columns at all).
@@ -345,17 +381,23 @@ func isNullRejectedExpr(
 		return false
 	}
 
-	// (4) Structural (syntactic) decision; if deterministic, return immediately
-	switch result := isNullRejectingByStructure(predicate, innerSchema); result {
-	case NullRejecting:
-		return true
-	case NotNullRejecting:
-		return false
-	case Undecided:
-		// continue to fallback
-	}
+	// (4) Structural (syntactic) decision
+	// The switch is exhaustive, so the result is always determined here.
+	result := isNullRejectingByStructure(predicate, innerSchema)
+	return result == NullRejecting
+}
 
-	return false // conservative default
+// evaluateConstantPredicate evaluates a constant predicate under 3VL.
+// Returns true if null-rejecting (NULL or FALSE), false otherwise.
+func evaluateConstantPredicate(ctx base.PlanContext, c *expression.Constant) bool {
+	if c.Value.IsNull() {
+		return true // WHERE NULL → always null-rejecting
+	}
+	sc := ctx.GetSessionVars().StmtCtx
+	if b, err := c.Value.ToBool(sc.TypeCtxOrDefault()); err == nil {
+		return b == 0 // WHERE 0 ⇒ reject, WHERE 1 ⇒ not reject
+	}
+	return false
 }
 
 // ResetNotNullFlag resets the not-null flag of [start, end) columns in the schema.
@@ -372,6 +414,18 @@ func ResetNotNullFlag(schema *expression.Schema, start, end int) {
 // -----------------------------------------
 // Transparent wrapper peeling (trait-driven)
 // -----------------------------------------
+
+// isTransparentWrapper checks if a function name is a transparent wrapper.
+// Inlined check for hot path to avoid map lookup.
+func isTransparentWrapper(name string) bool {
+	switch name {
+	case ast.Cast, ast.Convert, ast.WeightString, ast.UnaryPlus, ast.UnaryMinus:
+		return true
+	default:
+		return false
+	}
+}
+
 // peelTransparentWrappers removes unary shells that are both NULL-transparent and
 // structurally transparent for our purposes (e.g., CAST/CONVERT/WEIGHT_STRING).
 // For CAST/CONVERT that carry more than one arg, we still peel the first argument.
@@ -381,7 +435,7 @@ func peelTransparentWrappers(e expression.Expression) expression.Expression {
 		if !ok {
 			return e
 		}
-		if !has(traitOf(sf.FuncName.L), NullTransparentWrapper) {
+		if !isTransparentWrapper(sf.FuncName.L) {
 			return e
 		}
 		args := sf.GetArgs()
@@ -393,67 +447,88 @@ func peelTransparentWrappers(e expression.Expression) expression.Expression {
 	}
 }
 
-// anyColumnFromSchema after peeling wrappers.
-func anyColumnFromSchema(e expression.Expression, sch *expression.Schema) bool {
-	e = peelTransparentWrappers(e)
-	for _, c := range expression.ExtractColumns(e) {
-		if sch.Contains(c) {
-			return true
-		}
-	}
-	return false
-}
-
-// isNullPropagatingWRTInner reports whether expression `e` has at least one
+// isNullPropagatingWRTInner (MustNull evidence) reports whether expression `e` has at least one
 // evaluation path where a NULL coming from the `inner` schema *must* propagate
 // to the result of `e` (i.e., no guard like IF/IFNULL/COALESCE catches it).
+//
+// This implements MustNull(E) semantics: returns true if there exists a variable x in inner
+// such that x=U ⇒ E=U.
 //
 // WRT = "with respect to": here it means we only consider NULLs coming from
 // columns in `inner` (not from outer columns or constants).
 //
-// Intuition:
-//   - A plain inner column by itself propagates NULL.
-//   - A constant never propagates NULL.
-//   - For a scalar function, if the function is "NULL-hiding" (IF/IFNULL/COALESCE/CASE,
-//     IS NULL, IS TRUE/FALSE variants), then a NULL may be masked ⇒ we conservatively
-//     say it does NOT propagate. Otherwise, we say it propagates if ANY child
-//     expression propagates.
+// Framework rules:
+//   - MustNull(column from inner) = {that column}
+//   - MustNull(constant) = ∅
+//   - MustNull(NULL Preserving F(args...)) = ⋃ MustNull(arg_i)  [union: any arg propagates]
+//   - MustNull(NULL Hiding F(...)) = ∅  [conservative: cannot prove propagation]
+//   - MustNull(A AND B) = MustNull(A) ∩ MustNull(B)  [both must be U]
+//   - MustNull(A OR B) = MustNull(A) ∩ MustNull(B)  [both must be U]
+//   - MustNull(NOT A) = MustNull(A)  [NOT preserves U]
 //
 // Examples:
-//   - inner.a                 → true
-//   - ifnull(inner.a, 0)      → false   (NULL is hidden)
-//   - inner.a + 1             → true
-//   - if(inner.a > 0, 1, 2)   → false   (NULL in test doesn't have to bubble up)
-//   - outer.b + 1             → false   (no inner cols involved)
+//   - inner.a                 → true  (x ∈ MustNull(inner.a))
+//   - ifnull(inner.a, 0)      → false (NULL is hidden, x ∉ MustNull)
+//   - inner.a + 1             → true  (NULL Preserving: union of args)
+//   - if(inner.a > 0, 1, 2)   → false (NULL Hiding)
+//   - outer.b + 1             → false (no inner cols)
 func isNullPropagatingWRTInner(e expression.Expression, inner *expression.Schema) bool {
 	e = peelTransparentWrappers(e)
 	switch x := e.(type) {
 	case *expression.Column:
-		// Only columns from the `inner` schema are considered.
+		// Base case: column from inner schema → x ∈ MustNull(column)
 		return inner.Contains(x)
 
 	case *expression.Constant:
-		// A pure constant does not propagate inner NULL.
+		// Constants never propagate inner NULL → ∅
 		return false
 
 	case *expression.ScalarFunction:
-		// Trait-driven decisions:
 		t := traitOf(x.FuncName.L)
 		// Info/meta functions are *not* evidence structurally (stay conservative).
 		if isOpaqueInfoFuncName(x.FuncName.L) {
 			return false
 		}
+
+		// Handle boolean connectives with intersection semantics
+		switch x.FuncName.L {
+		case ast.LogicAnd:
+			// MustNull(A AND B) = MustNull(A) ∩ MustNull(B)
+			// Both sides must propagate NULL (U AND F = F, so both must be U)
+			return isNullPropagatingWRTInner(x.GetArgs()[0], inner) &&
+				isNullPropagatingWRTInner(x.GetArgs()[1], inner)
+
+		case ast.LogicOr:
+			// MustNull(A OR B) = MustNull(A) ∩ MustNull(B)
+			// Both sides must propagate NULL (T OR U = T, so both must be U)
+			return isNullPropagatingWRTInner(x.GetArgs()[0], inner) &&
+				isNullPropagatingWRTInner(x.GetArgs()[1], inner)
+
+		case ast.UnaryNot:
+			// MustNull(NOT A) = MustNull(A)  [NOT preserves U]
+			return isNullPropagatingWRTInner(x.GetArgs()[0], inner)
+		}
+
 		// NullHiding / NullSafeEq can potentially "consume/handle" NULL:
-		// - IF/CASE/COALESCE/IS.../AND/OR may mask NULL values
+		// - IF/CASE/COALESCE/IS... may mask NULL values
 		// - `<=>` is NULL-safe (NULL <=> NULL returns TRUE), should not be treated as "always propagating NULL"
 		if has(t, NullHiding) || has(t, NullSafeEq) {
 			return false
 		}
-		for _, a := range x.GetArgs() {
-			if isNullPropagatingWRTInner(a, inner) {
-				return true
+
+		// NULL Preserving functions: MustNull(F(args...)) = ⋃ MustNull(arg_i)
+		// Union semantics: if ANY argument propagates NULL, the result propagates NULL
+		if has(t, NullPreserving) {
+			for _, a := range x.GetArgs() {
+				if isNullPropagatingWRTInner(a, inner) {
+					return true
+				}
 			}
+			return false
 		}
+
+		// Unknown function: conservatively assume it does not propagate NULL.
+		// If a function is NULL-preserving, it should be explicitly added to fnTraits.
 		return false
 
 	default:
@@ -466,7 +541,8 @@ func isNullPropagatingWRTInner(e expression.Expression, inner *expression.Schema
 type NullRejectionResult int
 
 const (
-	// Undecided means we cannot determine from structure alone, need fallback
+	// Undecided means we cannot determine from structure alone.
+	// The caller treats this as NotNullRejecting (conservative default).
 	Undecided NullRejectionResult = iota
 	// NotNullRejecting means the predicate definitely does not reject NULL values
 	NotNullRejecting
@@ -474,57 +550,61 @@ const (
 	NullRejecting
 )
 
+// checkNullPreservingArgs checks if a NULL-preserving function is null-rejecting
+// based on whether any of its arguments propagate inner NULL.
+// This is the unified logic for: NonTrue(F(args...)) ⊇ MustNull(F(args...)) = ⋃ MustNull(arg_i)
+//
+// Parameters:
+//   - args: function arguments to check
+//   - inner: inner schema to check against
+//   - maxArgsToCheck: maximum number of arguments to check (use -1 for all)
+//
+// Returns NullRejecting if any arg propagates NULL, Undecided otherwise.
+func checkNullPreservingArgs(args []expression.Expression, inner *expression.Schema, maxArgsToCheck int) NullRejectionResult {
+	if maxArgsToCheck < 0 || maxArgsToCheck > len(args) {
+		maxArgsToCheck = len(args)
+	}
+	for i := 0; i < maxArgsToCheck; i++ {
+		if isNullPropagatingWRTInner(args[i], inner) {
+			return NullRejecting
+		}
+	}
+	return Undecided
+}
+
 // isNullRejectingByStructure tries to decide *syntactically* whether predicate `p`
 // is NULL-rejecting w.r.t. `inner`. It returns:
 //
-//	NullRejecting    → definitely NULL-rejecting (no fallback needed)
-//	NotNullRejecting → definitely NOT NULL-rejecting (no fallback needed)
-//	Undecided        → cannot determine structurally (caller should apply fallback)
+//	NullRejecting    → definitely NULL-rejecting
+//	NotNullRejecting → definitely NOT NULL-rejecting
+//	Undecided        → cannot determine structurally (treated as NotNullRejecting by caller)
 //
-// The rules are deliberately conservative. If we cannot be *certain* from the
-// structure, we return Undecided and let the fallback decide.
+// This implements the two-set framework (NonTrue/MustNull) for sound null-rejection analysis.
+// The rules are deliberately conservative: if we cannot be *certain* from the
+// structure, we return Undecided (which the caller treats as not null-rejecting).
 //
-// Key families handled here:
-//  1. Comparisons/LIKE/REGEXP    → NULL-rejecting if a side actually propagates inner NULL
-//  2. Null-safe equal `<=>`      → NEVER NULL-rejecting
-//  3. IN/NOT IN                  → handled via fallback (NOT IN is UnaryNot(In(...)))
-//  4. Boolean composition        → AND/OR combine child decisions as in MySQL logic
-//  5. NOT (x IS NULL)            → NULL-rejecting if x comes from inner
+// Framework rules applied:
+//   - NonTrue(A AND B) = NonTrue(A) ∪ NonTrue(B)  [union: either side null-rejecting]
+//   - NonTrue(A OR B) = NonTrue(A) ∩ NonTrue(B)   [intersection: both must be null-rejecting]
+//   - NonTrue(NOT A) = MustNull(A)                [NOT requires MustNull evidence]
+//   - NonTrue(NULL Preserving F(args...)) ⊇ MustNull(F(args...)) = ⋃ MustNull(arg_i)
+//   - NonTrue(IS NOT NULL / IS TRUE / IS FALSE) ⊇ MustNull(arg)  [reject-NULL tests]
+//   - NonTrue(IS NULL / IS UNKNOWN) = ∅                           [accept-NULL tests]
 func isNullRejectingByStructure(p expression.Expression, inner *expression.Schema) NullRejectionResult {
 	sf, ok := p.(*expression.ScalarFunction)
 	if !ok {
 		// Non-scalar (pure column/constant) rarely decides anything structurally.
 		return Undecided
 	}
+
 	args := sf.GetArgs()
-	t := traitOf(sf.FuncName.L)
-	switch sf.FuncName.L {
+	funcName := sf.FuncName.L
+
+	switch funcName {
 	// ---- 1) Comparisons / LIKE / REGEXP ------------------------------------
-	// They are NULL-rejecting only if at least one side *propagates* inner NULL.
-	// Examples:
-	//   inner.a   = outer.b      → yes (propagates through inner.a)
-	//   ifnull(inner.a,0) = 1    → no  (inner NULL is hidden)
-	//   outer.b   = 1            → no  (no inner cols)
+	// NULL Preserving functions with explicit handling for common comparison operators.
 	case ast.EQ, ast.NE, ast.GT, ast.GE, ast.LT, ast.LE, ast.Like, ast.Ilike, ast.RegexpLike, ast.Regexp:
-		cols := expression.ExtractColumns(peelTransparentWrappers(p))
-		hasInner := false
-		for _, c := range cols {
-			if inner.Contains(c) {
-				hasInner = true
-				break
-			}
-		}
-		if !hasInner {
-			// No inner column referenced → not NULL-rejecting, and decision is final.
-			return NotNullRejecting
-		}
-		if len(args) == 2 &&
-			(isNullPropagatingWRTInner(args[0], inner) || isNullPropagatingWRTInner(args[1], inner)) {
-			return NullRejecting // structurally sufficient (info functions already excluded in isNullPropagatingWRTInner)
-		}
-		// We saw inner columns but couldn't prove propagation structurally
-		// (e.g., both sides have potential NULL-hiding). Let fallback decide.
-		return Undecided
+		return handleNullPreservingComparison(sf, args, inner)
 
 	// ---- 2) Null-safe equal `<=>` -------------------------------------------
 	// By definition it does not reject NULLs (NULL <=> NULL is TRUE).
@@ -533,90 +613,163 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 
 	// ---- 3) IN / NOT IN -----------------------------------------------------
 	// Defer IN to higher-level isNullRejectedInList() in IsNullRejected.
-	// Here we do not decide structurally.
 	case ast.In:
 		return Undecided
 
-	// ---- 4) IS [NOT] TRUE/FALSE (3VL predicates) ----------------------------
-	// For `E IS FALSE/TRUE`, we must NOT reuse the boolean-connective rules.
-	// Example: (FALSE AND innerNullable) is FALSE, so `IS FALSE` is TRUE and the
-	// row is KEPT — i.e. NOT NULL-rejecting. Treat these separately:
-	case ast.IsFalsity, ast.IsTruthWithoutNull, ast.IsTruthWithNull:
-		if anyColumnFromSchema(args[0], inner) {
-			return Undecided
-		}
+	// ---- 4) IS NULL (accept-NULL test) --------------------------------------
+	// Framework: NonTrue(IS NULL) = ∅. When A=U, IS NULL(A) = T.
+	case ast.IsNull:
 		return NotNullRejecting
 
-	// ---- 5) Boolean composition ---------------------------------------------
-	case ast.LogicAnd:
-		// AND is NULL-rejecting if EITHER side is NULL-rejecting.
-		left := isNullRejectingByStructure(args[0], inner)
-		right := isNullRejectingByStructure(args[1], inner)
-		if left != Undecided && right != Undecided {
-			if left == NullRejecting || right == NullRejecting {
-				return NullRejecting
-			}
-			return NotNullRejecting
-		}
-		return Undecided
-
-	case ast.LogicOr:
-		// OR is NULL-rejecting only if BOTH sides are NULL-rejecting.
-		left := isNullRejectingByStructure(args[0], inner)
-		right := isNullRejectingByStructure(args[1], inner)
-		if left != Undecided && right != Undecided {
-			if left == NullRejecting && right == NullRejecting {
-				return NullRejecting
-			}
-			return NotNullRejecting
-		}
-		return Undecided
-
-	// ---- 6) NOT … -----------------------------------------------------------
-	// We only address NOT (x IS NULL) ⇒ x IS NOT NULL, which *is* NULL-rejecting
-	// if x comes from the inner side. For other NOT forms, defer to fallback.
-	case ast.UnaryNot:
-		if child, ok := peelTransparentWrappers(args[0]).(*expression.ScalarFunction); ok {
-			switch child.FuncName.L {
-			case ast.IsNull:
-				// NOT (X IS NULL) ≡ X IS NOT NULL
-				// Treat it as NULL-rejecting only if X *propagates* inner NULL.
-				// e.g. X=inner.col            → propagates  → true
-				//      X=NOT(ISNULL(inner.col))→ never NULL → false
-				if isNullPropagatingWRTInner(child.GetArgs()[0], inner) {
-					return NullRejecting
-				}
-				// Deterministically NOT null-rejecting if X doesn't propagate inner NULL.
-				return NotNullRejecting
-			case ast.In:
-				// NOT (IN(...)) → let fallback handle exact 3VL
-				return Undecided
-			}
-		}
-		return Undecided
-	}
-	// ---------- default families ----------
-	// Unknown / unhandled function families → undecided, let fallback run.
-	// If this is a known NullPreserving comparator family, but we reached here via default,
-	// we still honor the generic rule; otherwise, unknown/unhandled → undecided.
-	if has(t, NullPreserving) {
-		cols := expression.ExtractColumns(peelTransparentWrappers(p))
-		hasInner := false
-		for _, c := range cols {
-			if inner.Contains(c) {
-				hasInner = true
-				break
-			}
-		}
-		if !hasInner {
-			return NotNullRejecting
-		}
-		a := sf.GetArgs()
-		if len(a) == 2 && (isNullPropagatingWRTInner(a[0], inner) || isNullPropagatingWRTInner(a[1], inner)) {
+	// ---- 5) IS TRUE / IS FALSE / IS NOT NULL (reject-NULL tests) -----------
+	// Framework: NonTrue(Test_reject_NULL(A)) ⊇ MustNull(A)
+	case ast.IsFalsity, ast.IsTruthWithoutNull, ast.IsTruthWithNull:
+		if len(args) > 0 && isNullPropagatingWRTInner(args[0], inner) {
 			return NullRejecting
 		}
 		return Undecided
+
+	// ---- 6) Boolean composition ---------------------------------------------
+	case ast.LogicAnd:
+		return handleLogicAnd(args, inner)
+
+	case ast.LogicOr:
+		return handleLogicOr(args, inner)
+
+	// ---- 7) XOR (NULL-preserving: NULL XOR anything = NULL) -----------------
+	case ast.LogicXor:
+		return handleLogicXor(args, inner)
+
+	// ---- 8) NOT … -----------------------------------------------------------
+	case ast.UnaryNot:
+		return handleUnaryNot(args, inner)
+
+	default:
+		// Generic handler for other NullPreserving functions
+		return handleGenericNullPreserving(sf, args, inner)
 	}
-	// Unknown / unhandled function families → undecided, let fallback run.
+}
+
+// handleNullPreservingComparison handles comparison operators (=, <>, <, >, <=, >=, LIKE, REGEXP).
+// Optimized: uses containsColumnFromSchema to avoid slice allocation.
+func handleNullPreservingComparison(sf *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+	// Quick check: does the expression reference any inner column?
+	peeled := peelTransparentWrappers(sf)
+	if !containsColumnFromSchema(peeled, inner) {
+		return NotNullRejecting
+	}
+
+	// Check if any argument propagates NULL (union semantics)
+	// For LIKE/ILIKE, only check first 2 args (escape arg is usually constant)
+	maxArgs := 2
+	return checkNullPreservingArgs(args, inner, maxArgs)
+}
+
+// handleLogicAnd handles AND with union semantics: NonTrue(A AND B) = NonTrue(A) ∪ NonTrue(B)
+func handleLogicAnd(args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+	if len(args) < 2 {
+		return Undecided
+	}
+
+	left := isNullRejectingByStructure(args[0], inner)
+	// Short-circuit: if left is NullRejecting, the whole is NullRejecting
+	if left == NullRejecting {
+		return NullRejecting
+	}
+
+	right := isNullRejectingByStructure(args[1], inner)
+	if right == NullRejecting {
+		return NullRejecting
+	}
+
+	// Both sides determined but neither is NullRejecting
+	if left != Undecided && right != Undecided {
+		return NotNullRejecting
+	}
+
 	return Undecided
+}
+
+// handleLogicXor handles XOR with union semantics (NULL-preserving: NULL XOR anything = NULL).
+// NonTrue(A XOR B) ⊇ MustNull(A) ∪ MustNull(B)
+func handleLogicXor(args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+	if len(args) < 2 {
+		return Undecided
+	}
+	// XOR is NULL-preserving: if ANY side propagates NULL, result is NULL
+	return checkNullPreservingArgs(args, inner, -1)
+}
+
+// handleLogicOr handles OR with intersection semantics: NonTrue(A OR B) = NonTrue(A) ∩ NonTrue(B)
+func handleLogicOr(args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+	if len(args) < 2 {
+		return Undecided
+	}
+
+	left := isNullRejectingByStructure(args[0], inner)
+	// Short-circuit: if left is NotNullRejecting, the whole cannot be NullRejecting
+	if left == NotNullRejecting {
+		return NotNullRejecting
+	}
+
+	right := isNullRejectingByStructure(args[1], inner)
+	if right == NotNullRejecting {
+		return NotNullRejecting
+	}
+
+	// Both sides must be NullRejecting for intersection
+	if left == NullRejecting && right == NullRejecting {
+		return NullRejecting
+	}
+
+	return Undecided
+}
+
+// handleUnaryNot handles NOT with MustNull semantics: NonTrue(NOT A) = MustNull(A)
+func handleUnaryNot(args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+	if len(args) == 0 {
+		return Undecided
+	}
+
+	child := args[0]
+	childPeeled := peelTransparentWrappers(child)
+
+	// Special handling for NOT (IS NULL) and NOT (IN)
+	if childSF, ok := childPeeled.(*expression.ScalarFunction); ok {
+		switch childSF.FuncName.L {
+		case ast.IsNull:
+			// NOT (X IS NULL) ≡ X IS NOT NULL (reject-NULL test)
+			if len(childSF.GetArgs()) > 0 && isNullPropagatingWRTInner(childSF.GetArgs()[0], inner) {
+				return NullRejecting
+			}
+			return NotNullRejecting
+		case ast.In:
+			// NOT (IN(...)) → defer to fallback
+			return Undecided
+		}
+	}
+
+	// General NOT: NonTrue(NOT A) = MustNull(A)
+	if isNullPropagatingWRTInner(child, inner) {
+		return NullRejecting
+	}
+	return Undecided
+}
+
+// handleGenericNullPreserving handles other NullPreserving functions not explicitly listed.
+// Uses the generic rule: NonTrue(F(args...)) ⊇ MustNull(F(args...)) = ⋃ MustNull(arg_i)
+func handleGenericNullPreserving(sf *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+	t := traitOf(sf.FuncName.L)
+	if !has(t, NullPreserving) {
+		return Undecided
+	}
+
+	// Quick check: does the expression reference any inner column?
+	peeled := peelTransparentWrappers(sf)
+	if !containsColumnFromSchema(peeled, inner) {
+		return NotNullRejecting
+	}
+
+	// Check all arguments for NULL propagation
+	return checkNullPreservingArgs(args, inner, -1)
 }
