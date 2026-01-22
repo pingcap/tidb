@@ -71,16 +71,6 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		currentLeadingHint = join.HintInfo
 	}
 
-	// Check if current plan is a derived table referenced in LEADING hint
-	// If so, don't expand it - keep it as an atomic unit for join reordering
-	if currentLeadingHint != nil && isDerivedTableInLeadingHint(p, currentLeadingHint) {
-		return &joinGroupResult{
-			group:              []base.LogicalPlan{p},
-			joinOrderHintInfo:  nil,
-			basicJoinGroupInfo: &basicJoinGroupInfo{},
-		}
-	}
-
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
