@@ -256,10 +256,10 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		for j, s := range collectors[i].Samples {
 			s.Ordinal = j
 			tmp, err := tablecodec.DecodeColumnValue(s.Value.GetBytes(), &col.FieldType, timeZone)
-			s.Value = &tmp
 			if err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
+			s.Value = &tmp
 			// When collation is enabled, we store the Key representation of the sampling data. So we set it to kind `Bytes` here
 			// to avoid to convert it to its Key representation once more.
 			if s.Value.Kind() == types.KindString {
