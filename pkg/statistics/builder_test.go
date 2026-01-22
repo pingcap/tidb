@@ -92,14 +92,14 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 		d := types.NewIntDatum(int64(1000))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i <= 1_000; i++ {
 		total++
 		d := types.NewIntDatum(int64(2000))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	end := total / 2
 	for range end {
@@ -107,14 +107,14 @@ func BenchmarkBuildHistAndTopNWithLowNDV(b *testing.B) {
 		d := types.NewIntDatum(rand.Int63n(50))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	end = cnt - total
 	for range end {
 		d := types.NewIntDatum(rand.Int63n(100))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(b, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	collector := &SampleCollector{
 		Samples:   data,
