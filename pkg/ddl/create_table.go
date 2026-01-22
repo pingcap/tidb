@@ -507,6 +507,10 @@ func checkTableInfoValidWithStmt(ctx *metabuild.Context, tbInfo *model.TableInfo
 	if ctx.PrimaryKeyRequired() && len(tbInfo.GetPkName().String()) == 0 {
 		return infoschema.ErrTableWithoutPrimaryKey
 	}
+	// ACTIVE_ACTIVE tables must have a primary key.
+	if tbInfo.IsActiveActive && len(tbInfo.GetPkName().String()) == 0 {
+		return dbterror.ErrGeneralUnsupportedDDL.FastGenByArgs("must have explicit PK for Active-Active table")
+	}
 	if tbInfo.Partition != nil {
 		if err := checkPartitionDefinitionConstraints(ctx.GetExprCtx(), tbInfo); err != nil {
 			return errors.Trace(err)
@@ -774,6 +778,19 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbIn
 	colDefs := s.Cols
 	dbCharset := dbInfo.Charset
 	dbCollate := dbInfo.Collate
+
+	// Only derive internal-column-related options (softdelete/active-active) early.
+	optInfo := &model.TableInfo{}
+	if err := ensureInternalColumnsForTableOptions(optInfo, dbInfo, s.Options); err != nil {
+		return nil, errors.Trace(err)
+	}
+	for _, ci := range optInfo.Columns {
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{Name: ci.Name},
+			Tp:   ci.FieldType.Clone(),
+		})
+	}
+
 	tableCharset, tableCollate, err := GetCharsetAndCollateInTableOption(0, s.Options, ctx.GetDefaultCollationForUTF8MB4())
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -914,12 +931,91 @@ func extractAutoRandomBitsFromColDef(colDef *ast.ColumnDef) (shardBits, rangeBit
 	return 0, 0, nil
 }
 
+// ensureInternalColumnsForTableOptions appends internal columns needed by table options
+// before building indexes/constraints that may reference them.
+func ensureInternalColumnsForTableOptions(tbInfo *model.TableInfo, dbInfo *model.DBInfo, options []*ast.TableOption) error {
+	if tbInfo == nil {
+		return nil
+	}
+	var (
+		activeActive  *bool
+		softDeleteArg = &model.SoftDeleteInfoArg{}
+	)
+	for _, op := range options {
+		switch op.Tp {
+		case ast.TableOptionSoftDelete:
+			softDeleteArg.Enable = op.BoolValue
+			softDeleteArg.HasEnable = true
+			softDeleteArg.Handled = true
+		case ast.TableOptionSoftDeleteRetention:
+			softDeleteArg.Retention = op.StrValue
+			softDeleteArg.RetentionUnit = op.TimeUnitValue.Unit
+			softDeleteArg.Handled = true
+		case ast.TableOptionSoftDeleteJobInterval:
+			softDeleteArg.JobInterval = op.StrValue
+			softDeleteArg.Handled = true
+		case ast.TableOptionSoftDeleteJobEnable:
+			softDeleteArg.JobEnable = op.BoolValue
+			softDeleteArg.HasJobEnable = true
+			softDeleteArg.Handled = true
+		case ast.TableOptionActiveActive:
+			v := op.BoolValue
+			activeActive = &v
+		}
+	}
+
+	if dbInfo == nil {
+		dbInfo = &model.DBInfo{}
+	}
+	var err error
+	tbInfo.SoftdeleteInfo, tbInfo.IsActiveActive, err = getSoftDeleteAndActiveActive(dbInfo.SoftdeleteInfo, softDeleteArg, dbInfo.IsActiveActive, activeActive)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if err := checkSoftDeleteAndActiveActive(tbInfo, nil, ast.CIStr{}); err != nil {
+		return errors.Trace(err)
+	}
+
+	// Add internal columns if they are required and not already present.
+	if tbInfo.IsActiveActive {
+		if model.FindColumnInfo(tbInfo.Columns, model.ExtraOriginTSName.L) == nil {
+			originTSCol := model.NewExtraOriginTSColInfo()
+			originTSCol.ID = AllocateColumnID(tbInfo)
+			originTSCol.State = model.StatePublic
+			originTSCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, originTSCol)
+		} else {
+			// User-defined internal column must match expected type.
+			expected := model.NewExtraOriginTSColInfo().FieldType
+			col := model.FindColumnInfo(tbInfo.Columns, model.ExtraOriginTSName.L)
+			if col.FieldType.GetType() != expected.GetType() || col.FieldType.GetFlen() != expected.GetFlen() || col.FieldType.GetDecimal() != expected.GetDecimal() {
+				return types.ErrWrongFieldSpec.GenWithStackByArgs(model.ExtraOriginTSName.L)
+			}
+		}
+	}
+	if tbInfo.SoftdeleteInfo != nil {
+		if model.FindColumnInfo(tbInfo.Columns, model.ExtraSoftDeleteTimeName.L) == nil {
+			softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
+			softDeleteCol.ID = AllocateColumnID(tbInfo)
+			softDeleteCol.State = model.StatePublic
+			softDeleteCol.Offset = len(tbInfo.Columns)
+			tbInfo.Columns = append(tbInfo.Columns, softDeleteCol)
+		} else {
+			// User-defined internal column must match expected type.
+			expected := model.NewExtraSoftDeleteTimeColInfo().FieldType
+			col := model.FindColumnInfo(tbInfo.Columns, model.ExtraSoftDeleteTimeName.L)
+			if col.FieldType.GetType() != expected.GetType() || col.FieldType.GetFlen() != expected.GetFlen() || col.FieldType.GetDecimal() != expected.GetDecimal() {
+				return types.ErrWrongFieldSpec.GenWithStackByArgs(model.ExtraSoftDeleteTimeName.L)
+			}
+		}
+	}
+	return nil
+}
+
 // handleTableOptions updates tableInfo according to table options.
 func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbInfo *model.DBInfo) error {
 	var (
 		ttlOptionsHandled bool
-		activeActive      *bool
-		softDeleteArg     = &model.SoftDeleteInfoArg{}
 	)
 
 	for _, op := range options {
@@ -977,24 +1073,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
-		case ast.TableOptionSoftDelete:
-			softDeleteArg.Enable = op.BoolValue
-			softDeleteArg.HasEnable = true
-			softDeleteArg.Handled = true
-		case ast.TableOptionSoftDeleteRetention:
-			softDeleteArg.Retention = op.StrValue
-			softDeleteArg.RetentionUnit = op.TimeUnitValue.Unit
-			softDeleteArg.Handled = true
-		case ast.TableOptionSoftDeleteJobInterval:
-			softDeleteArg.JobInterval = op.StrValue
-			softDeleteArg.Handled = true
-		case ast.TableOptionSoftDeleteJobEnable:
-			softDeleteArg.JobEnable = op.BoolValue
-			softDeleteArg.HasJobEnable = true
-			softDeleteArg.Handled = true
-		case ast.TableOptionActiveActive:
-			v := op.BoolValue
-			activeActive = &v
 		case ast.TableOptionEngineAttribute:
 			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
@@ -1005,32 +1083,9 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 		tbInfo.PreSplitRegions = shardingBits
 	}
 
-	var err error
-	tbInfo.SoftdeleteInfo, tbInfo.IsActiveActive, err = getSoftDeleteAndActiveActive(dbInfo.SoftdeleteInfo, softDeleteArg, dbInfo.IsActiveActive, activeActive)
-	if err != nil {
+	// Softdelete/active-active options may need to add internal columns.
+	if err := ensureInternalColumnsForTableOptions(tbInfo, dbInfo, options); err != nil {
 		return errors.Trace(err)
-	}
-	if err := checkSoftDeleteAndActiveActive(tbInfo, nil, ast.CIStr{}); err != nil {
-		return errors.Trace(err)
-	}
-
-	// Add extra hidden columns for active-active and soft-delete features
-	if tbInfo.IsActiveActive {
-		// Add _tidb_origin_ts hidden column
-		originTSCol := model.NewExtraOriginTSColInfo()
-		originTSCol.ID = AllocateColumnID(tbInfo)
-		originTSCol.State = model.StatePublic
-		originTSCol.Offset = len(tbInfo.Columns)
-		tbInfo.Columns = append(tbInfo.Columns, originTSCol)
-	}
-
-	if tbInfo.SoftdeleteInfo != nil {
-		// Add _tidb_softdelete_time hidden column
-		softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
-		softDeleteCol.ID = AllocateColumnID(tbInfo)
-		softDeleteCol.State = model.StatePublic
-		softDeleteCol.Offset = len(tbInfo.Columns)
-		tbInfo.Columns = append(tbInfo.Columns, softDeleteCol)
 	}
 
 	return nil

@@ -16,6 +16,17 @@ show create database test_aa;
 Database	Create Database
 test_aa	CREATE DATABASE `test_aa` /*!40100 DEFAULT CHARACTER SET utf8mb4 */ /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 use test_aa;
+set @@sql_require_primary_key=false;
+create table t_no_pk (id int, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
+Error 8200 (HY000): Unsupported must have explicit PK for Active-Active table
+set @@sql_require_primary_key=DEFAULT;
+set tidb_enable_clustered_index = OFF;
+drop table if exists t_drop_pk;
+create table t_drop_pk (id int primary key, v int) softdelete retention 7 day, active_active = 'ON';
+alter table t_drop_pk drop primary key;
+Error 8200 (HY000): Unsupported drop primary key when the table is active-active
+drop table if exists t_drop_pk;
+set tidb_enable_clustered_index = DEFAULT;
 create table t (id int primary key, name varchar(50));
 show create table t;
 Table	Create Table
@@ -62,8 +73,8 @@ t	CREATE TABLE `t` (
   `id` int NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
   /*T![softdelete] , KEY `i3` (`_tidb_softdelete_time`) GLOBAL */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-PARTITION BY HASH (`id`) PARTITIONS 4 /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+PARTITION BY HASH (`id`) PARTITIONS 4
 drop table if exists t;
 create table t (
 id int primary key,

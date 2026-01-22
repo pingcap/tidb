@@ -335,7 +335,8 @@ func NewExtraOriginTSColInfo() *ColumnInfo {
 		Name: ExtraOriginTSName,
 	}
 	colInfo.SetType(mysql.TypeLonglong)
-	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.SetFlag(colInfo.GetFlag() | mysql.UnsignedFlag)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(colInfo.GetType())
 	colInfo.SetFlen(flen)
 	colInfo.SetDecimal(decimal)
 	colInfo.SetCharset(charset.CharsetBin)
@@ -349,8 +350,7 @@ func NewExtraSoftDeleteTimeColInfo() *ColumnInfo {
 		Name: ExtraSoftDeleteTimeName,
 	}
 	colInfo.SetType(mysql.TypeTimestamp)
-	flen, _ := mysql.GetDefaultFieldLengthAndDecimal(colInfo.GetType())
-	colInfo.SetFlen(flen)
+	colInfo.SetFlen(mysql.MaxDatetimeWidthWithFsp)
 	colInfo.SetDecimal(6)
 	colInfo.SetCharset(charset.CharsetBin)
 	colInfo.SetCollate(charset.CollationBin)

@@ -308,7 +308,17 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
-	if colName := colDef.Name.Name; model.IsInternalColumn(colName) {
+	if colName := colDef.Name.Name; colName == model.ExtraSoftDeleteTimeName {
+		expected := model.NewExtraSoftDeleteTimeColInfo().FieldType
+		if colDef.Tp.GetType() != expected.GetType() || colDef.Tp.GetDecimal() != expected.GetDecimal() || colDef.Tp.GetFlen() != expected.GetFlen() {
+			return nil, nil, types.ErrWrongFieldSpec.GenWithStackByArgs(colName.L)
+		}
+	} else if colName == model.ExtraOriginTSName {
+		expected := model.NewExtraOriginTSColInfo().FieldType
+		if colDef.Tp.GetType() != expected.GetType() || colDef.Tp.GetDecimal() != expected.GetDecimal() || colDef.Tp.GetFlen() != expected.GetFlen() {
+			return nil, nil, types.ErrWrongFieldSpec.GenWithStackByArgs(colName.L)
+		}
+	} else if model.IsInternalColumn(colName) {
 		return nil, nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(colName.L)
 	}
 

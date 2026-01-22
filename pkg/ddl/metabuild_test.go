@@ -19,13 +19,59 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCreateTableIndexOnSoftDeleteInternalColumn(t *testing.T) {
+	sctx := mock.NewContext()
+	ctx := NewMetaBuildContextWithSctx(sctx)
+
+	// Minimal TableInfo for option defaults.
+	dbInfo := &model.DBInfo{
+		Charset: mysql.DefaultCharset,
+		Collate: mysql.DefaultCollationName,
+	}
+
+	stmt := &ast.CreateTableStmt{
+		Table: &ast.TableName{Name: ast.NewCIStr("t")},
+		Cols: []*ast.ColumnDef{
+			{
+				Name: &ast.ColumnName{Name: ast.NewCIStr("id")},
+				Tp:   types.NewFieldType(mysql.TypeLong),
+				Options: []*ast.ColumnOption{
+					{Tp: ast.ColumnOptionNotNull},
+				},
+			},
+		},
+		Constraints: []*ast.Constraint{
+			{Tp: ast.ConstraintPrimaryKey, Keys: []*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: ast.NewCIStr("id")}}}},
+			{
+				Tp:   ast.ConstraintIndex,
+				Name: "i1",
+				Keys: []*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: model.ExtraSoftDeleteTimeName}, Length: types.UnspecifiedLength}},
+			},
+		},
+
+		Options: []*ast.TableOption{
+			{Tp: ast.TableOptionSoftDeleteRetention, StrValue: "7", TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitDay}},
+		},
+	}
+
+	tbl, err := BuildTableInfoWithStmt(ctx, stmt, dbInfo)
+	require.NoError(t, err)
+	require.NotNil(t, model.FindColumnInfo(tbl.Columns, model.ExtraSoftDeleteTimeName.L))
+	// Ensure the index was built.
+	idx := tbl.FindIndexByName("i1")
+	require.NotNil(t, idx)
+}
 
 func TestNewMetaBuildContextWithSctx(t *testing.T) {
 	sqlMode := mysql.ModeStrictAllTables | mysql.ModeNoZeroDate

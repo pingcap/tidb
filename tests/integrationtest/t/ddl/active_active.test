@@ -12,6 +12,21 @@ alter database test_aa active_active = 'ON' softdelete = retention 7 day;
 show create database test_aa;
 use test_aa;
 
+# ACTIVE_ACTIVE tables must have an explicit primary key.
+set @@sql_require_primary_key=false;
+-- error 8200
+create table t_no_pk (id int, name varchar(50)) active_active = 'ON' softdelete = retention 7 day;
+set @@sql_require_primary_key=DEFAULT;
+
+# ACTIVE_ACTIVE tables must not allow dropping primary key.
+set tidb_enable_clustered_index = OFF;
+drop table if exists t_drop_pk;
+create table t_drop_pk (id int primary key, v int) softdelete retention 7 day, active_active = 'ON';
+-- error 8200
+alter table t_drop_pk drop primary key;
+drop table if exists t_drop_pk;
+set tidb_enable_clustered_index = DEFAULT;
+
 create table t (id int primary key, name varchar(50));
 show create table t;
 alter database test_aa active_active = 'OFF' softdelete = 'OFF';

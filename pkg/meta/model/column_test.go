@@ -111,11 +111,12 @@ func TestInternalColumn(t *testing.T) {
 		typ     byte
 		flen    int
 		decimal int
+		flag    uint
 	}{
-		{NewExtraHandleColInfo(), mysql.TypeLonglong, 0, 0},
-		{NewExtraCommitTSColInfo(), mysql.TypeLonglong, 0, 0},
-		{NewExtraOriginTSColInfo(), mysql.TypeLonglong, 0, 0},
-		{NewExtraSoftDeleteTimeColInfo(), mysql.TypeTimestamp, 0, 6},
+		{NewExtraHandleColInfo(), mysql.TypeLonglong, 0, 0, mysql.NotNullFlag | mysql.PriKeyFlag},
+		{NewExtraCommitTSColInfo(), mysql.TypeLonglong, 0, 0, 0},
+		{NewExtraOriginTSColInfo(), mysql.TypeLonglong, 0, 0, mysql.UnsignedFlag},
+		{NewExtraSoftDeleteTimeColInfo(), mysql.TypeTimestamp, 0, 6, 0},
 	}
 	for _, c := range cases {
 		eflen, edecimal := mysql.GetDefaultFieldLengthAndDecimal(c.typ)
@@ -123,5 +124,6 @@ func TestInternalColumn(t *testing.T) {
 		edecimal = max(edecimal, c.decimal)
 		require.Equal(t, eflen, c.col.GetFlen())
 		require.Equal(t, edecimal, c.col.GetDecimal())
+		require.Equal(t, c.flag, c.col.GetFlag())
 	}
 }
