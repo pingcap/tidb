@@ -100,6 +100,10 @@ func (c *SampleCollector) MergeSampleCollector(sc *stmtctx.StatementContext, rc 
 		terror.Log(errors.Trace(err))
 	}
 	for _, item := range rc.Samples {
+		if item.Value == nil {
+			terror.Log(errors.Errorf("sample item value is nil"))
+			continue
+		}
 		err := c.collect(sc, *item.Value)
 		terror.Log(errors.Trace(err))
 	}

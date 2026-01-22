@@ -434,6 +434,9 @@ func BuildHistAndTopN(
 		return cmp.Compare(a.Count, b.Count) // min-heap: smaller counts at root
 	})
 
+	if samples[0].Value == nil {
+		return nil, nil, errors.Errorf("sample item value is nil")
+	}
 	cur, err := getComparedBytes(*samples[0].Value)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
@@ -453,6 +456,9 @@ func BuildHistAndTopN(
 		}
 		if numTopN == 0 {
 			continue
+		}
+		if samples[i].Value == nil {
+			return nil, nil, errors.Errorf("sample item value is nil")
 		}
 		sampleBytes, err := getComparedBytes(*samples[i].Value)
 		if err != nil {
