@@ -38,13 +38,13 @@ import (
 
 // rankTopNCase is the sort case for RankTopN tests with string prefix key
 type rankTopNCase struct {
-	ctx                 sessionctx.Context
-	rowCount            int
-	cols                []*expression.Column
-	orderByIdx          []int
-	prefixKeyExprs      []expression.Expression
-	prefixKeyColIdxs    []int
-	prefixKeyCharCounts []int
+	ctx                         sessionctx.Context
+	rowCount                    int
+	cols                        []*expression.Column
+	orderByIdx                  []int
+	truncateKeyExprs            []expression.Expression
+	truncateKeyColIdxs          []int
+	truncateKeyPrefixCharCounts []int
 }
 
 func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Schema) *testutil.MockDataSource {
@@ -53,26 +53,26 @@ func buildRankTopNDataSource(rankTopNCase *rankTopNCase, schema *expression.Sche
 		DataSchema: schema,
 		Rows:       rankTopNCase.rowCount,
 		Ctx:        rankTopNCase.ctx,
-		Ndvs:       make([]int, len(rankTopNCase.prefixKeyExprs)+1),
-		Datums:     make([][]any, len(rankTopNCase.prefixKeyExprs)+1),
+		Ndvs:       make([]int, len(rankTopNCase.truncateKeyExprs)+1),
+		Datums:     make([][]any, len(rankTopNCase.truncateKeyExprs)+1),
 	}
 
-	for i := range rankTopNCase.prefixKeyExprs {
+	for i := range rankTopNCase.truncateKeyExprs {
 		// -2 means use provided data
 		opt.Ndvs[i] = -2
 	}
 
 	outputs := make([]string, rankTopNCase.rowCount)
 
-	opt.Ndvs[len(rankTopNCase.prefixKeyExprs)] = 0
+	opt.Ndvs[len(rankTopNCase.truncateKeyExprs)] = 0
 	// Generate prefix key data: strings that are pre-ordered.
 	// Each prefix group has multiple rows; the group size is variable and each group
 	// size is randomized in [1, 200].
-	for i, ft := range rankTopNCase.prefixKeyExprs {
+	for i, ft := range rankTopNCase.truncateKeyExprs {
 		prefixData := make([]any, rankTopNCase.rowCount)
 		groupIdx := 0
 		var bufLen int
-		if rankTopNCase.prefixKeyCharCounts[i] == -1 {
+		if rankTopNCase.truncateKeyPrefixCharCounts[i] == -1 {
 			bufLen = 0
 		} else {
 			bufLen = 5
@@ -135,7 +135,7 @@ func buildRankTopNExec(rankTopNCase *rankTopNCase, dataSource *testutil.MockData
 		Concurrency: 5,
 	}
 
-	topNexec.SetPrefixKeyMetasForTest(rankTopNCase.prefixKeyExprs, rankTopNCase.prefixKeyColIdxs, rankTopNCase.prefixKeyCharCounts)
+	topNexec.SetTruncateKeyMetasForTest(rankTopNCase.truncateKeyExprs, rankTopNCase.truncateKeyColIdxs, rankTopNCase.truncateKeyPrefixCharCounts)
 	return topNexec
 }
 
@@ -159,42 +159,42 @@ func TestRankTopN(t *testing.T) {
 	ctx := mock.NewContext()
 	rankTopNCases := make([]*rankTopNCase, 0)
 	for _, collationName := range collationNames {
-		prefixKeyField := types.NewFieldType(mysql.TypeVarString)
-		prefixKeyField.SetCharset("utf8mb4")
-		prefixKeyField.SetCollate(collationName)
+		truncateKeyField := types.NewFieldType(mysql.TypeVarString)
+		truncateKeyField.SetCharset("utf8mb4")
+		truncateKeyField.SetCollate(collationName)
 		rankTopNCases = append(rankTopNCases, &rankTopNCase{
 			rowCount:   rand.Intn(9000) + 1000,
 			ctx:        ctx,
-			orderByIdx: []int{0}, // Order by prefix key column
-			prefixKeyExprs: []expression.Expression{
+			orderByIdx: []int{0}, // Order by truncate key column
+			truncateKeyExprs: []expression.Expression{
 				&expression.Column{
-					RetType: prefixKeyField,
+					RetType: truncateKeyField,
 					Index:   0,
 				}},
-			prefixKeyColIdxs:    []int{0},
-			prefixKeyCharCounts: []int{14},
+			truncateKeyColIdxs:          []int{0},
+			truncateKeyPrefixCharCounts: []int{14},
 			cols: []*expression.Column{
-				{Index: 0, RetType: prefixKeyField},
+				{Index: 0, RetType: truncateKeyField},
 				{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		})
 		rankTopNCases = append(rankTopNCases, &rankTopNCase{
 			rowCount:   rand.Intn(9000) + 1000,
 			ctx:        ctx,
-			orderByIdx: []int{0, 1}, // Order by prefix key column
-			prefixKeyExprs: []expression.Expression{
+			orderByIdx: []int{0, 1}, // Order by truncate key column
+			truncateKeyExprs: []expression.Expression{
 				&expression.Column{
-					RetType: prefixKeyField,
+					RetType: truncateKeyField,
 					Index:   0,
 				},
 				&expression.Column{
-					RetType: prefixKeyField,
+					RetType: truncateKeyField,
 					Index:   1,
 				}},
-			prefixKeyColIdxs:    []int{0, 1},
-			prefixKeyCharCounts: []int{-1, 12},
+			truncateKeyColIdxs:          []int{0, 1},
+			truncateKeyPrefixCharCounts: []int{-1, 12},
 			cols: []*expression.Column{
-				{Index: 0, RetType: prefixKeyField},
-				{Index: 1, RetType: prefixKeyField},
+				{Index: 0, RetType: truncateKeyField},
+				{Index: 1, RetType: truncateKeyField},
 				{Index: 2, RetType: types.NewFieldType(mysql.TypeLonglong)}},
 		})
 	}

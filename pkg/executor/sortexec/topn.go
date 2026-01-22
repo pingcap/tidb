@@ -77,13 +77,13 @@ type TopNExec struct {
 
 	typeCtx types.Context
 
-	truncateKeyExprs       []expression.Expression
-	truncateFieldTypes     []*types.FieldType
-	truncateFieldCollators []collate.Collator
-	truncateKeyColIdxs     []int
-	truncateKeyCharCounts  []int
-	prevTruncateKeys       []string
-	truncateKeyCount       int
+	truncateKeyExprs            []expression.Expression
+	truncateFieldTypes          []*types.FieldType
+	truncateFieldCollators      []collate.Collator
+	truncateKeyColIdxs          []int
+	truncateKeyPrefixCharCounts []int
+	prevTruncateKeys            []string
+	truncateKeyCount            int
 }
 
 // Open implements the Executor Open interface.
@@ -103,7 +103,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
 
-	if len(e.truncateKeyCharCounts) > 0 {
+	if len(e.truncateKeyPrefixCharCounts) > 0 {
 		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	}
 
@@ -428,7 +428,7 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]string, error) {
 	prefixKeys := make([]string, 0, e.truncateKeyCount)
 	for i := range e.truncateFieldCollators {
-		if e.truncateKeyCharCounts[i] == -1 {
+		if e.truncateKeyPrefixCharCounts[i] == -1 {
 			bytes, err := row.SerializeToBytesForOneColumn(
 				e.typeCtx,
 				e.truncateFieldTypes[i],
@@ -440,7 +440,7 @@ func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]string, error) {
 			prefixKeys = append(prefixKeys, string(hack.String(bytes)))
 		} else {
 			key := row.GetString(e.truncateKeyColIdxs[i])
-			prefixKeys = append(prefixKeys, string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.truncateKeyCharCounts[i]))))
+			prefixKeys = append(prefixKeys, string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.truncateKeyPrefixCharCounts[i]))))
 		}
 	}
 	return prefixKeys, nil
@@ -870,9 +870,9 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 	}
 }
 
-// SetPrefixKeyMetasForTest sets prefix key fields for testing the RankTopN path.
-func (e *TopNExec) SetPrefixKeyMetasForTest(prefixKeyExprs []expression.Expression, prefixKeyColIdxs []int, prefixKeyCharCounts []int) {
-	e.truncateKeyExprs = prefixKeyExprs
-	e.truncateKeyColIdxs = prefixKeyColIdxs
-	e.truncateKeyCharCounts = prefixKeyCharCounts
+// SetTruncateKeyMetasForTest sets truncate key fields for testing the RankTopN path.
+func (e *TopNExec) SetTruncateKeyMetasForTest(truncateKeyExprs []expression.Expression, truncateKeyColIdxs []int, truncateKeyCharCounts []int) {
+	e.truncateKeyExprs = truncateKeyExprs
+	e.truncateKeyColIdxs = truncateKeyColIdxs
+	e.truncateKeyPrefixCharCounts = truncateKeyCharCounts
 }
