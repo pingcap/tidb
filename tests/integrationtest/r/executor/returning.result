@@ -1,0 +1,54 @@
+drop table if exists t;
+create table t (id int auto_increment primary key, name varchar(20), val int default 10);
+insert into t (name) values ('alice') returning *;
+id	name	val
+1	alice	10
+insert into t (name, val) values ('bob', 20) returning id, name;
+id	name
+2	bob
+insert into t (name, val) values ('charlie', 30) returning id, val + 1 as val_plus_one;
+id	val_plus_one
+3	31
+insert into t (name) values ('dave') returning id, val;
+id	val
+4	10
+insert into t (name, val) values ('eve', 50), ('frank', 60) returning id, name, val;
+id	name	val
+5	eve	50
+6	frank	60
+insert into t set name = 'gina', val = 70 returning id, name, val;
+id	name	val
+7	gina	70
+insert into t (name, val) select 'henry', 80 returning id, name, val;
+id	name	val
+8	henry	80
+insert into t (id, name, val) values (200, 'dup', 1);
+insert ignore into t (id, name, val) values (200, 'dup2', 2), (201, 'ok', 3) returning id, name;
+id	name
+201	ok
+insert into t (id, name, val) values (300, 'orig', 1);
+insert into t (id, name, val) values (300, 'updated', 5) on duplicate key update name=values(name), val=values(val)+1 returning id, name, val;
+id	name	val
+300	updated	6
+select * from t order by id;
+id	name	val
+1	alice	10
+2	bob	20
+3	charlie	30
+4	dave	10
+5	eve	50
+6	frank	60
+7	gina	70
+8	henry	80
+200	dup	1
+201	ok	3
+300	updated	6
+update t set val = val + 1 returning *;
+Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
+update t set val = 100 where id = 1 returning id, val;
+Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
+delete from t returning *;
+Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
+delete from t where id = 1 returning id, name;
+Error 1235 (42000): This version of TiDB doesn't yet support 'RETURNING clause'
+drop table t;
