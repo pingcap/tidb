@@ -479,21 +479,21 @@ select @@last_plan_from_cache;
 1
 drop table if exists t;
 create table t(j json, unique kj((cast(j as signed array))));
-explain select j from t where j=1;
+explain format='brief' select j from t where j=1;
 id	estRows	task	access object	operator info
-TableReader_8	8000.00	root		data:Selection_7
-└─Selection_7	8000.00	cop[tikv]		eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY))
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select j from t where j=1 or j=2;
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select j from t where j=1 or j=2;
 id	estRows	task	access object	operator info
-TableReader_8	9600.00	root		data:Selection_7
-└─Selection_7	9600.00	cop[tikv]		or(eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY)), eq(planner__core__indexmerge_path.t.j, cast(2, json BINARY)))
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain select j from t where j in (1, 2);
+TableReader	9600.00	root		data:Selection
+└─Selection	9600.00	cop[tikv]		or(eq(planner__core__indexmerge_path.t.j, cast(1, json BINARY)), eq(planner__core__indexmerge_path.t.j, cast(2, json BINARY)))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format='brief' select j from t where j in (1, 2);
 id	estRows	task	access object	operator info
-TableReader_8	8000.00	root		data:Selection_7
-└─Selection_7	8000.00	cop[tikv]		in(planner__core__indexmerge_path.t.j, cast(1, json BINARY), cast(2, json BINARY))
-  └─TableFullScan_6	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+TableReader	8000.00	root		data:Selection
+└─Selection	8000.00	cop[tikv]		in(planner__core__indexmerge_path.t.j, cast(1, json BINARY), cast(2, json BINARY))
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a int, j json, index kj((cast(j as signed array))));
 explain format='plan_tree' select /*+ use_index(t, kj) */ * from t;
@@ -691,11 +691,11 @@ create table t(a int, b json);
 insert into t value (1, '{"a":[1,2,3], "b": [2,3,4]}');
 analyze table t all columns;
 alter table t add index ibb( (cast(b->'$.b' as signed array)) );
-explain select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
+explain format='brief' select /*+ use_index_merge(t) */ * from t where 10 member of (b->'$.b');
 id	estRows	task	access object	operator info
-IndexMerge_8	1.00	root		type: union
-├─IndexRangeScan_6(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
-└─TableRowIDScan_7(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
+IndexMerge	1.00	root		type: union
+├─IndexRangeScan(Build)	1.00	cop[tikv]	table:t, index:ibb(cast(json_extract(`b`, _utf8mb4'$.b') as signed array))	range:[10,10], keep order:false, stats:partial[ibb:missing]
+└─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t	keep order:false, stats:partial[ibb:missing]
 drop table if exists t, t1;
 create table t (j json, i bigint(20) not null primary key, key mvi((cast(j as unsigned array))));
 insert into t values ('[1,2,3]', 1);
@@ -935,14 +935,14 @@ PRIMARY KEY (`col_38`) /*T![clustered_index] CLUSTERED */,
 UNIQUE KEY `idx_17` ((cast(`col_37` as unsigned array)),`col_38`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 INSERT INTO `t` VALUES('[12474495489656359869, 14407883655486982855, 4221184636468364556, 6110001961631615601, 15150776080990746179]','1970-03-12 00:00:00'),('[6085355592952464235]','1971-01-16 00:00:00'),('[5781707929468111406, 16382828507784518403]','1972-01-16 00:00:00'),('[6085355592952464235]','1972-08-02 00:00:00'),('[6085355592952464235]','1972-12-11 00:00:00'),('[6085355592952464235]','1972-12-21 00:00:00'),('[6085355592952464235]','1973-02-14 00:00:00'),('[6887567370081687232]','1973-05-04 00:00:00'),('[6085355592952464235]','1974-02-01 00:00:00'),('[6085355592952464235]','1974-04-27 00:00:00'),('[16443375232588053566, 15492284538739550474, 2631295588571312304, 15742669945672063486]','1974-06-09 00:00:00'),('[9489266093076991482, 4698969158339636571]','1975-10-26 00:00:00'),('[6085355592952464235]','1977-05-08 00:00:00'),('[898235511450526702, 6252566703278238786, 2261772813075859625]','1978-07-03 00:00:00'),(NULL,'1980-06-27 00:00:00'),('[10831919791216851694, 7541902588294758305, 6034300002828730755]','1980-07-30 00:00:00'),('[6085355592952464235]','1981-09-12 00:00:00'),('[6085355592952464235]','1982-05-30 00:00:00'),('[6085355592952464235]','1982-07-31 00:00:00'),('[4146363158315189712, 2391002653963544762]','1983-07-25 00:00:00'),('[6085355592952464235]','1985-01-26 00:00:00'),('[6085355592952464235]','1985-05-16 00:00:00'),('[9223372036854775807, 9558194088702539102, 6167960273278105650, 14757902754926577696, 16653691901076809579]','1986-03-08 00:00:00'),('[6085355592952464235]','1991-06-27 00:00:00'),('[6085355592952464235]','1991-11-22 00:00:00'),('[742183856683888275, 7870014111942346276, 3252208608007118384, 2554457559079886925, 3461660288536208965]','1991-12-01 00:00:00'),('[0, 7309322092917510049, 8282059475463020025, 9223372036854775807, 8236948484299513601]','1992-01-21 00:00:00'),('[6085355592952464235]','1992-07-30 00:00:00'),('[6085355592952464235]','1995-07-09 00:00:00'),('[4954624538838377461, 9223372036854775807]','1995-11-02 00:00:00'),('[6085355592952464235]','1997-09-24 00:00:00'),('[5541636548306836534]','1997-12-17 00:00:00'),('[2372084030128780091, 0, 8333919059399068469, 9097701366128382209, 12909943251581664025]','1998-03-08 00:00:00'),('[6085355592952464235]','1998-04-13 00:00:00'),('[6085355592952464235]','1999-04-10 00:00:00'),('[6085355592952464235]','1999-07-15 00:00:00'),('[13926602438239746596]','1999-08-08 00:00:00'),('[10622617655435321115, 12031447777564406671, 17187531506212239808, 13120343177240635444, 8528250079171510200]','1999-12-01 00:00:00'),('[3790911999833529022, 2343296225186042787, 6819537424069776784, 13270403636857415720]','2003-08-09 00:00:00'),('[10824194962777929518]','2006-11-05 00:00:00'),('[2689347729697653937, 6029425564270989071, 9613953820717421747, 9437566388707504417]','2008-02-25 00:00:00'),('[6085355592952464235]','2008-03-30 00:00:00'),('[15449121625659667298, 4541516510957888209, 1305529769721308891]','2008-11-07 00:00:00'),('[10699242186188846571, 7856577436586720260, 8851292429056441309, 11943637602148518975, 13317850842658892320]','2010-03-31 00:00:00'),('[1662225601861974430, 18092909239123653024, 11501141468789287862]','2012-04-15 00:00:00'),('[13015616341752575134]','2012-05-12 00:00:00'),('[6085355592952464235]','2012-06-13 00:00:00'),('[9806827176336778774, 6082939478820303687, 12353605732184995966, 17191985691142039533, 9223372036854775808]','2012-08-16 00:00:00'),('[6085355592952464235]','2012-10-14 00:00:00'),('[6085355592952464235]','2012-12-23 00:00:00'),('[6085355592952464235]','2013-04-17 00:00:00'),('[6085355592952464235]','2014-02-20 00:00:00'),('[6085355592952464235]','2015-08-06 00:00:00'),('[6085355592952464235]','2016-01-22 00:00:00'),('[6085355592952464235]','2016-05-27 00:00:00'),('[6085355592952464235]','2016-09-01 00:00:00'),('[6085355592952464235]','2017-01-19 00:00:00'),('[6085355592952464235]','2017-04-25 00:00:00'),('[2496954412283132814]','2017-10-20 00:00:00'),('[6011416056008097080, 8401732621063949750]','2018-10-20 00:00:00'),('[6085355592952464235]','2021-02-25 00:00:00'),('[6085355592952464235]','2021-05-23 00:00:00'),('[4765021307809451011, 166985960251921671, 7945653371704683528]','2021-08-27 00:00:00'),('[6085355592952464235]','2021-10-01 00:00:00'),('[6085355592952464235]','2023-09-08 00:00:00'),('[4298760996497097950, 16695885851907831657, 2, 211742148607907698]','2023-11-12 00:00:00'),('[6085355592952464235]','2024-11-06 00:00:00'),('[6085355592952464235]','2025-11-12 00:00:00'),('[6085355592952464235]','2026-08-05 00:00:00'),('[6085355592952464235]','2031-08-28 00:00:00'),('[6647303358869413442, 10003252368309984244, 3086718564738761942]','2031-10-01 00:00:00'),('[6085355592952464235]','2031-11-24 00:00:00'),('[6085355592952464235]','2032-04-23 00:00:00'),('[9201885267580925888, 9223372036854775808, 5257631883611568331, 11129612187092235508, 6214786545776627889]','2034-03-09 00:00:00'),('[7556387559865010847, 8798123769176200972]','2034-04-13 00:00:00'),('[13333584050314732558, 2379710530233660250, 12902416123543393674, 9259958507508213510, 17541647851839401835]','2035-02-17 00:00:00'),('[6085355592952464235]','2035-08-06 00:00:00'),('[14219119990701343056, 12146509442366889994, 11781375265446394500, 18446744073709551615, 7261133173516561900]','2035-11-08 00:00:00'),('[8809661147955879571, 4218874689382899073]','2035-12-11 00:00:00'),('[10187587245884493942, 9223372036854775807, 2, 928955973542912301]','2036-05-26 00:00:00');
-EXPLAIN SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
+EXPLAIN format='brief' SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 id	estRows	task	access object	operator info
-Projection_8	7.32	root		planner__core__indexmerge_path.t.col_37->Column#7
-└─IndexMerge_15	6.66	root		type: union
-  ├─TableFullScan_11(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
-  ├─IndexRangeScan_12(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
-  └─Selection_14(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
-    └─TableRowIDScan_13	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	7.32	root		planner__core__indexmerge_path.t.col_37->Column#7
+└─IndexMerge	6.66	root		type: union
+  ├─TableFullScan(Build)	0.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	10.00	cop[tikv]	table:t, index:idx_17(cast(`col_37` as unsigned array), col_38)	range:[138480458355390957,138480458355390957], keep order:false, stats:pseudo
+  └─Selection(Probe)	6.66	cop[tikv]		ne(planner__core__indexmerge_path.t.col_38, 1988-03-22 00:00:00.000000)
+    └─TableRowIDScan	10.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 SELECT /*+ use_index_merge(t)*/ MIN(col_37)  FROM t WHERE col_38 BETWEEN '1984-12-13' AND '1975-01-28' OR JSON_CONTAINS(col_37, '138480458355390957') GROUP BY col_38 HAVING col_38 != '1988-03-22';
 MIN(col_37)
 drop table if exists t1;
