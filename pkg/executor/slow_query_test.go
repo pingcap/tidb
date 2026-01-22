@@ -61,7 +61,7 @@ func newSlowQueryRetriever() (*slowQueryRetriever, error) {
 	data := infoschema.NewData()
 	schemaCacheSize := vardef.SchemaCacheSize.Load()
 	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
-	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, nil, 0)
 	if err != nil {
 		return nil, err
 	}
