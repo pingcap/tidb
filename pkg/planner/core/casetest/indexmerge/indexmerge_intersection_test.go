@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package indexmerge
 
 import (
 	"context"
@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/planner/core"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
@@ -61,7 +60,7 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 				Plan []string
 			}
 		)
-		planSuiteData := core.GetIndexMergeSuiteData()
+		planSuiteData := GetIndexMergeSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, ts := range input {
 			testdata.OnRecord(func() {
@@ -163,7 +162,7 @@ func TestHintForIntersectionIndexMerge(t *testing.T) {
 				Result []string
 			}
 		)
-		planSuiteData := core.GetIndexMergeSuiteData()
+		planSuiteData := GetIndexMergeSuiteData()
 		planSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 
 		matchSetStmt, err := regexp.Compile("^set")
