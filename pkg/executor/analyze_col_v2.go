@@ -735,7 +735,7 @@ workLoop:
 						Value:   &val,
 						Ordinal: j,
 					})
-					// Because copy the datum to local variable.
+					// Memory accounting for the datum copied into the local variable.
 					e.memTracker.BufferedConsume(&bufferedMemSize, types.EmptyDatumSize)
 					e.memTracker.BufferedRelease(&bufferedReleaseSize, types.EmptyDatumSize)
 				}
