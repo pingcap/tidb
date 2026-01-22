@@ -241,6 +241,10 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, error) {
+	now := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("lance test data for slow log done", zap.Duration("duration", time.Since(now)))
+	}()
 	var (
 		task slowLogTask
 		ok   bool
@@ -248,15 +252,19 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 	e.memConsume(-e.lastFetchSize)
 	e.lastFetchSize = 0
 	for {
+		now2 := time.Now()
 		select {
 		case task, ok = <-e.taskList:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
+		logutil.BgLogger().Info("lance test time spent waiting for task", zap.Duration("duration", time.Since(now2)))
 		if !ok {
 			return nil, nil
 		}
+		now3 := time.Now()
 		result := <-task.resultCh
+		logutil.BgLogger().Info("lance test time spent receiving result", zap.Duration("duration", time.Since(now3)))
 		rows, err := result.rows, result.err
 		if err != nil {
 			return nil, err
@@ -358,6 +366,10 @@ func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Read
 }
 
 func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
+	now := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("lance test get batch log for reversed scan done", zap.Duration("duration", time.Since(now)))
+	}()
 	// reader maybe change when read previous file.
 	inputReader := reader
 	defer func() {
@@ -495,11 +507,13 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			t.resultCh = make(chan parsedSlowLog, 1)
 			start := offset
 			ch <- 1
+			now2 := time.Now()
 			select {
 			case <-ctx.Done():
 				return
 			case e.taskList <- t:
 			}
+			logutil.BgLogger().Info("lance test time spent sending task", zap.Duration("duration", time.Since(now2)))
 			e.wg.Add(1)
 			go func() {
 				defer e.wg.Done()
