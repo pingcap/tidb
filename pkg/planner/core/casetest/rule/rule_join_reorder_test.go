@@ -24,7 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
+func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name, cascades string) {
 	var input []string
 	var output []struct {
 		SQL     string
@@ -32,7 +32,11 @@ func runJoinReorderTestData(t *testing.T, tk *testkit.TestKit, name string) {
 		Warning []string
 	}
 	joinReorderSuiteData := GetJoinReorderSuiteData()
-	joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output)
+	if cascades == "on" {
+		joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output, "on")
+	} else {
+		joinReorderSuiteData.LoadTestCasesByName(name, t, &input, &output)
+	}
 	require.Equal(t, len(input), len(output))
 	for i := range input {
 		testdata.OnRecord(func() {
@@ -54,7 +58,7 @@ func TestOptEnableHashJoin(t *testing.T) {
 		testKit.MustExec("create table t2(a int, b int, key(a));")
 		testKit.MustExec("create table t3(a int, b int, key(a));")
 		testKit.MustExec("create table t4(a int, b int, key(a));")
-		runJoinReorderTestData(t, testKit, "TestOptEnableHashJoin")
+		runJoinReorderTestData(t, testKit, "TestOptEnableHashJoin", cascades)
 	})
 }
 
@@ -81,7 +85,7 @@ func TestJoinOrderHint4TiFlash(t *testing.T) {
 		testkit.SetTiFlashReplica(t, dom, "test", "t6")
 
 		testKit.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
-		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4TiFlash")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4TiFlash", cascades)
 	})
 }
 
@@ -100,7 +104,7 @@ func TestJoinOrderHint4DynamicPartitionTable(t *testing.T) {
 
 		testKit.MustExec(`set @@tidb_partition_prune_mode="dynamic"`)
 		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
-		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4DynamicPartitionTable")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4DynamicPartitionTable", cascades)
 	})
 }
 
@@ -115,7 +119,7 @@ func TestJoinOrderHint4NestedLeading(t *testing.T) {
 		testKit.MustExec("create table t4(a int, b int, key(a));")
 		testKit.MustExec("create table t5(a int, b int, key(a));")
 		testKit.MustExec("create table t6(a int, b int, key(a));")
-		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeading")
+		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeading", cascades)
 	})
 }
 

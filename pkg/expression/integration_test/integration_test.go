@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
@@ -55,7 +56,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/stretchr/testify/assert"
@@ -671,24 +671,19 @@ func TestVectorConstantExplain(t *testing.T) {
 
 	stmtID, _, _, err := tk.Session().PrepareStmt("SELECT VEC_COSINE_DISTANCE(c, ?) FROM t")
 	require.Nil(t, err)
-	rs, err := tk.Session().ExecutePreparedStmt(context.Background(), stmtID, expression.Args2Expressions4Test(vb.String()))
+	_, err = tk.Session().ExecutePreparedStmt(context.Background(), stmtID, expression.Args2Expressions4Test(vb.String()))
 	require.NoError(t, err)
 
-	p, ok := tk.Session().GetSessionVars().StmtCtx.GetPlan().(base.Plan)
-	require.True(t, ok)
-
-	flat := plannercore.FlattenPhysicalPlan(p, true)
-	encodedPlanTree := plannercore.EncodeFlatPlan(flat)
-	planTree, err := plancodec.DecodePlan(encodedPlanTree)
-	require.NoError(t, err)
-	fmt.Println(planTree)
-	fmt.Println("++++")
-	// Don't check planTree directly, because it contains execution time info which is not fixed after open/close time is included
-	require.True(t, strings.Contains(planTree, `	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#4`))
-	require.True(t, strings.Contains(planTree, `	└─TableReader_6    	root     	10000  	data:TableFullScan_5`))
-	require.True(t, strings.Contains(planTree, `	  └─TableFullScan_5	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo`))
-	// No need to check result at all.
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs))
+	tkProcess := tk.Session().ShowProcess()
+	ps := []*sessmgr.ProcessInfo{tkProcess}
+	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+	tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10)).Check(testkit.Rows(
+		`Projection 10.00 0 root  time:0s, open:0s, close:0s, loops:0 vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4 N/A N/A`,
+		`└─TopN 10.00 0 root  time:0s, open:0s, close:0s, loops:0 Column#5, offset:0, count:10 N/A N/A`,
+		`  └─TableReader 10.00 0 root  time:0s, open:0s, close:0s, loops:0 data:TopN N/A N/A`,
+		`    └─TopN 10.00 0 cop[tikv]   Column#5, offset:0, count:10 N/A N/A`,
+		`      └─Projection 10.00 0 cop[tikv]   test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#5 N/A N/A`,
+		`        └─TableFullScan 10000.00 0 cop[tikv] table:t  keep order:false, stats:pseudo N/A N/A`))
 }
 
 func TestVectorIndexExplain(t *testing.T) {
@@ -2743,8 +2738,8 @@ func TestCompareBuiltin(t *testing.T) {
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
 		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#4",
-		"└─TableReader_6 10000.00 root  data:TableFullScan_5",
-		"  └─TableFullScan_5 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
+		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
+		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 
 	// for interval
