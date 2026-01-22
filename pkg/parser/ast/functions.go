@@ -358,8 +358,9 @@ const (
 	JSONKeys          = "json_keys"
 	JSONLength        = "json_length"
 
-	// Array functions
+	// PingKaiDB Enterprise Edit functions
 	ArrayElementAt = "array_element"
+	XPath          = "xpath"
 
 	// vector functions (tidb extension)
 	VecDims                 = "vec_dims"

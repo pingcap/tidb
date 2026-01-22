@@ -304,6 +304,32 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_antchfx_xmlquery",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/antchfx/xmlquery",
+        sha256 = "82285471a87b4ff436559d35693b2cb977f4a107708b47d6836e568bfb8de3af",
+        strip_prefix = "github.com/antchfx/xmlquery@v1.5.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/antchfx/xmlquery/com_github_antchfx_xmlquery-v1.5.0.zip",
+            "http://ats.apps.svc/gomod/github.com/antchfx/xmlquery/com_github_antchfx_xmlquery-v1.5.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/antchfx/xmlquery/com_github_antchfx_xmlquery-v1.5.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/antchfx/xmlquery/com_github_antchfx_xmlquery-v1.5.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_antchfx_xpath",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/antchfx/xpath",
+        sha256 = "71d7c3c95797314a09c6cb6c5e0d0d7efb2e3dcdba24083e4f19b74673ab21ef",
+        strip_prefix = "github.com/antchfx/xpath@v1.3.5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/antchfx/xpath/com_github_antchfx_xpath-v1.3.5.zip",
+            "http://ats.apps.svc/gomod/github.com/antchfx/xpath/com_github_antchfx_xpath-v1.3.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/antchfx/xpath/com_github_antchfx_xpath-v1.3.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/antchfx/xpath/com_github_antchfx_xpath-v1.3.5.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_antihax_optional",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/antihax/optional",

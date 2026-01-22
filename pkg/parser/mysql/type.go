@@ -52,6 +52,7 @@ const (
 const (
 	SubTypeUnspecified byte = 0
 	SubTypeArray       byte = 1
+	SubTypeXML         byte = 2
 )
 
 // Flag information.

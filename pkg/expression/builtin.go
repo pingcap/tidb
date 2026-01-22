@@ -960,8 +960,9 @@ var funcs = map[string]functionClass{
 	ast.JSONKeys:          &jsonKeysFunctionClass{baseFunctionClass{ast.JSONKeys, 1, 2}},
 	ast.JSONLength:        &jsonLengthFunctionClass{baseFunctionClass{ast.JSONLength, 1, 2}},
 
-	// array functions
+	// PingKaiDB Enterprise Edit functions
 	ast.ArrayElementAt: &arrayElementFunctionClass{baseFunctionClass{ast.ArrayElementAt, 2, -1}},
+	ast.XPath:          &xpathFunctionClass{baseFunctionClass{ast.XPath, 2, 2}},
 
 	// vector functions (TiDB extension)
 	ast.VecDims:                 &vecDimsFunctionClass{baseFunctionClass{ast.VecDims, 1, 1}},

@@ -28,6 +28,7 @@ import (
 	"unicode/utf8"
 	"unsafe"
 
+	"github.com/antchfx/xmlquery"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -1038,8 +1039,13 @@ func (d *Datum) ConvertTo(ctx Context, target *FieldType) (Datum, error) {
 		return d.convertToInt(ctx, target)
 	case mysql.TypeFloat, mysql.TypeDouble:
 		return d.convertToFloat(ctx, target)
-	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob,
+	case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob,
 		mysql.TypeString, mysql.TypeVarchar, mysql.TypeVarString:
+		return d.convertToString(ctx, target)
+	case mysql.TypeLongBlob:
+		if target.GetSubType() == mysql.SubTypeXML {
+			return d.convertToXML()
+		}
 		return d.convertToString(ctx, target)
 	case mysql.TypeTimestamp:
 		return d.convertToMysqlTimestamp(ctx, target)
@@ -1891,6 +1897,21 @@ func (d *Datum) convertToArray() (ret Datum, err error) {
 		ret.SetMysqlJSON(j)
 	default:
 		err = ErrInvalidArrayValue
+	}
+	return ret, errors.Trace(err)
+}
+
+func (d *Datum) convertToXML() (ret Datum, err error) {
+	switch d.k {
+	case KindString, KindBytes:
+		value := d.GetString()
+		_, err = xmlquery.Parse(strings.NewReader(value))
+		if err != nil {
+			return ret, ErrInvalidXMLValue
+		}
+		ret.SetString(value, mysql.DefaultCollationName)
+	default:
+		err = ErrInvalidXMLValue
 	}
 	return ret, errors.Trace(err)
 }

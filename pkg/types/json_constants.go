@@ -248,6 +248,8 @@ var (
 	ErrInvalidValueOfType = dbterror.ClassTypes.NewStd(mysql.ErrInvalidValueOfType)
 	// ErrInvalidArrayValue means invalid ARRAY value.
 	ErrInvalidArrayValue = ErrInvalidValueOfType.FastGenByArgs("ARRAY")
+	// ErrInvalidXMLValue means invalid xml value.
+	ErrInvalidXMLValue = ErrInvalidValueOfType.FastGenByArgs("XML")
 )
 
 // json_contains_path function type choices

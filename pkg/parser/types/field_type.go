@@ -504,6 +504,10 @@ func (ft *FieldType) CompactStr() string {
 		if ft.subType == mysql.SubTypeArray {
 			ts = "array"
 		}
+	case mysql.TypeLongBlob:
+		if ft.subType == mysql.SubTypeXML {
+			ts = "xml"
+		}
 	case mysql.TypeEnum, mysql.TypeSet:
 		// Format is ENUM ('e1', 'e2') or SET ('e1', 'e2')
 		es := make([]string, 0, len(ft.elems))

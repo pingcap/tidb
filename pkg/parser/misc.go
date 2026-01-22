@@ -941,6 +941,7 @@ var tokenMap = map[string]int{
 	"WRITE":                    write,
 	"WORKLOAD":                 workload,
 	"X509":                     x509,
+	"XML":                      xml,
 	"XOR":                      xor,
 	"YEAR_MONTH":               yearMonth,
 	"YEAR":                     yearType,

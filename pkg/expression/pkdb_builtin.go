@@ -1,9 +1,25 @@
+// Copyright 2026 PingCAP, Inc.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 package expression
 
 import (
 	"fmt"
 	"strconv"
 	"strings"
+
+	"github.com/antchfx/xmlquery"
 
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
@@ -85,5 +101,62 @@ func (b *builtinArrayElementSig) evalJSON(ctx EvalContext, row chunk.Row) (res t
 	if res, found = res.Extract(pathExprs); !found {
 		return res, true, nil
 	}
+	return res, false, nil
+}
+
+// xpathFunctionClass's logic is basically the same as that of jsonExtractFunctionClass.
+type xpathFunctionClass struct {
+	baseFunctionClass
+}
+
+type builtinXPathSig struct {
+	baseBuiltinFunc
+}
+
+func (b *builtinXPathSig) Clone() builtinFunc {
+	newSig := &builtinXPathSig{}
+	newSig.cloneFrom(&b.baseBuiltinFunc)
+	return newSig
+}
+
+func (c *xpathFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+	if err := c.baseFunctionClass.verifyArgs(args); err != nil {
+		return nil, err
+	}
+	argTps := make([]types.EvalType, 0, len(args))
+	argTps = append(argTps, types.ETString)
+	for range args[1:] {
+		argTps = append(argTps, types.ETString)
+	}
+	bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETString, argTps...)
+	if err != nil {
+		return nil, err
+	}
+	sig := &builtinXPathSig{bf}
+	return sig, nil
+}
+
+func (b *builtinXPathSig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
+	var xmlValue, path string
+	xmlValue, isNull, err = b.args[0].EvalString(ctx, row)
+	if isNull || err != nil {
+		return
+	}
+	path, isNull, err = b.args[1].EvalString(ctx, row)
+	if isNull || err != nil {
+		return
+	}
+	doc, err := xmlquery.Parse(strings.NewReader(xmlValue))
+	if err != nil {
+		return res, isNull, err
+	}
+	buf := strings.Builder{}
+	for _, node := range xmlquery.Find(doc, path) {
+		if buf.Len() > 0 {
+			buf.WriteString(",")
+		}
+		buf.WriteString(node.InnerText())
+	}
+	res = buf.String()
 	return res, false, nil
 }
