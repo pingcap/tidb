@@ -60,6 +60,50 @@
           "  └─TableRangeScan 2.00 cop[tikv] table:bar range: decided by [test.foo.a], keep order:false, stats:pseudo"
         ],
         "Warning": null
+      },
+      {
+        "SQL": "select foo.a, foo.b, bar.c from foo left join bar on foo.a=bar.a where (foo.a,foo.b) in ((1,2),(3,4));",
+        "Plan": [
+          "IndexJoin 2.50 root  left outer join, inner:TableReader, left side:Selection, outer key:test.foo.a, inner key:test.bar.a, equal cond:eq(test.foo.a, test.bar.a)",
+          "├─Selection(Build) 2.00 root  or(and(eq(test.foo.a, 1), eq(test.foo.b, 2)), and(eq(test.foo.a, 3), eq(test.foo.b, 4)))",
+          "│ └─Batch_Point_Get 2.00 root table:foo handle:[1 3], keep order:false, desc:false",
+          "└─TableReader(Probe) 2.00 root  data:TableRangeScan",
+          "  └─TableRangeScan 2.00 cop[tikv] table:bar range: decided by [test.foo.a], keep order:false, stats:pseudo"
+        ],
+        "Warning": null
+      },
+      {
+        "SQL": "select * from foo join bar on foo.a=bar.a where rand() > 0.5;",
+        "Plan": [
+          "MergeJoin 12500.00 root  inner join, left key:test.foo.a, right key:test.bar.a, other cond:gt(rand(), 0.5)",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:bar keep order:true, stats:pseudo",
+          "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "  └─TableFullScan 10000.00 cop[tikv] table:foo keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now."
+        ]
+      },
+      {
+        "SQL": "select * from foo join bar on foo.a=bar.a where foo.a = rand();",
+        "Plan": [
+          "Projection 10000.00 root  test.foo.a, test.foo.b, test.foo.c, test.bar.a, test.bar.b, test.bar.c",
+          "└─MergeJoin 10000.00 root  inner join, left key:test.bar.a, right key:test.foo.a",
+          "  ├─Selection(Build) 8000.00 root  eq(cast(test.foo.a, double BINARY), rand())",
+          "  │ └─TableReader 10000.00 root  data:TableFullScan",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:foo keep order:true, stats:pseudo",
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:bar keep order:true, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to storage layer now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now."
+        ]
       }
     ]
   }

@@ -327,10 +327,7 @@ func TestMPPHintsScope(t *testing.T) {
 		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 		testKit.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
 		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
-		testKit.MustExec("alter table t set tiflash replica 1")
-		tb := external.GetTableByName(t, testKit, "test", "t")
-		err := domain.GetDomain(testKit.Session()).DDLExecutor().UpdateTableReplicaInfo(testKit.Session(), tb.Meta().ID, true)
-		require.NoError(t, err)
+		testKit.MustExec("alter table t set hypo tiflash replica 1")
 
 		var input []string
 		var output []struct {
@@ -1655,12 +1652,12 @@ func TestSemiJoinRewriter(t *testing.T) {
 		tk.MustExec(`create table t2(a varchar(10));`)
 		tk.MustExec(`create table t3(a int);`)
 		tk.MustQuery(`explain format = 'plan_tree' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
-			`HashJoin root  inner join, equal:[eq(Column#6, Column#7)]`,
-			`├─HashAgg(Build) root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
-			`│ └─Projection root  cast(test.t2.a, double BINARY)->Column#7`,
+			`HashJoin root  inner join, equal:[eq(Column, Column)]`,
+			`├─HashAgg(Build) root  group by:Column, funcs:firstrow(Column)->Column`,
+			`│ └─Projection root  cast(test.t2.a, double BINARY)->Column`,
 			`│   └─TableReader root  data:TableFullScan`,
 			`│     └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
-			`└─Projection(Probe) root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
+			`└─Projection(Probe) root  test.t1.a, cast(test.t1.a, double BINARY)->Column`,
 			`  └─TableReader root  data:TableFullScan`,
 			`    └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 	})

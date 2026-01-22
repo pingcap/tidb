@@ -28,19 +28,19 @@ import (
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/ddl/copr"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/session"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	"github.com/pingcap/tidb/pkg/resourcemanager/util"
@@ -152,7 +152,7 @@ func NewAddIndexIngestPipeline(
 func NewWriteIndexToExternalStoragePipeline(
 	ctx *workerpool.Context,
 	store kv.Storage,
-	extStore storage.ExternalStorage,
+	extStore storeapi.Storage,
 	sessPool opSessPool,
 	taskID, subtaskID int64,
 	tbl table.PhysicalTable,
@@ -626,7 +626,7 @@ func NewWriteExternalStoreOperator(
 	subtaskID int64,
 	tbl table.PhysicalTable,
 	indexes []table.Index,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	srcChunkPool *sync.Pool,
 	concurrency int,
 	onClose external.OnWriterCloseFunc,

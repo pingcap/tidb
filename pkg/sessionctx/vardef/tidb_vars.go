@@ -171,6 +171,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptIndexPruneThreshold is used to control the threshold for index pruning optimization.
+	TiDBOptIndexPruneThreshold = "tidb_opt_index_prune_threshold"
+
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
@@ -657,6 +660,10 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
+
 	// TiDBSlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
@@ -977,6 +984,11 @@ const (
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
+	// TiDBOptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	// Examples of queries that can benefit from this optimization:
+	// 1. index a -> order by a, b limit
+	// 2. index a, prefix(b) -> order by a, b limit
+	TiDBOptPartialOrderedIndexForTopN = "tidb_opt_partial_ordered_index_for_topn"
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
@@ -1464,6 +1476,7 @@ const (
 	DefBroadcastJoinThresholdCount          = 10 * 1024
 	DefPreferBCJByExchangeDataSize          = false
 	DefTiDBOptimizerSelectivityLevel        = 0
+	DefTiDBOptIndexPruneThreshold           = 20
 	DefTiDBOptimizerEnableNewOFGB           = false
 	DefTiDBEnableOuterJoinReorder           = true
 	DefTiDBEnableNAAJ                       = true
@@ -1506,6 +1519,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
@@ -1664,6 +1678,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBOptPartialOrderedIndexForTopN              = false
 	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false

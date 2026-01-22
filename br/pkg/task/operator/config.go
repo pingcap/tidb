@@ -9,8 +9,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/spf13/pflag"
 )
 
@@ -69,13 +69,13 @@ func (cfg *PauseGcConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type Base64ifyConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	LoadCerd   bool
 }
 
 func DefineFlagsForBase64ifyConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "The external storage input.")
 	flags.Bool(flagLoadCreds, false, "whether loading the credientials from current environment and marshal them to the base64 string. [!]")
 }
@@ -98,13 +98,13 @@ func (cfg *Base64ifyConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type ListMigrationConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	JSONOutput bool
 }
 
 func DefineFlagsForListMigrationConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "the external storage input.")
 	flags.Bool(flagJSON, false, "output the result in json format.")
 }
@@ -127,7 +127,7 @@ func (cfg *ListMigrationConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type MigrateToConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	Recent     bool
 	MigrateTo  int
@@ -138,7 +138,7 @@ type MigrateToConfig struct {
 }
 
 func DefineFlagsForMigrateToConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "the external storage input.")
 	flags.Bool(flagRecent, true, "migrate to the most recent migration and BASE.")
 	flags.Int(flagTo, 0, "migrate all migrations from the BASE to the specified sequence number.")

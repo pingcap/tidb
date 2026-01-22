@@ -92,7 +92,7 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 // GetOrCreateStatementStatsItem is just a helper function, not responsible for
 // concurrency control, so GetOrCreateStatementStatsItem is **not** thread-safe.
 func (s *StatementStats) GetOrCreateStatementStatsItem(sqlDigest, planDigest []byte) *StatementStatsItem {
-	key := SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
+	key := newSQLPlanDigest(sqlDigest, planDigest)
 	item, ok := s.data[key]
 	if !ok {
 		s.data[key] = NewStatementStatsItem()
@@ -143,6 +143,13 @@ type BinaryDigest string
 type SQLPlanDigest struct {
 	SQLDigest  BinaryDigest
 	PlanDigest BinaryDigest
+}
+
+func newSQLPlanDigest(sqlDigest, planDigest []byte) SQLPlanDigest {
+	return SQLPlanDigest{
+		SQLDigest:  BinaryDigest(sqlDigest),
+		PlanDigest: BinaryDigest(planDigest),
+	}
 }
 
 // StatementStatsMap is the local data type of StatementStats.

@@ -1212,7 +1212,7 @@ func (cc *clientConn) Run(ctx context.Context) {
 						timestamp = ctx.GetSessionVars().TxnCtx.StaleReadTs
 					}
 				}
-				logutil.Logger(ctx).Info("command dispatched failed",
+				logutil.Logger(ctx).Warn("command dispatched failed",
 					zap.String("connInfo", cc.String()),
 					zap.String("command", mysql.Command2Str[data[0]]),
 					zap.String("status", cc.SessionStatusToString()),
@@ -2022,7 +2022,7 @@ func (cc *clientConn) prefetchPointPlanKeys(ctx context.Context, stmts []ast.Stm
 		return nil, err1
 	}
 	for idxKey, idxVal := range idxVals {
-		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal)
+		h, err2 := tablecodec.DecodeHandleInIndexValue(idxVal.Value)
 		if err2 != nil {
 			return nil, err2
 		}
@@ -2150,7 +2150,8 @@ func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
 		return servererr.ErrNotAllowedCommand
 	}
 
-	var readerBuilder executor.LoadDataReaderBuilder = func(filepath string) (
+	wg := &sync.WaitGroup{}
+	builderFunc := func(filepath string) (
 		io.ReadCloser, error,
 	) {
 		err := cc.writeReq(ctx, filepath)
@@ -2161,7 +2162,10 @@ func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
 		drained := false
 		r, w := io.Pipe()
 
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			var errOccurred error
 
 			defer func() {
@@ -2217,13 +2221,27 @@ func (cc *clientConn) preprocessLoadDataLocal(ctx context.Context) error {
 		return r, nil
 	}
 
+	var readerBuilder executor.LoadDataReaderBuilder = executor.LoadDataReaderBuilder{
+		Build: builderFunc,
+		Wg:    wg,
+	}
+
 	cc.ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 
 	return nil
 }
 
 func (cc *clientConn) postprocessLoadDataLocal() {
-	cc.ctx.ClearValue(executor.LoadDataReaderBuilderKey)
+	builder := cc.ctx.Value(executor.LoadDataReaderBuilderKey)
+	if builder != nil {
+		builder, ok := builder.(executor.LoadDataReaderBuilder)
+		if !ok {
+			intest.Assert(false, "LoadDataReaderBuilder should be of type executor.LoadDataReaderBuilder")
+			return
+		}
+		builder.Wg.Wait()
+		cc.ctx.ClearValue(executor.LoadDataReaderBuilderKey)
+	}
 }
 
 func (cc *clientConn) handleFileTransInConn(ctx context.Context, status uint16) (bool, error) {

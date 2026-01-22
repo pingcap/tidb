@@ -10,9 +10,9 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"go.uber.org/zap"
 )
 
@@ -23,7 +23,7 @@ type Writer struct {
 	tctx       *tcontext.Context
 	conf       *Config
 	conn       *sql.Conn
-	extStorage storage.ExternalStorage
+	extStorage storeapi.Storage
 	fileFmt    FileFormat
 	metrics    *metrics
 
@@ -40,7 +40,7 @@ func NewWriter(
 	id int64,
 	config *Config,
 	conn *sql.Conn,
-	externalStore storage.ExternalStorage,
+	externalStore storeapi.Storage,
 	metrics *metrics,
 ) *Writer {
 	sw := &Writer{

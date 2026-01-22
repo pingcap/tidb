@@ -801,9 +801,9 @@ func TestReserve(t *testing.T) {
 	require.Equal(t, 1, cap(col.offsets))
 	require.Equal(t, 0, cap(col.nullBitmap))
 	col.Reserve(10, 10, 10)
-	require.Less(t, 10, cap(col.data))
-	require.Less(t, 11, cap(col.offsets))
-	require.Less(t, 10, cap(col.nullBitmap))
+	require.GreaterOrEqual(t, cap(col.data)-len(col.data), 10)
+	require.GreaterOrEqual(t, cap(col.offsets)-len(col.offsets), 11)
+	require.GreaterOrEqual(t, cap(col.nullBitmap)-len(col.nullBitmap), 10)
 
 	col.data = append(col.data, 12)
 	col.data = append(col.data, 24)
@@ -824,9 +824,9 @@ func TestReserve(t *testing.T) {
 	col.nullBitmap = append(col.nullBitmap, 1)
 
 	col.Reserve(100, 100, 100)
-	require.Less(t, 105, cap(col.data))
-	require.Less(t, 106, cap(col.offsets))
-	require.Less(t, 105, cap(col.nullBitmap))
+	require.GreaterOrEqual(t, cap(col.data)-len(col.data), 105)
+	require.GreaterOrEqual(t, cap(col.offsets)-len(col.offsets), 106)
+	require.GreaterOrEqual(t, cap(col.nullBitmap)-len(col.nullBitmap), 105)
 
 	require.Equal(t, 12, int(col.data[0]))
 	require.Equal(t, 24, int(col.data[1]))
