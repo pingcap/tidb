@@ -1372,6 +1372,12 @@ func RunStreamRestore(
 	if err := checkLogRange(cfg.StartTS, cfg.RestoreTS, logInfo.logMinTS, logInfo.logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.LastRestore && !cfg.IsLastRestoreUserSpecified && cfg.IsRestoredTSUserSpecified && cfg.RestoreTS < logInfo.logMaxTS {
+		log.Info("restore-ts is before log max and --last not specified; treating as non-final segment",
+			zap.Uint64("restore-ts", cfg.RestoreTS),
+			zap.Uint64("log-max-ts", logInfo.logMaxTS))
+		cfg.LastRestore = false
+	}
 
 	// register task if needed
 	// will potentially override restoredTS
@@ -1620,6 +1626,9 @@ func restoreStream(
 	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg); err != nil {
 		return errors.Trace(err)
 	}
+	if err := loadTiFlashRecorderItemsIfNeeded(ctx, client, cfg); err != nil {
+		return errors.Trace(err)
+	}
 
 	// build schema replace
 	schemasReplace, err := buildSchemaReplace(client, cfg)
@@ -1795,11 +1804,19 @@ func restoreStream(
 	}
 
 	if cfg.tiflashRecorder != nil {
-		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
-		log.Info("Generating SQLs for restoring TiFlash Replica",
-			zap.Strings("sqls", sqls))
-		if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
-			return errors.Annotate(err, "failed to reset tiflash replicas")
+		if !cfg.LastRestore {
+			if err := client.SaveTiFlashRecorderItems(ctx, cfg.RestoreTS, cfg.tiflashRecorder.GetItems(), cfg.logCheckpointMetaManager); err != nil {
+				return errors.Annotate(err, "failed to persist tiflash items for next segment")
+			}
+			log.Info("skip restoring TiFlash Replica until last segment",
+				zap.Uint64("restored-ts", cfg.RestoreTS))
+		} else {
+			sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
+			log.Info("Generating SQLs for restoring TiFlash Replica",
+				zap.Strings("sqls", sqls))
+			if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
+				return errors.Annotate(err, "failed to reset tiflash replicas")
+			}
 		}
 	}
 
@@ -2241,6 +2258,29 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if err = client.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
 		return errors.Trace(err)
 	}
+	return nil
+}
+
+func loadTiFlashRecorderItemsIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig) error {
+	if cfg.tiflashRecorder == nil {
+		return nil
+	}
+	if len(cfg.FullBackupStorage) != 0 {
+		return nil
+	}
+
+	items, err := client.LoadTiFlashRecorderItems(ctx, cfg.StartTS, cfg.logCheckpointMetaManager)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if items == nil {
+		log.Info("no tiflash items found for previous segment", zap.Uint64("start-ts", cfg.StartTS))
+		return nil
+	}
+	cfg.tiflashRecorder.Load(items)
+	log.Info("loaded tiflash items for previous segment",
+		zap.Uint64("start-ts", cfg.StartTS),
+		zap.Int("item-count", len(items)))
 	return nil
 }
 

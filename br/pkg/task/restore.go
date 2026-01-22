@@ -281,6 +281,8 @@ type RestoreConfig struct {
 	IsRestoredTSUserSpecified bool `json:"-" toml:"-"`
 	// LastRestore represents whether restore is the last one.
 	LastRestore bool `json:"last" toml:"last"`
+	// whether LastRestore was explicitly specified by user vs default
+	IsLastRestoreUserSpecified bool `json:"-" toml:"-"`
 	// rewriteTS is the rewritten timestamp of meta kvs.
 	RewriteTS       uint64                      `json:"-" toml:"-"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
@@ -414,6 +416,8 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	// check if RestoreTS was explicitly specified by user
 	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
 
+	// check if LastRestore was explicitly specified by user
+	cfg.IsLastRestoreUserSpecified = flags.Changed(FlagStreamLast)
 	cfg.LastRestore, err = flags.GetBool(FlagStreamLast)
 	if err != nil {
 		return errors.Trace(err)
