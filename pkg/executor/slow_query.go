@@ -370,11 +370,14 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, rea
 	var logs []slowLogBlock
 
 	loopCnt := 0
+	switchReaderCnt := 0
 	defer func() {
 		logutil.BgLogger().Info("lance test get batch log for reversed scan done", zap.Duration("duration", time.Since(now)))
 		logutil.BgLogger().Info(
 			"lance test get batch log for reversed scan loop",
-			zap.Int("loopCnt", loopCnt), zap.Int("len(logs)", len(logs)))
+			zap.Int("loopCnt", loopCnt), zap.Int("len(logs)", len(logs)),
+			zap.Int("switchReaderCnt", switchReaderCnt),
+		)
 	}()
 	// reader maybe change when read previous file.
 	inputReader := reader
@@ -406,6 +409,7 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, rea
 				}
 				e.fileLine = 0
 				reader, err = e.getPreviousReader()
+				switchReaderCnt++
 				if reader == nil || err != nil {
 					return decomposeToSlowLogTasks(logs, num), nil
 				}
@@ -1092,6 +1096,11 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 	})
 	// Assume no time range overlap in log files and remove unnecessary log files for compressed files.
 	var ret []logFile
+	logutil.BgLogger().Info(
+		"lance test in getAllFiles before filtering",
+		zap.Int("file_num", len(logFiles)),
+		zap.Any("e.checker.timeRanges", e.checker.timeRanges),
+	)
 	for i, file := range logFiles {
 		if i == len(logFiles)-1 || !file.compressed || !e.checker.enableTimeCheck {
 			ret = append(ret, file)
@@ -1111,7 +1120,10 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			ret = append(ret, file)
 		}
 	}
-	logutil.BgLogger().Info("lance test leave getAllFiles", zap.Duration("duration", time.Since(now)))
+	logutil.BgLogger().Info("lance test leave getAllFiles",
+		zap.Duration("duration", time.Since(now)),
+		zap.Int("totalFileNum", len(ret)),
+	)
 	return ret, err
 }
 
