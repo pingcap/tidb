@@ -23,6 +23,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
@@ -371,12 +372,30 @@ func (e *slowQueryRetriever) getBatchLogForReversedScan(ctx context.Context, rea
 
 	loopCnt := 0
 	switchReaderCnt := 0
+
+	profileFileName := fmt.Sprintf("/tmp/tianyuan_%d.pprof", time.Now().UnixNano())
+	profileFile, err0 := os.Create(profileFileName)
+	if err0 != nil {
+		logutil.BgLogger().Warn("failed to create cpu profile file", zap.Error(err0))
+	} else {
+		if err0 = pprof.StartCPUProfile(profileFile); err0 != nil {
+			logutil.BgLogger().Warn("failed to start cpu profile", zap.Error(err0))
+			_ = profileFile.Close()
+		} else {
+			defer func() {
+				pprof.StopCPUProfile()
+				_ = profileFile.Close()
+			}()
+		}
+	}
+
 	defer func() {
 		logutil.BgLogger().Info("lance test get batch log for reversed scan done", zap.Duration("duration", time.Since(now)))
 		logutil.BgLogger().Info(
 			"lance test get batch log for reversed scan loop",
 			zap.Int("loopCnt", loopCnt), zap.Int("len(logs)", len(logs)),
 			zap.Int("switchReaderCnt", switchReaderCnt),
+			zap.String("profileFileName", profileFileName),
 		)
 	}()
 	// reader maybe change when read previous file.
