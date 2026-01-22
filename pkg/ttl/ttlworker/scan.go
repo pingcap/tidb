@@ -53,7 +53,8 @@ func refreshMinCheckpointTSO(
 	// B del     hard_del upd_from_A
 	// if checkpoint_ts is not after upd, we simply wait and fallback 0
 	rows, err := se.ExecuteSQL(ctx,
-		"SELECT IFNULL(MIN(checkpoint_ts), 0) FROM "+sqlbuilder.TiCDCProgressDB+"."+sqlbuilder.TiCDCProgressTable+" WHERE database_name=%? AND table_name=%?",
+		fmt.Sprintf("SELECT IFNULL(MIN(checkpoint_ts), 0) FROM %s.%s WHERE database_name=%%? AND table_name=%%?",
+			sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable),
 		sqlescape.EscapeString(tbl.Schema.O),
 		sqlescape.EscapeString(tbl.Name.O),
 	)
