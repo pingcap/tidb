@@ -258,8 +258,9 @@ func isDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *h.PlanHints) b
 	// Get the block offset of this plan node
 	blockOffset := p.QueryBlockOffset()
 
-	// blockOffset > 1 means this is a subquery/derived table
-	// blockOffset = 0 or 1 are typically main query or CTE
+	// Only blockOffset values in [2, len(queryBlockNames)-1] can represent
+	// subqueries / derived tables. Offsets 0 and 1 are typically main query
+	// or CTE, and offsets beyond the end of queryBlockNames are invalid.
 	if blockOffset <= 1 || blockOffset >= len(queryBlockNames) {
 		return false
 	}
