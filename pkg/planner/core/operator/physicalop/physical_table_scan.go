@@ -883,13 +883,13 @@ func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expre
 // setIndexMergeTableScanHandleCols set the handle columns of the table scan.
 func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.HandleCols
-	if handleCols == nil && !ds.Table.Type().IsClusterTable() {
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
-	}
-	// For cluster tables without handles, ts.HandleCols remains nil.
-	// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
 	if handleCols == nil {
-		return nil
+		if ds.Table.Type().IsClusterTable() {
+			// For cluster tables without handles, ts.HandleCols remains nil.
+			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
+			return nil
+		}
+		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
