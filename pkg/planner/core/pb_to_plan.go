@@ -267,7 +267,7 @@ func (b *PBPlanBuilder) convertColumnInfo(tblInfo *model.TableInfo, pbColumns []
 		for _, colInfo := range tblInfo.Columns {
 			if col.ColumnId == colInfo.ID {
 				columns = append(columns, colInfo)
-				tps = append(tps, colInfo.FieldType.Clone())
+				tps = append(tps, colInfo.FieldType.DeepClone())
 				found = true
 				break
 			}

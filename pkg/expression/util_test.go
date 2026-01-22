@@ -625,7 +625,7 @@ func (m *MockExpr) Clone() Expression {
 	cloned.i = m.i
 	cloned.err = m.err
 	if m.t != nil {
-		cloned.t = m.t.Clone()
+		cloned.t = m.t.DeepClone()
 	}
 	return cloned
 }
