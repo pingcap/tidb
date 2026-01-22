@@ -141,12 +141,16 @@ func (lt *LogicalTopN) DeriveStats(childStats []*property.StatsInfo, _ *expressi
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	lt.hasTiflash = infos[0].HasTiflash
 	propCols := getPossiblePropertyFromByItems(lt.ByItems)
 	if len(propCols) == 0 {
 		return nil
 	}
-	return [][]*expression.Column{propCols}
+	return &base.PossiblePropertiesInfo{
+		Order:      [][]*expression.Column{propCols},
+		HasTiflash: lt.hasTiflash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
