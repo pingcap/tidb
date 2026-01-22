@@ -1499,6 +1499,7 @@ func restoreStream(
 		checkpointTotalSize    uint64
 		currentTS              uint64
 		extraFields            []zapcore.Field
+		ingestItemsForNextSeg  map[int64]map[int64]bool
 		mu                     sync.Mutex
 		startTime              = time.Now()
 	)
@@ -1635,6 +1636,9 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if err := loadIngestRecorderItemsIfNeeded(ctx, client, cfg, schemasReplace.GetIngestRecorder()); err != nil {
+		return errors.Trace(err)
+	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(),
 		cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
@@ -1687,6 +1691,9 @@ func restoreStream(
 	rewriteRules := buildRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
+	if !cfg.LastRestore {
+		ingestItemsForNextSeg = ingestRecorder.ExportItems()
+	}
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
 		return errors.Trace(err)
 	}
@@ -1799,8 +1806,18 @@ func restoreStream(
 	}
 
 	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
-		return errors.Annotate(err, "failed to repair ingest index")
+	if cfg.LastRestore {
+		if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
+			return errors.Annotate(err, "failed to repair ingest index")
+		}
+	} else {
+		if len(ingestItemsForNextSeg) > 0 {
+			if err := client.SaveIngestRecorderItems(ctx, cfg.RestoreTS, ingestItemsForNextSeg, cfg.logCheckpointMetaManager); err != nil {
+				return errors.Annotate(err, "failed to persist ingest items for next segment")
+			}
+		}
+		log.Info("skip repairing ingest index until last segment",
+			zap.Uint64("restored-ts", cfg.RestoreTS))
 	}
 
 	if cfg.tiflashRecorder != nil {
@@ -2281,6 +2298,43 @@ func loadTiFlashRecorderItemsIfNeeded(ctx context.Context, client *logclient.Log
 	log.Info("loaded tiflash items for previous segment",
 		zap.Uint64("start-ts", cfg.StartTS),
 		zap.Int("item-count", len(items)))
+	return nil
+}
+
+func countIngestRecorderItems(items map[int64]map[int64]bool) int {
+	total := 0
+	for _, indexMap := range items {
+		total += len(indexMap)
+	}
+	return total
+}
+
+func loadIngestRecorderItemsIfNeeded(
+	ctx context.Context,
+	client *logclient.LogClient,
+	cfg *LogRestoreConfig,
+	recorder *ingestrec.IngestRecorder,
+) error {
+	if recorder == nil {
+		return nil
+	}
+	if len(cfg.FullBackupStorage) != 0 {
+		return nil
+	}
+
+	items, err := client.LoadIngestRecorderItems(ctx, cfg.StartTS, cfg.logCheckpointMetaManager)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if items == nil {
+		log.Info("no ingest items found for previous segment", zap.Uint64("start-ts", cfg.StartTS))
+		return nil
+	}
+	recorder.MergeItems(items)
+	log.Info("loaded ingest items for previous segment",
+		zap.Uint64("start-ts", cfg.StartTS),
+		zap.Int("table-count", len(items)),
+		zap.Int("index-count", countIngestRecorderItems(items)))
 	return nil
 }
 
