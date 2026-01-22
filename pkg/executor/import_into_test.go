@@ -164,7 +164,7 @@ func TestNextGenS3ExternalID(t *testing.T) {
 		}
 	})
 
-	t.Run("SEM enabled, set S3 external ID to keyspace name", func(t *testing.T) {
+	t.Run("SEM enabled, set external ID to keyspace name", func(t *testing.T) {
 		bak := config.GetGlobalKeyspaceName()
 		config.UpdateGlobal(func(conf *config.Config) {
 			conf.KeyspaceName = "aaa"
@@ -188,8 +188,10 @@ func TestNextGenS3ExternalID(t *testing.T) {
 					require.Equal(t, "aaa", u.Query().Get(s3like.S3ExternalID))
 					panic("FAIL IT, AS WE CANNOT RUN IT HERE")
 				})
-				err := tk.QueryToErr("IMPORT INTO test.t FROM 's3://bucket'")
-				require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+				for _, schema := range []string{"s3", "oss"} {
+					err := tk.QueryToErr(fmt.Sprintf("IMPORT INTO test.t FROM '%s://bucket'", schema))
+					require.ErrorContains(t, err, "FAIL IT, AS WE CANNOT RUN IT HERE")
+				}
 			})
 		}
 	})
