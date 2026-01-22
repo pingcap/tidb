@@ -81,6 +81,10 @@ type slowQueryRetriever struct {
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
+	now := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("lance test retrieve slow log done", zap.Duration("duration", time.Since(now)))
+	}()
 	if !e.initialized {
 		err := e.initialize(ctx, sctx)
 		if err != nil {
@@ -313,6 +317,10 @@ type slowLogTask struct {
 type slowLogBlock []string
 
 func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
+	now := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("lance test get batch log done", zap.Duration("duration", time.Since(now)))
+	}()
 	var line string
 	log := make([]string, 0, num)
 	var err error
@@ -436,6 +444,10 @@ func decomposeToSlowLogTasks(logs []slowLogBlock, num int) [][]string {
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
+	now := time.Now()
+	defer func() {
+		logutil.BgLogger().Info("lance test parse slow log done", zap.Duration("duration", time.Since(now)))
+	}()
 	defer close(e.taskList)
 	offset := offset{offset: 0, length: 0}
 	// To limit the num of go routine
@@ -641,6 +653,7 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 	logSize := calculateLogSize(log)
 	defer e.memConsume(-logSize)
 	defer func() {
+		logutil.BgLogger().Info("lance test parse log done", zap.Duration("duration", time.Since(start)))
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
 			buf := make([]byte, 4096)
@@ -942,6 +955,8 @@ type logFile struct {
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
 func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
+	now := time.Now()
+	logutil.BgLogger().Info("lance test enter getAllFiles")
 	totalFileNum := 0
 	if e.stats != nil {
 		startTime := time.Now()
@@ -1048,6 +1063,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return nil, err
 		}
 	}
+	logutil.BgLogger().Info("lance test in getAllFiles after workFn", zap.Duration("duration", time.Since(now)))
 	// Sort by start time
 	slices.SortFunc(logFiles, func(i, j logFile) int {
 		return i.start.Compare(j.start)
@@ -1073,6 +1089,7 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			ret = append(ret, file)
 		}
 	}
+	logutil.BgLogger().Info("lance test leave getAllFiles", zap.Duration("duration", time.Since(now)))
 	return ret, err
 }
 
