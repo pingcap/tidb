@@ -48,7 +48,7 @@ type SampleItem struct {
 	Ordinal int
 }
 
-// EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
+// EmptySampleItemSize is the size of empty SampleItem, 32 = 8 (datum ptr) + 16(interface) + 8(int).
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
 // CopySampleItems returns a deep copy of SampleItem slice.

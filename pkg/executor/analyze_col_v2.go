@@ -735,9 +735,9 @@ workLoop:
 						Value:   &val,
 						Ordinal: j,
 					})
-					var deltaSize int64 = 8 + 4 // 8 is size of reference, 4 is size of Ordinal
-					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
+					// Because copy the datum to local variable.
+					e.memTracker.BufferedConsume(&bufferedMemSize, types.EmptyDatumSize)
+					e.memTracker.BufferedRelease(&bufferedReleaseSize, types.EmptyDatumSize)
 				}
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
@@ -791,9 +791,6 @@ workLoop:
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value: &tmp,
 					})
-					var deltaSize int64 = 8
-					e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-					e.memTracker.BufferedRelease(&bufferedReleaseSize, deltaSize)
 				}
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
