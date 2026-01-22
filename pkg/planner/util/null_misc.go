@@ -651,14 +651,8 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 }
 
 // handleNullPreservingComparison handles comparison operators (=, <>, <, >, <=, >=, LIKE, REGEXP).
-// Optimized: uses containsColumnFromSchema to avoid slice allocation.
-func handleNullPreservingComparison(sf *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema) NullRejectionResult {
-	// Quick check: does the expression reference any inner column?
-	peeled := peelTransparentWrappers(sf)
-	if !containsColumnFromSchema(peeled, inner) {
-		return NotNullRejecting
-	}
-
+// Note: caller (isNullRejectedExpr) has already verified that predicate references inner columns.
+func handleNullPreservingComparison(_ *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema) NullRejectionResult {
 	// Check if any argument propagates NULL (union semantics)
 	// For LIKE/ILIKE, only check first 2 args (escape arg is usually constant)
 	maxArgs := 2
@@ -758,16 +752,11 @@ func handleUnaryNot(args []expression.Expression, inner *expression.Schema) Null
 
 // handleGenericNullPreserving handles other NullPreserving functions not explicitly listed.
 // Uses the generic rule: NonTrue(F(args...)) ⊇ MustNull(F(args...)) = ⋃ MustNull(arg_i)
+// Note: caller (isNullRejectedExpr) has already verified that predicate references inner columns.
 func handleGenericNullPreserving(sf *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema) NullRejectionResult {
 	t := traitOf(sf.FuncName.L)
 	if !has(t, NullPreserving) {
 		return Undecided
-	}
-
-	// Quick check: does the expression reference any inner column?
-	peeled := peelTransparentWrappers(sf)
-	if !containsColumnFromSchema(peeled, inner) {
-		return NotNullRejecting
 	}
 
 	// Check all arguments for NULL propagation
