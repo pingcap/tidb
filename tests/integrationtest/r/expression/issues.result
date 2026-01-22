@@ -3192,3 +3192,9 @@ Projection	8.00	root		test.ast.i, Column#32
       └─TableReader(Probe)	10.00	root		data:Selection
         └─Selection	10.00	cop[tikv]		eq("astp2019121731703151", test.acc.m)
           └─TableFullScan	10000.00	cop[tikv]	table:b	keep order:false, stats:pseudo
+DROP TABLE IF EXISTS test.t;
+CREATE TABLE test.t (id bigint(11) UNSIGNED PRIMARY KEY);
+INSERT INTO test.t VALUES (1234567890123456);
+SELECT IFNULL(id, 'abcdef') FROM test.t;
+IFNULL(id, 'abcdef')
+1234567890123456

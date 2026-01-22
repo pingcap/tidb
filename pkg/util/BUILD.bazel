@@ -35,6 +35,7 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/session/txninfo",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/types",
         "//pkg/util/collate",
         "//pkg/util/disk",
         "//pkg/util/execdetails",

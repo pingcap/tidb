@@ -42,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -873,6 +874,7 @@ func doReorgWorkForCreateIndex(w *worker, d *ddlCtx, t *meta.Meta, job *model.Jo
 			indexInfo.BackfillState = model.BackfillStateReadyToMerge
 		}
 		ver, err = updateVersionAndTableInfo(d, t, job, tbl.Meta(), true)
+		failpoint.InjectCall("afterBackfillStateRunningDone", job)
 		return false, ver, errors.Trace(err)
 	case model.BackfillStateReadyToMerge:
 		failpoint.Inject("mockDMLExecutionStateBeforeMerge", func(_ failpoint.Value) {
@@ -933,7 +935,15 @@ func runIngestReorgJob(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job,
 		//nolint:forcetypeassert
 		discovery = d.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 	}
-	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, allIndexInfos[0].Unique, nil, discovery, job.ReorgMeta.ResourceGroupName)
+	m := metrics.RegisterLightningCommonMetricsForDDL(job.ID)
+	ctx = lightningmetric.WithCommonMetric(ctx, m)
+	defer func() {
+		if err != nil || done {
+			metrics.UnregisterLightningCommonMetricsForDDL(job.ID, m)
+		}
+	}()
+	bc, err = ingest.LitBackCtxMgr.Register(ctx, job.ID, allIndexInfos[0].Unique,
+		nil, discovery, job.ReorgMeta.ResourceGroupName, job.RealStartTS)
 	if err != nil {
 		ver, err = convertAddIdxJob2RollbackJob(d, t, job, tbl.Meta(), allIndexInfos, err)
 		return false, ver, errors.Trace(err)
@@ -1678,6 +1688,7 @@ func newAddIndexIngestWorker(
 	checkpointMgr *ingest.CheckpointManager,
 ) (*addIndexIngestWorker, error) {
 	indexes := make([]table.Index, 0, len(indexIDs))
+	var indexNames strings.Builder
 	writers := make([]ingest.Writer, 0, len(indexIDs))
 	for i, indexID := range indexIDs {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, indexID)
@@ -1688,14 +1699,17 @@ func newAddIndexIngestWorker(
 		}
 		indexes = append(indexes, index)
 		writers = append(writers, lw)
+		if i > 0 {
+			indexNames.WriteString("+")
+		}
+		indexNames.WriteString(index.Meta().Name.O)
 	}
 
 	return &addIndexIngestWorker{
-		ctx:     ctx,
-		d:       d,
-		sessCtx: sessCtx,
-		metricCounter: metrics.BackfillTotalCounter.WithLabelValues(
-			metrics.GenerateReorgLabel("add_idx_rate", schemaName, t.Meta().Name.O)),
+		ctx:              ctx,
+		d:                d,
+		sessCtx:          sessCtx,
+		metricCounter:    metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, schemaName, t.Meta().Name.O, indexNames.String()),
 		tbl:              t,
 		indexes:          indexes,
 		writers:          writers,
@@ -2005,7 +2019,8 @@ func checkDuplicateForUniqueIndex(ctx context.Context, t table.Table, reorgInfo 
 		if indexInfo.Unique {
 			ctx := tidblogutil.WithCategory(ctx, "ddl-ingest")
 			if bc == nil {
-				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil, discovery, reorgInfo.ReorgMeta.ResourceGroupName)
+				bc, err = ingest.LitBackCtxMgr.Register(ctx, reorgInfo.ID, indexInfo.Unique, nil,
+					discovery, reorgInfo.ReorgMeta.ResourceGroupName, reorgInfo.RealStartTS)
 				if err != nil {
 					return err
 				}
@@ -2062,6 +2077,7 @@ func (w *worker) executeDistTask(t table.Table, reorgInfo *reorgInfo) error {
 		// It's possible that the task state is succeed but the ddl job is paused.
 		// When task in succeed state, we can skip the dist task execution/scheduing process.
 		if task.State == proto.TaskStateSucceed {
+			w.updateJobRowCount(taskKey, reorgInfo.Job.ID)
 			logutil.DDLLogger().Info(
 				"task succeed, start to resume the ddl job",
 				zap.String("task-key", taskKey))
@@ -2262,7 +2278,7 @@ func (w *worker) updateJobRowCount(taskKey string, jobID int64) {
 		logutil.DDLLogger().Warn("cannot get task manager", zap.String("task_key", taskKey), zap.Error(err))
 		return
 	}
-	task, err := taskMgr.GetTaskByKey(w.ctx, taskKey)
+	task, err := taskMgr.GetTaskByKeyWithHistory(w.ctx, taskKey)
 	if err != nil {
 		logutil.DDLLogger().Warn("cannot get task", zap.String("task_key", taskKey), zap.Error(err))
 		return
@@ -2427,7 +2443,7 @@ func newCleanUpIndexWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 	}
 	return &cleanUpIndexWorker{
 		baseIndexWorker: baseIndexWorker{
-			backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "cleanup_idx_rate", false),
+			backfillCtx: newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblCleanupIdxRate, false),
 			indexes:     indexes,
 			rowDecoder:  rowDecoder,
 			defaultVals: make([]types.Datum, len(t.WritableCols())),

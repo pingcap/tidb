@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze"
-	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/exec"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util/test"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -56,9 +55,9 @@ func TestEnableAutoAnalyzePriorityQueue(t *testing.T) {
 	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
 }
@@ -77,9 +76,9 @@ func TestAutoAnalyzeLockedTable(t *testing.T) {
 	tk.MustExec("lock stats t")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(is))
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	// Try to analyze the locked table, it should not analyze the table.
 	require.False(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -104,9 +103,9 @@ func TestDisableAutoAnalyze(t *testing.T) {
 	require.NoError(t, h.Update(is))
 
 	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0")
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	// Even auto analyze ratio is set to 0, we still need to analyze the unanalyzed tables.
 	require.True(t, dom.StatsHandle().HandleAutoAnalyze())
@@ -129,9 +128,9 @@ func TestAutoAnalyzeOnChangeAnalyzeVer(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 	tk.MustExec("set @@global.tidb_analyze_version = 1")
 	do := dom
-	exec.AutoAnalyzeMinCnt = 0
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = 1000
+		statistics.AutoAnalyzeMinCnt = 1000
 	}()
 	h := do.StatsHandle()
 	err := h.HandleDDLEvent(<-h.DDLEventCh())
@@ -309,10 +308,10 @@ func TestAutoAnalyzeSkipColumnTypes(t *testing.T) {
 	require.NoError(t, h.Update(dom.InfoSchema()))
 	tk.MustExec("set @@global.tidb_analyze_skip_column_types = 'json,blob,mediumblob,text,mediumtext'")
 
-	originalVal := exec.AutoAnalyzeMinCnt
-	exec.AutoAnalyzeMinCnt = 0
+	originalVal := statistics.AutoAnalyzeMinCnt
+	statistics.AutoAnalyzeMinCnt = 0
 	defer func() {
-		exec.AutoAnalyzeMinCnt = originalVal
+		statistics.AutoAnalyzeMinCnt = originalVal
 	}()
 	require.True(t, h.HandleAutoAnalyze())
 	tk.MustQuery("select job_info from mysql.analyze_jobs where job_info like '%auto analyze table%'").Check(testkit.Rows("auto analyze table columns a, b, d with 256 buckets, 500 topn, 1 samplerate"))
@@ -341,7 +340,7 @@ func TestAutoAnalyzeOnEmptyTable(t *testing.T) {
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(exec.AutoAnalyzeMinCnt)))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
@@ -376,7 +375,7 @@ func TestAutoAnalyzeOutOfSpecifiedTime(t *testing.T) {
 	// to pass the stats.Pseudo check in autoAnalyzeTable
 	tk.MustExec("analyze table t")
 	// to pass the AutoAnalyzeMinCnt check in autoAnalyzeTable
-	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(exec.AutoAnalyzeMinCnt)))
+	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", int(statistics.AutoAnalyzeMinCnt)))
 	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
 	require.NoError(t, dom.StatsHandle().Update(dom.InfoSchema()))
 
@@ -400,14 +399,18 @@ func makeFailpointRes(t *testing.T, v any) string {
 func getMockedServerInfo() map[string]*infosync.ServerInfo {
 	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s1": {
-			ID:   "s1",
-			IP:   "127.0.0.1",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s1",
+				IP:   "127.0.0.1",
+				Port: 4000,
+			},
 		},
 		"s2": {
-			ID:   "s2",
-			IP:   "127.0.0.2",
-			Port: 4000,
+			StaticServerInfo: infosync.StaticServerInfo{
+				ID:   "s2",
+				IP:   "127.0.0.2",
+				Port: 4000,
+			},
 		},
 	}
 	return mockedAllServerInfos

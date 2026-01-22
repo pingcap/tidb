@@ -756,6 +756,8 @@ func TestRadians(t *testing.T) {
 		{float64(180), float64(math.Pi)},
 		{-360, -2 * float64(math.Pi)},
 		{"180", float64(math.Pi)},
+		{float64(1.0e308), float64(1.7453292519943295e306)},
+		{float64(23), float64(0.4014257279586958)},
 	}
 
 	Dtbl := tblToDtbl(tbl)

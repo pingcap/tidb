@@ -6,9 +6,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	goerrors "errors"
 	"flag"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
 	"testing"
 	"time"
@@ -569,4 +573,36 @@ func TestSpeedReadManyFiles(t *testing.T) {
 	}
 	require.NoError(t, eg.Wait())
 	t.Logf("read %d large files cost %v", len(testFiles), time.Since(now))
+}
+
+func TestGCSShouldRetry(t *testing.T) {
+	require.True(t, shouldRetry(&url.Error{Err: goerrors.New("http2: client connection lost"), Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+	require.True(t, shouldRetry(&url.Error{Err: io.EOF, Op: "Get", URL: "https://storage.googleapis.com/storage/v1/"}))
+}
+
+func TestCtxUsage(t *testing.T) {
+	httpSvr := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer httpSvr.Close()
+
+	ctx := context.Background()
+	gcs := &backuppb.GCS{
+		Endpoint:      httpSvr.URL,
+		Bucket:        "test",
+		Prefix:        "prefix",
+		StorageClass:  "NEARLINE",
+		PredefinedAcl: "private",
+		CredentialsBlob: fmt.Sprintf(`
+{
+	"type":"external_account",
+	"audience":"//iam.googleapis.com/projects/1234567890123/locations/global/workloadIdentityPools/my-pool/providers/my-provider",
+	"subject_token_type":"urn:ietf:params:oauth:token-type:access_token",
+	"credential_source":{"url":"%s"}
+}`, httpSvr.URL),
+	}
+	stg, err := NewGCSStorage(ctx, gcs, &ExternalStorageOptions{})
+	require.NoError(t, err)
+
+	_, err = stg.FileExists(ctx, "key")
+	// before the fix, it's context canceled error
+	require.ErrorContains(t, err, "invalid_request")
 }

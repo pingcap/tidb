@@ -127,12 +127,12 @@ func canExprPushDown(ctx PushDownContext, expr Expression, storeType kv.StoreTyp
 			if expr.GetType().GetType() == mysql.TypeEnum && canEnumPush {
 				break
 			}
-			warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
+			warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains unsupported calculation of type '" + types.TypeStr(expr.GetType().GetType()) + "'.")
 			ctx.AppendWarning(warnErr)
 			return false
 		case mysql.TypeNewDecimal:
 			if !expr.GetType().IsDecimalValid() {
-				warnErr := errors.NewNoStackError("Expression about '" + expr.String() + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
+				warnErr := errors.NewNoStackError("Expression about '" + expr.StringWithCtx(errors.RedactLogDisable) + "' can not be pushed to TiFlash because it contains invalid decimal('" + strconv.Itoa(expr.GetType().GetFlen()) + "','" + strconv.Itoa(expr.GetType().GetDecimal()) + "').")
 				ctx.AppendWarning(warnErr)
 				return false
 			}
@@ -177,7 +177,7 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
 		// open the following switchers if we implement them in coprocessor via `cmath`
 		ast.Sin, ast.Asin, ast.Cos, ast.Acos /* ast.Tan */, ast.Atan, ast.Atan2, ast.Cot,
-		ast.Radians, ast.Degrees, ast.Conv, ast.CRC32,
+		ast.Radians, ast.Degrees, ast.CRC32,
 
 		// control flow functions.
 		ast.Case, ast.If, ast.Ifnull, ast.Coalesce,
@@ -221,6 +221,17 @@ func scalarExprSupportedByTiKV(sf *ScalarFunction) bool {
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
 		ast.UUID:
 
+		return true
+	// Rust use the llvm math functions, which have different precision with Golang/MySQL(cmath)
+	// open the following switchers if we implement them in coprocessor via `cmath`
+	case ast.Conv:
+		arg0 := sf.GetArgs()[0]
+		// To be aligned with MySQL, tidb handles hybrid type argument and binary literal specially, tikv can't be consistent with tidb now.
+		if f, ok := arg0.(*ScalarFunction); ok {
+			if f.FuncName.L == ast.Cast && (f.GetArgs()[0].GetType().Hybrid() || IsBinaryLiteral(f.GetArgs()[0])) {
+				return false
+			}
+		}
 		return true
 	case ast.Round:
 		switch sf.Function.PbCode() {
@@ -277,7 +288,15 @@ func scalarExprSupportedByFlash(function *ScalarFunction) bool {
 			tipb.ScalarFuncSig_CoalesceDuration,
 			tipb.ScalarFuncSig_IfNullDuration,
 			tipb.ScalarFuncSig_IfDuration,
-			tipb.ScalarFuncSig_CaseWhenDuration:
+			tipb.ScalarFuncSig_CaseWhenDuration,
+			tipb.ScalarFuncSig_LTJson,
+			tipb.ScalarFuncSig_LEJson,
+			tipb.ScalarFuncSig_GTJson,
+			tipb.ScalarFuncSig_GEJson,
+			tipb.ScalarFuncSig_EQJson,
+			tipb.ScalarFuncSig_NEJson,
+			tipb.ScalarFuncSig_JsonIsNull,
+			tipb.ScalarFuncSig_InJson:
 			return false
 		}
 		return true

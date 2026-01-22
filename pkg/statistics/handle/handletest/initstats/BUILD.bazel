@@ -1,0 +1,15 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_test")
+
+go_test(
+    name = "initstats_test",
+    timeout = "short",
+    srcs = ["load_stats_test.go"],
+    flaky = True,
+    deps = [
+        "//pkg/config",
+        "//pkg/parser/model",
+        "//pkg/statistics/handle",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

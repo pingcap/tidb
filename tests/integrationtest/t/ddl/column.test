@@ -44,3 +44,17 @@ alter table t1 add column d date default '2024-10';
 drop table if exists t;
 create table t(a decimal(0,0), b decimal(0));
 show create table t;
+
+# TestTooLongDefaultValueForBit
+drop table if exists t;
+-- error 1067
+create table t(a bit(2) default b'111');
+-- error 1439
+create table t(a bit(65) default b'111');
+create table t(a bit(64) default b'1111111111111111111111111111111111111111111111111111111111111111');
+drop table t;
+create table t(a bit(3) default b'111');
+drop table t;
+create table t(a bit(3) default b'000111');
+drop table t;
+create table t(a bit(32) default b'1111111111111111111111111111111');

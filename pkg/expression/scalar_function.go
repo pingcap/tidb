@@ -120,18 +120,23 @@ func (sf *ScalarFunction) Vectorized() bool {
 
 // String implements fmt.Stringer interface.
 func (sf *ScalarFunction) String() string {
+	return sf.StringWithCtx(errors.RedactLogDisable)
+}
+
+// StringWithCtx implements Expression interface.
+func (sf *ScalarFunction) StringWithCtx(redact string) string {
 	var buffer bytes.Buffer
 	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(redact))
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.String())
+			buffer.WriteString(arg.StringWithCtx(redact))
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -817,6 +822,16 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
+}
+
+// IsExplicitCharset return the charset is explicit set or not.
+func (sf *ScalarFunction) IsExplicitCharset() bool {
+	return sf.Function.IsExplicitCharset()
+}
+
+// SetExplicitCharset set the charset is explicit or not.
+func (sf *ScalarFunction) SetExplicitCharset(explicit bool) {
+	sf.Function.SetExplicitCharset(explicit)
 }
 
 const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))

@@ -9,7 +9,8 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 39,
+    race = "on",
+    shard_count = 41,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/types"
@@ -225,25 +226,25 @@ func (s *builtinArithmeticPlusIntSig) evalInt(ctx EvalContext, row chunk.Row) (v
 	switch {
 	case isLHSUnsigned && isRHSUnsigned:
 		if uint64(a) > math.MaxUint64-uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 	case isLHSUnsigned && !isRHSUnsigned:
 		if b < 0 && uint64(-b) > uint64(a) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 		if b > 0 && uint64(a) > math.MaxUint64-uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 	case !isLHSUnsigned && isRHSUnsigned:
 		if a < 0 && uint64(-a) > uint64(b) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 		if a > 0 && uint64(b) > math.MaxUint64-uint64(a) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 	case !isLHSUnsigned && !isRHSUnsigned:
 		if (a > 0 && b > math.MaxInt64-a) || (a < 0 && b < math.MinInt64-a) {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 	}
 
@@ -273,7 +274,7 @@ func (s *builtinArithmeticPlusDecimalSig) evalDecimal(ctx EvalContext, row chunk
 	err = types.DecimalAdd(a, b, c)
 	if err != nil {
 		if err == types.ErrOverflow {
-			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 		return nil, true, err
 	}
@@ -303,7 +304,7 @@ func (s *builtinArithmeticPlusRealSig) evalReal(ctx EvalContext, row chunk.Row) 
 		return 0, true, nil
 	}
 	if !mathutil.IsFinite(a + b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].String(), s.args[1].String()))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s + %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return a + b, false, nil
 }
@@ -368,7 +369,7 @@ func (s *builtinArithmeticMinusRealSig) evalReal(ctx EvalContext, row chunk.Row)
 		return 0, isNull, err
 	}
 	if !mathutil.IsFinite(a - b) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s - %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return a - b, false, nil
 }
@@ -396,7 +397,7 @@ func (s *builtinArithmeticMinusDecimalSig) evalDecimal(ctx EvalContext, row chun
 	err = types.DecimalSub(a, b, c)
 	if err != nil {
 		if err == types.ErrOverflow {
-			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s - %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 		return nil, true, err
 	}
@@ -434,7 +435,7 @@ func (s *builtinArithmeticMinusIntSig) evalInt(ctx EvalContext, row chunk.Row) (
 	}
 	overflow := s.overflowCheck(isLHSUnsigned, isRHSUnsigned, signed, a, b)
 	if overflow {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", s.args[0].String(), s.args[1].String()))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs(errType, fmt.Sprintf("(%s - %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 
 	return a - b, false, nil
@@ -578,7 +579,7 @@ func (s *builtinArithmeticMultiplyRealSig) evalReal(ctx EvalContext, row chunk.R
 	}
 	result := a * b
 	if math.IsInf(result, 0) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s * %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return result, false, nil
 }
@@ -596,7 +597,7 @@ func (s *builtinArithmeticMultiplyDecimalSig) evalDecimal(ctx EvalContext, row c
 	err = types.DecimalMul(a, b, c)
 	if err != nil && !terror.ErrorEqual(err, types.ErrTruncated) {
 		if err == types.ErrOverflow {
-			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
+			err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s * %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 		return nil, true, err
 	}
@@ -616,7 +617,7 @@ func (s *builtinArithmeticMultiplyIntUnsignedSig) evalInt(ctx EvalContext, row c
 	unsignedB := uint64(b)
 	result := unsignedA * unsignedB
 	if unsignedA != 0 && result/unsignedA != unsignedB {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s * %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return int64(result), false, nil
 }
@@ -632,7 +633,7 @@ func (s *builtinArithmeticMultiplyIntSig) evalInt(ctx EvalContext, row chunk.Row
 	}
 	result := a * b
 	if (a != 0 && result/a != b) || (result == math.MinInt64 && a == -1) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", s.args[0].String(), s.args[1].String()))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s * %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return result, false, nil
 }
@@ -645,7 +646,6 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
-	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	lhsEvalTp, rhsEvalTp := numericContextResultType(args[0]), numericContextResultType(args[1])
 	if lhsEvalTp == types.ETReal || rhsEvalTp == types.ETReal {
 		bf, err := newBaseBuiltinFuncWithTp(ctx, c.funcName, args, types.ETReal, types.ETReal, types.ETReal)
@@ -661,6 +661,7 @@ func (c *arithmeticDivideFunctionClass) getFunction(ctx BuildContext, args []Exp
 	if err != nil {
 		return nil, err
 	}
+	lhsTp, rhsTp := args[0].GetType(), args[1].GetType()
 	c.setType4DivDecimal(bf.tp, lhsTp, rhsTp, ctx.GetEvalCtx().GetDivPrecisionIncrement())
 	sig := &builtinArithmeticDivideDecimalSig{bf}
 	sig.setPbCode(tipb.ScalarFuncSig_DivideDecimal)
@@ -697,7 +698,7 @@ func (s *builtinArithmeticDivideRealSig) evalReal(ctx EvalContext, row chunk.Row
 	}
 	result := a / b
 	if math.IsInf(result, 0) {
-		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s / %s)", s.args[0].String(), s.args[1].String()))
+		return 0, true, types.ErrOverflow.GenWithStackByArgs("DOUBLE", fmt.Sprintf("(%s / %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return result, false, nil
 }
@@ -726,7 +727,7 @@ func (s *builtinArithmeticDivideDecimalSig) evalDecimal(ctx EvalContext, row chu
 			err = c.Round(c, s.baseBuiltinFunc.tp.GetDecimal(), types.ModeHalfUp)
 		}
 	} else if err == types.ErrOverflow {
-		err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", s.args[0].String(), s.args[1].String()))
+		err = types.ErrOverflow.GenWithStackByArgs("DECIMAL", fmt.Sprintf("(%s / %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 	}
 	return c, false, err
 }
@@ -857,14 +858,14 @@ func (s *builtinArithmeticIntDivideDecimalSig) evalInt(ctx EvalContext, row chun
 				ret = int64(0)
 				return ret, false, nil
 			}
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT UNSIGNED", fmt.Sprintf("(%s DIV %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 		ret = int64(val)
 	} else {
 		ret, err = c.ToInt()
 		// err returned by ToInt may be ErrTruncated or ErrOverflow, only handle ErrOverflow, ignore ErrTruncated.
 		if err == types.ErrOverflow {
-			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", s.args[0].String(), s.args[1].String()))
+			return 0, true, types.ErrOverflow.GenWithStackByArgs("BIGINT", fmt.Sprintf("(%s DIV %s)", s.args[0].StringWithCtx(errors.RedactLogDisable), s.args[1].StringWithCtx(errors.RedactLogDisable)))
 		}
 	}
 

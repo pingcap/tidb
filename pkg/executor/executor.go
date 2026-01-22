@@ -911,6 +911,11 @@ func (e *CheckTableExec) checkIndexHandle(ctx context.Context, src *IndexLookUpE
 			e.retCh <- errors.Trace(err)
 			break
 		}
+
+		failpoint.Inject("mockAdminCheckPanic", func() {
+			panic("mock admin check panic")
+		})
+
 		if chk.NumRows() == 0 {
 			break
 		}
@@ -1332,6 +1337,7 @@ type LimitExec struct {
 
 	// columnIdxsUsedByChild keep column indexes of child executor used for inline projection
 	columnIdxsUsedByChild []int
+	columnSwapHelper      *chunk.ColumnSwapHelper
 
 	// Log the close time when opentracing is enabled.
 	span opentracing.Span
@@ -1393,10 +1399,9 @@ func (e *LimitExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	e.cursor += batchSize
 
 	if e.columnIdxsUsedByChild != nil {
-		for i, childIdx := range e.columnIdxsUsedByChild {
-			if err = req.SwapColumn(i, e.childResult, childIdx); err != nil {
-				return err
-			}
+		err = e.columnSwapHelper.SwapColumns(e.childResult, req)
+		if err != nil {
+			return err
 		}
 	} else {
 		req.SwapColumns(e.childResult)
@@ -2119,6 +2124,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 	errLevels := sc.ErrLevels()
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.LevelWarn
+	inImportInto := false
 	switch stmt := s.(type) {
 	// `ResetUpdateStmtCtx` and `ResetDeleteStmtCtx` may modify the flags, so we'll need to store them.
 	case *ast.UpdateStmt:
@@ -2143,6 +2149,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			!strictSQLMode || stmt.IgnoreErr,
 		)
 		sc.Priority = stmt.Priority
+		sc.SetTypeFlags(util.GetTypeFlagsForInsert(sc.TypeFlags(), vars.SQLMode, stmt.IgnoreErr))
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
 			WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
@@ -2162,6 +2169,9 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		sc.InLoadDataStmt = true
 		// return warning instead of error when load data meet no partition for value
 		errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.LevelWarn
+	case *ast.ImportIntoStmt:
+		inImportInto = true
+		sc.SetTypeFlags(util.GetTypeFlagsForImportInto(sc.TypeFlags(), vars.SQLMode))
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 
@@ -2219,7 +2229,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		// WithAllowNegativeToUnsigned with false value indicates values less than 0 should be clipped to 0 for unsigned integer types.
 		// This is the case for `insert`, `update`, `alter table`, `create table` and `load data infile` statements, when not in strict SQL mode.
 		// see https://dev.mysql.com/doc/refman/5.7/en/out-of-range-and-overflow.html
-		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
+		WithAllowNegativeToUnsigned(!sc.InInsertStmt && !sc.InLoadDataStmt && !inImportInto && !sc.InUpdateStmt && !sc.InCreateOrAlterStmt),
 	)
 
 	vars.PlanCacheParams.Reset()
@@ -2366,6 +2376,7 @@ func (e *FastCheckTableExec) Open(ctx context.Context) error {
 
 type checkIndexTask struct {
 	indexOffset int
+	err         *atomic.Pointer[error]
 }
 
 type checkIndexWorker struct {
@@ -2420,6 +2431,11 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 
 // HandleTask implements the Worker interface.
 func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.None)) {
+	defer util.Recover("fast_check_table", "handleTableScanTaskWithRecover", func() {
+		err := errors.Errorf("checkIndexTask panicked, indexOffset: %d", task.indexOffset)
+		task.err.CompareAndSwap(nil, &err)
+	}, false)
+
 	defer w.e.wg.Done()
 	idxInfo := w.indexInfos[task.indexOffset]
 	bucketSize := int(CheckTableFastBucketSize.Load())
@@ -2556,6 +2572,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		}
 		slices.SortFunc(indexChecksum, func(i, j groupByChecksum) int {
 			return cmp.Compare(i.bucket, j.bucket)
+		})
+
+		// mock query panic for fast admin check.
+		failpoint.Inject("mockFastAdminCheckPanic", func() {
+			panic("mock fast admin check panic")
 		})
 
 		currentOffset := 0
@@ -2788,7 +2809,7 @@ func (e *FastCheckTableExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 
 	e.wg.Add(len(e.indexInfos))
 	for i := range e.indexInfos {
-		workerPool.AddTask(checkIndexTask{indexOffset: i})
+		workerPool.AddTask(checkIndexTask{indexOffset: i, err: e.err})
 	}
 
 	e.wg.Wait()

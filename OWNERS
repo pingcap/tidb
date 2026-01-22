@@ -1,5 +1,6 @@
 # See the OWNERS docs at https://go.k8s.io/owners
 approvers:
+  - 0xPoe
   - 3AceShowHand
   - 3pointer
   - 5kbpers
@@ -43,7 +44,6 @@ approvers:
   - guo-shaoge
   - hanfei1991
   - hawkingrei
-  - hi-rustin
   - hicqu
   - holys
   - hongyunyan

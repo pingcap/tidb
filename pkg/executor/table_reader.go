@@ -442,6 +442,7 @@ func (e *TableReaderExecutor) buildKVReqSeparately(ctx context.Context, ranges [
 			SetAllowBatchCop(e.batchCop).
 			SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
 			SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+			SetSQLKiller(e.dctx.SQLKiller).
 			Build()
 		if err != nil {
 			return nil, err
@@ -484,6 +485,7 @@ func (e *TableReaderExecutor) buildKVReqForPartitionTableScan(ctx context.Contex
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
 		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+		SetSQLKiller(e.dctx.SQLKiller).
 		Build()
 	if err != nil {
 		return nil, err
@@ -528,7 +530,8 @@ func (e *TableReaderExecutor) buildKVReq(ctx context.Context, ranges []*ranger.R
 		SetAllowBatchCop(e.batchCop).
 		SetClosestReplicaReadAdjuster(newClosestReadAdjuster(e.dctx, &reqBuilder.Request, e.netDataSize)).
 		SetPaging(e.paging).
-		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias)
+		SetConnIDAndConnAlias(e.dctx.ConnectionID, e.dctx.SessionAlias).
+		SetSQLKiller(e.dctx.SQLKiller)
 	return reqBuilder.Build()
 }
 

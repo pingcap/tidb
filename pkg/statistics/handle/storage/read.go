@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -41,7 +42,20 @@ import (
 
 // StatsMetaCountAndModifyCount reads count and modify_count for the given table from mysql.stats_meta.
 func StatsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
-	rows, _, err := util.ExecRows(sctx, "select count, modify_count from mysql.stats_meta where table_id = %?", tableID)
+	return statsMetaCountAndModifyCount(sctx, tableID, false)
+}
+
+// StatsMetaCountAndModifyCountForUpdate reads count and modify_count for the given table from mysql.stats_meta with lock.
+func StatsMetaCountAndModifyCountForUpdate(sctx sessionctx.Context, tableID int64) (count, modifyCount int64, isNull bool, err error) {
+	return statsMetaCountAndModifyCount(sctx, tableID, true)
+}
+
+func statsMetaCountAndModifyCount(sctx sessionctx.Context, tableID int64, forUpdate bool) (count, modifyCount int64, isNull bool, err error) {
+	sql := "select count, modify_count from mysql.stats_meta where table_id = %?"
+	if forUpdate {
+		sql += " for update"
+	}
+	rows, _, err := util.ExecRows(sctx, sql, tableID)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -515,8 +529,11 @@ func TableStatsFromStorage(sctx sessionctx.Context, snapshot uint64, tableInfo *
 	table.RealtimeCount = realtimeCount
 
 	rows, _, err := util.ExecRows(sctx, "select table_id, is_index, hist_id, distinct_count, version, null_count, tot_col_size, stats_ver, flag, correlation, last_analyze_pos from mysql.stats_histograms where table_id = %?", tableID)
+	if err != nil {
+		return nil, err
+	}
 	// Check deleted table.
-	if err != nil || len(rows) == 0 {
+	if len(rows) == 0 {
 		return nil, nil
 	}
 	for _, row := range rows {
@@ -563,7 +580,7 @@ func LoadHistogram(sctx sessionctx.Context, tableID int64, isIndex int, histID i
 }
 
 // LoadNeededHistograms will load histograms for those needed columns/indices.
-func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, loadFMSketch bool) (err error) {
+func LoadNeededHistograms(sctx sessionctx.Context, statsCache statstypes.StatsHandle, loadFMSketch bool) (err error) {
 	items := statistics.HistogramNeededItems.AllItems()
 	for _, item := range items {
 		if !item.IsIndex {
@@ -606,18 +623,42 @@ func CleanFakeItemsForShowHistInFlights(statsCache statstypes.StatsCache) int {
 	return reallyNeeded
 }
 
-func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsCache, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
-	tbl, ok := statsCache.Get(col.TableID)
+func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.StatsHandle, col model.TableItemID, loadFMSketch bool, fullLoad bool) (err error) {
+	statsTbl, ok := statsCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	tbl, ok := statsCache.TableInfoByID(is, col.TableID)
+	if !ok {
+		return nil
+	}
+	tblInfo := tbl.Meta()
 	var colInfo *model.ColumnInfo
-	_, loadNeeded, analyzed := tbl.ColumnIsLoadNeeded(col.ID, true)
-	if !loadNeeded || !analyzed {
+	_, loadNeeded, analyzed := statsTbl.ColumnIsLoadNeeded(col.ID, true)
+	for _, ci := range tblInfo.Columns {
+		if col.ID == ci.ID {
+			colInfo = ci
+			break
+		}
+	}
+	if colInfo == nil {
 		statistics.HistogramNeededItems.Delete(col)
 		return nil
 	}
-	colInfo = tbl.ColAndIdxExistenceMap.GetCol(col.ID)
+	if !loadNeeded || !analyzed {
+		// If this column is not analyzed yet and we don't have it in memory.
+		// We create a fake one for the pseudo estimation.
+		// Otherwise, it will trigger the sync/async load again, even if the column has not been analyzed.
+		if loadNeeded && !analyzed {
+			fakeCol := statistics.EmptyColumn(colInfo.ID, tblInfo.PKIsHandle, colInfo)
+			statsTbl.Columns[col.ID] = fakeCol
+			statsCache.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
+		}
+		statistics.HistogramNeededItems.Delete(col)
+		return nil
+	}
+
 	hg, _, statsVer, _, err := HistMetaFromStorageWithHighPriority(sctx, &col, colInfo)
 	if hg == nil || err != nil {
 		statistics.HistogramNeededItems.Delete(col)
@@ -651,29 +692,29 @@ func loadNeededColumnHistograms(sctx sessionctx.Context, statsCache statstypes.S
 		CMSketch:   cms,
 		TopN:       topN,
 		FMSketch:   fms,
-		IsHandle:   tbl.IsPkIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
+		IsHandle:   tblInfo.PKIsHandle && mysql.HasPriKeyFlag(colInfo.GetFlag()),
 		StatsVer:   statsVer,
 	}
 	// Reload the latest stats cache, otherwise the `updateStatsCache` may fail with high probability, because functions
 	// like `GetPartitionStats` called in `fmSketchFromStorage` would have modified the stats cache already.
-	tbl, ok = statsCache.Get(col.TableID)
+	statsTbl, ok = statsCache.Get(col.TableID)
 	if !ok {
 		return nil
 	}
-	tbl = tbl.Copy()
+	statsTbl = statsTbl.Copy()
 	if colHist.StatsAvailable() {
 		if fullLoad {
 			colHist.StatsLoadedStatus = statistics.NewStatsFullLoadStatus()
 		} else {
 			colHist.StatsLoadedStatus = statistics.NewStatsAllEvictedStatus()
 		}
-		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
 		if statsVer != statistics.Version0 {
-			tbl.StatsVer = int(statsVer)
+			statsTbl.LastAnalyzeVersion = max(statsTbl.LastAnalyzeVersion, colHist.LastUpdateVersion)
+			statsTbl.StatsVer = int(statsVer)
 		}
 	}
-	tbl.Columns[col.ID] = colHist
-	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
+	statsTbl.Columns[col.ID] = colHist
+	statsCache.UpdateStatsCache([]*statistics.Table{statsTbl}, nil)
 	statistics.HistogramNeededItems.Delete(col)
 	if col.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",
@@ -728,9 +769,9 @@ func loadNeededIndexHistograms(sctx sessionctx.Context, statsCache statstypes.St
 	tbl = tbl.Copy()
 	if idxHist.StatsVer != statistics.Version0 {
 		tbl.StatsVer = int(idxHist.StatsVer)
+		tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	}
 	tbl.Indices[idx.ID] = idxHist
-	tbl.LastAnalyzeVersion = max(tbl.LastAnalyzeVersion, idxHist.LastUpdateVersion)
 	statsCache.UpdateStatsCache([]*statistics.Table{tbl}, nil)
 	if idx.IsSyncLoadFailed {
 		logutil.BgLogger().Warn("Hist for column should already be loaded as sync but not found.",

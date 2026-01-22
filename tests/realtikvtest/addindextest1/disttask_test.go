@@ -17,8 +17,11 @@ package addindextest
 import (
 	"context"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -30,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
@@ -134,17 +138,63 @@ func TestAddIndexDistCancel(t *testing.T) {
 		tk1.MustExec("admin cancel ddl jobs " + jobID)
 	}
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish"))
-	}()
-
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish", "1*return(true)")
 	require.Error(t, tk.ExecToErr("alter table t add index idx(a);"))
 	tk.MustExec("admin check table t;")
 	tk.MustExec("alter table t add index idx2(a);")
 	tk.MustExec("admin check table t;")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionAddIndexSubTaskFinish")
 
-	tk.MustExec(`set global tidb_enable_dist_task=0;`)
+	// test get row count when job txn failed
+	tk.MustExec("drop database if exists addindexlit;")
+	tk.MustExec("create database addindexlit;")
+	tk.MustExec("use addindexlit;")
+	tk.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("create table t (a int, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use addindexlit;")
+	tk2.MustExec(`set global tidb_ddl_enable_fast_reorg=on;`)
+	tk.MustExec("set @@global.tidb_enable_dist_task = 1;")
+	tk2.MustExec("create table t2 (a int, b int);")
+	tk2.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3);")
+
+	var counter atomic.Int32
+	var enableTrigger atomic.Bool
+	var targetJobID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone", func(job *model.Job) {
+		// fail for one index when finish backfill, and check row count right
+		if counter.Add(1) == 1 {
+			targetJobID.Store(job.ID)
+			enableTrigger.Store(true)
+		}
+	})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable", func(job *model.Job, errP *error) {
+		if enableTrigger.Load() && job.ID == targetJobID.Load() {
+			*errP = errors.New("mock error")
+			enableTrigger.Store(false)
+		}
+	})
+	wg := &sync.WaitGroup{}
+	wg.Add(2)
+	go func() {
+		tk.MustExec("alter table t add index idx(a);")
+		wg.Done()
+	}()
+	go func() {
+		tk2.MustExec("alter table t2 add index idx_b(b);")
+		wg.Done()
+	}()
+	wg.Wait()
+	rows := tk.MustQuery("admin show ddl jobs 2;").Rows()
+	require.Len(t, rows, 2)
+	require.Equal(t, "3", rows[0][7].(string) /* row_count */)
+	require.Equal(t, "3", rows[1][7].(string) /* row_count */)
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterBackfillStateRunningDone")
+	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterUpdateJobToTable")
+
+	tk.MustExec(`set global tidb_enable_dist_task=0`)
 }
 
 func TestAddIndexDistPauseAndResume(t *testing.T) {

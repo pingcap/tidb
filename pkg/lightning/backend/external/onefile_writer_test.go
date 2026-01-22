@@ -17,6 +17,7 @@ package external
 import (
 	"bytes"
 	"context"
+	goerrors "errors"
 	"fmt"
 	"io"
 	"path"
@@ -81,7 +82,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/test/0_stat/one-file", bufSize)
@@ -90,7 +91,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	var keyCnt uint64 = 0
 	for {
 		p, err := statReader.nextProp()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
@@ -144,7 +145,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	statReader, err := newStatsReader(ctx, memStore, "/"+prefix+"/0_stat/one-file", bufSize)
@@ -154,7 +155,7 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	idx := 0
 	for {
 		p, err := statReader.nextProp()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.NoError(t, err)
@@ -230,7 +231,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		values = append(values, clonedVal)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	dir := t.TempDir()
@@ -331,7 +332,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		require.Equal(t, kvs[i].Val, value)
 	}
 	_, _, err = kvReader.nextKV()
-	require.Equal(t, io.EOF, err)
+	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
 	// check writerSummary.
@@ -394,7 +395,7 @@ func TestOnefilePropOffset(t *testing.T) {
 	lastOffset := uint64(0)
 	for {
 		prop, err := rd.nextProp()
-		if err == io.EOF {
+		if goerrors.Is(err, io.EOF) {
 			break
 		}
 		require.GreaterOrEqual(t, prop.offset, lastOffset)

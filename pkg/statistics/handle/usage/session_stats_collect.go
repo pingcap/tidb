@@ -38,7 +38,7 @@ var (
 	// DumpStatsDeltaRatio is the lower bound of `Modify Count / Table Count` for stats delta to be dumped.
 	DumpStatsDeltaRatio = 1 / 10000.0
 	// dumpStatsMaxDuration is the max duration since last update.
-	dumpStatsMaxDuration = time.Hour
+	dumpStatsMaxDuration = 5 * time.Minute
 
 	// batchInsertSize is the batch size used by internal SQL to insert values to some system table.
 	batchInsertSize = 10
@@ -68,7 +68,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 		item.InitTime = currentTime
 	}
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
-		// Dump the stats to kv at least once an hour.
+		// Dump the stats to kv at least once 5 minutes.
 		return true
 	}
 	statsTbl := s.statsHandle.GetPartitionStats(tbl.Meta(), id)
@@ -82,6 +82,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 // DumpStatsDeltaToKV sweeps the whole list and updates the global map, then we dumps every table that held in map to KV.
 // If the mode is `DumpDelta`, it will only dump that delta info that `Modify Count / Table Count` greater than a ratio.
 func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
+	defer util.Recover(metrics.LabelStats, "DumpStatsDeltaToKV", nil, false)
 	start := time.Now()
 	defer func() {
 		dur := time.Since(start)
@@ -214,6 +215,7 @@ func (s *statsUsageImpl) dumpTableStatCountToKV(is infoschema.InfoSchema, physic
 
 // DumpColStatsUsageToKV sweeps the whole list, updates the column stats usage map and dumps it to KV.
 func (s *statsUsageImpl) DumpColStatsUsageToKV() error {
+	defer util.Recover(metrics.LabelStats, "DumpColStatsUsageToKV", nil, false)
 	if !variable.EnableColumnTracking.Load() {
 		return nil
 	}

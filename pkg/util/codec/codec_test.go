@@ -983,14 +983,16 @@ func TestHashGroup(t *testing.T) {
 	tp1 := tp
 	tp1.SetFlen(20)
 	tp1.SetDecimal(5)
-	_, err := HashGroupKey(time.Local, 3, chk1.Column(0), buf1, tp1)
+	buf, err := HashGroupKey(time.Local, 3, chk1.Column(0), buf1, tp1)
 	require.Error(t, err)
+	require.Len(t, buf, 3)
 
 	tp2 := tp
 	tp2.SetFlen(12)
 	tp2.SetDecimal(10)
-	_, err = HashGroupKey(time.Local, 3, chk1.Column(0), buf1, tp2)
+	buf, err = HashGroupKey(time.Local, 3, chk1.Column(0), buf1, tp2)
 	require.Error(t, err)
+	require.Len(t, buf, 3)
 }
 
 func datumsForTest() ([]types.Datum, []*types.FieldType) {

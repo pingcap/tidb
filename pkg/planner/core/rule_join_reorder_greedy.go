@@ -20,6 +20,8 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type joinReorderGreedySolver struct {
@@ -96,11 +98,11 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	s.curJoinGroup = s.curJoinGroup[1:]
 	for {
 		bestCost := math.MaxFloat64
-		bestIdx := -1
-		var finalRemainOthers []expression.Expression
-		var bestJoin LogicalPlan
+		bestIdx, whateverValidOneIdx := -1, -1
+		var finalRemainOthers, remainOthersOfWhateverValidOne []expression.Expression
+		var bestJoin, whateverValidOne LogicalPlan
 		for i, node := range s.curJoinGroup {
-			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p)
+			newJoin, remainOthers := s.checkConnectionAndMakeJoin(curJoinTree.p, node.p, tracer.opt)
 			if newJoin == nil {
 				continue
 			}
@@ -108,6 +110,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 			if err != nil {
 				return nil, err
 			}
+			whateverValidOne = newJoin
+			whateverValidOneIdx = i
+			remainOthersOfWhateverValidOne = remainOthers
 			curCost := s.calcJoinCumCost(newJoin, curJoinTree, node)
 			tracer.appendLogicalJoinCost(newJoin, curCost)
 			if bestCost > curCost {
@@ -119,7 +124,16 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 		}
 		// If we could find more join node, meaning that the sub connected graph have been totally explored.
 		if bestJoin == nil {
-			break
+			if whateverValidOne == nil {
+				break
+			}
+			// This branch is for the unexpected case.
+			// We throw assertion in test env. And create a valid join to avoid wrong result in the production env.
+			intest.Assert(false, "Join reorder should find one valid join but failed.")
+			bestJoin = whateverValidOne
+			bestCost = math.MaxFloat64
+			bestIdx = whateverValidOneIdx
+			finalRemainOthers = remainOthersOfWhateverValidOne
 		}
 		curJoinTree = &jrNode{
 			p:       bestJoin,
@@ -131,10 +145,10 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree(tracer *joinReorder
 	return curJoinTree, nil
 }
 
-func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan) (LogicalPlan, []expression.Expression) {
+func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan LogicalPlan, opt *util.LogicalOptimizeOp) (LogicalPlan, []expression.Expression) {
 	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 {
 		return nil, nil
 	}
-	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
+	return s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, opt)
 }

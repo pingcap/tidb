@@ -56,6 +56,7 @@ type BackfillSubTaskMeta struct {
 	RowEnd   []byte `json:"row_end"`
 
 	// Used by global sort write & ingest step.
+	RangeJobKeys   [][]byte `json:"range_job_keys,omitempty"`
 	RangeSplitKeys [][]byte `json:"range_split_keys,omitempty"`
 	DataFiles      []string `json:"data-files,omitempty"`
 	StatFiles      []string `json:"stat-files,omitempty"`
@@ -117,21 +118,21 @@ func (s *backfillDistExecutor) newBackfillSubtaskExecutor(
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
 		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
-		return newReadIndexExecutor(ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
+		return newReadIndexExecutor(s.BaseTaskExecutor.Ctx(), ddlObj, jobMeta, indexInfos, tbl, jc, s.getBackendCtx, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:
 		return newMergeSortExecutor(jobMeta.ID, len(indexInfos), tbl, cloudStorageURI)
 	case proto.BackfillStepWriteAndIngest:
 		if len(cloudStorageURI) == 0 {
 			return nil, errors.Errorf("local import does not have write & ingest step")
 		}
-		return newCloudImportExecutor(jobMeta, indexInfos[0], tbl, s.getBackendCtx, cloudStorageURI)
+		return newCloudImportExecutor(s.BaseTaskExecutor.Ctx(), jobMeta, indexInfos[0], tbl, s.getBackendCtx, cloudStorageURI)
 	default:
 		// should not happen, caller has checked the stage
 		return nil, errors.Errorf("unknown step %d for job %d", stage, jobMeta.ID)
 	}
 }
 
-func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
+func (s *backfillDistExecutor) getBackendCtx(ctx context.Context) (ingest.BackendCtx, error) {
 	job := &s.taskMeta.Job
 	unique, err := decodeIndexUniqueness(job)
 	if err != nil {
@@ -140,7 +141,7 @@ func (s *backfillDistExecutor) getBackendCtx() (ingest.BackendCtx, error) {
 	ddlObj := s.d
 	discovery := ddlObj.store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
 
-	return ingest.LitBackCtxMgr.Register(s.BaseTaskExecutor.Ctx(), job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName)
+	return ingest.LitBackCtxMgr.Register(ctx, job.ID, unique, ddlObj.etcdCli, discovery, job.ReorgMeta.ResourceGroupName, job.RealStartTS)
 }
 
 func decodeIndexUniqueness(job *model.Job) (bool, error) {

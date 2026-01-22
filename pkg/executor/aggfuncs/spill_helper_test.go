@@ -25,8 +25,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var testLongStr1 string = getLongString("平p凯k星x辰c")
-var testLongStr2 string = getLongString("123aa啊啊aa")
+var testLongStr1 string = getLongString("平352p凯额6辰c")
+var testLongStr2 string = getLongString("123a啊f24f去rsgvsfg")
 
 func getChunk() *chunk.Chunk {
 	fieldTypes := make([]*types.FieldType, 1)
@@ -746,13 +746,15 @@ func TestPartialResult4SumFloat64(t *testing.T) {
 
 func TestBasePartialResult4GroupConcat(t *testing.T) {
 	var serializeHelper = NewSerializeHelper()
+	serializeHelper.buf = make([]byte, 0)
 	bufSizeChecker := newBufferSizeChecker()
 
 	// Initialize test data
 	expectData := []basePartialResult4GroupConcat{
+		{valsBuf: bytes.NewBufferString("123"), buffer: nil},
 		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString("")},
-		{valsBuf: bytes.NewBufferString("xzxx"), buffer: bytes.NewBufferString(testLongStr2)},
-		{valsBuf: bytes.NewBufferString(testLongStr1), buffer: bytes.NewBufferString(testLongStr2)},
+		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString(testLongStr1)},
+		{valsBuf: bytes.NewBufferString(""), buffer: bytes.NewBufferString(testLongStr2)},
 	}
 	serializedPartialResults := make([]PartialResult, len(expectData))
 	testDataNum := len(serializedPartialResults)
@@ -787,8 +789,11 @@ func TestBasePartialResult4GroupConcat(t *testing.T) {
 	// Check some results
 	require.Equal(t, testDataNum, index)
 	for i := 0; i < testDataNum; i++ {
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).valsBuf.String(), deserializedPartialResults[i].valsBuf.String())
-		require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
+		if (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer != nil {
+			require.Equal(t, (*basePartialResult4GroupConcat)(serializedPartialResults[i]).buffer.String(), deserializedPartialResults[i].buffer.String())
+		} else {
+			require.Equal(t, (*bytes.Buffer)(nil), deserializedPartialResults[i].buffer)
+		}
 	}
 }
 

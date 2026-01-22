@@ -19,7 +19,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"runtime"
 	"slices"
 	"strconv"
 	"time"
@@ -120,6 +119,8 @@ var optRuleList = []logicalOptRule{
 	&pushDownSequenceSolver{},
 	&resolveExpand{},
 }
+
+const initialMaxCores uint64 = 10000
 
 // Interaction Rule List
 /* The interaction rule will be trigger when it satisfies following conditions:
@@ -288,7 +289,7 @@ func doOptimize(
 		return nil, nil, 0, err
 	}
 
-	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
+	if !sctx.GetSessionVars().InRestrictedSQL && !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
 	planCounter := PlanCounterTp(sessVars.StmtCtx.StmtHints.ForceNthPlan)
@@ -770,7 +771,7 @@ const (
 type fineGrainedShuffleHelper struct {
 	shuffleTarget shuffleTarget
 	plans         []*basePhysicalPlan
-	joinKeysCount int
+	joinKeys      []*expression.Column
 }
 
 type tiflashClusterInfoStatus uint8
@@ -789,7 +790,7 @@ type tiflashClusterInfo struct {
 func (h *fineGrainedShuffleHelper) clear() {
 	h.shuffleTarget = unknown
 	h.plans = h.plans[:0]
-	h.joinKeysCount = 0
+	h.joinKeys = nil
 }
 
 func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysicalPlan) {
@@ -797,9 +798,7 @@ func (h *fineGrainedShuffleHelper) updateTarget(t shuffleTarget, p *basePhysical
 	h.plans = append(h.plans, p)
 }
 
-// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers, and divide by 2
-// return false, 0 if any err happens
-func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+func getTiFlashServerMinLogicalCores(ctx context.Context, sctx PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
 	failpoint.Inject("mockTiFlashStreamCountUsingMinLogicalCores", func(val failpoint.Value) {
 		intVal, err := strconv.Atoi(val.(string))
 		if err == nil {
@@ -812,7 +811,6 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx P
 	if err != nil {
 		return false, 0
 	}
-	var initialMaxCores uint64 = 10000
 	var minLogicalCores = initialMaxCores // set to a large enough value here
 	for _, row := range rows {
 		if row[4].GetString() == "cpu-logical-cores" {
@@ -823,14 +821,19 @@ func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx P
 		}
 	}
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
-	if minLogicalCores > 1 && minLogicalCores != initialMaxCores {
-		if runtime.GOARCH == "amd64" {
-			// In most x86-64 platforms, `Thread(s) per core` is 2
-			return true, minLogicalCores / 2
-		}
-		// ARM cpus don't implement Hyper-threading.
+	return true, minLogicalCores
+}
+
+// calculateTiFlashStreamCountUsingMinLogicalCores uses minimal logical cpu cores among tiflash servers
+// return false, 0 if any err happens
+func calculateTiFlashStreamCountUsingMinLogicalCores(ctx context.Context, sctx PlanContext, serversInfo []infoschema.ServerInfo) (bool, uint64) {
+	valid, minLogicalCores := getTiFlashServerMinLogicalCores(ctx, sctx, serversInfo)
+	if !valid {
+		return false, 0
+	}
+	if minLogicalCores != initialMaxCores {
+		// use logical core number as the stream count, the same as TiFlash's default max_threads: https://github.com/pingcap/tiflash/blob/v7.5.0/dbms/src/Interpreters/SettingsCommon.h#L166
 		return true, minLogicalCores
-		// Other platforms are too rare to consider
 	}
 
 	return false, 0
@@ -988,7 +991,7 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx PlanContext, plan
 		if len(joinKeys) > 0 { // Not cross join
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: joinBuild, plans: []*basePhysicalPlan{}}
 			buildHelper.plans = append(buildHelper.plans, &x.basePhysicalPlan)
-			buildHelper.joinKeysCount = len(joinKeys)
+			buildHelper.joinKeys = joinKeys
 			setupFineGrainedShuffleInternal(ctx, sctx, buildChild, &buildHelper, streamCountInfo, tiflashServerCountInfo)
 		} else {
 			buildHelper := fineGrainedShuffleHelper{shuffleTarget: unknown, plans: []*basePhysicalPlan{}}
@@ -1018,7 +1021,19 @@ func setupFineGrainedShuffleInternal(ctx context.Context, sctx PlanContext, plan
 				}
 			case joinBuild:
 				// Support hashJoin only when shuffle hash keys equals to join keys due to tiflash implementations
-				if len(x.HashCols) != helper.joinKeysCount {
+				if len(x.HashCols) != len(helper.joinKeys) {
+					break
+				}
+				// Check the shuffle key should be equal to joinKey, otherwise the shuffle hash code may not be equal to
+				// actual join hash code due to type cast
+				applyFlag := true
+				for i, joinKey := range helper.joinKeys {
+					if !x.HashCols[i].Col.Equal(nil, joinKey) {
+						applyFlag = false
+						break
+					}
+				}
+				if !applyFlag {
 					break
 				}
 				applyFlag, streamCount := checkFineGrainedShuffleForJoinAgg(ctx, sctx, streamCountInfo, tiflashServerCountInfo, exchangeColCount, 600) // 600: performance test result

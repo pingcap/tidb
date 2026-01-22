@@ -314,23 +314,15 @@ func (b *Bundle) String() string {
 
 // Tidy will post optimize Rules, trying to generate rules that suits PD.
 func (b *Bundle) Tidy() error {
+	// refer to tidb#58633
+	// Does not explicitly set exclude rule with label.key==EngineLabelKey, because the
+	// PD may wrongly add peer to the unexpected stores if that key is specified.
 	tempRules := b.Rules[:0]
 	id := 0
 	for _, rule := range b.Rules {
 		// useless Rule
 		if rule.Count <= 0 {
 			continue
-		}
-		// refer to tidb#22065.
-		// add -engine=tiflash to every rule to avoid schedules to tiflash instances.
-		// placement rules in SQL is not compatible with `set tiflash replica` yet
-		err := AddConstraint(&rule.LabelConstraints, pd.LabelConstraint{
-			Op:     pd.NotIn,
-			Key:    EngineLabelKey,
-			Values: []string{EngineLabelTiFlash},
-		})
-		if err != nil {
-			return err
 		}
 		rule.ID = strconv.Itoa(id)
 		tempRules = append(tempRules, rule)

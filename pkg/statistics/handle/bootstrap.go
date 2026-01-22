@@ -44,6 +44,11 @@ const initStatsStep = int64(500)
 
 var maxTidRecord MaxTidRecord
 
+// GetMaxTidRecordForTest gets the max tid record for test.
+func GetMaxTidRecordForTest() int64 {
+	return maxTidRecord.tid.Load()
+}
+
 // MaxTidRecord is to record the max tid.
 type MaxTidRecord struct {
 	mu  sync.Mutex
@@ -81,7 +86,7 @@ func (h *Handle) initStatsMeta4Chunk(is infoschema.InfoSchema, cache statstypes.
 	maxTidRecord.mu.Lock()
 	defer maxTidRecord.mu.Unlock()
 	if maxTidRecord.tid.Load() < maxPhysicalID {
-		maxTidRecord.tid.Store(physicalID)
+		maxTidRecord.tid.Store(maxPhysicalID)
 	}
 }
 

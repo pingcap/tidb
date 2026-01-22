@@ -83,6 +83,10 @@ func (c constantRegions) BlockGCUntil(ctx context.Context, at uint64) (uint64, e
 	return 0, status.Error(codes.Unimplemented, "Unsupported operation")
 }
 
+func (c constantRegions) UnblockGC(ctx context.Context) error {
+	return status.Error(codes.Unimplemented, "Unsupported operation")
+}
+
 // TODO: It should be able to synchoronize the current TS with the PD.
 func (c constantRegions) FetchCurrentTS(ctx context.Context) (uint64, error) {
 	return oracle.ComposeTS(time.Now().UnixMilli(), 0), nil

@@ -727,7 +727,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
+              "expr": "sum(rate(tidb_executor_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (sql_type)",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -737,7 +737,7 @@
             },
             {
               "exemplar": true,
-              "expr": "sum(rate(tidb_server_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+              "expr": "sum(rate(tidb_executor_affected_rows{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
               "hide": false,
               "interval": "",
               "legendFormat": "total",
@@ -15142,6 +15142,102 @@
           "yaxis": {
             "align": false
           }
+        },
+        {
+          "aliasColors": {},
+          "bars": false,
+          "dashLength": 10,
+          "dashes": false,
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "Add Index Backfill Import Speed of Each Job",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "fill": 0,
+          "fillGradient": 0,
+          "gridPos": {
+            "h": 7,
+            "w": 12,
+            "x": 12,
+            "y": 46
+          },
+          "hiddenSeries": false,
+          "id": 23763573003,
+          "legend": {
+            "avg": false,
+            "current": false,
+            "max": false,
+            "min": false,
+            "show": true,
+            "total": false,
+            "values": false
+          },
+          "lines": true,
+          "linewidth": 1,
+          "nullPointMode": "null",
+          "options": {
+            "alertThreshold": true
+          },
+          "percentage": false,
+          "pluginVersion": "7.5.17",
+          "pointradius": 2,
+          "points": false,
+          "renderer": "flot",
+          "seriesOverrides": [],
+          "spaceLength": 10,
+          "stack": false,
+          "steppedLine": false,
+          "targets": [
+            {
+              "exemplar": true,
+              "expr": "sum(rate(tidb_ddl_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", state=\"imported\"}[1m])) by(job_id)",
+              "hide": false,
+              "interval": "",
+              "legendFormat": "job-id {{job_id}}",
+              "refId": "C"
+            }
+          ],
+          "thresholds": [],
+          "timeFrom": null,
+          "timeRegions": [],
+          "timeShift": null,
+          "title": "Add Index Backfill Import Speed",
+          "tooltip": {
+            "shared": true,
+            "sort": 0,
+            "value_type": "individual"
+          },
+          "type": "graph",
+          "xaxis": {
+            "buckets": null,
+            "mode": "time",
+            "name": null,
+            "show": true,
+            "values": []
+          },
+          "yaxes": [
+            {
+              "format": "binBps",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            },
+            {
+              "format": "short",
+              "label": null,
+              "logBase": 1,
+              "max": null,
+              "min": null,
+              "show": true
+            }
+          ],
+          "yaxis": {
+            "align": false,
+            "alignLevel": null
+          }
         }
       ],
       "repeat": null,
@@ -15769,7 +15865,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|reverting|revert_pending|paused\"}) by (exec_id)",
+              "expr": "sum(tidb_disttask_subtasks{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", status=~\"pending|running|failed|canceled|paused\"}) by (exec_id)",
               "interval": "",
               "legendFormat": "",
               "queryType": "randomWalk",
@@ -16654,7 +16750,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_statistics_sync_load_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.9999, sum(rate(tidb_statistics_sync_load_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
               "format": "time_series",
               "interval": "",
               "intervalFactor": 2,
@@ -16664,7 +16760,7 @@
             },
             {
               "exemplar": true,
-              "expr": "histogram_quantile(0.95, sum(rate(tidb_statistics_read_stats_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
+              "expr": "histogram_quantile(0.9999, sum(rate(tidb_statistics_read_stats_latency_millis_bucket{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) by (le))",
               "format": "time_series",
               "hide": false,
               "interval": "",
@@ -16678,7 +16774,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Sync Load Latency 95",
+          "title": "Sync Load Latency P9999",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -21984,7 +22080,7 @@
           "targets": [
             {
               "exemplar": true,
-              "expr": "avg(tidb_server_ttl_watermark_delay{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"schedule\"}) by (type, name)",
+              "expr": "max(tidb_server_ttl_watermark_delay{k8s_cluster=\"$k8s_cluster\",tidb_cluster=\"$tidb_cluster\", type=\"schedule\"}) by (type, name)",
               "interval": "",
               "legendFormat": "{{ name }}",
               "queryType": "randomWalk",
@@ -22606,7 +22702,9 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "The total coprocessor response size between each tidb and tikv",
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "unit": "KiBs"
+            },
             "overrides": []
           },
           "fill": 1,
@@ -22676,7 +22774,7 @@
           "yaxes": [
             {
               "$$hashKey": "object:394",
-              "format": "binBps",
+              "format": "KiBs",
               "label": "",
               "logBase": 1,
               "max": null,
@@ -22706,7 +22804,9 @@
           "datasource": "${DS_TEST-CLUSTER}",
           "description": "Histogram of coprocessor response size in bytes between tidb and tikv",
           "fieldConfig": {
-            "defaults": {},
+            "defaults": {
+              "unit": "kbytes"
+            },
             "overrides": []
           },
           "fill": 1,
@@ -22803,7 +22903,7 @@
           "yaxes": [
             {
               "$$hashKey": "object:394",
-              "format": "bytes",
+              "format": "kbytes",
               "label": "",
               "logBase": 1,
               "max": null,

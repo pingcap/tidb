@@ -43,7 +43,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-const CheckpointDir = "/checkpoints"
+const CheckpointDir = "checkpoints"
 
 type flushPosition struct {
 	CheckpointDataDir     string

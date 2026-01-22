@@ -112,7 +112,7 @@ func Selectivity(
 			sel = 1.0 / pseudoEqualRate
 		}
 		if sc.EnableOptimizerDebugTrace {
-			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.String(), "Selectivity", sel)
+			debugtrace.RecordAnyValuesWithNames(ctx, "Expression", expr.StringWithCtx(errors.RedactLogDisable), "Selectivity", sel)
 		}
 		ret *= sel
 	}

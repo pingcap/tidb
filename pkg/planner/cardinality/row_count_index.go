@@ -250,13 +250,20 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			if fullLen {
 				// At most 1 in this case.
 				if idx.Info.Unique {
-					totalCount++
+					if !indexRange.IsOnlyNull() {
+						totalCount++
+						if debugTrace {
+							debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						}
+						continue
+					}
+					totalCount = max(1, float64(idx.NullCount))
 					if debugTrace {
-						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+						debugTraceEndEstimateRange(sctx, totalCount, debugTraceUniquePoint)
 					}
 					continue
 				}
-				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount)
+				count = equalRowCountOnIndex(sctx, idx, lb, realtimeRowCount, modifyCount)
 				// If the current table row count has changed, we should scale the row count accordingly.
 				count *= idx.GetIncreaseFactor(realtimeRowCount)
 				if debugTrace {
@@ -334,15 +341,20 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
 				c, ok := coll.Columns[idx.Histogram.ID]
-				// If this is single column of a multi-column index - use the column's NDV rather than index NDV
+				// If this is single column predicate - use the column's information rather than index.
+				// Index histograms are converted to string. Column uses original type - which can be more accurate for out of range
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
-				if isSingleColRange && !isSingleColIdx && ok && c != nil && c.Histogram.NDV > 0 {
+				if isSingleColRange && ok && c != nil && c.Histogram.NDV > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
+					count += c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], modifyCount, histNDV, increaseFactor)
 				} else {
+					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
+					count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV, increaseFactor)
 				}
+			} else {
+				count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV, increaseFactor)
 			}
-			count += idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, modifyCount, histNDV, increaseFactor)
 		}
 
 		if debugTrace {
@@ -356,7 +368,7 @@ func getIndexRowCountForStatsV2(sctx context.PlanContext, idx *statistics.Index,
 
 var nullKeyBytes, _ = codec.EncodeKey(time.UTC, nil, types.NewDatum(nil))
 
-func equalRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount int64) (result float64) {
+func equalRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, b []byte, realtimeRowCount, modifyCount int64) (result float64) {
 	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
 		debugtrace.EnterContextCommon(sctx)
 		debugtrace.RecordAnyValuesWithNames(sctx, "Encoded Value", b)
@@ -397,8 +409,27 @@ func equalRowCountOnIndex(sctx context.PlanContext, idx *statistics.Index, b []b
 	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
 	histNDV := float64(idx.Histogram.NDV - int64(idx.TopN.Num()))
 	if histNDV <= 0 {
-		return 0
+		// If histNDV is zero - we have all NDV's in TopN - and no histograms. This function uses
+		// idx.TotalRowCount rather than idx.Histogram.NotNullCount() since the histograms are empty.
+		//
+		// If the table hasn't been modified, it's safe to return 0.
+		if modifyCount == 0 {
+			return 0
+		}
+		// ELSE calculate an approximate estimate based upon newly inserted rows.
+		//
+		// Reset to the original NDV, or if no NDV - derive an NDV using sqrt
+		if idx.Histogram.NDV > 0 {
+			histNDV = float64(idx.Histogram.NDV)
+		} else {
+			histNDV = math.Sqrt(max(idx.TotalRowCount(), float64(realtimeRowCount)))
+		}
+		// As a conservative estimate - take the smaller of the orignal totalRows or the additions.
+		// "realtimeRowCount - original count" is a better measure of inserts than modifyCount
+		totalRowCount := min(idx.TotalRowCount(), float64(realtimeRowCount)-idx.TotalRowCount())
+		return max(1, totalRowCount/histNDV)
 	}
+	// return the average histogram rows (which excludes topN) and NDV that excluded topN
 	return idx.Histogram.NotNullCount() / histNDV
 }
 

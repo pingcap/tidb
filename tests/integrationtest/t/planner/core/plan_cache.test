@@ -130,11 +130,13 @@ drop table if exists t;
 create table t (a int);
 insert into t values (1), (2), (3), (4);
 prepare st from 'select * from t where a!=? and a in (?, ?, ?)';
+prepare st1 from 'select * from t where a!=1 and a in (2, 3, 4)';
 set @a=1, @b=2, @c=3, @d=4;
 --enable_warnings
 execute st using @a, @a, @a, @a;
 execute st using @a, @a, @b, @c;
 execute st using @a, @b, @c, @d;
+execute st1;
 --disable_warnings
 CREATE TABLE UK_SIGNED_19384 (
     COL1 decimal(37,4) unsigned DEFAULT NULL COMMENT 'WITH DEFAULT',

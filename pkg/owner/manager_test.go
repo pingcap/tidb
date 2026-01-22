@@ -17,6 +17,8 @@ package owner_test
 import (
 	"context"
 	"fmt"
+	"math/rand"
+	"net/url"
 	"runtime"
 	"testing"
 	"time"
@@ -30,10 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
+	"go.etcd.io/etcd/server/v3/embed"
 	"go.etcd.io/etcd/tests/v3/integration"
 )
 
@@ -276,11 +280,111 @@ func TestCluster(t *testing.T) {
 
 	logPrefix := fmt.Sprintf("[ddl] %s ownerManager %s", DDLOwnerKey, "useless id")
 	logCtx := logutil.WithKeyValue(context.Background(), "owner info", logPrefix)
-	_, err = owner.GetOwnerKey(context.Background(), logCtx, cliRW, DDLOwnerKey, "useless id")
+	_, _, err = owner.GetOwnerKeyInfo(context.Background(), logCtx, cliRW, DDLOwnerKey, "useless id")
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 	op, err := owner.GetOwnerOpValue(context.Background(), cliRW, DDLOwnerKey, logPrefix)
 	require.Truef(t, terror.ErrorEqual(err, concurrency.ErrElectionNoLeader), "get owner info result don't match, err %v", err)
 	require.Equal(t, op, owner.OpNone)
+}
+
+func TestWatchOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	client, d := tInfo.client, tInfo.ddl
+	defer tInfo.Close(t)
+	ownerManager := d.OwnerManager()
+	require.NoError(t, ownerManager.CampaignOwner())
+	isOwner := checkOwner(d, true)
+	require.True(t, isOwner)
+
+	// get the owner id.
+	ctx := context.Background()
+	id, err := ownerManager.GetOwnerID(ctx)
+	require.NoError(t, err)
+
+	// create etcd session.
+	session, err := concurrency.NewSession(client)
+	require.NoError(t, err)
+
+	// test the GetOwnerKeyInfo()
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
+	require.NoError(t, err)
+
+	// watch the ownerKey.
+	ctx2, cancel2 := context.WithTimeout(ctx, time.Millisecond*300)
+	defer cancel2()
+	watchDone := make(chan bool)
+	watched := false
+	go func() {
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
+		watchDone <- true
+	}()
+
+	select {
+	case watched = <-watchDone:
+	case <-ctx2.Done():
+	}
+	require.False(t, watched)
+
+	// delete the owner, and can watch the DELETE event.
+	err = deleteLeader(client, DDLOwnerKey)
+	require.NoError(t, err)
+	watched = <-watchDone
+	require.True(t, watched)
+
+	// the ownerKey has been deleted, watch ownerKey again, it can be watched.
+	go func() {
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
+		watchDone <- true
+	}()
+
+	watched = <-watchDone
+	require.True(t, watched)
+}
+
+func TestWatchOwnerAfterDeleteOwnerKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	tInfo := newTestInfo(t)
+	client, d := tInfo.client, tInfo.ddl
+	defer tInfo.Close(t)
+	ownerManager := d.OwnerManager()
+	require.NoError(t, ownerManager.CampaignOwner())
+	isOwner := checkOwner(d, true)
+	require.True(t, isOwner)
+
+	// get the owner id.
+	ctx := context.Background()
+	id, err := ownerManager.GetOwnerID(ctx)
+	require.NoError(t, err)
+	session, err := concurrency.NewSession(client)
+	require.NoError(t, err)
+
+	// get the ownkey informations.
+	ownerKey, currRevision, err := owner.GetOwnerKeyInfo(ctx, context.TODO(), client, DDLOwnerKey, id)
+	require.NoError(t, err)
+
+	// delete the ownerkey
+	err = deleteLeader(client, DDLOwnerKey)
+	require.NoError(t, err)
+
+	// watch the ownerKey with the current revisoin.
+	watchDone := make(chan bool)
+	go func() {
+		watchErr := owner.WatchOwnerForTest(ctx, ownerManager, session, ownerKey, currRevision)
+		require.NoError(t, watchErr)
+		watchDone <- true
+	}()
+	<-watchDone
 }
 
 func checkOwner(d DDL, fbVal bool) (isOwner bool) {
@@ -312,4 +416,109 @@ func deleteLeader(cli *clientv3.Client, prefixKey string) error {
 	}
 	_, err = cli.Delete(context.Background(), string(resp.Kvs[0].Key))
 	return errors.Trace(err)
+}
+
+func TestAcquireDistributedLock(t *testing.T) {
+	const addrFmt = "http://127.0.0.1:%d"
+	cfg := embed.NewConfig()
+	cfg.Dir = t.TempDir()
+	// rand port in [20000, 60000)
+	randPort := int(rand.Int31n(40000)) + 20000
+	clientAddr := fmt.Sprintf(addrFmt, randPort)
+	lcurl, _ := url.Parse(clientAddr)
+	cfg.ListenClientUrls, cfg.AdvertiseClientUrls = []url.URL{*lcurl}, []url.URL{*lcurl}
+	lpurl, _ := url.Parse(fmt.Sprintf(addrFmt, randPort+1))
+	cfg.ListenPeerUrls, cfg.AdvertisePeerUrls = []url.URL{*lpurl}, []url.URL{*lpurl}
+	cfg.InitialCluster = "default=" + lpurl.String()
+	cfg.Logger = "zap"
+	embedEtcd, err := embed.StartEtcd(cfg)
+	require.NoError(t, err)
+	<-embedEtcd.Server.ReadyNotify()
+	t.Cleanup(func() {
+		embedEtcd.Close()
+	})
+	makeEtcdCli := func(t *testing.T) (cli *clientv3.Client) {
+		cli, err := clientv3.New(clientv3.Config{
+			Endpoints: []string{lcurl.String()},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() {
+			cli.Close()
+		})
+		return cli
+	}
+	t.Run("acquire distributed lock with same client", func(t *testing.T) {
+		cli := makeEtcdCli(t)
+		getLock := make(chan struct{})
+		ctx := context.Background()
+
+		release1, err := owner.AcquireDistributedLock(ctx, cli, "test-lock", 10)
+		require.NoError(t, err)
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
+			// Acquire another distributed lock will be blocked.
+			release2, err := owner.AcquireDistributedLock(ctx, cli, "test-lock", 10)
+			require.NoError(t, err)
+			getLock <- struct{}{}
+			release2()
+		})
+		timer := time.NewTimer(300 * time.Millisecond)
+		select {
+		case <-getLock:
+			require.FailNow(t, "acquired same lock unexpectedly")
+		case <-timer.C:
+			release1()
+			<-getLock
+		}
+		wg.Wait()
+
+		release1, err = owner.AcquireDistributedLock(ctx, cli, "test-lock/1", 10)
+		require.NoError(t, err)
+		release2, err := owner.AcquireDistributedLock(ctx, cli, "test-lock/2", 10)
+		require.NoError(t, err)
+		release1()
+		release2()
+	})
+
+	t.Run("acquire distributed lock with different clients", func(t *testing.T) {
+		cli1 := makeEtcdCli(t)
+		cli2 := makeEtcdCli(t)
+
+		getLock := make(chan struct{})
+		ctx := context.Background()
+
+		release1, err := owner.AcquireDistributedLock(ctx, cli1, "test-lock", 10)
+		require.NoError(t, err)
+		var wg util.WaitGroupWrapper
+		wg.Run(func() {
+			// Acquire another distributed lock will be blocked.
+			release2, err := owner.AcquireDistributedLock(ctx, cli2, "test-lock", 10)
+			require.NoError(t, err)
+			getLock <- struct{}{}
+			release2()
+		})
+		timer := time.NewTimer(300 * time.Millisecond)
+		select {
+		case <-getLock:
+			require.FailNow(t, "acquired same lock unexpectedly")
+		case <-timer.C:
+			release1()
+			<-getLock
+		}
+		wg.Wait()
+	})
+
+	t.Run("acquire distributed lock until timeout", func(t *testing.T) {
+		cli1 := makeEtcdCli(t)
+		cli2 := makeEtcdCli(t)
+		ctx := context.Background()
+
+		_, err := owner.AcquireDistributedLock(ctx, cli1, "test-lock", 1)
+		require.NoError(t, err)
+		cli1.Close() // Note that release() is not invoked.
+
+		release2, err := owner.AcquireDistributedLock(ctx, cli2, "test-lock", 10)
+		require.NoError(t, err)
+		release2()
+	})
 }

@@ -85,3 +85,36 @@ func Test53726(t *testing.T) {
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
+
+func TestJoinReorderWithAddSelection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec(`create table t0(vkey integer, c3 varchar(0));`)
+	tk.MustExec(`create table t1(vkey integer, c10 integer);`)
+	tk.MustExec(`create table t2(c12 integer, c13 integer, c14 varchar(0), c15 double);`)
+	tk.MustExec(`create table t3(vkey varchar(0), c20 integer);`)
+	tk.MustQuery(`explain format='brief' select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);`).Check(testkit.Rows(
+		`Projection 0.00 root  0->Column#26`,
+		`└─HashJoin 0.00 root  inner join, equal:[eq(Column#27, Column#28)]`,
+		`  ├─HashJoin(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]`,
+		`  │ ├─Selection(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)`,
+		`  │ │ └─HashJoin 0.00 root  left outer join, equal:[eq(test.t3.c20, test.t1.vkey)]`,
+		`  │ │   ├─HashJoin(Build) 0.00 root  inner join, equal:[eq(test.t0.vkey, test.t2.c13)]`,
+		`  │ │   │ ├─TableDual(Build) 0.00 root  rows:0`,
+		`  │ │   │ └─TableReader(Probe) 9990.00 root  data:Selection`,
+		`  │ │   │   └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.c13))`,
+		`  │ │   │     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+		`  │ │   └─HashJoin(Probe) 9990.00 root  CARTESIAN left outer join`,
+		`  │ │     ├─TableDual(Build) 0.00 root  rows:0`,
+		`  │ │     └─TableReader(Probe) 9990.00 root  data:Selection`,
+		`  │ │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.vkey))`,
+		`  │ │         └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
+		`  │ └─Projection(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#27`,
+		`  │   └─TableReader 9990.00 root  data:Selection`,
+		`  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.c14))`,
+		`  │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
+		`  └─Projection(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#28`,
+		`    └─TableReader 10000.00 root  data:TableFullScan`,
+		`      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
+}

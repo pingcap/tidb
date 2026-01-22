@@ -255,11 +255,20 @@ func (rm *RunawayManager) MarkSyncerInitialized() {
 	rm.syncerInitialized.Store(true)
 }
 
+// IsSyncerInitialized is used to check whether the syncer is initialized.
+func (rm *RunawayManager) IsSyncerInitialized() bool {
+	return rm.syncerInitialized.Load()
+}
+
 // DeriveChecker derives a RunawayChecker from the given resource group
 func (rm *RunawayManager) DeriveChecker(resourceGroupName, originalSQL, sqlDigest, planDigest string) *RunawayChecker {
 	group, err := rm.resourceGroupCtl.GetResourceGroup(resourceGroupName)
 	if err != nil || group == nil {
 		logutil.BgLogger().Warn("cannot setup up runaway checker", zap.Error(err))
+		return nil
+	}
+	// Only check the normal statement.
+	if len(planDigest) == 0 {
 		return nil
 	}
 	rm.activeLock.RLock()

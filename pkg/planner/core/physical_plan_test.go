@@ -20,6 +20,7 @@ import (
 	"math"
 	"testing"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -514,5 +515,38 @@ func TestPhysicalTableScanExtractCorrelatedCols(t *testing.T) {
 	// make sure the correlated columns are extracted correctly
 	correlated := ts.ExtractCorrelatedCols()
 	require.Equal(t, 1, len(correlated))
-	require.Equal(t, "test.t2.company_no", correlated[0].String())
+	require.Equal(t, "test.t2.company_no", correlated[0].StringWithCtx(errors.RedactLogDisable))
+}
+
+func TestExchangeSenderResolveIndices(t *testing.T) {
+	schemaCols1 := make([]*expression.Column, 0, 4)
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 1})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 2})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 3})
+	schemaCols1 = append(schemaCols1, &expression.Column{UniqueID: 4})
+	schema1 := expression.NewSchema(schemaCols1...)
+
+	schemaCols2 := make([]*expression.Column, 0, 2)
+	schemaCols2 = append(schemaCols2, &expression.Column{UniqueID: 3})
+	schemaCols2 = append(schemaCols2, &expression.Column{UniqueID: 4})
+	schema2 := expression.NewSchema(schemaCols2...)
+
+	partitionCol1 := &property.MPPPartitionColumn{Col: &expression.Column{UniqueID: 4}}
+
+	// two exchange sender share the same MPPPartitionColumn
+	exchangeSender1 := &core.PhysicalExchangeSender{
+		HashCols: []*property.MPPPartitionColumn{partitionCol1},
+	}
+	exchangeSender2 := &core.PhysicalExchangeSender{
+		HashCols: []*property.MPPPartitionColumn{partitionCol1},
+	}
+
+	err := exchangeSender1.ResolveIndicesItselfWithSchema(schema1)
+	require.NoError(t, err)
+
+	err = exchangeSender2.ResolveIndicesItselfWithSchema(schema2)
+	require.NoError(t, err)
+
+	// after resolving, the partition col in two different exchange sender should have different index
+	require.NotEqual(t, exchangeSender1.HashCols[0].Col.Index, exchangeSender2.HashCols[0].Col.Index)
 }

@@ -284,6 +284,28 @@ func TestEstimationForUnknownValues(t *testing.T) {
 	require.Equal(t, 0.0, count)
 }
 
+func TestNewIndexWithoutStats(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("drop table if exists t")
+	testKit.MustExec("create table t(a int, b int, c int, index idxa(a))")
+	testKit.MustExec("set @@tidb_analyze_version=2")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	testKit.MustExec("insert into t values (1, 1, 1)")
+	testKit.MustExec("insert into t select mod(a,250), mod(a,10), mod(a,100) from (with recursive x as (select 1 as a union all select a + 1 AS a from x where a < 500) select a from x) as subquery")
+	testKit.MustExec("analyze table t")
+	testKit.MustExec("create index idxb on t(b)")
+	// Create index after ANALYZE. SkyLine pruning should ensure that idxa is chosen because it has statistics
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxa(a)")
+	testKit.MustExec("analyze table t")
+	// idxa should still win after statistics
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxa(a)")
+	testKit.MustExec("create index idxab on t(a, b)")
+	// New index idxab should win due to having the most matching equal predicates - regardless of no statistics
+	testKit.MustQuery("explain format='brief' select * from t where a = 5 and b = 5").CheckContain("idxab(a, b)")
+}
+
 func TestEstimationUniqueKeyEqualConds(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -1023,7 +1045,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 
 	testKit.MustExec("use test")
 	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int primary key , b int, c int, index ib(b), index ic(c))")
+	testKit.MustExec("create table t(a int primary key , b int, c int, d int, index ib(b), index ic(c))")
 	require.NoError(t, h.HandleDDLEvent(<-h.DDLEventCh()))
 	is := dom.InfoSchema()
 	tb, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
@@ -1033,7 +1055,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 	// Mock the stats:
 	// total row count 100000
 	// column a: PK, from 0 to 100000, NDV 100000
-	// column b, c: from 0 to 10000, each value has 10 rows, NDV 10000
+	// column b, c, d: from 0 to 10000, each value has 10 rows, NDV 10000
 	// indexes are created on (b), (c) respectively
 	mockStatsTbl := mockStatsTable(tblInfo, 100000)
 	pkColValues, err := generateIntDatum(1, 100000)
@@ -1053,7 +1075,7 @@ func TestOrderingIdxSelectivityThreshold(t *testing.T) {
 		idxValues = append(idxValues, types.NewBytesDatum(b))
 	}
 
-	for i := 2; i <= 3; i++ {
+	for i := 2; i <= 4; i++ {
 		mockStatsTbl.Columns[int64(i)] = &statistics.Column{
 			Histogram:         *mockStatsHistogram(int64(i), colValues, 10, types.NewFieldType(mysql.TypeLonglong)),
 			Info:              tblInfo.Columns[i-1],

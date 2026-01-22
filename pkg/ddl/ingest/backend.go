@@ -29,6 +29,7 @@ import (
 	lightning "github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/errormanager"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/table"
@@ -36,7 +37,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"go.etcd.io/etcd/client/v3/concurrency"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -93,6 +93,7 @@ type litBackendCtx struct {
 	updateInterval  time.Duration
 	checkpointMgr   *CheckpointManager
 	etcdClient      *clientv3.Client
+	initTS          uint64
 }
 
 func (bc *litBackendCtx) handleErrorAfterCollectRemoteDuplicateRows(err error, indexID int64, tbl table.Table, hasDupe bool) error {
@@ -128,9 +129,10 @@ func (bc *litBackendCtx) CollectRemoteDuplicateRows(indexID int64, tbl table.Tab
 	// backend must be a local backend.
 	dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 	hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-		SQLMode: mysql.ModeStrictAllTables,
-		SysVars: bc.sysVars,
-		IndexID: indexID,
+		SQLMode:     mysql.ModeStrictAllTables,
+		SysVars:     bc.sysVars,
+		IndexID:     indexID,
+		MinCommitTS: bc.initTS,
 	}, lightning.ErrorOnDup)
 	return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 }
@@ -160,22 +162,14 @@ func (bc *litBackendCtx) FinishImport(indexID int64, unique bool, tbl table.Tabl
 		//nolint:forcetypeassert
 		dupeController := bc.backend.GetDupeController(bc.cfg.TikvImporter.RangeConcurrency*2, errorMgr)
 		hasDupe, err := dupeController.CollectRemoteDuplicateRows(bc.ctx, tbl, tbl.Meta().Name.L, &encode.SessionOptions{
-			SQLMode: mysql.ModeStrictAllTables,
-			SysVars: bc.sysVars,
-			IndexID: ei.indexID,
+			SQLMode:     mysql.ModeStrictAllTables,
+			SysVars:     bc.sysVars,
+			IndexID:     ei.indexID,
+			MinCommitTS: bc.initTS,
 		}, lightning.ErrorOnDup)
 		return bc.handleErrorAfterCollectRemoteDuplicateRows(err, indexID, tbl, hasDupe)
 	}
 	return nil
-}
-
-func acquireLock(ctx context.Context, se *concurrency.Session, key string) (*concurrency.Mutex, error) {
-	mu := concurrency.NewMutex(se, key)
-	err := mu.Lock(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return mu, nil
 }
 
 // Flush checks the disk quota and imports the current key-values in engine to the storage.
@@ -207,27 +201,15 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 		return true, false, nil
 	}
 
-	// Use distributed lock if run in distributed mode).
 	if bc.etcdClient != nil {
-		distLockKey := fmt.Sprintf("/tidb/distributeLock/%d/%d", bc.jobID, indexID)
-		se, _ := concurrency.NewSession(bc.etcdClient)
-		mu, err := acquireLock(bc.ctx, se, distLockKey)
+		key := fmt.Sprintf("/tidb/distributeLock/%d", bc.jobID)
+		release, err := owner.AcquireDistributedLock(bc.ctx, bc.etcdClient, key, 10)
 		if err != nil {
-			return true, false, errors.Trace(err)
+			return true, false, err
 		}
-		logutil.Logger(bc.ctx).Info("acquire distributed flush lock success", zap.Int64("jobID", bc.jobID))
-		defer func() {
-			err = mu.Unlock(bc.ctx)
-			if err != nil {
-				logutil.Logger(bc.ctx).Warn("release distributed flush lock error", zap.Error(err), zap.Int64("jobID", bc.jobID))
-			} else {
-				logutil.Logger(bc.ctx).Info("release distributed flush lock success", zap.Int64("jobID", bc.jobID))
-			}
-			err = se.Close()
-			if err != nil {
-				logutil.Logger(bc.ctx).Warn("close session error", zap.Error(err))
-			}
-		}()
+		if release != nil {
+			defer release()
+		}
 	}
 	failpoint.Inject("mockDMLExecutionStateBeforeImport", func(_ failpoint.Value) {
 		if MockDMLExecutionStateBeforeImport != nil {
@@ -241,6 +223,8 @@ func (bc *litBackendCtx) Flush(indexID int64, mode FlushMode) (flushed, imported
 
 	return true, true, nil
 }
+
+const distributedLockLease = 10 // Seconds
 
 func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	logutil.Logger(bc.ctx).Info(LitInfoUnsafeImport, zap.Int64("index ID", ei.indexID),
@@ -296,8 +280,7 @@ func (bc *litBackendCtx) unsafeImportAndReset(ei *engineInfo) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	ei.openedEngine.SetTS(newTS)
-	return nil
+	return bc.backend.SetTSAfterResetEngine(ei.uuid, newTS)
 }
 
 // ForceSyncFlagForTest is a flag to force sync only for test.

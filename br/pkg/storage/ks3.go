@@ -439,7 +439,7 @@ func (rs *KS3Storage) Open(ctx context.Context, path string, o *ReaderOption) (E
 		return nil, errors.Trace(err)
 	}
 	if prefetchSize > 0 {
-		reader = prefetch.NewReader(reader, prefetchSize)
+		reader = prefetch.NewReader(reader, r.RangeSize(), prefetchSize)
 	}
 	return &ks3ObjectReader{
 		ctx:          ctx,
@@ -508,8 +508,14 @@ func (rs *KS3Storage) open(
 	}
 
 	if startOffset != r.Start || (endOffset != 0 && endOffset != r.End+1) {
-		return nil, r, errors.Annotatef(berrors.ErrStorageUnknown, "open file '%s' failed, expected range: %s, got: %v",
-			path, *rangeOffset, result.ContentRange)
+		rangeStr := "<empty>"
+		if result.ContentRange != nil {
+			rangeStr = *result.ContentRange
+		}
+		return nil, r, errors.Annotatef(
+			berrors.ErrStorageUnknown,
+			"open file '%s' failed, expected range: %s, got: %s",
+			path, *rangeOffset, rangeStr)
 	}
 
 	return result.Body, r, nil
@@ -553,14 +559,14 @@ func (r *ks3ObjectReader) Read(p []byte) (n int, err error) {
 		}
 		_ = r.reader.Close()
 
-		newReader, _, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
+		newReader, rangeInfo, err1 := r.storage.open(r.ctx, r.name, r.pos, end)
 		if err1 != nil {
 			log.Warn("open new s3 reader failed", zap.String("file", r.name), zap.Error(err1))
 			return
 		}
 		r.reader = newReader
 		if r.prefetchSize > 0 {
-			r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+			r.reader = prefetch.NewReader(r.reader, rangeInfo.RangeSize(), r.prefetchSize)
 		}
 		retryCnt++
 		n, err = r.reader.Read(p[:maxCnt])
@@ -632,7 +638,7 @@ func (r *ks3ObjectReader) Seek(offset int64, whence int) (int64, error) {
 	}
 	r.reader = newReader
 	if r.prefetchSize > 0 {
-		r.reader = prefetch.NewReader(r.reader, r.prefetchSize)
+		r.reader = prefetch.NewReader(r.reader, info.RangeSize(), r.prefetchSize)
 	}
 	r.rangeInfo = info
 	r.pos = realOffset

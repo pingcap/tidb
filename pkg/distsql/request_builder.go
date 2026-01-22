@@ -35,18 +35,22 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 // RequestBuilder is used to build a "kv.Request".
 // It is called before we issue a kv request by "Select".
+// Notice a builder can only be used once unless it returns an error in test.
 type RequestBuilder struct {
 	kv.Request
-	is  infoschema.InfoSchema
-	err error
+	is   infoschema.InfoSchema
+	err  error
+	used bool
 
 	// When SetDAGRequest is called, builder will also this field.
 	dag *tipb.DAGRequest
@@ -54,6 +58,10 @@ type RequestBuilder struct {
 
 // Build builds a "kv.Request".
 func (builder *RequestBuilder) Build() (*kv.Request, error) {
+	if builder.used && intest.InTest {
+		return nil, errors.Errorf("request builder is already used")
+	}
+	builder.used = true
 	if builder.ReadReplicaScope == "" {
 		builder.ReadReplicaScope = kv.GlobalReplicaScope
 	}
@@ -461,6 +469,12 @@ func (builder *RequestBuilder) SetClosestReplicaReadAdjuster(chkFn kv.CoprReques
 func (builder *RequestBuilder) SetConnIDAndConnAlias(connID uint64, connAlias string) *RequestBuilder {
 	builder.ConnID = connID
 	builder.ConnAlias = connAlias
+	return builder
+}
+
+// SetSQLKiller sets sqlkiller for the builder.
+func (builder *RequestBuilder) SetSQLKiller(killer *sqlkiller.SQLKiller) *RequestBuilder {
+	builder.SQLKiller = killer
 	return builder
 }
 

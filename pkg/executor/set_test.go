@@ -479,6 +479,12 @@ func TestSetVar(t *testing.T) {
 	tk.MustExec("set session tidb_dml_batch_size = -120")
 	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_dml_batch_size value: '-120'")) // without redaction
 
+	tk.MustExec("set global tidb_gogc_tuner_min_value=300")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set global tidb_gogc_tuner_max_value=600")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("set global tidb_gogc_tuner_max_value=600000000000000000")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_gogc_tuner_max_value value: '600000000000000000'"))
 	tk.MustExec("set @@session.tidb_dml_batch_size = 120")
 	tk.MustExec("set @@global.tidb_dml_batch_size = 200")                    // now permitted due to TiDB #19809
 	tk.MustQuery("select @@tidb_dml_batch_size;").Check(testkit.Rows("120")) // global only applies to new sessions
@@ -665,7 +671,7 @@ func TestSetVar(t *testing.T) {
 	tk.MustQuery("select @@pd_enable_follower_handle_region").Check(testkit.Rows("0"))
 	require.Error(t, tk.ExecToErr("set pd_enable_follower_handle_region = 1"))
 
-	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("0"))
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustQuery("select @@tidb_enable_historical_stats").Check(testkit.Rows("1"))
 	tk.MustExec("set global tidb_enable_historical_stats = 0")

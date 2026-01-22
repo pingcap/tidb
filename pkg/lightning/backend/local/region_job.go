@@ -15,6 +15,7 @@
 package local
 
 import (
+	"bytes"
 	"container/heap"
 	"context"
 	"fmt"
@@ -39,6 +40,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -136,6 +139,113 @@ type injectedWriteBehaviour struct {
 type injectedIngestBehaviour struct {
 	nextStage jobStageTp
 	err       error
+}
+
+func newRegionJob(
+	region *split.RegionInfo,
+	data common.IngestData,
+	jobStart []byte,
+	jobEnd []byte,
+	regionSplitSize int64,
+	regionSplitKeys int64,
+	metrics *metric.Common,
+) *regionJob {
+	log.L().Debug("new region job",
+		zap.Binary("jobStart", jobStart),
+		zap.Binary("jobEnd", jobEnd),
+		zap.Uint64("id", region.Region.GetId()),
+		zap.Stringer("epoch", region.Region.GetRegionEpoch()),
+		zap.Binary("regionStart", region.Region.GetStartKey()),
+		zap.Binary("regionEnd", region.Region.GetEndKey()),
+		zap.Reflect("peers", region.Region.GetPeers()))
+	return &regionJob{
+		keyRange:        common.Range{Start: jobStart, End: jobEnd},
+		region:          region,
+		stage:           regionScanned,
+		ingestData:      data,
+		regionSplitSize: regionSplitSize,
+		regionSplitKeys: regionSplitKeys,
+		metrics:         metrics,
+	}
+}
+
+// newRegionJobs creates a list of regionJob from the given regions and job
+// ranges.
+//
+// pre-condition:
+// - sortedRegions must be non-empty, sorted and continuous
+// - sortedJobRanges must be non-empty, sorted and continuous
+// - sortedRegions can cover sortedJobRanges
+func newRegionJobs(
+	sortedRegions []*split.RegionInfo,
+	data common.IngestData,
+	sortedJobRanges []common.Range,
+	regionSplitSize int64,
+	regionSplitKeys int64,
+	metrics *metric.Common,
+) []*regionJob {
+	var (
+		lenRegions   = len(sortedRegions)
+		lenJobRanges = len(sortedJobRanges)
+		ret          = make([]*regionJob, 0, max(lenRegions, lenJobRanges)*2)
+
+		curRegionIdx   = 0
+		curRegion      = sortedRegions[curRegionIdx].Region
+		curRegionStart []byte
+		curRegionEnd   []byte
+	)
+
+	_, curRegionStart, _ = codec.DecodeBytes(curRegion.StartKey, nil)
+	_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
+
+	for _, jobRange := range sortedJobRanges {
+		// build the job and move to next region for these cases:
+		//
+		// --region--)           or   -----region--)
+		// -------job range--)        --job range--)
+		for !beforeEnd(jobRange.End, curRegionEnd) {
+			ret = append(ret, newRegionJob(
+				sortedRegions[curRegionIdx],
+				data,
+				largerStartKey(jobRange.Start, curRegionStart),
+				curRegionEnd,
+				regionSplitSize,
+				regionSplitKeys,
+				metrics,
+			))
+
+			curRegionIdx++
+			if curRegionIdx >= lenRegions {
+				return ret
+			}
+			curRegion = sortedRegions[curRegionIdx].Region
+			_, curRegionStart, _ = codec.DecodeBytes(curRegion.StartKey, nil)
+			_, curRegionEnd, _ = codec.DecodeBytes(curRegion.EndKey, nil)
+		}
+
+		// now we can make sure
+		//
+		//               --region--)
+		// --job range--)
+		//
+		// only need to handle the case that job range has remaining part after above loop:
+		//
+		//            [----region--)
+		// --job range--)
+		if bytes.Compare(curRegionStart, jobRange.End) < 0 {
+			ret = append(ret, newRegionJob(
+				sortedRegions[curRegionIdx],
+				data,
+				largerStartKey(jobRange.Start, curRegionStart),
+				jobRange.End,
+				regionSplitSize,
+				regionSplitKeys,
+				metrics,
+			))
+		}
+	}
+
+	return ret
 }
 
 func (j *regionJob) convertStageTo(stage jobStageTp) {
@@ -320,6 +430,20 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) error {
 		allPeers = append(allPeers, peer)
 	}
 	dataCommitTS := j.ingestData.GetTS()
+	intest.AssertFunc(func() bool {
+		timeOfTS := oracle.GetTimeFromTS(dataCommitTS)
+		now := time.Now()
+		if timeOfTS.After(now) {
+			return false
+		}
+		if now.Sub(timeOfTS) > 24*time.Hour {
+			return false
+		}
+		return true
+	}, "TS used in import should in [now-1d, now], but got %d", dataCommitTS)
+	if dataCommitTS == 0 {
+		return errors.New("data commitTS is 0")
+	}
 	req.Chunk = &sst.WriteRequest_Batch{
 		Batch: &sst.WriteBatch{
 			CommitTs: dataCommitTS,
@@ -522,6 +646,7 @@ func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
 			log.FromContext(ctx).Warn("meet underlying error, will retry ingest",
 				log.ShortError(err), logutil.SSTMetas(j.writeResult.sstMeta),
 				logutil.Region(j.region.Region), logutil.Leader(j.region.Leader))
+			j.lastRetryableErr = err
 			continue
 		}
 		canContinue, err := j.convertStageOnIngestError(resp)
@@ -572,10 +697,21 @@ func (local *Backend) checkWriteStall(
 // doIngest send ingest commands to TiKV based on regionJob.writeResult.sstMeta.
 // When meet error, it will remove finished sstMetas before return.
 func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestResponse, error) {
+	failpoint.Inject("doIngestFailed", func() {
+		failpoint.Return(nil, errors.New("injected error"))
+	})
 	clientFactory := local.importClientFactory
 	supportMultiIngest := local.supportMultiIngest
 	shouldCheckWriteStall := local.ShouldCheckWriteStall
-	if shouldCheckWriteStall {
+
+	var limiter *ingestLimiter
+	if x := local.ingestLimiter.Load(); x != nil {
+		limiter = x
+	} else {
+		limiter = &ingestLimiter{}
+	}
+
+	if shouldCheckWriteStall && limiter.NoLimit() {
 		writeStall, resp, err := local.checkWriteStall(ctx, j.region)
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -588,12 +724,14 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 	batch := 1
 	if supportMultiIngest {
 		batch = len(j.writeResult.sstMeta)
+		batch = min(batch, limiter.Burst())
 	}
 
 	var resp *sst.IngestResponse
 	for start := 0; start < len(j.writeResult.sstMeta); start += batch {
 		end := min(start+batch, len(j.writeResult.sstMeta))
 		ingestMetas := j.writeResult.sstMeta[start:end]
+		weight := uint(len(ingestMetas))
 
 		log.FromContext(ctx).Debug("ingest meta", zap.Reflect("meta", ingestMetas))
 
@@ -643,6 +781,10 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			RequestSource: util.BuildRequestSource(true, kv.InternalTxnLightning, local.TaskType),
 		}
 
+		err = limiter.Acquire(leader.StoreId, weight)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
 		if supportMultiIngest {
 			req := &sst.MultiIngestRequest{
 				Context: reqCtx,
@@ -656,6 +798,7 @@ func (local *Backend) doIngest(ctx context.Context, j *regionJob) (*sst.IngestRe
 			}
 			resp, err = cli.Ingest(ctx, req)
 		}
+		limiter.Release(leader.StoreId, weight)
 		if resp.GetError() != nil || err != nil {
 			// remove finished sstMetas
 			j.writeResult.sstMeta = j.writeResult.sstMeta[start:]

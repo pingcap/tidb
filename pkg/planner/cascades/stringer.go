@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/planner/memo"
 )
 
@@ -66,7 +67,7 @@ func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 	schema := g.Prop.Schema
 	colStrs := make([]string, 0, len(schema.Columns))
 	for _, col := range schema.Columns {
-		colStrs = append(colStrs, col.String())
+		colStrs = append(colStrs, col.StringWithCtx(errors.RedactLogDisable))
 	}
 
 	groupLine := bytes.NewBufferString("")
@@ -77,7 +78,7 @@ func groupToString(g *memo.Group, idMap map[*memo.Group]int) []string {
 		for _, key := range schema.Keys {
 			ukColStrs := make([]string, 0, len(key))
 			for _, col := range key {
-				ukColStrs = append(ukColStrs, col.String())
+				ukColStrs = append(ukColStrs, col.StringWithCtx(errors.RedactLogDisable))
 			}
 			ukStrs = append(ukStrs, strings.Join(ukColStrs, ","))
 		}

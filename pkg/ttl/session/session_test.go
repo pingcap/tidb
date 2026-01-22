@@ -17,10 +17,12 @@ package session_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,4 +65,29 @@ func TestSessionResetTimeZone(t *testing.T) {
 	tk.MustQuery("select @@time_zone").Check(testkit.Rows("Asia/Shanghai"))
 	require.NoError(t, se.ResetWithGlobalTimeZone(context.TODO()))
 	tk.MustQuery("select @@time_zone").Check(testkit.Rows("UTC"))
+}
+
+func TestSessionKill(t *testing.T) {
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	se := session.NewSession(tk.Session(), tk.Session(), nil)
+	sleepStmt := "select sleep(123)"
+	wg := util.WaitGroupWrapper{}
+	wg.Run(func() {
+		start := time.Now()
+		for time.Since(start) < 10*time.Second {
+			time.Sleep(10 * time.Millisecond)
+			processes := do.InfoSyncer().GetSessionManager().ShowProcessList()
+			for _, proc := range processes {
+				if proc.Info == sleepStmt {
+					se.KillStmt()
+					return
+				}
+			}
+		}
+		require.FailNow(t, "wait sleep stmt timeout")
+	})
+	// the killed sleep stmt will return "1"
+	tk.MustQuery(sleepStmt).Check(testkit.Rows("1"))
+	wg.Wait()
 }

@@ -731,7 +731,7 @@ func (w *worker) doModifyColumnTypeWithData(
 		// Make sure job args change after `updateVersionAndTableInfoWithCheck`, otherwise, the job args will
 		// be updated in `updateDDLJob` even if it meets an error in `updateVersionAndTableInfoWithCheck`.
 		job.SchemaState = model.StateDeleteOnly
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String()).Set(0)
+		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, job.SchemaName, tblInfo.Name.String(), oldCol.Name.O).Set(0)
 		job.Args = append(job.Args, changingCol, changingIdxs, rmIdxIDs)
 	case model.StateDeleteOnly:
 		// Column from null to not null.
@@ -1211,20 +1211,27 @@ type updateColumnWorker struct {
 	checksumNeeded bool
 }
 
+func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
+	for _, col := range t.WritableCols() {
+		if col.ID == currElementID {
+			changeColumnOrigName := table.FindCol(t.Cols(), getChangingColumnOriginName(col.ColumnInfo))
+			if changeColumnOrigName != nil {
+				newCol = col.ColumnInfo
+				oldCol = changeColumnOrigName.ColumnInfo
+				return
+			}
+		}
+	}
+	return
+}
+
 func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalTable, decodeColMap map[int64]decoder.Column, reorgInfo *reorgInfo, jc *JobContext) *updateColumnWorker {
 	if !bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
 		logutil.DDLLogger().Error("Element type for updateColumnWorker incorrect", zap.String("jobQuery", reorgInfo.Query),
 			zap.Stringer("reorgInfo", reorgInfo))
 		return nil
 	}
-	var oldCol, newCol *model.ColumnInfo
-	for _, col := range t.WritableCols() {
-		if col.ID == reorgInfo.currElement.ID {
-			newCol = col.ColumnInfo
-			oldCol = table.FindCol(t.Cols(), getChangingColumnOriginName(newCol)).ColumnInfo
-			break
-		}
-	}
+	oldCol, newCol := getOldAndNewColumnsForUpdateColumn(t, reorgInfo.currElement.ID)
 	rowDecoder := decoder.NewRowDecoder(t, t.WritableCols(), decodeColMap)
 	checksumNeeded := false
 	failpoint.Inject("forceRowLevelChecksumOnUpdateColumnBackfill", func() {
@@ -1247,7 +1254,7 @@ func newUpdateColumnWorker(sessCtx sessionctx.Context, id int, t table.PhysicalT
 		}
 	}
 	return &updateColumnWorker{
-		backfillCtx:    newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo.SchemaName, t, jc, "update_col_rate", false),
+		backfillCtx:    newBackfillCtx(reorgInfo.d, id, sessCtx, reorgInfo, reorgInfo.SchemaName, t, jc, metrics.LblUpdateColRate, false),
 		oldColInfo:     oldCol,
 		newColInfo:     newCol,
 		rowDecoder:     rowDecoder,

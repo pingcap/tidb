@@ -447,6 +447,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 			exeerrors.ErrMemoryExceedForInstance.Equal(recoverdErr) ||
 			exeerrors.ErrQueryInterrupted.Equal(recoverdErr) ||
 			exeerrors.ErrMaxExecTimeExceeded.Equal(recoverdErr)) {
+			// Not sure why panic again after recover, we need to skip this for test.
+			failpoint.Inject("skipExecPanic", func() {
+				err = errors.Errorf("%v", r)
+				failpoint.Return()
+			})
 			panic(r)
 		}
 		err = recoverdErr
@@ -603,7 +608,7 @@ func (a *ExecStmt) handleStmtForeignKeyTrigger(ctx context.Context, e exec.Execu
 	if stmtCtx.ForeignKeyTriggerCtx.HasFKCascades {
 		// If the ExecStmt has foreign key cascade to be executed, we need call `StmtCommit` to commit the ExecStmt itself
 		// change first.
-		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't  do `StmtCommit`,
+		// Since `UnionScanExec` use `SnapshotIter` and `SnapshotGetter` to read txn mem-buffer, if we don't do `StmtCommit`,
 		// then the fk cascade executor can't read the mem-buffer changed by the ExecStmt.
 		a.Ctx.StmtCommit(ctx)
 	}
@@ -1369,6 +1374,7 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 	sessVars.PrevStmt = FormatSQL(a.GetTextToLog(false))
 	a.recordLastQueryInfo(err)
+	a.recordAffectedRows2Metrics()
 	a.observePhaseDurations(sessVars.InRestrictedSQL, execDetail.CommitDetail)
 	executeDuration := time.Since(sessVars.StartTime) - sessVars.DurationCompile
 	if sessVars.InRestrictedSQL {
@@ -1413,6 +1419,22 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	}
 
 	a.Ctx.ReportUsageStats()
+}
+
+func (a *ExecStmt) recordAffectedRows2Metrics() {
+	sessVars := a.Ctx.GetSessionVars()
+	if affectedRows := sessVars.StmtCtx.AffectedRows(); affectedRows > 0 {
+		switch sessVars.StmtCtx.StmtType {
+		case "Insert":
+			metrics.AffectedRowsCounterInsert.Add(float64(affectedRows))
+		case "Replace":
+			metrics.AffectedRowsCounterReplace.Add(float64(affectedRows))
+		case "Delete":
+			metrics.AffectedRowsCounterDelete.Add(float64(affectedRows))
+		case "Update":
+			metrics.AffectedRowsCounterUpdate.Add(float64(affectedRows))
+		}
+	}
 }
 
 func (a *ExecStmt) recordLastQueryInfo(err error) {

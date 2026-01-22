@@ -664,12 +664,12 @@ func (r *builder) buildFromIn(
 	for _, e := range list {
 		v, ok := e.(*expression.Constant)
 		if !ok {
-			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not constant", e.StringWithCtx(errors.RedactLogDisable))
 			return getFullRange(), hasNull
 		}
 		dt, err := v.Eval(evalCtx, chunk.Row{})
 		if err != nil {
-			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e)
+			r.err = plannererrors.ErrUnsupportedType.GenWithStack("expr:%v is not evaluated", e.StringWithCtx(errors.RedactLogDisable))
 			return getFullRange(), hasNull
 		}
 		if dt.IsNull() {

@@ -75,6 +75,43 @@ type Checksum struct {
 // ProgressUnit represents the unit of progress.
 type ProgressUnit string
 
+func MakeStoreBasedErr(storeID uint64, err error) *StoreBasedErr {
+	return &StoreBasedErr{storeID: storeID, err: err}
+}
+
+type StoreBasedErr struct {
+	storeID uint64
+	err     error
+}
+
+func (e *StoreBasedErr) Error() string {
+	return fmt.Sprintf("Store ID '%d': %v", e.storeID, e.err.Error())
+}
+
+func (e *StoreBasedErr) Unwrap() error {
+	return e.err
+}
+
+func (e *StoreBasedErr) Cause() error {
+	return e.Unwrap()
+}
+
+// Errors implements errors.ErrorGroup.
+// For now `WalkDeep` cannot walk "subtree"s like:
+/* 1 - 2 - 5
+ *   |
+ *   + 3 - 4
+ */
+// It stops after walking `1` and then gave up.
+// This is a bug: see https://github.com/pingcap/errors/issues/72
+// We manually make this a multierr to workaround this...
+func (e *StoreBasedErr) Errors() []error {
+	if errs, ok := e.err.(errors.ErrorGroup); ok {
+		return errs.Errors()
+	}
+	return nil
+}
+
 const (
 	// backupFineGrainedMaxBackoff is 1 hour.
 	// given it begins the fine-grained backup, there must be some problems in the cluster.
@@ -1270,6 +1307,13 @@ func (bc *Client) handleFineGrained(
 	storeID := targetPeer.GetStoreId()
 	lockResolver := bc.mgr.GetLockResolver()
 	client, err := bc.mgr.GetBackupClient(ctx, storeID)
+
+	// inject a disconnect failpoint
+	failpoint.Inject("disconnect", func(_ failpoint.Value) {
+		logutil.CL(ctx).Warn("This is a injected disconnection error")
+		err = berrors.ErrFailedToConnect
+	})
+
 	if err != nil {
 		if berrors.Is(err, berrors.ErrFailedToConnect) {
 			// When the leader store is died,
@@ -1330,12 +1374,74 @@ func (bc *Client) handleFineGrained(
 	return backoffMill, nil
 }
 
+// timeoutRecv cancel the context if `Refresh()` is not called within the specified time `timeout`.
+type timeoutRecv struct {
+	wg        sync.WaitGroup
+	parentCtx context.Context
+	cancel    context.CancelCauseFunc
+
+	refresh chan struct{}
+}
+
+// Refresh the timeout ticker
+func (trecv *timeoutRecv) Refresh() {
+	select {
+	case <-trecv.parentCtx.Done():
+	case trecv.refresh <- struct{}{}:
+	}
+}
+
+// Stop the timeout ticker
+func (trecv *timeoutRecv) Stop() {
+	close(trecv.refresh)
+	trecv.wg.Wait()
+	trecv.cancel(nil)
+}
+
+var TimeoutOneResponse = time.Hour
+
+func (trecv *timeoutRecv) loop(timeout time.Duration) {
+	defer trecv.wg.Done()
+	ticker := time.NewTicker(timeout)
+	defer ticker.Stop()
+	for {
+		ticker.Reset(timeout)
+		select {
+		case <-trecv.parentCtx.Done():
+			return
+		case _, ok := <-trecv.refresh:
+			if !ok {
+				return
+			}
+		case <-ticker.C:
+			log.Warn("receive a backup response timeout")
+			trecv.cancel(errors.Errorf("receive a backup response timeout"))
+		}
+	}
+}
+
+func StartTimeoutRecv(ctx context.Context, timeout time.Duration) (context.Context, *timeoutRecv) {
+	cctx, cancel := context.WithCancelCause(ctx)
+	trecv := &timeoutRecv{
+		parentCtx: ctx,
+		cancel:    cancel,
+		refresh:   make(chan struct{}),
+	}
+	trecv.wg.Add(1)
+	go trecv.loop(timeout)
+	return cctx, trecv
+}
+
 func doSendBackup(
-	ctx context.Context,
+	pctx context.Context,
 	client backuppb.BackupClient,
 	req backuppb.BackupRequest,
 	respFn func(*backuppb.BackupResponse) error,
 ) error {
+	// Backup might be stuck on GRPC `waitonHeader`, so start a timeout ticker to
+	// terminate the backup if it does not receive any new response for a long time.
+	ctx, timerecv := StartTimeoutRecv(pctx, TimeoutOneResponse)
+	defer timerecv.Stop()
 	failpoint.Inject("hint-backup-start", func(v failpoint.Value) {
 		logutil.CL(ctx).Info("failpoint hint-backup-start injected, " +
 			"process will notify the shell.")
@@ -1380,6 +1486,7 @@ func doSendBackup(
 
 	for {
 		resp, err := bCli.Recv()
+		timerecv.Refresh()
 		if err != nil {
 			if errors.Cause(err) == io.EOF { // nolint:errorlint
 				logutil.CL(ctx).Debug("backup streaming finish",

@@ -557,7 +557,15 @@ dumpling_bins:
 
 .PHONY: generate_grafana_scripts
 generate_grafana_scripts:
-	@cd metrics/grafana && mv tidb_summary.json tidb_summary.json.committed && ./generate_json.sh && diff -u tidb_summary.json.committed tidb_summary.json && rm tidb_summary.json.committed
+	@cd pkg/metrics/grafana && \
+	  mv tidb_summary.json tidb_summary.json.committed && \
+	  mv tidb_resource_control.json tidb_resource_control.json.committed && \
+	  ./generate_json.sh && \
+	  diff -u tidb_summary.json.committed tidb_summary.json && \
+	  diff -u tidb_resource_control.json.committed tidb_resource_control.json && \
+	  rm tidb_summary.json.committed && \
+	  rm tidb_resource_control.json.committed
+
 
 .PHONY: bazel_ci_prepare
 bazel_ci_prepare:
@@ -759,6 +767,14 @@ bazel_pipelineddmltest: failpoint-enable bazel_ci_simple_prepare
 	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
 	--@io_bazel_rules_go//go/config:cover_format=go_cover \
 		-- //tests/realtikvtest/pipelineddmltest/...
+	./build/jenkins_collect_coverage.sh
+
+# on timeout, bazel won't print log sometimes, so we use --test_output=all to print log always
+.PHONY: bazel_flashbacktest
+bazel_flashbacktest: failpoint-enable bazel_ci_simple_prepare
+	bazel $(BAZEL_GLOBAL_CONFIG) coverage $(BAZEL_CMD_CONFIG) $(BAZEL_INSTRUMENTATION_FILTER) --test_output=all --test_arg=-with-real-tikv --define gotags=deadlock,intest \
+	--@io_bazel_rules_go//go/config:cover_format=go_cover \
+		-- //tests/realtikvtest/flashbacktest/...
 	./build/jenkins_collect_coverage.sh
 
 .PHONY: bazel_lint

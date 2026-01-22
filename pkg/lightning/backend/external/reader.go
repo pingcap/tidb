@@ -17,6 +17,8 @@ package external
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
+	goerrors "errors"
 	"io"
 	"time"
 
@@ -43,8 +45,8 @@ func readAllData(
 	task.Info("arguments",
 		zap.Int("data-file-count", len(dataFiles)),
 		zap.Int("stat-file-count", len(statsFiles)),
-		zap.Binary("start-key", startKey),
-		zap.Binary("end-key", endKey),
+		zap.String("start-key", hex.EncodeToString(startKey)),
+		zap.String("end-key", hex.EncodeToString(endKey)),
 	)
 	defer func() {
 		if err != nil {
@@ -168,10 +170,10 @@ func readOneFile(
 	for {
 		k, v, err := rd.nextKV()
 		if err != nil {
-			if err == io.EOF {
+			if goerrors.Is(err, io.EOF) {
 				break
 			}
-			return err
+			return errors.Trace(err)
 		}
 		if bytes.Compare(k, startKey) < 0 {
 			droppedSize += len(k) + len(v)

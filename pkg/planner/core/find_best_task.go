@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
+	"github.com/pingcap/tidb/pkg/planner/context"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
@@ -747,11 +748,35 @@ func compareIndexBack(lhs, rhs *candidatePath) (int, bool) {
 
 // compareCandidates is the core of skyline pruning, which is used to decide which candidate path is better.
 // The return value is 1 if lhs is better, -1 if rhs is better, 0 if they are equivalent or not comparable.
-func compareCandidates(sctx PlanContext, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
+func compareCandidates(sctx context.PlanContext, statisticTable *statistics.Table, prop *property.PhysicalProperty, lhs, rhs *candidatePath) int {
 	// Due to #50125, full scan on MVIndex has been disabled, so MVIndex path might lead to 'can't find a proper plan' error at the end.
 	// Avoid MVIndex path to exclude all other paths and leading to 'can't find a proper plan' error, see #49438 for an example.
 	if isMVIndexPath(lhs.path) || isMVIndexPath(rhs.path) {
 		return 0
+	}
+
+	// If one index has statistics and the other does not, choose the index with statistics if it
+	// has the same or higher number of equal/IN predicates.
+	lhsHasStatistics := false
+	if lhs.path.Index != nil {
+		lhsHasStatistics = statisticTable != nil && statisticTable.Indices[lhs.path.Index.ID] != nil
+	}
+	rhsHasStatistics := false
+	if rhs.path.Index != nil {
+		rhsHasStatistics = statisticTable != nil && statisticTable.Indices[rhs.path.Index.ID] != nil
+	}
+	if !lhs.path.IsTablePath() && !rhs.path.IsTablePath() && // Not a table scan
+		(lhsHasStatistics || rhsHasStatistics) && // At least one index has statistics
+		(!lhsHasStatistics || !rhsHasStatistics) && // At least one index doesn't have statistics
+		len(lhs.path.PartialIndexPaths) == 0 && len(rhs.path.PartialIndexPaths) == 0 { // not IndexMerge due to unreliability
+		lhsTotalEqual := lhs.path.EqCondCount + lhs.path.EqOrInCondCount
+		rhsTotalEqual := rhs.path.EqCondCount + rhs.path.EqOrInCondCount
+		if lhsHasStatistics && lhsTotalEqual > 0 && lhsTotalEqual >= rhsTotalEqual {
+			return 1
+		}
+		if rhsHasStatistics && rhsTotalEqual > 0 && rhsTotalEqual >= lhsTotalEqual {
+			return -1
+		}
 	}
 
 	// This rule is empirical but not always correct.
@@ -796,6 +821,10 @@ func compareCandidates(sctx PlanContext, prop *property.PhysicalProperty, lhs, r
 }
 
 func (ds *DataSource) isMatchProp(path *util.AccessPath, prop *property.PhysicalProperty) bool {
+	if ds.table.Type().IsClusterTable() && !prop.IsSortItemEmpty() {
+		// TableScan with cluster table can't keep order.
+		return false
+	}
 	var isMatchProp bool
 	if path.IsIntHandlePath {
 		pkCol := ds.getPKIsHandleCol()
@@ -1168,7 +1197,7 @@ func (ds *DataSource) skylinePruning(prop *property.PhysicalProperty) []*candida
 			if candidates[i].path.StoreType == kv.TiFlash {
 				continue
 			}
-			result := compareCandidates(ds.SCtx(), prop, candidates[i], currentCandidate)
+			result := compareCandidates(ds.SCtx(), ds.statisticTable, prop, candidates[i], currentCandidate)
 			if result == 1 {
 				pruned = true
 				// We can break here because the current candidate cannot prune others anymore.
@@ -2825,10 +2854,12 @@ func (ds *DataSource) getOriginalPhysicalIndexScan(prop *property.PhysicalProper
 	rowCount := path.CountAfterAccess
 	is.initSchema(append(path.FullIdxCols, ds.commonHandleCols...), !isSingleScan)
 
-	// If (1) there exists an index whose selectivity is smaller than the threshold,
-	// and (2) there is Selection on the IndexScan, we don't use the ExpectedCnt to
+	// If (1) tidb_opt_ordering_index_selectivity_threshold is enabled (not 0)
+	// and (2) there exists an index whose selectivity is smaller than or equal to the threshold,
+	// and (3) there is Selection on the IndexScan, we don't use the ExpectedCnt to
 	// adjust the estimated row count of the IndexScan.
-	ignoreExpectedCnt := ds.accessPathMinSelectivity < ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
+	ignoreExpectedCnt := ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh != 0 &&
+		ds.accessPathMinSelectivity <= ds.SCtx().GetSessionVars().OptOrderingIdxSelThresh &&
 		len(path.IndexFilters)+len(path.TableFilters) > 0
 
 	if (isMatchProp || prop.IsSortItemEmpty()) && prop.ExpectedCnt < ds.StatsInfo().RowCount && !ignoreExpectedCnt {

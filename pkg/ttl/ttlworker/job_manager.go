@@ -497,8 +497,15 @@ func (m *JobManager) reportMetrics(se session.Session) {
 	metrics.RunningJobsCnt.Set(runningJobs)
 	metrics.CancellingJobsCnt.Set(cancellingJobs)
 
+	if !m.isLeader() {
+		// only the leader can do collect delay metrics to reduce the performance overhead
+		metrics.ClearDelayMetrics()
+		return
+	}
+
 	if time.Since(m.lastReportDelayMetricsTime) > 10*time.Minute {
 		m.lastReportDelayMetricsTime = time.Now()
+		logutil.Logger(m.ctx).Info("TTL leader to collect delay metrics")
 		records, err := GetDelayMetricRecords(m.ctx, se, time.Now())
 		if err != nil {
 			logutil.Logger(m.ctx).Info("failed to get TTL delay metrics", zap.Error(err))
@@ -557,8 +564,12 @@ j:
 			if err != nil {
 				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
 			}
+			err = job.finish(se, se.Now(), summary)
+			if err != nil {
+				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+				continue
+			}
 			m.removeJob(job)
-			job.finish(se, se.Now(), summary)
 		}
 		cancel()
 	}
@@ -572,6 +583,18 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		now = now.In(tz)
 	}
 
+	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
+	// never be cancelled.
+	jobTables := m.readyForLockHBTimeoutJobTables(now)
+	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
+	// when the heart beat is not sent
+	for _, table := range jobTables {
+		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
+		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
+			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
+		}
+	}
+
 	if !variable.EnableTTLJob.Load() || !timeutil.WithinDayTimePeriod(variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load(), now) {
 		if len(m.runningJobs) > 0 {
 			for _, job := range m.runningJobs {
@@ -579,10 +602,14 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 
 				summary, err := summarizeErr(errors.New("ttl job is disabled"))
 				if err != nil {
-					logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+					logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+				}
+				err = job.finish(se, now, summary)
+				if err != nil {
+					logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+					continue
 				}
 				m.removeJob(job)
-				job.finish(se, now, summary)
 			}
 		}
 		return
@@ -599,20 +626,14 @@ func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 		logutil.Logger(m.ctx).Info("cancel job because the table has been dropped or it's no longer TTL table", zap.String("jobID", job.id), zap.Int64("tableID", job.tbl.ID))
 		summary, err := summarizeErr(errors.New("TTL table has been removed or the TTL on this table has been stopped"))
 		if err != nil {
-			logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+			logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+		}
+		err = job.finish(se, now, summary)
+		if err != nil {
+			logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+			continue
 		}
 		m.removeJob(job)
-		job.finish(se, now, summary)
-	}
-
-	jobTables := m.readyForLockHBTimeoutJobTables(now)
-	// TODO: also consider to resume tables, but it's fine to left them there, as other nodes will take this job
-	// when the heart beat is not sent
-	for _, table := range jobTables {
-		logutil.Logger(m.ctx).Info("try lock new job", zap.Int64("tableID", table.ID))
-		if _, err := m.lockHBTimeoutJob(m.ctx, se, table, now); err != nil {
-			logutil.Logger(m.ctx).Warn("failed to lock heartbeat timeout job", zap.Error(err))
-		}
 	}
 }
 
@@ -870,11 +891,14 @@ func (m *JobManager) updateHeartBeat(ctx context.Context, se session.Session, no
 			logutil.Logger(m.ctx).Info("job is timeout", zap.String("jobID", job.id))
 			summary, err := summarizeErr(errors.New("job is timeout"))
 			if err != nil {
-				logutil.Logger(m.ctx).Info("fail to summarize job", zap.Error(err))
+				logutil.Logger(m.ctx).Warn("fail to summarize job", zap.Error(err))
+			}
+			err = job.finish(se, now, summary)
+			if err != nil {
+				logutil.Logger(m.ctx).Warn("fail to finish job", zap.Error(err))
+				continue
 			}
 			m.removeJob(job)
-			job.finish(se, now, summary)
-			continue
 		}
 
 		intest.Assert(se.GetSessionVars().TimeZone.String() == now.Location().String())
@@ -988,6 +1012,12 @@ func summarizeTaskResult(tasks []*cache.TTLTask) (*TTLSummary, error) {
 
 // DoGC deletes some old TTL job histories and redundant scan tasks
 func (m *JobManager) DoGC(ctx context.Context, se session.Session) {
+	if !m.isLeader() {
+		// only the leader can do the GC to reduce the performance impact
+		return
+	}
+
+	logutil.Logger(m.ctx).Info("TTL leader to DoGC")
 	// Remove the table not exist in info schema cache.
 	// Delete the table status before deleting the tasks. Therefore the related tasks
 	if err := m.updateInfoSchemaCache(se); err == nil {
@@ -1284,6 +1314,7 @@ func (a *managerJobAdapter) Now() (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
+	defer se.Close()
 
 	tz, err := se.GlobalTimeZone(context.TODO())
 	if err != nil {

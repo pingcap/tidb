@@ -79,20 +79,30 @@ const (
 	// 0 means no limit
 	unlimitedWriteSpeed = config.ByteSize(0)
 
-	characterSetOption          = "character_set"
-	fieldsTerminatedByOption    = "fields_terminated_by"
-	fieldsEnclosedByOption      = "fields_enclosed_by"
-	fieldsEscapedByOption       = "fields_escaped_by"
-	fieldsDefinedNullByOption   = "fields_defined_null_by"
-	linesTerminatedByOption     = "lines_terminated_by"
-	skipRowsOption              = "skip_rows"
-	splitFileOption             = "split_file"
-	diskQuotaOption             = "disk_quota"
-	threadOption                = "thread"
-	maxWriteSpeedOption         = "max_write_speed"
-	checksumTableOption         = "checksum_table"
-	recordErrorsOption          = "record_errors"
-	detachedOption              = "detached"
+	characterSetOption        = "character_set"
+	fieldsTerminatedByOption  = "fields_terminated_by"
+	fieldsEnclosedByOption    = "fields_enclosed_by"
+	fieldsEscapedByOption     = "fields_escaped_by"
+	fieldsDefinedNullByOption = "fields_defined_null_by"
+	linesTerminatedByOption   = "lines_terminated_by"
+	skipRowsOption            = "skip_rows"
+	splitFileOption           = "split_file"
+	diskQuotaOption           = "disk_quota"
+	threadOption              = "thread"
+	maxWriteSpeedOption       = "max_write_speed"
+	checksumTableOption       = "checksum_table"
+	recordErrorsOption        = "record_errors"
+	detachedOption            = "detached"
+	// if 'import mode' enabled, TiKV will:
+	//  - set level0_stop_writes_trigger = max(old, 1 << 30)
+	//  - set level0_slowdown_writes_trigger = max(old, 1 << 30)
+	//  - set soft_pending_compaction_bytes_limit = 0,
+	//  - set hard_pending_compaction_bytes_limit = 0,
+	//  - will not trigger flow control when SST count in L0 is large
+	//  - will not trigger region split, it might cause some region became
+	//    very large and be a hotspot, might cause latency spike.
+	//
+	// default false for local sort, true for global sort.
 	disableTiKVImportModeOption = "disable_tikv_import_mode"
 	cloudStorageURIOption       = "cloud_storage_uri"
 	disablePrecheckOption       = "disable_precheck"
@@ -780,6 +790,9 @@ func (p *Plan) adjustOptions(targetNodeCPUCnt int) {
 			zap.Int("before", p.ThreadCnt), zap.Int("after", limit))
 		p.ThreadCnt = limit
 	}
+	if p.IsGlobalSort() {
+		p.DisableTiKVImportMode = true
+	}
 }
 
 func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
@@ -811,7 +824,7 @@ func (p *Plan) initParameters(plan *plannercore.ImportInto) error {
 	optionMap := make(map[string]any, len(plan.Options))
 	for _, opt := range plan.Options {
 		if opt.Value != nil {
-			val := opt.Value.String()
+			val := opt.Value.StringWithCtx(errors.RedactLogDisable)
 			if opt.Name == cloudStorageURIOption {
 				val = ast.RedactURL(val)
 			}
@@ -1085,7 +1098,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			Compression: compressTp,
 			Type:        sourceType,
 		}
-		fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
+		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		dataFiles = append(dataFiles, &fileMeta)
 		totalSize = size
 	} else {
@@ -1099,7 +1112,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		// access, else walkDir will fail
 		// we only support '*', in order to reuse glob library manually escape the path
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
-		err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+
+		allFiles := make([]mydump.RawFile, 0, 16)
+		if err := s.WalkDir(ctx, &storage.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				// we have checked in LoadDataExec.Next
 				//nolint: errcheck
@@ -1107,39 +1122,34 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 				if !match {
 					return nil
 				}
-				compressTp := mydump.ParseCompressionOnFileExtension(remotePath)
+				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
+				totalSize += size
+				return nil
+			}); err != nil {
+			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
+		}
+
+		var err error
+		if dataFiles, err = mydump.ParallelProcess(ctx, allFiles, e.ThreadCnt*2,
+			func(ctx context.Context, f mydump.RawFile) (*mydump.SourceFileMeta, error) {
+				path, size := f.Path, f.Size
+				compressTp := mydump.ParseCompressionOnFileExtension(path)
 				fileMeta := mydump.SourceFileMeta{
-					Path:        remotePath,
+					Path:        path,
 					FileSize:    size,
 					Compression: compressTp,
 					Type:        sourceType,
 				}
-				fileMeta.RealSize = e.getFileRealSize(ctx, fileMeta, s)
-				dataFiles = append(dataFiles, &fileMeta)
-				totalSize += size
-				return nil
-			})
-		if err != nil {
-			return exeerrors.ErrLoadDataCantRead.GenWithStackByArgs(GetMsgFromBRError(err), "failed to walk dir")
+				fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
+				return &fileMeta, nil
+			}); err != nil {
+			return err
 		}
 	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
 	return nil
-}
-
-func (e *LoadDataController) getFileRealSize(ctx context.Context,
-	fileMeta mydump.SourceFileMeta, store storage.ExternalStorage) int64 {
-	if fileMeta.Compression == mydump.CompressionNone {
-		return fileMeta.FileSize
-	}
-	compressRatio, err := mydump.SampleFileCompressRatio(ctx, fileMeta, store)
-	if err != nil {
-		e.logger.Warn("failed to get compress ratio", zap.String("file", fileMeta.Path), zap.Error(err))
-		return fileMeta.FileSize
-	}
-	return int64(compressRatio * float64(fileMeta.FileSize))
 }
 
 func (e *LoadDataController) getSourceType() mydump.SourceType {

@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/btree"
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
@@ -453,6 +454,9 @@ func (p *Preparer) pushWaitApply(reqs pendingRequests, region Region) {
 // PrepareConnections prepares the connections for each store.
 // This will pause the admin commands for each store.
 func (p *Preparer) PrepareConnections(ctx context.Context) error {
+	failpoint.Inject("PrepareConnectionsErr", func() {
+		failpoint.Return(errors.New("mock PrepareConnectionsErr"))
+	})
 	log.Info("Preparing connections to stores.")
 	stores, err := p.env.GetAllLiveStores(ctx)
 	if err != nil {

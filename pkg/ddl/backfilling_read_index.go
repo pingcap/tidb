@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -30,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
+	lightningmetric "github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -53,6 +55,8 @@ type readIndexExecutor struct {
 	curRowCount *atomic.Int64
 
 	subtaskSummary sync.Map // subtaskID => readIndexSummary
+
+	metric *lightningmetric.Common
 }
 
 type readIndexSummary struct {
@@ -61,30 +65,35 @@ type readIndexSummary struct {
 }
 
 func newReadIndexExecutor(
+	ctx context.Context,
 	d *ddl,
 	job *model.Job,
 	indexes []*model.IndexInfo,
 	ptbl table.PhysicalTable,
 	jc *JobContext,
-	bcGetter func() (ingest.BackendCtx, error),
+	bcGetter func(context.Context) (ingest.BackendCtx, error),
 	cloudStorageURI string,
 	avgRowSize int,
-) (*readIndexExecutor, error) {
-	bc, err := bcGetter()
-	if err != nil {
-		return nil, err
-	}
-	return &readIndexExecutor{
+) (r *readIndexExecutor, err error) {
+	r = &readIndexExecutor{
 		d:               d,
 		job:             job,
 		indexes:         indexes,
 		ptbl:            ptbl,
 		jc:              jc,
-		bc:              bc,
 		cloudStorageURI: cloudStorageURI,
 		avgRowSize:      avgRowSize,
 		curRowCount:     &atomic.Int64{},
-	}, nil
+	}
+	if !r.isGlobalSort() {
+		r.metric = metrics.RegisterLightningCommonMetricsForDDL(r.job.ID)
+		ctx = lightningmetric.WithCommonMetric(ctx, r.metric)
+	}
+	r.bc, err = bcGetter(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return r, nil
 }
 
 func (*readIndexExecutor) Init(_ context.Context) error {
@@ -151,7 +160,14 @@ func (r *readIndexExecutor) Cleanup(ctx context.Context) error {
 	tidblogutil.Logger(ctx).Info("read index executor cleanup subtask exec env")
 	// cleanup backend context
 	ingest.LitBackCtxMgr.Unregister(r.job.ID)
+	if !r.isGlobalSort() {
+		metrics.UnregisterLightningCommonMetricsForDDL(r.job.ID, r.metric)
+	}
 	return nil
+}
+
+func (r *readIndexExecutor) isGlobalSort() bool {
+	return len(r.cloudStorageURI) > 0
 }
 
 // MockDMLExecutionAddIndexSubTaskFinish is used to mock DML execution during distributed add index.
@@ -227,7 +243,8 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 	}
 	d := r.d
 	engines := make([]ingest.Engine, 0, len(r.indexes))
-	for _, index := range r.indexes {
+	var idxNames strings.Builder
+	for i, index := range r.indexes {
 		ei, err := r.bc.Register(r.job.ID, index.ID, r.job.SchemaName, r.job.TableName)
 		if err != nil {
 			tidblogutil.Logger(opCtx).Warn("cannot register new engine", zap.Error(err),
@@ -235,9 +252,12 @@ func (r *readIndexExecutor) buildLocalStorePipeline(
 			return nil, err
 		}
 		engines = append(engines, ei)
+		if i > 0 {
+			idxNames.WriteByte('+')
+		}
+		idxNames.WriteString(index.Name.O)
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewAddIndexIngestPipeline(
 		opCtx,
 		d.store,
@@ -283,8 +303,14 @@ func (r *readIndexExecutor) buildExternalStorePipeline(
 		kvMeta.MergeSummary(summary)
 		s.mu.Unlock()
 	}
-	counter := metrics.BackfillTotalCounter.WithLabelValues(
-		metrics.GenerateReorgLabel("add_idx_rate", r.job.SchemaName, tbl.Meta().Name.O))
+	var idxNames strings.Builder
+	for _, idx := range r.indexes {
+		if idxNames.Len() > 0 {
+			idxNames.WriteByte('+')
+		}
+		idxNames.WriteString(idx.Name.O)
+	}
+	counter := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, r.job.SchemaName, tbl.Meta().Name.O, idxNames.String())
 	return NewWriteIndexToExternalStoragePipeline(
 		opCtx,
 		d.store,

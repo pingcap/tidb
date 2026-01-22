@@ -154,6 +154,8 @@ type HashAggExec struct {
 	spillHelper *parallelHashAggSpillHelper
 	// isChildDrained indicates whether the all data from child has been taken out.
 	isChildDrained bool
+
+	invalidMemoryUsageForTrackingTest bool
 }
 
 // Close implements the Executor Close interface.
@@ -204,7 +206,11 @@ func (e *HashAggExec) Close() error {
 		channel.Clear(e.finalOutputCh)
 		e.executed.Store(false)
 		if e.memTracker != nil {
-			e.memTracker.ReplaceBytesUsed(0)
+			if e.memTracker.BytesConsumed() < 0 {
+				e.invalidMemoryUsageForTrackingTest = true
+			} else {
+				e.memTracker.ReplaceBytesUsed(0)
+			}
 		}
 		e.parallelExecValid = false
 		if e.parallelAggSpillAction != nil {
@@ -285,6 +291,8 @@ func (e *HashAggExec) initForUnparallelExec() {
 }
 
 func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrency int, ctx sessionctx.Context) {
+	memUsage := int64(0)
+
 	for i := 0; i < partialConcurrency; i++ {
 		partialResultsMap := make([]aggfuncs.AggPartialResultMapper, finalConcurrency)
 		for i := 0; i < finalConcurrency; i++ {
@@ -311,6 +319,8 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			inflightChunkSync:    e.inflightChunkSync,
 		}
 
+		memUsage += e.partialWorkers[i].chk.MemoryUsage()
+
 		e.partialWorkers[i].partialResultNumInRow = e.partialWorkers[i].getPartialResultSliceLenConsiderByteAlign()
 		for j := 0; j < finalConcurrency; j++ {
 			e.partialWorkers[i].BInMaps[j] = 0
@@ -328,9 +338,11 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 			chk:        exec.NewFirstChunk(e.Children(0)),
 			giveBackCh: e.partialWorkers[i].inputCh,
 		}
-		e.memTracker.Consume(input.chk.MemoryUsage())
+		memUsage += input.chk.MemoryUsage()
 		e.inputCh <- input
 	}
+
+	e.memTracker.Consume(memUsage)
 }
 
 func (e *HashAggExec) initFinalWorkers(finalConcurrency int) {
@@ -395,9 +407,14 @@ func (e *HashAggExec) initForParallelExec(ctx sessionctx.Context) error {
 		spillChunkFieldTypes[i] = types.NewFieldType(mysql.TypeVarString)
 	}
 	spillChunkFieldTypes[baseRetTypeNum] = types.NewFieldType(mysql.TypeString)
-	e.spillHelper = newSpillHelper(e.memTracker, e.PartialAggFuncs, func() *chunk.Chunk {
+
+	var err error
+	e.spillHelper, err = newSpillHelper(e.memTracker, e.PartialAggFuncs, e.FinalAggFuncs, func() *chunk.Chunk {
 		return chunk.New(spillChunkFieldTypes, e.InitCap(), e.MaxChunkSize())
 	}, spillChunkFieldTypes)
+	if err != nil {
+		return err
+	}
 
 	if isTrackerEnabled && isParallelHashAggSpillEnabled {
 		if e.diskTracker != nil {
@@ -437,6 +454,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		ok    bool
 		err   error
 	)
+
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(e.finalOutputCh, r)
@@ -489,6 +507,7 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 		input.giveBackCh <- chk
 
 		if hasError := e.spillIfNeed(); hasError {
+			e.memTracker.Consume(-mSize)
 			return
 		}
 	}
@@ -851,4 +870,9 @@ func (e *HashAggExec) IsSpillTriggeredForTest() bool {
 		}
 	}
 	return false
+}
+
+// IsInvalidMemoryUsageTrackingForTest is for test
+func (e *HashAggExec) IsInvalidMemoryUsageTrackingForTest() bool {
+	return e.invalidMemoryUsageForTrackingTest
 }

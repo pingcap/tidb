@@ -2,13 +2,13 @@
 aliases:
   sig-critical-approvers-tidb-server:
     - yudongusa
-    - easonn7
+    - BenMeadowcroft
   sig-critical-approvers-tidb-lightning:
     - yudongusa
-    - easonn7
+    - BenMeadowcroft
   sig-critical-approvers-parser:
     - yudongusa
-    - easonn7
+    - BenMeadowcroft
   sig-approvers-autoid-service: # approvers for auto-id service
     - bb7133
     - tiancaiamao
@@ -30,7 +30,7 @@ aliases:
   sig-approvers-executor-import: # approvers for importer part of executor pkg.
     - D3Hunter
     - gmhdbjd
-    - lance6716    
+    - lance6716
   sig-approvers-expression: # approvers for expression pkg
     - windtalker
     - XuHuaiyu
@@ -82,7 +82,7 @@ aliases:
     - tangenta
     - wjhuang2016
     - ywqzzy
-    - zimulala    
+    - zimulala
   sig-approvers-owner: # approvers for `owner` pkg
     - Benjamin2037
     - lichunzhu
@@ -121,3 +121,16 @@ aliases:
     - Benjamin2037
     - gmhdbjd
     - lichunzhu
+  sig-approvers-planner: # approvers for planner module
+    - AilinKid
+    - 0xPoe
+    - elsa0520
+    - fixdb
+    - hawkingrei
+    - qw4990
+    - time-and-fate
+    - winoros
+    - terry1purcell
+    - ghazalfamilyusa
+    - henrybw
+    - wddevries

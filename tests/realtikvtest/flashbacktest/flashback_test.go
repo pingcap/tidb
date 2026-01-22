@@ -429,6 +429,7 @@ func TestFlashbackSequence(t *testing.T) {
 		require.Equal(t, res[0][0], "101")
 
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/injectSafeTS"))
+		tk.MustExec("drop sequence seq")
 	}
 }
 

@@ -127,6 +127,18 @@ func (ran *Range) isPoint(tc types.Context, regardNullAsPoint bool) bool {
 	return !ran.LowExclude && !ran.HighExclude
 }
 
+// IsOnlyNull checks if the range has [NULL, NULL] or [NULL NULL, NULL NULL] range.
+func (ran *Range) IsOnlyNull() bool {
+	for i := range ran.LowVal {
+		a := ran.LowVal[i]
+		b := ran.HighVal[i]
+		if !(a.IsNull() && b.IsNull()) {
+			return false
+		}
+	}
+	return true
+}
+
 // IsPointNonNullable returns if the range is a point without NULL.
 func (ran *Range) IsPointNonNullable(tc types.Context) bool {
 	return ran.isPoint(tc, false)
@@ -173,15 +185,38 @@ func HasFullRange(ranges []*Range, unsignedIntHandle bool) bool {
 	return false
 }
 
+func dealWithRedact(input string, redact string) string {
+	if input == "-inf" || input == "+inf" {
+		return input
+	}
+	if redact == errors.RedactLogDisable {
+		return input
+	} else if redact == errors.RedactLogEnable {
+		return "?"
+	}
+	return fmt.Sprintf("‹%s›", input)
+}
+
 // String implements the Stringer interface.
+// don't use it in the product.
 func (ran *Range) String() string {
+	return ran.string(errors.RedactLogDisable)
+}
+
+// Redact is to print the range with redacting sensitive data.
+func (ran *Range) Redact(redact string) string {
+	return ran.string(redact)
+}
+
+// String implements the Stringer interface.
+func (ran *Range) string(redact string) string {
 	lowStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.LowVal {
-		lowStrs = append(lowStrs, formatDatum(d, true))
+		lowStrs = append(lowStrs, dealWithRedact(formatDatum(d, true), redact))
 	}
 	highStrs := make([]string, 0, len(ran.LowVal))
 	for _, d := range ran.HighVal {
-		highStrs = append(highStrs, formatDatum(d, false))
+		highStrs = append(highStrs, dealWithRedact(formatDatum(d, false), redact))
 	}
 	l, r := "[", "]"
 	if ran.LowExclude {

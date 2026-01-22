@@ -90,7 +90,10 @@ type EngineConfig struct {
 	// when opening the engine, instead of removing it.
 	KeepSortDir bool
 	// TS is the preset timestamp of data in the engine. When it's 0, the used TS
-	// will be set lazily.
+	// will be set lazily. This is used by local backend. This field will be written
+	// to engineMeta.TS and take effect in below cases:
+	// - engineManager.openEngine
+	// - engineManager.closeEngine only for an external engine
 	TS uint64
 }
 
@@ -109,13 +112,13 @@ type LocalEngineConfig struct {
 
 // ExternalEngineConfig is the configuration used for local backend external engine.
 type ExternalEngineConfig struct {
-	StorageURI      string
-	DataFiles       []string
-	StatFiles       []string
-	StartKey        []byte
-	EndKey          []byte
-	SplitKeys       [][]byte
-	RegionSplitSize int64
+	StorageURI string
+	DataFiles  []string
+	StatFiles  []string
+	StartKey   []byte
+	EndKey     []byte
+	JobKeys    [][]byte
+	SplitKeys  [][]byte
 	// TotalFileSize can be an estimated value.
 	TotalFileSize int64
 	// TotalKVCount can be an estimated value.
@@ -305,13 +308,6 @@ func (engine *OpenedEngine) Flush(ctx context.Context) error {
 // LocalWriter returns a writer that writes to the local backend.
 func (engine *OpenedEngine) LocalWriter(ctx context.Context, cfg *LocalWriterConfig) (EngineWriter, error) {
 	return engine.backend.LocalWriter(ctx, cfg, engine.uuid)
-}
-
-// SetTS sets the TS of the engine. In most cases if the caller wants to specify
-// TS it should use the TS field in EngineConfig. This method is only used after
-// a ResetEngine.
-func (engine *OpenedEngine) SetTS(ts uint64) {
-	engine.config.TS = ts
 }
 
 // UnsafeCloseEngine closes the engine without first opening it.

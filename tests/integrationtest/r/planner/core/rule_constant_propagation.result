@@ -179,3 +179,33 @@ HashAgg_24	5325.33	root		group by:Column#14, Column#15, funcs:firstrow(Column#14
       └─TableReader_40(Probe)	3323.33	root		data:Selection_39
         └─Selection_39	3323.33	cop[tikv]		lt(planner__core__rule_constant_propagation.t.id, 3)
           └─TableFullScan_38	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+create table t1(id int, value int);
+create table t2(id int, value int);
+INSERT INTO t1 (id, value) VALUES (10, 0),(20, 0),(30, 0);
+INSERT INTO t2 (id, value) VALUES (10, 100), (10, 200), (10, 300), (20, 400), (30, 500);
+explain format='brief' update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+id	estRows	task	access object	operator info
+Update	N/A	root		N/A
+└─Projection	80.00	root		planner__core__rule_constant_propagation.t1.id, planner__core__rule_constant_propagation.t1.value, planner__core__rule_constant_propagation.t1._tidb_rowid, ifnull(Column#7, 0)->Column#7
+  └─HashJoin	80.00	root		CARTESIAN left outer join
+    ├─HashAgg(Build)	8.00	root		group by:planner__core__rule_constant_propagation.t2.id, funcs:count(1)->Column#7
+    │ └─TableReader	10.00	root		data:Selection
+    │   └─Selection	10.00	cop[tikv]		eq(10, planner__core__rule_constant_propagation.t2.id)
+    │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    └─TableReader(Probe)	10.00	root		data:Selection
+      └─Selection	10.00	cop[tikv]		eq(planner__core__rule_constant_propagation.t1.id, 10)
+        └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
+update t1 set value = (select count(*) from t2 where t1.id = t2.id) where t1.id = 10;
+select * from t1;
+id	value
+10	3
+20	0
+30	0
+select * from t2;
+id	value
+10	100
+10	200
+10	300
+20	400
+30	500
+drop table if exists t1, t2;

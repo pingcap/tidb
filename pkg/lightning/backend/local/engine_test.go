@@ -21,8 +21,10 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/cockroachdb/pebble"
 	"github.com/cockroachdb/pebble/objstorage/objstorageprovider"
@@ -32,8 +34,10 @@ import (
 	"github.com/pingcap/tidb/br/pkg/membuf"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/common"
+	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/oracle"
 )
 
 func makePebbleDB(t *testing.T, opt *pebble.Options) (*pebble.DB, string) {
@@ -68,6 +72,7 @@ func TestGetEngineSizeWhenImport(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	// simulate import
 	f.lock(importMutexStateImport)
@@ -106,6 +111,7 @@ func TestIngestSSTWithClosedEngine(t *testing.T) {
 		keyAdapter:   common.NoopKeyAdapter{},
 		logger:       log.L(),
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	f.sstIngester = dbSSTIngester{e: f}
 	sstPath := path.Join(tmpPath, uuid.New().String()+".sst")
@@ -142,6 +148,7 @@ func TestGetFirstAndLastKey(t *testing.T) {
 	f := &Engine{
 		sstDir: tmpPath,
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -184,6 +191,7 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	f := &Engine{
 		sstDir: tmpPath,
 	}
+	f.TS = oracle.GoTimeToTS(time.Now())
 	f.db.Store(db)
 	err := db.Set([]byte("a"), []byte("a"), nil)
 	require.NoError(t, err)
@@ -233,4 +241,37 @@ func TestIterOutputHasUniqueMemorySpace(t *testing.T) {
 	require.NoError(t, iter.Close())
 	// after iter closed, the memory buffer of iter goes to pool
 	require.Greater(t, pool.TotalSize(), int64(0))
+}
+
+// TestCreateSSTWriterDefaultBlockSize tests that createSSTWriter will use the default block size of 16KB if the block size is not set.
+func TestCreateSSTWriterDefaultBlockSize(t *testing.T) {
+	db, tmpPath := makePebbleDB(t, nil)
+	t.Cleanup(func() {
+		require.NoError(t, db.Close())
+	})
+	engine := &Engine{
+		config: backend.LocalEngineConfig{
+			BlockSize: 0, // BlockSize is not set
+		},
+		sstDir: tmpPath,
+		logger: log.Logger{},
+	}
+
+	writer := &Writer{
+		engine: engine,
+	}
+
+	sstWriter, err := writer.createSSTWriter()
+	require.NoError(t, err)
+	require.NotNil(t, sstWriter)
+
+	// blockSize is a private field of sstWriter.writer, so we use reflection to access the private field blockSize
+	writerValue := reflect.ValueOf(sstWriter.writer).Elem()
+	blockSizeField := writerValue.FieldByName("blockSize")
+	require.True(t, blockSizeField.IsValid(), "blockSize field should be valid")
+	require.Equal(t, config.DefaultBlockSize, int(blockSizeField.Int()))
+
+	// clean up
+	err = sstWriter.writer.Close()
+	require.NoError(t, err)
 }

@@ -519,8 +519,8 @@ func (m *MockExpr) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *
 func (m *MockExpr) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
 	return nil
 }
-
 func (m *MockExpr) String() string               { return "" }
+func (m *MockExpr) StringWithCtx(string) string  { return "" }
 func (m *MockExpr) MarshalJSON() ([]byte, error) { return nil, nil }
 func (m *MockExpr) Eval(ctx EvalContext, row chunk.Row) (types.Datum, error) {
 	return types.NewDatum(m.i), m.err
@@ -593,6 +593,8 @@ func (m *MockExpr) Coercibility() Coercibility                          { return
 func (m *MockExpr) SetCoercibility(Coercibility)                        {}
 func (m *MockExpr) Repertoire() Repertoire                              { return UNICODE }
 func (m *MockExpr) SetRepertoire(Repertoire)                            {}
+func (m *MockExpr) IsExplicitCharset() bool                             { return false }
+func (m *MockExpr) SetExplicitCharset(bool)                             {}
 
 func (m *MockExpr) CharsetAndCollation() (string, string) {
 	return "", ""

@@ -84,3 +84,15 @@ t	CREATE TABLE `t` (
   `a` decimal(10,0) DEFAULT NULL,
   `b` decimal(10,0) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table t(a bit(2) default b'111');
+Error 1067 (42000): Invalid default value for 'a'
+create table t(a bit(65) default b'111');
+Error 1439 (42000): Display width out of range for column 'a' (max = 64)
+create table t(a bit(64) default b'1111111111111111111111111111111111111111111111111111111111111111');
+drop table t;
+create table t(a bit(3) default b'111');
+drop table t;
+create table t(a bit(3) default b'000111');
+drop table t;
+create table t(a bit(32) default b'1111111111111111111111111111111');
