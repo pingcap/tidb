@@ -1663,7 +1663,6 @@ func approxCompilePlanMemQuota(sql string, hasSelect bool) int64 {
 
 func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.ParseParam) ([]ast.StmtNode, []error, error) {
 	globalMemArbitrator := memory.GlobalMemArbitrator()
-	arbitratorMode := globalMemArbitrator.WorkMode()
 	execUseArbitrator := false
 	parseSQLMemQuota := int64(0)
 	if globalMemArbitrator != nil && s.sessionVars.ConnectionID != 0 {
@@ -1675,21 +1674,10 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 
 	if execUseArbitrator {
 		uid := s.sessionVars.ConnectionID
-		intoErrBeforeExec := func() error {
-			if s.sessionVars.MemArbitrator.WaitAverse == variable.MemArbitratorWaitAverseEnable {
-				metrics.GlobalMemArbitratorSubTasks.CancelWaitAverseParse.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorWaitAverseCancel.String()+defSuffixParseSQL, uid)
-			}
-			if arbitratorMode == memory.ArbitratorModeStandard {
-				metrics.GlobalMemArbitratorSubTasks.CancelStandardModeParse.Inc()
-				return exeerrors.ErrQueryExecStopped.GenWithStackByArgs(memory.ArbitratorStandardCancel.String()+defSuffixParseSQL, uid)
-			}
-			return nil
-		}
 
 		if globalMemArbitrator.AtMemRisk() {
-			if err := intoErrBeforeExec(); err != nil {
-				return nil, nil, err
+			if s.sessionPlanCache != nil {
+				s.sessionPlanCache.DeleteAll()
 			}
 			for globalMemArbitrator.AtMemRisk() {
 				if globalMemArbitrator.AtOOMRisk() {
@@ -1704,8 +1692,8 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
 
 		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
-			if err := intoErrBeforeExec(); err != nil {
-				return nil, nil, err
+			if s.sessionPlanCache != nil {
+				s.sessionPlanCache.DeleteAll()
 			}
 		}
 	}
@@ -2519,6 +2507,9 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		}
 
 		if globalMemArbitrator.AtMemRisk() {
+			if s.sessionPlanCache != nil {
+				s.sessionPlanCache.DeleteAll()
+			}
 			if err := intoErrBeforeExec(); err != nil {
 				return nil, err
 			}
@@ -2535,7 +2526,10 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		defer releaseCommonQuota()
 
 		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
-			if err := intoErrBeforeExec(); err != nil {
+			if s.sessionPlanCache != nil && s.sessionPlanCache.Size() > 0 {
+				s.sessionPlanCache.DeleteAll()
+				// one more chance to get quota after clearing plan cache
+			} else if err := intoErrBeforeExec(); err != nil {
 				return nil, err
 			}
 		}
