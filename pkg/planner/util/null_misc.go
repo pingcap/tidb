@@ -560,11 +560,13 @@ const (
 //   - maxArgsToCheck: maximum number of arguments to check (use -1 for all)
 //
 // Returns NullRejecting if any arg propagates NULL, Undecided otherwise.
-func checkNullPreservingArgs(args []expression.Expression, inner *expression.Schema, maxArgsToCheck int) NullRejectionResult {
+func checkNullPreservingArgs(
+	args []expression.Expression, inner *expression.Schema, maxArgsToCheck int,
+) NullRejectionResult {
 	if maxArgsToCheck < 0 || maxArgsToCheck > len(args) {
 		maxArgsToCheck = len(args)
 	}
-	for i := 0; i < maxArgsToCheck; i++ {
+	for i := range maxArgsToCheck {
 		if isNullPropagatingWRTInner(args[i], inner) {
 			return NullRejecting
 		}
@@ -652,7 +654,9 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 
 // handleNullPreservingComparison handles comparison operators (=, <>, <, >, <=, >=, LIKE, REGEXP).
 // Note: caller (isNullRejectedExpr) has already verified that predicate references inner columns.
-func handleNullPreservingComparison(_ *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+func handleNullPreservingComparison(
+	_ *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema,
+) NullRejectionResult {
 	// Check if any argument propagates NULL (union semantics)
 	// For LIKE/ILIKE, only check first 2 args (escape arg is usually constant)
 	maxArgs := 2
@@ -753,7 +757,9 @@ func handleUnaryNot(args []expression.Expression, inner *expression.Schema) Null
 // handleGenericNullPreserving handles other NullPreserving functions not explicitly listed.
 // Uses the generic rule: NonTrue(F(args...)) ⊇ MustNull(F(args...)) = ⋃ MustNull(arg_i)
 // Note: caller (isNullRejectedExpr) has already verified that predicate references inner columns.
-func handleGenericNullPreserving(sf *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema) NullRejectionResult {
+func handleGenericNullPreserving(
+	sf *expression.ScalarFunction, args []expression.Expression, inner *expression.Schema,
+) NullRejectionResult {
 	t := traitOf(sf.FuncName.L)
 	if !has(t, NullPreserving) {
 		return Undecided
