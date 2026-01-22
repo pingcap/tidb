@@ -1158,6 +1158,10 @@ type SessionVars struct {
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
 
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel bool
+
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
 
@@ -2193,7 +2197,12 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		HashJoinCostFactor:            DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
 		CommandValue:                  uint32(mysql.ComSleep),
+<<<<<<< HEAD
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
+=======
+		TiDBOptJoinReorderThreshold:   vardef.DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThroughSel:  vardef.DefTiDBOptJoinReorderThroughSel,
+>>>>>>> fb3c1cfdffb (planner: handle the selection between the join group (#64535))
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
