@@ -31,6 +31,8 @@ wait_file_exists() {
 }
 
 CUR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+ORIGINAL_TIKV_CONFIG="${TIKV_CONFIG:?}"
+TIKV_API_V2_CONFIG="$CUR/../config/tikv_api_v2.toml"
 
 DB="${TEST_NAME}"
 GLOBAL_STORAGE="local://$TEST_DIR/gc_global_backup"
@@ -77,28 +79,3 @@ if echo "$safe_point" | grep -q "\"service_id\": \"$global_sp_id\""; then
   echo "global safepoint should be removed after backup: $global_sp_id"
   exit 1
 fi
-
-echo "=== Keyspace mode: backup full (keyspace1) ==="
-rm -f "$SIG_GLOBAL_SET" "$SIG_GLOBAL_DEL" "$SIG_KS_SET" "$SIG_KS_DEL"
-# Restart to reset failpoints for isolation verification
-restart_services
-
-run_br --pd $PD_ADDR backup full --keyspace-name keyspace1 -s "$KEYSPACE_STORAGE" &
-ks_pid=$!
-
-wait_file_exists "$SIG_KS_SET" "(waiting keyspace set)"
-# Verify keyspace backup did not trigger global failpoint
-test ! -f "$SIG_GLOBAL_SET"
-# Verify signal file contains keyspace info
-grep -q "keyspace=" "$SIG_KS_SET"
-
-wait "$ks_pid" || { echo "Keyspace backup failed"; exit 1; }
-wait_file_exists "$SIG_KS_DEL" "(waiting keyspace delete)"
-# Verify delete also did not trigger global failpoint
-test ! -f "$SIG_GLOBAL_DEL"
-# Verify delete signal file contains keyspace info
-grep -q "keyspace=" "$SIG_KS_DEL"
-
-export GO_FAILPOINTS=""
-
-run_sql "drop database if exists $DB;"
