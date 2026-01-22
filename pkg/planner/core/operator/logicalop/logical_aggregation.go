@@ -265,17 +265,18 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProps := childrenProperties[0]
+	la.hasTiflash = la.hasTiflash && childProps.HasTiflash
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
 		la.PossibleProperties = [][]*expression.Column{nil}
 		return nil
 	}
-	resultProperties := make([][]*expression.Column, 0, len(childProps))
+	resultProperties := make([][]*expression.Column, 0, len(childProps.Order))
 	groupByCols := la.GetGroupByCols()
-	for _, possibleChildProperty := range childProps {
+	for _, possibleChildProperty := range childProps.Order {
 		sortColOffsets := util.GetMaxSortPrefix(possibleChildProperty, groupByCols)
 		if len(sortColOffsets) == len(groupByCols) {
 			prop := possibleChildProperty[:len(groupByCols)]
@@ -283,7 +284,10 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 		}
 	}
 	la.PossibleProperties = resultProperties
-	return resultProperties
+	return &base.PossiblePropertiesInfo{
+		Order:      resultProperties,
+		HasTiflash: la.hasTiflash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

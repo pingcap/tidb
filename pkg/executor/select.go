@@ -970,7 +970,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	} else {
 		clear(sc.TblInfo2UnionScan)
 	}
-	sc.HasTiflash = false
 	sc.IsStaleness = false
 	sc.IsSyncStatsFailed = false
 	sc.IsExplainAnalyzeDML = false

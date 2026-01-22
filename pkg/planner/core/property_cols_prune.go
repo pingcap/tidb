@@ -15,14 +15,13 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 )
 
 // preparePossibleProperties traverses the plan tree by a post-order method,
 // recursively calls base.LogicalPlan PreparePossibleProperties interface.
-func preparePossibleProperties(lp base.LogicalPlan) [][]*expression.Column {
-	childrenProperties := make([][][]*expression.Column, 0, len(lp.Children()))
+func preparePossibleProperties(lp base.LogicalPlan) *base.PossiblePropertiesInfo {
+	childrenProperties := make([]*base.PossiblePropertiesInfo, 0, len(lp.Children()))
 	for _, child := range lp.Children() {
 		childrenProperties = append(childrenProperties, preparePossibleProperties(child))
 	}

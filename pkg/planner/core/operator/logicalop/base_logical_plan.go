@@ -56,8 +56,8 @@ type BaseLogicalPlan struct {
 	// including eliminating unnecessary DISTINCT operators, simplifying ORDER BY columns,
 	// removing Max1Row operators, and mapping semi-joins to inner-joins.
 	// for now, it's hard to maintain in individual operator, build it from bottom up when using.
-	fdSet *fd.FDSet
-
+	fdSet      *fd.FDSet
+	hasTiflash bool
 	// Flag is with that each bit has its meaning to mark this logical plan for special handling.
 	Flag uint64
 }
@@ -254,7 +254,12 @@ func (*BaseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expressi
 }
 
 // PreparePossibleProperties implements LogicalPlan.<13th> interface.
-func (*BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (p *BaseLogicalPlan) PreparePossibleProperties(_ *expression.Schema, info ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiflash := true
+	for _, childInfo := range info {
+		hasTiflash = hasTiflash && childInfo.HasTiflash
+	}
+	p.hasTiflash = hasTiflash
 	return nil
 }
 
@@ -469,4 +474,14 @@ func (p *BaseLogicalPlan) ReAlloc4Cascades(tp string, self base.LogicalPlan) {
 	// keep the children unchanged, unless outer side has some special requirements, do it in the caller.
 	// fdSet should be re-derived from the children, cuz apply -> join have different derive logic.
 	p.fdSet = nil
+}
+
+// SetHasTiFlash sets whether the plan has tiflash replica.
+func (p *BaseLogicalPlan) SetHasTiFlash(hasTiflash bool) {
+	p.hasTiflash = hasTiflash
+}
+
+// GetHasTiFlash gets whether the plan has tiflash replica.
+func (p *BaseLogicalPlan) GetHasTiFlash() bool {
+	return p.hasTiflash
 }

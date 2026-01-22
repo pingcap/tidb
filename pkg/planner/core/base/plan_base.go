@@ -224,7 +224,7 @@ type LogicalPlan interface {
 
 	// PreparePossibleProperties is only used for join and aggregation. Like group by a,b,c, all permutation of (a,b,c) is
 	// valid, but the ordered indices in leaf plan is limited. So we can get all possible order properties by a pre-walking.
-	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column
+	PreparePossibleProperties(schema *expression.Schema, childrenProperties ...*PossiblePropertiesInfo) *PossiblePropertiesInfo
 
 	// ExtractCorrelatedCols extracts correlated columns inside the LogicalPlan.
 	ExtractCorrelatedCols() []*expression.CorrelatedColumn
@@ -272,6 +272,12 @@ type LogicalPlan interface {
 
 	// GetJoinChildStatsAndSchema gets the stats and schema of both children.
 	GetJoinChildStatsAndSchema() (stats0, stats1 *property.StatsInfo, schema0, schema1 *expression.Schema)
+
+	// SetHasTiFlashSetHasTiFlash sets whether the plan has tiflash replica.
+	SetHasTiFlash(hasTiFlash bool)
+
+	// GetHasTiFlash gets whether the plan has tiflash replica.
+	GetHasTiFlash() bool
 }
 
 // GroupExpression is the interface for group expression.
@@ -377,4 +383,11 @@ type PhysicalJoin interface {
 	PhysicalJoinImplement()
 	GetInnerChildIdx() int
 	GetJoinType() JoinType
+}
+
+// PossiblePropertiesInfo is used to store all possible order properties.
+type PossiblePropertiesInfo struct {
+	// all possible order properties
+	Order      [][]*expression.Column
+	HasTiflash bool
 }

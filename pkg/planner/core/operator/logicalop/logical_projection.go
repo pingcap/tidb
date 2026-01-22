@@ -331,7 +331,7 @@ func (p *LogicalProjection) ExtractColGroups(colGroups [][]*expression.Column) [
 }
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...[][]*expression.Column) [][]*expression.Column {
+func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProperties := childrenProperties[0]
 	oldCols := make([]*expression.Column, 0, p.Schema().Len())
 	newCols := make([]*expression.Column, 0, p.Schema().Len())
@@ -341,9 +341,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			oldCols = append(oldCols, col)
 		}
 	}
+	p.hasTiflash = childProperties.HasTiflash
 	tmpSchema := expression.NewSchema(oldCols...)
-	newProperties := make([][]*expression.Column, 0, len(childProperties))
-	for _, childProperty := range childProperties {
+	newProperties := make([][]*expression.Column, 0, len(childProperties.Order))
+	for _, childProperty := range childProperties.Order {
 		newChildProperty := make([]*expression.Column, 0, len(childProperty))
 		for _, col := range childProperty {
 			pos := tmpSchema.ColumnIndex(col)
@@ -356,7 +357,10 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			newProperties = append(newProperties, newChildProperty)
 		}
 	}
-	return newProperties
+	return &base.PossiblePropertiesInfo{
+		Order:      newProperties,
+		HasTiflash: p.hasTiflash,
+	}
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.

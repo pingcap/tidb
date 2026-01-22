@@ -594,7 +594,7 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 	// step1: if user prefer tiFlash store type, tiFlash path should always be built anyway ahead.
 	var tiflashPath *util.AccessPath
 	isMPPEnforced := ds.SCtx().GetSessionVars().IsMPPEnforced()
-	if ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced {
+	if (ds.PreferStoreType&h.PreferTiFlash != 0 || isMPPEnforced) && ds.GetHasTiFlash() {
 		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				err := deriveTablePathStats(ds, path, ds.PushedDownConds, false)
