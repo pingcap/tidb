@@ -215,6 +215,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	lastRestore       bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -230,6 +231,14 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+}
+
+func (rc *LogClient) SetRestoreToLast(restoreToLast bool) {
+	rc.lastRestore = restoreToLast
+}
+
+func (rc *LogClient) LastOne() bool {
+	return rc.lastRestore
 }
 
 type restoreStatistics struct {

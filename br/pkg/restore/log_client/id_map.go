@@ -161,11 +161,42 @@ func (rc *LogClient) loadSchemasMap(
 	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
 		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
 		dbMaps, err := rc.loadSchemasMapFromStorage(ctx, checkpointStorage, restoredTS)
-		return dbMaps, errors.Trace(err)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(dbMaps) > 0 {
+			return dbMaps, nil
+		}
 	}
 	if rc.pitrIDMapTableExists() {
 		dbMaps, err := rc.loadSchemasMapFromTable(ctx, restoredTS)
-		return dbMaps, errors.Trace(err)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if len(dbMaps) > 0 {
+			return dbMaps, nil
+		}
+		// If we are loading the base map for a previous restore (restoredTS != rc.restoreTS),
+		// fall back to the latest restore_id for this restoredTS.
+		if restoredTS != rc.restoreTS && rc.pitrIDMapHasRestoreIDColumn() {
+			dbMaps, fallbackRestoreID, err := rc.loadSchemasMapFromTableLatestRestoreID(ctx, restoredTS)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if len(dbMaps) > 0 {
+				log.Info("load pitr id map from latest restore_id for previous segment",
+					zap.Uint64("restored_ts", restoredTS),
+					zap.Uint64("restore_id", fallbackRestoreID),
+					zap.Uint64("current_restore_id", rc.restoreID))
+				return dbMaps, nil
+			}
+		}
+		if rc.storage != nil {
+			log.Info("fallback to log backup storage for pitr id map", zap.Uint64("restored_ts", restoredTS))
+			dbMaps, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
+			return dbMaps, errors.Trace(err)
+		}
+		return nil, nil
 	}
 	log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
 	dbMaps, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
@@ -251,4 +282,53 @@ func (rc *LogClient) loadSchemasMapFromTable(
 	}
 
 	return backupMeta.GetDbMaps(), nil
+}
+
+func (rc *LogClient) loadSchemasMapFromTableLatestRestoreID(
+	ctx context.Context,
+	restoredTS uint64,
+) ([]*backuppb.PitrDBMap, uint64, error) {
+	getPitrIDMapSQL := "SELECT restore_id, segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY restore_id DESC, segment_id;"
+	args := []any{restoredTS, rc.upstreamClusterID}
+
+	execCtx := rc.unsafeSession.GetSessionCtx().GetRestrictedSQLExecutor()
+	rows, _, errSQL := execCtx.ExecRestrictedSQL(
+		kv.WithInternalSourceType(ctx, kv.InternalTxnBR),
+		nil,
+		getPitrIDMapSQL,
+		args...,
+	)
+	if errSQL != nil {
+		return nil, 0, errors.Annotatef(errSQL, "failed to get pitr id map from mysql.tidb_pitr_id_map")
+	}
+	if len(rows) == 0 {
+		log.Info("pitr id map does not exist", zap.Uint64("restored ts", restoredTS))
+		return nil, 0, nil
+	}
+
+	targetRestoreID := rows[0].GetUint64(0)
+	expectedSegmentID := uint64(0)
+	metaData := make([]byte, 0, len(rows)*PITRIdMapBlockSize)
+	for _, row := range rows {
+		restoreID := row.GetUint64(0)
+		if restoreID != targetRestoreID {
+			break
+		}
+		elementID := row.GetUint64(1)
+		if expectedSegmentID != elementID {
+			return nil, 0, errors.Errorf("the part(segment_id = %d) of pitr id map is lost", expectedSegmentID)
+		}
+		d := row.GetBytes(2)
+		if len(d) == 0 {
+			return nil, 0, errors.Errorf("get the empty part(segment_id = %d) of pitr id map", expectedSegmentID)
+		}
+		metaData = append(metaData, d...)
+		expectedSegmentID += 1
+	}
+	backupMeta := &backuppb.BackupMeta{}
+	if err := backupMeta.Unmarshal(metaData); err != nil {
+		return nil, 0, errors.Trace(err)
+	}
+
+	return backupMeta.GetDbMaps(), targetRestoreID, nil
 }
