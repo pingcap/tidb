@@ -951,7 +951,7 @@ Limit_13	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
 explain analyze select * from t where c = 'abd' order by id limit 100;
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_11	0.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
-└─TableReader_20	0.00	<actRows>	root	NULL	max_distsql_concurrency: 2	NULL	<memory>	<disk>
+└─TableReader_20	0.00	<actRows>	root	NULL	max_distsql_concurrency: 15	NULL	<memory>	<disk>
   └─Limit_19	0.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_18	0.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.t.c, "abd")	<memory>	<disk>
       └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:t	NULL	keep order:true	<memory>	<disk>
@@ -997,13 +997,13 @@ Limit_10	100.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
 explain analyze select * from pt order by id limit 100000;      # expected distsql concurrency 15
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_11	256.00	<actRows>	root	NULL	NULL	offset:0, count:100000	<memory>	<disk>
-└─TableReader_21	256.00	<actRows>	root	partition:all	max_distsql_concurrency: 2	NULL	<memory>	<disk>
+└─TableReader_21	256.00	<actRows>	root	partition:all	max_distsql_concurrency: 15	NULL	<memory>	<disk>
   └─Limit_20	256.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100000	<memory>	<disk>
     └─TableFullScan_19	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>
 explain analyze select * from pt where val = 126 order by id limit 100;  # expected distsql concurrency 15
 id	estRows	actRows	task	access object	execution info	operator info	memory	disk
 Limit_11	0.00	<actRows>	root	NULL	NULL	offset:0, count:100	<memory>	<disk>
-└─TableReader_20	0.00	<actRows>	root	partition:all	max_distsql_concurrency: 2	NULL	<memory>	<disk>
+└─TableReader_20	0.00	<actRows>	root	partition:all	max_distsql_concurrency: 15	NULL	<memory>	<disk>
   └─Limit_19	0.00	<actRows>	cop[tikv]	NULL	NULL	offset:0, count:100	<memory>	<disk>
     └─Selection_18	0.00	<actRows>	cop[tikv]	NULL	NULL	eq(executor__issues.pt.val, 126)	<memory>	<disk>
       └─TableFullScan_17	256.00	<actRows>	cop[tikv]	table:pt	NULL	keep order:true	<memory>	<disk>

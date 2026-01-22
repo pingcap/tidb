@@ -732,3 +732,33 @@ func TestIssue60926(t *testing.T) {
 	tk.MustQuery("select * from t1 join (select col0, sum(col1) from t2 group by col0) as r on t1.col0 = r.col0;")
 	require.True(t, executor.IsChildCloseCalledForTest.Load())
 }
+
+
+func TestXXX(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+    tk.MustExec(`create table pt (id int primary key auto_increment, val int) partition by range (id)
+(PARTITION p1 VALUES LESS THAN (100),
+PARTITION p2 VALUES LESS THAN (200),
+PARTITION p3 VALUES LESS THAN (300),
+PARTITION p4 VALUES LESS THAN (400),
+PARTITION p5 VALUES LESS THAN (500),
+PARTITION p6 VALUES LESS THAN (600),
+PARTITION p7 VALUES LESS THAN (700))`)
+
+tk.MustExec(`insert into pt (val) values (123),(456),(789),(1112);`)
+tk.MustExec(`insert into pt (val) select (val) from pt;`)
+tk.MustExec(`insert into pt (val) select (val) from pt;`)
+tk.MustExec(`insert into pt (val) select (val) from pt;`)
+tk.MustExec(`insert into pt (val) select (val) from pt;`)
+tk.MustExec(`insert into pt (val) select (val) from pt;`)
+tk.MustExec(`insert into pt (val) select (val) from pt;`)
+tk.MustExec(`split table pt between (0) and (40960) regions 30;`)
+
+tk.MustExec(`analyze table pt`)
+
+tk.MustQuery(`explain analyze select * from pt where val = 126 order by id limit 100;`).Check(testkit.Rows())
+
+}
