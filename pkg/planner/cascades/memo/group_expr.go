@@ -223,12 +223,14 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 	}
 	childStats := make([]*property.StatsInfo, 0, len(e.Inputs))
 	childSchema := make([]*expression.Schema, 0, len(e.Inputs))
-	childProperties := make([][][]*expression.Column, 0, len(e.Inputs))
+	childProperties := make([]*base.PossiblePropertiesInfo, 0, len(e.Inputs))
 	for _, childG := range e.Inputs {
 		childGProp := childG.GetLogicalProperty()
 		childStats = append(childStats, childGProp.Stats)
 		childSchema = append(childSchema, childGProp.Schema)
-		childProperties = append(childProperties, childGProp.PossibleProps)
+		childProperties = append(childProperties, &base.PossiblePropertiesInfo{
+			Order: childGProp.PossibleProps,
+		})
 	}
 	e.GetGroup().SetLogicalProperty(property.NewLogicalProp())
 	// currently the schemaProducer side logical op is still useful for group schema.
@@ -252,7 +254,7 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 		// todo: extractFD should be refactored as take in childFDs, and return the new FDSet rather than depend on tree.
 		tmpFD = e.LogicalPlan.ExtractFD()
 		// prepare the possible sort columns for the group, which require fillIndexPath to fill index cols.
-		tmpPossibleProps = e.LogicalPlan.PreparePossibleProperties(tmpSchema, childProperties...)
+		tmpPossibleProps = e.LogicalPlan.PreparePossibleProperties(tmpSchema, childProperties...).Order
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
 	e.GetGroup().GetLogicalProperty().Stats = tmpStats
