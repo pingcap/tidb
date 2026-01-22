@@ -80,11 +80,11 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		tkProcess := testKit.Session().ShowProcess()
 		ps := []*sessmgr.ProcessInfo{tkProcess}
 		testKit.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-		testKit.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#7)->Column#5",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#7",
-			"    └─IndexRangeScan_18 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
+		testKit.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkProcess.ID)).Check(testkit.Rows(
+			"StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+			"└─IndexReader 1.00 root  index:StreamAgg",
+			"  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+			"    └─IndexRangeScan 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 	})
 }
 
@@ -93,15 +93,15 @@ func TestInvisibleIndex(t *testing.T) {
 		testKit.MustExec("use test")
 		testKit.MustExec("CREATE TABLE t1 ( a INT, KEY( a ) INVISIBLE );")
 		testKit.MustExec("INSERT INTO t1 VALUES (1), (2), (3), (4), (5), (6), (7), (8), (9), (10);")
-		testKit.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testKit.MustQuery(`EXPLAIN format = 'brief' SELECT a FROM t1;`).Check(
 			testkit.Rows(
-				`TableReader_6 10000.00 root  data:TableFullScan_5`,
-				`└─TableFullScan_5 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				`TableReader 10000.00 root  data:TableFullScan`,
+				`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		testKit.MustExec("set session tidb_opt_use_invisible_indexes=on;")
-		testKit.MustQuery(`EXPLAIN SELECT a FROM t1;`).Check(
+		testKit.MustQuery(`EXPLAIN format = 'brief' SELECT a FROM t1;`).Check(
 			testkit.Rows(
-				`IndexReader_8 10000.00 root  index:IndexFullScan_7`,
-				`└─IndexFullScan_7 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
+				`IndexReader 10000.00 root  index:IndexFullScan`,
+				`└─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo`))
 	})
 }
 
@@ -225,20 +225,20 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("CREATE TABLE t1 (a int key, b int, c int, index (b, c));")
-		testKit.MustQuery("explain select a from t1 where b is null order by c").Check(testkit.Rows(
-			"Projection_6 10.00 root  test.t1.a",
-			"└─IndexReader_14 10.00 root  index:IndexRangeScan_13",
-			"  └─IndexRangeScan_13 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
+		testKit.MustQuery("explain format = 'brief' select a from t1 where b is null order by c").Check(testkit.Rows(
+			"Projection 10.00 root  test.t1.a",
+			"└─IndexReader 10.00 root  index:IndexRangeScan",
+			"  └─IndexRangeScan 10.00 cop[tikv] table:t1, index:b(b, c) range:[NULL,NULL], keep order:true, stats:pseudo",
 		))
 		// https://github.com/pingcap/tidb/issues/56116
 		testKit.MustExec("create table t2(id bigint(20) DEFAULT NULL, UNIQUE KEY index_on_id (id))")
 		testKit.MustExec("insert into t2 values (), (), ()")
 		testKit.MustExec("analyze table t2")
-		testKit.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#5)->Column#3",
-			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#5",
-			"    └─IndexRangeScan_18 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
+		testKit.MustQuery("explain format = 'brief' select count(*) from t2 where id is null;").Check(testkit.Rows(
+			"StreamAgg 1.00 root  funcs:count(Column#5)->Column#3",
+			"└─IndexReader 1.00 root  index:StreamAgg",
+			"  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#5",
+			"    └─IndexRangeScan 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
 	})
 }
 
