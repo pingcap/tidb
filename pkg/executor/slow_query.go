@@ -1154,7 +1154,8 @@ func (*slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File, 
 	}
 	var reader *bufio.Reader
 	if !compressed {
-		reader = bufio.NewReader(file)
+		// TODO(lance6716): maintain the line size while reading the slow log file.
+		reader = bufio.NewReaderSize(file, 64*1024)
 	} else {
 		gr, err := gzip.NewReader(file)
 		if err != nil {

@@ -228,47 +228,87 @@ func (t *TCPConnWithIOCounter) Write(b []byte) (n int, err error) {
 
 // ReadLine tries to read a complete line from bufio.Reader.
 // maxLineSize specifies the maximum size of a single line.
+//
+// Note: If the line fits in the reader's buffer, the returned bytes will alias
+// the underlying buffer of bufio.Reader and will be invalid after the next read
+// from the same reader. Better to use ReadLineCopy in this case.
 func ReadLine(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
-	var resByte []byte
-	lineByte, isPrefix, err := reader.ReadLine()
-	if isPrefix {
-		// Need to read more data.
-		resByte = make([]byte, len(lineByte), len(lineByte)*2)
-	} else {
-		resByte = make([]byte, len(lineByte))
+	line, _, err := readLineInternal(reader, maxLineSize)
+	return line, err
+}
+
+// ReadLineCopy tries to read a complete line from bufio.Reader and always
+// returns a line that doesn't alias the reader's buffer.
+func ReadLineCopy(reader *bufio.Reader, maxLineSize int) ([]byte, error) {
+	line, borrowed, err := readLineInternal(reader, maxLineSize)
+	if borrowed {
+		return bytes.Clone(line), err
 	}
-	// Use copy here to avoid shallow copy problem.
-	copy(resByte, lineByte)
-	if err != nil {
-		return resByte, err
+	return line, err
+}
+
+func assembleLine(fullBuffers [][]byte, finalFragment []byte, totalLen int) []byte {
+	buf := make([]byte, totalLen)
+	n := 0
+	for _, fb := range fullBuffers {
+		n += copy(buf[n:], fb)
 	}
-	var tempLine []byte
-	for isPrefix {
-		tempLine, isPrefix, err = reader.ReadLine()
-		resByte = append(resByte, tempLine...) // nozero
+	copy(buf[n:], finalFragment)
+	return buf
+}
+
+// readLineInternal reads one logical line. If the returned line is borrowed
+// (borrowed == true), it aliases the reader's internal buffer.
+func readLineInternal(reader *bufio.Reader, maxLineSize int) ([]byte, bool, error) {
+	frag, isPrefix, err := reader.ReadLine()
+	if !isPrefix || err != nil {
+		return frag, true, err
+	}
+
+	var fullBuffers [][]byte
+	totalLen := 0
+	for isPrefix && err == nil {
+		// Copy the current fragment since the next ReadLine call may overwrite
+		// the reader's buffer.
+		buf := bytes.Clone(frag)
+		fullBuffers = append(fullBuffers, buf)
+		totalLen += len(buf)
 		// Use maxLineSize to check the single line length.
-		if len(resByte) > maxLineSize {
-			return resByte, errors.Errorf("single line length exceeds limit: %v", maxLineSize)
+		if totalLen > maxLineSize {
+			return nil, false, errors.Errorf("single line length exceeds limit: %v", maxLineSize)
 		}
-		if err != nil {
-			return resByte, err
-		}
+		frag, isPrefix, err = reader.ReadLine()
 	}
-	return resByte, err
+
+	if err != nil {
+		return nil, false, err
+	}
+
+	totalLen += len(frag)
+	// Use maxLineSize to check the single line length.
+	if totalLen > maxLineSize {
+		return nil, false, errors.Errorf("single line length exceeds limit: %v", maxLineSize)
+	}
+	return assembleLine(fullBuffers, frag, totalLen), false, nil
 }
 
 // ReadLines tries to read lines from bufio.Reader.
 // count specifies the number of lines.
 // maxLineSize specifies the maximum size of a single line.
+//
+// NOTE: it also ensures that each returned line doesn't alias the reader's buffer.
 func ReadLines(reader *bufio.Reader, count int, maxLineSize int) ([][]byte, error) {
 	lines := make([][]byte, 0, count)
 	for range count {
-		line, err := ReadLine(reader, maxLineSize)
+		line, borrowed, err := readLineInternal(reader, maxLineSize)
 		if err == io.EOF && len(lines) > 0 {
 			return lines, nil
 		}
 		if err != nil {
 			return nil, err
+		}
+		if borrowed {
+			line = bytes.Clone(line)
 		}
 		lines = append(lines, line)
 	}
