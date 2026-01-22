@@ -77,13 +77,13 @@ type TopNExec struct {
 
 	typeCtx types.Context
 
-	prefixKeyExprs          []expression.Expression
-	prefixKeyFieldTypes     []*types.FieldType
-	prefixKeyFieldCollators []collate.Collator
-	prefixKeyColIdxs        []int
-	prefixKeyCharCounts     []int
-	prevPrefixKeys          []string
-	prefixKeyCount          int
+	truncateKeyExprs       []expression.Expression
+	truncateFieldTypes     []*types.FieldType
+	truncateFieldCollators []collate.Collator
+	truncateKeyColIdxs     []int
+	truncateKeyCharCounts  []int
+	prevTruncateKeys       []string
+	truncateKeyCount       int
 }
 
 // Open implements the Executor Open interface.
@@ -103,7 +103,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
 
-	if len(e.prefixKeyCharCounts) > 0 {
+	if len(e.truncateKeyCharCounts) > 0 {
 		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	}
 
@@ -287,7 +287,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 		return nil
 	}
 
-	if len(e.prefixKeyExprs) > 0 {
+	if len(e.truncateKeyExprs) > 0 {
 		err := e.loadChunksUntilTotalLimitForRankTopN(ctx)
 		if err != nil {
 			close(e.resultChannel)
@@ -318,21 +318,21 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		return err
 	}
 
-	e.prefixKeyFieldCollators = make([]collate.Collator, 0, len(e.prefixKeyExprs))
-	e.prefixKeyFieldTypes = make([]*types.FieldType, 0, len(e.prefixKeyExprs))
-	for i := range e.prefixKeyExprs {
-		fieldType := e.prefixKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
-		e.prefixKeyFieldTypes = append(e.prefixKeyFieldTypes, fieldType)
+	e.truncateFieldCollators = make([]collate.Collator, 0, len(e.truncateKeyExprs))
+	e.truncateFieldTypes = make([]*types.FieldType, 0, len(e.truncateKeyExprs))
+	for i := range e.truncateKeyExprs {
+		fieldType := e.truncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
+		e.truncateFieldTypes = append(e.truncateFieldTypes, fieldType)
 		switch fieldType.GetType() {
 		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
 			collateName := fieldType.GetCollate()
-			e.prefixKeyFieldCollators = append(e.prefixKeyFieldCollators, collate.GetCollator(collateName))
+			e.truncateFieldCollators = append(e.truncateFieldCollators, collate.GetCollator(collateName))
 		default:
-			e.prefixKeyFieldCollators = append(e.prefixKeyFieldCollators, nil)
+			e.truncateFieldCollators = append(e.truncateFieldCollators, nil)
 		}
 	}
 
-	e.prefixKeyCount = len(e.prefixKeyExprs)
+	e.truncateKeyCount = len(e.truncateKeyExprs)
 
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	return nil
@@ -370,8 +370,8 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 	e.initBeforeLoadingChunks()
 
 	// Check types, we need string types as prefix index only supports string types.
-	for i := range e.prefixKeyExprs {
-		prefixKeyType := e.prefixKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
+	for i := range e.truncateKeyExprs {
+		prefixKeyType := e.truncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
 		switch prefixKeyType {
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -426,21 +426,21 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 }
 
 func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]string, error) {
-	prefixKeys := make([]string, 0, e.prefixKeyCount)
-	for i := range e.prefixKeyFieldCollators {
-		if e.prefixKeyCharCounts[i] == -1 {
+	prefixKeys := make([]string, 0, e.truncateKeyCount)
+	for i := range e.truncateFieldCollators {
+		if e.truncateKeyCharCounts[i] == -1 {
 			bytes, err := row.SerializeToBytesForOneColumn(
 				e.typeCtx,
-				e.prefixKeyFieldTypes[i],
-				e.prefixKeyColIdxs[i],
-				e.prefixKeyFieldCollators[i])
+				e.truncateFieldTypes[i],
+				e.truncateKeyColIdxs[i],
+				e.truncateFieldCollators[i])
 			if err != nil {
 				return nil, err
 			}
 			prefixKeys = append(prefixKeys, string(hack.String(bytes)))
 		} else {
-			key := row.GetString(e.prefixKeyColIdxs[i])
-			prefixKeys = append(prefixKeys, string(hack.String(e.prefixKeyFieldCollators[i].ImmutablePrefixKey(key, e.prefixKeyCharCounts[i]))))
+			key := row.GetString(e.truncateKeyColIdxs[i])
+			prefixKeys = append(prefixKeys, string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.truncateKeyCharCounts[i]))))
 		}
 	}
 	return prefixKeys, nil
@@ -455,7 +455,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 
 	if savedRowCount+rowCnt <= totalLimit {
 		// Fast path
-		e.prevPrefixKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
+		e.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(rowCnt - 1))
 		return rowCnt, err
 	}
 
@@ -469,7 +469,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 
 	// both idx == 0 and len(e.prevPrefixKeys) == 0 is impossible
 	if idx > 0 {
-		e.prevPrefixKeys, err = e.getPrefixKeys(chk.GetRow(idx - 1))
+		e.prevTruncateKeys, err = e.getPrefixKeys(chk.GetRow(idx - 1))
 		if err != nil {
 			return 0, err
 		}
@@ -481,7 +481,7 @@ func (e *TopNExec) findEndIdx(chk *chunk.Chunk) (int, error) {
 		if err != nil {
 			return 0, err
 		}
-		if !slices.Equal(currentPrefixKeys, e.prevPrefixKeys) {
+		if !slices.Equal(currentPrefixKeys, e.prevTruncateKeys) {
 			return idx, nil
 		}
 		idx++
@@ -872,7 +872,7 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 
 // SetPrefixKeyMetasForTest sets prefix key fields for testing the RankTopN path.
 func (e *TopNExec) SetPrefixKeyMetasForTest(prefixKeyExprs []expression.Expression, prefixKeyColIdxs []int, prefixKeyCharCounts []int) {
-	e.prefixKeyExprs = prefixKeyExprs
-	e.prefixKeyColIdxs = prefixKeyColIdxs
-	e.prefixKeyCharCounts = prefixKeyCharCounts
+	e.truncateKeyExprs = prefixKeyExprs
+	e.truncateKeyColIdxs = prefixKeyColIdxs
+	e.truncateKeyCharCounts = prefixKeyCharCounts
 }
