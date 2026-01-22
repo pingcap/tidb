@@ -789,6 +789,24 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateTiDBMaskingPolicyTable is a table to store masking policy metadata.
+	CreateTiDBMaskingPolicyTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_masking_policy (
+		policy_id BIGINT PRIMARY KEY,
+		policy_name VARCHAR(64) NOT NULL,
+		db_name VARCHAR(64) NOT NULL,
+		table_name VARCHAR(64) NOT NULL,
+		table_id BIGINT NOT NULL,
+		column_name VARCHAR(64) NOT NULL,
+		column_id BIGINT NOT NULL,
+		expression TEXT NOT NULL,
+		status ENUM('ENABLE','DISABLE') DEFAULT 'ENABLE',
+		function_type VARCHAR(32),
+		created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		created_by VARCHAR(128),
+		UNIQUE KEY db_name_policy_name (db_name, policy_name),
+		KEY idx_table_column (table_id, column_id));`
 )
 
 // all below are related to DDL or DXF tables
