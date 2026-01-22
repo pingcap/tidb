@@ -25,9 +25,10 @@ go_test(
         "sql_test.go",
     ],
     flaky = True,
-    shard_count = 7,
+    shard_count = 9,
     deps = [
         ":sqlbuilder",
+        "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser",
