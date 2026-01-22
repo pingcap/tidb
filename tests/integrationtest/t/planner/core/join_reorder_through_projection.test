@@ -2,7 +2,7 @@
 # Tests for join reorder optimization when projection operators contain expressions
 #
 # Overview:
-# The tidb_opt_join_reorder_proj session variable controls whether 
+# The tidb_opt_join_reorder_through_proj session variable controls whether 
 # the join reorder algorithm can "look through" projection operators to find more
 # reorderable join nodes. When a projection contains expressions (e.g., t2.b + t3.b),
 # it creates "derived columns" that hide the underlying join structure from the 
@@ -51,7 +51,7 @@ insert into t5 values(1, 10, 'e1'), (2, 20, 'e2'), (3, 30, 'e3'), (4, 40, 'e4');
 #   - t3.b + 100 (only references t3)
 #   Join group becomes {t1, t2, t3}. Join conditions using derived columns are
 #   substituted to use base columns.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.doubled_b, dt.shifted_b from t1,
   (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
    from t2 join t3 on t2.a = t3.a) dt
@@ -62,7 +62,7 @@ select t1.a, dt.doubled_b, dt.shifted_b from t1,
    from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.a2;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.doubled_b, dt.shifted_b from t1,
   (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
    from t2 join t3 on t2.a = t3.a) dt
@@ -86,7 +86,7 @@ where t1.a = dt.a2;
 # - Since t2.b * 2 only references t2, it CAN be inlined.
 #
 # NOTE: TiDB inlines simple CTEs, so this test behaves similarly to derived tables.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' with joined_cte as (
   select t2.a as cte_a, t2.b * 2 as doubled_b 
   from t2 join t3 on t2.a = t3.a
@@ -99,7 +99,7 @@ with joined_cte as (
 )
 select t1.a, cte.cte_a, cte.doubled_b from t1 join joined_cte cte on t1.a = cte.cte_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' with joined_cte as (
   select t2.a as cte_a, t2.b * 2 as doubled_b 
   from t2 join t3 on t2.a = t3.a
@@ -126,7 +126,7 @@ select t1.a, cte.cte_a, cte.doubled_b from t1 join joined_cte cte on t1.a = cte.
 # - OFF: Join group = {t1, Projection(t2 JOIN t3)}, projection blocks visibility
 # - ON: Projection is inlined, join group = {t1, t2, t3}
 #   The projection moves to the top level, and join conditions are substituted
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
    from t2 join t3 on t2.a = t3.a) dt
@@ -137,7 +137,7 @@ select t1.a, dt.* from t1,
    from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
    from t2 join t3 on t2.a = t3.a) dt
@@ -160,7 +160,7 @@ where t1.a = dt.key_a;
 # - cte1's colExprMap: doubled_b -> (t2.b * 2)
 # - cte2's colExprMap: shifted_b -> (t3.b + 100), and passes through cte1's mappings
 # - After inlining, t1.b = cte2.doubled_b becomes t1.b = (t2.b * 2)
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' with 
   cte1 as (select a, b * 2 as doubled_b from t2),
   cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
@@ -171,7 +171,7 @@ with
   cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
 select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' with 
   cte1 as (select a, b * 2 as doubled_b from t2),
   cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
@@ -193,7 +193,7 @@ select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b;
 #
 # NOTE: If plans differ between OFF and ON, it confirms inlining is working.
 # Look for structural differences like projection position in the plan tree.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, v.* from t1,
   (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
 where t1.a = v.va;
@@ -202,7 +202,7 @@ select t1.a, v.* from t1,
   (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
 where t1.a = v.va;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, v.* from t1,
   (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
 where t1.a = v.va;
@@ -220,7 +220,7 @@ where t1.a = v.va;
 # 1. The expression's collation is determined by its source columns
 # 2. Join reordering doesn't change which columns participate in the expression
 # 3. The expression is evaluated in the same context after inlining
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -229,7 +229,7 @@ select t1.a, dt.* from t1,
   (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -252,7 +252,7 @@ where t1.a = dt.key_a;
 # - The derived table (dt) is on the OUTER side of the LEFT JOIN.
 # - The expression (t2.b * 2) only references t2, so projection CAN be inlined.
 # - When ON, the join group should include {t2, t3, t5} for potential reordering.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -261,7 +261,7 @@ select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -280,7 +280,7 @@ left join t5 on dt.key_a = t5.a;
 #   single-table expressions.
 #
 # RESULT: Plans should be identical for both OFF and ON.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1
 left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.key_a;
@@ -289,7 +289,7 @@ select t1.a, dt.* from t1
 left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1
 left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.key_a;
@@ -307,7 +307,7 @@ on t1.a = dt.key_a;
 # - When projection is inlined, this condition is SUBSTITUTED:
 #   dt.doubled_b > 100 -> (t2.b * 2) > 100
 # - This tests the outerBindCondition substitution in extractJoinGroupImpl.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a and dt.doubled_b > 100;
@@ -316,7 +316,7 @@ select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a and dt.doubled_b > 100;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a and dt.doubled_b > 100;
@@ -350,7 +350,7 @@ insert into oj_t3 values
 insert into oj_t5 values (1, 1000), (2, 2000);
 analyze table oj_t2, oj_t3, oj_t5;
 
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
   (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
    from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -363,7 +363,7 @@ select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
 left join oj_t5 on dt.key_a = oj_t5.a and dt.doubled_b > 0 and dt.shifted_b > 150
 order by dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
   (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
    from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -384,7 +384,7 @@ order by dt.key_a;
 #
 # Without correct leftNode/rightNode update after injectExpr(), this can produce an invalid plan
 # (join condition columns not found in join children schema).
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
   (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b
    from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -414,7 +414,7 @@ drop table oj_t2, oj_t3, oj_t5;
 # - Each projection is evaluated independently for inlining.
 # - If both are inlined, join group becomes {t1, t2, t3, t4}.
 # - The join condition dt1.a1 = dt2.a3 becomes t1.a = t3.a after substitution.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -425,7 +425,7 @@ select dt1.*, dt2.* from
   (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.a1 = dt2.a3;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -438,7 +438,7 @@ where dt1.a1 = dt2.a3;
 
 # Join on computed columns (dt1.doubled1 = dt2.doubled3)
 # Tests colExprMap substitution for computed column join keys between two derived tables
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -449,7 +449,7 @@ select dt1.*, dt2.* from
   (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.doubled1 = dt2.doubled3;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -477,7 +477,7 @@ where dt1.doubled1 = dt2.doubled3;
 #
 # This is a KEY test for bottom-up colExprMap propagation correctness.
 # If working correctly, join group should include {t1, t2, t3, t4}.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -490,7 +490,7 @@ select outer_t.a, dt2.* from t1 outer_t,
    join t4 on dt1.key_a = t4.a) dt2
 where outer_t.a = dt2.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -505,7 +505,7 @@ where outer_t.a = dt2.key_a;
 
 # Join on nested computed column (outer_t.b = dt2.adjusted)
 # Tests multi-level colExprMap substitution: adjusted = doubled_b + 10 = (t2.b * 2) + 10
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -518,7 +518,7 @@ select outer_t.a, dt2.* from t1 outer_t,
    join t4 on dt1.key_a = t4.a) dt2
 where outer_t.b = dt2.adjusted;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -549,13 +549,13 @@ where outer_t.b = dt2.adjusted;
 #
 # NOTE: The SELECT doesn't reference unsafe_expr, but its presence in the
 # projection still blocks inlining for the entire projection.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.a2, dt.cross_table_sum from t1,
   (select t2.a as a2, t2.b + t3.b as cross_table_sum, rand() as unsafe_expr 
    from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.a2;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.a2, dt.cross_table_sum from t1,
   (select t2.a as a2, t2.b + t3.b as cross_table_sum, rand() as unsafe_expr 
    from t2 join t3 on t2.a = t3.a) dt
@@ -570,12 +570,12 @@ where t1.a = dt.a2;
 # - expression.ExprsHasSideEffects() returns true for setvar
 # - Projection should NOT be inlined
 # - Plans should be identical for OFF and ON
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.a2, dt.val from t1,
   (select t2.a as a2, @v := t2.b as val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.a2;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.a2, dt.val from t1,
   (select t2.a as a2, @v := t2.b as val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.a2;
@@ -613,7 +613,7 @@ insert into expr_large values(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (
 analyze table expr_small, expr_medium, expr_large;
 
 # Query: outer table joins with derived table that has expression join key
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select s.*, dt.* from expr_small s,
   (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key;
@@ -622,7 +622,7 @@ select s.*, dt.* from expr_small s,
   (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select s.*, dt.* from expr_small s,
   (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key;
@@ -661,7 +661,7 @@ analyze table t_int_small, t_double_medium, t_int_large;
 # Query: outer table joins with derived table that has cast expression
 # The derived table contains a join between int and double columns,
 # producing a projection with CAST to match types
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select s.*, dt.* from t_int_small s,
   (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb 
    from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
@@ -672,7 +672,7 @@ select s.*, dt.* from t_int_small s,
    from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
 where s.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select s.*, dt.* from t_int_small s,
   (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb 
    from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
@@ -696,7 +696,7 @@ drop table t_int_small, t_double_medium, t_int_large;
 # Tests findNodeIndexInGroupWithSubstitution in rule_join_reorder_dp.go
 set tidb_opt_join_reorder_threshold = 10;
 
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a;
@@ -705,7 +705,7 @@ select t1.a, dt.key_a, dt.doubled_b from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a;
@@ -724,7 +724,7 @@ where t1.a = dt.key_a and dt.key_a = t5.a;
 #
 # POTENTIAL ISSUE: If DP phase directly type-asserts sf.GetArgs()[1].(*Column),
 # it would panic because after substitution the argument is ScalarFunction not Column.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -733,7 +733,7 @@ select t1.a, dt.key_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -747,7 +747,7 @@ where t1.b = dt.doubled_b and dt.key_a = t5.a;
 # dt.const_key is a constant expression. After projection inlining substitution:
 #   t1.a = dt.const_key -> t1.a = 1
 # This no longer connects t1 with {t2,t3}, but it MUST still be applied as a filter on t1.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a from t1 join
   (select 1 as const_key, t2.a as key_a from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.const_key
@@ -758,7 +758,7 @@ select t1.a, dt.key_a from t1 join
 on t1.a = dt.const_key
 order by t1.a, dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a from t1 join
   (select 1 as const_key, t2.a as key_a from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.const_key
@@ -771,7 +771,7 @@ order by t1.a, dt.key_a;
 
 # DP Solver with multiple computed columns as join keys
 # Tests multiple substituted expressions in single query
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
@@ -780,7 +780,7 @@ select t1.a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
@@ -791,7 +791,7 @@ where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
 
 # DP Solver with computed column in filter (otherConds)
 # Tests substitution in non-equality conditions during DP graph building
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
@@ -800,7 +800,7 @@ select t1.a, dt.key_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
@@ -811,7 +811,7 @@ where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
 
 # DP Solver with nested computed expression
 # Tests multi-level colExprMap substitution in DP phase
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt2.key_a from t1, t5,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -824,7 +824,7 @@ select t1.a, dt2.key_a from t1, t5,
    join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted and dt2.key_a = t5.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt2.key_a from t1, t5,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -844,7 +844,7 @@ set tidb_opt_join_reorder_threshold = 0;
 # =============================================================================
 # Query: WHERE clause references the derived column dt.doubled_b
 # Tests substituteColsInExprs for otherConds
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 100;
@@ -853,7 +853,7 @@ select t1.a, dt.key_a, dt.doubled_b from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 100;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 100;
@@ -867,7 +867,7 @@ where t1.a = dt.key_a and dt.doubled_b > 100;
 # =============================================================================
 # Query: Projection with constant expression (1 + 1 as const_val)
 # Constant expressions don't reference any columns, should be safe
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a, dt.const_val from t1,
   (select t2.a as key_a, 1 + 1 as const_val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -876,7 +876,7 @@ select t1.a, dt.key_a, dt.const_val from t1,
   (select t2.a as key_a, 1 + 1 as const_val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a, dt.const_val from t1,
   (select t2.a as key_a, 1 + 1 as const_val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -899,7 +899,7 @@ where t1.a = dt.key_a;
 # - OFF: Projection blocks join reorder
 # - ON: Projection is inlined, and the condition "t1.b = dt.doubled_b" is substituted
 #   to "t1.b = (t2.b * 2)". This tests colExprMap substitution in eqCond.
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b;
@@ -908,7 +908,7 @@ select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b;
@@ -925,7 +925,7 @@ where t1.b = dt.doubled_b;
 # - Both conditions should be substituted:
 #   t1.b = dt.doubled_b -> t1.b = (t2.b * 2)
 #   t1.c = dt.upper_c -> t1.c = upper(t2.c)
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c 
    from t2 join t3 on t2.a = t3.a) dt
@@ -936,7 +936,7 @@ select t1.*, dt.* from t1,
    from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c 
    from t2 join t3 on t2.a = t3.a) dt
@@ -954,7 +954,7 @@ where t1.b = dt.doubled_b and t1.c = dt.upper_c;
 # EXPECTED BEHAVIOR:
 # - The filter "dt.doubled_b > 200" should be substituted to "(t2.b * 2) > 200"
 # - This tests substituteColsInExprs for otherConds
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 200;
@@ -963,7 +963,7 @@ select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 200;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.* from t1,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 200;
@@ -979,7 +979,7 @@ where t1.a = dt.key_a and dt.doubled_b > 200;
 # EXPECTED BEHAVIOR:
 # - Join group should include {t1, t2, t3, t5}
 # - Condition "t1.b = dt.doubled_b" is substituted to "t1.b = (t2.b * 2)"
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.*, t5.a as t5_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -988,7 +988,7 @@ select t1.*, dt.*, t5.a as t5_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.*, t5.a as t5_a from t1, t5,
   (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -1004,7 +1004,7 @@ where t1.b = dt.doubled_b and dt.key_a = t5.a;
 # EXPECTED BEHAVIOR:
 # - dt2.adjusted is computed from dt1.doubled_b which is t2.b * 2
 # - Final substitution: t1.b = (t2.b * 2) + 10
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt2.* from t1,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1017,7 +1017,7 @@ select t1.*, dt2.* from t1,
    join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt2.* from t1,
   (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
     (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1037,7 +1037,7 @@ where t1.b = dt2.adjusted;
 # EXPECTED BEHAVIOR:
 # - Condition "dt1.doubled1 = dt2.doubled2" is substituted to "(t1.b * 2) = (t3.b * 2)"
 # - Join group should include {t1, t2, t3, t4}
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
@@ -1048,7 +1048,7 @@ select dt1.*, dt2.* from
   (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.doubled1 = dt2.doubled2;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
@@ -1075,7 +1075,7 @@ where dt1.doubled1 = dt2.doubled2;
 
 # Cross-Table Arithmetic Expression
 # Expression: t2.b + t3.b (references BOTH t2 and t3)
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
    from t2 join t3 on t2.a = t3.a) dt
@@ -1086,7 +1086,7 @@ select t1.a, dt.* from t1,
    from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
    from t2 join t3 on t2.a = t3.a) dt
@@ -1099,7 +1099,7 @@ where t1.a = dt.key_a;
 
 # Cross-Table String/Function Expression
 # Expressions: concat(t2.c, '-', t3.c), greatest(t2.b, t3.b), least(t2.b, t3.b)
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, 
           concat(t2.c, '-', t3.c) as combined_c,
@@ -1116,7 +1116,7 @@ select t1.a, dt.* from t1,
    from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
   (select t2.a as key_a, 
           concat(t2.c, '-', t3.c) as combined_c,
@@ -1135,7 +1135,7 @@ where t1.a = dt.key_a;
 
 # Cross-Table CTE Expression
 # Expression: t2.b + t3.b in CTE
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' with joined_cte as (
   select t2.a as cte_a, t2.b + t3.b as sum_b 
   from t2 join t3 on t2.a = t3.a
@@ -1148,7 +1148,7 @@ with joined_cte as (
 )
 select t1.a, cte.cte_a, cte.sum_b from t1 join joined_cte cte on t1.a = cte.cte_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' with joined_cte as (
   select t2.a as cte_a, t2.b + t3.b as sum_b 
   from t2 join t3 on t2.a = t3.a
@@ -1163,7 +1163,7 @@ select t1.a, cte.cte_a, cte.sum_b from t1 join joined_cte cte on t1.a = cte.cte_
 
 # Cross-Table LEFT JOIN Expression
 # Expression: t2.b + t3.b in LEFT JOIN outer side
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -1172,7 +1172,7 @@ select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.*, t5.a as t5_a from
   (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -1183,7 +1183,7 @@ left join t5 on dt.key_a = t5.a;
 
 # Cross-Table RIGHT JOIN Expression
 # Expression: t2.b + t3.b in RIGHT JOIN outer side
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t5.a as t5_a, dt.* from t5
 right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 on t5.a = dt.key_a;
@@ -1192,7 +1192,7 @@ select t5.a as t5_a, dt.* from t5
 right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 on t5.a = dt.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t5.a as t5_a, dt.* from t5
 right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 on t5.a = dt.key_a;
@@ -1203,7 +1203,7 @@ on t5.a = dt.key_a;
 
 # Cross-Table Multiple Derived Tables
 # Expressions: t1.b + t2.b, t3.b + t4.b
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
@@ -1214,7 +1214,7 @@ select dt1.*, dt2.* from
   (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.a1 = dt2.a3;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
   (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
   (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
@@ -1227,7 +1227,7 @@ where dt1.a1 = dt2.a3;
 
 # Cross-Table Deeply Nested Expression
 # Expressions: t2.b + t3.b in nested derived tables
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
   (select dt1.key_a, dt1.sum_b + t4.b as final_sum from 
     (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1240,7 +1240,7 @@ select outer_t.a, dt2.* from t1 outer_t,
    join t4 on dt1.key_a = t4.a) dt2
 where outer_t.a = dt2.key_a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
   (select dt1.key_a, dt1.sum_b + t4.b as final_sum from 
     (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1302,7 +1302,7 @@ insert into t4 values(101, 1), (120, 2), (230, 3);
 # extractTablePrefix might see "t.a" and "t.b" as both having prefix "t",
 # incorrectly concluding this is a single-table expression.
 
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t4.a, tt.plus from t4,
   (select t.a + t.b as plus, t3.a as t3_a from (
     select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
@@ -1317,7 +1317,7 @@ select t4.a, tt.plus from t4,
   join t3 on t.a = t3.a) tt
 where t4.a = tt.plus order by t4.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t4.a, tt.plus from t4,
   (select t.a + t.b as plus, t3.a as t3_a from (
     select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
@@ -1336,7 +1336,7 @@ where t4.a = tt.plus order by t4.a;
 # dt2.combined references dt1.val_a and dt1.val_b, which come from t1.a and t2.b
 # Outer t4 joins on t4.a = dt2.combined
 
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t4.a, dt2.combined from t4,
   (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
     select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
@@ -1351,7 +1351,7 @@ select t4.a, dt2.combined from t4,
   join t3 on dt1.val_a = t3.a) dt2
 where t4.a = dt2.combined order by t4.a;
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t4.a, dt2.combined from t4,
   (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
     select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
@@ -1376,7 +1376,7 @@ where t4.a = dt2.combined order by t4.a;
 # 2) Join method hints: MERGE_JOIN(t2) should still take effect even if the
 #    join side is wrapped by an injected projection.
 
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 set tidb_opt_join_reorder_threshold = 0;
 set tidb_opt_advanced_join_hint = on;
 
@@ -1407,5 +1407,5 @@ explain format = 'brief' select t1.a, dt.a2 from t1 join (
 # =============================================================================
 # Cleanup
 # =============================================================================
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 drop table if exists t1, t2, t3, t4, t5;

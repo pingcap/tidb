@@ -9,7 +9,7 @@ insert into t2 values(1, 100, 'b1'), (2, 200, 'b2'), (3, 300, 'b3');
 insert into t3 values(1, 1000, 'c1'), (2, 2000, 'c2'), (3, 3000, 'c3');
 insert into t4 values(1, 10000, 'd1'), (2, 20000, 'd2'), (3, 30000, 'd3');
 insert into t5 values(1, 10, 'e1'), (2, 20, 'e2'), (3, 30, 'e3'), (4, 40, 'e4');
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.doubled_b, dt.shifted_b from t1,
 (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b
 from t2 join t3 on t2.a = t3.a) dt
@@ -32,7 +32,7 @@ a	doubled_b	shifted_b
 1	200	1100
 2	400	2100
 3	600	3100
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.doubled_b, dt.shifted_b from t1,
 (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b
 from t2 join t3 on t2.a = t3.a) dt
@@ -55,7 +55,7 @@ a	doubled_b	shifted_b
 1	200	1100
 2	400	2100
 3	600	3100
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' with joined_cte as (
 select t2.a as cte_a, t2.b * 2 as doubled_b
 from t2 join t3 on t2.a = t3.a
@@ -80,7 +80,7 @@ a	cte_a	doubled_b
 1	1	200
 2	2	400
 3	3	600
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' with joined_cte as (
 select t2.a as cte_a, t2.b * 2 as doubled_b
 from t2 join t3 on t2.a = t3.a
@@ -105,7 +105,7 @@ a	cte_a	doubled_b
 1	1	200
 2	2	400
 3	3	600
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b
 from t2 join t3 on t2.a = t3.a) dt
@@ -128,7 +128,7 @@ a	key_a	doubled_b	shifted_b
 1	1	200	1100
 2	2	400	2100
 3	3	600	3100
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b
 from t2 join t3 on t2.a = t3.a) dt
@@ -151,7 +151,7 @@ a	key_a	doubled_b	shifted_b
 1	1	200	1100
 2	2	400	2100
 3	3	600	3100
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' with
 cte1 as (select a, b * 2 as doubled_b from t2),
 cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
@@ -174,7 +174,7 @@ cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 
 select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b;
 a	a	shifted_b	doubled_b
 4	1	1100	200
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' with
 cte1 as (select a, b * 2 as doubled_b from t2),
 cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
@@ -197,7 +197,7 @@ cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 
 select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b;
 a	a	shifted_b	doubled_b
 4	1	1100	200
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, v.* from t1,
 (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
 where t1.a = v.va;
@@ -218,7 +218,7 @@ a	va	vb	vb2
 1	1	200	1000
 2	2	400	2000
 3	3	600	3000
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, v.* from t1,
 (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
 where t1.a = v.va;
@@ -239,7 +239,7 @@ a	va	vb	vb2
 1	1	200	1000
 2	2	400	2000
 3	3	600	3000
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -260,7 +260,7 @@ a	key_a	upper_c
 1	1	B1
 2	2	B2
 3	3	B3
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -281,7 +281,7 @@ a	key_a	upper_c
 1	1	B1
 2	2	B2
 3	3	B3
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.*, t5.a as t5_a from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -302,7 +302,7 @@ key_a	doubled_b	t5_a
 1	200	1
 2	400	2
 3	600	3
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.*, t5.a as t5_a from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -323,7 +323,7 @@ key_a	doubled_b	t5_a
 1	200	1
 2	400	2
 3	600	3
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1
 left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.key_a;
@@ -345,7 +345,7 @@ a	key_a	doubled_b
 2	2	400
 3	3	600
 4	NULL	NULL
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1
 left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.key_a;
@@ -367,7 +367,7 @@ a	key_a	doubled_b
 2	2	400
 3	3	600
 4	NULL	NULL
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.*, t5.a as t5_a from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a and dt.doubled_b > 100;
@@ -388,7 +388,7 @@ key_a	doubled_b	t5_a
 1	200	1
 2	400	2
 3	600	3
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.*, t5.a as t5_a from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a and dt.doubled_b > 100;
@@ -421,7 +421,7 @@ insert into oj_t3 values
 (6, 10), (7, 10), (8, 10), (9, 10), (10, 10);
 insert into oj_t5 values (1, 1000), (2, 2000);
 analyze table oj_t2, oj_t3, oj_t5;
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
 (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
 from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -454,7 +454,7 @@ key_a	t5_b
 8	-1
 9	-1
 10	-1
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
 (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
 from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -487,7 +487,7 @@ key_a	t5_b
 8	-1
 9	-1
 10	-1
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
 (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b
 from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
@@ -523,7 +523,7 @@ key_a	t5_b
 9	-1
 10	-1
 drop table oj_t2, oj_t3, oj_t5;
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -550,7 +550,7 @@ a1	doubled1	a3	doubled3
 1	20	1	2000
 2	40	2	4000
 3	60	3	6000
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -576,7 +576,7 @@ a1	doubled1	a3	doubled3
 1	20	1	2000
 2	40	2	4000
 3	60	3	6000
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -602,7 +602,7 @@ select dt1.*, dt2.* from
 (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.doubled1 = dt2.doubled3;
 a1	doubled1	a3	doubled3
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
@@ -629,7 +629,7 @@ select dt1.*, dt2.* from
 (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.doubled1 = dt2.doubled3;
 a1	doubled1	a3	doubled3
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -658,7 +658,7 @@ a	key_a	adjusted
 1	1	210
 2	2	410
 3	3	610
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -686,7 +686,7 @@ a	key_a	adjusted
 1	1	210
 2	2	410
 3	3	610
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -713,7 +713,7 @@ select outer_t.a, dt2.* from t1 outer_t,
 join t4 on dt1.key_a = t4.a) dt2
 where outer_t.b = dt2.adjusted;
 a	key_a	adjusted
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -741,7 +741,7 @@ select outer_t.a, dt2.* from t1 outer_t,
 join t4 on dt1.key_a = t4.a) dt2
 where outer_t.b = dt2.adjusted;
 a	key_a	adjusted
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.a2, dt.cross_table_sum from t1,
 (select t2.a as a2, t2.b + t3.b as cross_table_sum, rand() as unsafe_expr
 from t2 join t3 on t2.a = t3.a) dt
@@ -756,7 +756,7 @@ MergeJoin	15625.00	root		inner join, left key:planner__core__join_reorder_throug
 │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.a2, dt.cross_table_sum from t1,
 (select t2.a as a2, t2.b + t3.b as cross_table_sum, rand() as unsafe_expr
 from t2 join t3 on t2.a = t3.a) dt
@@ -771,7 +771,7 @@ MergeJoin	15625.00	root		inner join, left key:planner__core__join_reorder_throug
 │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.a2, dt.val from t1,
 (select t2.a as a2, @v := t2.b as val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.a2;
@@ -785,7 +785,7 @@ MergeJoin	15625.00	root		inner join, left key:planner__core__join_reorder_throug
 │     └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:true, stats:pseudo
 └─TableReader(Probe)	10000.00	root		data:TableFullScan
   └─TableFullScan	10000.00	cop[tikv]	table:t1	keep order:true, stats:pseudo
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.a2, dt.val from t1,
 (select t2.a as a2, @v := t2.b as val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.a2;
@@ -808,7 +808,7 @@ insert into expr_medium values(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 6
 insert into expr_large values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10);
 insert into expr_large values(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20);
 analyze table expr_small, expr_medium, expr_large;
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select s.*, dt.* from expr_small s,
 (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key;
@@ -829,7 +829,7 @@ where s.a = dt.expr_key;
 a	b	key_a	expr_key	lb
 11	10	1	11	1
 21	20	2	21	2
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select s.*, dt.* from expr_small s,
 (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
 where s.a = dt.expr_key;
@@ -861,7 +861,7 @@ insert into t_double_medium values(1.0, 100.0), (2.0, 200.0), (3.0, 300.0), (4.0
 insert into t_int_large values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10);
 insert into t_int_large values(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20);
 analyze table t_int_small, t_double_medium, t_int_large;
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select s.*, dt.* from t_int_small s,
 (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb
 from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
@@ -885,7 +885,7 @@ where s.a = dt.key_a;
 a	b	key_a	doubled_b	mb
 1	10	1	2	100
 2	20	2	4	200
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select s.*, dt.* from t_int_small s,
 (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb
 from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
@@ -910,7 +910,7 @@ a	b	key_a	doubled_b	mb
 2	20	2	4	200
 drop table t_int_small, t_double_medium, t_int_large;
 set tidb_opt_join_reorder_threshold = 10;
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a;
@@ -934,7 +934,7 @@ a	key_a	doubled_b
 1	1	200
 2	2	400
 3	3	600
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a;
@@ -958,7 +958,7 @@ a	key_a	doubled_b
 1	1	200
 2	2	400
 3	3	600
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -981,7 +981,7 @@ select t1.a, dt.key_a from t1, t5,
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
 a	key_a
 4	1
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -1005,7 +1005,7 @@ select t1.a, dt.key_a from t1, t5,
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
 a	key_a
 4	1
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a from t1 join
 (select 1 as const_key, t2.a as key_a from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.const_key
@@ -1029,7 +1029,7 @@ a	key_a
 1	1
 1	2
 1	3
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a from t1 join
 (select 1 as const_key, t2.a as key_a from t2 join t3 on t2.a = t3.a) dt
 on t1.a = dt.const_key
@@ -1053,7 +1053,7 @@ a	key_a
 1	1
 1	2
 1	3
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
@@ -1076,7 +1076,7 @@ select t1.a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
 a
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
@@ -1101,7 +1101,7 @@ select t1.a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
 a
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
@@ -1125,7 +1125,7 @@ a	key_a
 1	1
 2	2
 3	3
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
@@ -1149,7 +1149,7 @@ a	key_a
 1	1
 2	2
 3	3
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt2.key_a from t1, t5,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1179,7 +1179,7 @@ select t1.a, dt2.key_a from t1, t5,
 join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted and dt2.key_a = t5.a;
 a	key_a
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt2.key_a from t1, t5,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1210,7 +1210,7 @@ join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted and dt2.key_a = t5.a;
 a	key_a
 set tidb_opt_join_reorder_threshold = 0;
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 100;
@@ -1232,7 +1232,7 @@ a	key_a	doubled_b
 1	1	200
 2	2	400
 3	3	600
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a, dt.doubled_b from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 100;
@@ -1254,7 +1254,7 @@ a	key_a	doubled_b
 1	1	200
 2	2	400
 3	3	600
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.key_a, dt.const_val from t1,
 (select t2.a as key_a, 1 + 1 as const_val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -1275,7 +1275,7 @@ a	key_a	const_val
 1	1	2
 2	2	2
 3	3	2
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.key_a, dt.const_val from t1,
 (select t2.a as key_a, 1 + 1 as const_val from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a;
@@ -1296,7 +1296,7 @@ a	key_a	const_val
 1	1	2
 2	2	2
 3	3	2
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b;
@@ -1317,7 +1317,7 @@ select t1.*, dt.* from t1,
 where t1.b = dt.doubled_b;
 a	b	c	key_a	doubled_b
 4	200	a4	1	200
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b;
@@ -1339,7 +1339,7 @@ select t1.*, dt.* from t1,
 where t1.b = dt.doubled_b;
 a	b	c	key_a	doubled_b
 4	200	a4	1	200
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c
 from t2 join t3 on t2.a = t3.a) dt
@@ -1361,7 +1361,7 @@ select t1.*, dt.* from t1,
 from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c;
 a	b	c	key_a	doubled_b	upper_c
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c
 from t2 join t3 on t2.a = t3.a) dt
@@ -1386,7 +1386,7 @@ select t1.*, dt.* from t1,
 from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and t1.c = dt.upper_c;
 a	b	c	key_a	doubled_b	upper_c
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 200;
@@ -1407,7 +1407,7 @@ where t1.a = dt.key_a and dt.doubled_b > 200;
 a	b	c	key_a	doubled_b
 2	20	a2	2	400
 3	30	a3	3	600
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.* from t1,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.a = dt.key_a and dt.doubled_b > 200;
@@ -1428,7 +1428,7 @@ where t1.a = dt.key_a and dt.doubled_b > 200;
 a	b	c	key_a	doubled_b
 2	20	a2	2	400
 3	30	a3	3	600
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt.*, t5.a as t5_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -1454,7 +1454,7 @@ select t1.*, dt.*, t5.a as t5_a from t1, t5,
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
 a	b	c	key_a	doubled_b	t5_a
 4	200	a4	1	200	1
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt.*, t5.a as t5_a from t1, t5,
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
@@ -1481,7 +1481,7 @@ select t1.*, dt.*, t5.a as t5_a from t1, t5,
 where t1.b = dt.doubled_b and dt.key_a = t5.a;
 a	b	c	key_a	doubled_b	t5_a
 4	200	a4	1	200	1
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.*, dt2.* from t1,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1509,7 +1509,7 @@ select t1.*, dt2.* from t1,
 join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted;
 a	b	c	key_a	adjusted
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.*, dt2.* from t1,
 (select dt1.key_a, dt1.doubled_b + 10 as adjusted from
 (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1538,7 +1538,7 @@ select t1.*, dt2.* from t1,
 join t4 on dt1.key_a = t4.a) dt2
 where t1.b = dt2.adjusted;
 a	b	c	key_a	adjusted
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
@@ -1564,7 +1564,7 @@ select dt1.*, dt2.* from
 (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.doubled1 = dt2.doubled2;
 a1	doubled1	a3	doubled2
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
@@ -1591,7 +1591,7 @@ select dt1.*, dt2.* from
 (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
 where dt1.doubled1 = dt2.doubled2;
 a1	doubled1	a3	doubled2
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
 from t2 join t3 on t2.a = t3.a) dt
@@ -1614,7 +1614,7 @@ a	key_a	cross_sum	cross_product
 1	1	1100	100000
 2	2	2200	400000
 3	3	3300	900000
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
 from t2 join t3 on t2.a = t3.a) dt
@@ -1637,7 +1637,7 @@ a	key_a	cross_sum	cross_product
 1	1	1100	100000
 2	2	2200	400000
 3	3	3300	900000
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a,
 concat(t2.c, '-', t3.c) as combined_c,
@@ -1666,7 +1666,7 @@ a	key_a	combined_c	max_b	min_b
 1	1	b1-c1	1000	100
 2	2	b2-c2	2000	200
 3	3	b3-c3	3000	300
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t1.a, dt.* from t1,
 (select t2.a as key_a,
 concat(t2.c, '-', t3.c) as combined_c,
@@ -1695,7 +1695,7 @@ a	key_a	combined_c	max_b	min_b
 1	1	b1-c1	1000	100
 2	2	b2-c2	2000	200
 3	3	b3-c3	3000	300
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' with joined_cte as (
 select t2.a as cte_a, t2.b + t3.b as sum_b
 from t2 join t3 on t2.a = t3.a
@@ -1720,7 +1720,7 @@ a	cte_a	sum_b
 1	1	1100
 2	2	2200
 3	3	3300
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' with joined_cte as (
 select t2.a as cte_a, t2.b + t3.b as sum_b
 from t2 join t3 on t2.a = t3.a
@@ -1745,7 +1745,7 @@ a	cte_a	sum_b
 1	1	1100
 2	2	2200
 3	3	3300
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt.*, t5.a as t5_a from
 (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -1766,7 +1766,7 @@ key_a	sum_b	t5_a
 1	1100	1
 2	2200	2
 3	3300	3
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt.*, t5.a as t5_a from
 (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 left join t5 on dt.key_a = t5.a;
@@ -1787,7 +1787,7 @@ key_a	sum_b	t5_a
 1	1100	1
 2	2200	2
 3	3300	3
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t5.a as t5_a, dt.* from t5
 right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 on t5.a = dt.key_a;
@@ -1808,7 +1808,7 @@ t5_a	key_a	sum_b
 1	1	1100
 2	2	2200
 3	3	3300
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t5.a as t5_a, dt.* from t5
 right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
 on t5.a = dt.key_a;
@@ -1829,7 +1829,7 @@ t5_a	key_a	sum_b
 1	1	1100
 2	2	2200
 3	3	3300
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
@@ -1856,7 +1856,7 @@ a1	sum1	a3	sum3
 1	110	1	11000
 2	220	2	22000
 3	330	3	33000
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select dt1.*, dt2.* from
 (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
 (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
@@ -1883,7 +1883,7 @@ a1	sum1	a3	sum3
 1	110	1	11000
 2	220	2	22000
 3	330	3	33000
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
 (select dt1.key_a, dt1.sum_b + t4.b as final_sum from
 (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1913,7 +1913,7 @@ a	key_a	final_sum
 1	1	11100
 2	2	22200
 3	3	33300
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select outer_t.a, dt2.* from t1 outer_t,
 (select dt1.key_a, dt1.sum_b + t4.b as final_sum from
 (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
@@ -1952,7 +1952,7 @@ insert into t1 values(1, 10), (2, 20), (3, 30);
 insert into t2 values(1, 100), (2, 200), (3, 300);
 insert into t3 values(1, 1000), (2, 2000), (3, 3000);
 insert into t4 values(101, 1), (120, 2), (230, 3);
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t4.a, tt.plus from t4,
 (select t.a + t.b as plus, t3.a as t3_a from (
 select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
@@ -1980,7 +1980,7 @@ join t3 on t.a = t3.a) tt
 where t4.a = tt.plus order by t4.a;
 a	plus
 101	101
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t4.a, tt.plus from t4,
 (select t.a + t.b as plus, t3.a as t3_a from (
 select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
@@ -2008,7 +2008,7 @@ join t3 on t.a = t3.a) tt
 where t4.a = tt.plus order by t4.a;
 a	plus
 101	101
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 explain format = 'brief' select t4.a, dt2.combined from t4,
 (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
 select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
@@ -2036,7 +2036,7 @@ join t3 on dt1.val_a = t3.a) dt2
 where t4.a = dt2.combined order by t4.a;
 a	combined
 101	101
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 explain format = 'brief' select t4.a, dt2.combined from t4,
 (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
 select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
@@ -2064,7 +2064,7 @@ join t3 on dt1.val_a = t3.a) dt2
 where t4.a = dt2.combined order by t4.a;
 a	combined
 101	101
-set tidb_opt_join_reorder_proj = on;
+set tidb_opt_join_reorder_through_proj = on;
 set tidb_opt_join_reorder_threshold = 0;
 set tidb_opt_advanced_join_hint = on;
 explain format = 'brief' select t1.a, dt.a2 from t1 join (
@@ -2137,5 +2137,5 @@ Projection	12500.00	root		planner__core__join_reorder_through_projection.t1.a, p
         └─TableReader	8000.00	root		data:Selection
           └─Selection	8000.00	cop[tikv]		not(isnull(mul(planner__core__join_reorder_through_projection.t2.b, 2)))
             └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo
-set tidb_opt_join_reorder_proj = off;
+set tidb_opt_join_reorder_through_proj = off;
 drop table if exists t1, t2, t3, t4, t5;

@@ -48,58 +48,77 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 // 3. Build current node's colExprMap and return
 // This approach is consistent with rule_eliminate_projection.go.
 func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
-	// Check if we should try to inline projections
-	if proj, ok := p.(*logicalop.LogicalProjection); ok &&
-		p.SCtx() != nil && p.SCtx().GetSessionVars().TiDBOptJoinReorderProj {
-		// Only inline projections whose child is a join; otherwise the projection is treated as an atomic leaf.
-		if _, isJoin := proj.Children()[0].(*logicalop.LogicalJoin); isJoin {
-			// Fast safety checks first to avoid unnecessary recursion.
-			if canInlineProjectionBasic(proj) {
-				childResult := extractJoinGroupImpl(proj.Children()[0])
-				// The single-leaf check needs the extracted join group and child's colExprMap.
-				if canInlineProjection(proj, childResult) {
-					// Build current Projection's colExprMap.
-					colExprMap := make(map[int64]expression.Expression, len(proj.Schema().Columns))
-					for i, col := range proj.Schema().Columns {
-						expr := proj.Exprs[i]
+	// NOTE: We only support extracting join groups through a single Selection/Projection layer for now.
+	// TODO: Support stacked unary operators like Projection->Selection->Join or Selection->Projection->Join.
+	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection {
+		// If its child is a join, add the selection conditions to otherConds and continue extracting
+		// the join group from the child.
+		//
+		// Join reorder may distribute/push down conditions during constructing the new join tree.
+		// For volatile or side-effect expressions, moving them can change evaluation times/orders,
+		// thus may change query results, so we skip reordering through Selection in such cases.
+		if p.SCtx() != nil && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
+			!slices.ContainsFunc(selection.Conditions, expression.IsMutableEffectsExpr) {
+			child := selection.Children()[0]
+			if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {
+				childResult := extractJoinGroup(child)
+				childResult.otherConds = append(childResult.otherConds, selection.Conditions...)
+				return childResult
+			}
+		}
+	} else if proj, ok := p.(*logicalop.LogicalProjection); ok {
+		// Check if we should try to inline projections
+		if p.SCtx() != nil && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughProj {
+			// Only inline projections whose child is a join; otherwise the projection is treated as an atomic leaf.
+			if _, isJoin := proj.Children()[0].(*logicalop.LogicalJoin); isJoin {
+				// Fast safety checks first to avoid unnecessary recursion.
+				if canInlineProjectionBasic(proj) {
+					childResult := extractJoinGroupImpl(proj.Children()[0])
+					// The single-leaf check needs the extracted join group and child's colExprMap.
+					if canInlineProjection(proj, childResult) {
+						// Build current Projection's colExprMap.
+						colExprMap := make(map[int64]expression.Expression, len(proj.Schema().Columns))
+						for i, col := range proj.Schema().Columns {
+							expr := proj.Exprs[i]
 
-						// Use child's colExprMap to substitute column references in current expression.
-						if len(childResult.colExprMap) > 0 {
-							expr = substituteColsInExpr(expr, childResult.colExprMap)
+							// Use child's colExprMap to substitute column references in current expression.
+							if len(childResult.colExprMap) > 0 {
+								expr = substituteColsInExpr(expr, childResult.colExprMap)
+							}
+
+							// For pass-through columns (where the projection expression is just a Column reference
+							// that has been substituted to the underlying expression), we need to check if the output
+							// column's UniqueID matches the input column's UniqueID. This can happen when a projection
+							// simply passes through a column without transformation (e.g., SELECT dt1.key_a FROM ...).
+							// In such cases, the output column may share the same UniqueID as the input column.
+							//
+							// If expr is a Column and its UniqueID equals col.UniqueID, this is a pass-through scenario.
+							// We should NOT add it to colExprMap because:
+							// 1. It would create a self-referential mapping (UniqueID -> Column with same UniqueID)
+							// 2. It could conflict with child's colExprMap entry for the same UniqueID
+							//
+							// The child's colExprMap will be merged later and will provide the proper mapping for this UniqueID.
+							if colExpr, isCol := expr.(*expression.Column); isCol && colExpr.UniqueID == col.UniqueID {
+								// Skip pass-through columns - they will get their mapping from child's colExprMap.
+								continue
+							}
+
+							colExprMap[col.UniqueID] = expr
 						}
 
-						// For pass-through columns (where the projection expression is just a Column reference
-						// that has been substituted to the underlying expression), we need to check if the output
-						// column's UniqueID matches the input column's UniqueID. This can happen when a projection
-						// simply passes through a column without transformation (e.g., SELECT dt1.key_a FROM ...).
-						// In such cases, the output column may share the same UniqueID as the input column.
-						//
-						// If expr is a Column and its UniqueID equals col.UniqueID, this is a pass-through scenario.
-						// We should NOT add it to colExprMap because:
-						// 1. It would create a self-referential mapping (UniqueID -> Column with same UniqueID)
-						// 2. It could conflict with child's colExprMap entry for the same UniqueID
-						//
-						// The child's colExprMap will be merged later and will provide the proper mapping for this UniqueID.
-						if colExpr, isCol := expr.(*expression.Column); isCol && colExpr.UniqueID == col.UniqueID {
-							// Skip pass-through columns - they will get their mapping from child's colExprMap.
-							continue
+						// Merge child's colExprMap entries.
+						// Note: A key conflict here should not happen because each projection layer
+						// produces new UniqueIDs. If it occurs, we skip the child's entry and keep
+						// the current projection's entry, which is the correct behavior.
+						for k, v := range childResult.colExprMap {
+							if _, exists := colExprMap[k]; !exists {
+								colExprMap[k] = v
+							}
 						}
 
-						colExprMap[col.UniqueID] = expr
+						childResult.colExprMap = colExprMap
+						return childResult
 					}
-
-					// Merge child's colExprMap entries.
-					// Note: A key conflict here should not happen because each projection layer
-					// produces new UniqueIDs. If it occurs, we skip the child's entry and keep
-					// the current projection's entry, which is the correct behavior.
-					for k, v := range childResult.colExprMap {
-						if _, exists := colExprMap[k]; !exists {
-							colExprMap[k] = v
-						}
-					}
-
-					childResult.colExprMap = colExprMap
-					return childResult
 				}
 			}
 		}
@@ -114,21 +133,6 @@ func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
 		joinTypes         []*joinTypeWithExtMsg
 		hasOuterJoin      bool
 	)
-
-	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
-	// to otherConds and continue extracting the join group from the child.
-	// Join reorder may distribute/push down conditions during constructing the new join tree.
-	// For volatile or side-effect expressions, moving them can change evaluation times/orders
-	// thus may change query results, so we skip reordering through Selection in such cases.
-	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
-		!slices.ContainsFunc(selection.Conditions, expression.IsMutableEffectsExpr) {
-		child := selection.Children()[0]
-		if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {
-			childResult := extractJoinGroup(child)
-			childResult.otherConds = append(childResult.otherConds, selection.Conditions...)
-			return childResult
-		}
-	}
 
 	join, isJoin := p.(*logicalop.LogicalJoin)
 	if isJoin && join.PreferJoinOrder {
@@ -593,12 +597,12 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 		origJoinRoot := p
 		originalSchema := p.Schema()
 		fallbackOnErr := func(err error) (base.LogicalPlan, error) {
-			if ctx.GetSessionVars().TiDBOptJoinReorderProj {
+			if ctx.GetSessionVars().TiDBOptJoinReorderThroughProj {
 				// This optimization is best-effort. If anything goes wrong, fallback to the
 				// original behavior (treat projections as atomic leaves) to keep correctness.
-				saved := ctx.GetSessionVars().TiDBOptJoinReorderProj
-				ctx.GetSessionVars().TiDBOptJoinReorderProj = false
-				defer func() { ctx.GetSessionVars().TiDBOptJoinReorderProj = saved }()
+				saved := ctx.GetSessionVars().TiDBOptJoinReorderThroughProj
+				ctx.GetSessionVars().TiDBOptJoinReorderThroughProj = false
+				defer func() { ctx.GetSessionVars().TiDBOptJoinReorderThroughProj = saved }()
 				return s.optimizeRecursive(ctx, origJoinRoot)
 			}
 			return nil, err
