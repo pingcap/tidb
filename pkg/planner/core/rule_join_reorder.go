@@ -251,9 +251,11 @@ func isDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *h.PlanHints) b
 
 	// Get the query block names mapping to find derived table aliases
 	var queryBlockNames []ast.HintTable
-	if names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); names != nil {
-		queryBlockNames = *names
+	names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load()
+	if names == nil {
+		return false
 	}
+	queryBlockNames = *names
 
 	// Get the block offset of this plan node
 	blockOffset := p.QueryBlockOffset()
