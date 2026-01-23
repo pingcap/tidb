@@ -4680,6 +4680,121 @@ local coprocessorResponseSizeP = graphPanel.new(
   )
 );
 
+// ============== Row: Import Into ==============
+local importIntoRow = row.new(collapse=true, title='Import Into');
+
+local importTotalSpeedP = graphPanel.new(
+  title='Total Encode/Deliver/Import-kv Speed',
+  datasource=myDS,
+  format='binBps',
+  description='Total encode/deliver/merge/import-kv speed of distributed task.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="restored"}[1m])) by(task_id)',
+    legendFormat='encode - {{task_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="written"}[1m])) by(task_id)',
+    legendFormat='deliver - {{task_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="imported"}[1m])) by(task_id)',
+    legendFormat='import kv - {{task_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="merged"}[1m])) by(task_id)',
+    legendFormat='merged - {{task_id}}',
+  )
+);
+
+local importDataSizeP = graphPanel.new(
+  title='Encoded/Delivered/Imported Data Size',
+  datasource=myDS,
+  format='bytes',
+  description='Encoded/Delivered/Imported data size of a distributed task.',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="restored"}',
+    legendFormat='encoded source size - {{task_id}} - {{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="written"}',
+    legendFormat='delivered kv size - {{task_id}} - {{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="total_restore"}) by(task_id)',
+    legendFormat='total source data size - {{task_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_import_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="imported"}',
+    legendFormat='imported kv size - {{task_id}} - {{instance}}',
+  )
+);
+
+local deliveredKvCountP = graphPanel.new(
+  title='Delivered KV Count',
+  datasource=myDS,
+  format='short',
+  description='Delivered data and index kv count of a task.',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_import_block_deliver_kv_pairs_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{kind}} kv - {{task_id}} - {{instance}}',
+  )
+);
+
+local dataReadEncodeDeliverAvgDurationP = graphPanel.new(
+  title='Data Read/Encode/Deliver Average Duration',
+  datasource=myDS,
+  format='s',
+  description='Data read/encode/deliver average duration.',
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_import_row_encode_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m]) / rate(tidb_import_row_encode_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])',
+    legendFormat='encode - {{instance}} - {{task_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_import_block_deliver_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m]) / rate(tidb_import_block_deliver_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])',
+    legendFormat='deliver - {{instance}} - {{task_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_import_row_read_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m]) / rate(tidb_import_row_read_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])',
+    legendFormat='read - {{instance}} - {{task_id}}',
+  )
+);
+
+local importNormalModeP = graphPanel.new(
+  title='Import/Normal Mode',
+  datasource=myDS,
+  description='Import/Normal mode of all TiKV instances.',
+)
+.addTarget(
+  prometheus.target(
+    'min(tikv_config_rocksdb{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", name="hard_pending_compaction_bytes_limit"}) by (instance)',
+    legendFormat='{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -5032,6 +5147,16 @@ newDash
   .addPanel(closestReplicaHitCountPerSecondP, gridPos=leftThirdPanelPos)
   .addPanel(coprocessorResponseSizePerInstanceP, gridPos=midThirdPanelPos)
   .addPanel(coprocessorResponseSizeP, gridPos=rightThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  importIntoRow
+  .addPanel(importTotalSpeedP, gridPos=leftThirdPanelPos)
+  .addPanel(importDataSizeP, gridPos=midThirdPanelPos)
+  .addPanel(deliveredKvCountP, gridPos=rightThirdPanelPos)
+  .addPanel(dataReadEncodeDeliverAvgDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(importNormalModeP, gridPos=midThirdPanelPos)
   ,
   gridPos=rowPos
 )
