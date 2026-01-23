@@ -26,7 +26,7 @@ This document tracks the migration of `tidb.json` to `tidb.jsonnet`.
 | 12 | Dist Execute Framework | 7 | ✅ Done | e708549962 |
 | 13 | Statistics & Plan Management | 17 | ✅ Done | cb21e62411 |
 | 14 | Owner | 2 | ✅ Done | 589b18c287 |
-| 15 | Meta | 4 | ⏳ Pending | - |
+| 15 | Meta | 4 | ✅ Done | 0be0d78c3a |
 | 16 | GC | 11 | ⏳ Pending | - |
 | 17 | Batch Client | 4 | ⏳ Pending | - |
 | 18 | TopSQL | 6 | ⏳ Pending | - |
