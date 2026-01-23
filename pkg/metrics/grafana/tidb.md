@@ -33,7 +33,7 @@ This document tracks the migration of `tidb.json` to `tidb.jsonnet`.
 | 19 | TTL | 17 | ✅ Done | 12627a6187 |
 | 20 | Resource Manager | 2 | ✅ Done | b0101f0bba |
 | 21 | Follower Read | 3 | ✅ Done | 17b61e9426 |
-| 22 | Import Into | 5 | ⏳ Pending | - |
+| 22 | Import Into | 5 | ✅ Done | 20922e8df3 |
 | 23 | Global Sort | 6 | ⏳ Pending | - |
 | 24 | Network Transmission | 1 | ⏳ Pending | - |
 | 25 | Memory Arbitrator | 8 | ⏳ Pending | - |
