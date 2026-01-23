@@ -725,9 +725,10 @@ func (*RuntimeStatsWithConcurrencyInfo) Merge(RuntimeStats) {}
 
 // RuntimeStatsWithCommit is the RuntimeStats with commit detail.
 type RuntimeStatsWithCommit struct {
-	Commit   *util.CommitDetails
-	LockKeys *util.LockKeysDetails
-	TxnCnt   int
+	Commit         *util.CommitDetails
+	LockKeys       *util.LockKeysDetails
+	SharedLockKeys *util.LockKeysDetails
+	TxnCnt         int
 }
 
 // Tp implements the RuntimeStats interface.

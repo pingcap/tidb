@@ -542,6 +542,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 					metrics.PessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
 				}
 			}
+			sharedLockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.SharedLockKeysCount
+			if sharedLockKeysCnt > 0 {
+				metrics.StatementSharedLockKeysCount.Observe(float64(sharedLockKeysCnt))
+			}
 
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
@@ -1153,6 +1157,44 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 	}()
 
+	tryLockKeys := func(e exec.Executor, keys []kv.Key, shared bool) (exec.Executor, error) {
+		seVars := sctx.GetSessionVars()
+		keys = filterTemporaryTableKeys(seVars, keys)
+		keys = filterLockTableKeys(seVars.StmtCtx, keys)
+		if len(keys) == 0 {
+			return nil, nil
+		}
+		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys), shared)
+		if err != nil {
+			return nil, err
+		}
+		var lockKeyStats *util.LockKeysDetails
+		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
+		startLocking := time.Now()
+		err = txn.LockKeys(ctx, lockCtx, keys...)
+		a.phaseLockDurations[0] += time.Since(startLocking)
+		if e.RuntimeStats() != nil {
+			e.RuntimeStats().Record(time.Since(startLocking), 0)
+		}
+		if lockKeyStats != nil {
+			if shared {
+				seVars.StmtCtx.MergeSharedLockKeysExecDetails(lockKeyStats)
+			} else {
+				seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+			}
+		}
+		if err == nil {
+			return nil, nil
+		}
+		e, err = a.handlePessimisticLockError(ctx, err)
+		if err != nil {
+			if exeerrors.ErrDeadlock.Equal(err) {
+				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+			}
+			return nil, err
+		}
+		return e, nil
+	}
 	isFirstAttempt := true
 
 	for {
@@ -1160,6 +1202,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
 
+		txnCtx.ResetUnchangedKeysForLock()
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
@@ -1184,43 +1227,30 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			}
 			continue
 		}
+
+		// acquire xlocks
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
 			return err1
 		}
-		keys = txnCtx.CollectUnchangedKeysForLock(keys)
-		if len(keys) == 0 {
-			return nil
-		}
-		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
-		seVars := sctx.GetSessionVars()
-		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
-		if err != nil {
+		keys = txnCtx.CollectUnchangedKeysForXLock(keys)
+		if ex, err := tryLockKeys(e, keys, false); err != nil {
 			return err
+		} else if ex != nil {
+			e = ex
+			continue
 		}
-		var lockKeyStats *util.LockKeysDetails
-		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
-		startLocking := time.Now()
-		err = txn.LockKeys(ctx, lockCtx, keys...)
-		a.phaseLockDurations[0] += time.Since(startLocking)
-		if e.RuntimeStats() != nil {
-			e.RuntimeStats().Record(time.Since(startLocking), 0)
-		}
-		if lockKeyStats != nil {
-			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
-		}
-		if err == nil {
-			return nil
-		}
-		e, err = a.handlePessimisticLockError(ctx, err)
-		if err != nil {
-			// todo: Report deadlock
-			if exeerrors.ErrDeadlock.Equal(err) {
-				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
-			}
+
+		// acquire slocks
+		keys = txnCtx.CollectUnchangedKeysForSLock(keys[:0])
+		if ex, err := tryLockKeys(e, keys, true); err != nil {
 			return err
+		} else if ex != nil {
+			e = ex
+			continue
 		}
+
+		return nil
 	}
 }
 
@@ -1493,8 +1523,9 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
 	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
 		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
-			Commit:   execDetail.CommitDetail,
-			LockKeys: execDetail.LockKeysDetail,
+			Commit:         execDetail.CommitDetail,
+			LockKeys:       execDetail.LockKeysDetail,
+			SharedLockKeys: execDetail.SharedLockKeysDetail,
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}
