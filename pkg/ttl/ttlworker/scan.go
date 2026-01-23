@@ -39,11 +39,11 @@ import (
 
 func refreshMinCheckpointTSO(
 	ctx context.Context,
-	jobType cache.TTLJobType,
+	jobType session.TTLJobType,
 	se session.Session,
 	tbl *cache.PhysicalTable,
 ) (uint64, error) {
-	if jobType != cache.TTLJobTypeSoftDelete || !tbl.TableInfo.IsActiveActive {
+	if jobType != session.TTLJobTypeSoftDelete || !tbl.TableInfo.IsActiveActive {
 		return 0, nil
 	}
 
