@@ -764,7 +764,12 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 	}
 }
 
-func (e *slowQueryRetriever) parseSlowLogWithLimit(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
+func (e *slowQueryRetriever) parseSlowLogWithLimit(
+	ctx context.Context,
+	sctx sessionctx.Context,
+	reader *bufio.Reader,
+	logNum int,
+) {
 	offset := offset{offset: 0, length: 0}
 	target := e.limit
 	var produced uint64
@@ -1409,8 +1414,7 @@ func (*slowQueryRetriever) getFileStartTime(ctx context.Context, file *os.File, 
 	}
 	var reader *bufio.Reader
 	if !compressed {
-		// TODO(lance6716): maintain the line size while reading the slow log file.
-		reader = bufio.NewReaderSize(file, 64*1024)
+		reader = bufio.NewReader(file)
 	} else {
 		gr, err := gzip.NewReader(file)
 		if err != nil {
