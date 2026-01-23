@@ -105,10 +105,10 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 	setOptionForTopSQL(e.Ctx().GetSessionVars().StmtCtx, e.snapshot)
 	var batchGetter kv.BatchGetter = e.snapshot
 	if txn.Valid() {
-		lock := e.tblInfo.Lock
+		//lock := e.tblInfo.Lock
 		if e.lock {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-		} else if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
+		} else if e.Ctx().GetSessionVars().ConnectionID > 0 {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
@@ -529,18 +529,7 @@ type cacheBatchGetter struct {
 
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key) (map[string][]byte, error) {
 	cacheDB := b.ctx.GetStore().GetMemCache()
-	vals := make(map[string][]byte)
-	for _, key := range keys {
-		val, err := cacheDB.UnionGet(ctx, b.tid, b.snapshot, key)
-		if err != nil {
-			if !kv.ErrNotExist.Equal(err) {
-				return nil, err
-			}
-			continue
-		}
-		vals[string(key)] = val
-	}
-	return vals, nil
+	return cacheDB.BatchUnionGet(ctx, b.tid, b.snapshot, keys)
 }
 
 func newCacheBatchGetter(ctx sessionctx.Context, tid int64, snapshot kv.Snapshot) *cacheBatchGetter {
