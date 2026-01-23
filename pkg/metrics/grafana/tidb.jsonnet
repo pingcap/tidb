@@ -3797,6 +3797,75 @@ local ownerWatcherOpsP = graphPanel.new(
   )
 );
 
+// ============== Row: Meta ==============
+local metaRow = row.new(collapse=true, title='Meta');
+
+local autoIdQpsP = graphPanel.new(
+  title='AutoID QPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='TiDB auto id requests per second including  single table/global auto id processing and single table auto id rebase processing',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_autoid_operation_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='AutoID QPS',
+  )
+);
+
+local autoIdDurationP = graphPanel.new(
+  title='AutoID Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='TiDB auto id requests durations',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_autoid_operation_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='99-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_autoid_operation_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='80-{{type}}',
+  )
+);
+
+local metaOperationsDuration99P = graphPanel.new(
+  title='Meta Operations Duration 99',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='TiDB meta operation durations including get/set schema and ddl jobs',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_meta_operation_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}',
+  )
+);
+
+local autoIdClientConnResetCounterP = graphPanel.new(
+  title='AutoID Client Conn Reset Counter',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='TiDB auto id client connection reset counter',
+)
+.addTarget(
+  prometheus.target(
+    'increase(tidb_meta_autoid_client_conn_reset_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])',
+    legendFormat='',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4067,6 +4136,15 @@ newDash
   ownerRow
   .addPanel(newEtcdSessionDurationP, gridPos=leftPanelPos)
   .addPanel(ownerWatcherOpsP, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  metaRow
+  .addPanel(autoIdQpsP, gridPos=leftPanelPos)
+  .addPanel(autoIdDurationP, gridPos=rightPanelPos)
+  .addPanel(metaOperationsDuration99P, gridPos=leftPanelPos)
+  .addPanel(autoIdClientConnResetCounterP, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 )
