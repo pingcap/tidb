@@ -301,6 +301,11 @@ func TestFieldTypeEqual(t *testing.T) {
 }
 
 func TestFieldTypeSubType(t *testing.T) {
+	EnableExtraDataType.Store(true)
+	defer func() {
+		EnableExtraDataType.Store(false)
+	}()
+
 	ft := NewFieldType(mysql.TypeJSON)
 	ft.SetSubType(mysql.SubTypeArray)
 

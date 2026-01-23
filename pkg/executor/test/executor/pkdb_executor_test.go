@@ -26,6 +26,10 @@ func TestArrayType(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
+	tk.MustExec("set global pkdb_extra_data_type = on")
+	t.Cleanup(func() {
+		tk.MustExec("set global pkdb_extra_data_type = off")
+	})
 	tk.MustExec("create table t (a array, b json);")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` array DEFAULT NULL,\n" +
@@ -75,6 +79,10 @@ func TestXMLType(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set global pkdb_extra_data_type = on")
+	t.Cleanup(func() {
+		tk.MustExec("set global pkdb_extra_data_type = off")
+	})
 	tk.MustExec("create table t (a int, b xml);")
 	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
 		"  `a` int(11) DEFAULT NULL,\n" +
@@ -216,4 +224,28 @@ func TestXMLType(t *testing.T) {
 		require.Error(t, err, sql)
 		require.Equal(t, "[types:8801]Invalid XML value", err.Error(), sql)
 	}
+}
+
+func TestPKDBExtraDataType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("set global pkdb_extra_data_type = off")
+	t.Cleanup(func() {
+		tk.MustExec("set global pkdb_extra_data_type = off")
+	})
+	tk.MustExec("create table t (a array, b xml);")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` json DEFAULT NULL,\n" +
+		"  `b` longblob DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
+	tk.MustExec("drop table t;")
+
+	tk.MustExec("set global pkdb_extra_data_type = on")
+	tk.MustExec("create table t (a array, b xml);")
+	tk.MustQuery("show create table t").Check(testkit.Rows("t CREATE TABLE `t` (\n" +
+		"  `a` array DEFAULT NULL,\n" +
+		"  `b` xml DEFAULT NULL\n" +
+		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
 }

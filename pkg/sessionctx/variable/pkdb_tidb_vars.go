@@ -18,6 +18,8 @@ const (
 	TiDBXEnablePDLocalCall = "tidbx_enable_pd_local_call"
 	// PKDBEnableWhitelist indicates whether to enable the whitelist feature.
 	PKDBEnableWhitelist = "pkdb_enable_whitelist"
+	// PKDBExtraDataType indicates whether to enable extra data types.
+	PKDBExtraDataType = "pkdb_extra_data_type"
 )
 
 // Default TiDB system variable values.
@@ -34,6 +36,7 @@ const (
 	DefTiDBEnableSPParamSubstitute     = false
 	DefTiDBCreateFromSelectUsingImport = false
 	DefPKDBEnableWhitelist             = false
+	DefPKDBExtraDataType               = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.

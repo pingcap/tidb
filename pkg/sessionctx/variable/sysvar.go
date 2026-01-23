@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -3663,6 +3664,15 @@ var defaultSysVars = []*SysVar{
 			return nil
 		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 			return BoolToOnOff(EnableWhitelist.Load()), nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: PKDBExtraDataType, Value: BoolToOnOff(DefPKDBExtraDataType), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			enabled := TiDBOptOn(val)
+			parsertypes.EnableExtraDataType.Store(enabled)
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(parsertypes.EnableExtraDataType.Load()), nil
 		},
 	},
 }
