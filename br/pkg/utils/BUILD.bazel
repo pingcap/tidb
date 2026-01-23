@@ -20,7 +20,6 @@ go_library(
         "progress.go",
         "register.go",
         "retry.go",
-        "safe_point.go",
         "schema.go",
         "store_manager.go",
         "wait.go",
@@ -59,7 +58,11 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/encryptionpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_log//:log",
+<<<<<<< HEAD
         "@com_github_tikv_client_go_v2//oracle",
+=======
+        "@com_github_prometheus_client_golang//prometheus/promhttp",
+>>>>>>> cb138ca3deb (br: add keyspace-aware GC safepoint support for backup and restore (#65483))
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
         "@io_etcd_go_etcd_client_v3//:client",
@@ -74,7 +77,6 @@ go_library(
         "@org_uber_go_atomic//:atomic",
         "@org_uber_go_multierr//:multierr",
         "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zapcore",
     ],
 )
 
@@ -94,12 +96,11 @@ go_test(
         "progress_test.go",
         "register_test.go",
         "retry_test.go",
-        "safe_point_test.go",
         "schema_test.go",
     ],
     embed = [":utils"],
     flaky = True,
-    shard_count = 41,
+    shard_count = 38,
     deps = [
         "//br/pkg/errors",
         "//pkg/kv",
@@ -119,7 +120,6 @@ go_test(
         "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//oracle",
         "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_pd_client//:client",
         "@io_etcd_go_etcd_tests_v3//integration",
         "@org_golang_google_grpc//codes",
         "@org_golang_google_grpc//status",
