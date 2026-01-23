@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -402,6 +403,8 @@ func newSlowLogReverseScanner(e *slowQueryRetriever, sctx sessionctx.Context) *s
 	return scanner
 }
 
+var DashboardSlowLogReadBlockCnt4Test int
+
 func (s *slowLogReverseScanner) nextBatch(ctx context.Context, batchSize int) ([]string, error) {
 	if s.finished {
 		return nil, nil
@@ -415,6 +418,9 @@ func (s *slowLogReverseScanner) nextBatch(ctx context.Context, batchSize int) ([
 		}
 		if err != nil {
 			return nil, err
+		}
+		if intest.InTest {
+			DashboardSlowLogReadBlockCnt4Test++
 		}
 		if s.hasMinStart && len(block) > 0 && strings.HasPrefix(block[0], variable.SlowLogStartPrefixStr) {
 			t, err := ParseTime(block[0][len(variable.SlowLogStartPrefixStr):])
