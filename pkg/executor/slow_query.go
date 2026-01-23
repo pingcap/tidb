@@ -308,7 +308,11 @@ func (sc *slowLogChecker) isTimeValid(t types.Time) bool {
 }
 
 func getOneLine(reader *bufio.Reader) ([]byte, error) {
-	return util.ReadLine(reader, int(vardef.MaxOfMaxAllowedPacket))
+	line, err := util.ReadLine(reader, int(vardef.MaxOfMaxAllowedPacket))
+	if err == io.EOF && len(line) > 0 {
+		return line, nil
+	}
+	return line, err
 }
 
 type offset struct {
@@ -462,6 +466,29 @@ func (s *slowLogReverseScanner) nextBlock(ctx context.Context) (slowLogBlock, er
 			}
 			block := s.compressedBlocks[s.compressedIdx]
 			s.compressedIdx--
+			hasSQLSuffix := false
+			for _, line := range block {
+				if strings.HasSuffix(line, variable.SlowLogSQLSuffixStr) {
+					if strings.HasPrefix(line, "use") || strings.HasPrefix(line, variable.SlowLogRowPrefixStr) {
+						continue
+					}
+					hasSQLSuffix = true
+					break
+				}
+			}
+			if !hasSQLSuffix {
+				if !s.pendingHasSQLSuffix {
+					continue
+				}
+				merged := make(slowLogBlock, 0, len(block)+len(s.pendingBlock))
+				merged = append(merged, block...)
+				for j := len(s.pendingBlock) - 1; j >= 0; j-- {
+					merged = append(merged, s.pendingBlock[j])
+				}
+				s.pendingBlock = s.pendingBlock[:0]
+				s.pendingHasSQLSuffix = false
+				return merged, nil
+			}
 			return block, nil
 		}
 
@@ -571,8 +598,12 @@ func (s *slowLogReverseScanner) loadCompressedBlocks(ctx context.Context, file *
 			return err
 		}
 		line := string(hack.String(lineByte))
-		if !hasStartFlag && strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
-			hasStartFlag = true
+		if strings.HasPrefix(line, variable.SlowLogStartPrefixStr) {
+			if hasStartFlag {
+				block = block[:0]
+			} else {
+				hasStartFlag = true
+			}
 		}
 		if hasStartFlag {
 			block = append(block, line)
