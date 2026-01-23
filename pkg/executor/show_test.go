@@ -98,6 +98,24 @@ func TestShow(t *testing.T) {
 	tk.MustQuery("show tables from test like 't2';").Check(testkit.Rows("t2"))
 }
 
+func TestShowMaskingPolicies(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int, c char(120))")
+	tk.MustExec("create masking policy p on t(c) as c")
+
+	tk.MustQuery("show masking policies for t").Check(testkit.Rows("p c `c` ENABLE CUSTOM"))
+	tk.MustQuery("show masking policies for t where column_name = 'c'").Check(testkit.Rows("p c `c` ENABLE CUSTOM"))
+	tk.MustQuery("show masking policies for t where column_name = 'missing'").Check(testkit.Rows())
+
+	rows := tk.MustQuery("show create table t").Rows()
+	require.Len(t, rows, 1)
+	require.Contains(t, rows[0][1], "/* MASKING POLICY `p` ENABLE */")
+}
+
 func TestShowIndex(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
