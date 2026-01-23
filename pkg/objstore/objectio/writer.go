@@ -72,7 +72,6 @@ func newPlainBuffer(chunkSize int) *plainBuffer {
 // BufferedWriter is a buffered writer
 type BufferedWriter struct {
 	buf       interceptBuffer
-	written   int
 	writer    Writer
 	accessRec *recording.AccessStats
 }
@@ -80,6 +79,7 @@ type BufferedWriter struct {
 // Write implements Writer.
 func (u *BufferedWriter) Write(ctx context.Context, p []byte) (int, error) {
 	n, err := u.write0(ctx, p)
+	u.accessRec.RecWrite(n)
 	return n, errors.Trace(err)
 }
 
@@ -95,7 +95,6 @@ func (u *BufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
 			prewrite := p[0:chunkToFill]
 			w, err := u.buf.Write(prewrite)
 			bytesWritten += w
-			u.written += w
 			if err != nil {
 				return bytesWritten, errors.Trace(err)
 			}
@@ -113,13 +112,10 @@ func (u *BufferedWriter) write0(ctx context.Context, p []byte) (int, error) {
 	}
 	w, err := u.buf.Write(p)
 	bytesWritten += w
-	u.written += w
 	return bytesWritten, errors.Trace(err)
 }
 
 func (u *BufferedWriter) uploadChunk(ctx context.Context) error {
-	u.accessRec.RecWrite(u.written)
-	u.written = 0
 	if u.buf.Len() == 0 {
 		return nil
 	}
