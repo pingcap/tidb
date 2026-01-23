@@ -670,7 +670,6 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 
 	// Step 2: Match by query-block alias (subquery name)
 	// Only execute this step if no direct table name match was found
-	groupIdx := -1
 	for i, joinGroup := range plans {
 		blockOffset := joinGroup.QueryBlockOffset()
 		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
@@ -678,23 +677,10 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
 			tableMatch := astTbl.TableName.L == blockName.TableName.L
 			if dbMatch && tableMatch {
-				// this can happen when multiple join groups are from the same block, for example:
-				//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
-				// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
-				// TODO: currently we skip this case for simplification, we can support it in the future.
-				if groupIdx != -1 {
-					groupIdx = -1
-					break
-				}
-				groupIdx = i
+				newPlans := append(plans[:i], plans[i+1:]...)
+				return joinGroup, newPlans, true
 			}
 		}
-	}
-
-	if groupIdx != -1 {
-		matched := plans[groupIdx]
-		newPlans := append(plans[:groupIdx], plans[groupIdx+1:]...)
-		return matched, newPlans, true
 	}
 
 	return nil, plans, false
