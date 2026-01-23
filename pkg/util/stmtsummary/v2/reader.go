@@ -843,7 +843,7 @@ func isCtxDone(ctx context.Context) bool {
 }
 
 func readLine(reader *bufio.Reader) ([]byte, error) {
-	return util.ReadLineCopy(reader, maxLineSize)
+	return util.ReadLine(reader, maxLineSize)
 }
 
 func readLines(reader *bufio.Reader, count int) ([][]byte, error) {

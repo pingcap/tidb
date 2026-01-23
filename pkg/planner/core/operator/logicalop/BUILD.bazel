@@ -68,6 +68,7 @@ go_library(
         "//pkg/planner/util/utilfuncp",
         "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/table",
         "//pkg/types",
