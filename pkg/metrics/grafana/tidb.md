@@ -16,7 +16,7 @@ This document tracks the migration of `tidb.json` to `tidb.jsonnet`.
 | 2 | Query Detail | 7 | ✅ Done | 827cec6c41 |
 | 3 | Server | 23 | ✅ Done | 9c6e6d4abf |
 | 4 | Transaction | 35 | ✅ Done | fd02c6ad66 |
-| 5 | Executor | 16 | ✅ Done | TBD |
+| 5 | Executor | 16 | ✅ Done | 6448df4c85 |
 | 6 | Distsql | 8 | ✅ Done | c36c24b8db |
 | 7 | KV Errors | 5 | ✅ Done | b536b3d6e1 |
 | 8 | KV Request | 16 | ✅ Done | a0bc3c0270 |
