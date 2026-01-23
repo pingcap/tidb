@@ -248,6 +248,15 @@ func (i *IngestRecorder) IterateForeignKeys(f func(*ForeignKeyRecord) error) err
 	return nil
 }
 
+// CountItems counts the total ingested indexes across all tables.
+func CountItems(items map[int64]map[int64]bool) int {
+	total := 0
+	for _, indexMap := range items {
+		total += len(indexMap)
+	}
+	return total
+}
+
 // ExportItems returns a snapshot of ingest items keyed by table ID and index ID.
 func (i *IngestRecorder) ExportItems() map[int64]map[int64]bool {
 	items := make(map[int64]map[int64]bool, len(i.items))

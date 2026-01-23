@@ -23,6 +23,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 )
@@ -69,6 +70,7 @@ type MetaManager[K KeyType, SV, LV ValueType, M any] interface {
 
 type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	MetaManager[K, SV, LV, M]
+	SegmentedRestoreStorage
 
 	LoadCheckpointProgress(context.Context) (*CheckpointProgress, error)
 	SaveCheckpointProgress(context.Context, *CheckpointProgress) error
@@ -79,6 +81,13 @@ type LogMetaManager[K KeyType, SV, LV ValueType, M any] interface {
 	ExistsCheckpointIngestIndexRepairSQLs(context.Context) (bool, error)
 
 	TryGetStorage() storeapi.Storage
+}
+
+type SegmentedRestoreStorage interface {
+	LoadPITRIngestItems(context.Context, uint64, uint64) (map[int64]map[int64]bool, bool, error)
+	SavePITRIngestItems(context.Context, uint64, uint64, map[int64]map[int64]bool) error
+	LoadPITRTiFlashItems(context.Context, uint64, uint64) (map[int64]model.TiFlashReplicaInfo, bool, error)
+	SavePITRTiFlashItems(context.Context, uint64, uint64, map[int64]model.TiFlashReplicaInfo) error
 }
 
 type TableMetaManager[K KeyType, SV, LV ValueType, M any] struct {

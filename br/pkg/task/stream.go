@@ -1542,6 +1542,10 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
+	if !cfg.LastRestore && cfg.logCheckpointMetaManager == nil {
+		return errors.Annotatef(berrors.ErrInvalidArgument,
+			"segmented log restore requires checkpoint storage (table or external), enable checkpoint or configure --checkpoint-storage")
+	}
 	migs, err := client.GetLockedMigrations(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -2301,14 +2305,6 @@ func loadTiFlashRecorderItemsIfNeeded(ctx context.Context, client *logclient.Log
 	return nil
 }
 
-func countIngestRecorderItems(items map[int64]map[int64]bool) int {
-	total := 0
-	for _, indexMap := range items {
-		total += len(indexMap)
-	}
-	return total
-}
-
 func loadIngestRecorderItemsIfNeeded(
 	ctx context.Context,
 	client *logclient.LogClient,
@@ -2334,7 +2330,7 @@ func loadIngestRecorderItemsIfNeeded(
 	log.Info("loaded ingest items for previous segment",
 		zap.Uint64("start-ts", cfg.StartTS),
 		zap.Int("table-count", len(items)),
-		zap.Int("index-count", countIngestRecorderItems(items)))
+		zap.Int("index-count", ingestrec.CountItems(items)))
 	return nil
 }
 
