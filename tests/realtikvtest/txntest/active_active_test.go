@@ -15,7 +15,9 @@
 package txntest
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	txnerr "github.com/pingcap/tidb/pkg/store/driver/error"
@@ -51,4 +53,43 @@ func TestWaitLaggingTSO(t *testing.T) {
 			require.True(t, errors.Is(err, txnerr.ErrPDTimestampLagsTooMuch))
 		})
 	}
+}
+
+// TestReadCommitTSWithGeneratedColumn tests that reading _tidb_commit_ts works correctly
+// It should cover the issue: https://github.com/pingcap/tidb/issues/65659
+func TestReadCommitTS(t *testing.T) {
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	defer tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, b INT, v INT GENERATED ALWAYS AS (id + b + 1) VIRTUAL)")
+	getLastCommitTS := func() uint64 {
+		type txnInfo struct {
+			CommitTS uint64 `json:"commit_ts"`
+		}
+		var lastTxn txnInfo
+		require.NoError(t, json.Unmarshal([]byte(tk.Session().GetSessionVars().LastTxnInfo), &lastTxn))
+		require.NotZero(t, lastTxn.CommitTS)
+		return lastTxn.CommitTS
+	}
+	tk.MustExec("insert into t(id, b) values (1,10)")
+	lastCommitTS := getLastCommitTS()
+
+	// See issue: https://github.com/pingcap/tidb/issues/65659
+	// If the position of _tidb_commit_ts in `tipb.TableScan.Columns` is before a pk column,
+	// it should work correctly and don't panic.
+	tk.MustQuery("SELECT v, _tidb_commit_ts FROM t;").Check(
+		testkit.Rows(fmt.Sprintf("12 %d", lastCommitTS)),
+	)
+
+	// normal case1
+	tk.MustQuery("select b, _tidb_commit_ts from t where id = 1").Check(
+		testkit.Rows(fmt.Sprintf("10 %d", lastCommitTS)),
+	)
+
+	// normal case2
+	tk.MustQuery("select id, b, _tidb_commit_ts from t where id = 1").Check(
+		testkit.Rows(fmt.Sprintf("1 10 %d", lastCommitTS)),
+	)
 }
