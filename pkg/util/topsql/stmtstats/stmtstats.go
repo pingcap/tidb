@@ -66,6 +66,10 @@ func (s *StatementStats) OnExecutionBegin(sqlDigest, planDigest []byte) {
 	item := s.GetOrCreateStatementStatsItem(sqlDigest, planDigest)
 
 	item.ExecCount++
+<<<<<<< HEAD
+=======
+	item.NetworkInBytes += inNetworkBytes
+>>>>>>> 4c9e28c02ae (topsql: Increase network stats instead of overwrite (#65688))
 	// Count more data here.
 }
 
@@ -82,6 +86,10 @@ func (s *StatementStats) OnExecutionFinished(sqlDigest, planDigest []byte, execD
 
 	item.SumDurationNs += uint64(ns)
 	item.DurationCount++
+<<<<<<< HEAD
+=======
+	item.NetworkOutBytes += outNetworkBytes
+>>>>>>> 4c9e28c02ae (topsql: Increase network stats instead of overwrite (#65688))
 	// Count more data here.
 }
 
