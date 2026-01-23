@@ -3497,6 +3497,13 @@ func (c *colNameResolver) Leave(inNode ast.Node) (ast.Node, bool) {
 		idx, err := expression.FindFieldName(c.p.OutputNames(), v.Name)
 		if err == nil && idx >= 0 {
 			c.names[c.p.OutputNames()[idx]] = struct{}{}
+		} else if join, isJoin := c.p.(*logicalop.LogicalJoin); isJoin && join.FullSchema != nil {
+			// For NATURAL JOIN or JOIN ... USING, the output schema is coalesced and
+			// may not contain all original columns. We need to check FullNames as well.
+			idx, err = expression.FindFieldName(join.FullNames, v.Name)
+			if err == nil && idx >= 0 {
+				c.names[join.FullNames[idx]] = struct{}{}
+			}
 		}
 	}
 	return inNode, true

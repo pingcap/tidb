@@ -146,6 +146,30 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		tk.MustQuery("select * from v")
 	}
 
+	// Test ONLY_FULL_GROUP_BY with NATURAL JOIN.
+	// For NATURAL JOIN, the columns are coalesced in the output schema,
+	// but we should still detect non-aggregated columns from the FullSchema.
+	// only-full-group-by-natural-join
+	{
+		tk := prepareSharedTestKit(t)
+		tk.MustExec("create table t0(c0 int)")
+		tk.MustExec("create table t1(c0 int)")
+		tk.MustExec("insert into t0 values (1), (2)")
+		tk.MustExec("insert into t1 values (1), (3)")
+		tk.MustExec("set @@sql_mode = default")
+		tk.MustQuery("select @@sql_mode REGEXP 'ONLY_FULL_GROUP_BY'").Check(testkit.Rows("1"))
+		// Select the coalesced column should error
+		tk.MustContainErrMsg("select c0 from t0 natural right join t1 group by null",
+			"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t1.c0' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+		// Select the explicit t0.c0 column should also error (was a bug before fix)
+		tk.MustContainErrMsg("select t0.c0 from t0 natural right join t1 group by null",
+			"[planner:1055]Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'test.t0.c0' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by")
+		// Using aggregation should work
+		tk.MustQuery("select max(t0.c0) from t0 natural right join t1 group by null").Check(testkit.Rows("1"))
+		// Normal query without GROUP BY should work
+		tk.MustQuery("select t0.c0, t1.c0 from t0 natural right join t1 order by t1.c0").Check(testkit.Rows("1 1", "<nil> 3"))
+	}
+
 	// index-merge-with-generated-column
 	{
 		tk := prepareSharedTestKit(t)
