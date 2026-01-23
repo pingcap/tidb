@@ -267,93 +267,23 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 	var err error
 
-<<<<<<< HEAD
-	result := extractJoinGroup(p)
-	curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
-	if len(curJoinGroup) > 1 {
-		for i := range curJoinGroup {
-			curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
-			if err != nil {
-				return nil, err
-			}
-		}
-		originalSchema := p.Schema()
-
-		// Not support outer join reorder when using the DP algorithm
-		isSupportDP := true
-		for _, joinType := range joinTypes {
-			if joinType.JoinType != logicalop.InnerJoin {
-				isSupportDP = false
-				break
-			}
-		}
-
-		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-			ctx:                ctx,
-			basicJoinGroupInfo: result.basicJoinGroupInfo,
-		}
-
-		joinGroupNum := len(curJoinGroup)
-		useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
-
-		leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
-		if hasDiffLeadingHint {
-			ctx.GetSessionVars().StmtCtx.SetHintWarning(
-				"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
-		}
-
-		if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
-			if useGreedy {
-				ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin, tracer.opt)
-				if !ok {
-					ctx.GetSessionVars().StmtCtx.SetHintWarning(
-						"leading hint is inapplicable, check if the leading hint table is valid")
-				} else {
-					curJoinGroup = leftJoinGroup
-=======
 	if _, ok := p.(*logicalop.LogicalJoin); ok {
 		result := extractJoinGroup(p)
 		curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
 		if len(curJoinGroup) > 1 {
 			for i := range curJoinGroup {
-				curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i])
+				curJoinGroup[i], err = s.optimizeRecursive(ctx, curJoinGroup[i], tracer)
 				if err != nil {
 					return nil, err
->>>>>>> fb3c1cfdffb (planner: handle the selection between the join group (#64535))
 				}
 			}
 			originalSchema := p.Schema()
 
-<<<<<<< HEAD
-		if useGreedy {
-			groupSolver := &joinReorderGreedySolver{
-				baseSingleGroupJoinOrderSolver: baseGroupSolver,
-			}
-			p, err = groupSolver.solve(curJoinGroup, tracer)
-		} else {
-			dpSolver := &joinReorderDPSolver{
-				baseSingleGroupJoinOrderSolver: baseGroupSolver,
-			}
-			dpSolver.newJoin = dpSolver.newJoinWithEdges
-			p, err = dpSolver.solve(curJoinGroup, tracer)
-		}
-		if err != nil {
-			return nil, err
-		}
-		schemaChanged := false
-		if len(p.Schema().Columns) != len(originalSchema.Columns) {
-			schemaChanged = true
-		} else {
-			for i, col := range p.Schema().Columns {
-				if !col.EqualColumn(originalSchema.Columns[i]) {
-					schemaChanged = true
-=======
 			// Not support outer join reorder when using the DP algorithm
-			allInnerJoin := true
+			isSupportDP := true
 			for _, joinType := range joinTypes {
-				if joinType.JoinType != base.InnerJoin {
-					allInnerJoin = false
->>>>>>> fb3c1cfdffb (planner: handle the selection between the join group (#64535))
+				if joinType.JoinType != logicalop.InnerJoin {
+					isSupportDP = false
 					break
 				}
 			}
@@ -364,7 +294,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			}
 
 			joinGroupNum := len(curJoinGroup)
-			useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
+			useGreedy := joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold || !isSupportDP
 
 			leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
 			if hasDiffLeadingHint {
@@ -374,7 +304,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 			if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
 				if useGreedy {
-					ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+					ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin, tracer.opt)
 					if !ok {
 						ctx.GetSessionVars().StmtCtx.SetHintWarning(
 							"leading hint is inapplicable, check if the leading hint table is valid")
@@ -388,16 +318,15 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 			if useGreedy {
 				groupSolver := &joinReorderGreedySolver{
-					allInnerJoin:                   allInnerJoin,
 					baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				}
-				p, err = groupSolver.solve(curJoinGroup)
+				p, err = groupSolver.solve(curJoinGroup, tracer)
 			} else {
 				dpSolver := &joinReorderDPSolver{
 					baseSingleGroupJoinOrderSolver: baseGroupSolver,
 				}
 				dpSolver.newJoin = dpSolver.newJoinWithEdges
-				p, err = dpSolver.solve(curJoinGroup)
+				p, err = dpSolver.solve(curJoinGroup, tracer)
 			}
 			if err != nil {
 				return nil, err

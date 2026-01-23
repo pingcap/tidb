@@ -2197,12 +2197,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		HashJoinCostFactor:            DefOptHashJoinCostFactor,
 		IndexJoinCostFactor:           DefOptIndexJoinCostFactor,
 		CommandValue:                  uint32(mysql.ComSleep),
-<<<<<<< HEAD
 		TiDBOptJoinReorderThreshold:   DefTiDBOptJoinReorderThreshold,
-=======
-		TiDBOptJoinReorderThreshold:   vardef.DefTiDBOptJoinReorderThreshold,
-		TiDBOptJoinReorderThroughSel:  vardef.DefTiDBOptJoinReorderThroughSel,
->>>>>>> fb3c1cfdffb (planner: handle the selection between the join group (#64535))
+		TiDBOptJoinReorderThroughSel:  DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:         DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:        DefWaitSplitRegionTimeout,
