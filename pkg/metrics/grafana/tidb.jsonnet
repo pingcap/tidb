@@ -4955,6 +4955,22 @@ local activeParallelUploadWorkerCountP = graphPanel.new(
   )
 );
 
+// ============== Row: Network Transmission ==============
+local networkTransmissionRow = row.new(collapse=true, title='Network Transmission');
+
+local queryNetworkTransmissionBytesP = graphPanel.new(
+  title='Query Network Trasmission Bytes',
+  datasource=myDS,
+  format='binBps',
+  description='Query network Trasmission Bytes.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_network_transmission{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -5328,6 +5344,12 @@ newDash
   .addPanel(readFromCloudStorageRateP, gridPos=leftThirdPanelPos)
   .addPanel(ingestWorkerCountP, gridPos=midThirdPanelPos)
   .addPanel(activeParallelUploadWorkerCountP, gridPos=rightThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  networkTransmissionRow
+  .addPanel(queryNetworkTransmissionBytesP, gridPos=leftPanelPos)
   ,
   gridPos=rowPos
 )
