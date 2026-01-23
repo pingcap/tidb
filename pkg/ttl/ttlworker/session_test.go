@@ -197,11 +197,7 @@ func (s *mockSession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
 }
 
-func (s *mockSession) GetMinActiveActiveCheckpointTS(
-	ctx context.Context,
-	jobType session.TTLJobType,
-	dbName, tableName string,
-	isActiveActive bool) (uint64, error) {
+func (s *mockSession) GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error) {
 	return 0, nil
 }
 

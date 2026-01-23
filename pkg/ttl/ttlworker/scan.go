@@ -33,41 +33,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"go.uber.org/zap"
 )
-
-func refreshMinCheckpointTSO(
-	ctx context.Context,
-	jobType session.TTLJobType,
-	se session.Session,
-	tbl *cache.PhysicalTable,
-) (uint64, error) {
-	if jobType != session.TTLJobTypeSoftDelete || !tbl.TableInfo.IsActiveActive {
-		return 0, nil
-	}
-
-	// we should always prevent hard deletion without safe checkpoint ts
-	// A     upd
-	// ---------------------------------
-	// B del     hard_del upd_from_A
-	// if checkpoint_ts is not after upd, we simply wait and fallback 0
-	rows, err := se.ExecuteSQL(ctx,
-		fmt.Sprintf("SELECT IFNULL(MIN(checkpoint_ts), 0) FROM %s.%s WHERE database_name=%%? AND table_name=%%?",
-			sqlbuilder.TiCDCProgressDB, sqlbuilder.TiCDCProgressTable),
-		sqlescape.EscapeString(tbl.Schema.O),
-		sqlescape.EscapeString(tbl.Name.O),
-	)
-	if err != nil {
-		return 0, err
-	}
-	if len(rows) == 1 && rows[0].Len() == 1 {
-		return rows[0].GetUint64(0), nil
-	}
-	// maybe the progress table is not created yet
-	// just return 0 for safety
-	return 0, nil
-}
 
 var (
 	scanTaskExecuteSQLMaxRetry      = 5
@@ -246,16 +213,16 @@ func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDe
 	}
 	defer terror.Call(restoreSession)
 
-	minCheckpointTS, err := rawSess.GetMinActiveActiveCheckpointTS(
-		ctx,
-		t.JobType,
-		t.tbl.Schema.O,
-		t.tbl.Name.O,
-		t.tbl.TableInfo.IsActiveActive,
-	)
-
-	if err != nil {
-		return err
+	minCheckpointTS := uint64(0)
+	if t.JobType == session.TTLJobTypeSoftDelete && t.tbl.TableInfo.IsActiveActive {
+		minCheckpointTS, err = rawSess.GetMinActiveActiveCheckpointTS(
+			ctx,
+			t.tbl.Schema.O,
+			t.tbl.Name.O,
+		)
+		if err != nil {
+			return err
+		}
 	}
 
 	generator, err := sqlbuilder.NewScanQueryGenerator(t.JobType, t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)

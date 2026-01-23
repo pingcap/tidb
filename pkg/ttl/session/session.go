@@ -89,8 +89,7 @@ type Session interface {
 	Now() time.Time
 	// GetMinActiveActiveCheckpointTS returns cached min checkpoint ts from TiCDC progress table.
 	// It refreshes the cache periodically to avoid querying for every SQL.
-	GetMinActiveActiveCheckpointTS(ctx context.Context, jobType TTLJobType,
-		dbName, tableName string, isActiveActive bool) (uint64, error)
+	GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error)
 	// AvoidReuse is used to avoid reuse the session
 	AvoidReuse()
 }
@@ -254,15 +253,8 @@ func (s *session) AvoidReuse() {
 	}
 }
 
-func (s *session) GetMinActiveActiveCheckpointTS(
-	ctx context.Context,
-	jobType TTLJobType,
-	dbName, tableName string,
-	isActiveActive bool) (uint64, error) {
-	if jobType != TTLJobTypeSoftDelete || !isActiveActive {
-		return 0, nil
-	}
-
+// GetMinActiveActiveCheckpointTS get min safe checkpoint ts on demand.
+func (s *session) GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error) {
 	// Refresh periodically to avoid querying TiCDC progress table for every SQL.
 	if !s.minActiveActiveCheckpointTSLastRefresh.IsZero() &&
 		time.Since(s.minActiveActiveCheckpointTSLastRefresh) < minActiveActiveCheckpointTSRefreshInterval {
