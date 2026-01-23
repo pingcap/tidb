@@ -27,7 +27,7 @@ This document tracks the migration of `tidb.json` to `tidb.jsonnet`.
 | 13 | Statistics & Plan Management | 17 | ✅ Done | cb21e62411 |
 | 14 | Owner | 2 | ✅ Done | 589b18c287 |
 | 15 | Meta | 4 | ✅ Done | 0be0d78c3a |
-| 16 | GC | 11 | ⏳ Pending | - |
+| 16 | GC | 11 | ✅ Done | ff477e5330 |
 | 17 | Batch Client | 4 | ⏳ Pending | - |
 | 18 | TopSQL | 6 | ⏳ Pending | - |
 | 19 | TTL | 17 | ⏳ Pending | - |
