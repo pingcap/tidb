@@ -386,9 +386,10 @@ type LoadDataController struct {
 	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
 
-	logger    *zap.Logger
-	dataStore storeapi.Storage
-	dataFiles []*mydump.SourceFileMeta
+	logger        *zap.Logger
+	dataStore     storeapi.Storage
+	dataFiles     []*mydump.SourceFileMeta
+	totalRealSize int64
 	// globalSortStore is used to store sorted data when using global sort.
 	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
@@ -1377,8 +1378,8 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  int64
-		sourceType mydump.SourceType
+		totalSize, totalRealSize int64
+		sourceType               mydump.SourceType
 		// sizeExpansionRatio is the estimated size expansion for parquet format.
 		// For non-parquet format, it's always 1.0.
 		sizeExpansionRatio = 1.0
@@ -1481,6 +1482,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			if f != nil {
 				dataFiles = append(dataFiles, f)
 				totalSize += f.FileSize
+				totalRealSize += f.RealSize
 			}
 		}
 	}
@@ -1491,6 +1493,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 	}
 
 	e.dataFiles = dataFiles
+	e.totalRealSize = totalRealSize
 	e.TotalFileSize = totalSize
 
 	return nil
@@ -1508,7 +1511,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	if err != nil {
 		return err
 	}
-	totalSize := e.TotalFileSize
+	totalSize := e.totalRealSize
 	failpoint.InjectCall("mockImportDataSize", &totalSize)
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
@@ -1527,7 +1530,8 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
 		zap.Int("targetNodeCPU", targetNodeCPUCnt),
-		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.String("totalFileSize", units.BytesSize(float64(e.TotalFileSize))),
+		zap.String("totalRealSize", units.BytesSize(float64(totalSize))),
 		zap.Int("fileCount", len(e.dataFiles)),
 		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
 		zap.Float64("indexSizeRatio", indexSizeRatio),
