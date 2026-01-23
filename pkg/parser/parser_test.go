@@ -1463,6 +1463,8 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
+		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
