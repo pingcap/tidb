@@ -30,7 +30,7 @@ This document tracks the migration of `tidb.json` to `tidb.jsonnet`.
 | 16 | GC | 11 | ✅ Done | ff477e5330 |
 | 17 | Batch Client | 4 | ✅ Done | d2a0212889 |
 | 18 | TopSQL | 6 | ✅ Done | e227dc8460 |
-| 19 | TTL | 17 | ⏳ Pending | - |
+| 19 | TTL | 17 | ✅ Done | 12627a6187 |
 | 20 | Resource Manager | 2 | ⏳ Pending | - |
 | 21 | Follower Read | 3 | ⏳ Pending | - |
 | 22 | Import Into | 5 | ⏳ Pending | - |
