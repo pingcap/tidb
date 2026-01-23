@@ -1041,7 +1041,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
-	// Check if this is a PartitionHandle (for global non-unique indexes V2+)
+	// Check if this is a PartitionHandle (for global non-unique indexes V1+)
 	if len(keySuffix) > 0 && keySuffix[0] == PartitionIDFlag {
 		// Format: PartitionIDFlag + partition_id (8 bytes) + inner_handle
 		keySuffix = keySuffix[1:] // Skip the flag
