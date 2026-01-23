@@ -1841,6 +1841,190 @@ local indexLookUpRowNumP = graphPanel.new(
   )
 );
 
+// ============== Row: Distsql ==============
+local distsqlRow = row.new(collapse=true, title='Distsql');
+
+local distsqlDurationP = graphPanel.new(
+  title='Distsql Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  logBase1Y=2,
+  description='durations of distsql execution by type',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_distsql_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='999-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_distsql_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='99-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_distsql_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='90-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_distsql_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='50-{{type}}',
+  )
+);
+
+local distsqlQpsP = graphPanel.new(
+  title='Distsql QPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='distsql query handling durations per second',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_distsql_handle_query_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (copr_type)',
+    legendFormat='{{copr_type}}',
+  )
+);
+
+local distsqlPartialQpsP = graphPanel.new(
+  title='Distsql Partial QPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='the numebr of distsql partial scan numbers',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_distsql_scan_keys_partial_num_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='',
+  )
+);
+
+local scanKeysNumP = graphPanel.new(
+  title='Scan Keys Num',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='the numebr of distsql scan numbers',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(1, sum(rate(tidb_distsql_scan_keys_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='100',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_distsql_scan_keys_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_distsql_scan_keys_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='50',
+  )
+);
+
+local scanKeysPartialNumP = graphPanel.new(
+  title='Scan Keys Partial Num',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='the numebr of distsql partial scan key numbers',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(1, sum(rate(tidb_distsql_scan_keys_partial_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='100',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_distsql_scan_keys_partial_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_distsql_scan_keys_partial_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='50',
+  )
+);
+
+local partialNumP = graphPanel.new(
+  title='Partial Num',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='distsql partial numbers per query',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(1, sum(rate(tidb_distsql_partial_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='100',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_distsql_partial_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_distsql_partial_num_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='50',
+  )
+);
+
+local coprocessorCacheP = graphPanel.new(
+  title='Coprocessor Cache',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_values=true,
+  legend_sort='avg',
+  legend_sortDesc=true,
+  format='none',
+  description='TiDB coprocessor cache hit, evict and miss number',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_distsql_copr_cache{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local coprocessorSeconds999P = graphPanel.new(
+  title='Coprocessor Seconds 999',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_values=true,
+  legend_sort='max',
+  legend_sortDesc=true,
+  format='s',
+  description='kv storage coprocessor processing durations',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_tikvclient_request_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", store!="0", scope="false", type="Cop"}[1m])) by (le,instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -1850,6 +2034,10 @@ local rowH = 1;
 local rowPos = {x:0, y:0, w:rowW, h:rowH};
 local leftPanelPos = {x:0, y:0, w:panelW, h:panelH};
 local rightPanelPos = {x:panelW, y:0, w:panelW, h:panelH};
+local thirdPanelW = 8;
+local leftThirdPanelPos = {x:0, y:0, w:thirdPanelW, h:panelH};
+local midThirdPanelPos = {x:thirdPanelW, y:0, w:thirdPanelW, h:panelH};
+local rightThirdPanelPos = {x:thirdPanelW * 2, y:0, w:thirdPanelW, h:panelH};
 
 newDash
 .addPanel(
@@ -1967,6 +2155,19 @@ newDash
   .addPanel(indexLookUpDurationP, gridPos=rightPanelPos)
   .addPanel(indexLookUpRowsP, gridPos=leftPanelPos)
   .addPanel(indexLookUpRowNumP, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  distsqlRow
+  .addPanel(distsqlDurationP, gridPos=leftPanelPos)
+  .addPanel(distsqlQpsP, gridPos=rightPanelPos)
+  .addPanel(distsqlPartialQpsP, gridPos=leftThirdPanelPos)
+  .addPanel(scanKeysNumP, gridPos=midThirdPanelPos)
+  .addPanel(scanKeysPartialNumP, gridPos=rightThirdPanelPos)
+  .addPanel(partialNumP, gridPos=leftThirdPanelPos)
+  .addPanel(coprocessorSeconds999P, gridPos=midThirdPanelPos)
+  .addPanel(coprocessorCacheP, gridPos=rightThirdPanelPos)
   ,
   gridPos=rowPos
 )
