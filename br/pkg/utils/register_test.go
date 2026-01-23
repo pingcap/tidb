@@ -15,7 +15,6 @@ package utils
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
@@ -92,11 +91,7 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 
 	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
 	defer func() {
-		err := register.Close(ctx)
-		// for flaky test, the lease would expire
-		if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
-			require.NoError(t, err)
-		}
+		require.NoError(t, register.Close(ctx))
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant", "return(true)"))
@@ -113,11 +108,7 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		list, err := GetImportTasksFrom(ctx, client)
-		if err != nil {
-			// The task lease might be revoked during TTL query.
-			return strings.Contains(err.Error(), "requested lease not found")
-		}
-		return len(list.Tasks) == 0
+		return err == nil && len(list.Tasks) == 0
 	}, 5*time.Second, 50*time.Millisecond)
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
@@ -145,11 +136,7 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 
 	register := NewTaskRegisterWithTTL(client, 3*time.Second, RegisterRestore, "test")
 	defer func() {
-		err := register.Close(ctx)
-		// for flaky test, the lease would expire
-		if err != nil && !strings.Contains(err.Error(), "requested lease not found") {
-			require.NoError(t, err)
-		}
+		require.NoError(t, register.Close(ctx))
 	}()
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput", "return(true)"))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-always-grant", "return(true)"))
@@ -166,11 +153,7 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 
 	require.Eventually(t, func() bool {
 		list, err := GetImportTasksFrom(ctx, client)
-		if err != nil {
-			// The task lease might be revoked during TTL query.
-			return strings.Contains(err.Error(), "requested lease not found")
-		}
-		return len(list.Tasks) == 0
+		return err == nil && len(list.Tasks) == 0
 	}, 5*time.Second, 50*time.Millisecond)
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
