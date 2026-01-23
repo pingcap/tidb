@@ -3866,6 +3866,162 @@ local autoIdClientConnResetCounterP = graphPanel.new(
   )
 );
 
+// ============== Row: GC ==============
+local gcRow = row.new(collapse=true, title='GC');
+
+local gcWorkerActionOpmP = graphPanel.new(
+  title='Worker Action OPM',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='kv storage garbage collection counts by type',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_tikvclient_gc_worker_actions_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local gcDurationByStageP = graphPanel.new(
+  title='GC Duration By Stage',
+  datasource=myDS,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='s',
+  description='Transaction GC durations per stage or in total. Note that the minimum bucket is 1s, and it might be not accurate when the values are sparse.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(1, sum(rate(tidb_tikvclient_gc_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (stage, le))',
+    legendFormat='{{stage}}',
+  )
+);
+
+local gcConfigP = graphPanel.new(
+  title='Config',
+  datasource=myDS,
+  format='s',
+  description='kv storage garbage collection config including gc_life_time and gc_run_interval',
+)
+.addTarget(
+  prometheus.target(
+    'max(tidb_tikvclient_gc_config{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local gcFailureOpmP = graphPanel.new(
+  title='GC Failure OPM',
+  datasource=myDS,
+  format='short',
+  description='kv storage garbage collection failing counts',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_tikvclient_gc_failure{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local deleteRangeFailureOpmP = graphPanel.new(
+  title='Delete Range Failure OPM',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='kv storage unsafe destroy range failed counts',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_tikvclient_gc_unsafe_destroy_range_failures{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local tooManyLocksErrorOpmP = graphPanel.new(
+  title='Too Many Locks Error OPM',
+  datasource=myDS,
+  format='short',
+  description='kv storage region garbage collection clean too many locks count',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_tikvclient_gc_region_too_many_locks{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='Locks Error OPM',
+  )
+);
+
+local gcActionResultOpmP = graphPanel.new(
+  title='Action Result OPM',
+  datasource=myDS,
+  format='short',
+  description='kv storage garbage collection results including failed and successful ones',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_tikvclient_gc_action_result{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local resolveLocksRangeTasksStatusP = graphPanel.new(
+  title='Resolve Locks Range Tasks Status',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  format='short',
+  description='Status of range tasks used in resolving locks',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_tikvclient_range_task_stats{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"resolve-locks-runner.*"}) by (type, result)',
+    legendFormat='{{type}}_{{result}}',
+  )
+);
+
+local resolveLocksRangeTasksPushDurationP = graphPanel.new(
+  title='Resolve Locks Range Tasks Push Task Duration 95',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=true,
+  format='s',
+  description='kv storage range worker processing one task duration',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_tikvclient_range_task_push_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"resolve-locks-runner.*"}[1m])) by (le, instance, type))',
+    legendFormat='{{type}}_{{instance}}',
+  )
+);
+
+local ongoingUserTxnDurationP = graphPanel.new(
+  title='Ongoing User Transaction Duration',
+  datasource=myDS,
+  description='Ongoing user transaction durations. long-running transaction will block GC safepoint.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_executor_ongoing_txn_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="general"}[1m])) by (le))',
+    legendFormat='',
+  )
+);
+
+local ongoingInternalTxnDurationP = graphPanel.new(
+  title='Ongoing Internal Transaction Duration',
+  datasource=myDS,
+  description='Ongoing internal transaction durations. long-running transaction will block GC safepoint.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_executor_ongoing_txn_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="internal"}[1m])) by (le))',
+    legendFormat='',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4145,6 +4301,22 @@ newDash
   .addPanel(autoIdDurationP, gridPos=rightPanelPos)
   .addPanel(metaOperationsDuration99P, gridPos=leftPanelPos)
   .addPanel(autoIdClientConnResetCounterP, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  gcRow
+  .addPanel(gcWorkerActionOpmP, gridPos=leftThirdPanelPos)
+  .addPanel(gcDurationByStageP, gridPos=midThirdPanelPos)
+  .addPanel(gcConfigP, gridPos=rightThirdPanelPos)
+  .addPanel(gcFailureOpmP, gridPos=leftThirdPanelPos)
+  .addPanel(deleteRangeFailureOpmP, gridPos=midThirdPanelPos)
+  .addPanel(tooManyLocksErrorOpmP, gridPos=rightThirdPanelPos)
+  .addPanel(gcActionResultOpmP, gridPos=leftThirdPanelPos)
+  .addPanel(resolveLocksRangeTasksStatusP, gridPos=midThirdPanelPos)
+  .addPanel(resolveLocksRangeTasksPushDurationP, gridPos=rightThirdPanelPos)
+  .addPanel(ongoingUserTxnDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(ongoingInternalTxnDurationP, gridPos=midThirdPanelPos)
   ,
   gridPos=rowPos
 )
