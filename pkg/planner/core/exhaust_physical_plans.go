@@ -108,17 +108,61 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 
-	// Hash join cannot satisfy ORDER BY properties directly.
-	// Don't generate hash joins here when there's an ORDER BY requirement - the planner
-	// will try separately with empty property and add Sort on top if needed.
-	// This ensures hash join competes fairly with merge join (which can use sorted inputs).
-	if !prop.IsSortItemEmpty() {
-		return
-	}
-
-	// These variables are only used when keepProbeOrder is true, which is currently disabled.
+	// Check if we can preserve ordering from the probe side.
+	// This allows ORDER BY ... LIMIT queries to avoid a sort when the probe side has an index.
+	// We should only consider order-preserving hash join when the build side (inner)
+	// cannot provide sorted output on join keys - otherwise MergeJoin is more appropriate.
 	keepProbeOrder := false
 	sortColsFromLeft := false
+	sortColsFromRight := false
+	if !prop.IsSortItemEmpty() {
+		_, _, leftSchema, rightSchema := getJoinChildStatsAndSchema(ge, super)
+		if leftSchema != nil && rightSchema != nil {
+			for _, item := range prop.SortItems {
+				if leftSchema.Contains(item.Col) {
+					sortColsFromLeft = true
+				}
+				if rightSchema.Contains(item.Col) {
+					sortColsFromRight = true
+				}
+			}
+
+			// Only enable order-preserving hash join if all sort columns come from exactly one side
+			if (sortColsFromLeft && !sortColsFromRight) || (sortColsFromRight && !sortColsFromLeft) {
+				// Check if ORDER BY columns match the join keys.
+				// If they do AND the build side can also provide sorted output (has index),
+				// MergeJoin can satisfy ORDER BY directly - don't generate order-preserving hash join.
+				// If ORDER BY matches join keys but build side cannot provide order (no index),
+				// order-preserving hash join is beneficial and should be generated.
+				leftJoinKeys, rightJoinKeys, _, _ := p.GetJoinKeys()
+				sortColsAreJoinKeys := false
+
+				if sortColsFromLeft {
+					sortColsAreJoinKeys = columnsMatchJoinKeys(prop.SortItems, leftJoinKeys)
+				} else {
+					sortColsAreJoinKeys = columnsMatchJoinKeys(prop.SortItems, rightJoinKeys)
+				}
+
+				if sortColsAreJoinKeys {
+					// ORDER BY matches join keys. Check if build side can provide sorted output.
+					// For order-preserving hash join, the ORDER BY side becomes the probe side.
+					// So the OTHER side becomes the build side.
+					// Only skip order-preserving hash join if BOTH sides can provide sorted output
+					// (i.e., both have indexes on join keys), making MergeJoin optimal.
+					buildSideCanProvideOrder := buildSideHasIndexOnJoinKeys(super, sortColsFromLeft, leftJoinKeys, rightJoinKeys)
+					if !buildSideCanProvideOrder {
+						// Build side cannot provide order - order-preserving hash join is beneficial
+						keepProbeOrder = true
+					}
+					// If build side CAN provide order, MergeJoin is optimal - don't set keepProbeOrder
+				} else {
+					// ORDER BY doesn't match join keys - order-preserving hash join helps
+					keepProbeOrder = true
+				}
+			}
+			// If sort columns from both sides or neither - can't preserve order
+		}
+	}
 
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
@@ -202,6 +246,133 @@ func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (join
 				"or the tidb_opt_enable_hash_join system variable, the HASH_JOIN hint will take precedence.")
 	}
 	return
+}
+
+// columnsMatchJoinKeys checks if the ORDER BY sort columns match the join keys.
+// This is used to determine if MergeJoin can satisfy the ORDER BY (when both sides have indexes).
+// If sort columns match join keys, we should NOT generate order-preserving hash join.
+func columnsMatchJoinKeys(sortItems []property.SortItem, joinKeys []*expression.Column) bool {
+	if len(sortItems) == 0 || len(joinKeys) == 0 {
+		return false
+	}
+	// Check if all sort columns are in the join keys
+	for _, item := range sortItems {
+		found := false
+		for _, key := range joinKeys {
+			if item.Col.EqualColumn(key) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// buildSideHasIndexOnJoinKeys checks if the build side (opposite of ORDER BY side) has an index
+// on the join keys. If the build side can provide sorted output, MergeJoin is optimal and we
+// should not generate order-preserving hash join.
+// sortColsFromLeft: true if ORDER BY columns come from left side (so right is build side)
+func buildSideHasIndexOnJoinKeys(super base.LogicalPlan, sortColsFromLeft bool, leftJoinKeys, rightJoinKeys []*expression.Column) bool {
+	// Get the join's children
+	children := super.Children()
+	if len(children) != 2 {
+		return false
+	}
+
+	// Determine which child is the build side (opposite of ORDER BY side)
+	var buildChild base.LogicalPlan
+	var buildJoinKeys []*expression.Column
+	if sortColsFromLeft {
+		// ORDER BY from left, so right is build side
+		buildChild = children[1]
+		buildJoinKeys = rightJoinKeys
+	} else {
+		// ORDER BY from right, so left is build side
+		buildChild = children[0]
+		buildJoinKeys = leftJoinKeys
+	}
+
+	// Traverse to find DataSource
+	return hasIndexOnColumns(buildChild, buildJoinKeys)
+}
+
+// hasIndexOnColumns recursively checks if any DataSource under the plan has an index
+// covering the given columns (typically join keys).
+func hasIndexOnColumns(plan base.LogicalPlan, cols []*expression.Column) bool {
+	if len(cols) == 0 {
+		return false
+	}
+
+	// Check if this is a DataSource
+	if ds, ok := plan.(*logicalop.DataSource); ok {
+		// Check if any index covers the join key columns
+		for _, path := range ds.PossibleAccessPaths {
+			if path.IsTablePath() {
+				continue
+			}
+			// Check if this index covers the join key
+			if indexCoversColumns(path, cols, ds) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Recursively check children
+	for _, child := range plan.Children() {
+		if hasIndexOnColumns(child, cols) {
+			return true
+		}
+	}
+	return false
+}
+
+// indexCoversColumns checks if an index path covers the specified columns.
+// This is a simplified check - we verify that the join key columns match leading index columns.
+func indexCoversColumns(path *util.AccessPath, cols []*expression.Column, ds *logicalop.DataSource) bool {
+	if path.Index == nil || len(path.Index.Columns) == 0 {
+		return false
+	}
+
+	// Get the table info to find column offset
+	tblInfo := ds.TableInfo
+	if tblInfo == nil {
+		return false
+	}
+
+	// Check if join key columns match the leading index columns
+	for _, col := range cols {
+		found := false
+		// Find this column's offset in the table
+		colOffset := -1
+		for i, tblCol := range tblInfo.Columns {
+			if col.ID == tblCol.ID {
+				colOffset = i
+				break
+			}
+		}
+		if colOffset < 0 {
+			continue
+		}
+
+		// Check if this column is a leading index column
+		for i, idxCol := range path.Index.Columns {
+			if i >= len(cols) {
+				break
+			}
+			if idxCol.Offset == colOffset {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
 }
 
 func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *property.PhysicalProperty, innerIdx int, useOuterToBuild bool, keepProbeOrder bool, sortColsFromLeft bool) *physicalop.PhysicalHashJoin {
