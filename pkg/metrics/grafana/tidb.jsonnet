@@ -3017,6 +3017,326 @@ local infoschemaV2CacheTableCountP = graphPanel.new(
   )
 );
 
+// ============== Row: DDL ==============
+local ddlRow = row.new(collapse=true, title='DDL');
+
+local ddlOpsP = graphPanel.new(
+  title='OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_avg=true,
+  legend_max=true,
+  format='short',
+  description='executed DDL jobs per second',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{ type }}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='total',
+  )
+);
+
+local ddlExecuteDurationP = graphPanel.new(
+  title='Execute Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='TiDB DDL duration statistics',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_ddl_handle_job_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}} - p99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_ddl_batch_add_idx_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='add index worker',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_ddl_handle_job_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type) / sum(rate(tidb_ddl_handle_job_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}} -avg',
+  )
+);
+
+local ddlWorkerOperationsDurationP = graphPanel.new(
+  title='Job Worker Operations Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='s',
+  description='TiDB worker duration by type, action, results',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(increase(tidb_ddl_worker_operation_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type, action, result))',
+    legendFormat='{{type}}-{{action}}-{{result}} - p99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_ddl_worker_operation_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, action, result)/sum(increase(tidb_ddl_worker_operation_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, action, result)',
+    legendFormat='{{type}}-{{action}}-{{result}} - avg',
+  )
+);
+
+local syncSchemaVersionOpsDurationP = graphPanel.new(
+  title='Sync Schema Version Operations Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='Sync schema version operations duration',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(.99, sum(rate(tidb_ddl_owner_handle_syncer_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])) by (le, type, result))',
+    legendFormat='{{type}}-{{result}} - p99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(.99, sum(rate(tidb_ddl_update_self_ver_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])) by (le, result))',
+    legendFormat='update_self_ver-{{result}} - p99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_ddl_owner_handle_syncer_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]) / rate(tidb_ddl_owner_handle_syncer_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])',
+    legendFormat='{{type}} - {{result}} - avg',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_ddl_update_self_ver_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (result) / sum(rate(tidb_ddl_update_self_ver_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (result)',
+    legendFormat='update_self_ver-{{result}} - avg',
+  )
+);
+
+local systemTableOperationsDurationP = graphPanel.new(
+  title='System Table Operations Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_avg=true,
+  format='s',
+  description='DDL system table operations duration',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_ddl_job_table_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", }[1m])) by (le, type))',
+    legendFormat='{{type}}-95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_ddl_job_table_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type) / sum(rate(tidb_ddl_job_table_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}} - avg',
+  )
+);
+
+local waitingJobCountP = graphPanel.new(
+  title='Waiting Job Count',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='TiDB ddl request in queue',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_ddl_waiting_jobs{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}-{{type}}',
+  )
+);
+
+local runningJobCountByWorkerPoolP = graphPanel.new(
+  title='Running Job Count By Worker Pool',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  format='short',
+  description='current count of the running DDL jobs',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_ddl_running_job_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}',
+    legendFormat='{{ type }}',
+  )
+);
+
+local deploySyncerDurationP = graphPanel.new(
+  title='Deploy Syncer Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='TiDB ddl schema syncer statistics, including init, start, watch, clear function call time cost',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(1, sum(rate(tidb_ddl_deploy_syncer_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])) by (le, type, result))',
+    legendFormat='{{type}}-{{result}}',
+  )
+);
+
+local ddlMetaOpmP = graphPanel.new(
+  title='DDL META OPM',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='TiDB different ddl worker numbers',
+)
+.addTarget(
+  prometheus.target(
+    'increase(tidb_ddl_worker_operation_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])',
+    legendFormat='{{instance}}-{{type}}',
+  )
+);
+
+local backfillProgressPercentageP = graphPanel.new(
+  title='Backfill Progress In Percentage',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='percent',
+  description='TiDB DDL backfill progress in percentage. The value is [0,100]',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_ddl_backfill_percentage_progress{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_ddl_backfill_percentage_progress{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="modify_column"}',
+    legendFormat='{{instance}}-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum by (table_id) (tidb_ddl_temp_index_op_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="single_write"})',
+    legendFormat='write-table_id_{{table_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_ddl_temp_index_op_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="merge"}',
+    legendFormat='{{instance}}-merged-table_id_{{table_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_ddl_temp_index_op_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="scan"}',
+    legendFormat='{{instance}}-scanned-table_id_{{table_id}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum by (table_id) (tidb_ddl_temp_index_op_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="double_write"})',
+    legendFormat='double-write-table_id_{{table_id}}',
+  )
+);
+
+local backfillDataRateP = graphPanel.new(
+  title='Backfill Data Rate',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='Some DDLs need to backfill data, for example, adding indexes, column type changes, etc. This metrics shows the number of rows backfilled per second.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_ddl_add_index_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local addIndexScanRateP = graphPanel.new(
+  title='Add Index Scan Rate',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='MiBs',
+  description='Rate of scanning during adding index',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_ddl_scan_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_ddl_scan_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_ddl_scan_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-50',
+  )
+);
+
+local retryableErrorP = graphPanel.new(
+  title='Retryable Error',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='none',
+  description='Count of retryable errors',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_ddl_retryable_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[2m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local addIndexBackfillImportSpeedP = graphPanel.new(
+  title='Add Index Backfill Import Speed',
+  datasource=myDS,
+  format='binBps',
+  description='Add Index Backfill Import Speed of Each Job',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_ddl_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", state="imported"}[1m])) by(job_id)',
+    legendFormat='job-id {{job_id}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -3227,6 +3547,25 @@ newDash
   .addPanel(infoschemaV2CacheSizeP, gridPos=rightThirdPanelPos)
   .addPanel(tableByNameApiDurationP, gridPos=leftThirdPanelPos)
   .addPanel(infoschemaV2CacheTableCountP, gridPos=midThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  ddlRow
+  .addPanel(ddlOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(ddlExecuteDurationP, gridPos=midThirdPanelPos)
+  .addPanel(ddlWorkerOperationsDurationP, gridPos=rightThirdPanelPos)
+  .addPanel(syncSchemaVersionOpsDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(systemTableOperationsDurationP, gridPos=midThirdPanelPos)
+  .addPanel(waitingJobCountP, gridPos=rightThirdPanelPos)
+  .addPanel(runningJobCountByWorkerPoolP, gridPos=leftThirdPanelPos)
+  .addPanel(deploySyncerDurationP, gridPos=midThirdPanelPos)
+  .addPanel(ddlMetaOpmP, gridPos=rightThirdPanelPos)
+  .addPanel(backfillProgressPercentageP, gridPos=leftThirdPanelPos)
+  .addPanel(backfillDataRateP, gridPos=midThirdPanelPos)
+  .addPanel(addIndexScanRateP, gridPos=rightThirdPanelPos)
+  .addPanel(retryableErrorP, gridPos=leftThirdPanelPos)
+  .addPanel(addIndexBackfillImportSpeedP, gridPos=midThirdPanelPos)
   ,
   gridPos=rowPos
 )
