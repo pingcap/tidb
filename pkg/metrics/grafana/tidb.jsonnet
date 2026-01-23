@@ -367,6 +367,118 @@ local duration80P = graphPanel.new(
   )
 );
 
+// ============== Row: Query Detail ==============
+local queryDetailRow = row.new(collapse=true, title='Query Detail');
+
+local duration80ByInstP = graphPanel.new(
+  title='Duration 80 By Instance',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  logBase1Y=2,
+  description='TiDB durations with 80 percent buckets by instance',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
+local duration95ByInstP = graphPanel.new(
+  title='Duration 95 By Instance',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  logBase1Y=2,
+  description='TiDB durations with 95 percent buckets by instance',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance))',
+    legendFormat='{{ instance }}',
+  )
+);
+
+local duration99ByInstP = graphPanel.new(
+  title='Duration 99 By Instance',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  logBase1Y=2,
+  description='TiDB durations with 99 percent buckets by instance',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
+local duration999ByInstP = graphPanel.new(
+  title='Duration 999 By Instance',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  logBase1Y=2,
+  description='TiDB durations with 99.9 percent buckets by instance',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
+local failedQueryOPMDetailP = graphPanel.new(
+  title='Failed Query OPM Detail',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='none',
+  logBase1Y=2,
+  description='TiDB failed query statistics with failing information',
+)
+.addTarget(
+  prometheus.target(
+    'increase(tidb_server_execute_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])',
+    legendFormat='{{type}} @ {{instance}}',
+  )
+);
+
+local internalSqlOpsP = graphPanel.new(
+  title='Internal SQL OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='The internal SQL is used by TiDB itself.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_session_restricted_sql_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s]))',
+    legendFormat='',
+  )
+);
+
+local queriesInMultiStmtP = graphPanel.new(
+  title='Queries In Multi-Statement',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='The number of queries contained in a multi-query statement per second.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_multi_query_num_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s]))/sum(rate(tidb_server_multi_query_num_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s]))',
+    legendFormat='avg',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_multi_query_num_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s]))',
+    legendFormat='sum',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -392,6 +504,18 @@ newDash
   .addPanel(duration99P, gridPos=rightPanelPos)
   .addPanel(duration95P, gridPos=leftPanelPos)
   .addPanel(duration80P, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  queryDetailRow
+  .addPanel(duration80ByInstP, gridPos=leftPanelPos)
+  .addPanel(duration95ByInstP, gridPos=rightPanelPos)
+  .addPanel(duration99ByInstP, gridPos=leftPanelPos)
+  .addPanel(duration999ByInstP, gridPos=rightPanelPos)
+  .addPanel(failedQueryOPMDetailP, gridPos=leftPanelPos)
+  .addPanel(internalSqlOpsP, gridPos=rightPanelPos)
+  .addPanel(queriesInMultiStmtP, gridPos=leftPanelPos)
   ,
   gridPos=rowPos
 )
