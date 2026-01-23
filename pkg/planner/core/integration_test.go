@@ -613,8 +613,8 @@ func TestScalarFunctionPushDown(t *testing.T) {
 		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where month(d);").
 			CheckAt([]int{0, 3, 6}, rows)
 
-		//rows[1][2] = "dayname(test.t.d)"
-		//tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayname(d);").
+		// rows[1][2] = "dayname(test.t.d)"
+		// tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayname(d);").
 		//	CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "dayofmonth(test.t.d)"
@@ -625,16 +625,16 @@ func TestScalarFunctionPushDown(t *testing.T) {
 		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where from_days(id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
-		//rows[1][2] = "last_day(test.t.d)"
-		//tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where last_day(d);").
+		// rows[1][2] = "last_day(test.t.d)"
+		// tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where last_day(d);").
 		//	CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "gt(4, test.t.id)"
 		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where pi() > id;").
 			CheckAt([]int{0, 3, 6}, rows)
 
-		//rows[1][2] = "truncate(test.t.id, 0)"
-		//tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where truncate(id,0)").
+		// rows[1][2] = "truncate(test.t.id, 0)"
+		// tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where truncate(id,0)").
 		//	CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "round(test.t.b)"
@@ -2475,9 +2475,9 @@ func TestNullReject(t *testing.T) {
 		q1 := "select 1 from chqin where  '2008-05-28' NOT IN(" +
 			"select a1.f1 from chqin a1 NATURAL RIGHT JOIN chqin2 a2 WHERE a2.f1  >= '1990-11-27' union select f1 from chqin where id=5)"
 		tk.MustQuery("explain format='plan_tree' " + q1).Check(testkit.Rows(
-			"Projection root  1->Column#14",
-			"└─HashJoin root  Null-aware anti semi join, left side:Projection, equal:[eq(Column#16, Column#13)]",
-			"  ├─HashAgg(Build) root  group by:Column#13, funcs:firstrow(Column#13)->Column#13",
+			"Projection root  1->Column",
+			"└─HashJoin root  Null-aware anti semi join, left side:Projection, equal:[eq(Column, Column)]",
+			"  ├─HashAgg(Build) root  group by:Column, funcs:firstrow(Column)->Column",
 			"  │ └─Union root  ",
 			"  │   ├─HashJoin root  right outer join, left side:TableReader, equal:[eq(test.chqin.id, test.chqin2.id) eq(test.chqin.f1, test.chqin2.f1)]",
 			"  │   │ ├─TableReader(Build) root  data:Selection",
@@ -2487,10 +2487,10 @@ func TestNullReject(t *testing.T) {
 			"  │   │   └─Selection cop[tikv]  ge(test.chqin2.f1, 1990-11-27 00:00:00.000000)",
 			"  │   │     └─TableFullScan cop[tikv] table:a2 keep order:false, stats:pseudo",
 			"  │   └─TableReader root  data:Projection",
-			"  │     └─Projection cop[tikv]  test.chqin.f1->Column#13",
+			"  │     └─Projection cop[tikv]  test.chqin.f1->Column",
 			"  │       └─Selection cop[tikv]  eq(test.chqin.id, 5)",
 			"  │         └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo",
-			"  └─Projection(Probe) root  2008-05-28 00:00:00.000000->Column#16",
+			"  └─Projection(Probe) root  2008-05-28 00:00:00.000000->Column",
 			"    └─TableReader root  data:TableFullScan",
 			"      └─TableFullScan cop[tikv] table:chqin keep order:false, stats:pseudo",
 		))
@@ -2512,7 +2512,7 @@ func TestNullReject(t *testing.T) {
 			"where ((subq_0.c_1) <> (subq_0.c_2)) or (true) order by c_0 desc limit 1)) is null))"
 		tk.MustQuery("explain format='plan_tree' " + q2).Check(testkit.Rows(
 			"Projection root  test.t0.c0, test.t1.c2, test.t1.c2",
-			"└─Selection root  isnull(eq(\"\", Column#12))",
+			"└─Selection root  isnull(eq(\"\", Column))",
 			"  └─Apply root  CARTESIAN left outer join, left side:HashJoin",
 			"    ├─HashJoin(Build) root  right outer join, left side:TableReader, equal:[eq(test.t1.c1, test.t0.c0)]",
 			"    │ ├─TableReader(Build) root  data:TableFullScan",
@@ -2520,7 +2520,7 @@ func TestNullReject(t *testing.T) {
 			"    │ └─TableReader(Probe) root  data:Selection",
 			"    │   └─Selection cop[tikv]  not(isnull(test.t1.c1))",
 			"    │     └─TableFullScan cop[tikv] table:ref_0 keep order:false, stats:pseudo",
-			"    └─Projection(Probe) root   n1`->Column#12",
+			"    └─Projection(Probe) root   n1`->Column",
 			"      └─Limit root  offset:0, count:1",
 			"        └─HashJoin root  left outer join, left side:Limit, equal:[eq(test.t2.c4, test.t2.c3)]",
 			"          ├─Limit(Build) root  offset:0, count:1",
@@ -2544,14 +2544,14 @@ func TestNullReject(t *testing.T) {
 		q3 := "SELECT * FROM t0 LEFT JOIN (SELECT NULL AS col_2 FROM t2) as subQuery1 ON true " +
 			"INNER JOIN t3 ON (((((CASE 1 WHEN subQuery1.col_2 THEN t3.c0 ELSE NULL END)) AND (((t0.c0))))) < 1)"
 		tk.MustQuery("explain format='plan_tree' " + q3).Check(testkit.Rows(
-			"Projection root  test.t0.c0, Column#5, test.t3.c0",
-			"└─HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column#5, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)",
+			"Projection root  test.t0.c0, Column, test.t3.c0",
+			"└─HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)",
 			"  ├─TableReader(Build) root  data:TableFullScan",
 			"  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
 			"  └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader",
 			"    ├─TableReader(Build) root  data:TableFullScan",
 			"    │ └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo",
-			"    └─Projection(Probe) root  <nil>->Column#5",
+			"    └─Projection(Probe) root  <nil>->Column",
 			"      └─TableReader root  data:TableFullScan",
 			"        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo",
 		))
