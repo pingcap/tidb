@@ -479,6 +479,439 @@ local queriesInMultiStmtP = graphPanel.new(
   )
 );
 
+// ============== Row: Server ==============
+local serverRow = row.new(collapse=true, title='Server');
+
+local tidbServerStatusP = graphPanel.new(
+  title='TiDB Server Status',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='none',
+  description='TiDB server status',
+)
+.addTarget(
+  prometheus.target(
+    'count(up{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} == 1)',
+    legendFormat='Up',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'count(up{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} == 0)',
+    legendFormat='Down',
+  )
+);
+
+local uptimeP = graphPanel.new(
+  title='Uptime',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='dtdurations',
+  logBase1Y=2,
+  description='TiDB uptime since last restart',
+)
+.addTarget(
+  prometheus.target(
+    '(time() - process_start_time_seconds{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"})',
+    legendFormat='{{instance}}',
+  )
+);
+
+local cpuUsageP = graphPanel.new(
+  title='CPU Usage',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='percentunit',
+  description='TiDB cpu usage calculated with process cpu running seconds',
+)
+.addTarget(
+  prometheus.target(
+    'irate(process_cpu_seconds_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}[30s])',
+    legendFormat='{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_maxprocs{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='quota-{{instance}}',
+  )
+);
+
+local memUsageP = graphPanel.new(
+  title='Memory Usage',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='bytes',
+  description='TiDB process rss memory usage. TiDB heap memory size in use',
+)
+.addTarget(
+  prometheus.target(
+    'process_resident_memory_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='process-{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_memory_classes_heap_objects_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} + go_memory_classes_heap_unused_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} + go_memory_classes_heap_released_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} + go_memory_classes_heap_free_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='HeapSys-{{instance}}',
+    hide=true,
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_memory_classes_heap_objects_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} + go_memory_classes_heap_unused_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='HeapInuse-{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_memory_classes_heap_objects_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='HeapAlloc-{{instance}}',
+    hide=true,
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_memory_classes_heap_released_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"} + go_memory_classes_heap_free_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='HeapIdle-{{instance}}',
+    hide=true,
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_memory_classes_heap_released_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='HeapReleased-{{instance}}',
+    hide=true,
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_gc_heap_goal_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}',
+    legendFormat='GCTrigger-{{instance}}',
+    hide=true,
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_memory_usage{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}',
+    legendFormat='{{module}}-{{type}}-{{instance}}',
+    hide=true,
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_memory_usage{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}) by (module, instance)',
+    legendFormat='{{module}}-{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_memory_quota_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='quota-{{instance}}',
+  )
+);
+
+local runtimeGcRateP = graphPanel.new(
+  title='Runtime GC Rate And GOMEMLIMIT',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'rate(go_gc_cycles_total_gc_cycles_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}[1m])',
+    legendFormat='gc-rate - {{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'go_gc_gomemlimit_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='gomemlimit - {{instance}}',
+  )
+);
+
+local openFdCountP = graphPanel.new(
+  title='Open FD Count',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB process opened file descriptors count',
+)
+.addTarget(
+  prometheus.target(
+    'process_open_fds{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='{{instance}}',
+  )
+);
+
+local connectionCountP = graphPanel.new(
+  title='Connection Count',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB current connection counts',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}} {{resource_group}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_connections{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"})',
+    legendFormat='total',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_tokens{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster"})',
+    legendFormat='active connections',
+  )
+);
+
+local eventsOpmP = graphPanel.new(
+  title='Events OPM',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB Server critical events total, including start/close/shutdown/hang etc',
+)
+.addTarget(
+  prometheus.target(
+    'increase(tidb_server_event_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[10m])',
+    legendFormat='{{instance}}-{{type}}',
+  )
+);
+
+local disconnectionCountP = graphPanel.new(
+  title='Disconnection Count',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB connection disconnected counts',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_disconnection_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (instance, result)',
+    legendFormat='{{instance}}-{{result}}',
+  )
+);
+
+local prepareStmtCountP = graphPanel.new(
+  title='Prepare Statement Count',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB instance prepare statements count',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_prepared_stmts{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_prepared_stmts{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"})',
+    legendFormat='total',
+  )
+);
+
+local goroutineCountP = graphPanel.new(
+  title='Goroutine Count',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB process current goroutines count',
+)
+.addTarget(
+  prometheus.target(
+    'go_sched_goroutines_goroutines{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job=~"tidb.*"}',
+    legendFormat='{{instance}}',
+  )
+);
+
+local panicCriticalErrorP = graphPanel.new(
+  title='Panic And Critial Error',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB instance critical errors count including panic etc',
+)
+.addTarget(
+  prometheus.target(
+    'increase(tidb_server_panic_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])',
+    legendFormat='panic-{{instance}}-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'increase(tidb_server_critical_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])',
+    legendFormat='critical-{{instance}}',
+  )
+);
+
+local keepAliveOpmP = graphPanel.new(
+  title='Keep Alive OPM',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB instance monitor average keep alive times',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_monitor_keep_alive_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (instance)',
+    legendFormat='{{instance}}',
+  )
+);
+
+local getTokenDurationP = graphPanel.new(
+  title='Get Token Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='µs',
+  description='Duration (us) for getting token, it should be small until concurrency limit is reached.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_get_token_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='99',
+  )
+);
+
+local timeJumpBackOpsP = graphPanel.new(
+  title='Time Jump Back OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB monitor time jump back count',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_monitor_time_jump_back_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (instance)',
+    legendFormat='{{instance}}',
+  )
+);
+
+local clientDataTrafficP = graphPanel.new(
+  title='Client Data Traffic',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='Bps',
+  description='Data traffic statistics between TiDB and the client.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_packet_io_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}-rate',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_packet_io_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (type)',
+    legendFormat='{{type}}-total',
+  )
+);
+
+local skipBinlogCountP = graphPanel.new(
+  title='Skip Binlog Count',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB instance critical errors count including panic etc',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_critical_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}',
+  )
+);
+
+local rcCheckTsWriteConflictP = graphPanel.new(
+  title='RCCheckTS WriteConflict Num',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='The number of WriteConflict errors caused by RCCheckTS',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_rc_check_ts_conflict_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local handshakeErrorOpsP = graphPanel.new(
+  title='Handshake Error OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB processing handshake error count',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_handshake_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (instance)',
+    legendFormat='{{instance}}',
+  )
+);
+
+local internalSessionsP = graphPanel.new(
+  title='Internal Sessions',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='The total count of internal sessions.',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_internal_sessions{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}',
+    legendFormat='{{instance}}',
+  )
+);
+
+local activeUsersP = graphPanel.new(
+  title='Active Users',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='The total count of active users.',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_active_users{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}',
+    legendFormat='{{instance}}',
+  )
+);
+
+local connPerTlsCipherP = graphPanel.new(
+  title='Connections Per TLS Cipher',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='Connections per TLS Cipher and instance',
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_server_tls_cipher{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}[1m])',
+    legendFormat='{{cipher}} - {{instance}}',
+  )
+);
+
+local connPerTlsVersionP = graphPanel.new(
+  title='Connections Per TLS Version',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='Connections per TLS version and instance',
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_server_tls_version{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", job="tidb"}[1m])',
+    legendFormat='{{version}} - {{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -516,6 +949,34 @@ newDash
   .addPanel(failedQueryOPMDetailP, gridPos=leftPanelPos)
   .addPanel(internalSqlOpsP, gridPos=rightPanelPos)
   .addPanel(queriesInMultiStmtP, gridPos=leftPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  serverRow
+  .addPanel(tidbServerStatusP, gridPos=leftPanelPos)
+  .addPanel(uptimeP, gridPos=rightPanelPos)
+  .addPanel(cpuUsageP, gridPos=leftPanelPos)
+  .addPanel(memUsageP, gridPos=rightPanelPos)
+  .addPanel(runtimeGcRateP, gridPos=leftPanelPos)
+  .addPanel(openFdCountP, gridPos=rightPanelPos)
+  .addPanel(connectionCountP, gridPos=leftPanelPos)
+  .addPanel(eventsOpmP, gridPos=rightPanelPos)
+  .addPanel(disconnectionCountP, gridPos=leftPanelPos)
+  .addPanel(prepareStmtCountP, gridPos=rightPanelPos)
+  .addPanel(goroutineCountP, gridPos=leftPanelPos)
+  .addPanel(panicCriticalErrorP, gridPos=rightPanelPos)
+  .addPanel(keepAliveOpmP, gridPos=leftPanelPos)
+  .addPanel(getTokenDurationP, gridPos=rightPanelPos)
+  .addPanel(timeJumpBackOpsP, gridPos=leftPanelPos)
+  .addPanel(clientDataTrafficP, gridPos=rightPanelPos)
+  .addPanel(skipBinlogCountP, gridPos=leftPanelPos)
+  .addPanel(rcCheckTsWriteConflictP, gridPos=rightPanelPos)
+  .addPanel(handshakeErrorOpsP, gridPos=leftPanelPos)
+  .addPanel(internalSessionsP, gridPos=rightPanelPos)
+  .addPanel(activeUsersP, gridPos=leftPanelPos)
+  .addPanel(connPerTlsCipherP, gridPos=rightPanelPos)
+  .addPanel(connPerTlsVersionP, gridPos=leftPanelPos)
   ,
   gridPos=rowPos
 )

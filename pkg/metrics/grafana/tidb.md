@@ -13,8 +13,8 @@ This document tracks the migration of `tidb.json` to `tidb.jsonnet`.
 | Row # | Row Name | Panels | Status | Commit |
 |-------|----------|--------|--------|--------|
 | 1 | Query Summary | 12 | ✅ Done | 47fc2affb1 |
-| 2 | Query Detail | 7 | ✅ Done | TBD |
-| 3 | Server | 23 | ⏳ Pending | - |
+| 2 | Query Detail | 7 | ✅ Done | 827cec6c41 |
+| 3 | Server | 23 | ✅ Done | TBD |
 | 4 | Transaction | 35 | ⏳ Pending | - |
 | 5 | Executor | 16 | ⏳ Pending | - |
 | 6 | Distsql | 8 | ⏳ Pending | - |
