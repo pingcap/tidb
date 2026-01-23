@@ -243,7 +243,7 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 					default:
 					}
 					log.Warn("failed to grant lease", zap.Error(grantErr))
-					tr.sleepRetryInterval(RegisterRetryInternal)
+					tr.sleepRetryInterval()
 					continue
 				}
 				tr.curLeaseID = lease.ID
@@ -266,7 +266,7 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 					default:
 					}
 					log.Warn("failed to put new kv", zap.Error(reputErr))
-					tr.sleepRetryInterval(RegisterRetryInternal)
+					tr.sleepRetryInterval()
 					continue
 				}
 				needReputKV = false
@@ -280,7 +280,7 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 				default:
 				}
 				log.Warn("failed to create new kv", zap.Error(err))
-				tr.sleepRetryInterval(RegisterRetryInternal)
+				tr.sleepRetryInterval()
 				continue
 			}
 
@@ -289,22 +289,12 @@ func (tr *taskRegister) keepaliveLoop(ctx context.Context, ch <-chan *clientv3.L
 	}
 }
 
-func (tr *taskRegister) sleepRetryInterval(defaultInterval time.Duration) {
-	interval := defaultInterval
+func (tr *taskRegister) sleepRetryInterval() {
+	interval := RegisterRetryInternal
 	failpoint.Inject("brie-task-register-retry-interval", func(val failpoint.Value) {
-		switch v := val.(type) {
-		case int:
-			if v > 0 {
-				interval = time.Duration(v) * time.Millisecond
-			}
-		case int64:
-			if v > 0 {
-				interval = time.Duration(v) * time.Millisecond
-			}
-		case float64:
-			if v > 0 {
-				interval = time.Duration(v) * time.Millisecond
-			}
+		v, ok := val.(int)
+		if ok && v > 0 {
+			interval = time.Duration(v) * time.Millisecond
 		}
 	})
 	time.Sleep(interval)
