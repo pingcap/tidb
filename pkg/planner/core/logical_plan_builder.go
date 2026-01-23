@@ -4578,7 +4578,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	allPaths := make([]*util.AccessPath, len(possiblePaths))
 	copy(allPaths, possiblePaths)
 
-	countCnt := len(columns) + 1 // +1 for an extra handle column
+	countCnt := len(columns) + 2 // +1 for an extra handle column and extra commit ts column
 	ds := logicalop.DataSource{
 		DBName:                 dbName,
 		TableAsName:            asName,
