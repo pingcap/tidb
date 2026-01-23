@@ -112,31 +112,37 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 
 // PushDownTopN implements base.LogicalPlan.<5th> interface.
 func (p *LogicalMemTable) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
-	if topNLogicalPlan == nil {
+	// TODO(lance6716): why don't change function signature to use *LogicalTopN directly?
+	topN, ok := topNLogicalPlan.(*LogicalTopN)
+	if !ok {
 		return p.Self()
 	}
-	topN := topNLogicalPlan.(*LogicalTopN)
 
-	if p.Extractor != nil &&
-		len(topN.PartitionBy) == 0 &&
-		(p.TableInfo.Name.O == infoschema.TableSlowQuery || p.TableInfo.Name.O == infoschema.ClusterTableSlowLog) {
-		switch {
-		case topN.IsLimit():
-			p.pushDownSlowLogLimit(topN)
-		case p.isSlowLogTimeTopN(topN):
-			p.pushDownSlowLogDesc(topN.ByItems[0].Desc)
-			p.pushDownSlowLogLimit(topN)
+	if len(topN.PartitionBy) > 0 {
+		return p.Self()
+	}
+
+	rowLimitSetter, okRowLimit := p.Extractor.(base.MemTableRowLimitHintSetter)
+	descSetter, okDesc := p.Extractor.(base.MemTableDescHintSetter)
+
+	switch {
+	case topN.IsLimit():
+		if okRowLimit {
+			p.pushDownSlowLogLimit(topN, rowLimitSetter)
+		}
+	case p.isSlowLogTopNByTime(topN):
+		if okDesc {
+			descSetter.SetDesc(topN.ByItems[0].Desc)
+		}
+		if okRowLimit {
+			p.pushDownSlowLogLimit(topN, rowLimitSetter)
 		}
 	}
 
 	return topN.AttachChild(p)
 }
 
-func (p *LogicalMemTable) pushDownSlowLogLimit(topN *LogicalTopN) {
-	limitSetter, ok := p.Extractor.(base.MemTableRowLimitHintSetter)
-	if !ok {
-		return
-	}
+func (*LogicalMemTable) pushDownSlowLogLimit(topN *LogicalTopN, limitSetter base.MemTableRowLimitHintSetter) {
 	end := topN.Offset + topN.Count
 	if end < topN.Offset {
 		end = ^uint64(0)
@@ -144,15 +150,7 @@ func (p *LogicalMemTable) pushDownSlowLogLimit(topN *LogicalTopN) {
 	limitSetter.SetRowLimitHint(end)
 }
 
-func (p *LogicalMemTable) pushDownSlowLogDesc(desc bool) {
-	descSetter, ok := p.Extractor.(base.MemTableDescHintSetter)
-	if !ok {
-		return
-	}
-	descSetter.SetDesc(desc)
-}
-
-func (p *LogicalMemTable) isSlowLogTimeTopN(topN *LogicalTopN) bool {
+func (p *LogicalMemTable) isSlowLogTopNByTime(topN *LogicalTopN) bool {
 	if len(topN.ByItems) != 1 {
 		return false
 	}
@@ -160,14 +158,13 @@ func (p *LogicalMemTable) isSlowLogTimeTopN(topN *LogicalTopN) bool {
 	if !ok {
 		return false
 	}
-	var timeColID int64
-	for _, column := range p.TableInfo.Columns {
-		if column.Name.O == variable.SlowLogTimeStr {
-			timeColID = column.ID
-			break
-		}
+	if p.TableInfo.Name.O != infoschema.TableSlowQuery &&
+		p.TableInfo.Name.O != infoschema.ClusterTableSlowLog {
+		return false
 	}
-	return timeColID != 0 && col.ID == timeColID
+	return slices.ContainsFunc(p.TableInfo.Columns, func(column *model.ColumnInfo) bool {
+		return column.Name.O == variable.SlowLogTimeStr && column.ID == col.ID
+	})
 }
 
 // DeriveTopN inherits BaseLogicalPlan.<6th> implementation.
