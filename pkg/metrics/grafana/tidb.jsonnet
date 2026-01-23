@@ -4586,6 +4586,34 @@ local ttlEventCountPerMinuteP = graphPanel.new(
   )
 );
 
+// ============== Row: Resource Manager ==============
+local resourceManagerRow = row.new(collapse=true, title='Resource Manager');
+
+local gOGCP = graphPanel.new(
+  title='GOGC',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_gogc{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}',
+  )
+);
+
+local emaCpuUsageP = graphPanel.new(
+  title='EMA CPU Usage',
+  datasource=myDS,
+  format='short',
+  description='exponential moving average of CPU Usage',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_rm_ema_cpu_usage{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4923,6 +4951,13 @@ newDash
   .addPanel(tableCountByTtlScheduleDelayP, gridPos=rightThirdPanelPos)
   .addPanel(ttlInsertDeleteRowsByDayP, gridPos=leftThirdPanelPos)
   .addPanel(ttlEventCountPerMinuteP, gridPos=midThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  resourceManagerRow
+  .addPanel(gOGCP, gridPos=leftPanelPos)
+  .addPanel(emaCpuUsageP, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 )
