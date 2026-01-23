@@ -4795,6 +4795,166 @@ local importNormalModeP = graphPanel.new(
   )
 );
 
+// ============== Row: Global Sort ==============
+local globalSortRow = row.new(collapse=true, title='Global Sort');
+
+local writeToCloudStorageDurationP = graphPanel.new(
+  title='Write To Cloud Storage Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='s',
+  description='Duration of writing to cloud storage',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_global_sort_write_to_cloud_storage_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_global_sort_write_to_cloud_storage_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_global_sort_write_to_cloud_storage_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-50',
+  )
+);
+
+local writeToCloudStorageRateP = graphPanel.new(
+  title='Write To Cloud Storage Rate',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='MiBs',
+  description='Rate of writing to cloud storage',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_global_sort_write_to_cloud_storage_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_global_sort_write_to_cloud_storage_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_global_sort_write_to_cloud_storage_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-50',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_global_sort_merge_sort_write_bytes{k8s_cluster="$k8s_cluster", tidb_cluster=~"$tidb_cluster"}[1m]))/1024.0/1024.0',
+    legendFormat='merge-sort',
+  )
+);
+
+local readFromCloudStorageDurationP = graphPanel.new(
+  title='Read From Cloud Storage Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='s',
+  description='Duration of reading from cloud storage',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_global_sort_read_from_cloud_storage_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_global_sort_read_from_cloud_storage_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_global_sort_read_from_cloud_storage_duration_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-50',
+  )
+);
+
+local readFromCloudStorageRateP = graphPanel.new(
+  title='Read From Cloud Storage Rate',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='MiBs',
+  description='Rate of reading from cloud storage',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_global_sort_read_from_cloud_storage_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_global_sort_read_from_cloud_storage_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_global_sort_read_from_cloud_storage_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='{{type}}-50',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_global_sort_merge_sort_read_bytes{k8s_cluster="$k8s_cluster", tidb_cluster=~"$tidb_cluster"}[1m]))/1024.0/1024.0',
+    legendFormat='merge-sort',
+  )
+);
+
+local ingestWorkerCountP = graphPanel.new(
+  title='Ingest Worker Count',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='none',
+  description='Working worker count of ingest',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_global_sort_ingest_worker_cnt{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}-{{type}}',
+  )
+);
+
+local activeParallelUploadWorkerCountP = graphPanel.new(
+  title='Active Parallel Upload Worker Count',
+  datasource=myDS,
+  description='Active parallel upload worker count, only valid for GCS now',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_global_sort_upload_worker_cnt{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -5157,6 +5317,17 @@ newDash
   .addPanel(deliveredKvCountP, gridPos=rightThirdPanelPos)
   .addPanel(dataReadEncodeDeliverAvgDurationP, gridPos=leftThirdPanelPos)
   .addPanel(importNormalModeP, gridPos=midThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  globalSortRow
+  .addPanel(writeToCloudStorageDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(writeToCloudStorageRateP, gridPos=midThirdPanelPos)
+  .addPanel(readFromCloudStorageDurationP, gridPos=rightThirdPanelPos)
+  .addPanel(readFromCloudStorageRateP, gridPos=leftThirdPanelPos)
+  .addPanel(ingestWorkerCountP, gridPos=midThirdPanelPos)
+  .addPanel(activeParallelUploadWorkerCountP, gridPos=rightThirdPanelPos)
   ,
   gridPos=rowPos
 )
