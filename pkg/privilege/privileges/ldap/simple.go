@@ -19,14 +19,13 @@ import (
 )
 
 type ldapSimplAuthImpl struct {
-	*ldapAuthImpl
+	*ldapAuthImplBuilder
 }
 
 // AuthLDAPSimple authenticates the user through LDAP Simple Bind
 // password is expected to be a nul-terminated string
 func (impl *ldapSimplAuthImpl) AuthLDAPSimple(userName string, dn string, password []byte) error {
-	impl.RLock()
-	defer impl.RUnlock()
+	ldapImpl := impl.ldapAuthImplBuilder.build()
 
 	if len(password) == 0 {
 		return errors.New("invalid password")
@@ -38,19 +37,19 @@ func (impl *ldapSimplAuthImpl) AuthLDAPSimple(userName string, dn string, passwo
 
 	var err error
 	if len(dn) == 0 {
-		dn, err = impl.searchUser(userName)
+		dn, err = ldapImpl.searchUser(userName)
 		if err != nil {
 			return err
 		}
 	} else {
-		dn = impl.canonicalizeDN(userName, dn)
+		dn = ldapImpl.canonicalizeDN(userName, dn)
 	}
 
-	ldapConn, err := impl.getConnection()
+	ldapConn, err := ldapImpl.getConnection()
 	if err != nil {
 		return errors.Wrap(err, "create LDAP connection")
 	}
-	defer impl.putConnection(ldapConn)
+	defer ldapImpl.putConnection(ldapConn)
 	err = ldapConn.Bind(dn, passwordStr)
 	if err != nil {
 		return errors.Wrap(err, "bind LDAP")
@@ -61,5 +60,5 @@ func (impl *ldapSimplAuthImpl) AuthLDAPSimple(userName string, dn string, passwo
 
 // LDAPSimpleAuthImpl is the implementation of authentication with LDAP clear text password
 var LDAPSimpleAuthImpl = &ldapSimplAuthImpl{
-	&ldapAuthImpl{},
+	&ldapAuthImplBuilder{},
 }
