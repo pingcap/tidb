@@ -128,7 +128,7 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.Lo
 
 func (d *ConflictDetector) makeEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) *edge {
 	e := &edge{
-		joinop:        joinop,
+		joinType:      joinop.JoinType,
 		leftVertexes:  leftVertexes,
 		rightVertexes: rightVertexes,
 		leftEdges:     leftEdges,
@@ -137,8 +137,8 @@ func (d *ConflictDetector) makeEdge(joinop *logicalop.LogicalJoin, leftVertexes,
 
 	// setup TES. Only consider EqualConditions and NAEQConditions.
 	// OtherConditions are not edges.
-	e.tes = d.calcTES(joinop.EqualConditions)
-	e.tes = e.tes.Union(d.calcTES(joinop.NAEQConditions))
+	e.tes = d.calcTES(expression.ScalarFuncs2Exprs(joinop.EqualConditions))
+	e.tes = e.tes.Union(d.calcTES(expression.ScalarFuncs2Exprs(joinop.NAEQConditions)))
 
 	// gjt todo: handle CrossProduct
 
@@ -183,7 +183,7 @@ func leftToRightRule(child *edge) *rule {
 	return rule
 }
 
-func (d *ConflictDetector) calcTES(conds []base.Expression) BitSet {
+func (d *ConflictDetector) calcTES(conds []expression.Expression) BitSet {
 	var res BitSet
 	for _, cond := range conds {
 		for _, node := range d.groupVertexes {
@@ -320,21 +320,24 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult) (*Node, 
 	}
 
 	var err error
-	var p *logicalop.LogicalJoin
+	var p base.LogicalPlan
+	var newJoin *logicalop.LogicalJoin
 	if numNonInnerEdges > 0 {
-		if p, err = makeNonInnerJoin(d.ctx, checkResult); err != nil {
+		if newJoin, err = makeNonInnerJoin(d.ctx, checkResult); err != nil {
 			return nil, err
 		}
 	}
 	if numInnerEdges > 0 {
-		if p, err = makeInnerJoin(d.ctx, checkResult, p); err != nil {
+		if p, err = makeInnerJoin(d.ctx, checkResult, newJoin); err != nil {
 			return nil, err
 		}
+	} else {
+		p = newJoin
 	}
 	if p == nil {
 		return nil, errors.New("failed to make join plan")
 	}
-	if _, _, err := p.RecursiveDeriveStats(); err != nil {
+	if _, _, err := p.RecursiveDeriveStats(nil); err != nil {
 		return nil, err
 	}
 	node1 := checkResult.node1
@@ -370,19 +373,20 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult) 
 	return join, nil
 }
 
-func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin) (*logicalop.LogicalJoin, error) {
+func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin) (base.LogicalPlan, error) {
 	if existingJoin != nil {
 		// Append selections to existing join
 		selection := logicalop.LogicalSelection{
 			Conditions: []expression.Expression{}, // gjt todo reserve space
 		}
 		for _, e := range checkResult.appliedInnerEdges {
-			selection.Conditions = append(selection.Conditions, e.eqConds...)
+			eqExprs := expression.ScalarFuncs2Exprs(e.eqConds)
+			selection.Conditions = append(selection.Conditions, eqExprs...)
 			selection.Conditions = append(selection.Conditions, e.nonEQConds...)
 		}
-		selection.Init(ctx, existingJoin.QueryBlockOffset())
-		selection.SetChildren(existingJoin)
-		return selection, nil
+		resSelection := selection.Init(ctx, existingJoin.QueryBlockOffset())
+		resSelection.SetChildren(existingJoin)
+		return resSelection, nil
 	}
 
 	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p)

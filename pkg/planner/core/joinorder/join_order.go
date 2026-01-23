@@ -4,6 +4,8 @@ import (
 	"cmp"
 	"maps"
 	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/cockroachdb/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -58,7 +60,7 @@ func (g *joinGroup) merge(other *joinGroup) {
 
 type vertexJoinMethodHint struct {
 	preferJoinMethod uint
-	hintInfo         *hint.PlanHint
+	hintInfo         *hint.PlanHints
 }
 
 func extractJoinGroup(p base.LogicalPlan) *joinGroup {
@@ -140,6 +142,10 @@ func makeSingleGroup(p base.LogicalPlan) *joinGroup {
 	}
 }
 
+func Optimize(p base.LogicalPlan) (base.LogicalPlan, error) {
+	return optimizeRecursive(p)
+}
+
 func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	if p == nil {
 		return nil, nil
@@ -176,13 +182,13 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 		}
 	}
 	// gjt todo set children?
-	if p, err = j.optimizeForJoinGroup(p.SCtx(), joinGroup); err != nil {
+	if p, err = optimizeForJoinGroup(p.SCtx(), joinGroup); err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func (j *JoinOrder) optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
+func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
 	useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
@@ -215,6 +221,10 @@ type joinOrderDP struct {
 }
 
 func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
+	panic("not implement yet")
+}
+
+func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
 	panic("not implement yet")
 }
 
@@ -254,12 +264,16 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return detector.MakeJoin(checkResult)
 	}
 
-	return buildLeadingTreeFromList(j.ctx, leadingHint, nodes, checker)
+	if leadingHint == nil || leadingHint.LeadingList == nil {
+		return nil, nodes, nil
+	}
+
+	return buildLeadingTreeFromList(j.ctx, leadingHint.LeadingList, nodes, checker)
 }
 
 func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	group := j.group
-	detector := newConflictDetector()
+	detector := newConflictDetector(j.ctx)
 	nodes, err := detector.Build(group)
 	if err != nil {
 		return nil, err
@@ -344,7 +358,7 @@ func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPl
 				resNodes = append(resNodes, cartesianNodes[i])
 				break
 			}
-			newJoin, err := newCartesianJoin(ctx, cartesianNodes[i].p, cartesianNodes[i+1].p)
+			newJoin, err := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p)
 			if err != nil {
 				return nil, err
 			}
@@ -357,9 +371,9 @@ func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPl
 }
 
 // gjt todo refactor these functions to avoid code duplication.
-func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
+func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
-	var leadingHintInfo *h.PlanHints
+	var leadingHintInfo *hint.PlanHints
 	hasDiffLeadingHint := false
 	if leadingHintNum > 0 {
 		leadingHintInfo = hintInfo[0]
@@ -417,15 +431,18 @@ func buildLeadingTreeFromList(
 		case *ast.LeadingList:
 			// recursively handle nested lists
 			var nestedJoin *Node
-			nestedJoin, remainingGroups, ok = buildLeadingTreeFromList(element, remainingGroups, checker)
-			if !ok {
+			nestedJoin, remainingGroups, err = buildLeadingTreeFromList(ctx, element, remainingGroups, checker)
+			if err != nil {
+				return nil, availableGroups, err
+			}
+			if nestedJoin == nil {
 				return nil, availableGroups, nil
 			}
 
 			if i == 0 {
 				currentJoin = nestedJoin
 			} else {
-				currentJoin, ok = checker(currentJoin, nestedJoin)
+				currentJoin, err = checker(currentJoin, nestedJoin)
 				if err != nil {
 					return nil, availableGroups, err
 				}
@@ -509,4 +526,14 @@ func findAndRemovePlanByAstHint(
 	}
 
 	return nil, plans, false
+}
+
+// extract the number x from 'sel_x'
+func extractSelectOffset(qbName string) int {
+	if strings.HasPrefix(qbName, "sel_") {
+		if offset, err := strconv.Atoi(qbName[4:]); err == nil {
+			return offset
+		}
+	}
+	return -1
 }
