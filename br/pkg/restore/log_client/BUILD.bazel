@@ -118,6 +118,7 @@ go_test(
         "//br/pkg/utils/consts",
         "//br/pkg/utils/iter",
         "//br/pkg/utiltest",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta/metadef",
