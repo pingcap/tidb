@@ -94,8 +94,12 @@ bin/br backup full --pd pd0:2379 --storage "s3://mybucket/full" \
     --parquet-only \
     --parquet-output "s3://mybucket/parquet"
 
-Note: `--export-parquet` and `--parquet-only` run the Parquet conversion
-synchronously via the TiKV backup RPC, so the command returns after the export completes.
+# Note: `--export-parquet` and `--parquet-only` run the Parquet conversion
+# synchronously via the TiKV backup RPC, so the command returns after the export completes.
+# Note: if `--parquet-output` is set, Parquet export is enabled automatically; if export is
+# enabled without an output, BR falls back to `--storage`.
+# Note: if the Parquet conversion fails, the command returns an error even though the SST
+# backup may have succeeded; you can retry with `--parquet-only`.
 
 # Drop database and restore!
 mysql -uroot -htidb -P4000 -E -e "DROP DATABASE test; SHOW DATABASES;" && \
