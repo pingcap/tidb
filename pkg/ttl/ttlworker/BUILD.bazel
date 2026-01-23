@@ -45,7 +45,6 @@ go_library(
         "//pkg/util/chunk",
         "//pkg/util/intest",
         "//pkg/util/logutil",
-        "//pkg/util/sqlescape",
         "//pkg/util/timeutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
