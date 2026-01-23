@@ -30,7 +30,7 @@ TICDC_BIN="./third_bin/cdc"
 TIFLASH_BIN_DEFAULT="./third_bin/tiflash"
 TICI_BIN_DEFAULT="./third_bin/tici-server"
 MINIO_BIN_DEFAULT="./third_bin/minio"
-MINIO_MC_BIN_DEFAULT="./third_bin/mc"
+MINIO_MC_BIN_DEFAULT=""
 
 # Variables to set data directories
 PD_DATA_DIR="./data/pd_data"
@@ -396,6 +396,33 @@ function wait_for_port_ready() {
     return 1
 }
 
+function prepare_tici_config() {
+    if [ -z "$TICI_META_CONFIG" ] || [ -z "$TICI_WORKER_CONFIG" ] || [ -z "$TIFLASH_CONFIG" ]; then
+        if [ -d "$TICI_CONFIG_DIR" ]; then
+            if [ -f "$TICI_CONFIG_DIR/env.sh" ]; then
+                source "$TICI_CONFIG_DIR/env.sh"
+            fi
+            if command -v envsubst >/dev/null 2>&1; then
+                if [ -f "$TICI_CONFIG_DIR/meta.toml.in" ]; then
+                    envsubst < "$TICI_CONFIG_DIR/meta.toml.in" > "$TICI_CONFIG_DIR/meta.toml"
+                    TICI_META_CONFIG="${TICI_META_CONFIG:-$TICI_CONFIG_DIR/meta.toml}"
+                fi
+                if [ -f "$TICI_CONFIG_DIR/worker.toml.in" ]; then
+                    envsubst < "$TICI_CONFIG_DIR/worker.toml.in" > "$TICI_CONFIG_DIR/worker.toml"
+                    TICI_WORKER_CONFIG="${TICI_WORKER_CONFIG:-$TICI_CONFIG_DIR/worker.toml}"
+                fi
+                if [ -f "$TICI_CONFIG_DIR/tiflash.toml.in" ]; then
+                    envsubst < "$TICI_CONFIG_DIR/tiflash.toml.in" > "$TICI_CONFIG_DIR/tiflash.toml"
+                    TIFLASH_CONFIG="${TIFLASH_CONFIG:-$TICI_CONFIG_DIR/tiflash.toml}"
+                fi
+            else
+                echo "envsubst not found; cannot render TiCI configs" >&2
+                exit 1
+            fi
+        fi
+    fi
+}
+
 function start_tici_server() {
     log_file=${1:-$TICI_LOG_FILE}
     local tici_bin
@@ -622,6 +649,7 @@ if [ ${#non_ticdc_cases[@]} -ne 0 ]; then
 fi
 
 if [ ${#tici_cases[@]} -ne 0 ]; then
+    prepare_tici_config
     start_minio
     start_tiflash_server
     start_tici_server
