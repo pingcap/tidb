@@ -13,6 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+if [ -z "${BASH_VERSION:-}" ]; then
+    exec bash "$0" "$@"
+fi
+
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+
 set -x
 
 # Variables to set paths for each server binary
@@ -23,8 +29,8 @@ DUMPLING_BIN="./third_bin/dumpling"
 TICDC_BIN="./third_bin/cdc"
 TIFLASH_BIN_DEFAULT="./third_bin/tiflash"
 TICI_BIN_DEFAULT="./third_bin/tici-server"
-MINIO_BIN_DEFAULT="minio"
-MINIO_MC_BIN_DEFAULT="mc"
+MINIO_BIN_DEFAULT="./third_bin/minio"
+MINIO_MC_BIN_DEFAULT="./third_bin/mc"
 
 # Variables to set data directories
 PD_DATA_DIR="./data/pd_data"
@@ -74,7 +80,13 @@ TICI_BIN="${TICI_BIN:-$TICI_BIN_DEFAULT}"
 MINIO_BIN="${MINIO_BIN:-$MINIO_BIN_DEFAULT}"
 MINIO_MC_BIN="${MINIO_MC_BIN:-$MINIO_MC_BIN_DEFAULT}"
 TIFLASH_BIN="${TIFLASH_BIN:-$TIFLASH_BIN_DEFAULT}"
+TIKV_CONFIG="${TIKV_CONFIG:-}"
 TICI_ARGS="${TICI_ARGS:-}"
+TICI_META_CONFIG="${TICI_META_CONFIG:-}"
+TICI_WORKER_CONFIG="${TICI_WORKER_CONFIG:-}"
+TICI_META_ARGS="${TICI_META_ARGS:-$TICI_ARGS}"
+TICI_WORKER_ARGS="${TICI_WORKER_ARGS:-$TICI_ARGS}"
+TIFLASH_CONFIG="${TIFLASH_CONFIG:-}"
 MINIO_PORT="${MINIO_PORT:-9000}"
 MINIO_ACCESS_KEY="${MINIO_ACCESS_KEY:-minioadmin}"
 MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
@@ -83,6 +95,17 @@ MINIO_PREFIX="${MINIO_PREFIX:-tici_default_prefix/cdc}"
 MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_PORT}}"
 TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true"
 TICDC_S3_SINK_URI="${TICDC_S3_SINK_URI:-$TICDC_S3_SINK_URI_DEFAULT}"
+TICI_CONFIG_DIR="${TICI_CONFIG_DIR:-$SCRIPT_DIR/tici/config}"
+
+if [ -d "$TIFLASH_BIN" ] && [ -x "$TIFLASH_BIN/tiflash" ]; then
+    TIFLASH_BIN="$TIFLASH_BIN/tiflash"
+fi
+if [ ! -x "$TICDC_BIN" ] && [ -x "./third_bin/ticdc" ]; then
+    TICDC_BIN="./third_bin/ticdc"
+fi
+if [ -z "$TIKV_CONFIG" ] && [ -f "$SCRIPT_DIR/tikv.toml" ]; then
+    TIKV_CONFIG="$SCRIPT_DIR/tikv.toml"
+fi
 
 function help_message()
 {
@@ -106,8 +129,13 @@ function help_message()
                     Run all tests if this option is not provided.
 
     tici/minio settings (env vars):
-      TICI_BIN, TICI_ARGS, MINIO_BIN, MINIO_MC_BIN, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
+      TICI_BIN, TICI_META_CONFIG, TICI_WORKER_CONFIG, TICI_META_ARGS, TICI_WORKER_ARGS,
+      MINIO_BIN, MINIO_MC_BIN, MINIO_PORT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY,
       MINIO_BUCKET, MINIO_PREFIX, MINIO_ENDPOINT, TICDC_S3_SINK_URI
+    tiflash settings (env vars):
+      TIFLASH_BIN, TIFLASH_CONFIG
+    tidb settings (env vars):
+      TIDB_PORT (fixed upstream port; must be free)
 
 "
 }
@@ -285,12 +313,22 @@ start_tikv_server() {
 	echo "Starting TiKV server..."
     mkdir -p $data_dir
 
-	$TIKV_BIN --pd="http://127.0.0.1:$pd_client_port" \
-        --addr="127.0.0.1:$tikv_port" \
-        --advertise-addr="127.0.0.1:$tikv_port" \
-        --status-addr="127.0.0.1:$tikv_status_port" \
-		--data-dir="$data_dir" \
-		--log-file="$log_dir" &
+	if [ -n "$TIKV_CONFIG" ]; then
+        $TIKV_BIN --config="$TIKV_CONFIG" \
+            --pd="http://127.0.0.1:$pd_client_port" \
+            --addr="127.0.0.1:$tikv_port" \
+            --advertise-addr="127.0.0.1:$tikv_port" \
+            --status-addr="127.0.0.1:$tikv_status_port" \
+            --data-dir="$data_dir" \
+            --log-file="$log_dir" &
+    else
+        $TIKV_BIN --pd="http://127.0.0.1:$pd_client_port" \
+            --addr="127.0.0.1:$tikv_port" \
+            --advertise-addr="127.0.0.1:$tikv_port" \
+            --status-addr="127.0.0.1:$tikv_status_port" \
+            --data-dir="$data_dir" \
+            --log-file="$log_dir" &
+    fi
     sleep 5  # Wait for TiKV to connect to PD
 }
 
@@ -305,7 +343,11 @@ start_tiflash_server() {
 
     echo "Starting TiFlash server..."
     mkdir -p $TIFLASH_DATA_DIR
-    $tiflash_bin --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log &
+    if [ -n "$TIFLASH_CONFIG" ]; then
+        $tiflash_bin --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log --config-file="$TIFLASH_CONFIG" &
+    else
+        $tiflash_bin --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log &
+    fi
 
     sleep 5  # Wait for TiFlash to connect
 }
@@ -328,6 +370,32 @@ function start_tidb_server()
     echo "tidb-server(PID: $SERVER_PID) started, port: $tidb_port"
 }
 
+function wait_for_port_ready() {
+    local host=$1
+    local port=$2
+    local label=$3
+    local log_file=$4
+    local timeout=${5:-60}
+    local deadline=$((SECONDS + timeout))
+
+    while [ $SECONDS -lt $deadline ]; do
+        if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
+            exec 3>&-
+            echo "$label is reachable at $host:$port"
+            return 0
+        fi
+        sleep 1
+    done
+
+    echo "$label did not become ready within ${timeout}s"
+    if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+        echo "=== tail $log_file ==="
+        tail -n 50 "$log_file" || true
+        echo "=== end ==="
+    fi
+    return 1
+}
+
 function start_tici_server() {
     log_file=${1:-$TICI_LOG_FILE}
     local tici_bin
@@ -337,10 +405,20 @@ function start_tici_server() {
         exit 1
     }
 
-    echo "Starting tici..."
-    $tici_bin $TICI_ARGS > "$log_file" 2>&1 &
-    TICI_PID=$!
-    echo "tici(PID: $TICI_PID) started"
+    if [ -z "$TICI_META_CONFIG" ] || [ -z "$TICI_WORKER_CONFIG" ]; then
+        echo "tici meta/worker config is required: TICI_META_CONFIG, TICI_WORKER_CONFIG" >&2
+        exit 1
+    fi
+
+    echo "Starting tici meta..."
+    $tici_bin meta --config "$TICI_META_CONFIG" $TICI_META_ARGS > "$log_file" 2>&1 &
+    TICI_META_PID=$!
+    echo "tici-meta(PID: $TICI_META_PID) started"
+
+    echo "Starting tici worker..."
+    $tici_bin worker --config "$TICI_WORKER_CONFIG" $TICI_WORKER_ARGS >> "$log_file" 2>&1 &
+    TICI_WORKER_PID=$!
+    echo "tici-worker(PID: $TICI_WORKER_PID) started"
 }
 
 function start_minio() {
@@ -353,6 +431,11 @@ function start_minio() {
     }
     mc_bin=$(resolve_bin "$MINIO_MC_BIN" || true)
 
+    if lsof -i ":$MINIO_PORT" &> /dev/null; then
+        echo "MinIO port $MINIO_PORT already in use; assuming MinIO is running"
+        return 0
+    fi
+
     echo "Starting MinIO server..."
     mkdir -p "$MINIO_DATA_DIR/$MINIO_BUCKET"
     export MINIO_ROOT_USER="$MINIO_ACCESS_KEY"
@@ -360,12 +443,16 @@ function start_minio() {
     "$minio_bin" server "$MINIO_DATA_DIR" --address ":$MINIO_PORT" > "$MINIO_LOG_FILE" 2>&1 &
     MINIO_PID=$!
 
-    for i in {1..10}; do
-        if curl -s "http://127.0.0.1:$MINIO_PORT/minio/health/ready" | grep -q "OK"; then
-            echo "MinIO is up"
+    for i in {1..60}; do
+        if (exec 3<>"/dev/tcp/127.0.0.1/$MINIO_PORT") 2>/dev/null; then
+            exec 3>&-
+            echo "MinIO is up (port $MINIO_PORT reachable)"
             if [ -n "$mc_bin" ]; then
-                "$mc_bin" alias set localminio "http://127.0.0.1:$MINIO_PORT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
-                "$mc_bin" mb --ignore-existing "localminio/$MINIO_BUCKET"
+                if "$mc_bin" alias set localminio "http://127.0.0.1:$MINIO_PORT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"; then
+                    "$mc_bin" mb --ignore-existing "localminio/$MINIO_BUCKET"
+                else
+                    echo "mc alias set failed; continuing without bucket creation"
+                fi
             else
                 echo "mc not found; skipping bucket creation"
             fi
@@ -374,7 +461,8 @@ function start_minio() {
         sleep 1
     done
 
-    echo "MinIO failed to start"
+    echo "MinIO failed to start; tailing log:"
+    tail -n 50 "$MINIO_LOG_FILE" || true
     return 1
 }
 
@@ -425,7 +513,15 @@ function start_tidb_cluster()
 	tikv_status_port=${ports[1]}
 	start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR $TIKV_LOG_FILE
 
-    tidb_port=$(find_available_port 4000)
+    if [ -n "${TIDB_PORT:-}" ]; then
+        if lsof -i :"${TIDB_PORT}" &> /dev/null; then
+            echo "Error: TIDB_PORT ${TIDB_PORT} is in use." >&2
+            exit 1
+        fi
+        tidb_port="${TIDB_PORT}"
+    else
+        tidb_port=$(find_available_port 4000)
+    fi
     UPSTREAM_PORT=$tidb_port
 	tidb_status_port=$(find_available_port 10080)
 	start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE
@@ -478,6 +574,8 @@ function run_mysql_tester()
 }
 
 start_tidb_cluster
+wait_for_port_ready "127.0.0.1" "$UPSTREAM_PORT" "TiDB upstream" "$TIDB_LOG_FILE" 120 || exit 1
+wait_for_port_ready "127.0.0.1" "$DOWNSTREAM_PORT" "TiDB downstream" "$TIDB_LOG_FILE2" 120 || exit 1
 
 if [ $record -eq 1 ]; then
     if [ "$record_case" = 'all' ]; then
@@ -526,6 +624,7 @@ fi
 if [ ${#tici_cases[@]} -ne 0 ]; then
     start_minio
     start_tiflash_server
+    start_tici_server
 fi
 
 if [ ${#ticdc_cases[@]} -ne 0 ] || [ ${#tici_cases[@]} -ne 0 ]; then
@@ -538,7 +637,6 @@ if [ ${#ticdc_cases[@]} -ne 0 ] || [ ${#tici_cases[@]} -ne 0 ]; then
     fi
     if [ ${#tici_cases[@]} -ne 0 ]; then
         create_ticdc_changefeed $ticdc_port "$TICDC_S3_SINK_URI" "tici-replication-task"
-        start_tici_server
     fi
 fi
 

@@ -1,0 +1,13 @@
+[tidb-server]
+dsns = ["mysql://root@localhost:${TIDB_PORT}"]
+
+[s3]
+endpoint = "${S3_ENDPOINT}"
+region = "${S3_REGION}"
+access-key = "${S3_ACCESS_KEY}"
+secret-key = "${S3_SECRET_KEY}"
+use-path-style = ${S3_USE_PATH_STYLE}
+bucket = "${S3_BUCKET}"
+
+[shard]
+max-size = "128MB"
