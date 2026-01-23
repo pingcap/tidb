@@ -200,6 +200,7 @@ select 7;`
 		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
 
+	executor.DashboardSlowLogReadBlockCnt4Test = 0
 	// 2020-02-16T00:00:00.000000+08:00
 	unixTimeStart := time.Date(2020, 2, 16, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
 	// 2020-02-17T00:00:00.000000+08:00

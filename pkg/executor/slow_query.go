@@ -230,9 +230,9 @@ func (e *slowQueryRetriever) getNextReader() (*bufio.Reader, error) {
 
 func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessionctx.Context) {
 	defer e.wg.Done()
-	batchSize := ParseSlowLogBatchSize
-	if e.limit > 0 && e.limit < uint64(batchSize) {
-		batchSize = int(e.limit)
+	batchSize := uint64(ParseSlowLogBatchSize)
+	if e.limit > 0 && e.limit < batchSize {
+		batchSize = e.limit
 	}
 	if e.extractor.Desc {
 		e.parseSlowLogReversed(ctx, sctx, batchSize)
@@ -322,10 +322,10 @@ type slowLogTask struct {
 
 type slowLogBlock []string
 
-func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([]string, error) {
+func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, batchSize uint64) ([]string, error) {
 	var line string
-	log := make([]string, 0, num)
-	for range num {
+	log := make([]string, 0, batchSize)
+	for range batchSize {
 		for {
 			if err := ctx.Err(); err != nil {
 				return nil, err
@@ -403,15 +403,16 @@ func newSlowLogReverseScanner(e *slowQueryRetriever, sctx sessionctx.Context) *s
 	return scanner
 }
 
+// DashboardSlowLogReadBlockCnt4Test is only used in tests
 var DashboardSlowLogReadBlockCnt4Test int
 
-func (s *slowLogReverseScanner) nextBatch(ctx context.Context, batchSize int) ([]string, error) {
+func (s *slowLogReverseScanner) nextBatch(ctx context.Context, batchSize uint64) ([]string, error) {
 	if s.finished {
 		return nil, nil
 	}
 
 	blocks := make([]slowLogBlock, 0, batchSize)
-	for len(blocks) < batchSize {
+	for uint64(len(blocks)) < batchSize {
 		block, err := s.nextBlock(ctx)
 		if err == io.EOF {
 			break
@@ -587,16 +588,16 @@ func (s *slowLogReverseScanner) loadCompressedBlocks(ctx context.Context, file *
 	}
 }
 
-type slowLogBatchGetter func(ctx context.Context, batchSize int) ([]string, error)
+type slowLogBatchGetter func(ctx context.Context, batchSize uint64) ([]string, error)
 
 func (e *slowQueryRetriever) parseSlowLog(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	reader *bufio.Reader,
-	batchSize int,
+	batchSize uint64,
 ) {
 	offset := offset{offset: 0, length: 0}
-	nextBatch := func(ctx context.Context, batchSize int) ([]string, error) {
+	nextBatch := func(ctx context.Context, batchSize uint64) ([]string, error) {
 		return e.getBatchLog(ctx, reader, &offset, batchSize)
 	}
 	afterBatch := func() {
@@ -606,7 +607,7 @@ func (e *slowQueryRetriever) parseSlowLog(
 	e.parseSlowLogByBatchGetter(ctx, sctx, batchSize, &offset, nextBatch, afterBatch)
 }
 
-func (e *slowQueryRetriever) parseSlowLogReversed(ctx context.Context, sctx sessionctx.Context, batchSize int) {
+func (e *slowQueryRetriever) parseSlowLogReversed(ctx context.Context, sctx sessionctx.Context, batchSize uint64) {
 	scanner := newSlowLogReverseScanner(e, sctx)
 	offset := offset{offset: 0, length: 0}
 	e.parseSlowLogByBatchGetter(ctx, sctx, batchSize, &offset, scanner.nextBatch, nil)
@@ -615,7 +616,7 @@ func (e *slowQueryRetriever) parseSlowLogReversed(ctx context.Context, sctx sess
 func (e *slowQueryRetriever) parseSlowLogByBatchGetter(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	batchSize int,
+	batchSize uint64,
 	off *offset,
 	nextBatch slowLogBatchGetter,
 	afterBatch func(),
@@ -690,7 +691,7 @@ func (e *slowQueryRetriever) parseSlowLogByBatchGetter(
 func (e *slowQueryRetriever) parseSlowLogByBatchGetterWithLimit(
 	ctx context.Context,
 	sctx sessionctx.Context,
-	batchSizeFromCaller int,
+	batchSizeFromCaller uint64,
 	off *offset,
 	nextBatch slowLogBatchGetter,
 	afterBatch func(),
@@ -699,7 +700,7 @@ func (e *slowQueryRetriever) parseSlowLogByBatchGetterWithLimit(
 	var produced uint64
 	for produced < target {
 		remaining := target - produced
-		batchSize := min(batchSizeFromCaller, int(remaining))
+		batchSize := min(batchSizeFromCaller, remaining)
 		startTime := time.Now()
 		log, err := nextBatch(ctx, batchSize)
 		if e.stats != nil {
