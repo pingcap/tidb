@@ -58,7 +58,7 @@ func WithTraceBuf(ctx context.Context, trace *TraceBuf) context.Context {
 	return tracing.WithTraceBuf(ctx, trace)
 }
 
-// GetTraceBuf returns the TraceBuf bind with this context.
+// GetTraceBuf returns the TraceBuf bound with this context.
 func GetTraceBuf(ctx context.Context) *TraceBuf {
 	val := tracing.GetTraceBuf(ctx)
 	if val == nil {
