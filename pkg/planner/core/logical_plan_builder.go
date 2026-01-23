@@ -458,13 +458,33 @@ func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSet
 			return nil, err
 		}
 
-		for _, name := range p.OutputNames() {
-			if name.Hidden {
-				continue
+		// Clone output names before modifying to avoid mutating shared structs
+		if x.AsName.L != "" {
+			clonedNames := make([]*types.FieldName, len(p.OutputNames()))
+			for i, name := range p.OutputNames() {
+				if name.Hidden {
+					clonedNames[i] = name
+					continue
+				}
+				// Clone the field name and update table name
+				// For derived tables (subqueries), clear DBName to avoid confusion with actual tables
+				// For base tables with aliases, preserve DBName for proper metadata and DEFAULT() resolution
+				dbName := ast.NewCIStr("")
+				if isTableName {
+					dbName = name.DBName
+				}
+				clonedNames[i] = &types.FieldName{
+					DBName:            dbName,
+					OrigTblName:       name.OrigTblName,
+					OrigColName:       name.OrigColName,
+					TblName:           x.AsName,
+					ColName:           name.ColName,
+					NotExplicitUsable: name.NotExplicitUsable,
+					Redundant:         name.Redundant,
+					Hidden:            name.Hidden,
+				}
 			}
-			if x.AsName.L != "" {
-				name.TblName = x.AsName
-			}
+			p.SetOutputNames(clonedNames)
 		}
 		// `TableName` is not a select block, so we do not need to handle it.
 		var plannerSelectBlockAsName []ast.HintTable
@@ -548,6 +568,25 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 	}
 }
 
+// containsLateralTableSource checks if a ResultSetNode contains a LATERAL table source.
+// This handles parenthesized forms like (LATERAL (...) AS dt) where the parser creates
+// nested Join nodes: Join{Right: Join{Left: TableSource{Lateral:true}}}
+func containsLateralTableSource(node ast.ResultSetNode) bool {
+	switch n := node.(type) {
+	case *ast.TableSource:
+		return n.Lateral
+	case *ast.Join:
+		// For parenthesized single table refs, the parser creates Join{Left: TableSource, Right: nil}
+		if n.Right == nil {
+			return containsLateralTableSource(n.Left)
+		}
+		// Check both sides for nested LATERAL
+		return containsLateralTableSource(n.Left) || containsLateralTableSource(n.Right)
+	default:
+		return false
+	}
+}
+
 func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.LogicalPlan, error) {
 	// We will construct a "Join" node for some statements like "INSERT",
 	// "DELETE", "UPDATE", "REPLACE". For this scenario "joinNode.Right" is nil
@@ -556,9 +595,18 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return b.buildResultSetNode(ctx, joinNode.Left, false)
 	}
 
+	// Check if right side is LATERAL
+	// Detect LATERAL - check if right side contains a LATERAL table source
+	// This handles both direct TableSource and parenthesized forms like (LATERAL (...) AS dt)
+	// When parenthesized, the parser creates: Join{Right: Join{Left: TableSource{Lateral:true}}}
+	isLateral := containsLateralTableSource(joinNode.Right)
+
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown
-	// Add join reorder flag regardless of inner join or outer join.
-	b.optFlag = b.optFlag | rule.FlagJoinReOrder
+	// Don't enable join reorder for LATERAL (similar to StraightJoin)
+	// LATERAL has order dependencies: right side can reference left side
+	if !isLateral {
+		b.optFlag = b.optFlag | rule.FlagJoinReOrder
+	}
 	b.optFlag |= rule.FlagPredicateSimplification
 	b.optFlag |= rule.FlagEmptySelectionEliminator
 
@@ -567,9 +615,39 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		return nil, err
 	}
 
+	// For LATERAL: Push left side schema onto outerSchemas stack
+	// This makes left-side columns visible when building right-side subquery
+	if isLateral {
+		// For USING/NATURAL joins, use FullSchema/FullNames which include redundant columns
+		// that were merged (e.g., both t1.a and t2.a from JOIN ... USING(a))
+		outerSchema := leftPlan.Schema()
+		outerNames := leftPlan.OutputNames()
+		if join, ok := leftPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+			outerSchema = join.FullSchema
+			outerNames = join.FullNames
+		}
+		b.outerSchemas = append(b.outerSchemas, outerSchema)
+		b.outerNames = append(b.outerNames, outerNames)
+		// Set flag to allow ORDER BY/LIMIT in LATERAL subqueries within recursive CTEs
+		saveBuildingLateral := b.buildingLateralSubquery
+		b.buildingLateralSubquery = true
+		// Use a single defer to ensure consistent cleanup in all paths (success and error)
+		defer func() {
+			b.outerSchemas = b.outerSchemas[:len(b.outerSchemas)-1]
+			b.outerNames = b.outerNames[:len(b.outerNames)-1]
+			b.buildingLateralSubquery = saveBuildingLateral
+		}()
+	}
+
 	rightPlan, err := b.buildResultSetNode(ctx, joinNode.Right, false)
+
 	if err != nil {
 		return nil, err
+	}
+
+	// For LATERAL: Build LogicalApply instead of LogicalJoin
+	if isLateral {
+		return b.buildLateralJoin(ctx, leftPlan, rightPlan, joinNode)
 	}
 
 	// The recursive part in CTE must not be on the right side of a LEFT JOIN.
@@ -610,7 +688,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		lFullSchema, rFullSchema *expression.Schema
 		lFullNames, rFullNames   types.NameSlice
 	)
+	// Check for LogicalJoin or LogicalApply (which embeds LogicalJoin)
+	// LogicalApply is used for LATERAL joins and correlated subqueries
 	if left, ok := leftPlan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+		lFullSchema = left.FullSchema
+		lFullNames = left.FullNames
+	} else if left, ok := leftPlan.(*logicalop.LogicalApply); ok && left.FullSchema != nil {
 		lFullSchema = left.FullSchema
 		lFullNames = left.FullNames
 	} else {
@@ -618,6 +701,9 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		lFullNames = leftPlan.OutputNames()
 	}
 	if right, ok := rightPlan.(*logicalop.LogicalJoin); ok && right.FullSchema != nil {
+		rFullSchema = right.FullSchema
+		rFullNames = right.FullNames
+	} else if right, ok := rightPlan.(*logicalop.LogicalApply); ok && right.FullSchema != nil {
 		rFullSchema = right.FullSchema
 		rFullNames = right.FullNames
 	} else {
@@ -687,6 +773,164 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 		joinPlan.AttachOnConds(onCondition)
 	}
 	return joinPlan, nil
+}
+
+// buildLateralJoin builds a LogicalApply for LATERAL derived tables.
+// LATERAL makes left-side columns available to the right-side subquery,
+// which is semantically equivalent to a correlated subquery.
+func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan base.LogicalPlan, joinNode *ast.Join) (base.LogicalPlan, error) {
+	// NATURAL JOIN and USING clauses are not supported with LATERAL derived tables.
+	// These clauses match columns by name between two tables, but LATERAL subqueries
+	// define their own output column names which typically don't match the left-side table.
+	if joinNode.NaturalJoin {
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("NATURAL JOIN is not supported with LATERAL")
+	}
+	if joinNode.Using != nil {
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("USING clause is not supported with LATERAL")
+	}
+
+	// Extract correlated columns from right side that reference left side
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, leftPlan.Schema())
+
+	// Determine join type based on AST
+	var joinType base.JoinType
+	switch joinNode.Tp {
+	case ast.LeftJoin:
+		joinType = base.LeftOuterJoin
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+	case ast.RightJoin:
+		// LATERAL cannot be on the preserved side of RIGHT JOIN
+		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("LATERAL cannot be used with RIGHT JOIN")
+	case ast.CrossJoin:
+		// CROSS JOIN with LATERAL becomes INNER JOIN semantics
+		joinType = base.InnerJoin
+	default:
+		joinType = base.InnerJoin
+	}
+
+	// Build LogicalApply (leveraging existing correlated subquery infrastructure)
+	// Note: We enable decorrelation optimization, which will attempt to convert the
+	// nested loop (LogicalApply) into a more efficient join when safe. The decorrelator
+	// is conservative and will only transform patterns it can prove are semantically equivalent.
+	// Complex cases (aggregates with correlation, non-deterministic functions, etc.) will
+	// remain as Apply and use nested loop execution.
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
+
+	ap := logicalop.LogicalApply{
+		LogicalJoin:   logicalop.LogicalJoin{JoinType: joinType},
+		CorCols:       corCols,
+		NoDecorrelate: false, // Allow decorrelation; optimizer will decide if safe
+		IsLateral:     true,  // Mark as LATERAL join to prevent unsafe elimination in PruneColumns
+	}.Init(b.ctx, b.getSelectOffset())
+
+	ap.SetChildren(leftPlan, rightPlan)
+	ap.SetSchema(expression.MergeSchema(leftPlan.Schema(), rightPlan.Schema()))
+
+	// CRITICAL FIX: After MergeSchema, update the Index values for right-side columns.
+	// MergeSchema clones columns but preserves their original Index values (positions in the
+	// original child schema). For LATERAL joins, when a projection above the Apply references
+	// a column from the right side, it uses the Column's Index field to determine which
+	// position to read from the input row. Without this fix, right-side columns would still
+	// have Index=0,1,... instead of their new positions (leftLen+0, leftLen+1, ...) in the
+	// merged schema, causing incorrect data to be read.
+	leftLen := leftPlan.Schema().Len()
+	for i := range rightPlan.Schema().Len() {
+		ap.Schema().Columns[leftLen+i].Index = leftLen + i
+	}
+
+	// Clone output names to avoid sharing FieldName structs that might be mutated later.
+	// Clear DBName for the right-side (derived table) outputs to prevent confusion with
+	// actual database tables. This is consistent with buildResultSetNode behavior for all
+	// aliased derived tables (see line ~470).
+	outputNames := make([]*types.FieldName, leftPlan.Schema().Len()+rightPlan.Schema().Len())
+	for i, name := range leftPlan.OutputNames() {
+		outputNames[i] = &types.FieldName{
+			DBName:            name.DBName,
+			OrigTblName:       name.OrigTblName,
+			OrigColName:       name.OrigColName,
+			TblName:           name.TblName,
+			ColName:           name.ColName,
+			NotExplicitUsable: name.NotExplicitUsable,
+			Redundant:         name.Redundant,
+			Hidden:            name.Hidden,
+		}
+	}
+	for i, name := range rightPlan.OutputNames() {
+		outputNames[leftPlan.Schema().Len()+i] = &types.FieldName{
+			DBName:            ast.NewCIStr(""), // Clear DBName for derived table
+			OrigTblName:       name.OrigTblName,
+			OrigColName:       name.OrigColName,
+			TblName:           name.TblName,
+			ColName:           name.ColName,
+			NotExplicitUsable: name.NotExplicitUsable,
+			Redundant:         name.Redundant,
+			Hidden:            name.Hidden,
+		}
+	}
+	ap.SetOutputNames(outputNames)
+
+	// Set FullSchema and FullNames for USING clause handling (consistent with buildJoin).
+	// Even though LATERAL typically doesn't use USING, LogicalApply extends LogicalJoin
+	// which has these fields, so we should set them for correctness.
+	var lFullSchema, rFullSchema *expression.Schema
+	var lFullNames, rFullNames types.NameSlice
+	if left, ok := leftPlan.(*logicalop.LogicalJoin); ok && left.FullSchema != nil {
+		lFullSchema = left.FullSchema
+		lFullNames = left.FullNames
+	} else {
+		lFullSchema = leftPlan.Schema()
+		lFullNames = leftPlan.OutputNames()
+	}
+	// For LATERAL, right side is always a derived table (never a LogicalJoin with FullSchema)
+	rFullSchema = rightPlan.Schema()
+	rFullNames = rightPlan.OutputNames()
+
+	ap.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+
+	// Clear NotNull flag for the inner side (right side) of FullSchema if it's a LEFT JOIN
+	// (consistent with buildJoin behavior at line 681-682)
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.FullSchema, lFullSchema.Len(), ap.FullSchema.Len())
+	}
+
+	ap.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	for _, lName := range lFullNames {
+		name := *lName
+		ap.FullNames = append(ap.FullNames, &name)
+	}
+	for _, rName := range rFullNames {
+		name := *rName
+		ap.FullNames = append(ap.FullNames, &name)
+	}
+
+	// Handle ON conditions if present
+	if joinNode.On != nil {
+		b.curClause = onClause
+		onExpr, newPlan, err := b.rewrite(ctx, joinNode.On.Expr, ap, nil, false)
+		if err != nil {
+			return nil, err
+		}
+		if newPlan != ap {
+			return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("ON condition contains subqueries")
+		}
+		onCondition := expression.SplitCNFItems(onExpr)
+		ap.AttachOnConds(onCondition)
+	}
+
+	// Reset nullability for outer joins
+	if joinType == base.LeftOuterJoin {
+		util.ResetNotNullFlag(ap.Schema(), leftPlan.Schema().Len(), ap.Schema().Len())
+	}
+
+	// Merge handle maps (copied from buildJoin)
+	handleMap1 := b.handleHelper.popMap()
+	handleMap2 := b.handleHelper.popMap()
+	b.handleHelper.mergeAndPush(handleMap1, handleMap2)
+
+	// Set join hints if any
+	ap.LogicalJoin.SetPreferredJoinTypeAndOrder(b.TableHints())
+
+	return ap, nil
 }
 
 // buildUsingClause eliminate the redundant columns and ordering columns based
@@ -3717,9 +3961,16 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 		b.popTableHints()
 	}()
 	if b.buildingRecursivePartForCTE {
-		if sel.Distinct || sel.OrderBy != nil || sel.Limit != nil {
-			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression")
+		// Check for DISTINCT
+		if sel.Distinct {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("SELECT DISTINCT in recursive query block of Common Table Expression")
 		}
+
+		// Check for ORDER BY and LIMIT - allow them only within LATERAL subqueries
+		if (sel.OrderBy != nil || sel.Limit != nil) && !b.buildingLateralSubquery {
+			return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs("ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)")
+		}
+
 		if sel.GroupBy != nil {
 			return nil, plannererrors.ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
@@ -4199,6 +4450,20 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 					limitEnd = x.Offset + x.Count
 				case *logicalop.LogicalTableDual:
 					// Beg and End will both be 0.
+				case *logicalop.LogicalSort:
+					// When there's ORDER BY + LIMIT, we get a LogicalSort wrapping a LogicalLimit
+					// Extract the limit from the child plan
+					if len(x.Children()) > 0 {
+						if limitChild, ok := x.Children()[0].(*logicalop.LogicalLimit); ok {
+							limitBeg = limitChild.Offset
+							limitEnd = limitChild.Offset + limitChild.Count
+						} else {
+							// Sort without Limit child - treat as no limit
+							hasLimit = false
+						}
+					} else {
+						hasLimit = false
+					}
 				default:
 					return nil, errors.Errorf("invalid type for limit plan: %v", cte.limitLP)
 				}
@@ -4220,8 +4485,8 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 			var p base.LogicalPlan
 			lp := logicalop.LogicalCTE{CteAsName: tn.Name, CteName: tn.Name, Cte: cte.cteClass, SeedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
-			prevSchema := cte.seedLP.Schema().Clone()
-			lp.SetSchema(getResultCTESchema(cte.seedLP.Schema(), b.ctx.GetSessionVars()))
+			prevSchema := cte.cteClass.SeedPartLogicalPlan.Schema().Clone()
+			lp.SetSchema(getResultCTESchema(cte.cteClass.SeedPartLogicalPlan.Schema(), b.ctx.GetSessionVars()))
 
 			// If current CTE query contain another CTE which 'containRecursiveForbiddenOperator' is true, current CTE 'containRecursiveForbiddenOperator' will be true
 			if b.buildingCTE {
@@ -7192,21 +7457,32 @@ func (b *PlanBuilder) buildRecursiveCTE(ctx context.Context, cte ast.ResultSetNo
 
 func (b *PlanBuilder) adjustCTEPlanOutputName(p base.LogicalPlan, def *ast.CommonTableExpression) (base.LogicalPlan, error) {
 	outPutNames := p.OutputNames()
-	for _, name := range outPutNames {
-		name.TblName = def.Name
-		if name.DBName.String() == "" {
-			name.DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	// Clone output names to avoid mutating shared structs (important for LATERAL subqueries)
+	clonedNames := make([]*types.FieldName, len(outPutNames))
+	for i, name := range outPutNames {
+		clonedNames[i] = &types.FieldName{
+			DBName:            name.DBName,
+			OrigTblName:       name.OrigTblName,
+			OrigColName:       name.OrigColName,
+			TblName:           def.Name, // Set to CTE name
+			ColName:           name.ColName,
+			NotExplicitUsable: name.NotExplicitUsable,
+			Redundant:         name.Redundant,
+			Hidden:            name.Hidden,
+		}
+		if clonedNames[i].DBName.String() == "" {
+			clonedNames[i].DBName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 		}
 	}
 	if len(def.ColNameList) > 0 {
-		if len(def.ColNameList) != len(p.OutputNames()) {
+		if len(def.ColNameList) != len(clonedNames) {
 			return nil, dbterror.ErrViewWrongList
 		}
 		for i, n := range def.ColNameList {
-			outPutNames[i].ColName = n
+			clonedNames[i].ColName = n
 		}
 	}
-	p.SetOutputNames(outPutNames)
+	p.SetOutputNames(clonedNames)
 	return p, nil
 }
 
@@ -7297,6 +7573,39 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 	return proj, nil
 }
 
+// getResultCTESchemaWithRecur creates the result schema for a recursive CTE by using
+// the wider/longer type from both seed and recursive parts. This is similar to how regular
+// UNION handles type inference. For example, if seed has ' ' (empty string - varchar(0)) and recur
+// has varchar(10), the result schema will use varchar(10) to prevent truncation.
+// Special case: if seed type is NULL, use the recursive part's type directly.
+func getResultCTESchemaWithRecur(seedSchema, recurSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
+	res := seedSchema.Clone()
+	for i, col := range res.Columns {
+		col.RetType = col.RetType.Clone()
+		col.UniqueID = svar.AllocPlanColumnID()
+		col.RetType.DelFlag(mysql.NotNullFlag)
+		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.
+		col.CleanHashCode()
+
+		// Use the wider/longer type from both seed and recur schemas
+		if i < len(recurSchema.Columns) {
+			recurTp := recurSchema.Columns[i].RetType
+			seedTp := col.RetType
+			// Special case: if seed type is NULL, use recursive type directly
+			// This handles cases like: WITH RECURSIVE cte AS (SELECT 1, NULL UNION ALL SELECT n+1, val FROM ...)
+			if seedTp.GetType() == mysql.TypeNull {
+				col.RetType = recurTp.Clone()
+			} else {
+				// Use unionJoinFieldType to get the wider/longer type that can hold both
+				widerTp := unionJoinFieldType(seedTp, recurTp)
+				col.RetType = widerTp.Clone()
+			}
+			col.RetType.DelFlag(mysql.NotNullFlag)
+		}
+	}
+	return res
+}
+
 // The recursive part/CTE's schema is nullable, and the UID should be unique.
 func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
 	res := seedSchema.Clone()
@@ -7308,4 +7617,53 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.CleanHashCode()
 	}
 	return res
+}
+
+// buildProjection4CTESeed creates a projection for the CTE seed part if any columns have NULL type.
+// This is needed when the seed has NULL literals that need to be cast to the proper type from the recursive part.
+// Returns the original seed if no projection is needed.
+func (b *PlanBuilder) buildProjection4CTESeed(seed, recur base.LogicalPlan) base.LogicalPlan {
+	if recur == nil {
+		return seed
+	}
+	if seed.Schema().Len() != recur.Schema().Len() {
+		return seed
+	}
+
+	// Check if any seed column has NULL type
+	needsProjection := false
+	for _, col := range seed.Schema().Columns {
+		if col.RetType.GetType() == mysql.TypeNull {
+			needsProjection = true
+			break
+		}
+	}
+	if !needsProjection {
+		return seed
+	}
+
+	// Build projection for seed, casting NULL columns to recur's type
+	exprs := make([]expression.Expression, len(seed.Schema().Columns))
+	resSchema := getResultCTESchemaWithRecur(seed.Schema(), recur.Schema(), b.ctx.GetSessionVars())
+
+	for i, col := range seed.Schema().Columns {
+		newCol := &expression.Column{
+			UniqueID: col.UniqueID,
+			RetType:  col.RetType,
+			Index:    i,
+		}
+		// If seed column is NULL type, cast to the target type from result schema
+		if col.RetType.GetType() == mysql.TypeNull && i < len(resSchema.Columns) {
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
+		} else if !resSchema.Columns[i].RetType.Equal(col.RetType) {
+			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
+		} else {
+			exprs[i] = newCol
+		}
+	}
+
+	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
+	proj.SetSchema(resSchema)
+	proj.SetChildren(seed)
+	return proj
 }

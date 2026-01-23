@@ -286,7 +286,7 @@ select 3, 0 from qn
 select * from qn;
 Error 1222 (21000): The used SELECT statements have a different number of columns
 with recursive cte1 as (select 1 union all (select 1 from cte1 limit 10)) select * from cte1;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
 with recursive qn as (select 123 as a union all select null from qn where a is not null) select * from qn;
 a
 123

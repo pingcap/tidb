@@ -36,6 +36,16 @@ import (
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
 func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
+	// LATERAL joins use LogicalApply and must not be reordered
+	// LogicalApply has execution order dependencies (outer drives inner)
+	if _, isApply := p.(*logicalop.LogicalApply); isApply {
+		return &joinGroupResult{
+			group:              []base.LogicalPlan{p},
+			joinOrderHintInfo:  nil,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+	}
+
 	joinMethodHintInfo := make(map[int]*joinMethodHint)
 	var (
 		group             []base.LogicalPlan
