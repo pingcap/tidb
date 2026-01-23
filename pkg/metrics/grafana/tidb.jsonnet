@@ -4089,6 +4089,137 @@ local batchReceiveAverageDurationP = graphPanel.new(
   )
 );
 
+// ============== Row: TopSQL ==============
+local topSqlRow = row.new(collapse=true, title='TopSQL');
+
+local ignoreEventPerMinuteP = graphPanel.new(
+  title='Ignore Event Per Minute',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_sort='current',
+  legend_sortDesc=true,
+  format='none',
+  description='TiDB TopSQL ignore event information ',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_topsql_ignored_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local reportDuration99P = graphPanel.new(
+  title='99 Report Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_sort='current',
+  legend_sortDesc=true,
+  format='s',
+  description='Durations for different TopSQL report types with 99 percent buckets',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_topsql_report_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", result="ok"}[5m])) by (le, type))',
+    legendFormat='{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tikv_resource_metering_report_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[5m])) by (le))',
+    legendFormat='tikv-record',
+  )
+);
+
+local reportDataCountPerMinuteP = graphPanel.new(
+  title='Report Data Count Per Minute',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_sort='current',
+  legend_sortDesc=true,
+  format='none',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_topsql_report_data_total_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, job)',
+    legendFormat='{{job}}-{{type}}',
+  )
+);
+
+local totalReportCountP = graphPanel.new(
+  title='Total Report Count',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_sort='current',
+  legend_sortDesc=true,
+  format='none',
+  description='Total TiDB/TiKV TopSQL report count.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_topsql_report_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (type, result)',
+    legendFormat='{{type}}-{{result}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_topsql_report_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, result)',
+    legendFormat='',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tikv_resource_metering_report_data_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="sent"}) by (type)',
+    legendFormat='tikv-{{type}}',
+  )
+);
+
+local cpuProfilingOpsP = graphPanel.new(
+  title='CPU Profiling OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_max=true,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_server_cpu_profile_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])',
+    legendFormat='{{instance}}',
+  )
+);
+
+local tikvStatTaskOpsP = graphPanel.new(
+  title='TiKV Stat Task OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_max=true,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'rate(tikv_resource_metering_stat_task_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])',
+    legendFormat='{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4393,6 +4524,17 @@ newDash
   .addPanel(batchClientUnavailableDurationP, gridPos=rightPanelPos)
   .addPanel(waitConnectionEstablishDurationP, gridPos=leftPanelPos)
   .addPanel(batchReceiveAverageDurationP, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  topSqlRow
+  .addPanel(ignoreEventPerMinuteP, gridPos=leftThirdPanelPos)
+  .addPanel(reportDuration99P, gridPos=midThirdPanelPos)
+  .addPanel(reportDataCountPerMinuteP, gridPos=rightThirdPanelPos)
+  .addPanel(totalReportCountP, gridPos=leftThirdPanelPos)
+  .addPanel(cpuProfilingOpsP, gridPos=midThirdPanelPos)
+  .addPanel(tikvStatTaskOpsP, gridPos=rightThirdPanelPos)
   ,
   gridPos=rowPos
 )
