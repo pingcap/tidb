@@ -39,6 +39,12 @@ func TestOuterToSemiJoin(tt *testing.T) {
 		// B.val=500 and 600 have no match in A.val.
 		tk.MustExec("INSERT INTO B VALUES (101, 1, 10, 1, 1), (102, 2, NULL, 2, NULL), (103, 5, 500, 5, 5), (104, NULL, 600, 6, 6)")
 
+		tk.MustExec("CREATE TABLE t1 (i INT NOT NULL)")
+		tk.MustExec("INSERT INTO t1 VALUES (0), (2), (3), (4)")
+		tk.MustExec("CREATE TABLE t2 (i INT NOT NULL)")
+		tk.MustExec("INSERT INTO t2 VALUES (0), (1), (3), (4)")
+		tk.MustExec("CREATE TABLE t3 (i INT NOT NULL)")
+		tk.MustExec("INSERT INTO t3 VALUES (0), (1), (2), (4)")
 		var input []string
 		var output []struct {
 			SQL    string
@@ -56,24 +62,5 @@ func TestOuterToSemiJoin(tt *testing.T) {
 			tk.MustQuery("EXPLAIN FORMAT='plan_tree' " + sql).Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery(sql).Check(testkit.Rows(output[i].Result...))
 		}
-	})
-}
-
-func TestOuterToSemiJoinNestedOuterJoinNullability(tt *testing.T) {
-	testkit.RunTestUnderCascades(tt, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2, t3")
-		tk.MustExec("CREATE TABLE t1 (i INT NOT NULL)")
-		tk.MustExec("INSERT INTO t1 VALUES (0), (2), (3), (4)")
-		tk.MustExec("CREATE TABLE t2 (i INT NOT NULL)")
-		tk.MustExec("INSERT INTO t2 VALUES (0), (1), (3), (4)")
-		tk.MustExec("CREATE TABLE t3 (i INT NOT NULL)")
-		tk.MustExec("INSERT INTO t3 VALUES (0), (1), (2), (4)")
-
-		sql := "SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN t3 ON t3.i = t2.i) ON t2.i = t1.i WHERE t3.i IS NULL"
-		tk.MustQuery(sql).Sort().Check(testkit.Rows(
-			"2 <nil> <nil>",
-			"3 3 <nil>",
-		))
 	})
 }
