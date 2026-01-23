@@ -2444,6 +2444,353 @@ local readReqTrafficP = graphPanel.new(
   )
 );
 
+// ============== Row: PD Client ==============
+local pdClientRow = row.new(collapse=true, title='PD Client');
+
+local pdClientCmdOpsP = graphPanel.new(
+  title='PD Client CMD OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='pd command count by type',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type!="tso"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local pdClientCmdDurationP = graphPanel.new(
+  title='PD Client CMD Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='pd client command durations by type within 99.9 percent buckets',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type!~"tso|tso_async_wait"}[1m])) by (le, type))',
+    legendFormat='999-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type!~"tso|tso_async_wait"}[1m])) by (le, type))',
+    legendFormat='99-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type!~"tso|tso_async_wait"}[1m])) by (le, type))',
+    legendFormat='90-{{type}}',
+  )
+);
+
+local pdClientCmdFailOpsP = graphPanel.new(
+  title='PD Client CMD Fail OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='pd client command fail count by type',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(pd_client_cmd_handle_failed_cmds_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local pdTsoOpsP = graphPanel.new(
+  title='PD TSO OPS',
+  datasource=myDS,
+  format='none',
+  description='The duration of a client calling GetTSAsync until received the TS result.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso"}[1m]))',
+    legendFormat='cmd',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(pd_client_request_handle_requests_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso"}[1m]))',
+    legendFormat='request',
+  )
+);
+
+local pdTsoWaitDurationP = graphPanel.new(
+  title='PD TSO Wait Duration',
+  datasource=myDS,
+  format='s',
+  description='The duration of a client starting to wait for the TS until received the TS result.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="wait"}[1m])) by (le))',
+    legendFormat='999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="wait"}[1m])) by (le))',
+    legendFormat='99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="wait"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(pd_client_cmd_handle_cmds_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="wait"}[1m])) / sum(rate(pd_client_cmd_handle_cmds_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="wait"}[1m]))',
+    legendFormat='avg',
+  )
+);
+
+local pdTsoRpcDurationP = graphPanel.new(
+  title='PD TSO RPC Duration',
+  datasource=myDS,
+  format='s',
+  description='The duration of a client sending TSO request until received the response.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9999, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso"}[1m])) by (le))',
+    legendFormat='9999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso"}[1m])) by (le))',
+    legendFormat='999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(pd_client_request_handle_requests_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso"}[1m])) by (le))',
+    legendFormat='99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(pd_client_request_handle_requests_duration_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso"}[1m])) / sum(rate(pd_client_request_handle_requests_duration_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso"}[1m]))',
+    legendFormat='avg',
+  )
+);
+
+local estimateTsoRttLatencyP = graphPanel.new(
+  title='Estimate TSO RTT Latency',
+  datasource=myDS,
+  format='s',
+  description='The estimated latency of TSO RPC calls that\'s used to adjust batching time for parallel RPC requests',
+)
+.addTarget(
+  prometheus.target(
+    'pd_client_request_estimate_tso_latency{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}-{{stream}}',
+  )
+);
+
+local asyncTsoDurationP = graphPanel.new(
+  title='Async TSO Duration',
+  datasource=myDS,
+  format='s',
+  description='The duration of the async TS until called the Wait function.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso_async_wait"}[1m])) by (le))',
+    legendFormat='999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso_async_wait"}[1m])) by (le))',
+    legendFormat='99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(pd_client_cmd_handle_cmds_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="tso_async_wait"}[1m])) by (le))',
+    legendFormat='90',
+  )
+);
+
+local requestForwardedStatusP = graphPanel.new(
+  title='Request Forwarded Status',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='It indicates if a request of PD client is forwarded by the PD follower',
+)
+.addTarget(
+  prometheus.target(
+    'pd_client_request_forwarded_status',
+    legendFormat='{{delegate}}-{{host}}',
+  )
+);
+
+local pdHttpRequestDurationP = graphPanel.new(
+  title='PD HTTP Request Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='The duration of a client sending one HTTP request to PD util received the response.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_server_pd_api_execution_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='999-all',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_pd_api_execution_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='99-all',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_server_pd_api_execution_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='90-all',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_server_pd_api_execution_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='999-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_pd_api_execution_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='99-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_server_pd_api_execution_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='90-{{type}}',
+  )
+);
+
+local pdHttpRequestOpsP = graphPanel.new(
+  title='PD HTTP Request OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='PD HTTP API request count per second.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_pd_api_request_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='all',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_pd_api_request_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local pdHttpRequestFailOpsP = graphPanel.new(
+  title='PD HTTP Request Fail OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='PD failed HTTP request count per second.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_pd_api_request_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", result!~"200.*"}[1m]))',
+    legendFormat='all',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_pd_api_request_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", result!~"200.*"}[1m])) by (type, result)',
+    legendFormat='{{type}} - {{result}}',
+  )
+);
+
+local staleRegionFromPdP = graphPanel.new(
+  title='Stale Region From PD',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='ops',
+  description='The stale regions from PD per second.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_stale_region_from_pd{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s]))',
+    legendFormat='all',
+  )
+);
+
+local circuitBreakerEventP = graphPanel.new(
+  title='Circuit Breaker Event',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(pd_client_request_circuit_breaker_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (name, event)',
+    legendFormat='{{name}}-{{event}}',
+  )
+);
+
+local tidbWaitTsoFutureDurationP = graphPanel.new(
+  title='TiDB Wait TSO Future Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='How long tidb side wait for tso future',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_tikvclient_ts_future_wait_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_tikvclient_ts_future_wait_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_tikvclient_ts_future_wait_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_ts_future_wait_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le) / sum(rate(tidb_tikvclient_ts_future_wait_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le)',
+    legendFormat='avg',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -2618,6 +2965,26 @@ newDash
   .addPanel(clientSideSlowScoreP, gridPos=leftThirdPanelPos)
   .addPanel(tikvSideSlowScoreP, gridPos=midThirdPanelPos)
   .addPanel(readReqTrafficP, gridPos=rightThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  pdClientRow
+  .addPanel(pdClientCmdOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(pdClientCmdDurationP, gridPos=midThirdPanelPos)
+  .addPanel(pdClientCmdFailOpsP, gridPos=rightThirdPanelPos)
+  .addPanel(pdTsoOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(pdTsoWaitDurationP, gridPos=midThirdPanelPos)
+  .addPanel(pdTsoRpcDurationP, gridPos=rightThirdPanelPos)
+  .addPanel(estimateTsoRttLatencyP, gridPos=leftThirdPanelPos)
+  .addPanel(asyncTsoDurationP, gridPos=midThirdPanelPos)
+  .addPanel(requestForwardedStatusP, gridPos=rightThirdPanelPos)
+  .addPanel(pdHttpRequestDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(pdHttpRequestOpsP, gridPos=midThirdPanelPos)
+  .addPanel(pdHttpRequestFailOpsP, gridPos=rightThirdPanelPos)
+  .addPanel(staleRegionFromPdP, gridPos=leftThirdPanelPos)
+  .addPanel(circuitBreakerEventP, gridPos=midThirdPanelPos)
+  .addPanel(tidbWaitTsoFutureDurationP, gridPos=rightThirdPanelPos)
   ,
   gridPos=rowPos
 )
