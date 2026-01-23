@@ -173,6 +173,7 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 	for i, col := range columns {
 		if col.ID == model.ExtraCommitTSID {
 			columns = slices.Delete(slices.Clone(columns), i, i+1)
+			break
 		}
 	}
 	rows := getCardinality(p, option.CostFlag)

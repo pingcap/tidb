@@ -642,6 +642,7 @@ func (p *PhysicalTableScan) GetScanRowSize() float64 {
 		for i, col := range cols {
 			if col.ID == model.ExtraCommitTSID {
 				cols = slices.Delete(slices.Clone(cols), i, i+1)
+				break
 			}
 		}
 		return cardinality.GetTableAvgRowSize(p.SCtx(), p.TblColHists, cols, p.StoreType, true)
