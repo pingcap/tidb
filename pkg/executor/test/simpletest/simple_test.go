@@ -798,3 +798,36 @@ func TestSelectWhereInvalidDSTTime(t *testing.T) {
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'",
 		"Warning 8179 Timestamp is not valid, since it is in Daylight Saving Time transition '{2025 3 30 2 30 0 0}' for time zone 'Europe/Amsterdam'"))
 }
+
+func TestFlushStatsDelta(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int)")
+
+	// Get table ID for later query.
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	// Insert some rows to generate stats delta.
+	tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5)")
+	tk.MustExec("flush stats_delta")
+	rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, rows, 1, "stats_meta should have entry for the table")
+	modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), modifyCnt, "modify_count should be 5 after inserting 5 rows and flushing")
+
+	// Insert 2 more rows and flush again.
+	tk.MustExec("insert into t values (6,6), (7,7)")
+	tk.MustExec("flush stats_delta")
+	rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
+	require.Len(t, rows, 1, "stats_meta should have entry for the table")
+	modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), modifyCnt, "modify_count should be 7 after inserting 2 more rows and flushing")
+
+	tk.MustGetErrMsg("flush stats_delta cluster", "FLUSH STATS_DELTA CLUSTER is not supported yet")
+}
