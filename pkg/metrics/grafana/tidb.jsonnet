@@ -1554,6 +1554,293 @@ local pipelinedFlushDurationP = graphPanel.new(
   )
 );
 
+// ============== Row: Executor ==============
+local executorRow = row.new(collapse=true, title='Executor');
+
+local parseDurationP = graphPanel.new(
+  title='Parse Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  description='The time cost of parsing SQL to AST',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_session_parse_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, sql_type))',
+    legendFormat='{{sql_type}}',
+  )
+);
+
+local compileDurationP = graphPanel.new(
+  title='Compile Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  description='The time cost of building the query plan',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_session_compile_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, sql_type))',
+    legendFormat='{{sql_type}}',
+  )
+);
+
+local executionDurationP = graphPanel.new(
+  title='Execution Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  description='The time cost of executing the SQL which does not include the time to get the results of the query.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_session_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, sql_type))',
+    legendFormat='{{sql_type}}',
+  )
+);
+
+local expensiveExecutorsOpsP = graphPanel.new(
+  title='Expensive Executors OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=10,
+  description='TiDB executors using more cpu and memory resources',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_expensive_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local planCacheOpsP = graphPanel.new(
+  title='Queries Using Plan Cache OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='TiDB plan cache hit total',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_plan_cache_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local planCacheMissOpsP = graphPanel.new(
+  title='Plan Cache Miss OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='TiDB plan cache miss total',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_plan_cache_miss_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local readFromTableCacheOpsP = graphPanel.new(
+  title='Read From Table Cache OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='TiDB read table cache hit total',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_read_from_tablecache_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='qps',
+  )
+);
+
+local planCacheMemUsageP = graphPanel.new(
+  title='Plan Cache Memory Usage',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='bytes',
+  description='Total memory usage of all prepared plan cache in a instance',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_plan_cache_instance_memory_usage{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}{{type}}',
+  )
+);
+
+local planCachePlanNumP = graphPanel.new(
+  title='Plan Cache Plan Num',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB prepared plan cache plan num',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_plan_cache_instance_plan_num_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}{{type}}',
+  )
+);
+
+local planCacheProcessDurationP = graphPanel.new(
+  title='Plan Cache Process Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  description='The time cost of Plan Cache Process',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_plan_cache_process_duration_seconds_sum{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", sql_type!="internal"}[1m])) by (le, type) / sum(rate(tidb_server_plan_cache_process_duration_seconds_count{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", sql_type!="internal"}[1m])) by (le, type)',
+    legendFormat='avg-{{type}}',
+  )
+);
+
+local mppCoordinatorCounterP = graphPanel.new(
+  title='Mpp Coordinator Counter',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='none',
+  description='Records Mpp coordinator related stats',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_mpp_coordinator_stats{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local mppCoordinatorLatencyP = graphPanel.new(
+  title='Mpp Coordinator Latency',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='ms',
+  description='Records Mpp coordinator related stats',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_executor_mpp_coordinator_latency_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='0.95-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.75, sum(rate(tidb_executor_mpp_coordinator_latency_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='0.75-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_executor_mpp_coordinator_latency_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='0.50-{{type}}',
+  )
+);
+
+local indexLookUpOpsP = graphPanel.new(
+  title='IndexLookUp OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='The OPS for IndexLookUp Executor or Cop tasks',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_expensive_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="IndexLookUpExecutor"}[1m]))',
+    legendFormat='executor-total',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_index_lookup_row_number_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="enable_index_lookup_push_down"}[1m]))',
+    legendFormat='executor-index-lookup-pushdown',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_index_lookup_cop_task_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"index_scan_.*"}[1m]))',
+    legendFormat='cop-task-index-scan-total',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_index_lookup_cop_task_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="index_scan_with_lookup_push_down"}[1m]))',
+    legendFormat='cop-task-index-scan-with-lookup-pushdown',
+  )
+);
+
+local indexLookUpDurationP = graphPanel.new(
+  title='IndexLookUp Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='s',
+  description='The time cost of executing the IndexLookUp executor',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_executor_index_lookup_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="enable_index_lookup_push_down"}[1m])) by (le))',
+    legendFormat='index-lookup-pushdown p80',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_executor_index_lookup_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="enable_index_lookup_push_down"}[1m])) by (le))',
+    legendFormat='index-lookup-pushdown p95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_executor_index_lookup_execute_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="enable_index_lookup_push_down"}[1m])) by (le))',
+    legendFormat='index-lookup-pushdown p99',
+  )
+);
+
+local indexLookUpRowsP = graphPanel.new(
+  title='IndexLookUp Rows',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  logBase1Y=2,
+  description='The processed rate of rows in IndexLookUp executor',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_index_lookup_rows{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='total',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_index_lookup_rows{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"normal"}[1m])) by (type)',
+    legendFormat='non_index_lookup_push_down',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_executor_index_lookup_rows{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"index_lookup_push_down_.*"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local indexLookUpRowNumP = graphPanel.new(
+  title='IndexLookUp Row Num With PushDown Enabled',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB row histogram bucket statistics in IndexLookUp PushDown executor. It includes both hit and miss rows.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_executor_index_lookup_row_number_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"enable_index_lookup_push_down"}[1m])) by (le)',
+    legendFormat='{{le}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -1659,6 +1946,27 @@ newDash
   .addPanel(pipelinedFlushKeysP, gridPos=leftPanelPos)
   .addPanel(pipelinedFlushSizeP, gridPos=rightPanelPos)
   .addPanel(pipelinedFlushDurationP, gridPos=leftPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  executorRow
+  .addPanel(parseDurationP, gridPos=leftPanelPos)
+  .addPanel(compileDurationP, gridPos=rightPanelPos)
+  .addPanel(executionDurationP, gridPos=leftPanelPos)
+  .addPanel(expensiveExecutorsOpsP, gridPos=rightPanelPos)
+  .addPanel(planCacheOpsP, gridPos=leftPanelPos)
+  .addPanel(planCacheMissOpsP, gridPos=rightPanelPos)
+  .addPanel(readFromTableCacheOpsP, gridPos=leftPanelPos)
+  .addPanel(planCacheMemUsageP, gridPos=rightPanelPos)
+  .addPanel(planCachePlanNumP, gridPos=leftPanelPos)
+  .addPanel(planCacheProcessDurationP, gridPos=rightPanelPos)
+  .addPanel(mppCoordinatorCounterP, gridPos=leftPanelPos)
+  .addPanel(mppCoordinatorLatencyP, gridPos=rightPanelPos)
+  .addPanel(indexLookUpOpsP, gridPos=leftPanelPos)
+  .addPanel(indexLookUpDurationP, gridPos=rightPanelPos)
+  .addPanel(indexLookUpRowsP, gridPos=leftPanelPos)
+  .addPanel(indexLookUpRowNumP, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 )
