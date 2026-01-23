@@ -82,10 +82,6 @@ type slowQueryRetriever struct {
 }
 
 func (e *slowQueryRetriever) retrieve(ctx context.Context, sctx sessionctx.Context) ([][]types.Datum, error) {
-	now := time.Now()
-	defer func() {
-		logutil.BgLogger().Info("lance test retrieve slow log done", zap.Duration("duration", time.Since(now)))
-	}()
 	if !e.initialized {
 		err := e.initialize(ctx, sctx)
 		if err != nil {
@@ -250,10 +246,6 @@ func (e *slowQueryRetriever) parseDataForSlowLog(ctx context.Context, sctx sessi
 }
 
 func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datum, error) {
-	now := time.Now()
-	defer func() {
-		logutil.BgLogger().Info("lance test data for slow log done", zap.Duration("duration", time.Since(now)))
-	}()
 	var (
 		task slowLogTask
 		ok   bool
@@ -261,19 +253,15 @@ func (e *slowQueryRetriever) dataForSlowLog(ctx context.Context) ([][]types.Datu
 	e.memConsume(-e.lastFetchSize)
 	e.lastFetchSize = 0
 	for {
-		now2 := time.Now()
 		select {
 		case task, ok = <-e.taskList:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
-		logutil.BgLogger().Info("lance test time spent waiting for task", zap.Duration("duration", time.Since(now2)))
 		if !ok {
 			return nil, nil
 		}
-		now3 := time.Now()
 		result := <-task.resultCh
-		logutil.BgLogger().Info("lance test time spent receiving result", zap.Duration("duration", time.Since(now3)))
 		rows, err := result.rows, result.err
 		if err != nil {
 			return nil, err
@@ -334,10 +322,6 @@ type slowLogTask struct {
 type slowLogBlock []string
 
 func (e *slowQueryRetriever) getBatchLog(ctx context.Context, reader *bufio.Reader, offset *offset, num int) ([][]string, error) {
-	now := time.Now()
-	defer func() {
-		logutil.BgLogger().Info("lance test get batch log done", zap.Duration("duration", time.Since(now)))
-	}()
 	var line string
 	log := make([]string, 0, num)
 	var err error
@@ -712,10 +696,6 @@ func (e *slowQueryRetriever) parseSlowLogReversedWithLimit(ctx context.Context, 
 }
 
 func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.Context, reader *bufio.Reader, logNum int) {
-	now := time.Now()
-	defer func() {
-		logutil.BgLogger().Info("lance test parse slow log done", zap.Duration("duration", time.Since(now)))
-	}()
 	defer close(e.taskList)
 	if e.limit > 0 {
 		e.parseSlowLogWithLimit(ctx, sctx, reader, logNum)
@@ -761,13 +741,11 @@ func (e *slowQueryRetriever) parseSlowLog(ctx context.Context, sctx sessionctx.C
 			t.resultCh = make(chan parsedSlowLog, 1)
 			start := offset
 			ch <- 1
-			now2 := time.Now()
 			select {
 			case <-ctx.Done():
 				return
 			case e.taskList <- t:
 			}
-			logutil.BgLogger().Info("lance test time spent sending task", zap.Duration("duration", time.Since(now2)))
 			e.wg.Add(1)
 			go func() {
 				defer e.wg.Done()
@@ -988,7 +966,6 @@ func (e *slowQueryRetriever) parseLog(ctx context.Context, sctx sessionctx.Conte
 	logSize := calculateLogSize(log)
 	defer e.memConsume(-logSize)
 	defer func() {
-		logutil.BgLogger().Info("lance test parse log done", zap.Duration("duration", time.Since(start)))
 		if r := recover(); r != nil {
 			err = util.GetRecoverError(r)
 			buf := make([]byte, 4096)
@@ -1290,8 +1267,6 @@ type logFile struct {
 
 // getAllFiles is used to get all slow-log needed to parse, it is exported for test.
 func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Context, logFilePath string) ([]logFile, error) {
-	now := time.Now()
-	logutil.BgLogger().Info("lance test enter getAllFiles")
 	totalFileNum := 0
 	if e.stats != nil {
 		startTime := time.Now()
@@ -1398,18 +1373,12 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			return nil, err
 		}
 	}
-	logutil.BgLogger().Info("lance test in getAllFiles after workFn", zap.Duration("duration", time.Since(now)))
 	// Sort by start time
 	slices.SortFunc(logFiles, func(i, j logFile) int {
 		return i.start.Compare(j.start)
 	})
 	// Assume no time range overlap in log files and remove unnecessary log files for compressed files.
 	var ret []logFile
-	logutil.BgLogger().Info(
-		"lance test in getAllFiles before filtering",
-		zap.Int("file_num", len(logFiles)),
-		zap.Any("e.checker.timeRanges", e.checker.timeRanges),
-	)
 	for i, file := range logFiles {
 		if i == len(logFiles)-1 || !file.compressed || !e.checker.enableTimeCheck {
 			ret = append(ret, file)
@@ -1429,10 +1398,6 @@ func (e *slowQueryRetriever) getAllFiles(ctx context.Context, sctx sessionctx.Co
 			ret = append(ret, file)
 		}
 	}
-	logutil.BgLogger().Info("lance test leave getAllFiles",
-		zap.Duration("duration", time.Since(now)),
-		zap.Int("totalFileNum", len(ret)),
-	)
 	return ret, err
 }
 

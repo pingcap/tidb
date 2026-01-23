@@ -825,17 +825,6 @@ func (b *executorBuilder) buildLimit(v *physicalop.PhysicalLimit) exec.Executor 
 	if b.err != nil {
 		return nil
 	}
-	if memTableReader, ok := childExec.(*MemTableReaderExec); ok {
-		if retriever, ok := memTableReader.retriever.(*slowQueryRetriever); ok {
-			end := v.Offset + v.Count
-			if end < v.Offset {
-				end = ^uint64(0)
-			}
-			if retriever.limit == 0 || end < retriever.limit {
-				retriever.limit = end
-			}
-		}
-	}
 	n := int(min(v.Count, uint64(b.ctx.GetSessionVars().MaxChunkSize)))
 	base := exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID(), childExec)
 	base.SetInitCap(n)
@@ -2603,6 +2592,7 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				},
 			}
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			extractor := v.Extractor.(*plannercore.SlowQueryExtractor)
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -2611,7 +2601,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				retriever: &slowQueryRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
-					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+					extractor:  extractor,
+					limit:      extractor.Limit,
 					memTracker: memTracker,
 				},
 			}

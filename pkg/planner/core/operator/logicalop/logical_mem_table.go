@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
 )
@@ -109,7 +110,65 @@ func (p *LogicalMemTable) PruneColumns(parentUsedCols []*expression.Column) (bas
 
 // BuildKeyInfo inherits BaseLogicalPlan.<4th> implementation.
 
-// PushDownTopN inherits BaseLogicalPlan.<5th> implementation.
+// PushDownTopN implements base.LogicalPlan.<5th> interface.
+func (p *LogicalMemTable) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.LogicalPlan {
+	if topNLogicalPlan == nil {
+		return p.Self()
+	}
+	topN := topNLogicalPlan.(*LogicalTopN)
+
+	if p.Extractor != nil &&
+		len(topN.PartitionBy) == 0 &&
+		(p.TableInfo.Name.O == infoschema.TableSlowQuery || p.TableInfo.Name.O == infoschema.ClusterTableSlowLog) {
+		switch {
+		case topN.IsLimit():
+			p.pushDownSlowLogLimit(topN)
+		case p.isSlowLogTimeTopN(topN):
+			p.pushDownSlowLogDesc(topN.ByItems[0].Desc)
+			p.pushDownSlowLogLimit(topN)
+		}
+	}
+
+	return topN.AttachChild(p)
+}
+
+func (p *LogicalMemTable) pushDownSlowLogLimit(topN *LogicalTopN) {
+	limitSetter, ok := p.Extractor.(base.MemTableRowLimitHintSetter)
+	if !ok {
+		return
+	}
+	end := topN.Offset + topN.Count
+	if end < topN.Offset {
+		end = ^uint64(0)
+	}
+	limitSetter.SetRowLimitHint(end)
+}
+
+func (p *LogicalMemTable) pushDownSlowLogDesc(desc bool) {
+	descSetter, ok := p.Extractor.(base.MemTableDescHintSetter)
+	if !ok {
+		return
+	}
+	descSetter.SetDesc(desc)
+}
+
+func (p *LogicalMemTable) isSlowLogTimeTopN(topN *LogicalTopN) bool {
+	if len(topN.ByItems) != 1 {
+		return false
+	}
+	col, ok := topN.ByItems[0].Expr.(*expression.Column)
+	if !ok {
+		return false
+	}
+	var timeColID int64
+	for _, column := range p.TableInfo.Columns {
+		if column.Name.O == variable.SlowLogTimeStr {
+			timeColID = column.ID
+			break
+		}
+	}
+	return timeColID != 0 && col.ID == timeColID
+}
 
 // DeriveTopN inherits BaseLogicalPlan.<6th> implementation.
 

@@ -38,8 +38,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -812,6 +814,49 @@ select 5;`
 	require.Equal(t, "2020-02-15 22:00:05.000000", t0)
 	require.Equal(t, "2020-02-15 21:00:05.000000", t1)
 	require.NoError(t, retriever.close())
+}
+
+func TestPBPlanBuilderPushDownLimitToSlowQueryRetriever(t *testing.T) {
+	data := infoschema.NewData()
+	schemaCacheSize := vardef.SchemaCacheSize.Load()
+	newISBuilder := infoschema.NewBuilder(nil, schemaCacheSize, nil, data, schemaCacheSize > 0)
+	err := newISBuilder.InitWithDBInfos(nil, nil, nil, 0)
+	require.NoError(t, err)
+	is := newISBuilder.Build(math.MaxUint64)
+	tbl, err := is.TableByName(context.Background(), metadef.InformationSchemaName, ast.NewCIStr(infoschema.ClusterTableSlowLog))
+	require.NoError(t, err)
+
+	pbCols := util.ColumnsToProto(tbl.Meta().Columns, tbl.Meta().PKIsHandle, false, false)
+	executors := []*tipb.Executor{
+		{
+			Tp: tipb.ExecType_TypeTableScan,
+			TblScan: &tipb.TableScan{
+				TableId: tbl.Meta().ID,
+				Columns: pbCols,
+				Desc:    true,
+			},
+		},
+		{
+			Tp: tipb.ExecType_TypeLimit,
+			Limit: &tipb.Limit{
+				Limit: 2,
+			},
+		},
+	}
+
+	sctx := mock.NewContext()
+	physicalPlan, err := plannercore.NewPBPlanBuilder(sctx, is, nil).Build(executors)
+	require.NoError(t, err)
+
+	execBuilder := NewMockExecutorBuilderForTest(sctx, is, nil)
+	executor := execBuilder.Build(physicalPlan)
+	limitExec, ok := executor.(*LimitExec)
+	require.True(t, ok)
+	memTableReader, ok := limitExec.AllChildren()[0].(*MemTableReaderExec)
+	require.True(t, ok)
+	retriever, ok := memTableReader.retriever.(*slowQueryRetriever)
+	require.True(t, ok)
+	require.Equal(t, uint64(2), retriever.limit)
 }
 
 func TestCancelParseSlowLog(t *testing.T) {
