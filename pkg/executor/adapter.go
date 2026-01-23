@@ -1228,11 +1228,27 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			continue
 		}
 
-		// acquire xlocks
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
 			return err1
 		}
+
+		if !a.Ctx.GetSessionVars().ForeignKeyCheckInSharedLock {
+			// When ForeignKeyCheckInSharedLock is false, lock all keys in exclusive mode
+			keys = txnCtx.CollectUnchangedKeysForXLock(keys)
+			keys = txnCtx.CollectUnchangedKeysForSLock(keys)
+			ex, err := tryLockKeys(e, keys, false)
+			if err != nil {
+				return err
+			}
+			if ex != nil {
+				e = ex
+				continue
+			}
+			return nil
+		}
+
+		// acquire xlocks
 		keys = txnCtx.CollectUnchangedKeysForXLock(keys)
 		if ex, err := tryLockKeys(e, keys, false); err != nil {
 			return err

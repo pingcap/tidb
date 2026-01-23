@@ -1612,6 +1612,9 @@ type SessionVars struct {
 	// ForeignKeyChecks indicates whether to enable foreign key constraint check.
 	ForeignKeyChecks bool
 
+	// ForeignKeyCheckInSharedLock indicates whether to use shared lock for foreign key check.
+	ForeignKeyCheckInSharedLock bool
+
 	// RangeMaxSize is the max memory limit for ranges. When the optimizer estimates that the memory usage of complete
 	// ranges would exceed the limit, it chooses less accurate ranges such as full range. 0 indicates that there is no
 	// memory limit for ranges.
