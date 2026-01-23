@@ -102,6 +102,11 @@ type PhysicalHashJoin struct {
 	// on the probe side, allowing ORDER BY ... LIMIT queries to avoid a sort operation.
 	KeepProbeOrder bool
 
+	// ExpectedCnt is the expected number of rows to be returned when KeepProbeOrder is true.
+	// This is used to optimize chunk sizes for ORDER BY ... LIMIT queries by using smaller
+	// chunks when the limit is small, reducing unnecessary row processing.
+	ExpectedCnt float64
+
 	// on which store the join executes.
 	StoreTp        kv.StoreType
 	MppShuffleJoin bool
@@ -201,6 +206,7 @@ func (p *PhysicalHashJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, er
 	cloned.Concurrency = p.Concurrency
 	cloned.UseOuterToBuild = p.UseOuterToBuild
 	cloned.KeepProbeOrder = p.KeepProbeOrder
+	cloned.ExpectedCnt = p.ExpectedCnt
 	for _, c := range p.EqualConditions {
 		cloned.EqualConditions = append(cloned.EqualConditions, c.Clone().(*expression.ScalarFunction))
 	}

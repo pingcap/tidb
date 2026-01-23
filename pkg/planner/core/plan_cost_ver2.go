@@ -701,7 +701,12 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 	buildRows := max(MinNumRows, getCardinality(build, option.CostFlag))
 	probeRows := getCardinality(probe, option.CostFlag)
 	buildRowSize := max(MinRowSize, getAvgRowSize(build.StatsInfo(), build.Schema().Columns))
-	tidbConcurrency := float64(p.Concurrency)
+	// For order-preserving hash join, probe uses single-threaded execution (concurrency=1)
+	// to maintain order from the probe side, so don't divide probe cost by full concurrency.
+	tidbProbeConcurrency := float64(p.Concurrency)
+	if p.KeepProbeOrder {
+		tidbProbeConcurrency = 1
+	}
 	mppConcurrency := float64(3) // TODO: remove this empirical value
 	cpuFactor := getTaskCPUFactorVer2(p, taskType)
 	memFactor := getTaskMemFactorVer2(p, taskType)
@@ -729,7 +734,7 @@ func getPlanCostVer24PhysicalHashJoin(pp base.PhysicalPlan, taskType property.Ta
 			10*3*cpuFactor.Value, // 10rows * 3func * cpuFactor
 			func() string { return fmt.Sprintf("cpu(10*3*%v)", cpuFactor) })
 		p.PlanCostVer2 = costusage.SumCostVer2(startCost, buildChildCost, probeChildCost, buildHashCost, buildFilterCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbConcurrency))
+			costusage.DivCostVer2(costusage.SumCostVer2(probeFilterCost, probeHashCost), tidbProbeConcurrency))
 	}
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model

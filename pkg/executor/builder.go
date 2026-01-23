@@ -1790,6 +1790,9 @@ func (b *executorBuilder) buildHashJoinV2FromChildExecs(leftExec, rightExec exec
 	} else if v.InnerChildIdx == 0 && !v.UseOuterToBuild {
 		e.HashJoinCtxV2.RightAsBuildSide = false
 	}
+	// Pass order-preserving hash join parameters
+	e.HashJoinCtxV2.KeepProbeOrder = v.KeepProbeOrder
+	e.HashJoinCtxV2.ExpectedCnt = v.ExpectedCnt
 
 	lhsTypes, rhsTypes := exec.RetTypes(leftExec), exec.RetTypes(rightExec)
 	joinedTypes := make([]*types.FieldType, 0, len(lhsTypes)+len(rhsTypes))

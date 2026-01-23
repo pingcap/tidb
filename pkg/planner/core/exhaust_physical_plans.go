@@ -108,36 +108,17 @@ func exhaustPhysicalPlans(lp base.LogicalPlan, prop *property.PhysicalProperty) 
 func getHashJoins(super base.LogicalPlan, prop *property.PhysicalProperty) (joins []base.PhysicalPlan, forced bool) {
 	ge, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 
-	// Check if we can preserve ordering from the probe side
-	// This allows ORDER BY ... LIMIT queries to avoid a sort when the probe side has an index
+	// Hash join cannot satisfy ORDER BY properties directly.
+	// Don't generate hash joins here when there's an ORDER BY requirement - the planner
+	// will try separately with empty property and add Sort on top if needed.
+	// This ensures hash join competes fairly with merge join (which can use sorted inputs).
+	if !prop.IsSortItemEmpty() {
+		return
+	}
+
+	// These variables are only used when keepProbeOrder is true, which is currently disabled.
 	keepProbeOrder := false
 	sortColsFromLeft := false
-	sortColsFromRight := false
-	if !prop.IsSortItemEmpty() {
-		_, _, leftSchema, rightSchema := getJoinChildStatsAndSchema(ge, super)
-		if leftSchema != nil && rightSchema != nil {
-			for _, item := range prop.SortItems {
-				if leftSchema.Contains(item.Col) {
-					sortColsFromLeft = true
-				}
-				if rightSchema.Contains(item.Col) {
-					sortColsFromRight = true
-				}
-			}
-			// Only enable order-preserving hash join if all sort columns come from exactly one side
-			if sortColsFromLeft && !sortColsFromRight {
-				keepProbeOrder = true
-			} else if sortColsFromRight && !sortColsFromLeft {
-				keepProbeOrder = true
-			}
-			// If sort columns come from both sides or neither, hash join cannot satisfy this ORDER BY.
-			// Don't return hash joins here - the planner will try separately with empty property
-			// and add Sort on top if needed. This ensures hash join still competes.
-			if !keepProbeOrder {
-				return
-			}
-		}
-	}
 
 	forceLeftToBuild := ((p.PreferJoinType & h.PreferLeftAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferRightAsHJProbe) > 0)
 	forceRightToBuild := ((p.PreferJoinType & h.PreferRightAsHJBuild) > 0) || ((p.PreferJoinType & h.PreferLeftAsHJProbe) > 0)
@@ -275,10 +256,13 @@ func getHashJoin(ge base.GroupExpression, p *logicalop.LogicalJoin, prop *proper
 	hashJoin := physicalop.NewPhysicalHashJoin(p, innerIdx, useOuterToBuild, p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), chReqProps...)
 	hashJoin.SetSchema(p.Schema())
 
-	// Set KeepProbeOrder and use single-threaded probing to maintain order
+	// Set KeepProbeOrder for order-preserving hash join.
+	// Note: We don't set Concurrency=1 here because we want full concurrency for the BUILD phase.
+	// Single-threaded PROBING is handled in the executor when KeepProbeOrder is true.
 	if keepProbeOrder {
 		hashJoin.KeepProbeOrder = true
-		hashJoin.Concurrency = 1
+		// Pass expected count for early termination optimization
+		hashJoin.ExpectedCnt = prop.ExpectedCnt
 	}
 
 	return hashJoin
