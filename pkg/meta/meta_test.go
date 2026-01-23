@@ -117,6 +117,71 @@ func TestPlacementPolicy(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestMaskingPolicy(t *testing.T) {
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+
+	defer func() {
+		err := store.Close()
+		require.NoError(t, err)
+	}()
+
+	txn, err := store.Begin()
+	require.NoError(t, err)
+
+	m := meta.NewMutator(txn)
+	policy := &model.MaskingPolicyInfo{
+		ID:           1,
+		Name:         ast.NewCIStr("mp1"),
+		DBName:       ast.NewCIStr("test"),
+		TableName:    ast.NewCIStr("t"),
+		TableID:      10,
+		ColumnName:   ast.NewCIStr("c"),
+		ColumnID:     11,
+		Expression:   "mask_full(c)",
+		Status:       model.MaskingPolicyStatusEnable,
+		FunctionType: model.MaskingPolicyFuncTypeFull,
+		CreatedBy:    "root@%",
+		State:        model.StatePublic,
+	}
+	err = m.CreateMaskingPolicy(policy)
+	require.NoError(t, err)
+	require.Equal(t, policy.ID, int64(1))
+
+	err = m.CreateMaskingPolicy(policy)
+	require.NotNil(t, err)
+
+	val, err := m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	policy.Expression = "mask_partial(c, 0, 2, '*')"
+	policy.Status = model.MaskingPolicyStatusDisable
+	err = m.UpdateMaskingPolicy(policy)
+	require.NoError(t, err)
+
+	val, err = m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+
+	ps, err := m.ListMaskingPolicies()
+	require.NoError(t, err)
+	require.Equal(t, []*model.MaskingPolicyInfo{policy}, ps)
+
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+
+	txn, err = store.Begin()
+	require.NoError(t, err)
+
+	m = meta.NewMutator(txn)
+	val, err = m.GetMaskingPolicy(1)
+	require.NoError(t, err)
+	require.Equal(t, policy, val)
+	err = txn.Commit(context.Background())
+	require.NoError(t, err)
+}
+
 func TestResourceGroup(t *testing.T) {
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)

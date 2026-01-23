@@ -1041,6 +1041,12 @@ func (w *worker) runOneJobStep(
 		ver, err = onAlterTableAttributes(jobCtx, job)
 	case model.ActionAlterTablePartitionAttributes:
 		ver, err = onAlterTablePartitionAttributes(jobCtx, job)
+	case model.ActionCreateMaskingPolicy:
+		ver, err = w.onCreateMaskingPolicy(jobCtx, job)
+	case model.ActionAlterMaskingPolicy:
+		ver, err = w.onAlterMaskingPolicy(jobCtx, job)
+	case model.ActionDropMaskingPolicy:
+		ver, err = w.onDropMaskingPolicy(jobCtx, job)
 	case model.ActionCreatePlacementPolicy:
 		ver, err = onCreatePlacementPolicy(jobCtx, job)
 	case model.ActionDropPlacementPolicy:

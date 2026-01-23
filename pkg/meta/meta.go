@@ -51,8 +51,9 @@ import (
 )
 
 var (
-	globalIDMutex sync.Mutex
-	policyIDMutex sync.Mutex
+	globalIDMutex        sync.Mutex
+	policyIDMutex        sync.Mutex
+	maskingPolicyIDMutex sync.Mutex
 )
 
 // Meta structure:
@@ -77,25 +78,28 @@ var (
 var (
 	mMetaPrefix = []byte("m")
 	// the value inside it is actually the max current used ID, not next id.
-	mNextGlobalIDKey     = []byte("NextGlobalID")
-	mSchemaVersionKey    = []byte("SchemaVersionKey")
-	mDBs                 = []byte("DBs")
-	mDBPrefix            = "DB"
-	mTablePrefix         = "Table"
-	mSequencePrefix      = "SID"
-	mSeqCyclePrefix      = "SequenceCycle"
-	mTableIDPrefix       = "TID"
-	mIncIDPrefix         = "IID"
-	mRandomIDPrefix      = "TARID"
-	mBootstrapKey        = []byte("BootstrapKey")
-	mSchemaDiffPrefix    = "Diff"
-	mPolicies            = []byte("Policies")
-	mPolicyPrefix        = "Policy"
-	mResourceGroups      = []byte("ResourceGroups")
-	mResourceGroupPrefix = "RG"
-	mPolicyGlobalID      = []byte("PolicyGlobalID")
-	mPolicyMagicByte     = CurrentMagicByteVer
-	mDDLTableVersion     = []byte("DDLTableVersion")
+	mNextGlobalIDKey       = []byte("NextGlobalID")
+	mSchemaVersionKey      = []byte("SchemaVersionKey")
+	mDBs                   = []byte("DBs")
+	mDBPrefix              = "DB"
+	mTablePrefix           = "Table"
+	mSequencePrefix        = "SID"
+	mSeqCyclePrefix        = "SequenceCycle"
+	mTableIDPrefix         = "TID"
+	mIncIDPrefix           = "IID"
+	mRandomIDPrefix        = "TARID"
+	mBootstrapKey          = []byte("BootstrapKey")
+	mSchemaDiffPrefix      = "Diff"
+	mPolicies              = []byte("Policies")
+	mPolicyPrefix          = "Policy"
+	mMaskingPolicies       = []byte("MaskingPolicies")
+	mMaskingPolicyPrefix   = "MaskingPolicy"
+	mResourceGroups        = []byte("ResourceGroups")
+	mResourceGroupPrefix   = "RG"
+	mPolicyGlobalID        = []byte("PolicyGlobalID")
+	mMaskingPolicyGlobalID = []byte("MaskingPolicyGlobalID")
+	mPolicyMagicByte       = CurrentMagicByteVer
+	mDDLTableVersion       = []byte("DDLTableVersion")
 	// the name doesn't contain nextgen, as we might impl the same logic in classic
 	// kernel later, then we can reuse the same meta key.
 	mBootTableVersion = []byte("BootTableVersion")
@@ -150,6 +154,10 @@ var (
 	ErrPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyExists)
 	// ErrPolicyNotExists is the error for policy not exists.
 	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
+	// ErrMaskingPolicyExists is the error for masking policy exists.
+	ErrMaskingPolicyExists = errors.New("masking policy already exists")
+	// ErrMaskingPolicyNotExists is the error for masking policy not exists.
+	ErrMaskingPolicyNotExists = errors.New("masking policy doesn't exist")
 	// ErrResourceGroupExists is the error for resource group exists.
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
@@ -177,6 +185,8 @@ const (
 	// will create 52 physical tables.
 	// Note: DDL related tables are created separately, see DDLTableVersion.
 	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
+	// MaskingPolicyNextGenBootTableVersion adds mysql.tidb_masking_policy.
+	MaskingPolicyNextGenBootTableVersion NextGenBootTableVersion = 2
 )
 
 // DDLTableVersion is to display ddl related table versions
@@ -290,6 +300,14 @@ func (m *Mutator) GenPlacementPolicyID() (int64, error) {
 	return m.txn.Inc(mPolicyGlobalID, 1)
 }
 
+// GenMaskingPolicyID generates next masking policy id globally.
+func (m *Mutator) GenMaskingPolicyID() (int64, error) {
+	maskingPolicyIDMutex.Lock()
+	defer maskingPolicyIDMutex.Unlock()
+
+	return m.txn.Inc(mMaskingPolicyGlobalID, 1)
+}
+
 // GetGlobalID gets current global id.
 func (m *Mutator) GetGlobalID() (int64, error) {
 	return m.txn.GetInt64(mNextGlobalIDKey)
@@ -300,8 +318,17 @@ func (m *Mutator) GetPolicyID() (int64, error) {
 	return m.txn.GetInt64(mPolicyGlobalID)
 }
 
+// GetMaskingPolicyID gets current masking policy global id.
+func (m *Mutator) GetMaskingPolicyID() (int64, error) {
+	return m.txn.GetInt64(mMaskingPolicyGlobalID)
+}
+
 func (*Mutator) policyKey(policyID int64) []byte {
 	return fmt.Appendf(nil, "%s:%d", mPolicyPrefix, policyID)
+}
+
+func (*Mutator) maskingPolicyKey(policyID int64) []byte {
+	return fmt.Appendf(nil, "%s:%d", mMaskingPolicyPrefix, policyID)
 }
 
 func (*Mutator) resourceGroupKey(groupID int64) []byte {
@@ -549,6 +576,22 @@ func (m *Mutator) checkPolicyNotExists(policyKey []byte) error {
 	return errors.Trace(err)
 }
 
+func (m *Mutator) checkMaskingPolicyExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
+	if err == nil && v == nil {
+		err = ErrMaskingPolicyNotExists
+	}
+	return errors.Trace(err)
+}
+
+func (m *Mutator) checkMaskingPolicyNotExists(policyKey []byte) error {
+	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
+	if err == nil && v != nil {
+		err = ErrMaskingPolicyExists
+	}
+	return errors.Trace(err)
+}
+
 func (m *Mutator) checkResourceGroupNotExists(groupKey []byte) error {
 	v, err := m.txn.HGet(mResourceGroups, groupKey)
 	if err == nil && v != nil {
@@ -615,6 +658,24 @@ func (m *Mutator) CreatePolicy(policy *model.PolicyInfo) error {
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
 }
 
+// CreateMaskingPolicy creates a masking policy.
+func (m *Mutator) CreateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
+	if policy.ID == 0 {
+		return errors.New("masking policy.ID is invalid")
+	}
+
+	policyKey := m.maskingPolicyKey(policy.ID)
+	if err := m.checkMaskingPolicyNotExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mMaskingPolicies, policyKey, attachMagicByte(data))
+}
+
 // UpdatePolicy updates a policy.
 func (m *Mutator) UpdatePolicy(policy *model.PolicyInfo) error {
 	policyKey := m.policyKey(policy.ID)
@@ -628,6 +689,21 @@ func (m *Mutator) UpdatePolicy(policy *model.PolicyInfo) error {
 		return errors.Trace(err)
 	}
 	return m.txn.HSet(mPolicies, policyKey, attachMagicByte(data))
+}
+
+// UpdateMaskingPolicy updates a masking policy.
+func (m *Mutator) UpdateMaskingPolicy(policy *model.MaskingPolicyInfo) error {
+	policyKey := m.maskingPolicyKey(policy.ID)
+
+	if err := m.checkMaskingPolicyExists(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+
+	data, err := json.Marshal(policy)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return m.txn.HSet(mMaskingPolicies, policyKey, attachMagicByte(data))
 }
 
 // AddResourceGroup creates a resource group.
@@ -963,6 +1039,18 @@ func (m *Mutator) DropPolicy(policyID int64) error {
 		return errors.Trace(err)
 	}
 	if err := m.txn.HDel(mPolicies, policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// DropMaskingPolicy drops the specified masking policy.
+func (m *Mutator) DropMaskingPolicy(policyID int64) error {
+	policyKey := m.maskingPolicyKey(policyID)
+	if err := m.txn.HClear(policyKey); err != nil {
+		return errors.Trace(err)
+	}
+	if err := m.txn.HDel(mMaskingPolicies, policyKey); err != nil {
 		return errors.Trace(err)
 	}
 	return nil
@@ -1469,6 +1557,29 @@ func (m *Mutator) ListPolicies() ([]*model.PolicyInfo, error) {
 	return policies, nil
 }
 
+// ListMaskingPolicies shows all masking policies.
+func (m *Mutator) ListMaskingPolicies() ([]*model.MaskingPolicyInfo, error) {
+	res, err := m.txn.HGetAll(mMaskingPolicies)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policies := make([]*model.MaskingPolicyInfo, 0, len(res))
+	for _, r := range res {
+		value, err := detachMagicByte(r.Value)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policy := &model.MaskingPolicyInfo{}
+		err = json.Unmarshal(value, policy)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		policies = append(policies, policy)
+	}
+	return policies, nil
+}
+
 // GetPolicy gets the database value with ID.
 func (m *Mutator) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 	policyKey := m.policyKey(policyID)
@@ -1486,6 +1597,27 @@ func (m *Mutator) GetPolicy(policyID int64) (*model.PolicyInfo, error) {
 	}
 
 	policy := &model.PolicyInfo{}
+	err = json.Unmarshal(value, policy)
+	return policy, errors.Trace(err)
+}
+
+// GetMaskingPolicy gets the masking policy value with ID.
+func (m *Mutator) GetMaskingPolicy(policyID int64) (*model.MaskingPolicyInfo, error) {
+	policyKey := m.maskingPolicyKey(policyID)
+	value, err := m.txn.HGet(mMaskingPolicies, policyKey)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if value == nil {
+		return nil, ErrMaskingPolicyNotExists
+	}
+
+	value, err = detachMagicByte(value)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	policy := &model.MaskingPolicyInfo{}
 	err = json.Unmarshal(value, policy)
 	return policy, errors.Trace(err)
 }

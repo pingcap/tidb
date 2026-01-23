@@ -71,6 +71,33 @@ func applyDropPolicy(b *Builder, PolicyID int64) []int64 {
 	return []int64{}
 }
 
+func applyCreateMaskingPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
+	policy, err := m.GetMaskingPolicy(diff.SchemaID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	b.infoSchema.setMaskingPolicy(policy)
+	return nil
+}
+
+func applyAlterMaskingPolicy(b *Builder, m meta.Reader, diff *model.SchemaDiff) ([]int64, error) {
+	policy, err := m.GetMaskingPolicy(diff.SchemaID)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	b.infoSchema.setMaskingPolicy(policy)
+	return []int64{}, nil
+}
+
+func applyDropMaskingPolicy(b *Builder, policyID int64) []int64 {
+	policy, ok := b.infoSchema.MaskingPolicyByID(policyID)
+	if !ok {
+		return nil
+	}
+	b.infoSchema.deleteMaskingPolicy(policy.Name.L)
+	return []int64{}
+}
+
 func applyCreateOrAlterResourceGroup(b *Builder, m meta.Reader, diff *model.SchemaDiff) error {
 	group, err := m.GetResourceGroup(diff.SchemaID)
 	if err != nil {
@@ -101,7 +128,7 @@ func (b *Builder) addTemporaryTable(tblID int64) {
 	b.infoSchema.temporaryTableIDs[tblID] = struct{}{}
 }
 
-func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo) {
+func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model.ResourceGroupInfo, maskingPolicies []*model.MaskingPolicyInfo) {
 	info := b.infoSchema
 	// build the policies.
 	for _, policy := range policies {
@@ -111,5 +138,10 @@ func (b *Builder) initMisc(policies []*model.PolicyInfo, resourceGroups []*model
 	// build the groups.
 	for _, group := range resourceGroups {
 		info.setResourceGroup(group)
+	}
+
+	// build the masking policies.
+	for _, policy := range maskingPolicies {
+		info.setMaskingPolicy(policy)
 	}
 }
