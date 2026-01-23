@@ -323,8 +323,8 @@ func (b *Buffer) GetSlice(loc *SliceLocation) []byte {
 	return b.blocks[loc.BufIdx][loc.Offset : loc.Offset+loc.Length]
 }
 
-// GetSliceWithoutLength returns the byte slice from offset to the end.
-func (b *Buffer) GetSliceWithoutLength(bufIdx, offset int32) []byte {
+// GetUnboundedSlice returns the byte slice from offset to the end.
+func (b *Buffer) GetUnboundedSlice(bufIdx, offset int32) []byte {
 	return b.blocks[bufIdx][offset:]
 }
 
