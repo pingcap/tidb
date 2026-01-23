@@ -3766,6 +3766,37 @@ local numBindingsInCacheP = graphPanel.new(
   )
 );
 
+// ============== Row: Owner ==============
+local ownerRow = row.new(collapse=true, title='Owner');
+
+local newEtcdSessionDurationP = graphPanel.new(
+  title='New ETCD Session Duration 95',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=true,
+  format='s',
+  description='TiDB new session durations for new etcd sessions',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_owner_new_session_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance, result))',
+    legendFormat='{{instance}}-{{result}}',
+  )
+);
+
+local ownerWatcherOpsP = graphPanel.new(
+  title='Owner Watcher OPS',
+  datasource=myDS,
+  format='short',
+  description='TiDB owner  watcher counts',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_owner_watch_owner_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, result, instance)',
+    legendFormat='{{type}}-{{result}}-{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4029,6 +4060,13 @@ newDash
   .addPanel(bindingCacheMemoryUsageP, gridPos=rightThirdPanelPos)
   .addPanel(bindingCacheHitMissOpsP, gridPos=leftThirdPanelPos)
   .addPanel(numBindingsInCacheP, gridPos=midThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  ownerRow
+  .addPanel(newEtcdSessionDurationP, gridPos=leftPanelPos)
+  .addPanel(ownerWatcherOpsP, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 )
