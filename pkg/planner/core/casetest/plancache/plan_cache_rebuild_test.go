@@ -12,18 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package core_test
+package plancache
 
 import (
 	"context"
 	"fmt"
 	"math/rand"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 	"unsafe"
 
+	"github.com/bazelbuild/rules_go/go/runfiles"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -312,7 +314,7 @@ func TestCheckPlanClone(t *testing.T) {
 	s2 := new(S)
 	s1.p2 = new(int)
 	s2.p2 = s1.p2
-	require.Equal(t, checkUnclearPlanCacheClone(s1, s2).Error(), "same pointer, path *core_test.S.p2")
+	require.Equal(t, checkUnclearPlanCacheClone(s1, s2).Error(), "same pointer, path *plancache.S.p2")
 	s2.p2 = new(int)
 	s1.p1 = new(int)
 	s2.p1 = s1.p1
@@ -457,8 +459,7 @@ type visit struct {
 }
 
 func TestFastPointGetClone(t *testing.T) {
-	codeFile := "plan_clone_utils.go"
-	codeData, err := os.ReadFile(codeFile)
+	codeData, err := readPlanCloneUtils()
 	require.NoError(t, err)
 	codeLines := strings.Split(string(codeData), "\n")
 	beginPrefix := `func FastClonePointGetForPlanCache(`
@@ -510,6 +511,28 @@ func TestFastPointGetClone(t *testing.T) {
 			t.Fatal(errMsg)
 		}
 	}
+}
+
+func readPlanCloneUtils() ([]byte, error) {
+	rf, err := runfiles.New()
+	if err != nil {
+		path := filepath.Join("..", "..", "plan_clone_utils.go")
+		return os.ReadFile(path)
+	}
+	if path, err := rf.Rlocation("pkg/planner/core/plan_clone_utils.go"); err == nil {
+		if data, err := os.ReadFile(path); err == nil {
+			return data, nil
+		}
+	}
+	if workspace := os.Getenv("TEST_WORKSPACE"); workspace != "" {
+		if path, err := rf.Rlocation(workspace + "/pkg/planner/core/plan_clone_utils.go"); err == nil {
+			if data, err := os.ReadFile(path); err == nil {
+				return data, nil
+			}
+		}
+	}
+	path := filepath.Join("..", "..", "plan_clone_utils.go")
+	return os.ReadFile(path)
 }
 
 func BenchmarkPointGetCloneFast(b *testing.B) {

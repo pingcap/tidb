@@ -399,9 +399,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
-					err = txn.SetAssertion(key, kv.SetAssertUnknown)
+					err = setAssertion(txn, key, kv.AssertUnknown)
 				} else {
-					err = txn.SetAssertion(key, kv.SetAssertNotExist)
+					err = setAssertion(txn, key, kv.AssertNotExist)
 				}
 			}
 			if err != nil {
@@ -440,7 +440,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
 						if id == partHandle.PartitionID {
 							// Simply overwrite it
-							err = txn.SetAssertion(key, kv.SetAssertUnknown)
+							err = setAssertion(txn, key, kv.AssertUnknown)
 							if err != nil {
 								return nil, err
 							}
@@ -525,9 +525,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {
-				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+				err = setAssertion(txn, key, kv.AssertUnknown)
 			} else {
-				err = txn.SetAssertion(key, kv.SetAssertNotExist)
+				err = setAssertion(txn, key, kv.AssertNotExist)
 			}
 			if err != nil {
 				return nil, err
@@ -636,7 +636,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 		if c.idxInfo.State == model.StatePublic {
 			// If the index is in public state, delete this index means it must exists.
-			err = txn.SetAssertion(key, kv.SetAssertExist)
+			err = setAssertion(txn, key, kv.AssertExist)
 		}
 		if err != nil {
 			return err

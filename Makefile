@@ -344,6 +344,10 @@ failpoint-disable: tools/bin/failpoint-ctl
 bazel-failpoint-enable:
 	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
 
+.PHONY: bazel_failpoint-disable
+bazel_failpoint-disable:
+	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go
 	cd tools/check; \
@@ -424,9 +428,10 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	# Plan cache benchmarks moved to casetest/plancache.
+	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpch -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
