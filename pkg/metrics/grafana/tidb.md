@@ -21,7 +21,7 @@ This document tracks the migration of `tidb.json` to `tidb.jsonnet`.
 | 7 | KV Errors | 5 | ✅ Done | b536b3d6e1 |
 | 8 | KV Request | 16 | ✅ Done | a0bc3c0270 |
 | 9 | PD Client | 15 | ✅ Done | 3e8b635b50 |
-| 10 | Schema Load | 11 | ⏳ Pending | - |
+| 10 | Schema Load | 11 | ✅ Done | 98eddd5b41 |
 | 11 | DDL | 14 | ⏳ Pending | - |
 | 12 | Dist Execute Framework | 7 | ⏳ Pending | - |
 | 13 | Statistics & Plan Management | 17 | ⏳ Pending | - |
