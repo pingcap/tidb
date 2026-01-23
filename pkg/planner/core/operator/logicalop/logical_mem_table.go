@@ -128,21 +128,21 @@ func (p *LogicalMemTable) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Lo
 	switch {
 	case topN.IsLimit():
 		if okRowLimit {
-			p.pushDownSlowLogLimit(topN, rowLimitSetter)
+			p.pushDownRowLimit(topN, rowLimitSetter)
 		}
 	case p.isSlowLogTopNByTime(topN):
 		if okDesc {
 			descSetter.SetDesc(topN.ByItems[0].Desc)
 		}
 		if okRowLimit {
-			p.pushDownSlowLogLimit(topN, rowLimitSetter)
+			p.pushDownRowLimit(topN, rowLimitSetter)
 		}
 	}
 
 	return topN.AttachChild(p)
 }
 
-func (*LogicalMemTable) pushDownSlowLogLimit(topN *LogicalTopN, limitSetter base.MemTableRowLimitHintSetter) {
+func (*LogicalMemTable) pushDownRowLimit(topN *LogicalTopN, limitSetter base.MemTableRowLimitHintSetter) {
 	end := topN.Offset + topN.Count
 	if end < topN.Offset {
 		end = ^uint64(0)
