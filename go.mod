@@ -12,8 +12,10 @@ require (
 	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/Masterminds/semver v1.5.0
 	github.com/YangKeao/go-mysql-driver v0.0.0-20240627104025-dd5589458cfa
+	github.com/alibabacloud-go/tea v1.3.11
 	github.com/aliyun/alibaba-cloud-sdk-go v1.61.1581
 	github.com/aliyun/alibabacloud-oss-go-sdk-v2 v1.2.3
+	github.com/aliyun/credentials-go v1.4.7
 	github.com/apache/arrow-go/v18 v18.0.0
 	github.com/apache/skywalking-eyes v0.4.0
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2
@@ -99,7 +101,7 @@ require (
 	github.com/pingcap/errors v0.11.5-0.20250523034308-74f78ae071ee
 	github.com/pingcap/failpoint v0.0.0-20240528011301-b51a646c7c86
 	github.com/pingcap/fn v1.0.0
-	github.com/pingcap/kvproto v0.0.0-20260123000903-a6b6f87a1b79
+	github.com/pingcap/kvproto v0.0.0-20251218093338-9f0ac2fc9a1a
 	github.com/pingcap/log v1.1.1-0.20250917021125-19901e015dc9
 	github.com/pingcap/metering_sdk v0.0.0-20251110022152-dac449ac5389
 	github.com/pingcap/sysutil v1.0.1-0.20240311050922-ae81ee01f3a5
@@ -172,10 +174,8 @@ require (
 	github.com/alibabacloud-go/endpoint-util v1.1.0 // indirect
 	github.com/alibabacloud-go/openapi-util v0.1.1 // indirect
 	github.com/alibabacloud-go/sts-20150401/v2 v2.0.4 // indirect
-	github.com/alibabacloud-go/tea v1.3.11 // indirect
 	github.com/alibabacloud-go/tea-utils/v2 v2.0.7 // indirect
 	github.com/alibabacloud-go/tea-xml v1.1.3 // indirect
-	github.com/aliyun/credentials-go v1.4.7 // indirect
 	github.com/andybalholm/brotli v1.1.1 // indirect
 	github.com/aws/aws-sdk-go v1.55.7 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.0 // indirect
@@ -369,6 +369,7 @@ replace (
 	// Downgrade grpc to v1.63.2, as well as other related modules.
 	github.com/apache/arrow-go/v18 => github.com/joechenrh/arrow-go/v18 v18.0.0-20250911101656-62c34c9a3b82
 	github.com/go-ldap/ldap/v3 => github.com/YangKeao/ldap/v3 v3.4.5-0.20230421065457-369a3bab1117
+	github.com/pingcap/kvproto => github.com/pingcap/kvproto v0.0.0-20260123000903-a6b6f87a1b79 // release/v6.10.0
 	github.com/pingcap/tidb/pkg/parser => ./pkg/parser
 
 	// TODO: `sourcegraph.com/sourcegraph/appdash` has been archived, and the original host has been removed.
