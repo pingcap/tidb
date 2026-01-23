@@ -4971,6 +4971,147 @@ local queryNetworkTransmissionBytesP = graphPanel.new(
   )
 );
 
+// ============== Row: Memory Arbitrator ==============
+local memoryArbitratorRow = row.new(collapse=true, title='Memory Arbitrator');
+
+local memoryWorkModeP = graphPanel.new(
+  title='Work Mode',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='Work mode of TiDB instances: DISABLE; STANDARD; PRIORITY;',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_memory_arbitrator_work_mode{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{type}}-{{instance}}',
+  )
+);
+
+local memoryArbitrationExecP = graphPanel.new(
+  title='Arbitration Exec',
+  datasource=myDS,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='Arbitration execution statistics of the global memory arbitrator',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_memory_arbitrator_task_exec{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local memoryArbitratorEventsP = graphPanel.new(
+  title='Events',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='Events of the global memory arbitrator',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_memory_arbitrator_event{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (type, instance)',
+    legendFormat='{{type}}-{{instance}}',
+  )
+);
+
+local memoryQuotaStatsP = graphPanel.new(
+  title='Mem Quota Stats',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='bytes',
+  description='Mem quota statistics of the global memory arbitrator',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_memory_arbitrator_quota_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{type}}-{{instance}}',
+  )
+);
+
+local memQuotaArbitrationDurationP = graphPanel.new(
+  title='Mem Quota Arbitration Duration',
+  datasource=myDS,
+  description='Bucketed histogram of mem quota arbitration time (s) in SQL execution',
+)
+.addTarget(
+  prometheus.target(
+    'sum(delta(tidb_memory_arbitration_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (le)',
+    legendFormat='{{le}}',
+  )
+);
+
+local memPoolStatsP = graphPanel.new(
+  title='Mem Pool Stats',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='Mem pools statistics of the global memory arbitrator',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_memory_arbitrator_root_pool{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{type}}-{{instance}}',
+  )
+);
+
+local runtimeMemPressureP = graphPanel.new(
+  title='Runtime Mem Pressure',
+  datasource=myDS,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='Runtime memory load pressure value (Heap / Quota)',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_memory_arbitrator_magnifi_ratio{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}',
+  )
+);
+
+local waitingTasksStatsP = graphPanel.new(
+  title='Waiting Tasks Stats',
+  datasource=myDS,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='none',
+  description='Waiting task num of the global memory arbitrator',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_memory_arbitrator_waiting_task{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{type}}-{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -5350,6 +5491,19 @@ newDash
 .addPanel(
   networkTransmissionRow
   .addPanel(queryNetworkTransmissionBytesP, gridPos=leftPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  memoryArbitratorRow
+  .addPanel(memoryWorkModeP, gridPos=leftThirdPanelPos)
+  .addPanel(memoryArbitrationExecP, gridPos=midThirdPanelPos)
+  .addPanel(memoryArbitratorEventsP, gridPos=rightThirdPanelPos)
+  .addPanel(memoryQuotaStatsP, gridPos=leftThirdPanelPos)
+  .addPanel(memQuotaArbitrationDurationP, gridPos=midThirdPanelPos)
+  .addPanel(memPoolStatsP, gridPos=rightThirdPanelPos)
+  .addPanel(runtimeMemPressureP, gridPos=leftThirdPanelPos)
+  .addPanel(waitingTasksStatsP, gridPos=midThirdPanelPos)
   ,
   gridPos=rowPos
 )
