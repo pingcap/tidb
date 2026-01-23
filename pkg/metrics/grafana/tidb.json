@@ -8161,6 +8161,79 @@
             "align": false,
             "alignLevel": null
           }
+        },
+        {
+          "cards": {
+            "cardPadding": null,
+            "cardRound": null
+          },
+          "color": {
+            "cardColor": "#b4ff00",
+            "colorScale": "sqrt",
+            "colorScheme": "interpolateSpectral",
+            "exponent": 0.5,
+            "mode": "spectrum"
+          },
+          "dataFormat": "tsbuckets",
+          "datasource": "${DS_TEST-CLUSTER}",
+          "description": "The number of statement acquires shared locks.",
+          "fieldConfig": {
+            "defaults": {},
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 7,
+            "w": 8,
+            "x": 16,
+            "y": 81
+          },
+          "heatmap": {},
+          "hideZeroBuckets": true,
+          "highlightCards": true,
+          "id": 23763573005,
+          "legend": {
+            "show": false
+          },
+          "links": [],
+          "targets": [
+            {
+              "expr": "sum(increase(tidb_session_statement_shared_lock_keys_count_bucket{instance=~\"$instance\"}[1m])) by (le)",
+              "legendFormat": "{{le}}",
+              "interval": "",
+              "exemplar": true,
+              "format": "heatmap",
+              "instant": false,
+              "intervalFactor": 2,
+              "refId": "A",
+              "step": 10
+            }
+          ],
+          "title": "Statement Shared Lock Keys",
+          "tooltip": {
+            "show": true,
+            "showHistogram": false
+          },
+          "type": "heatmap",
+          "xAxis": {
+            "show": true
+          },
+          "yAxis": {
+            "decimals": 0,
+            "format": "short",
+            "logBase": 1,
+            "max": null,
+            "min": null,
+            "show": true,
+            "splitFactor": null
+          },
+          "yBucketBound": "auto",
+          "reverseYBuckets": false,
+          "timeFrom": null,
+          "timeShift": null,
+          "xBucketNumber": null,
+          "xBucketSize": null,
+          "yBucketNumber": null,
+          "yBucketSize": null
         }
       ],
       "repeat": null,

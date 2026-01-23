@@ -252,17 +252,28 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
 	}
+
+	// collect keys to be locked for pessimistic transaction, these keys will be locked in `handlePessimisticDML` after
+	// xlocks are acquired since we do not allow a slocked key to be a primary key for now.
+	if txn.IsPessimistic() {
+		txnCtx := fkc.ctx.GetSessionVars().TxnCtx
+		for _, k := range fkc.toBeLockedKeys {
+			txnCtx.AddUnchangedKeyForLock(k, true)
+		}
+		return nil
+	}
+
+	// doLockKeys for optimistic transaction, it won't send any request to tikv but adds `flagKeyLocked` to these keys
+	// so that LOCK records will be written during 2PC.
 	sessVars := fkc.ctx.GetSessionVars()
-	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys))
+	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys), false)
 	if err != nil {
 		return err
 	}
-	// WARN: Since tidb current doesn't support `LOCK IN SHARE MODE`, therefore, performance will be very poor in concurrency cases.
-	// TODO(crazycs520):After TiDB support `LOCK IN SHARE MODE`, use `LOCK IN SHARE MODE` here.
-	forUpdate := atomic.LoadUint32(&sessVars.TxnCtx.ForUpdate)
-	err = doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
 	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
 	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
+	forUpdate := atomic.LoadUint32(&sessVars.TxnCtx.ForUpdate)
+	err = doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
 	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
 	if fkc.stats != nil {
 		fkc.stats.Lock = time.Since(start) - fkc.stats.Check

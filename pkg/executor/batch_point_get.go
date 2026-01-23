@@ -508,7 +508,7 @@ func LockKeys(ctx context.Context, sctx sessionctx.Context, lockWaitTime int64, 
 	}
 
 	txnCtx := sessVars.TxnCtx
-	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys))
+	lctx, err := newLockCtx(sctx, lockWaitTime, len(keys), false)
 	if err != nil {
 		return err
 	}
