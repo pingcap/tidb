@@ -117,18 +117,64 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.Lo
 		return nil, 0, err
 	}
 
-	curEdge := d.makeEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges)
+	var curEdges []*edge
+	if joinop.JoinType == base.InnerJoin {
+		curEdges = d.makeInnerEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges)
+	} else {
+		curEdge := d.makeNonInnerEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		curEdges = []*edge{curEdge}
+	}
 	if leftVertexes.HasIntersect(rightVertexes) {
 		return nil, 0, errors.New("conflicting join edges detected")
 	}
 	curVertexes := leftVertexes.Union(rightVertexes)
 
-	return append(leftEdges, append(rightEdges, curEdge)...), curVertexes, nil
+	return append(leftEdges, append(rightEdges, curEdges...)...), curVertexes, nil
 }
 
-func (d *ConflictDetector) makeEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) *edge {
+func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) (res []*edge) {
+	// todo: handle NAEQConditions
+	// e.tes = e.tes.Union(d.calcTES(expression.ScalarFuncs2Exprs(joinop.NAEQConditions)))
+	if len(joinop.NAEQConditions) > 0 {
+		panic("NAEQConditions not supported in conflict detector yet")
+	}
+
+	conds := expression.ScalarFuncs2Exprs(joinop.EqualConditions)
+	condArg := make([]expression.Expression, 1)
+	for _, cond := range conds {
+		condArg[0] = cond
+		tmp := d.makeEdge(base.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		tmp.eqConds = append(tmp.eqConds, cond.(*expression.ScalarFunction))
+		res = append(res, tmp)
+	}
+	for _, cond := range joinop.OtherConditions {
+		condArg[0] = cond
+		tmp := d.makeEdge(base.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		tmp.nonEQConds = append(tmp.nonEQConds, cond)
+		res = append(res, tmp)
+	}
+	return
+}
+
+func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) *edge {
+	nonEQConds := make([]expression.Expression, 0, len(joinop.LeftConditions)+len(joinop.RightConditions)+len(joinop.OtherConditions))
+	nonEQConds = append(nonEQConds, joinop.LeftConditions...)
+	nonEQConds = append(nonEQConds, joinop.RightConditions...)
+	nonEQConds = append(nonEQConds, joinop.OtherConditions...)
+
+	conds := expression.ScalarFuncs2Exprs(joinop.EqualConditions)
+	conds = append(conds, nonEQConds...)
+
+	e := d.makeEdge(joinop.JoinType, conds, leftVertexes, rightVertexes, leftEdges, rightEdges)
+	e.eqConds = make([]*expression.ScalarFunction, len(joinop.EqualConditions))
+	copy(e.eqConds, joinop.EqualConditions)
+	e.nonEQConds = nonEQConds
+	return e
+}
+
+func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) *edge {
 	e := &edge{
-		joinType:      joinop.JoinType,
+		joinType:      joinType,
 		leftVertexes:  leftVertexes,
 		rightVertexes: rightVertexes,
 		leftEdges:     leftEdges,
@@ -137,8 +183,13 @@ func (d *ConflictDetector) makeEdge(joinop *logicalop.LogicalJoin, leftVertexes,
 
 	// setup TES. Only consider EqualConditions and NAEQConditions.
 	// OtherConditions are not edges.
-	e.tes = d.calcTES(expression.ScalarFuncs2Exprs(joinop.EqualConditions))
-	e.tes = e.tes.Union(d.calcTES(expression.ScalarFuncs2Exprs(joinop.NAEQConditions)))
+	e.tes = d.calcTES(conds)
+
+	if joinType == base.InnerJoin {
+		d.innerEdges = append(d.innerEdges, e)
+	} else {
+		d.nonInnerEdges = append(d.nonInnerEdges, e)
+	}
 
 	// gjt todo: handle CrossProduct
 
@@ -252,7 +303,7 @@ func (r *CheckConnectionResult) NoEQEdge() bool {
 	return !r.hasEQCond
 }
 
-func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node) (*Node, error) {
+func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node, vertexHints map[int]*vertexJoinMethodHint) (*Node, error) {
 	checkResult, err := d.CheckConnection(node1, node2)
 	if err != nil {
 		return nil, err
@@ -260,7 +311,7 @@ func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node) (*Node, error) {
 	if !checkResult.Connected() {
 		return nil, nil
 	}
-	return d.MakeJoin(checkResult)
+	return d.MakeJoin(checkResult, vertexHints)
 }
 
 func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnectionResult, error) {
@@ -268,7 +319,10 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 		return nil, errors.Errorf("nil node found in CheckConnection, node1: %v, node2: %v", node1, node2)
 	}
 
-	var result CheckConnectionResult
+	result := &CheckConnectionResult{
+		node1: node1,
+		node2: node2,
+	}
 	for _, e := range d.innerEdges {
 		if e.checkInnerEdge(node1, node2) {
 			result.appliedInnerEdges = append(result.appliedInnerEdges, e)
@@ -284,7 +338,7 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 			result.hasEQCond = result.hasEQCond || len(e.eqConds) > 0
 		}
 	}
-	return &result, nil
+	return result, nil
 }
 
 func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
@@ -312,7 +366,7 @@ func (e *edge) checkRules(node1, node2 *Node) bool {
 	return true
 }
 
-func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult) (*Node, error) {
+func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHints map[int]*vertexJoinMethodHint) (*Node, error) {
 	numInnerEdges := len(checkResult.appliedInnerEdges)
 	var numNonInnerEdges int
 	if checkResult.appliedNonInnerEdge != nil {
@@ -323,12 +377,12 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult) (*Node, 
 	var p base.LogicalPlan
 	var newJoin *logicalop.LogicalJoin
 	if numNonInnerEdges > 0 {
-		if newJoin, err = makeNonInnerJoin(d.ctx, checkResult); err != nil {
+		if newJoin, err = makeNonInnerJoin(d.ctx, checkResult, vertexHints); err != nil {
 			return nil, err
 		}
 	}
 	if numInnerEdges > 0 {
-		if p, err = makeInnerJoin(d.ctx, checkResult, newJoin); err != nil {
+		if p, err = makeInnerJoin(d.ctx, checkResult, newJoin, vertexHints); err != nil {
 			return nil, err
 		}
 	} else {
@@ -349,12 +403,12 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult) (*Node, 
 	}, nil
 }
 
-func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult) (*logicalop.LogicalJoin, error) {
+func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*vertexJoinMethodHint) (*logicalop.LogicalJoin, error) {
 	e := checkResult.appliedNonInnerEdge
 	left := checkResult.node1.p
 	right := checkResult.node2.p
 
-	join, err := newCartesianJoin(ctx, e.joinType, left, right)
+	join, err := newCartesianJoin(ctx, e.joinType, left, right, vertexHints)
 	if err != nil {
 		return nil, err
 	}
@@ -373,7 +427,7 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult) 
 	return join, nil
 }
 
-func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin) (base.LogicalPlan, error) {
+func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*vertexJoinMethodHint) (base.LogicalPlan, error) {
 	if existingJoin != nil {
 		// Append selections to existing join
 		selection := logicalop.LogicalSelection{
@@ -389,7 +443,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		return resSelection, nil
 	}
 
-	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p)
+	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +456,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 	return join, nil
 }
 
-func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan) (*logicalop.LogicalJoin, error) {
+func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan, vertexHints map[int]*vertexJoinMethodHint) (*logicalop.LogicalJoin, error) {
 	offset := left.QueryBlockOffset()
 	if offset != right.QueryBlockOffset() {
 		return nil, errors.Errorf("cannot make join with different query block offsets: %d and %d", offset, right.QueryBlockOffset())
@@ -417,7 +471,23 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	join.SetChildren(left, right)
 	join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
 	join.SetChildren(left, right)
+
+	setNewJoinWithHint(join, vertexHints)
 	return join, nil
+}
+
+func setNewJoinWithHint(newJoin *logicalop.LogicalJoin, vertexHints map[int]*vertexJoinMethodHint) {
+	lChild := newJoin.Children()[0]
+	rChild := newJoin.Children()[1]
+	if joinMethodHint, ok := vertexHints[lChild.ID()]; ok {
+		newJoin.LeftPreferJoinType = joinMethodHint.PreferJoinMethod
+		newJoin.HintInfo = joinMethodHint.HintInfo
+	}
+	if joinMethodHint, ok := vertexHints[rChild.ID()]; ok {
+		newJoin.RightPreferJoinType = joinMethodHint.PreferJoinMethod
+		newJoin.HintInfo = joinMethodHint.HintInfo
+	}
+	newJoin.SetPreferredJoinType()
 }
 
 // 0: rule doesn't apply

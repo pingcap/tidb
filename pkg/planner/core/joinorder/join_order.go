@@ -16,14 +16,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
-// todo:
-// 1. check all conditions should be handled
-// 2. handle only inner join situation
-// 3. handle other conditions as edge
-// 4. quick fix for old implementation
-// 5. refactor functions that duplicated with old implementation
-// 6. handle right outer join
-
 type JoinOrder struct {
 	ctx   base.PlanContext
 	group *joinGroup
@@ -59,8 +51,8 @@ func (g *joinGroup) merge(other *joinGroup) {
 }
 
 type vertexJoinMethodHint struct {
-	preferJoinMethod uint
-	hintInfo         *hint.PlanHints
+	PreferJoinMethod uint
+	HintInfo         *hint.PlanHints
 }
 
 func extractJoinGroup(p base.LogicalPlan) *joinGroup {
@@ -94,15 +86,15 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroup {
 		vertexHints = make(map[int]*vertexJoinMethodHint)
 		if join.LeftPreferJoinType > uint(0) {
 			vertexHints[join.Children()[0].ID()] = &vertexJoinMethodHint{
-				preferJoinMethod: join.LeftPreferJoinType,
-				hintInfo:         join.HintInfo,
+				PreferJoinMethod: join.LeftPreferJoinType,
+				HintInfo:         join.HintInfo,
 			}
 			leftHasHint = true
 		}
 		if join.RightPreferJoinType > uint(0) {
 			vertexHints[join.Children()[1].ID()] = &vertexJoinMethodHint{
-				preferJoinMethod: join.RightPreferJoinType,
-				hintInfo:         join.HintInfo,
+				PreferJoinMethod: join.RightPreferJoinType,
+				HintInfo:         join.HintInfo,
 			}
 			rightHasHint = true
 		}
@@ -191,7 +183,9 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
-	useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
+	// gjt todo impl DP
+	// useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
+	useGreedy := true
 	if useGreedy {
 		joinOrderGreedy := newJoinOrderGreedy(ctx, group)
 		if p, err = joinOrderGreedy.optimize(); err != nil {
@@ -261,7 +255,7 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		if !checkResult.Connected() {
 			return nil, nil
 		}
-		return detector.MakeJoin(checkResult)
+		return detector.MakeJoin(checkResult, j.group.vertexHints)
 	}
 
 	if leadingHint == nil || leadingHint.LeadingList == nil {
@@ -311,7 +305,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			if !checkResult.Connected() {
 				continue
 			}
-			newNode, err := detector.MakeJoin(checkResult)
+			newNode, err := detector.MakeJoin(checkResult, j.group.vertexHints)
 			if err != nil {
 				return nil, err
 			}
@@ -358,7 +352,7 @@ func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPl
 				resNodes = append(resNodes, cartesianNodes[i])
 				break
 			}
-			newJoin, err := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p)
+			newJoin, err := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, nil)
 			if err != nil {
 				return nil, err
 			}
