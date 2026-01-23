@@ -32,21 +32,18 @@ tikv_sha1_url="${file_server_url}/download/refs/pingcap/tikv/${branch}/sha1"
 pd_sha1_url="${file_server_url}/download/refs/pingcap/pd/${branch}/sha1"
 tiflash_sha1_url="${file_server_url}/download/refs/pingcap/tiflash/${branch}/sha1"
 ticdc_sha1_url="${file_server_url}/download/refs/pingcap/ticdc/${branch}/sha1"
-tici_sha1_url="${file_server_url}/download/refs/pingcap/tici/${branch}/sha1"
 minio_download_url="${file_server_url}/download/minio.tar.gz"
 
 pd_sha1=$(curl "$pd_sha1_url")
 tikv_sha1=$(curl "$tikv_sha1_url")
 tiflash_sha1=$(curl "$tiflash_sha1_url")
 ticdc_sha1=$(curl "$ticdc_sha1_url")
-tici_sha1=$(curl "$tici_sha1_url")
 
 # download pd / tikv / tiflash binary build from tibuid multibranch pipeline
 pd_download_url="${file_server_url}/download/builds/pingcap/pd/${pd_sha1}/centos7/pd-server.tar.gz"
 tikv_download_url="${file_server_url}/download/builds/pingcap/tikv/${tikv_sha1}/centos7/tikv-server.tar.gz"
 tiflash_download_url="${file_server_url}/download/builds/pingcap/tiflash/${branch}/${tiflash_sha1}/centos7/tiflash.tar.gz"
 ticdc_download_url="${file_server_url}/download/builds/pingcap/ticdc/${ticdc_sha1}/centos7/ticdc-linux-amd64.tar.gz"
-tici_download_url="${file_server_url}/download/builds/pingcap/tici/${tici_sha1}/centos7/tici-linux-amd64.tar.gz"
 
 set -o nounset
 
@@ -96,25 +93,6 @@ function main() {
     # tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin --wildcards '*/bin/*'
     tar -xzf tmp/ticdc-linux-amd64.tar.gz -C third_bin
     mv third_bin/ticdc-linux-amd64/bin/* third_bin/
-
-    #Tici
-    download "$tici_download_url" "tici-linux-amd64.tar.gz" "tmp/tici-linux-amd64.tar.gz"
-    mkdir -p tmp/tici
-    tar -xzf tmp/tici-linux-amd64.tar.gz -C tmp/tici
-    tici_bin=$(find tmp/tici -type f -name tici-server -perm -u+x -print -quit)
-    if [[ -z "$tici_bin" ]]; then
-        tici_bin=$(find tmp/tici -type f -name tici -perm -u+x -print -quit)
-    fi
-    if [[ -z "$tici_bin" ]]; then
-        echo "tici binary not found in archive" >&2
-        exit 1
-    fi
-    cp "$tici_bin" third_bin/tici-server
-    ln -sf tici-server third_bin/tici
-
-    #MinIO
-    download "$minio_download_url" "minio.tar.gz" "tmp/minio.tar.gz"
-    tar -xzf tmp/minio.tar.gz -C third_bin
 
     chmod +x third_bin/*
     rm -rf tmp
