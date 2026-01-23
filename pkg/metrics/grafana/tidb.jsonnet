@@ -2791,6 +2791,232 @@ local tidbWaitTsoFutureDurationP = graphPanel.new(
   )
 );
 
+// ============== Row: Schema Load ==============
+local schemaLoadRow = row.new(collapse=true, title='Schema Load');
+
+local loadSchemaDurationP = graphPanel.new(
+  title='Load Schema Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='TiDB loading schema time durations by instance',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_domain_load_schema_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
+local loadSchemaActionDurationP = graphPanel.new(
+  title='Load Schema Action Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_sort='current',
+  legend_sortDesc=true,
+  format='s',
+  description='TiDB loading schema time durations by instance',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_domain_load_schema_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, action))',
+    legendFormat='{{action}}',
+  )
+);
+
+local schemaLeaseErrorOpmP = graphPanel.new(
+  title='Schema Lease Error OPM',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='short',
+  description='TiDB schema lease error counts',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_session_schema_lease_error_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (instance)',
+    legendFormat='{{instance}}',
+  )
+);
+
+local loadSchemaOpsP = graphPanel.new(
+  title='Load Schema OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_sort='current',
+  legend_sortDesc=true,
+  format='short',
+  description='TiDB loading schema times including both failed and successful ones',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_domain_load_schema_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (instance,type)',
+    legendFormat='{{instance}}-{{type}}',
+  )
+);
+
+local loadDataFromCachedTableDurationP = graphPanel.new(
+  title='Load Data From Cached Table Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='short',
+  description='TiDB loading table cache time durations by instance',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_load_table_cache_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
+local schemaCacheOpsP = graphPanel.new(
+  title='Schema Cache OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_sort='current',
+  legend_sortDesc=true,
+  format='short',
+  description='TiDB schema cache operations per second.',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_domain_infocache_counters{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (action,type)',
+    legendFormat='{{action}}-{{type}}',
+  )
+);
+
+local leaseDurationP = graphPanel.new(
+  title='Lease Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  format='dtdurations',
+  description='How much longer until the lease expires?',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_domain_lease_expire_time{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"} - time()',
+    legendFormat='{{instance}}',
+  )
+);
+
+local infoschemaV2CacheOperationP = graphPanel.new(
+  title='Infoschema V2 Cache Operation',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_avg=true,
+  legend_hideEmpty=false,
+  legend_hideZero=false,
+  format='short',
+  description='Infoschema v2 cache hit, evict and miss number',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="hit"}[1m]))/(sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="hit"}[1m]))+sum(rate(tidb_domain_infoschema_v2_cache{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type="miss"}[1m])))',
+    legendFormat='hit/(hit+miss)',
+  )
+);
+
+local infoschemaV2CacheSizeP = graphPanel.new(
+  title='Infoschema V2 Cache Size',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  legend_values=true,
+  legend_current=true,
+  format='bytes',
+  description='Memory size of infoschema cache v2',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_domain_infoschema_v2_cache_size{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}',
+    legendFormat='{{instance}} used',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_domain_infoschema_v2_cache_limit{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}',
+    legendFormat='{{instance}} limit',
+  )
+);
+
+local tableByNameApiDurationP = graphPanel.new(
+  title='TableByName API Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='ns',
+  description='TiDB infoschema v2 TableByName API time durations',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_infoschema_table_by_name_duration_nanoseconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='99-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_infoschema_table_by_name_duration_nanoseconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type) / sum(rate(tidb_infoschema_table_by_name_duration_nanoseconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type)',
+    legendFormat='avg-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_infoschema_table_by_name_duration_nanoseconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_infoschema_table_by_name_duration_nanoseconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='80',
+  )
+);
+
+local infoschemaV2CacheTableCountP = graphPanel.new(
+  title='Infoschema V2 Cache Table Count',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  legend_values=true,
+  legend_current=true,
+  format='short',
+  description='Cached table count of infoschema cache v2',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_domain_infoschema_v2_cache_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}',
+    legendFormat='used',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -2985,6 +3211,22 @@ newDash
   .addPanel(staleRegionFromPdP, gridPos=leftThirdPanelPos)
   .addPanel(circuitBreakerEventP, gridPos=midThirdPanelPos)
   .addPanel(tidbWaitTsoFutureDurationP, gridPos=rightThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  schemaLoadRow
+  .addPanel(loadSchemaDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(loadSchemaActionDurationP, gridPos=midThirdPanelPos)
+  .addPanel(schemaLeaseErrorOpmP, gridPos=rightThirdPanelPos)
+  .addPanel(loadSchemaOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(loadDataFromCachedTableDurationP, gridPos=midThirdPanelPos)
+  .addPanel(schemaCacheOpsP, gridPos=rightThirdPanelPos)
+  .addPanel(leaseDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(infoschemaV2CacheOperationP, gridPos=midThirdPanelPos)
+  .addPanel(infoschemaV2CacheSizeP, gridPos=rightThirdPanelPos)
+  .addPanel(tableByNameApiDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(infoschemaV2CacheTableCountP, gridPos=midThirdPanelPos)
   ,
   gridPos=rowPos
 )
