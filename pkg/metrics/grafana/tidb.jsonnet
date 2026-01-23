@@ -4022,6 +4022,73 @@ local ongoingInternalTxnDurationP = graphPanel.new(
   )
 );
 
+// ============== Row: Batch Client ==============
+local batchClientRow = row.new(collapse=true, title='Batch Client');
+
+local noAvailableConnectionCounterP = graphPanel.new(
+  title='No Available Connection Counter',
+  datasource=myDS,
+  format='short',
+  description='Metrics for \'no available connection\'.\nThere should be no data here if the connection between TiDB and TiKV is healthy.',
+)
+.addTarget(
+  prometheus.target(
+    'delta(tidb_tikvclient_batch_client_no_available_connection_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])',
+    legendFormat='{{instance}}',
+  )
+);
+
+local batchClientUnavailableDurationP = graphPanel.new(
+  title='Batch Client Unavailable Duration 95',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  format='s',
+  description='kv storage batch processing unvailable durations',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_tikvclient_batch_client_unavailable_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (le, instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
+local waitConnectionEstablishDurationP = graphPanel.new(
+  title='Wait Connection Establish Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_alignAsTable=false,
+  format='s',
+  description='kv storage batch client wait new connection establish duration',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9999, sum(rate(tidb_tikvclient_batch_client_wait_connection_establish_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (le, instance))',
+    legendFormat='{{instance}}',
+  )
+);
+
+local batchReceiveAverageDurationP = graphPanel.new(
+  title='Batch Receive Average Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='ns',
+  description='The duration of receiving response from TiKV.\nThis metrics can be high when there is no workload.\nBut if the value is too large, TiKV maybe not responding in time.',
+)
+.addTarget(
+  prometheus.target(
+    'rate(tidb_tikvclient_batch_recv_latency_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]) / rate(tidb_tikvclient_batch_recv_latency_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])',
+    legendFormat='{{instance}}-{{result}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_tikvclient_batch_recv_latency_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, instance))',
+    legendFormat='99-{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4317,6 +4384,15 @@ newDash
   .addPanel(resolveLocksRangeTasksPushDurationP, gridPos=rightThirdPanelPos)
   .addPanel(ongoingUserTxnDurationP, gridPos=leftThirdPanelPos)
   .addPanel(ongoingInternalTxnDurationP, gridPos=midThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  batchClientRow
+  .addPanel(noAvailableConnectionCounterP, gridPos=leftPanelPos)
+  .addPanel(batchClientUnavailableDurationP, gridPos=rightPanelPos)
+  .addPanel(waitConnectionEstablishDurationP, gridPos=leftPanelPos)
+  .addPanel(batchReceiveAverageDurationP, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 )
