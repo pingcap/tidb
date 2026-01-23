@@ -811,6 +811,12 @@ func TestDMLStmt(t *testing.T) {
 		{"select * from t for update of t skip locked", true, "SELECT * FROM `t` FOR UPDATE OF `t` SKIP LOCKED"},
 		{"select * from t for share of t skip locked", true, "SELECT * FROM `t` FOR SHARE OF `t` SKIP LOCKED"},
 
+		// select into variables
+		{"select score into @game_score from game_records where user_id = 1", true, "SELECT `score` INTO @`game_score` FROM `game_records` WHERE `user_id`=1"},
+		{"select a, b into @v1, @v2 from t", true, "SELECT `a`,`b` INTO @`v1`,@`v2` FROM `t`"},
+		{"select a into v from t", true, "SELECT `a` INTO `v` FROM `t`"},
+		{"select 1 into @a", true, "SELECT 1 INTO @`a`"},
+
 		// select into outfile
 		{"select a, b from t into outfile '/tmp/result.txt'", true, "SELECT `a`,`b` FROM `t` INTO OUTFILE '/tmp/result.txt'"},
 		{"select a from t order by a into outfile '/tmp/abc'", true, "SELECT `a` FROM `t` ORDER BY `a` INTO OUTFILE '/tmp/abc'"},

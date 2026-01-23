@@ -288,6 +288,16 @@ func (s *Scanner) Lex(v *yySymType) int {
 			return toTSO
 		}
 	}
+	if tok == into {
+		if tok1 := s.getNextToken(); tok1 == outfile {
+			_, pos, lit = s.scan()
+			v.ident = fmt.Sprintf("%s %s", v.ident, lit)
+			s.lastKeyword = intoOutfile
+			s.lastScanOffset = pos.Offset
+			v.offset = pos.Offset
+			return intoOutfile
+		}
+	}
 	// fix shift/reduce conflict with DEFINED NULL BY xxx OPTIONALLY ENCLOSED
 	if tok == optionally {
 		tok1, tok2 := s.getNextTwoTokens()

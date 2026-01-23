@@ -56,6 +56,7 @@ import (
 	toTSO                "TO TSO"
 	memberof             "MEMBER OF"
 	optionallyEnclosedBy "OPTIONALLY ENCLOSED BY"
+	intoOutfile          "INTO OUTFILE"
 
 	/*yy:token "_%c"    */
 	underscoreCS "UNDERSCORE_CHARSET"
@@ -1350,6 +1351,9 @@ import (
 	SelectStmtFromTable                    "SELECT statement from table"
 	SelectStmtGroup                        "SELECT statement optional GROUP BY clause"
 	SelectStmtIntoOption                   "SELECT statement into clause"
+	SelectStmtIntoVarOption                "SELECT statement into variables clause"
+	SelectStmtIntoVarList                  "SELECT statement into variables list"
+	SelectStmtIntoVar                      "SELECT statement into variable"
 	SequenceOption                         "Create sequence option"
 	SequenceOptionList                     "Create sequence option list"
 	SetRoleOpt                             "Set role options"
@@ -9511,7 +9515,7 @@ HelpStmt:
 	}
 
 SelectStmtBasic:
-	"SELECT" SelectStmtOpts SelectStmtFieldList HavingClause
+	"SELECT" SelectStmtOpts SelectStmtFieldList SelectStmtIntoVarOption HavingClause
 	{
 		st := &ast.SelectStmt{
 			SelectStmtOpts: $2.(*ast.SelectStmtOpts),
@@ -9523,7 +9527,10 @@ SelectStmtBasic:
 			st.TableHints = st.SelectStmtOpts.TableHints
 		}
 		if $4 != nil {
-			st.Having = $4.(*ast.HavingClause)
+			st.SelectIntoOpt = $4.(*ast.SelectIntoOption)
+		}
+		if $5 != nil {
+			st.Having = $5.(*ast.HavingClause)
 		}
 		$$ = st
 	}
@@ -9532,10 +9539,12 @@ SelectStmtFromDualTable:
 	SelectStmtBasic FromDual WhereClauseOptional
 	{
 		st := $1.(*ast.SelectStmt)
-		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := yyS[yypt-1].offset - 1
-			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+		if st.SelectIntoOpt == nil || st.SelectIntoOpt.Tp != ast.SelectIntoVars {
+			lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+			if lastField.Expr != nil && lastField.AsName.O == "" {
+				lastEnd := yyS[yypt-1].offset - 1
+				lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+			}
 		}
 		if $3 != nil {
 			st.Where = $3.(ast.ExprNode)
@@ -9547,10 +9556,12 @@ SelectStmtFromTable:
 	{
 		st := $1.(*ast.SelectStmt)
 		st.From = $3.(*ast.TableRefsClause)
-		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-		if lastField.Expr != nil && lastField.AsName.O == "" {
-			lastEnd := parser.endOffset(&yyS[yypt-5])
-			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+		if st.SelectIntoOpt == nil || st.SelectIntoOpt.Tp != ast.SelectIntoVars {
+			lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+			if lastField.Expr != nil && lastField.AsName.O == "" {
+				lastEnd := parser.endOffset(&yyS[yypt-5])
+				lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+			}
 		}
 		if $4 != nil {
 			st.Where = $4.(ast.ExprNode)
@@ -10564,21 +10575,53 @@ SelectStmtGroup:
 	}
 |	GroupByClause
 
+SelectStmtIntoVarOption:
+	{
+		$$ = nil
+	}
+|	"INTO" SelectStmtIntoVarList
+	{
+		$$ = &ast.SelectIntoOption{
+			Tp:        ast.SelectIntoVars,
+			Variables: $2.([]*ast.ColumnNameOrUserVar),
+		}
+	}
+
+SelectStmtIntoVarList:
+	SelectStmtIntoVar
+	{
+		$$ = []*ast.ColumnNameOrUserVar{$1.(*ast.ColumnNameOrUserVar)}
+	}
+|	SelectStmtIntoVarList ',' SelectStmtIntoVar
+	{
+		$$ = append($1.([]*ast.ColumnNameOrUserVar), $3.(*ast.ColumnNameOrUserVar))
+	}
+
+SelectStmtIntoVar:
+	Identifier
+	{
+		$$ = &ast.ColumnNameOrUserVar{ColumnName: &ast.ColumnName{Name: ast.NewCIStr($1)}}
+	}
+|	UserVariable
+	{
+		$$ = &ast.ColumnNameOrUserVar{UserVar: $1.(*ast.VariableExpr)}
+	}
+
 SelectStmtIntoOption:
 	{
 		$$ = nil
 	}
-|	"INTO" "OUTFILE" stringLit Fields Lines
+|	intoOutfile stringLit Fields Lines
 	{
 		x := &ast.SelectIntoOption{
 			Tp:       ast.SelectIntoOutfile,
-			FileName: $3,
+			FileName: $2,
+		}
+		if $3 != nil {
+			x.FieldsInfo = $3.(*ast.FieldsClause)
 		}
 		if $4 != nil {
-			x.FieldsInfo = $4.(*ast.FieldsClause)
-		}
-		if $5 != nil {
-			x.LinesInfo = $5.(*ast.LinesClause)
+			x.LinesInfo = $4.(*ast.LinesClause)
 		}
 
 		$$ = x
