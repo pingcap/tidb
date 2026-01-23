@@ -3973,7 +3973,7 @@ func TestDDL(t *testing.T) {
 		{"alter table t disable masking policy p", true, "ALTER TABLE `t` DISABLE MASKING POLICY `p`"},
 		{"alter table t drop masking policy p", true, "ALTER TABLE `t` DROP MASKING POLICY `p`"},
 		{"show masking policies for t", true, "SHOW MASKING POLICIES FOR `t`"},
-		{"show masking policies for t where col = 'c'", true, "SHOW MASKING POLICIES FOR `t` WHERE `col`=_UTF8MB4'c'"},
+		{"show masking policies for t where column_name = 'c'", true, "SHOW MASKING POLICIES FOR `t` WHERE `column_name`=_UTF8MB4'c'"},
 
 		{"alter placement policy x primary_region='us'", true, "ALTER PLACEMENT POLICY `x` PRIMARY_REGION = 'us'"},
 		{"alter placement policy x region='us, 3'", false, ""},

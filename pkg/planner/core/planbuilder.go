@@ -6053,6 +6053,8 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 		names = []string{"Policy", "Create Policy"}
 	case ast.ShowCreateResourceGroup:
 		names = []string{"Resource_Group", "Create Resource Group"}
+	case ast.ShowMaskingPolicies:
+		names = []string{"Policy_name", "Column_name", "Expression", "Status", "Function_type"}
 	case ast.ShowCreateUser:
 		if s.User != nil {
 			names = []string{fmt.Sprintf("CREATE USER for %s", s.User)}
