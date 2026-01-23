@@ -1134,7 +1134,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
 		vars:                    it.vars,
-		kvclient:                txnsnapshot.NewClientHelper(newVersionedTxnSnapshotStore(it.store.store, it.store.versionedRPC, it.store.codec), &it.resolvedLocks, &it.committedLocks, false),
+		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
 		memTracker:              it.memTracker,
 		replicaReadSeed:         it.replicaReadSeed,
 		pagingTaskIdx:           &it.pagingTaskIdx,

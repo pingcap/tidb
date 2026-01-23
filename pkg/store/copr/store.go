@@ -15,7 +15,6 @@
 package copr
 
 import (
-	"context"
 	"crypto/tls"
 	"math/rand"
 	"runtime"
@@ -30,7 +29,6 @@ import (
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
-	"github.com/tikv/client-go/v2/util/async"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -39,8 +37,6 @@ type kvStore struct {
 	mppStoreCnt    *mppStoreCnt
 	TiCIShardCache *TiCIShardCache
 	codec          tikv.Codec
-	tlsConfig      *tls.Config
-	versionedRPC   *versionedRPCClient
 }
 
 // GetRegionCache returns the region cache instance.
@@ -61,49 +57,7 @@ func (s *kvStore) CheckVisibility(startTime uint64) error {
 
 // GetTiKVClient gets the client instance.
 func (s *kvStore) GetTiKVClient() tikv.Client {
-	client := s.store.GetTiKVClient()
-	return &tikvClient{c: client, versionedRPC: s.versionedRPC, codec: s.codec}
-}
-
-type tikvClient struct {
-	c tikv.Client
-	// versionedRPC is used for TiCI version-aware lookups.
-	versionedRPC *versionedRPCClient
-	codec        tikv.Codec
-}
-
-func (c *tikvClient) Close() error {
-	if c.versionedRPC != nil {
-		c.versionedRPC.Close()
-	}
-	return c.c.Close()
-}
-
-func (c *tikvClient) CloseAddr(addr string) error {
-	if c.versionedRPC != nil {
-		c.versionedRPC.CloseAddr(addr)
-	}
-	return c.c.CloseAddr(addr)
-}
-
-// SendRequest sends Request.
-func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	if c.versionedRPC != nil && isVersionedCoprocessorRequest(req) {
-		return c.versionedRPC.SendRequest(ctx, addr, req, timeout, c.codec)
-	}
-	if c.versionedRPC != nil && isVersionedBatchCoprocessorRequest(req) {
-		return c.versionedRPC.SendBatchRequest(ctx, addr, req, timeout, c.codec)
-	}
-	return c.c.SendRequest(ctx, addr, req, timeout)
-}
-
-// SendRequestAsync sends Request asynchronously.
-func (c *tikvClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
-	c.c.SendRequestAsync(ctx, addr, req, cb)
-}
-
-func (c *tikvClient) SetEventListener(listener tikv.ClientEventListener) {
-	c.c.SetEventListener(listener)
+	return s.store.GetTiKVClient()
 }
 
 // Store wraps tikv.KVStore and provides coprocessor utilities.
@@ -142,7 +96,7 @@ func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.Coproces
 
 	/* #nosec G404 */
 	return &Store{
-		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient), codec: codec, tlsConfig: tls, versionedRPC: newVersionedRPCClient(tls)},
+		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient), codec: codec},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 		numcpu:          runtime.GOMAXPROCS(0),
@@ -156,9 +110,6 @@ func (s *Store) Close() {
 	}
 	if s.TiCIShardCache != nil {
 		s.TiCIShardCache.client.Close()
-	}
-	if s.versionedRPC != nil {
-		s.versionedRPC.Close()
 	}
 }
 
