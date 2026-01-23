@@ -129,7 +129,11 @@ func (c *s3Client) CheckPutAndDeleteObject(ctx context.Context) (err error) {
 		Bucket: aws.String(c.Bucket),
 		Key:    aws.String(key),
 	}
-	_, err = c.svc.PutObject(ctx, input)
+	var optFns []func(*s3.Options)
+	if c.s3Compatible {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	_, err = c.svc.PutObject(ctx, input, optFns...)
 	return errors.Trace(err)
 }
 
@@ -160,7 +164,11 @@ func (c *s3Client) PutObject(ctx context.Context, name string, data []byte) erro
 	// since aws-go-sdk already did it in #computeBodyHashes
 	// https://github.com/aws/aws-sdk-go/blob/bcb2cf3fc2263c8c28b3119b07d2dbb44d7c93a0/service/s3/body_hash.go#L30
 	input := c.buildPutObjectInput(c.options, name, data)
-	_, err := c.svc.PutObject(ctx, input)
+	var optFns []func(*s3.Options)
+	if c.s3Compatible {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	_, err := c.svc.PutObject(ctx, input, optFns...)
 	return errors.Trace(err)
 }
 
@@ -329,6 +337,7 @@ func (c *s3Client) MultipartWriter(ctx context.Context, name string) (objectio.W
 		svc:           c.svc,
 		createOutput:  resp,
 		completeParts: make([]types.CompletedPart, 0, 128),
+		s3Compatible:  c.s3Compatible,
 	}, nil
 }
 
@@ -337,6 +346,9 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 		u.PartSize = partSize
 		u.Concurrency = concurrency
 		u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(concurrency * s3like.HardcodedChunkSize)
+		if c.s3Compatible {
+			u.ClientOptions = append(u.ClientOptions, withContentMD5)
+		}
 	})
 	return &multipartUploader{
 		uploader:     up,
@@ -362,6 +374,7 @@ type multipartWriter struct {
 	svc           S3API
 	createOutput  *s3.CreateMultipartUploadOutput
 	completeParts []types.CompletedPart
+	s3Compatible  bool
 }
 
 // UploadPart update partial data to s3, we should call CreateMultipartUpload to start it,
@@ -376,7 +389,11 @@ func (u *multipartWriter) Write(ctx context.Context, data []byte) (int, error) {
 		ContentLength: aws.Int64(int64(len(data))),
 	}
 
-	uploadResult, err := u.svc.UploadPart(ctx, partInput)
+	var optFns []func(*s3.Options)
+	if u.s3Compatible {
+		optFns = []func(*s3.Options){withContentMD5}
+	}
+	uploadResult, err := u.svc.UploadPart(ctx, partInput, optFns...)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}

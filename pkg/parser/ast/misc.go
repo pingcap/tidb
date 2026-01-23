@@ -3802,7 +3802,7 @@ func RedactURL(str string) string {
 
 	var redactKeys map[string]struct{}
 	switch strings.ToLower(scheme) {
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
 		redactKeys = map[string]struct{}{
 			"access-key":        {},
 			"secret-access-key": {},

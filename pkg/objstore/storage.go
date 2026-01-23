@@ -22,6 +22,8 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/ossstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/s3store"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -87,8 +89,10 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *storeapi.O
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
-		if backend.S3.Provider == s3store.KS3SDKProvider {
+		if backend.S3.Provider == s3like.KS3SDKProvider {
 			return s3store.NewKS3Storage(ctx, backend.S3, opts)
+		} else if backend.S3.Provider == s3like.OSSProvider {
+			return ossstore.NewOSSStorage(ctx, backend.S3, opts)
 		}
 		return s3store.NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
