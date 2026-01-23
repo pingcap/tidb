@@ -3440,6 +3440,332 @@ local distSlotsUsageP = graphPanel.new(
   )
 );
 
+// ============== Row: Statistics & Plan Management ==============
+local statisticsPlanManagementRow = row.new(collapse=true, title='Statistics & Plan Management');
+
+local autoManualAnalyzeDurationP = graphPanel.new(
+  title='Auto/Manual Analyze Duration',
+  datasource=myDS,
+  format='s',
+  description='TiDB auto and manual analyze time durations',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_statistics_auto_analyze_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='Auto 95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_statistics_auto_analyze_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='Auto 80',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.95, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="AnalyzeTable"}[1m])) by (le))',
+    legendFormat='Manual 95',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_server_handle_query_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="AnalyzeTable"}[1m])) by (le))',
+    legendFormat='Manual 80',
+  )
+);
+
+local autoManualAnalyzeQueriesPerMinuteP = graphPanel.new(
+  title='Auto/Manual Analyze Queries Per Minute',
+  datasource=myDS,
+  format='short',
+  description='TiDB auto/manual analyze queries per minute',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_statistics_auto_analyze_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='Auto {{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_statistics_manual_analyze_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='Manual {{type}}',
+  )
+);
+
+local statsInaccuracyRateP = graphPanel.new(
+  title='Stats Inaccuracy Rate',
+  datasource=myDS,
+  format='short',
+  description='TiDB statistics inaccurate rate',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_statistics_stats_inaccuracy_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_statistics_stats_inaccuracy_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_statistics_stats_inaccuracy_rate_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='50',
+  )
+);
+
+local pseudoEstimationOpsP = graphPanel.new(
+  title='Pseudo Estimation OPS',
+  datasource=myDS,
+  format='short',
+  description='TiDB optimizer using pseudo estimation counts',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_statistics_pseudo_estimation_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[30s])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local updateStatsOpsP = graphPanel.new(
+  title='Update Stats OPS',
+  datasource=myDS,
+  format='short',
+  description='TiDB updating statistics using feed back counts',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_statistics_update_stats_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local statsHealthyDistributionP = graphPanel.new(
+  title='Stats Healthy Distribution',
+  datasource=myDS,
+  format='short',
+  description='TiDB table stats healthy distribution',
+)
+.addTarget(
+  prometheus.target(
+    'avg(tidb_statistics_stats_healthy{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local syncLoadQpsP = graphPanel.new(
+  title='Sync Load QPS',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_statistics_sync_load_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='total sync-load',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_statistics_sync_load_timeout_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='timeout',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_statistics_sync_load_dedup_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='dedup sync-load',
+  )
+);
+
+local syncLoadLatencyP9999P = graphPanel.new(
+  title='Sync Load Latency P9999',
+  datasource=myDS,
+  format='ms',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9999, sum(rate(tidb_statistics_sync_load_latency_millis_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='sync-load',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9999, sum(rate(tidb_statistics_read_stats_latency_millis_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='read-stats',
+  )
+);
+
+local statsCacheCostP = graphPanel.new(
+  title='Stats Cache Cost',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=false,
+  format='bytes',
+  description='TiDB managing stats cache',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_statistics_stats_cache_val{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="track"}',
+    legendFormat='track-{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_statistics_stats_cache_val{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", type="capacity"}',
+    legendFormat='capacity--{{instance}}',
+  )
+);
+
+local statsCacheOpsP = graphPanel.new(
+  title='Stats Cache OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_avg=true,
+  legend_max=true,
+  format='short',
+  description='TiDB managing stats cache',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_statistics_stats_cache_op{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local planReplayerTaskOpmP = graphPanel.new(
+  title='Plan Replayer Task OPM',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_plan_replayer_task{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"dump"}[1m])) by (result)',
+    legendFormat='dump-task-{{result}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_plan_replayer_task{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"capture"}[1m])) by (result)',
+    legendFormat='capture-task-{{result}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'avg(tidb_plan_replayer_register_task{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"})',
+    legendFormat='register-task',
+  )
+);
+
+local historicalStatsOpmP = graphPanel.new(
+  title='Historical Stats OPM',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_statistics_historical_stats{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"generate"}[1m])) by (result)',
+    legendFormat='generate-{{result}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_statistics_historical_stats{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", type=~"dump"}[1m])) by (result)',
+    legendFormat='dump-{{result}}',
+  )
+);
+
+local statsLoadingDurationP = graphPanel.new(
+  title='Stats Loading Duration',
+  datasource=myDS,
+  format='s',
+  description='The duration of background job of loading the newly changed statistics into memory',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_statistics_stats_delta_load_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='99',
+  )
+);
+
+local statsMetaUsageUpdatingDurationP = graphPanel.new(
+  title='Stats Meta/Usage Updating Duration',
+  datasource=myDS,
+  format='s',
+  description='The duration to handle the background job of updating the count and the modify_count of the mysql.stats_meta',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_statistics_stats_delta_update_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='stats-meta-99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_statistics_stats_usage_update_duration_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='stats-usage-99',
+  )
+);
+
+local bindingCacheMemoryUsageP = graphPanel.new(
+  title='Binding Cache Memory Usage',
+  datasource=myDS,
+  format='bytes',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_binding_cache_mem_usage{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}} usage',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_binding_cache_mem_limit{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}} limit',
+  )
+);
+
+local bindingCacheHitMissOpsP = graphPanel.new(
+  title='Binding Cache Hit / Miss OPS',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_binding_cache_hit_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='{{instance}} hit',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_binding_cache_miss_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='{{instance}} miss',
+  )
+);
+
+local numBindingsInCacheP = graphPanel.new(
+  title='Number Of Bindings In Cache',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_binding_cache_num_bindings{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='{{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -3681,6 +4007,28 @@ newDash
   .addPanel(distSubtaskPendingDurationP, gridPos=midThirdPanelPos)
   .addPanel(distUncompletedSubtaskDistributionP, gridPos=rightThirdPanelPos)
   .addPanel(distSlotsUsageP, gridPos=leftThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  statisticsPlanManagementRow
+  .addPanel(autoManualAnalyzeDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(autoManualAnalyzeQueriesPerMinuteP, gridPos=midThirdPanelPos)
+  .addPanel(statsInaccuracyRateP, gridPos=rightThirdPanelPos)
+  .addPanel(pseudoEstimationOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(updateStatsOpsP, gridPos=midThirdPanelPos)
+  .addPanel(statsHealthyDistributionP, gridPos=rightThirdPanelPos)
+  .addPanel(syncLoadQpsP, gridPos=leftThirdPanelPos)
+  .addPanel(syncLoadLatencyP9999P, gridPos=midThirdPanelPos)
+  .addPanel(statsCacheCostP, gridPos=rightThirdPanelPos)
+  .addPanel(statsCacheOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(planReplayerTaskOpmP, gridPos=midThirdPanelPos)
+  .addPanel(historicalStatsOpmP, gridPos=rightThirdPanelPos)
+  .addPanel(statsLoadingDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(statsMetaUsageUpdatingDurationP, gridPos=midThirdPanelPos)
+  .addPanel(bindingCacheMemoryUsageP, gridPos=rightThirdPanelPos)
+  .addPanel(bindingCacheHitMissOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(numBindingsInCacheP, gridPos=midThirdPanelPos)
   ,
   gridPos=rowPos
 )
