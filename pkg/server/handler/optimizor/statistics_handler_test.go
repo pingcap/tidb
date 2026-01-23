@@ -307,6 +307,9 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
@@ -368,6 +371,9 @@ func TestLoadNullStatsFile(t *testing.T) {
 	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	// Creating and running the server
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
