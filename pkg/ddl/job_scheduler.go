@@ -55,6 +55,7 @@ import (
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	clientgotrace "github.com/tikv/client-go/v2/trace"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -570,6 +571,7 @@ func (s *jobScheduler) getJobRunCtx(trace *traceevent.TraceBuf, jobID int64, tra
 	newCtx := traceevent.WithTraceBuf(s.schCtx, trace)
 	if len(traceInfo.TraceID) > 0 {
 		trace.SetTraceID(traceInfo.TraceID)
+		newCtx = clientgotrace.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}
 	return &jobContext{
 		ctx:                  newCtx,

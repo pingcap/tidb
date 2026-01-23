@@ -491,7 +491,6 @@ func newHTTPFlightRecorder(config *FlightRecorderConfig) (*HTTPFlightRecorder, e
 		zap.Stringer("category", categories),
 		zap.Any("mapping", compiled.nameMapping),
 		zap.Uint64s("truthTable", ret.truthTable))
-
 	globalHTTPFlightRecorder.Store(ret)
 	return ret, nil
 }
