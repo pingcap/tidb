@@ -15,57 +15,87 @@
 package runaway
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
 	"time"
 
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
-// watchSyncInterval is the interval to sync the watch record.
-const watchSyncInterval = time.Second
+const (
+	// watchSyncInterval is the interval to sync the watch record.
+	watchSyncInterval = time.Second
+	// watchTableName is the name of system table which save runaway watch items.
+	runawayWatchTableName = "tidb_runaway_watch"
+	// watchDoneTableName is the name of system table which save done runaway watch items.
+	runawayWatchDoneTableName = "tidb_runaway_watch_done"
+)
+
+func getRunawayWatchTableName() string {
+	return fmt.Sprintf("mysql.%s", runawayWatchTableName)
+}
+
+func getRunawayWatchDoneTableName() string {
+	return fmt.Sprintf("mysql.%s", runawayWatchDoneTableName)
+}
 
 // Syncer is used to sync the runaway records.
 type syncer struct {
 	newWatchReader      *systemTableReader
 	deletionWatchReader *systemTableReader
 	sysSessionPool      util.SessionPool
+	infoCache           *infoschema.InfoCache
 
 	mu sync.Mutex
 }
 
-func newSyncer(sysSessionPool util.SessionPool) *syncer {
+func newSyncer(sysSessionPool util.SessionPool, infoCache *infoschema.InfoCache) *syncer {
 	return &syncer{
 		sysSessionPool: sysSessionPool,
+		infoCache:      infoCache,
 		newWatchReader: &systemTableReader{
-			watchTableName,
+			getRunawayWatchTableName(),
 			"start_time",
 			NullTime},
 		deletionWatchReader: &systemTableReader{
-			watchDoneTableName,
+			getRunawayWatchDoneTableName(),
 			"done_time",
 			NullTime},
 	}
 }
 
-func (s *syncer) checkWatchTableExist() (bool, error) {
-	return s.checkTableExist("tidb_runaway_watch")
+var (
+	systemSchemaCIStr          = ast.NewCIStr("mysql")
+	runawayWatchTableCIStr     = ast.NewCIStr(runawayWatchTableName)
+	runawayWatchDoneTableCIStr = ast.NewCIStr(runawayWatchDoneTableName)
+)
+
+func (s *syncer) checkWatchTableExist() bool {
+	return s.checkTableExist(runawayWatchTableCIStr)
 }
 
-func (s *syncer) checkWatchDoneTableExist() (bool, error) {
-	return s.checkTableExist("tidb_runaway_watch_done")
+func (s *syncer) checkWatchDoneTableExist() bool {
+	return s.checkTableExist(runawayWatchDoneTableCIStr)
 }
 
-func (s *syncer) checkTableExist(tableName string) (bool, error) {
-	sql := fmt.Sprintf(`SELECT COUNT(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA = 'mysql' AND TABLE_NAME = '%s'`, tableName)
-	rows, err := ExecRCRestrictedSQL(s.sysSessionPool, sql, nil)
-	if err != nil || len(rows) == 0 {
-		return false, err
+// checkTableExist checks if the table exists using infoschema cache (memory lookup, no SQL).
+func (s *syncer) checkTableExist(tableName ast.CIStr) bool {
+	if s.infoCache == nil {
+		return false
 	}
-	return rows[0].GetInt64(0) > 0, nil
+	is := s.infoCache.GetLatest()
+	if is == nil {
+		return false
+	}
+	_, err := is.TableByName(context.Background(), systemSchemaCIStr, tableName)
+	// If the table not exists, an `ErrTableNotExists` error will be returned.
+	return err == nil
 }
 
 func (s *syncer) getWatchRecordByID(id int64) ([]*QuarantineRecord, error) {
