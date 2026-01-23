@@ -3966,6 +3966,7 @@ func TestDDL(t *testing.T) {
 		{"create masking policy p on t(c) as c enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS `c` ENABLE"},
 		{"create masking policy if not exists p on t(c) as c disable", true, "CREATE MASKING POLICY IF NOT EXISTS `p` ON `t` (`c`) AS `c` DISABLE"},
 		{"create or replace masking policy p on t(c) as c", true, "CREATE OR REPLACE MASKING POLICY `p` ON `t` (`c`) AS `c`"},
+		{"create masking policy p on t(c) as case when current_user() = 'root' then c else 'xxx' end enable", true, "CREATE MASKING POLICY `p` ON `t` (`c`) AS CASE WHEN CURRENT_USER()=_UTF8MB4'root' THEN `c` ELSE _UTF8MB4'xxx' END ENABLE"},
 		{"alter table t add masking policy p on (c) as c", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c`"},
 		{"alter table t add masking policy p on (c) as c disable", true, "ALTER TABLE `t` ADD MASKING POLICY `p` ON (`c`) AS `c` DISABLE"},
 		{"alter table t enable masking policy p", true, "ALTER TABLE `t` ENABLE MASKING POLICY `p`"},

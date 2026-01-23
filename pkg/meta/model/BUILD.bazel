@@ -10,6 +10,7 @@ go_library(
         "index.go",
         "job.go",
         "job_args.go",
+        "masking_policy.go",
         "placement.go",
         "reorg.go",
         "resource_group.go",
