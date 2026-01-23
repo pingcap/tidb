@@ -1265,6 +1265,16 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalTopN)
 	t := tasks[0].Copy()
+
+	// Handle partial order TopN first: when child property carries PartialOrderInfo,
+	// skylinePruning has already ensured that the chosen access path can provide
+	// partial order via prefix index and filled PrefixColID/PrefixLen.
+	if copTask, ok := t.(*physicalop.CopTask); ok {
+		if childProp := p.GetChildReqProps(0); childProp != nil && childProp.PartialOrderInfo != nil {
+			return handlePartialOrderTopN(p, copTask, childProp.PartialOrderInfo)
+		}
+	}
+
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
@@ -1328,6 +1338,134 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		return t
 	}
 	return attachPlan2Task(p, rootTask)
+}
+
+// handlePartialOrderTopN handles the partial order TopN scenario.
+// It fills the partial-order-related fields on the TopN itself and, when possible,
+// pushes down a special Limit (N+Offset) with prefix information to the index side.
+func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask,
+	partialOrderInfo *property.PartialOrderInfo) base.Task {
+
+	if partialOrderInfo == nil {
+		rootTask := copTask.ConvertToRootTask(p.SCtx())
+		return attachPlan2Task(p, rootTask)
+	}
+
+	// PartialOrderedLimit = Count + Offset. Executor will handle "read X more rows"
+	// internally based on this value and PrefixColID/PrefixLen.
+	partialOrderedLimit := p.Count + p.Offset
+	p.PartialOrderedLimit = partialOrderedLimit
+	p.PrefixColID = partialOrderInfo.PrefixColID
+	p.PrefixLen = partialOrderInfo.PrefixLen
+
+	// Decide whether we can push a special Limit down to the index plan.
+	// Conditions:
+	//   - Not an IndexMerge.
+	//   - IndexPlan is not finished (IndexPlanFinished == false).
+	//   - No root task conditions.
+	canPushLimit := false
+	if len(copTask.IdxMergePartPlans) == 0 &&
+		!copTask.IndexPlanFinished &&
+		len(copTask.RootTaskConds) == 0 &&
+		copTask.IndexPlan != nil {
+		canPushLimit = true
+	}
+
+	if canPushLimit {
+		// Estimate X only for statistics; actual Limit.Count is still Count+Offset.
+		maxX := estimateMaxXForPartialOrder(p.SCtx(), copTask)
+		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
+
+		childProfile := copTask.IndexPlan.StatsInfo()
+		stats := property.DeriveLimitStats(childProfile, estimatedRows)
+
+		pushedDownLimit := physicalop.PhysicalLimit{
+			Count:               partialOrderedLimit,
+			PartialOrderedLimit: partialOrderedLimit,
+			PrefixColID:         partialOrderInfo.PrefixColID,
+			PrefixLen:           partialOrderInfo.PrefixLen,
+		}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+		pushedDownLimit.SetChildren(copTask.IndexPlan)
+		pushedDownLimit.SetSchema(copTask.IndexPlan.Schema())
+		copTask.IndexPlan = pushedDownLimit
+	}
+
+	// Always keep TopN in TiDB as the upper layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask)
+}
+
+// estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
+// This value is only used for statistics (row count estimation) and does not affect the actual
+// PartialOrderedLimit, which is always Count + Offset.
+func estimateMaxXForPartialOrder(ctx base.PlanContext, copTask *physicalop.CopTask) uint64 {
+	if copTask == nil || copTask.IndexPlan == nil {
+		return 1000
+	}
+
+	// Extract the underlying PhysicalIndexScan from IndexPlan (possibly beneath a Selection).
+	indexPlan := copTask.IndexPlan
+	var indexScan *physicalop.PhysicalIndexScan
+	if is, ok := indexPlan.(*physicalop.PhysicalIndexScan); ok {
+		indexScan = is
+	} else if sel, ok := indexPlan.(*physicalop.PhysicalSelection); ok {
+		if is, ok := sel.Children()[0].(*physicalop.PhysicalIndexScan); ok {
+			indexScan = is
+		}
+	}
+	if indexScan == nil {
+		return 1000
+	}
+
+	statsTbl := indexScan.StatsTable()
+	if statsTbl == nil {
+		return 1000
+	}
+
+	idx := statsTbl.GetIdx(indexScan.Index.ID)
+	if idx == nil {
+		return 1000
+	}
+
+	totalRows := float64(statsTbl.RealtimeCount)
+	if totalRows <= 0 {
+		return 1000
+	}
+
+	// Use average rows per prefix as a baseline: totalRows / NDV.
+	ndv := float64(idx.NDV)
+	if ndv <= 0 {
+		ndv = 1
+	}
+	avgRowsPerPrefix := totalRows / ndv
+
+	// Use TopN statistics' maximum frequency as another signal.
+	var maxTopNCount uint64
+	if idx.TopN != nil {
+		for _, item := range idx.TopN.TopN {
+			if item.Count > maxTopNCount {
+				maxTopNCount = item.Count
+			}
+		}
+	}
+
+	estimatedX := uint64(avgRowsPerPrefix * 1.5)
+	if maxTopNCount > estimatedX {
+		estimatedX = maxTopNCount
+	}
+
+	// Cap X to at most 10% of total rows.
+	maxAllowed := uint64(totalRows * 0.1)
+	if maxAllowed == 0 {
+		maxAllowed = 1
+	}
+	if estimatedX > maxAllowed {
+		estimatedX = maxAllowed
+	}
+	if estimatedX == 0 {
+		estimatedX = 1
+	}
+	return estimatedX
 }
 
 // attach2Task4PhysicalProjection implements PhysicalPlan interface.

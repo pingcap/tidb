@@ -331,6 +331,14 @@ type PhysicalProperty struct {
 type PartialOrderInfo struct {
 	// SortItems are the ORDER BY columns from TopN
 	SortItems []*SortItem
+
+	// PrefixColID is the UniqueID of the prefix index column
+	// This field is set by matchPartialOrderProperty in skylinePruning
+	PrefixColID int64
+
+	// PrefixLen is the length (in bytes) of the prefix index
+	// This field is set by matchPartialOrderProperty in skylinePruning
+	PrefixLen int
 }
 
 // AllSameOrder checks if all the items have same order.
@@ -635,6 +643,38 @@ func (p *PhysicalProperty) AllSameOrder() (isSame bool, desc bool) {
 		}
 	}
 	return true, p.SortItems[0].Desc
+}
+
+// NeedKeepOrder returns whether the property requires maintaining order.
+// It handles both normal sorting (SortItems) and partial order (PartialOrderInfo).
+func (p *PhysicalProperty) NeedKeepOrder() bool {
+	return !p.IsSortItemEmpty() || p.PartialOrderInfo != nil
+}
+
+// GetSortDesc returns the sort direction (descending or not).
+// It prioritizes PartialOrderInfo over SortItems.
+// This method reuses the existing AllSameOrder methods.
+func (p *PhysicalProperty) GetSortDesc() bool {
+	if p.PartialOrderInfo != nil {
+		_, desc := p.PartialOrderInfo.AllSameOrder()
+		return desc
+	}
+	_, desc := p.AllSameOrder()
+	return desc
+}
+
+// GetSortItemsForKeepOrder returns the sort items used for KeepOrder.
+// It prioritizes PartialOrderInfo over SortItems.
+// Returns a copy of SortItems (converting from []*SortItem to []SortItem if from PartialOrderInfo).
+func (p *PhysicalProperty) GetSortItemsForKeepOrder() []SortItem {
+	if p.PartialOrderInfo != nil && len(p.PartialOrderInfo.SortItems) > 0 {
+		items := make([]SortItem, 0, len(p.PartialOrderInfo.SortItems))
+		for _, si := range p.PartialOrderInfo.SortItems {
+			items = append(items, *si)
+		}
+		return items
+	}
+	return p.SortItems
 }
 
 const emptyPhysicalPropertySize = int64(unsafe.Sizeof(PhysicalProperty{}))
