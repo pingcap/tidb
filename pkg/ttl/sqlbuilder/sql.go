@@ -208,13 +208,7 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 	return nil
 }
 
-// Safety conditions for Active-Active softdelete cleanup.
-// require:
-//  1. min_checkpoint_ts > IFNULL(_tidb_origin_ts, _tidb_commit_ts)
-//     so TiCDC won't replicate any future row with a timestamp <= this row.
-//  2. tidb_current_tso() > IFNULL(_tidb_origin_ts, _tidb_commit_ts)
-//     so the delete won't be blocked waiting for TSO to pass the origin ts.
-//
+// WriteActiveActiveSafetyCondition writes safe conds for Active-Active softdelete cleanup.
 // The min_checkpoint_ts is queried and cached from `tidb_cdc`.`ticdc_progress_table` for the table.
 func (b *SQLBuilder) WriteActiveActiveSafetyCondition(minCheckpointTS uint64) error {
 	switch b.state {
@@ -226,6 +220,11 @@ func (b *SQLBuilder) WriteActiveActiveSafetyCondition(minCheckpointTS uint64) er
 	default:
 		return errors.Errorf("invalid state: %v", b.state)
 	}
+
+	//  1. min_checkpoint_ts > IFNULL(_tidb_origin_ts, _tidb_commit_ts)
+	//     so TiCDC won't replicate any future row with a timestamp <= this row.
+	//  2. tidb_current_tso() > IFNULL(_tidb_origin_ts, _tidb_commit_ts)
+	//     so the delete won't be blocked waiting for TSO to pass the origin ts.
 
 	// tidb_current_tso just reads session variable tidb_current_ts.
 	b.restoreCtx.WritePlainf(
