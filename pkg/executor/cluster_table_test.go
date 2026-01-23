@@ -214,7 +214,7 @@ select 7;`
 	require.Equal(t, 2, len(rows))
 	require.Equal(t, "select 5;", rows[0][1])
 	require.Equal(t, "select 4;", rows[1][1])
-	// 3 means we read 3 blocks of logData3, and last block of logData2
+	// 3 means we read 2 blocks of logData3, and last block of logData2
 	require.EqualValues(t, 3, executor.DashboardSlowLogReadBlockCnt4Test)
 }
 

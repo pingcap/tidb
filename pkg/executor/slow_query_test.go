@@ -753,7 +753,7 @@ select 9;`
 		comment := fmt.Sprintf("case id: %v", i)
 		scanner := newSlowLogReverseScanner(retriever, sctx)
 		maxBlocks := len(cas.logs[0]) / 2
-		got, err := scanner.nextBatch(context.Background(), maxBlocks)
+		got, err := scanner.nextBatch(context.Background(), uint64(maxBlocks))
 		require.NoError(t, err)
 		require.Equal(t, cas.logs[0], got, comment)
 		require.NoError(t, retriever.close())
@@ -795,6 +795,7 @@ select 5;`
 	}
 	require.GreaterOrEqual(t, timeColIdx, 0)
 
+	DashboardSlowLogReadBlockCnt4Test = 0
 	ctx := context.Background()
 	allRows := make([][]types.Datum, 0, retriever.limit)
 	for {
@@ -806,6 +807,7 @@ select 5;`
 		allRows = append(allRows, rows...)
 	}
 	require.Len(t, allRows, 2)
+	require.EqualValues(t, 2, DashboardSlowLogReadBlockCnt4Test)
 
 	t0, err := allRows[0][timeColIdx].ToString()
 	require.NoError(t, err)
