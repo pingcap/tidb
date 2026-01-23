@@ -4220,6 +4220,372 @@ local tikvStatTaskOpsP = graphPanel.new(
   )
 );
 
+// ============== Row: TTL ==============
+local ttlRow = row.new(collapse=true, title='TTL');
+
+local ttlTidbCpuUsageP = graphPanel.new(
+  title='TiDB CPU Usage',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  format='percentunit',
+  description='TiDB cpu usage calculated with process cpu running seconds',
+)
+.addTarget(
+  prometheus.target(
+    'irate(process_cpu_seconds_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}[30s])',
+    legendFormat='{{instance}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_maxprocs{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='quota-{{instance}}',
+  )
+);
+
+local ttlTikvIoMbpsP = graphPanel.new(
+  title='TiKV IO MBps',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_avg=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='Bps',
+  description='IO MBps: The total bytes of read and write in all TiKV instances',
+)
+.addTarget(
+  prometheus.target(
+    'avg(sum(rate(tikv_engine_flow_bytes{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", db="kv", type=~"wal_file_bytes|bytes_read|iter_bytes_read"}[1m])) by (instance))',
+    legendFormat='IO-Avg',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'max(sum(rate(tikv_engine_flow_bytes{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", db="kv", type=~"wal_file_bytes|bytes_read|iter_bytes_read"}[1m])) by (instance))',
+    legendFormat='IO-Max',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'max(sum(rate(tikv_engine_flow_bytes{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", db="kv", type=~"wal_file_bytes|bytes_read|iter_bytes_read"}[1m])) by (instance)) - min(sum(rate(tikv_engine_flow_bytes{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", db="kv", type=~"wal_file_bytes|bytes_read|iter_bytes_read"}[1m])) by (instance))',
+    legendFormat='IO-Delta',
+  )
+);
+
+local ttlTikvCpuP = graphPanel.new(
+  title='TiKV CPU',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_sort='max',
+  legend_sortDesc=true,
+  format='percentunit',
+  description='The CPU usage of each TiKV instance',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(process_cpu_seconds_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job=~".*tikv"}[1m])) by (instance)',
+    legendFormat='{{instance}}',
+  )
+);
+
+local ttlQpsByTypeP = graphPanel.new(
+  title='TTL QPS By Type',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='short',
+  description='The query count per second for each type of query in TTL jobs',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_ttl_query_duration_count{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (sql_type, result)',
+    legendFormat='{{sql_type}} {{result}}',
+  )
+);
+
+local ttlInsertRowsPerSecondP = graphPanel.new(
+  title='TTL Insert Rows Per Second',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_ttl_insert_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='insert rows per second',
+  )
+);
+
+local ttlProcessedRowsPerSecondP = graphPanel.new(
+  title='TTL Processed Rows Per Second',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='short',
+  description='The processed rows per second by TTL jobs',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_ttl_processed_expired_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (sql_type, result)',
+    legendFormat='{{sql_type}} {{result}}',
+  )
+);
+
+local ttlInsertRowsPerHourP = graphPanel.new(
+  title='TTL Insert Rows Per Hour',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_insert_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}[1h]))',
+    legendFormat='insert rows per hour',
+  )
+);
+
+local ttlDeleteRowsPerHourP = graphPanel.new(
+  title='TTL Delete Rows Per Hour',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='short',
+  description='The rows deleted per hour by TTL jobs',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[1h])) by (sql_type, result)',
+    legendFormat='delete rows per hour',
+  )
+);
+
+local ttlScanQueryDurationP = graphPanel.new(
+  title='TTL Scan Query Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='s',
+  description='The duration of the TTL scan queries',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="select", result="ok"}[1m])) by (le))',
+    legendFormat='50',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="select", result="ok"}[1m])) by (le))',
+    legendFormat='80',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="select", result="ok"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="select", result="ok"}[1m])) by (le))',
+    legendFormat='99',
+  )
+);
+
+local ttlDeleteQueryDurationP = graphPanel.new(
+  title='TTL Delete Query Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='s',
+  description='The duration of the TTL delete queries',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.50, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[1m])) by (le))',
+    legendFormat='50',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[1m])) by (le))',
+    legendFormat='80',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.90, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[1m])) by (le))',
+    legendFormat='90',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_server_ttl_query_duration_bucket{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[1m])) by (le))',
+    legendFormat='99',
+  )
+);
+
+local ttlScanWorkerTimeByPhaseP = graphPanel.new(
+  title='Scan Worker Time By Phase',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='s',
+  description='The time spent on each phase for scan workers',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_ttl_phase_time{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", type="scan_worker"}[1m])) by (phase)',
+    legendFormat='{{phase}}',
+  )
+);
+
+local ttlDeleteWorkerTimeByPhaseP = graphPanel.new(
+  title='Delete Worker Time By Phase',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='s',
+  description='The time spent on each phase for delete workers',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_server_ttl_phase_time{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", type="delete_worker"}[1m])) by (phase)',
+    legendFormat='{{phase}}',
+  )
+);
+
+local ttlJobCountByStatusP = graphPanel.new(
+  title='TTL Job Count By Status',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='short',
+  description='The TTL job statuses in each worker',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_ttl_job_status{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster"}) by (type)',
+    legendFormat='ALL {{ type }}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_ttl_job_status{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (type, instance)',
+    legendFormat='{{ instance }} {{ type }}',
+  )
+);
+
+local ttlTaskCountByStatusP = graphPanel.new(
+  title='TTL Task Count By Status',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='short',
+  description='The TTL task statuses in each worker',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_ttl_task_status{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster"}) by (type)',
+    legendFormat='ALL {{ type }}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_server_ttl_task_status{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (type, instance)',
+    legendFormat='{{ instance }} {{ type }}',
+  )
+);
+
+local tableCountByTtlScheduleDelayP = graphPanel.new(
+  title='Table Count By TTL Schedule Delay',
+  datasource=myDS,
+  legend_rightSide=true,
+  format='short',
+  description='TTL Schedule Delay is defined by "MAX(0, now - lastSuccessJobTime - scheduleInterval)"',
+)
+.addTarget(
+  prometheus.target(
+    'max(tidb_server_ttl_watermark_delay{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", type="schedule"}) by (type, name)',
+    legendFormat='{{ name }}',
+  )
+);
+
+local ttlInsertDeleteRowsByDayP = graphPanel.new(
+  title='TTL Insert/Delete Rows By Day',
+  datasource=myDS,
+  description='The insert/delete row count for TTL tables by day',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_insert_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}[${__to:date:H}h${__to:date:m}m]))',
+    legendFormat='insert current day',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[${__to:date:H}h${__to:date:m}m]))',
+    legendFormat='delete current day',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_insert_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}[1d] offset ${__to:date:H}h${__to:date:m}m))',
+    legendFormat='insert last day',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[1d] offset ${__to:date:H}h${__to:date:m}m))',
+    legendFormat='delete last day',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_insert_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance"}[1d] offset 1d${__to:date:H}h${__to:date:m}m))',
+    legendFormat='insert 2 days ago',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_processed_expired_rows{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster", instance=~"$instance", sql_type="delete", result="ok"}[1d] offset 1d${__to:date:H}h${__to:date:m}m))',
+    legendFormat='delete 2 days ago',
+  )
+);
+
+local ttlEventCountPerMinuteP = graphPanel.new(
+  title='TTL Event Count Per Minute',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_avg=true,
+  legend_max=true,
+  format='short',
+  description='Count of event every minute for TTL',
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_ttl_event_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='ttl-{{ type }}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_timer_event_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", scope="hook.tidb.ttl"}[1m])) by (type)',
+    legendFormat='hook-{{ type }}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(increase(tidb_server_timer_event_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", scope=~"runtime\\.ttl.*"}[1m])) by (type)',
+    legendFormat='runtime-{{ type }}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4535,6 +4901,28 @@ newDash
   .addPanel(totalReportCountP, gridPos=leftThirdPanelPos)
   .addPanel(cpuProfilingOpsP, gridPos=midThirdPanelPos)
   .addPanel(tikvStatTaskOpsP, gridPos=rightThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  ttlRow
+  .addPanel(ttlTidbCpuUsageP, gridPos=leftThirdPanelPos)
+  .addPanel(ttlTikvIoMbpsP, gridPos=midThirdPanelPos)
+  .addPanel(ttlTikvCpuP, gridPos=rightThirdPanelPos)
+  .addPanel(ttlQpsByTypeP, gridPos=leftThirdPanelPos)
+  .addPanel(ttlInsertRowsPerSecondP, gridPos=midThirdPanelPos)
+  .addPanel(ttlProcessedRowsPerSecondP, gridPos=rightThirdPanelPos)
+  .addPanel(ttlInsertRowsPerHourP, gridPos=leftThirdPanelPos)
+  .addPanel(ttlDeleteRowsPerHourP, gridPos=midThirdPanelPos)
+  .addPanel(ttlScanQueryDurationP, gridPos=rightThirdPanelPos)
+  .addPanel(ttlDeleteQueryDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(ttlScanWorkerTimeByPhaseP, gridPos=midThirdPanelPos)
+  .addPanel(ttlDeleteWorkerTimeByPhaseP, gridPos=rightThirdPanelPos)
+  .addPanel(ttlJobCountByStatusP, gridPos=leftThirdPanelPos)
+  .addPanel(ttlTaskCountByStatusP, gridPos=midThirdPanelPos)
+  .addPanel(tableCountByTtlScheduleDelayP, gridPos=rightThirdPanelPos)
+  .addPanel(ttlInsertDeleteRowsByDayP, gridPos=leftThirdPanelPos)
+  .addPanel(ttlEventCountPerMinuteP, gridPos=midThirdPanelPos)
   ,
   gridPos=rowPos
 )
