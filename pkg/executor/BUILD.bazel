@@ -330,6 +330,7 @@ go_test(
     name = "executor_test",
     timeout = "moderate",
     srcs = [
+        "active_active_test.go",
         "adapter_test.go",
         "analyze_test.go",
         "analyze_utils_test.go",
@@ -436,6 +437,7 @@ go_test(
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/lightning/log",
+        "//pkg/lightning/mydump",
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/metadef",
@@ -527,6 +529,7 @@ go_test(
         "@com_github_pingcap_sysutil//:sysutil",
         "@com_github_pingcap_tipb//go-tipb",
         "@com_github_prometheus_client_golang//prometheus",
+        "@com_github_prometheus_client_golang//prometheus/testutil",
         "@com_github_prometheus_client_model//go",
         "@com_github_prometheus_common//model",
         "@com_github_stretchr_testify//mock",

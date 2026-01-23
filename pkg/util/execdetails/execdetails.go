@@ -166,6 +166,8 @@ const (
 	ProcessKeysStr = "Process_keys"
 	// PreWriteTimeStr means the time of pre-write.
 	PreWriteTimeStr = "Prewrite_time"
+	// CommitTSLagStr means information for commit ts lagging.
+	CommitTSLagStr = "Commit_ts_lag"
 	// CommitTimeStr means the time of commit.
 	CommitTimeStr = "Commit_time"
 	// WriteKeysStr means the count of keys in the transaction.
@@ -216,6 +218,13 @@ func (d ExecDetails) String() string {
 		}
 		if commitDetails.GetLatestTsTime > 0 {
 			parts = append(parts, GetLatestTsTimeStr+": "+strconv.FormatFloat(commitDetails.GetLatestTsTime.Seconds(), 'f', -1, 64))
+		}
+		if lagDetails := commitDetails.LagDetails; lagDetails.FirstLagTS > 0 {
+			parts = append(parts, CommitTSLagStr+
+				": {wait_time: "+strconv.FormatFloat(lagDetails.WaitTime.Seconds(), 'f', -1, 64)+
+				", backoff_count: "+strconv.Itoa(lagDetails.BackoffCnt)+
+				", first_lag_ts: "+strconv.FormatUint(lagDetails.FirstLagTS, 10)+
+				", wait_until_ts: "+strconv.FormatUint(lagDetails.WaitUntilTS, 10)+"}")
 		}
 		commitDetails.Mu.Lock()
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime

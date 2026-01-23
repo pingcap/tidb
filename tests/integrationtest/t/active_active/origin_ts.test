@@ -9,14 +9,34 @@ select id, v, _tidb_origin_ts from t where id in (1, 2, 3, 4);
 truncate table t;
 insert into t (id, v, _tidb_origin_ts) values (1, 1, 123456), (2, 2, 7891011), (3, 3, 5768205);
 
-# insert _tidb_origin_ts is leagal
+# insert _tidb_origin_ts is legal
 # when conflict, _tidb_origin_ts should not be updated?
 insert into t (id, _tidb_origin_ts) values (1, 11111111) on duplicate key update v = 42;
 select id, v, _tidb_origin_ts from t where id = 1;
 
-# on duplicate, update _tidb_origin_ts is leagal, and _tidb_origin_ts should be updated
+# on duplicate, update _tidb_origin_ts is legal, and _tidb_origin_ts should be updated
 insert into t (id, v) values (2, 22) on duplicate key update _tidb_origin_ts = 22222222;
 select id, v, _tidb_origin_ts from t where id = 2;
+
+# update should set _tidb_origin_ts as the given value if it is specified
+# we should test both const and expression assignment
+truncate table t;
+insert into t (id, v, _tidb_origin_ts) values (1, 10, 123);
+update t set _tidb_origin_ts = 567;
+select id, v, _tidb_origin_ts from t;
+update t set v=v+_tidb_origin_ts, _tidb_origin_ts=v*_tidb_origin_ts;
+select id, v, _tidb_origin_ts from t;
+
+# update should set _tidb_origin_ts to NULL if it's value is not specified
+update t set v=200;
+select id, v, _tidb_origin_ts from t;
+
+# update should set _tidb_origin_ts to NULL if it's value is not specified,
+# but the expression should still use the old _tidb_origin_ts to evaluate
+update t set _tidb_origin_ts = 789;
+select id, v, _tidb_origin_ts from t;
+update t set v=_tidb_origin_ts*10;
+select id, v, _tidb_origin_ts from t;
 
 # reset
 truncate table t;
@@ -29,7 +49,7 @@ update t, t1 set t.v = t1.v, t1.v = 666 where t.id = t1.id;
 select id, v, _tidb_origin_ts from t where id = 1;
 select id, v, _tidb_origin_ts from t1 where id = 1;
 
-# update join _tidb_origin_ts is leagal, and _tidb_origin_ts should be updated
+# update join _tidb_origin_ts is legal, and _tidb_origin_ts should be updated
 update t, t1 set t1._tidb_origin_ts = 9876543 where t.id = t1.id;
 select id, v, _tidb_origin_ts from t1 where id = 1;
 

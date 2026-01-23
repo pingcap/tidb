@@ -1029,6 +1029,7 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
 		ignoreErr:                 v.IgnoreErr,
+		activeActive:              newActiveActiveTableInfo(v.Table.Meta()),
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -2895,6 +2896,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
+	var tblID2ActiveActive map[int64]ActiveActiveTableInfo
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
@@ -2911,6 +2913,12 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 					tblID2table[info.TblID] = p
 				}
 			}
+		}
+		if tblInfo := tbl.Meta(); tblInfo.IsActiveActive {
+			if tblID2ActiveActive == nil {
+				tblID2ActiveActive = make(map[int64]ActiveActiveTableInfo, len(v.TblColPosInfos))
+			}
+			tblID2ActiveActive[info.TblID] = newActiveActiveTableInfo(tblInfo)
 		}
 	}
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -2943,6 +2951,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
 		IgnoreError:               v.IgnoreError,
+		tblID2ActiveActive:        tblID2ActiveActive,
 	}
 	updateExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
 	if b.err != nil {

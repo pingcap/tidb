@@ -1303,18 +1303,22 @@ func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKi
 		tk.MustQuery("select _tidb_origin_ts from t where id = 1").Check(testkit.Rows("<nil>"))
 	}
 
+	checkCommitTSLagErr := func(t *testing.T, err error) {
+		require.ErrorContains(t, err, "[tikv:8181]TSO lags too much")
+	}
+
 	t.Run(tc.name, func(t *testing.T) {
 		{
 			originTS := tc.resetState(t, tk)
 			// insert
 			err := tk.ExecToErr("insert into t (id, v) value (1, 2)")
-			require.Error(t, err)
+			require.EqualError(t, err, "[kv:1062]Duplicate entry '1' for key 't.PRIMARY'")
 			// insert ignore
 			tk.MustExec("insert ignore into t (id, v) value (1, 2)")
 			tk.MustQuery("select id, v from t").Check(testkit.Rows("1 1"))
 			// insert on duplicate
 			if tc.execToErr {
-				require.Error(t, tk.ExecToErr("insert into t (id, v) value (1, 3) on duplicate key update v = 3"))
+				checkCommitTSLagErr(t, tk.ExecToErr("insert into t (id, v) value (1, 3) on duplicate key update v = 3"))
 			} else {
 				tk.MustExec("insert into t (id, v) value (1, 3) on duplicate key update v = 3")
 				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 3"))
@@ -1326,7 +1330,7 @@ func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKi
 			originTS := tc.resetState(t, tk)
 			// replace
 			if tc.execToErr {
-				require.Error(t, tk.ExecToErr("replace into t (id, v) value (1, 4)"))
+				checkCommitTSLagErr(t, tk.ExecToErr("replace into t (id, v) value (1, 4)"))
 			} else {
 				tk.MustExec("replace into t (id, v) value (1, 4)")
 				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 4"))
@@ -1338,7 +1342,7 @@ func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKi
 			originTS := tc.resetState(t, tk)
 			// update
 			if tc.execToErr {
-				require.Error(t, tk.ExecToErr("update t set v = 5 where id = 1"))
+				checkCommitTSLagErr(t, tk.ExecToErr("update t set v = 5 where id = 1"))
 			} else {
 				tk.MustExec("update t set v = 5 where id = 1")
 				tk.MustQuery("select id, v from t").Check(testkit.Rows("1 5"))
@@ -1350,7 +1354,7 @@ func testActiveActiveTableSetCommitWaitUntilTSO(t *testing.T, tk *testkit.TestKi
 			tc.resetState(t, tk)
 			// delete
 			if tc.execToErr {
-				require.Error(t, tk.ExecToErr("delete from t where id = 1"))
+				checkCommitTSLagErr(t, tk.ExecToErr("delete from t where id = 1"))
 			} else {
 				tk.MustExec("delete from t where id = 1")
 				tk.MustQuery("select id, v from t").Check(testkit.Rows())
