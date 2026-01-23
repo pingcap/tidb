@@ -4614,6 +4614,72 @@ local emaCpuUsageP = graphPanel.new(
   )
 );
 
+// ============== Row: Follower Read ==============
+local followerReadRow = row.new(collapse=true, title='Follower Read');
+
+local closestReplicaHitCountPerSecondP = graphPanel.new(
+  title='Closest Replica Hit Count Per Second',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  format='short',
+  description='The hit/miss count of kv requests that read from closest tikv. null means the request don\'t not support follower read',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_distsql_copr_closest_read{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local coprocessorResponseSizePerInstanceP = graphPanel.new(
+  title='Coprocessor Response Size Per Instance And TiKV',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  format='KiBs',
+  description='The total coprocessor response size between each tidb and tikv',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_distsql_copr_resp_size_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (instance, store)',
+    legendFormat='{{instance}}-{{store}}',
+  )
+);
+
+local coprocessorResponseSizeP = graphPanel.new(
+  title='Coprocessor Response Size',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=false,
+  format='kbytes',
+  description='Histogram of coprocessor response size in bytes between tidb and tikv',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_distsql_copr_resp_size_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) / sum(rate(tidb_distsql_copr_resp_size_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m]))',
+    legendFormat='avg',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.5, sum(rate(tidb_distsql_copr_resp_size_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='P50',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.8, sum(rate(tidb_distsql_copr_resp_size_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='P80',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_distsql_copr_resp_size_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='P99',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -4958,6 +5024,14 @@ newDash
   resourceManagerRow
   .addPanel(gOGCP, gridPos=leftPanelPos)
   .addPanel(emaCpuUsageP, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  followerReadRow
+  .addPanel(closestReplicaHitCountPerSecondP, gridPos=leftThirdPanelPos)
+  .addPanel(coprocessorResponseSizePerInstanceP, gridPos=midThirdPanelPos)
+  .addPanel(coprocessorResponseSizeP, gridPos=rightThirdPanelPos)
   ,
   gridPos=rowPos
 )
