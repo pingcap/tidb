@@ -220,31 +220,6 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	}
 
 	if it.req.KeepOrder {
-		// Don't set high concurrency for the keep order case. It wastes a lot of memory and gains nothing.
-		// TL;DR
-		// Because for a keep order coprocessor request, the cop tasks are handled one by one, if we set a
-		// higher concurrency, the data is just cached and not consumed for a while, this increase the memory usage.
-		// Set concurrency to 2 can reduce the memory usage and I've tested that it does not necessarily
-		// decrease the performance.
-		// For ReqTypeAnalyze, we keep its concurrency to avoid slow analyze(see https://github.com/pingcap/tidb/issues/40162 for details).
-		if it.concurrency > 2 && it.req.Tp != kv.ReqTypeAnalyze {
-			oldConcurrency := it.concurrency
-			partitionNum := req.KeyRanges.PartitionNum()
-			if partitionNum > it.concurrency {
-				partitionNum = it.concurrency
-			}
-			it.concurrency = 2
-			if it.concurrency < partitionNum {
-				it.concurrency = partitionNum
-			}
-
-			failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
-				if val.(bool) {
-					// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
-					it.concurrency = oldConcurrency
-				}
-			})
-		}
 		if it.smallTaskConcurrency > 20 {
 			it.smallTaskConcurrency = 20
 		}

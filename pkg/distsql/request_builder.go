@@ -51,6 +51,9 @@ type RequestBuilder struct {
 	is   infoschema.InfoSchema
 	err  error
 	used bool
+
+	// When SetDAGRequest is called, builder will also this field.
+	dag *tipb.DAGRequest
 }
 
 // Build builds a "kv.Request".
@@ -83,6 +86,29 @@ func (builder *RequestBuilder) Build() (*kv.Request, error) {
 	if builder.Request.KeyRanges == nil {
 		builder.Request.KeyRanges = kv.NewNonPartitionedKeyRanges(nil)
 	}
+
+	if dag := builder.dag; dag != nil {
+		if execCnt := len(dag.Executors); execCnt == 1 {
+			// select * from t order by id
+			if builder.Request.KeepOrder {
+				// When the DAG is just simple scan and keep order, set concurrency to 2.
+				// If a lot data are returned to client, mysql protocol is the bottleneck so concurrency 2 is enough.
+				// If very few data are returned to client, the speed is not optimal but good enough.
+				switch dag.Executors[0].Tp {
+				case tipb.ExecType_TypeTableScan, tipb.ExecType_TypeIndexScan, tipb.ExecType_TypePartitionTableScan:
+					oldConcurrency := builder.Request.Concurrency
+					builder.Request.Concurrency = 2
+					failpoint.Inject("testRateLimitActionMockConsumeAndAssert", func(val failpoint.Value) {
+						if val.(bool) {
+							// When the concurrency is too small, test case tests/realtikvtest/sessiontest.TestCoprocessorOOMAction can't trigger OOM condition
+							builder.Request.Concurrency = oldConcurrency
+						}
+					})
+				}
+			}
+		}
+	}
+
 	return &builder.Request, builder.err
 }
 
@@ -162,17 +188,29 @@ func (builder *RequestBuilder) SetDAGRequest(dag *tipb.DAGRequest) *RequestBuild
 		builder.Request.Tp = kv.ReqTypeDAG
 		builder.Request.Cacheable = true
 		builder.Request.Data, builder.err = dag.Marshal()
-	}
-	if execCnt := len(dag.Executors); execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
-		limit := dag.Executors[execCnt-1].GetLimit()
-		builder.Request.LimitSize = limit.GetLimit()
-		// When the DAG is just simple scan and small limit, set concurrency to 1 would be sufficient.
-		if execCnt == 2 {
-			if limit.Limit < estimatedRegionRowCount {
-				if kr := builder.Request.KeyRanges; kr != nil {
-					builder.Request.Concurrency = kr.PartitionNum()
-				} else {
-					builder.Request.Concurrency = 1
+		builder.dag = dag
+		execCnt := len(dag.Executors)
+		if execCnt != 0 && dag.Executors[execCnt-1].GetLimit() != nil {
+			limit := dag.Executors[execCnt-1].GetLimit()
+			builder.Request.LimitSize = limit.GetLimit()
+		}
+
+		if execCnt >= 2 {
+			// When the DAG is just a simple scan and small limit, set concurrency to 1 would be sufficient.
+			secondExec := dag.Executors[1]
+			if limit := secondExec.GetLimit(); limit != nil && limit.Limit < estimatedRegionRowCount {
+				minimalConcurrency := false
+				if execCnt == 2 {
+					// execCnt == 2 indicates TableScan / IndexScan -> Limit
+					minimalConcurrency = true
+				}
+
+				if minimalConcurrency {
+					if kr := builder.Request.KeyRanges; kr != nil {
+						builder.Request.Concurrency = kr.PartitionNum()
+					} else {
+						builder.Request.Concurrency = 1
+					}
 				}
 			}
 		}

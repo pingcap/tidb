@@ -668,3 +668,103 @@ select tan(9021874879467600608071521900001091070693729763119983979);
 CREATE TABLE test_55837 (col1 int(4) NOT NULL, col2 bigint(4) NOT NULL, KEY col2_index (col2));
 insert into test_55837 values(0,1725292800),(0,1725292800);
 select from_unixtime( if(col2 >9999999999, col2/1000, col2), '%Y-%m-%d %H:%i:%s') as result from test_55837;
+
+# TestIssue54969
+# For order by query, the distsql concurrency should be @@tidb_distsql_scan_concurrency.
+# For simple limit N query and N < 10000, the distsql concurrency should be 1 (normal table)
+#     For this case nn partition table, concurrency should be partition number.
+drop table if exists t;
+create table t (id int auto_increment, c char(120), primary key(id));
+create table pt (id int primary key auto_increment, val int) partition by range (id)
+(PARTITION p1 VALUES LESS THAN (100),
+ PARTITION p2 VALUES LESS THAN (200),
+ PARTITION p3 VALUES LESS THAN (300),
+ PARTITION p4 VALUES LESS THAN (400),
+ PARTITION p5 VALUES LESS THAN (500),
+ PARTITION p6 VALUES LESS THAN (600),
+ PARTITION p7 VALUES LESS THAN (700));
+insert into t (c) values ('abc'), ('def'), ('ghi'), ('jkl');
+insert into t (c) select (c) from t;
+insert into t (c) select (c) from t;
+insert into t (c) select (c) from t;
+insert into t (c) select (c) from t;
+insert into t (c) select (c) from t;
+insert into t (c) select (c) from t;
+split table t between (0) and (40960) regions 30;
+analyze table t;
+
+insert into pt (val) values (123),(456),(789),(1112);
+insert into pt (val) select (val) from pt;
+insert into pt (val) select (val) from pt;
+insert into pt (val) select (val) from pt;
+insert into pt (val) select (val) from pt;
+insert into pt (val) select (val) from pt;
+insert into pt (val) select (val) from pt;
+split table pt between (0) and (40960) regions 30;
+analyze table pt;
+
+set @@tidb_distsql_scan_concurrency = default;
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t order by id;  # expected distsql concurrency 2
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t limit 100;    # expected distsql concurrency 1
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t limit 100000; # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t where c = 'abc' limit 100; # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t where c = 'abc' limit 100000;  # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t order by id limit 100;  # expected distsql concurrency 1
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t order by id limit 100000;  # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from t where c = 'abd' order by id limit 100;
+select @@tidb_partition_prune_mode;
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt order by id;  # expected distsql concurrency 2
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt limit 100;    # expected distsql concurrency 7
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt limit 100000; # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt where val = 125 limit 100;     # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt where val = 125 limit 100000;  # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt order by id limit 100;         # expected distsql concurrency 7, but currently get 1, see issue #55190
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt order by id limit 100000;      # expected distsql concurrency 15
+
+-- replace_column 8 <memory> 9 <disk> 3 <actRows>
+-- replace_regex /.*max_distsql_concurrency: (?P<num>[0-9]+).*/max_distsql_concurrency: $num/ /tikv_task:.*// /time:.*// /data:.*//
+explain analyze select * from pt where val = 126 order by id limit 100;  # expected distsql concurrency 15
