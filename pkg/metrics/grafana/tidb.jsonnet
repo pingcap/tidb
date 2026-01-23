@@ -3337,6 +3337,109 @@ local addIndexBackfillImportSpeedP = graphPanel.new(
   )
 );
 
+// ============== Row: Dist Execute Framework ==============
+local distExecuteFrameworkRow = row.new(collapse=true, title='Dist Execute Framework');
+
+local distTaskStatusP = graphPanel.new(
+  title='Task Status',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_values=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_disttask_task_status{k8s_cluster="$k8s_cluster",tidb_cluster="$tidb_cluster"}) by (status, task_type)',
+    legendFormat='{{task_type}}-{{status}}',
+  )
+);
+
+local distTaskCompletedTotalSubtaskCountP = graphPanel.new(
+  title='Completed/Total Subtask Count',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_disttask_subtasks{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", status=~"succeed|failed|canceled|reverted|revert_failed"}) by (task_id, task_type)',
+    legendFormat='{{task_type}}-task{{task_id}}-completed',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_disttask_subtasks{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (task_id, task_type)',
+    legendFormat='{{task_type}}-task{{task_id}}-total',
+  )
+);
+
+local distTaskPendingSubtaskCountP = graphPanel.new(
+  title='Pending Subtask Count',
+  datasource=myDS,
+  format='short',
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_disttask_subtasks{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", status=~"pending"}) by (exec_id)',
+    legendFormat='{{exec_id}}',
+  )
+);
+
+local distSubtaskRunningDurationP = graphPanel.new(
+  title='SubTask Running Duration',
+  datasource=myDS,
+  format='s',
+)
+.addTarget(
+  prometheus.target(
+    'tidb_disttask_subtask_duration{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", status=~"running"}',
+    legendFormat='{{task_type}}-task{{task_id}}-subtask{{subtask_id}}',
+  )
+);
+
+local distSubtaskPendingDurationP = graphPanel.new(
+  title='Subtask Pending Duration',
+  datasource=myDS,
+)
+.addTarget(
+  prometheus.target(
+    'tidb_disttask_subtask_duration{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", status="pending"}',
+    legendFormat='',
+  )
+);
+
+local distUncompletedSubtaskDistributionP = graphPanel.new(
+  title='Uncompleted Subtask Distribution On TiDB Nodes',
+  datasource=myDS,
+)
+.addTarget(
+  prometheus.target(
+    'sum(tidb_disttask_subtasks{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", status=~"pending|running|failed|canceled|paused"}) by (exec_id)',
+    legendFormat='',
+  )
+);
+
+local distSlotsUsageP = graphPanel.new(
+  title='Slots Usage',
+  datasource=myDS,
+)
+.addTarget(
+  prometheus.target(
+    'tidb_disttask_used_slots{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}',
+    legendFormat='Used-{{instance}} - {{service_scope}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'tidb_server_maxprocs{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", job="tidb"}',
+    legendFormat='Capacity - {{instance}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -3566,6 +3669,18 @@ newDash
   .addPanel(addIndexScanRateP, gridPos=rightThirdPanelPos)
   .addPanel(retryableErrorP, gridPos=leftThirdPanelPos)
   .addPanel(addIndexBackfillImportSpeedP, gridPos=midThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  distExecuteFrameworkRow
+  .addPanel(distTaskStatusP, gridPos=leftThirdPanelPos)
+  .addPanel(distTaskCompletedTotalSubtaskCountP, gridPos=midThirdPanelPos)
+  .addPanel(distTaskPendingSubtaskCountP, gridPos=rightThirdPanelPos)
+  .addPanel(distSubtaskRunningDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(distSubtaskPendingDurationP, gridPos=midThirdPanelPos)
+  .addPanel(distUncompletedSubtaskDistributionP, gridPos=rightThirdPanelPos)
+  .addPanel(distSlotsUsageP, gridPos=leftThirdPanelPos)
   ,
   gridPos=rowPos
 )
