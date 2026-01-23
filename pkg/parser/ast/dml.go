@@ -3744,9 +3744,6 @@ func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
 			}
 		}
-	case SelectIntoDumpfile:
-		ctx.WriteKeyWord("INTO DUMPFILE ")
-		ctx.WriteString(n.FileName)
 	case SelectIntoVars:
 		ctx.WriteKeyWord("INTO ")
 		for i, v := range n.Variables {
