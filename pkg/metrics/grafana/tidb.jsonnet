@@ -2140,6 +2140,310 @@ local replicaSelectorFailurePerSecondP = graphPanel.new(
   )
 );
 
+// ============== Row: KV Request ==============
+local kvRequestRow = row.new(collapse=true, title='KV Request');
+
+local kvRequestOpsP = graphPanel.new(
+  title='KV Request OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_values=true,
+  format='short',
+  description='kv request total by instance and command type',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_request_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", scope="false"}[1m])) by (instance, type)',
+    legendFormat='{{instance}}-{{type}}',
+  )
+);
+
+local kvRequestDuration99ByStoreP = graphPanel.new(
+  title='KV Request Duration 99 By Store',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_sort='max',
+  legend_sortDesc=true,
+  legend_values=true,
+  format='s',
+  description='kv requests durations by store',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", store!="0", scope="false"}[1m])) by (le, store))',
+    legendFormat='store-{{store}}',
+  )
+);
+
+local kvRequestDuration99ByTypeP = graphPanel.new(
+  title='KV Request Duration 99 By Type',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_sort='max',
+  legend_sortDesc=true,
+  legend_values=true,
+  format='s',
+  description='kv request durations by request type',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_tikvclient_request_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", store!="0", scope="false"}[1m])) by (le,type))',
+    legendFormat='{{type}}',
+  )
+);
+
+local kvRequestForwardingOpsP = graphPanel.new(
+  title='KV Request Forwarding OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_values=true,
+  format='short',
+  description='kv requests that\'s forwarded by different stores',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_forward_request_counter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (from_store, to_store, result)',
+    legendFormat='{{from_store}}-to-{{to_store}}-{{result}}',
+  )
+);
+
+local kvRequestForwardingOpsByTypeP = graphPanel.new(
+  title='KV Request Forwarding OPS By Type',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_values=true,
+  format='short',
+  description='kv requests that\'s forwarded by different stores, grouped by request type',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_forward_request_counter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, result)',
+    legendFormat='{{type}}-{{result}}',
+  )
+);
+
+local successfulKvRequestWaitDurationP = graphPanel.new(
+  title='Successful KV Request Wait Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_max=true,
+  legend_min=true,
+  legend_values=true,
+  format='s',
+  description='KV request wait duration caused by Resource Control (RU). This shows the time a request waits in TiDB client before being sent to TiKV due to RU token bucket throttling.',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster="$k8s_cluster", tidb_cluster_id="$tidb_cluster", instance=~"$instance"}[1m])) by (instance, resource_group, le))',
+    legendFormat='{{instance}}-{{resource_group}}-99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.9, sum(rate(resource_manager_client_request_success_bucket{k8s_cluster="$k8s_cluster", tidb_cluster_id="$tidb_cluster", instance=~"$instance"}[1m])) by (instance, resource_group, le))',
+    legendFormat='{{instance}}-{{resource_group}}-90',
+  )
+);
+
+local regionCacheOkOpsP = graphPanel.new(
+  title='Region Cache OK OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB successful region cache operations count',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_region_cache_operations_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", result="ok"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local regionCacheErrorOpsP = graphPanel.new(
+  title='Region Cache Error OPS',
+  datasource=myDS,
+  legend_rightSide=false,
+  format='short',
+  description='TiDB error region cache operations count',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_region_cache_operations_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", result="err"}[1m])) by (type)',
+    legendFormat='{{type}}-err',
+  )
+);
+
+local loadRegionDurationP = graphPanel.new(
+  title='Load Region Duration',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  format='s',
+  description='TiDB loading region cache durations',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_tikvclient_load_region_cache_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type))',
+    legendFormat='99-{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_load_region_cache_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type) / sum(rate(tidb_tikvclient_load_region_cache_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le, type)',
+    legendFormat='avg-{{type}}',
+  )
+);
+
+local rpcLayerLatencyP = graphPanel.new(
+  title='RPC Layer Latency',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_current=true,
+  legend_values=true,
+  format='s',
+  description='Time spent on the RPC layer between TiDB and TiKV, including the part used in the TiDB batch client',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_tikvclient_rpc_net_latency_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", scope="false"}[1m])) by (le, store))',
+    legendFormat='99-store{{store}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_rpc_net_latency_seconds_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", scope="false"}[1m])) by (le, store) / sum(rate(tidb_tikvclient_rpc_net_latency_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance", scope="false"}[1m])) by (le, store)',
+    legendFormat='avg-store{{store}}',
+  )
+);
+
+local staleReadHitMissOpsP = graphPanel.new(
+  title='Stale Read Hit/Miss OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_max=true,
+  legend_values=true,
+  format='short',
+  description='TiDB hit/miss stale-read operations count',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_stale_read_counter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (result)',
+    legendFormat='{{result}}',
+  )
+);
+
+local staleReadReqOpsP = graphPanel.new(
+  title='Stale Read Req OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_max=true,
+  legend_values=true,
+  format='short',
+  description='TiDB stale-read requests count',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_stale_read_req_counter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local staleReadReqTrafficP = graphPanel.new(
+  title='Stale Read Req Traffic',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_max=true,
+  legend_values=true,
+  format='Bps',
+  description='TiDB stale-read requests traffic statistic',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_stale_read_bytes{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (result, direction)',
+    legendFormat='{{result}}-{{direction}}',
+  )
+);
+
+local clientSideSlowScoreP = graphPanel.new(
+  title='Client-side Slow Score',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_max=true,
+  legend_values=true,
+  format='none',
+  description='The slow score calculated by time cost of some specific TiKV RPC requests.',
+)
+.addTarget(
+  prometheus.target(
+    'max(tidb_tikvclient_store_slow_score{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (store)',
+    legendFormat='store-{{store}}',
+  )
+);
+
+local tikvSideSlowScoreP = graphPanel.new(
+  title='TiKV-side Slow Score',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_max=true,
+  legend_values=true,
+  format='none',
+  description='The slow score calculated by TiKV rafstore and sent to TiDB via health feedback.',
+)
+.addTarget(
+  prometheus.target(
+    'max(tidb_tikvclient_feedback_slow_score{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}) by (store)',
+    legendFormat='store-{{store}}',
+  )
+);
+
+local readReqTrafficP = graphPanel.new(
+  title='Read Req Traffic',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_avg=true,
+  legend_current=true,
+  legend_max=true,
+  legend_values=true,
+  format='Bps',
+  description='TiDB read requests traffic statistic',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_read_request_bytes_sum{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type, result)',
+    legendFormat='{{type}}-{{result}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -2293,6 +2597,27 @@ newDash
   .addPanel(kvBackoffOpsP, gridPos=leftPanelPos)
   .addPanel(lockResolveOpsP, gridPos=rightPanelPos)
   .addPanel(replicaSelectorFailurePerSecondP, gridPos=rightPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  kvRequestRow
+  .addPanel(kvRequestOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(kvRequestDuration99ByStoreP, gridPos=midThirdPanelPos)
+  .addPanel(kvRequestDuration99ByTypeP, gridPos=rightThirdPanelPos)
+  .addPanel(kvRequestForwardingOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(kvRequestForwardingOpsByTypeP, gridPos=midThirdPanelPos)
+  .addPanel(successfulKvRequestWaitDurationP, gridPos=leftThirdPanelPos)
+  .addPanel(regionCacheOkOpsP, gridPos=rightThirdPanelPos)
+  .addPanel(regionCacheErrorOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(loadRegionDurationP, gridPos=midThirdPanelPos)
+  .addPanel(rpcLayerLatencyP, gridPos=rightThirdPanelPos)
+  .addPanel(staleReadHitMissOpsP, gridPos=leftThirdPanelPos)
+  .addPanel(staleReadReqOpsP, gridPos=midThirdPanelPos)
+  .addPanel(staleReadReqTrafficP, gridPos=rightThirdPanelPos)
+  .addPanel(clientSideSlowScoreP, gridPos=leftThirdPanelPos)
+  .addPanel(tikvSideSlowScoreP, gridPos=midThirdPanelPos)
+  .addPanel(readReqTrafficP, gridPos=rightThirdPanelPos)
   ,
   gridPos=rowPos
 )
