@@ -4,7 +4,7 @@ go_test(
     name = "txntest_test",
     timeout = "moderate",
     srcs = [
-        "active_active_txn_check_test.go",
+        "active_active_test.go",
         "isolation_test.go",
         "main_test.go",
         "replica_read_test.go",
