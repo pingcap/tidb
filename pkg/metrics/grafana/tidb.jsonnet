@@ -2025,6 +2025,121 @@ local coprocessorSeconds999P = graphPanel.new(
   )
 );
 
+// ============== Row: KV Errors ==============
+local kvErrorsRow = row.new(collapse=true, title='KV Errors');
+
+local kvBackoffDurationP = graphPanel.new(
+  title='KV Backoff Duration',
+  datasource=myDS,
+  legend_rightSide=false,
+  legend_max=true,
+  legend_values=true,
+  format='s',
+  description='kv backoff time durations by type',
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.999, sum(rate(tidb_tikvclient_backoff_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='999',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.99, sum(rate(tidb_tikvclient_backoff_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='99',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'histogram_quantile(0.80, sum(rate(tidb_tikvclient_backoff_seconds_bucket{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (le))',
+    legendFormat='80',
+  )
+);
+
+local ticlientRegionErrorOpsP = graphPanel.new(
+  title='TiClient Region Error OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_current=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  legend_values=true,
+  format='short',
+  description='kv region error times',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_region_err_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_region_err_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}{EXTERNAL_LABELtype="server_is_busy"}[1m]))',
+    legendFormat='sum',
+    hide=true,
+  )
+);
+
+local kvBackoffOpsP = graphPanel.new(
+  title='KV Backoff OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  legend_total=true,
+  legend_values=true,
+  format='short',
+  description='kv storage backoff times',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_backoff_seconds_count{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local lockResolveOpsP = graphPanel.new(
+  title='Lock Resolve OPS',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_max=true,
+  legend_hideEmpty=true,
+  legend_hideZero=true,
+  legend_values=true,
+  format='short',
+  description='lock resolve times',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_lock_resolver_actions_total{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
+local replicaSelectorFailurePerSecondP = graphPanel.new(
+  title='Replica Selector Failure Per Second',
+  datasource=myDS,
+  legend_rightSide=true,
+  legend_alignAsTable=true,
+  legend_current=true,
+  legend_max=true,
+  legend_values=true,
+  format='short',
+  description='This metric shows the reasons of replica selector failure (which needs a backoff).',
+)
+.addTarget(
+  prometheus.target(
+    'sum(rate(tidb_tikvclient_replica_selector_failure_counter{k8s_cluster="$k8s_cluster", tidb_cluster="$tidb_cluster", instance=~"$instance"}[1m])) by (type)',
+    legendFormat='{{type}}',
+  )
+);
+
 // Merge together.
 local panelW = 12;
 local panelH = 7;
@@ -2168,6 +2283,16 @@ newDash
   .addPanel(partialNumP, gridPos=leftThirdPanelPos)
   .addPanel(coprocessorSeconds999P, gridPos=midThirdPanelPos)
   .addPanel(coprocessorCacheP, gridPos=rightThirdPanelPos)
+  ,
+  gridPos=rowPos
+)
+.addPanel(
+  kvErrorsRow
+  .addPanel(kvBackoffDurationP, gridPos=leftPanelPos)
+  .addPanel(ticlientRegionErrorOpsP, gridPos=rightPanelPos)
+  .addPanel(kvBackoffOpsP, gridPos=leftPanelPos)
+  .addPanel(lockResolveOpsP, gridPos=rightPanelPos)
+  .addPanel(replicaSelectorFailurePerSecondP, gridPos=rightPanelPos)
   ,
   gridPos=rowPos
 )
