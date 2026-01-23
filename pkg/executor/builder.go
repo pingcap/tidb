@@ -4375,7 +4375,7 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 	}
 
 	if p.Index.IsTiCIIndex() {
-		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen, p.Schema().Len()), nil
+		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen, p.Schema().Len(), needExtraOutputCol), nil
 	}
 
 	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, p.NeedExtraOutputCol()), nil
@@ -4397,9 +4397,12 @@ func handleOutputOffsetsForTiKVIndexLookUp(outputOffsets []uint32, handleLen int
 
 // handleOutputOffsetsForTiCIIndexLookUp handles the output offsets for TiCI index look up requests.
 // See the InitSchemaForTiCIIndex for the row layout.
-func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int, schemaLen int) []uint32 {
+func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int, schemaLen int, needExtraOutputCol bool) []uint32 {
 	for i := range handleLen {
 		outputOffsets = append(outputOffsets, uint32(i))
+	}
+	if needExtraOutputCol {
+		outputOffsets = append(outputOffsets, uint32(schemaLen-2))
 	}
 	outputOffsets = append(outputOffsets, uint32(schemaLen-1))
 	return outputOffsets

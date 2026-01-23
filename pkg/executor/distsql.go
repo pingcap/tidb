@@ -795,6 +795,9 @@ func (e *IndexLookUpExecutor) needPartitionHandle(tp getHandleType) (bool, error
 		cols := e.idxPlans[0].Schema().Columns
 		outputOffsets := e.dagPB.OutputOffsets
 		col = cols[outputOffsets[len(outputOffsets)-1]]
+		if col.ID == model.ExtraVersionID && len(outputOffsets) >= 2 {
+			col = cols[outputOffsets[len(outputOffsets)-2]]
+		}
 		// For indexScan, need partitionHandle when global index or keepOrder with partitionTable
 		needPartitionHandle = e.index.Global || e.partitionTableMode && e.keepOrder
 	} else {
@@ -1678,7 +1681,11 @@ func (e *IndexLookUpExecutor) getHandle(row chunk.Row, handleIdx []int,
 		return nil, 0, err
 	}
 	if ok {
-		pid := row.GetInt64(row.Len() - 1)
+		pidIdx := row.Len() - 1
+		if e.isVersionAware {
+			pidIdx--
+		}
+		pid := row.GetInt64(pidIdx)
 		handle = kv.NewPartitionHandle(pid, handle)
 	}
 

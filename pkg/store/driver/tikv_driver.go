@@ -231,7 +231,7 @@ func (d *TiKVDriver) OpenWithOptions(path string, options ...Option) (resStore k
 		s.EnableTxnLocalLatches(d.txnLocalLatches.Capacity)
 	}
 	coprCacheConfig := &config.GetGlobalConfig().TiKVClient.CoprCache
-	coprStore, err := copr.NewStore(s, tlsConfig, coprCacheConfig)
+	coprStore, err := copr.NewStore(s, tlsConfig, coprCacheConfig, codec)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

@@ -317,12 +317,16 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 	}
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
+		if task.task.rangeVersions != nil && len(task.task.rangeVersions) != len(task.region.GetRanges()) {
+			panic(fmt.Sprintf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", len(task.region.GetRanges()), len(task.task.rangeVersions)))
+		}
 		storeBatchTask := &coprocessor.StoreBatchTask{
-			RegionId:    task.region.GetRegionId(),
-			RegionEpoch: task.region.GetRegionEpoch(),
-			Peer:        task.peer,
-			Ranges:      task.region.GetRanges(),
-			TaskId:      task.task.taskID,
+			RegionId:      task.region.GetRegionId(),
+			RegionEpoch:   task.region.GetRegionEpoch(),
+			Peer:          task.peer,
+			Ranges:        task.region.GetRanges(),
+			TaskId:        task.task.taskID,
+			RangeVersions: task.task.rangeVersions,
 		}
 		pbTasks = append(pbTasks, storeBatchTask)
 	}
@@ -1130,7 +1134,7 @@ func newCopIteratorWorker(it *copIterator, taskCh <-chan *copTask) *copIteratorW
 		respChan:                it.respChan,
 		finishCh:                it.finishCh,
 		vars:                    it.vars,
-		kvclient:                txnsnapshot.NewClientHelper(it.store.store, &it.resolvedLocks, &it.committedLocks, false),
+		kvclient:                txnsnapshot.NewClientHelper(newVersionedTxnSnapshotStore(it.store.store, it.store.versionedRPC, it.store.codec), &it.resolvedLocks, &it.committedLocks, false),
 		memTracker:              it.memTracker,
 		replicaReadSeed:         it.replicaReadSeed,
 		pagingTaskIdx:           &it.pagingTaskIdx,
@@ -1791,7 +1795,11 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			i := 0
 			task.ranges.Do(func(r *kv.KeyRange) {
 				rangeVersionMap[r.StartKey.AsString()] = task.rangeVersions[i]
+				i++
 			})
+			if i != len(task.rangeVersions) {
+				return nil, errors.Errorf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", task.ranges.Len(), len(task.rangeVersions))
+			}
 		}
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 			req:                         worker.req,
@@ -1955,7 +1963,11 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				i := 0
 				task.ranges.Do(func(r *kv.KeyRange) {
 					rangeVersionMap[r.StartKey.AsString()] = task.rangeVersions[i]
+					i++
 				})
+				if i != len(task.rangeVersions) {
+					return batchRespList, nil, errors.Errorf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", task.ranges.Len(), len(task.rangeVersions))
+				}
 			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,

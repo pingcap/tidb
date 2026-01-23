@@ -38,6 +38,9 @@ type kvStore struct {
 	store          *tikv.KVStore
 	mppStoreCnt    *mppStoreCnt
 	TiCIShardCache *TiCIShardCache
+	codec          tikv.Codec
+	tlsConfig      *tls.Config
+	versionedRPC   *versionedRPCClient
 }
 
 // GetRegionCache returns the region cache instance.
@@ -59,34 +62,43 @@ func (s *kvStore) CheckVisibility(startTime uint64) error {
 // GetTiKVClient gets the client instance.
 func (s *kvStore) GetTiKVClient() tikv.Client {
 	client := s.store.GetTiKVClient()
-	return &tikvClient{c: client}
+	return &tikvClient{c: client, versionedRPC: s.versionedRPC, codec: s.codec}
 }
 
 type tikvClient struct {
 	c tikv.Client
+	// versionedRPC is used for TiCI version-aware lookups.
+	versionedRPC *versionedRPCClient
+	codec        tikv.Codec
 }
 
 func (c *tikvClient) Close() error {
-	err := c.c.Close()
-	return derr.ToTiDBErr(err)
+	if c.versionedRPC != nil {
+		c.versionedRPC.Close()
+	}
+	return c.c.Close()
 }
 
 func (c *tikvClient) CloseAddr(addr string) error {
-	err := c.c.CloseAddr(addr)
-	return derr.ToTiDBErr(err)
+	if c.versionedRPC != nil {
+		c.versionedRPC.CloseAddr(addr)
+	}
+	return c.c.CloseAddr(addr)
 }
 
 // SendRequest sends Request.
 func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
-	res, err := c.c.SendRequest(ctx, addr, req, timeout)
-	return res, derr.ToTiDBErr(err)
+	if c.versionedRPC != nil && isVersionedCoprocessorRequest(req) {
+		return c.versionedRPC.SendRequest(ctx, addr, req, timeout, c.codec)
+	}
+	if c.versionedRPC != nil && isVersionedBatchCoprocessorRequest(req) {
+		return c.versionedRPC.SendBatchRequest(ctx, addr, req, timeout, c.codec)
+	}
+	return c.c.SendRequest(ctx, addr, req, timeout)
 }
 
 // SendRequestAsync sends Request asynchronously.
 func (c *tikvClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
-	cb.Inject(func(res *tikvrpc.Response, err error) (*tikvrpc.Response, error) {
-		return res, derr.ToTiDBErr(err)
-	})
 	c.c.SendRequestAsync(ctx, addr, req, cb)
 }
 
@@ -103,7 +115,7 @@ type Store struct {
 }
 
 // NewStore creates a new store instance.
-func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
+func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.CoprocessorCache, codec tikv.Codec) (*Store, error) {
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -130,7 +142,7 @@ func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.Coproces
 
 	/* #nosec G404 */
 	return &Store{
-		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient)},
+		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient), codec: codec, tlsConfig: tls, versionedRPC: newVersionedRPCClient(tls)},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 		numcpu:          runtime.GOMAXPROCS(0),
@@ -144,6 +156,9 @@ func (s *Store) Close() {
 	}
 	if s.TiCIShardCache != nil {
 		s.TiCIShardCache.client.Close()
+	}
+	if s.versionedRPC != nil {
+		s.versionedRPC.Close()
 	}
 }
 

@@ -51,7 +51,30 @@ func NewMockStorage(tikvStore *tikv.KVStore, keyspaceMeta *keyspacepb.KeyspaceMe
 	if err != nil {
 		return nil, err
 	}
-	coprStore, err := copr.NewStore(tikvStore, tlsConfig, &coprConfig)
+	var codec tikv.Codec
+	if keyspaceMeta == nil {
+		pdClient := tikvStore.GetPDClient()
+		pdCodecCli := tikv.NewCodecPDClient(tikv.ModeTxn, pdClient)
+		codec = pdCodecCli.GetCodec()
+	} else {
+		// Get API V2 codec.
+		pdClient := tikvStore.GetPDClient()
+		ksMeta, err := pdClient.LoadKeyspace(context.Background(), keyspaceMeta.Name)
+		if err != nil {
+			return nil, err
+		}
+		// the mock PD client return nil keyspace meta.
+		if ksMeta == nil {
+			pdClient = &pdCliWithCodec{Client: pdClient, ksMeta: keyspaceMeta}
+		}
+		pdCodecCli, err := tikv.NewCodecPDClientWithKeyspace(tikv.ModeTxn, pdClient, keyspaceMeta.Name)
+		if err != nil {
+			return nil, err
+		}
+		codec = pdCodecCli.GetCodec()
+	}
+
+	coprStore, err := copr.NewStore(tikvStore, tlsConfig, &coprConfig, codec)
 	if err != nil {
 		return nil, err
 	}

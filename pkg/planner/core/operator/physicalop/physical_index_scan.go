@@ -511,6 +511,14 @@ func (p *PhysicalIndexScan) InitSchemaForTiCIIndex(possibleHandleCols, indexCols
 		}
 	}
 
+	for _, col := range p.DataSourceSchema.Columns {
+		if col.ID == model.ExtraPhysTblID && !columnIDSet.Has(int(col.ID)) {
+			rowLayout = append(rowLayout, col.Clone().(*expression.Column))
+			columnIDSet.Insert(int(col.ID))
+			break
+		}
+	}
+
 	rowLayout = append(rowLayout, &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		ID:       model.ExtraVersionID,
