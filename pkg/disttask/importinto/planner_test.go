@@ -165,10 +165,10 @@ func genEncodeStepMetas(t *testing.T, cnt int) [][]byte {
 }
 
 func TestGenerateMergeSortSpecs(t *testing.T) {
-	stepBak := external.MergeSortFileCountStep
-	external.MergeSortFileCountStep = 2
+	stepBak := external.MaxMergeSortFileCountStep
+	external.MaxMergeSortFileCountStep = 2
 	t.Cleanup(func() {
-		external.MergeSortFileCountStep = stepBak
+		external.MaxMergeSortFileCountStep = stepBak
 	})
 	// force merge sort for data kv
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/importinto/forceMergeSort", `return("data")`))
@@ -182,6 +182,7 @@ func TestGenerateMergeSortSpecs(t *testing.T) {
 		PreviousSubtaskMetas: map[proto.Step][][]byte{
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 		},
+		ThreadCnt: 16,
 	}
 	specs, err := generateMergeSortSpecs(planCtx, &LogicalPlan{})
 	require.NoError(t, err)
@@ -278,7 +279,12 @@ func TestGetSortedKVMetas(t *testing.T) {
 			proto.ImportStepEncodeAndSort: encodeStepMetaBytes,
 			proto.ImportStepMergeSort:     mergeStepMetas,
 		},
+<<<<<<< HEAD
 	}, &LogicalPlan{})
+=======
+		ThreadCnt: 16,
+	}, &LogicalPlan{}, nil)
+>>>>>>> 06674e23094 (*: adjusts the merge sort overlap threshold/merge sort file count step based on concurrency (#62483))
 	require.NoError(t, err)
 	require.Len(t, allKVMetas, 2)
 	require.Equal(t, []byte("x_0_a"), allKVMetas["data"].StartKey)
