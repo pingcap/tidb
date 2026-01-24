@@ -186,10 +186,14 @@ func (f *AnalysisJobFactory) CalculateChangePercentage(tblStats *statistics.Tabl
 // CalculateTableSize calculates the size of the table.
 func (*AnalysisJobFactory) CalculateTableSize(tblStats *statistics.Table) float64 {
 	tblCnt := float64(tblStats.RealtimeCount)
-	colCnt := float64(tblStats.ColAndIdxExistenceMap.ColNum())
-	intest.Assert(colCnt != 0, "Column count should not be 0")
-
-	return tblCnt * colCnt
+	if tblStats.ColAndIdxExistenceMap == nil {
+		return tblCnt
+	}
+	colCnt := tblStats.ColAndIdxExistenceMap.ColNum()
+	if colCnt == 0 {
+		return tblCnt
+	}
+	return tblCnt * float64(colCnt)
 }
 
 // GetTableLastAnalyzeDuration gets the last analyze duration of the table.
