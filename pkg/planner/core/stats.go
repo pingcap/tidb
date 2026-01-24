@@ -140,8 +140,219 @@ func (p *baseLogicalPlan) recursiveDeriveStats(colGroups [][]*expression.Column)
 	return p.self.DeriveStats(childStats, p.self.Schema(), childSchema, colGroups)
 }
 
+<<<<<<< HEAD
 // ExtractColGroups implements LogicalPlan ExtractColGroups interface.
 func (*baseLogicalPlan) ExtractColGroups(_ [][]*expression.Column) [][]*expression.Column {
+=======
+func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression) error {
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
+	}
+	path.Ranges = ranger.FullRange()
+	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	if !path.Index.Unique && !path.Index.Primary && len(path.Index.Columns) == len(path.IdxCols) {
+		handleCol := ds.GetPKIsHandleCol()
+		if handleCol != nil && !mysql.HasUnsignedFlag(handleCol.RetType.GetFlag()) {
+			alreadyHandle := false
+			for _, col := range path.IdxCols {
+				if col.ID == model.ExtraHandleID || col.EqualColumn(handleCol) {
+					alreadyHandle = true
+				}
+			}
+			// Don't add one column twice to the index. May cause unexpected errors.
+			if !alreadyHandle {
+				path.IdxCols = append(path.IdxCols, handleCol)
+				path.IdxColLens = append(path.IdxColLens, types.UnspecifiedLength)
+				// Also updates the map that maps the index id to its prefix column ids.
+				if len(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID]) == len(path.Index.Columns) {
+					ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID] = append(ds.TableStats.HistColl.Idx2ColUniqueIDs[path.Index.ID], handleCol.UniqueID)
+				}
+			}
+		}
+	}
+	err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl)
+	return err
+}
+
+// deriveIndexPathStats will fulfill the information that the AccessPath need.
+// conds is the conditions used to generate the DetachRangeResult for path.
+// isIm indicates whether this function is called to generate the partial path for IndexMerge.
+func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []expression.Expression, isIm bool) {
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
+	}
+	if path.EqOrInCondCount == len(path.AccessConds) {
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
+		path.AccessConds = append(path.AccessConds, accesses...)
+		path.TableFilters = remained
+		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
+		} else {
+			selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
+			for i := range accesses {
+				col := path.IdxCols[path.EqOrInCondCount+i]
+				ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.CountAfterAccess = path.CountAfterAccess / ndv
+			}
+		}
+	}
+	var indexFilters []expression.Expression
+	indexFilters, path.TableFilters = splitIndexFilterConditions(ds, path.TableFilters, path.FullIdxCols, path.FullIdxColLens)
+	path.IndexFilters = append(path.IndexFilters, indexFilters...)
+	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	}
+	if path.IndexFilters != nil {
+		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
+		if err != nil {
+			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
+			selectivity = cost.SelectionFactor
+		}
+		if isIm {
+			path.CountAfterIndex = path.CountAfterAccess * selectivity
+		} else {
+			path.CountAfterIndex = math.Max(path.CountAfterAccess*selectivity, ds.StatsInfo().RowCount)
+		}
+	} else {
+		path.CountAfterIndex = path.CountAfterAccess
+	}
+}
+
+// deriveTablePathStats will fulfill the information that the AccessPath need.
+// isIm indicates whether this function is called to generate the partial path for IndexMerge.
+func deriveTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
+	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(ds.SCtx())
+		defer debugtrace.LeaveContextCommon(ds.SCtx())
+	}
+	if path.IsCommonHandlePath {
+		return deriveCommonHandleTablePathStats(ds, path, conds, isIm)
+	}
+	var err error
+	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	path.TableFilters = conds
+	var pkCol *expression.Column
+	isUnsigned := false
+	if ds.TableInfo.PKIsHandle {
+		if pkColInfo := ds.TableInfo.GetPkColInfo(); pkColInfo != nil {
+			isUnsigned = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+			pkCol = expression.ColInfo2Col(ds.Schema().Columns, pkColInfo)
+		}
+	} else {
+		pkCol = ds.Schema().GetExtraHandleColumn()
+	}
+	if pkCol == nil {
+		path.Ranges = ranger.FullIntRange(isUnsigned)
+		return nil
+	}
+
+	path.Ranges = ranger.FullIntRange(isUnsigned)
+	if len(conds) == 0 {
+		return nil
+	}
+	// for cnf condition combination, c=1 and c=2 and (1 member of (a)),
+	// c=1 and c=2 will derive invalid range represented by an access condition as constant of 0 (false).
+	// later this constant of 0 will be built as empty range.
+	path.AccessConds, path.TableFilters = ranger.DetachCondsForColumn(ds.SCtx().GetRangerCtx(), conds, pkCol)
+	// If there's no access cond, we try to find that whether there's expression containing correlated column that
+	// can be used to access data.
+	corColInAccessConds := false
+	if len(path.AccessConds) == 0 {
+		for i, filter := range path.TableFilters {
+			eqFunc, ok := filter.(*expression.ScalarFunction)
+			if !ok || eqFunc.FuncName.L != ast.EQ {
+				continue
+			}
+			lCol, lOk := eqFunc.GetArgs()[0].(*expression.Column)
+			if lOk && lCol.Equal(ds.SCtx().GetExprCtx().GetEvalCtx(), pkCol) {
+				_, rOk := eqFunc.GetArgs()[1].(*expression.CorrelatedColumn)
+				if rOk {
+					path.AccessConds = append(path.AccessConds, filter)
+					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
+					corColInAccessConds = true
+					break
+				}
+			}
+			rCol, rOk := eqFunc.GetArgs()[1].(*expression.Column)
+			if rOk && rCol.Equal(ds.SCtx().GetExprCtx().GetEvalCtx(), pkCol) {
+				_, lOk := eqFunc.GetArgs()[0].(*expression.CorrelatedColumn)
+				if lOk {
+					path.AccessConds = append(path.AccessConds, filter)
+					path.TableFilters = append(path.TableFilters[:i], path.TableFilters[i+1:]...)
+					corColInAccessConds = true
+					break
+				}
+			}
+		}
+	}
+	if corColInAccessConds {
+		path.CountAfterAccess = 1
+		return nil
+	}
+	var remainedConds []expression.Expression
+	path.Ranges, path.AccessConds, remainedConds, err = ranger.BuildTableRange(path.AccessConds, ds.SCtx().GetRangerCtx(), pkCol.RetType, ds.SCtx().GetSessionVars().RangeMaxSize)
+	path.TableFilters = append(path.TableFilters, remainedConds...)
+	if err != nil {
+		return err
+	}
+	path.CountAfterAccess, err = cardinality.GetRowCountByIntColumnRanges(ds.SCtx(), &ds.StatisticTable.HistColl, pkCol.ID, path.Ranges)
+	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	}
+	return err
+}
+
+func deriveCommonHandleTablePathStats(ds *logicalop.DataSource, path *util.AccessPath, conds []expression.Expression, isIm bool) error {
+	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
+	path.Ranges = ranger.FullNotNullRange()
+	path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+	if len(conds) == 0 {
+		return nil
+	}
+	if err := detachCondAndBuildRangeForPath(ds.SCtx(), path, conds, ds.TableStats.HistColl); err != nil {
+		return err
+	}
+	if path.EqOrInCondCount == len(path.AccessConds) {
+		accesses, remained := path.SplitCorColAccessCondFromFilters(ds.SCtx(), path.EqOrInCondCount)
+		path.AccessConds = append(path.AccessConds, accesses...)
+		path.TableFilters = remained
+		if len(accesses) > 0 && ds.StatisticTable.Pseudo {
+			path.CountAfterAccess = cardinality.PseudoAvgCountPerValue(ds.StatisticTable)
+		} else {
+			selectivity := path.CountAfterAccess / float64(ds.StatisticTable.RealtimeCount)
+			for i := range accesses {
+				col := path.IdxCols[path.EqOrInCondCount+i]
+				ndv := cardinality.EstimateColumnNDV(ds.StatisticTable, col.ID)
+				ndv *= selectivity
+				if ndv < 1 {
+					ndv = 1.0
+				}
+				path.CountAfterAccess = path.CountAfterAccess / ndv
+			}
+		}
+	}
+	// If the `CountAfterAccess` is less than `stats.RowCount`, there must be some inconsistent stats info.
+	// We prefer the `stats.RowCount` because it could use more stats info to calculate the selectivity.
+	// Add an arbitrary tolerance factor to account for comparison with floating point
+	if (path.CountAfterAccess+cost.ToleranceFactor) < ds.StatsInfo().RowCount && !isIm {
+		path.CountAfterAccess = math.Min(ds.StatsInfo().RowCount/cost.SelectionFactor, float64(ds.StatisticTable.RealtimeCount))
+	}
+>>>>>>> 430fa8fc6a3 (planner: add tolerance for row count floating point comparison (#59241))
 	return nil
 }
 
