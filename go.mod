@@ -106,7 +106,7 @@ require (
 	github.com/tdakkota/asciicheck v0.2.0
 	github.com/tiancaiamao/appdash v0.0.0-20181126055449-889f96f722a2
 	github.com/tidwall/btree v1.7.0
-	github.com/tikv/client-go/v2 v2.0.8-0.20250304121542-d240c6516dca
+	github.com/tikv/client-go/v2 v2.0.8-0.20250709095512-f1f78f5d268e
 	github.com/tikv/pd/client v0.0.0-20250219032910-117cb87da8f0
 	github.com/timakin/bodyclose v0.0.0-20240125160201-f835fa56326a
 	github.com/twmb/murmur3 v1.1.6
