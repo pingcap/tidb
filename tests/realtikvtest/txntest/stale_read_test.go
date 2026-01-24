@@ -1164,7 +1164,7 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 		// assert select statement in stale transaction
 		{
 			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
-			hasStaleFlag: false,
+			hasStaleFlag: true,
 		},
 		{
 			sql:          "select * from t",
@@ -1210,7 +1210,7 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 		// assert execute select statement in stale transaction
 		{
 			sql:          fmt.Sprintf("start transaction read only as of timestamp '%v'", time1),
-			hasStaleFlag: false,
+			hasStaleFlag: true,
 		},
 		{
 			sql:          "execute p1",
