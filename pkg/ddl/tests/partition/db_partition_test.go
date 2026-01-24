@@ -3264,7 +3264,7 @@ func TestRemovePartitioningAutoIDs(t *testing.T) {
 	//waitFor(4, "t", "public")
 	//tk2.MustExec(`commit`)
 	// TODO: Investigate and fix, but it is also related to https://github.com/pingcap/tidb/issues/46904
-	require.ErrorContains(t, <-alterChan, "[kv:1062]Duplicate entry '26' for key 't.PRIMARY'")
+	require.ErrorContains(t, <-alterChan, "[kv:1062]Duplicate entry '31' for key 't.PRIMARY'")
 	tk3.MustQuery(`select _tidb_rowid, a, b from t`).Sort().Check(testkit.Rows(
 		"13 11 11", "14 2 2", "15 12 12", "17 16 18",
 		"19 18 4", "21 20 5", "23 22 6", "25 24 7", "27 26 8", "30 29 9",

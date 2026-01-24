@@ -3467,3 +3467,44 @@ Error 1731 (HY000): Non matching attribute 'global index: b' between partition a
 drop database partition_exchange;
 use ddl__db_partition;
 set tidb_enable_global_index=default;
+# 53385
+drop table if exists t,t1;
+create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));
+create table t1(id int not null, store_id int not null);
+insert into t values (1, 1);
+insert into t values (2, 17);
+insert into t1 values (0, 18);
+alter table t exchange partition p3 with table t1;
+alter table t remove partitioning;
+select * from t;
+id	store_id
+0	18
+1	1
+select *,_tidb_rowid from t;
+id	store_id	_tidb_rowid
+0	18	30257
+1	1	30001
+drop table t, t1;
+create table t (id int not null, store_id int not null )  partition by range (store_id) (partition p0 values less than (6), partition p1 values less than (11), partition p2 values less than (16), partition p3 values less than (21));
+create table t1(id int not null, store_id int not null);
+insert into t values (1, 1);
+insert into t values (2, 17);
+insert into t1 values (0, 18);
+alter table t exchange partition p3 with table t1;
+select *, _tidb_rowid from t;
+id	store_id	_tidb_rowid
+0	18	1
+1	1	1
+select *, _tidb_rowid from t1;
+id	store_id	_tidb_rowid
+2	17	2
+alter table t reorganize partition p0, p1, p2, p3 into (partition pMax values less than (maxvalue));
+select * from t;
+id	store_id
+0	18
+1	1
+select *,_tidb_rowid from t;
+id	store_id	_tidb_rowid
+0	18	30257
+1	1	30001
+drop table t, t1;
