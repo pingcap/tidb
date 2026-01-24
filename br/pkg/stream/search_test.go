@@ -196,9 +196,6 @@ func TestMergeCFEntries(t *testing.T) {
 		}
 	}
 
-	s := fakeStorage(t)
-	comparator := NewStartWithComparator()
-	bs := NewStreamBackupSearch(s, comparator, []byte{})
-	kvEntries := bs.mergeCFEntries(defaultCFEntries, writeCFEntries)
+	kvEntries := MergeCFEntries(defaultCFEntries, writeCFEntries)
 	require.Equal(t, len(writeCFs)+1, len(kvEntries))
 }

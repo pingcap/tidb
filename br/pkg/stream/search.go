@@ -8,10 +8,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"io"
 	"sort"
 	"strings"
-	"sync"
 
+	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
@@ -57,7 +58,7 @@ type StreamKVInfo struct {
 type StreamBackupSearch struct {
 	storage    storeapi.Storage
 	comparator Comparator
-	searchKey  []byte // hex string
+	searchKey  []byte // encoded search key
 	startTs    uint64
 	endTs      uint64
 }
@@ -68,13 +69,11 @@ func NewStreamBackupSearch(
 	comparator Comparator,
 	searchKey []byte,
 ) *StreamBackupSearch {
-	bs := &StreamBackupSearch{
+	return &StreamBackupSearch{
 		storage:    storage,
 		comparator: comparator,
+		searchKey:  searchKey,
 	}
-
-	bs.searchKey = codec.EncodeBytes([]byte{}, searchKey)
-	return bs
 }
 
 // SetStartTS set start timestamp searched from
@@ -127,31 +126,39 @@ func (s *StreamBackupSearch) resolveMetaData(
 	metaData *backuppb.Metadata,
 	ch chan<- *backuppb.DataFileInfo,
 ) {
-	for _, file := range metaData.Files {
-		if file.IsMeta {
-			continue
-		}
-
-		// TODO dynamically configure filter policy
-		if bytes.Compare(s.searchKey, file.StartKey) < 0 {
-			continue
-		}
-		if bytes.Compare(s.searchKey, file.EndKey) > 0 {
-			continue
-		}
-
-		if s.startTs > 0 {
-			if file.MaxTs < s.startTs {
+	for _, group := range metaData.FileGroups {
+		for _, file := range group.DataFilesInfo {
+			if file.IsMeta {
 				continue
 			}
-		}
-		if s.endTs > 0 {
-			if file.MinTs > s.endTs {
+
+			// file.StartKey and file.EndKey are encoded.
+			// TODO dynamically configure filter policy
+			if bytes.Compare(s.searchKey, file.StartKey) < 0 {
 				continue
 			}
-		}
+			if bytes.Compare(s.searchKey, file.EndKey) > 0 {
+				continue
+			}
 
-		ch <- file
+			log.Info("filter in file key")
+			if s.startTs > 0 {
+				if file.MaxTs < s.startTs {
+					continue
+				}
+			}
+			if s.endTs > 0 {
+				if file.MinTs > s.endTs {
+					continue
+				}
+			}
+			log.Info("filter in ts", zap.String("file name", group.Path), zap.Uint64("offset", file.RangeOffset), zap.Uint64("length", file.RangeLength))
+			file.Path = group.Path
+			select {
+			case <-ctx.Done():
+			case ch <- file:
+			}
+		}
 	}
 }
 
@@ -159,29 +166,39 @@ func (s *StreamBackupSearch) resolveMetaData(
 func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error) {
 	dataFilesCh := make(chan *backuppb.DataFileInfo, 32)
 	entriesCh, errCh := make(chan *StreamKVInfo, 64), make(chan error, 8)
-	go func() {
+	eg, ectx := errgroup.WithContext(ctx)
+	eg.Go(func() error {
 		defer close(dataFilesCh)
-		if err := s.readDataFiles(ctx, dataFilesCh); err != nil {
-			errCh <- err
+		if err := s.readDataFiles(ectx, dataFilesCh); err != nil {
+			select {
+			case <-ectx.Done():
+			case errCh <- err:
+			}
+			return errors.Trace(err)
+		}
+		return nil
+	})
+
+	pool := util.NewWorkerPool(8, "search key")
+
+	go func() {
+		for dataFile := range dataFilesCh {
+			file := dataFile
+			pool.ApplyOnErrorGroup(eg, func() error {
+				if err := s.searchFromDataFile(ectx, file, entriesCh); err != nil {
+					select {
+					case <-ectx.Done():
+					case errCh <- err:
+					}
+					return err
+				}
+				return nil
+			})
 		}
 	}()
 
-	pool := util.NewWorkerPool(16, "search key")
-	var wg sync.WaitGroup
-
-	for dataFile := range dataFilesCh {
-		wg.Add(1)
-		file := dataFile
-		pool.Apply(func() {
-			defer wg.Done()
-			if err := s.searchFromDataFile(ctx, file, entriesCh); err != nil {
-				errCh <- err
-			}
-		})
-	}
-
 	go func() {
-		wg.Wait()
+		eg.Wait()
 		close(entriesCh)
 		close(errCh)
 	}()
@@ -194,14 +211,15 @@ func (s *StreamBackupSearch) Search(ctx context.Context) ([]*StreamKVInfo, error
 	writeCFEntries := make(map[string]*StreamKVInfo, 64)
 
 	for entry := range entriesCh {
-		if entry.CFName == consts.WriteCF {
+		switch entry.CFName {
+		case consts.WriteCF:
 			writeCFEntries[entry.EncodedKey] = entry
-		} else if entry.CFName == consts.DefaultCF {
+		case consts.DefaultCF:
 			defaultCFEntries[entry.EncodedKey] = entry
 		}
 	}
 
-	entries := s.mergeCFEntries(defaultCFEntries, writeCFEntries)
+	entries := MergeCFEntries(defaultCFEntries, writeCFEntries)
 	return entries, nil
 }
 
@@ -210,11 +228,25 @@ func (s *StreamBackupSearch) searchFromDataFile(
 	dataFile *backuppb.DataFileInfo,
 	ch chan<- *StreamKVInfo,
 ) error {
-	buff, err := s.storage.ReadFile(ctx, dataFile.Path)
+	start := int64(dataFile.RangeOffset)
+	end := int64(dataFile.RangeOffset + dataFile.RangeLength)
+	reader, err := s.storage.Open(ctx, dataFile.Path, &storage.ReaderOption{
+		StartOffset: &start,
+		EndOffset:   &end,
+	})
 	if err != nil {
-		return errors.Annotatef(err, "read data file error, file: %s", dataFile.Path)
+		return errors.Trace(err)
 	}
-
+	defer reader.Close()
+	buff, err := io.ReadAll(reader)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	decoder, _ := zstd.NewReader(nil)
+	buff, err = decoder.DecodeAll(buff, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if checksum := sha256.Sum256(buff); !bytes.Equal(checksum[:], dataFile.GetSha256()) {
 		return errors.Annotatef(err, "validate checksum failed, file: %s", dataFile.Path)
 	}
@@ -226,23 +258,23 @@ func (s *StreamBackupSearch) searchFromDataFile(
 			return errors.Trace(err)
 		}
 
-		k, v := iter.Key(), iter.Value()
-		if !s.comparator.Compare(k, s.searchKey) {
+		enck, v := iter.Key(), iter.Value()
+		if !s.comparator.Compare(enck, s.searchKey) {
 			continue
 		}
-
-		_, ts, err := codec.DecodeUintDesc(k[len(k)-8:])
+		_, ts, err := codec.DecodeUintDesc(enck[len(enck)-8:])
 		if err != nil {
 			return errors.Annotatef(err, "decode ts from key error, file: %s", dataFile.Path)
 		}
 
-		k = k[:len(k)-8]
-		_, rawKey, err := codec.DecodeBytes(k, nil)
+		enck = enck[:len(enck)-8]
+		_, rawKey, err := codec.DecodeBytes(enck, nil)
 		if err != nil {
 			return errors.Annotatef(err, "decode raw key error, file: %s", dataFile.Path)
 		}
 
-		if dataFile.Cf == consts.WriteCF {
+		switch dataFile.Cf {
+		case consts.WriteCF:
 			rawWriteCFValue := new(RawWriteCFValue)
 			if err := rawWriteCFValue.ParseFrom(v); err != nil {
 				return errors.Annotatef(err, "parse raw write cf value error, file: %s", dataFile.Path)
@@ -262,8 +294,11 @@ func (s *StreamBackupSearch) searchFromDataFile(
 				EncodedKey: hex.EncodeToString(iter.Key()),
 				ShortValue: valueStr,
 			}
-			ch <- kvInfo
-		} else if dataFile.Cf == consts.DefaultCF {
+			select {
+			case <-ctx.Done():
+			case ch <- kvInfo:
+			}
+		case consts.DefaultCF:
 			kvInfo := &StreamKVInfo{
 				CFName:     dataFile.Cf,
 				StartTs:    ts,
@@ -271,7 +306,10 @@ func (s *StreamBackupSearch) searchFromDataFile(
 				EncodedKey: hex.EncodeToString(iter.Key()),
 				Value:      base64.StdEncoding.EncodeToString(v),
 			}
-			ch <- kvInfo
+			select {
+			case <-ctx.Done():
+			case ch <- kvInfo:
+			}
 		}
 	}
 
@@ -279,7 +317,7 @@ func (s *StreamBackupSearch) searchFromDataFile(
 	return nil
 }
 
-func (s *StreamBackupSearch) mergeCFEntries(defaultCFEntries, writeCFEntries map[string]*StreamKVInfo) []*StreamKVInfo {
+func MergeCFEntries(defaultCFEntries, writeCFEntries map[string]*StreamKVInfo) []*StreamKVInfo {
 	entries := make([]*StreamKVInfo, 0, len(defaultCFEntries)+len(writeCFEntries))
 	mergedDefaultCFKeys := make(map[string]struct{}, 16)
 	for _, entry := range writeCFEntries {

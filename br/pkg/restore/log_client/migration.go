@@ -103,6 +103,13 @@ type WithMigrationsBuilder struct {
 	restoredTS   uint64
 }
 
+func NewWithMigrationsBuilder(startTS, restoredTS uint64) *WithMigrationsBuilder {
+	return &WithMigrationsBuilder{
+		startTS:    startTS,
+		restoredTS: restoredTS,
+	}
+}
+
 func (builder *WithMigrationsBuilder) SetShiftStartTS(ts uint64) {
 	builder.shiftStartTS = ts
 }
