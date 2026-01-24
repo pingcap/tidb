@@ -56,6 +56,7 @@ func run() error {
 		return err
 	}
 
+	// such as test,t_curr,A;test,t_next,B
 	items := strings.Split(os.Args[3], ";")
 	tableCfgs := make([]tableCfg, 0, len(items))
 	for _, itm := range items {
