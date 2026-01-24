@@ -2268,7 +2268,7 @@ func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physical
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
-	// index join would have the same logic with here.
+	// index join would use the same logic.
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
