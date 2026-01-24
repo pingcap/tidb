@@ -1772,7 +1772,12 @@ func (p *LogicalJoin) outerJoinPropConst(predicates []expression.Expression) []e
 	exprCtx := p.SCtx().GetExprCtx()
 	outerTableSchema := outerTable.Schema()
 	innerTableSchema := innerTable.Schema()
+<<<<<<< HEAD
 	joinConds, predicates = expression.PropConstOverOuterJoin(exprCtx, joinConds, predicates, outerTableSchema, innerTableSchema, nullSensitive)
+=======
+	joinConds, predicates = expression.PropConstForOuterJoin(exprCtx, joinConds, predicates, outerTableSchema,
+		innerTableSchema, p.SCtx().GetSessionVars().AlwaysKeepJoinKey, nullSensitive, vaildExprFunc)
+>>>>>>> d022959e781 (planner: keep join keys for join optimization in constant propagation (#63404))
 	p.AttachOnConds(joinConds)
 	return predicates
 }
