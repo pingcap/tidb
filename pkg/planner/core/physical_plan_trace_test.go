@@ -166,6 +166,7 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 	otrace := sctx.GetSessionVars().StmtCtx.OptimizeTracer.Physical
 	require.NotNil(t, otrace)
 	elements := map[int]string{
+<<<<<<< HEAD
 		12: "TableReader",
 		14: "TableReader",
 		13: "TableFullScan",
@@ -186,21 +187,32 @@ func TestPhysicalOptimizerTrace(t *testing.T) {
 		9:  {},
 		7:  {},
 		6:  {},
+=======
+		8:  "Projection",
+		28: "HashAgg",
+		16: "HashJoin",
+		18: "HashJoin",
+		17: "HashJoin",
+		11: "Sort",
+		15: "HashAgg",
+		27: "TableFullScan",
+		29: "TableReader",
+		20: "HashAgg",
+		24: "TableFullScan",
+		25: "HashAgg",
+		30: "TableFullScan",
+		23: "HashAgg",
+		21: "HashAgg",
+		31: "TableReader",
+		32: "TableFullScan",
+		33: "TableReader",
+>>>>>>> d87ec2b1884 (planner: RegardNULLAsPoint should be true as default (#62194))
 	}
 	for _, c := range otrace.Candidates {
 		tp, ok := elements[c.ID]
-		if !ok || tp != c.TP {
-			t.FailNow()
-		}
+		require.Truef(t, ok, "ID: %d not found in elements", c.ID)
+		require.Equalf(t, tp, c.TP, "ID: %d, expected TP: %s, got TP: %s", c.ID, tp, c.TP)
 	}
-	require.Len(t, otrace.Candidates, len(elements))
-	for _, p := range otrace.Final {
-		_, ok := final[p.ID]
-		if !ok {
-			t.FailNow()
-		}
-	}
-	require.Len(t, otrace.Final, len(final))
 }
 
 func TestPhysicalOptimizerTraceChildrenNotDuplicated(t *testing.T) {
