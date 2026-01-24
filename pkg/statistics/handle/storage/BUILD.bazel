@@ -23,7 +23,11 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/statistics",
+<<<<<<< HEAD
         "//pkg/statistics/handle/cache",
+=======
+        "//pkg/statistics/asyncload",
+>>>>>>> 2214bd07fc6 (statistics: Remove the ineffective dirty IDs from the row count cache (#56287))
         "//pkg/statistics/handle/lockstats",
         "//pkg/statistics/handle/logutil",
         "//pkg/statistics/handle/metrics",
