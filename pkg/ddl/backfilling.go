@@ -145,12 +145,26 @@ type backfillTaskContext struct {
 type backfillCtx struct {
 	id int
 	*ddlCtx
+<<<<<<< HEAD
 	sessCtx       sessionctx.Context
 	schemaName    string
 	table         table.Table
 	batchCnt      int
 	jobContext    *JobContext
 	metricCounter prometheus.Counter
+=======
+	warnings   contextutil.WarnHandlerExt
+	loc        *time.Location
+	exprCtx    exprctx.BuildContext
+	tblCtx     table.MutateContext
+	schemaName string
+	table      table.Table
+	batchCnt   int
+	jobContext *ReorgContext
+
+	metricCounter   prometheus.Counter
+	conflictCounter prometheus.Counter
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
 }
 
 func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, rInfo *reorgInfo, schemaName string, tbl table.Table,
@@ -169,6 +183,7 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, rInfo *reor
 		}
 	}
 	return &backfillCtx{
+<<<<<<< HEAD
 		id:            id,
 		ddlCtx:        ctx,
 		sessCtx:       sessCtx,
@@ -177,6 +192,32 @@ func newBackfillCtx(ctx *ddlCtx, id int, sessCtx sessionctx.Context, rInfo *reor
 		batchCnt:      int(variable.GetDDLReorgBatchSize()),
 		jobContext:    jobCtx,
 		metricCounter: metrics.GetBackfillTotalByLabel(label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+=======
+		id:         id,
+		ddlCtx:     rInfo.jobCtx.oldDDLCtx,
+		warnings:   warnHandler,
+		exprCtx:    exprCtx,
+		tblCtx:     tblCtx,
+		loc:        exprCtx.GetEvalCtx().Location(),
+		schemaName: schemaName,
+		table:      tbl,
+		batchCnt:   batchCnt,
+		jobContext: jobCtx,
+		metricCounter: metrics.GetBackfillTotalByLabel(
+			label, schemaName, tbl.Meta().Name.String(), colOrIdxName),
+		conflictCounter: metrics.GetBackfillTotalByLabel(
+			fmt.Sprintf("%s-conflict", label), schemaName, tbl.Meta().Name.String(), colOrIdxName),
+	}, nil
+}
+
+func getIdxNamesFromArgs(args *model.ModifyIndexArgs) string {
+	var sb strings.Builder
+	for i, idx := range args.IndexArgs {
+		if i > 0 {
+			sb.WriteString("+")
+		}
+		sb.WriteString(idx.IndexName.O)
+>>>>>>> 35d9646b088 (ddl: optimize temp index worker in highly conflicting case (#61445))
 	}
 }
 
@@ -190,7 +231,7 @@ func updateTxnEntrySizeLimitIfNeeded(txn kv.Transaction) {
 }
 
 type backfiller interface {
-	BackfillData(handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
+	BackfillData(ctx context.Context, handleRange reorgBackfillTask) (taskCtx backfillTaskContext, err error)
 	AddMetricInfo(float64)
 	GetCtx() *backfillCtx
 	String() string
@@ -302,7 +343,7 @@ func (w *backfillWorker) handleBackfillTask(d *ddlCtx, task *reorgBackfillTask, 
 			return result
 		}
 
-		taskCtx, err := bf.BackfillData(handleRange)
+		taskCtx, err := bf.BackfillData(w.ctx, handleRange)
 		if err != nil {
 			result.err = err
 			return result
