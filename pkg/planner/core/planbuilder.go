@@ -2171,7 +2171,11 @@ func getModifiedIndexesInfoForAnalyze(
 }
 
 // filterSkipColumnTypes filters out columns whose types are in the skipTypes list.
+<<<<<<< HEAD
 func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast.TableName, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo) {
+=======
+func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *resolve.TableNameW, mustAnalyzedCols *calcOnceMap) (result []*model.ColumnInfo, skipCol []*model.ColumnInfo) {
+>>>>>>> 304732848c5 (planner: fix the problem of not finding the referenced column in the virtual column (#57084))
 	// If the session is in restricted SQL mode, it uses @@global.tidb_analyze_skip_column_types to get the skipTypes list.
 	skipTypes := b.ctx.GetSessionVars().AnalyzeSkipColumnTypes
 	if b.ctx.GetSessionVars().InRestrictedSQL {
@@ -2197,6 +2201,7 @@ func (b *PlanBuilder) filterSkipColumnTypes(origin []*model.ColumnInfo, tbl *ast
 		// into TiDB to build the index statistics.
 		_, keep := mustAnalyze[colInfo.ID]
 		if skip && !keep {
+			skipCol = append(skipCol, colInfo)
 			continue
 		}
 		result = append(result, colInfo)
@@ -2254,6 +2259,7 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 		if id == tbl.TableInfo.ID {
 			id = statistics.NonPartitionTableID
 		}
+<<<<<<< HEAD
 		info := AnalyzeInfo{
 			DBName:        tbl.Schema.O,
 			TableName:     tbl.Name.O,
@@ -2291,6 +2297,74 @@ func (b *PlanBuilder) buildAnalyzeFullSamplingTask(
 				IndexInfo:   indexInfo,
 				TblInfo:     tbl.TableInfo,
 				AnalyzeInfo: info,
+=======
+		// Build tasks for each partition.
+		for i, id := range physicalIDs {
+			physicalID := id
+			if id == tbl.TableInfo.ID {
+				id = statistics.NonPartitionTableID
+			}
+			info := AnalyzeInfo{
+				DBName:        tbl.Schema.O,
+				TableName:     tbl.Name.O,
+				PartitionName: partitionNames[i],
+				TableID:       statistics.AnalyzeTableID{TableID: tbl.TableInfo.ID, PartitionID: id},
+				StatsVersion:  version,
+			}
+			if optsV2, ok := optionsMap[physicalID]; ok {
+				info.V2Options = &optsV2
+			}
+			execColsInfo := astColsInfo
+			if colsInfo, ok := colsInfoMap[physicalID]; ok {
+				execColsInfo = colsInfo
+			}
+			var skipColsInfo []*model.ColumnInfo
+			execColsInfo, skipColsInfo = b.filterSkipColumnTypes(execColsInfo, tbl, &mustAnalyzedCols)
+			allColumns := len(tbl.TableInfo.Columns) == len(execColsInfo)
+			indexes, independentIndexes, specialGlobalIndexes = getModifiedIndexesInfoForAnalyze(b.ctx.GetSessionVars().StmtCtx, tbl.TableInfo, allColumns, execColsInfo)
+			handleCols := BuildHandleColsForAnalyze(b.ctx, tbl.TableInfo, allColumns, execColsInfo)
+			newTask := AnalyzeColumnsTask{
+				HandleCols:   handleCols,
+				ColsInfo:     execColsInfo,
+				AnalyzeInfo:  info,
+				TblInfo:      tbl.TableInfo,
+				Indexes:      indexes,
+				SkipColsInfo: skipColsInfo,
+			}
+			if newTask.HandleCols == nil {
+				extraCol := model.NewExtraHandleColInfo()
+				// Always place _tidb_rowid at the end of colsInfo, this is corresponding to logics in `analyzeColumnsPushdown`.
+				newTask.ColsInfo = append(newTask.ColsInfo, extraCol)
+				newTask.HandleCols = util.NewIntHandleCols(colInfoToColumn(extraCol, len(newTask.ColsInfo)-1))
+			}
+			analyzePlan.ColTasks = append(analyzePlan.ColTasks, newTask)
+			for _, indexInfo := range independentIndexes {
+				newIdxTask := AnalyzeIndexTask{
+					IndexInfo:   indexInfo,
+					TblInfo:     tbl.TableInfo,
+					AnalyzeInfo: info,
+				}
+				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
+			}
+		}
+	}
+
+	if isAnalyzeTable {
+		if needAnalyzeCols {
+			// When `needAnalyzeCols == true`, non-global indexes already covered by previous loop,
+			// deal with global index here.
+			for _, indexInfo := range specialGlobalIndexes {
+				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(indexInfo, as, tbl.TableInfo, nil, nil, version)...)
+			}
+		} else {
+			// For `analyze table t index idx1[, idx2]` and all indexes are global index.
+			for _, idxName := range as.IndexNames {
+				idx := tbl.TableInfo.FindIndexByName(idxName.L)
+				if idx == nil || !handleutil.IsSpecialGlobalIndex(idx, tbl.TableInfo) {
+					continue
+				}
+				analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, generateIndexTasks(idx, as, tbl.TableInfo, nil, nil, version)...)
+>>>>>>> 304732848c5 (planner: fix the problem of not finding the referenced column in the virtual column (#57084))
 			}
 			analyzePlan.IdxTasks = append(analyzePlan.IdxTasks, newIdxTask)
 		}
