@@ -20,6 +20,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strconv"
+	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
@@ -34,27 +37,47 @@ func main() {
 	}
 }
 
+type tableCfg struct {
+	schema string
+	table  string
+	group  string
+}
+
 func run() error {
-	keyspaceID := uint32(16777214)
-	db, err := sql.Open("mysql", "root:@tcp(127.0.0.1:4000)/")
+	// such as 16777214
+	keyspaceID, err := strconv.Atoi(os.Args[1])
 	if err != nil {
 		return err
 	}
+	// such as root:@tcp(127.0.0.1:4000)/
+	connStr := os.Args[2]
+	db, err := sql.Open("mysql", connStr)
+	if err != nil {
+		return err
+	}
+
+	items := strings.Split(os.Args[3], ";")
+	tableCfgs := make([]tableCfg, 0, len(items))
+	for _, itm := range items {
+		parts := strings.Split(itm, ",")
+		if len(parts) != 3 {
+			return fmt.Errorf("invalid table config: %s, should be schema,table,groupID", itm)
+		}
+		tableCfgs = append(tableCfgs, tableCfg{
+			schema: parts[0],
+			table:  parts[1],
+			group:  parts[2],
+		})
+	}
+
 	var opts []*RuleOp
-	for _, cc := range []struct {
-		schema string
-		table  string
-		group  string
-	}{
-		{"test", "t_curr", "A"},
-		{"test", "t_next", "B"},
-	} {
+	for _, cc := range tableCfgs {
 		tableID, err := getTableID(db, cc.schema, cc.table)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("table %s.%s id: %d\n", cc.schema, cc.table, tableID)
-		ksCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: keyspaceID})
+		ksCodec, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Id: uint32(keyspaceID)})
 		if err != nil {
 			panic(err)
 		}
