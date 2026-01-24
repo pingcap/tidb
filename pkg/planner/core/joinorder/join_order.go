@@ -334,8 +334,12 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			nodes = append(nodes[:bestIdx], nodes[bestIdx+1:]...)
 		}
 	}
+	// gjt todo better policy
 	if len(bushyJoinTreeNodes) > 0 {
 		return makeBushyTree(j.ctx, bushyJoinTreeNodes)
+	}
+	if err := detector.CheckAllEdgesUsed(curJoinTree); err != nil {
+		return nil, err
 	}
 	return curJoinTree.p, nil
 }

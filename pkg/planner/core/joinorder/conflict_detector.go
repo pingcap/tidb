@@ -500,6 +500,25 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	return join, nil
 }
 
+func (d *ConflictDetector) CheckAllEdgesUsed(curJoinTree *Node) error {
+	for _, e := range d.innerEdges {
+		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
+			if _, ok := curJoinTree.usedEdges[e.idx]; !ok {
+				return errors.New("not all inner join edges used in join tree")
+			}
+		}
+	}
+	for _, e := range d.nonInnerEdges {
+		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
+			if _, ok := curJoinTree.usedEdges[e.idx]; !ok {
+				return errors.New("not all non-inner join edges used in join tree")
+			}
+		}
+	}
+	return nil
+}
+
+// gjt todo duplicated function with old implementation
 func setNewJoinWithHint(newJoin *logicalop.LogicalJoin, vertexHints map[int]*vertexJoinMethodHint) {
 	lChild := newJoin.Children()[0]
 	rChild := newJoin.Children()[1]
