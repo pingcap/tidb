@@ -20,6 +20,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -60,13 +61,27 @@ const (
 
 var systemSchemaCIStr = model.NewCIStr("mysql")
 
+var hasDeletedExpiredRows = atomic.Bool{}
+
 func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration time.Duration) {
 	if !do.DDL().OwnerManager().IsOwner() {
 		return
 	}
+	batchSize := runawayRecordGCSelectBatchSize
+	deleteSize := runawayRecordGCBatchSize
 	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Second * 1
+		expiredDuration = time.Millisecond * 1
+		deleteSize = 2
+		batchSize = 5 * deleteSize
 	})
+	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return()
+		}
+	})
+	if hasDeletedExpiredRows.Load() {
+		return
+	}
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := model.NewCIStr(tableName)
 	tbl, err := do.InfoSchema().TableByName(systemSchemaCIStr, tbCIStr)
@@ -93,7 +108,7 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 	var leftRows [][]types.Datum
 	for {
 		sql := ""
-		if sql, err = generator.NextSQL(leftRows, runawayRecordGCSelectBatchSize); err != nil {
+		if sql, err = generator.NextSQL(leftRows, batchSize); err != nil {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
@@ -111,16 +126,16 @@ func (do *Domain) deleteExpiredRows(tableName, colName string, expiredDuration t
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
+		failpoint.Inject("deleteExpiredRows", func() {
+			hasDeletedExpiredRows.Store(true)
+		})
 
-		for len(leftRows) > 0 {
-			var delBatch [][]types.Datum
-			if len(leftRows) < runawayRecordGCBatchSize {
-				delBatch = leftRows
-				leftRows = nil
-			} else {
-				delBatch = leftRows[0:runawayRecordGCBatchSize]
-				leftRows = leftRows[runawayRecordGCBatchSize:]
+		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
+			endIndex := startIndex + deleteSize
+			if endIndex > len(leftRows) {
+				endIndex = len(leftRows)
 			}
+			delBatch := leftRows[startIndex:endIndex]
 			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
 			if err != nil {
 				logutil.BgLogger().Error(
