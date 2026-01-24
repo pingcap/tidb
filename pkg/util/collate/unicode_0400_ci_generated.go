@@ -18,6 +18,11 @@
 
 package collate
 
+<<<<<<< HEAD
+=======
+import "unicode/utf8"
+
+>>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 // unicodeCICollator implements UCA. see http://unicode.org/reports/tr10/
 type unicodeCICollator struct {
 	impl unicode0400Impl
@@ -39,7 +44,19 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 		if an == 0 {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
+<<<<<<< HEAD
 					ar, ai = decodeRune(a, ai)
+=======
+					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+					ar, arLen = utf8.DecodeRuneInString(a[ai:])
+					invalid := ar == utf8.RuneError && arLen == 1
+					if invalid {
+						return 0
+					}
+					ai = ai + arLen
+>>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 					an, as = uc.impl.GetWeight(ar)
 				}
 			} else {
@@ -51,7 +68,19 @@ func (uc *unicodeCICollator) Compare(a, b string) int {
 		if bn == 0 {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
+<<<<<<< HEAD
 					br, bi = decodeRune(b, bi)
+=======
+					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
+					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
+					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
+					br, brLen = utf8.DecodeRuneInString(b[bi:])
+					invalid := br == utf8.RuneError && brLen == 1
+					if invalid {
+						return 0
+					}
+					bi = bi + brLen
+>>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 					bn, bs = uc.impl.GetWeight(br)
 				}
 			} else {
@@ -92,8 +121,18 @@ func (uc *unicodeCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	sn, ss := uint64(0), uint64(0) // weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
 
 	for si < len(str) {
+<<<<<<< HEAD
 		r, si = decodeRune(str, si)
 
+=======
+		r, rLen = utf8.DecodeRuneInString(str[si:])
+		invalid := r == utf8.RuneError && rLen == 1
+		if invalid {
+			return buf
+		}
+
+		si = si + rLen
+>>>>>>> fa0106d6c46 (util/collate: fix the issue that '�'(\uFFFD) was treated as invalid sequence (#64165))
 		sn, ss = uc.impl.GetWeight(r)
 
 		for sn != 0 {
