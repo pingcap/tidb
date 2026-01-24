@@ -48,6 +48,8 @@ func Step2Str(t TaskType, s Step) string {
 		return importIntoStep2Str(s)
 	case TaskTypeExample:
 		return exampleStep2Str(s)
+	case GlobalIndexCleanup:
+		return globalIndexCleanupStep2Str(s)
 	}
 	return fmt.Sprintf("unknown type %s", t)
 }
@@ -180,6 +182,21 @@ func backfillStep2Str(s Step) string {
 		return "ingest"
 	case BackfillStepMergeTempIndex:
 		return "merge-temp-index"
+	default:
+		return unknownStepStr(s)
+	}
+}
+
+// Steps of GlobalIndexCleanup task type.
+const (
+	// GlobalIndexCleanupStepScanAndDelete scans old partition rows and deletes corresponding global index entries.
+	GlobalIndexCleanupStepScanAndDelete Step = 1
+)
+
+func globalIndexCleanupStep2Str(s Step) string {
+	switch s {
+	case GlobalIndexCleanupStepScanAndDelete:
+		return "scan-and-delete"
 	default:
 		return unknownStepStr(s)
 	}

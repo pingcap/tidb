@@ -3989,3 +3989,85 @@ func TestExchangeTiDBRowID(t *testing.T) {
 		"6 6 3",
 		"8 8 30001"))
 }
+
+func TestDropPartitionWithGlobalIndexDXF(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Enable distributed task framework.
+	tk.MustExec("set global tidb_enable_dist_task = 1")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+
+	tk.MustExec("drop table if exists t_dxf")
+	tk.MustExec(`create table t_dxf (a int, b int, c int)
+		partition by range(a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (30)
+		)`)
+
+	tt := external.GetTableByName(t, tk, "test", "t_dxf")
+	p1ID := tt.Meta().Partition.Definitions[1].ID
+
+	tk.MustExec("alter table t_dxf add unique index idx_b (b) global")
+	tk.MustExec("insert into t_dxf values (1,1,1), (2,2,2), (11,11,11), (12,12,12), (21,21,21)")
+
+	// Get job ID for verification.
+	var jobID int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterRunOneJobStep", func(job *model.Job) {
+		if job.Type == model.ActionDropTablePartition && jobID == 0 {
+			jobID = job.ID
+		}
+	})
+
+	tk.MustExec("alter table t_dxf drop partition p1")
+
+	// Verify global index cleanup is done.
+	tt = external.GetTableByName(t, tk, "test", "t_dxf")
+	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, p1ID)
+	require.Equal(t, 3, cnt) // p0: 2 rows, p2: 1 row
+
+	// Verify data correctness.
+	tk.MustQuery("select * from t_dxf order by a").Check(testkit.Rows("1 1 1", "2 2 2", "21 21 21"))
+	tk.MustQuery("select b from t_dxf use index(idx_b) order by b").Check(testkit.Rows("1", "2", "21"))
+}
+
+func TestTruncatePartitionWithGlobalIndexDXF(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Enable distributed task framework.
+	tk.MustExec("set global tidb_enable_dist_task = 1")
+	tk.MustExec("set global tidb_ddl_enable_fast_reorg = 1")
+
+	tk.MustExec("drop table if exists t_dxf_trunc")
+	tk.MustExec(`create table t_dxf_trunc (a int, b int, c int)
+		partition by range(a) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (30)
+		)`)
+
+	tt := external.GetTableByName(t, tk, "test", "t_dxf_trunc")
+	p1ID := tt.Meta().Partition.Definitions[1].ID
+
+	tk.MustExec("alter table t_dxf_trunc add unique index idx_b (b) global")
+	tk.MustExec("insert into t_dxf_trunc values (1,1,1), (2,2,2), (11,11,11), (12,12,12), (21,21,21)")
+
+	tk.MustExec("alter table t_dxf_trunc truncate partition p1")
+
+	// Verify global index cleanup is done.
+	tt = external.GetTableByName(t, tk, "test", "t_dxf_trunc")
+	idxInfo := tt.Meta().FindIndexByName("idx_b")
+	require.NotNil(t, idxInfo)
+	cnt := checkGlobalIndexCleanUpDone(t, tk.Session(), tt.Meta(), idxInfo, p1ID)
+	require.Equal(t, 3, cnt) // p0: 2 rows, p2: 1 row
+
+	// Verify data correctness.
+	tk.MustQuery("select * from t_dxf_trunc order by a").Check(testkit.Rows("1 1 1", "2 2 2", "21 21 21"))
+	tk.MustQuery("select b from t_dxf_trunc use index(idx_b) order by b").Check(testkit.Rows("1", "2", "21"))
+}
