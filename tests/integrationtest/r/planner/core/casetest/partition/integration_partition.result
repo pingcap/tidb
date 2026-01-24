@@ -20,6 +20,7 @@ PartitionUnion	root
     └─TableFullScan	cop[tikv]	table:tlist, partition:p1	keep order:false, stats:pseudo
 explain format='plan_tree' select avg(a) from tlist;
 id	task	access object	operator info
+<<<<<<< HEAD
 HashAgg	root		funcs:avg(Column#5, Column#6)->Column#4
 └─PartitionUnion	root		
   ├─HashAgg	root		funcs:count(Column#7)->Column#5, funcs:sum(Column#8)->Column#6
@@ -29,6 +30,17 @@ HashAgg	root		funcs:avg(Column#5, Column#6)->Column#4
   └─HashAgg	root		funcs:count(Column#11)->Column#5, funcs:sum(Column#12)->Column#6
     └─TableReader	root		data:HashAgg
       └─HashAgg	cop[tikv]		funcs:count(list_push_down.tlist.a)->Column#11, funcs:sum(list_push_down.tlist.a)->Column#12
+=======
+HashAgg	root		funcs:avg(Column, Column)->Column
+└─PartitionUnion	root		
+  ├─HashAgg	root		funcs:count(Column)->Column, funcs:sum(Column)->Column
+  │ └─TableReader	root		data:HashAgg
+  │   └─HashAgg	cop[tikv]		funcs:count(list_push_down.tlist.a)->Column, funcs:sum(list_push_down.tlist.a)->Column
+  │     └─TableFullScan	cop[tikv]	table:tlist, partition:p0	keep order:false, stats:pseudo
+  └─HashAgg	root		funcs:count(Column)->Column, funcs:sum(Column)->Column
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		funcs:count(list_push_down.tlist.a)->Column, funcs:sum(list_push_down.tlist.a)->Column
+>>>>>>> master
         └─TableFullScan	cop[tikv]	table:tlist, partition:p1	keep order:false, stats:pseudo
 explain format='plan_tree' select a from tlist limit 10;
 id	task	access object	operator info
@@ -65,6 +77,7 @@ PartitionUnion	root
     └─TableFullScan	cop[tikv]	table:tcollist, partition:p1	keep order:false, stats:pseudo
 explain format='plan_tree' select avg(a) from tcollist;
 id	task	access object	operator info
+<<<<<<< HEAD
 HashAgg	root		funcs:avg(Column#5, Column#6)->Column#4
 └─PartitionUnion	root		
   ├─HashAgg	root		funcs:count(Column#7)->Column#5, funcs:sum(Column#8)->Column#6
@@ -74,6 +87,17 @@ HashAgg	root		funcs:avg(Column#5, Column#6)->Column#4
   └─HashAgg	root		funcs:count(Column#11)->Column#5, funcs:sum(Column#12)->Column#6
     └─TableReader	root		data:HashAgg
       └─HashAgg	cop[tikv]		funcs:count(list_push_down.tcollist.a)->Column#11, funcs:sum(list_push_down.tcollist.a)->Column#12
+=======
+HashAgg	root		funcs:avg(Column, Column)->Column
+└─PartitionUnion	root		
+  ├─HashAgg	root		funcs:count(Column)->Column, funcs:sum(Column)->Column
+  │ └─TableReader	root		data:HashAgg
+  │   └─HashAgg	cop[tikv]		funcs:count(list_push_down.tcollist.a)->Column, funcs:sum(list_push_down.tcollist.a)->Column
+  │     └─TableFullScan	cop[tikv]	table:tcollist, partition:p0	keep order:false, stats:pseudo
+  └─HashAgg	root		funcs:count(Column)->Column, funcs:sum(Column)->Column
+    └─TableReader	root		data:HashAgg
+      └─HashAgg	cop[tikv]		funcs:count(list_push_down.tcollist.a)->Column, funcs:sum(list_push_down.tcollist.a)->Column
+>>>>>>> master
         └─TableFullScan	cop[tikv]	table:tcollist, partition:p1	keep order:false, stats:pseudo
 explain format='plan_tree' select a from tcollist limit 10;
 id	task	access object	operator info

@@ -763,3 +763,25 @@ CREATE OR REPLACE VIEW v AS SELECT 1, 1;
 Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v'
 CREATE OR REPLACE VIEW v1 AS SELECT 1, 1;
 Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 'v1'
+use privilege__privileges;
+DROP TABLE IF EXISTS t_partition;
+DROP USER IF EXISTS foo;
+CREATE TABLE t_partition (id INT, year_col INT)
+PARTITION BY RANGE (year_col) (
+PARTITION p0 VALUES LESS THAN (1991),
+PARTITION p1 VALUES LESS THAN (1995),
+PARTITION p2 VALUES LESS THAN (1999),
+PARTITION p3 VALUES LESS THAN (2003),
+PARTITION p4 VALUES LESS THAN (2007)
+);
+CREATE USER foo;
+GRANT ALTER ON privilege__privileges.t_partition TO foo;
+ALTER TABLE t_partition TRUNCATE PARTITION p0;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 't_partition'
+ALTER TABLE t_partition DROP PARTITION p1;
+Error 1142 (42000): DROP command denied to user 'foo'@'%' for table 't_partition'
+GRANT DROP ON privilege__privileges.t_partition TO foo;
+ALTER TABLE t_partition TRUNCATE PARTITION p2;
+ALTER TABLE t_partition DROP PARTITION p3;
+DROP TABLE t_partition;
+DROP USER foo;

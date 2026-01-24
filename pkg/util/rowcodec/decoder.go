@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // decoder contains base util for decode row.
@@ -212,6 +213,10 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, hand
 	for colIdx := range decoder.columns {
 		col := &decoder.columns[colIdx]
 		if col.ID == model.ExtraCommitTSID {
+<<<<<<< HEAD
+=======
+			intest.Assert(commitTS > 0, "commitTS should be valid if ExtraCommitTSID exists")
+>>>>>>> master
 			if commitTS > 0 {
 				chk.AppendUint64(colIdx, commitTS)
 			} else {
@@ -219,7 +224,10 @@ func (decoder *ChunkDecoder) DecodeToChunk(rowData []byte, commitTS uint64, hand
 			}
 			continue
 		}
+<<<<<<< HEAD
 
+=======
+>>>>>>> master
 		// fill the virtual column value after row calculation
 		if col.VirtualGenCol {
 			chk.AppendNull(colIdx)

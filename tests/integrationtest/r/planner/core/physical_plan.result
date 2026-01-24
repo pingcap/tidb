@@ -29,7 +29,11 @@ count(*)
 0
 explain format = 'plan_tree' select count(*) from t30965 where d = 2 and b = 4 and a = 3 and c = 5;
 id	task	access object	operator info
+<<<<<<< HEAD
 StreamAgg	root		funcs:count(1)->Column#7
+=======
+StreamAgg	root		funcs:count(1)->Column
+>>>>>>> master
 └─Selection	root		eq(planner__core__physical_plan.t30965.d, 2)
   └─IndexLookUp	root		
     ├─IndexRangeScan(Build)	cop[tikv]	table:t30965, index:ib(b)	range:[4,4], keep order:false, stats:pseudo

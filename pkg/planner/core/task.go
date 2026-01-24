@@ -2117,6 +2117,10 @@ func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
 		for i, col := range schemaCols {
 			if col.ID == model.ExtraCommitTSID {
 				schemaCols = slices.Delete(slices.Clone(schemaCols), i, i+1)
+<<<<<<< HEAD
+=======
+				break
+>>>>>>> master
 			}
 		}
 		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, schemaCols, false, false)

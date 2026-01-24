@@ -526,6 +526,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
 		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
+		{"admin reload cluster bindings", true, "ADMIN RELOAD CLUSTER BINDINGS"},
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
@@ -1462,6 +1463,8 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
+		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -2625,6 +2628,7 @@ func TestDDL(t *testing.T) {
 		{`create table t1 (c1 int) collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = BINARY"},
 		{`create table t1 (c1 int) collate=utf8mb4_0900_as_cs;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT COLLATE = UTF8MB4_0900_AS_CS"},
 		{`create table t1 (c1 int) default charset=binary collate=binary;`, true, "CREATE TABLE `t1` (`c1` INT) DEFAULT CHARACTER SET = BINARY DEFAULT COLLATE = BINARY"},
+		{`create table t1 (c1 int) autoextend_size=4M`, true, "CREATE TABLE `t1` (`c1` INT) AUTOEXTEND_SIZE = 4M"},
 
 		// for table option `UNION`
 		{"ALTER TABLE t_n UNION ( ), KEY_BLOCK_SIZE = 1", true, "ALTER TABLE `t_n` UNION = (), KEY_BLOCK_SIZE = 1"},
@@ -8020,6 +8024,19 @@ func TestExplainExplore(t *testing.T) {
 	RunTest(t, cases, false)
 }
 
+// TestCompatMariaDB is to test for MariaDB specific table options
+func TestCompatMariaDB(t *testing.T) {
+	cases := []testCase{
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_CHECKSUM=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_CHECKSUM = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSED=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSED = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) PAGE_COMPRESSION_LEVEL=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) PAGE_COMPRESSION_LEVEL = 1"},
+		{`CREATE TABLE t (id int PRIMARY KEY) TRANSACTIONAL=0`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) TRANSACTIONAL = 0"},
+		{`CREATE TABLE t (id int PRIMARY KEY) IETF_QUOTES=YES`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) IETF_QUOTES = YES"},
+		{`CREATE TABLE t (id int PRIMARY KEY) SEQUENCE=1`, true, "CREATE TABLE `t` (`id` INT PRIMARY KEY) SEQUENCE = 1"},
+	}
+	RunTest(t, cases, false)
+}
+
 func TestSecondaryEngineAttribute(t *testing.T) {
 	table := []testCase{
 		// Valid Partition-level SECONDARY_ENGINE_ATTRIBUTE
@@ -8176,6 +8193,7 @@ func TestPartialIndex(t *testing.T) {
 	RunTest(t, cases, false)
 }
 
+<<<<<<< HEAD
 func TestRecoverValuesStmt(t *testing.T) {
 	cases := []testCase{
 		{"recover values from t where a > 1", true, "RECOVER VALUES FROM `t` WHERE `a`>1"},
@@ -8184,4 +8202,30 @@ func TestRecoverValuesStmt(t *testing.T) {
 		{"recover values from t123 where a > (select b from t)", true, "RECOVER VALUES FROM `t123` WHERE `a`>(SELECT `b` FROM `t`)"},
 	}
 	RunTest(t, cases, false)
+=======
+func TestTableAffinityOption(t *testing.T) {
+	table := []testCase{
+		// create table with affinity option
+		{"create table t (a int) AFFINITY = 'table'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) affinity 'TABLE'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'TABLE'"},
+		{"create table t (a int) affinity 'partition'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'partition'"},
+		{"create table t (a int) AFFINITY = ''", true, "CREATE TABLE `t` (`a` INT) AFFINITY = ''"},
+		{"create table t (a int) AFFINITY 'none'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'none'"},
+		{"create table t (a int) AFFINITY 'PARTITION' partition by hash ( a ) PARTITIONS 1", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'PARTITION' PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"create table t (a int) /*T![affinity] AFFINITY = 'table'*/", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) AFFINITY 'abcd'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'abcd'"},
+
+		// alter table with affinity option
+		{"alter table t AFFINITY = 'table'", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+		{"alter table t affinity 'TABLE'", true, "ALTER TABLE `t` AFFINITY = 'TABLE'"},
+		{"alter table t /*T![affinity] affinity 'table'*/", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+
+		// invalid option
+		{"create table t (a int) AFFINITY 1", false, ""},
+		{"create table t (a int) AFFINITY = 1", false, ""},
+		{"create table t (a int) AFFINITY", false, ""},
+	}
+
+	RunTest(t, table, false)
+>>>>>>> master
 }

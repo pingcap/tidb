@@ -115,6 +115,10 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	switch job.SchemaState {
 	case model.StateNone:
+		if tblInfo.Affinity != nil {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of a table with AFFINITY option")
+		}
 		// job.SchemaState == model.StateNone means the job is in the initial state of add partition.
 		// Here should use partInfo from job directly and do some check action.
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
@@ -644,6 +648,10 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 					return dbterror.ErrGlobalIndexNotExplicitlySet.GenWithStackByArgs(index.Name.O)
 				}
 			}
+		}
+
+		if index.HasCondition() {
+			return dbterror.ErrUnsupportedAddPartialIndex.GenWithStackByArgs("partial index is not supported on partitioned table")
 		}
 	}
 	if tbInfo.PKIsHandle {
@@ -2015,6 +2023,10 @@ func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
 
+	if meta.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("DROP PARTITION of a table with AFFINITY option")
+	}
+
 	// To be error compatible with MySQL, we need to do this first!
 	// see https://github.com/pingcap/tidb/issues/31681#issuecomment-1015536214
 	oldDefs := pi.Definitions
@@ -2614,6 +2626,21 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
+		// Create new affinity groups first (critical operation - must succeed)
+		if tblInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+
+		// Delete old affinity groups (best-effort cleanup - ignore errors)
+		if tblInfo.Affinity != nil {
+			if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, oldDefinitions); err != nil {
+				logutil.DDLLogger().Error("failed to delete old partition affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
+			}
+		}
+
 		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += vardef.GetDDLErrorCountLimit() / 2
@@ -3157,6 +3184,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 	metaMut := jobCtx.metaMut
 	switch job.SchemaState {
 	case model.StateNone:
+		if tblInfo.Affinity != nil {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
+		}
+
 		// job.SchemaState == model.StateNone means the job is in the initial state of reorg partition.
 		// Here should use partInfo from job directly and do some check action.
 		// In case there was a race for queueing different schema changes on the same

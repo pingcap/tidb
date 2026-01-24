@@ -454,6 +454,7 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		// Used in ALTER TABLE or CREATE TABLE
 		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
+<<<<<<< HEAD
 		// When tidb_translate_softdelete_sql is enabled, the softdelete semantics are enabled for softdelete tables,
 		// and _tidb_softdelete_time column have special meaning, so user query should not reference the hidden column.
 		// The special semantics only apply to DML and SELECT statements, for which we implemented corresponding
@@ -466,6 +467,12 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 			p.err = plannererrors.ErrInternal.GenWithStack(
 				"column '%s' cannot be referenced when tidb_translate_softdelete_sql is enabled",
 				model.ExtraSoftDeleteTimeName.O)
+=======
+		if node.Name.L == model.ExtraCommitTSName.L &&
+			(p.stmtTp == TypeSelect || p.stmtTp == TypeSetOpr || p.stmtTp == TypeUpdate || p.stmtTp == TypeDelete) {
+			p.err = plannererrors.ErrInternal.GenWithStack("Usage of column name '%s' is not supported for now",
+				model.ExtraCommitTSName.O)
+>>>>>>> master
 		}
 	default:
 		p.flag &= ^parentIsJoin
@@ -1521,6 +1528,9 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 	"myisam":     {},
 	"ndb":        {},
 	"heap":       {},
+	"aria":       {}, // https://mariadb.com/docs/server/server-usage/storage-engines/aria/aria-storage-engine
+	"myrocks":    {}, // https://mariadb.com/docs/server/server-usage/storage-engines/myrocks
+	"tokudb":     {}, // https://mariadb.com/docs/server/server-usage/storage-engines/legacy-storage-engines/tokudb
 }
 
 func checkTableEngine(engineName string) error {
@@ -2005,7 +2015,6 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 
 func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName ast.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
 	skipLock := false
-	shouldLockMDL := false
 	var lockedID int64
 
 	defer func() {
@@ -2020,8 +2029,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			}
 		}
 
-		if shouldLockMDL && err == nil && !skipLock {
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[retTbl.Meta().ID] = struct{}{}
+		if err == nil {
+			sctx.GetSessionVars().StmtCtx.RelatedTableIDs[retTbl.Meta().ID] = struct{}{}
 		}
 
 		if lockedID != 0 && err != nil {
@@ -2052,7 +2061,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
-	shouldLockMDL = true
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {

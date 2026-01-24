@@ -238,8 +238,8 @@
           "TopN 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader 1.00 root  index:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─Selection 6.00 cop[tikv]  gt(test.t.c, 0)",
-          "      └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
+          "    └─Selection 7.00 cop[tikv]  gt(test.t.c, 0)",
+          "      └─IndexRangeScan 7.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
         ]
       }
     ]
@@ -411,12 +411,20 @@
         "SQL": "explain format = 'brief' select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
         "Plan": [
           "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#8",
+<<<<<<< HEAD
           "└─Limit 1.00 root  offset:0, count:1",
           "  └─Projection 1.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e",
           "    └─IndexLookUp 1.00 root  ",
           "      ├─IndexFullScan(Build) 8540341.00 cop[tikv] table:t, index:idx4(e) keep order:true, desc",
           "      └─Selection(Probe) 1.00 cop[tikv]  eq(test.t.a, \"T3382\"), eq(test.t.b, \"ECO\"), eq(test.t.c, \"TOPIC\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\")",
           "        └─TableRowIDScan 8540341.00 cop[tikv] table:t keep order:false"
+=======
+          "└─TopN 1.00 root  test.t.e:desc, offset:0, count:1",
+          "  └─IndexLookUp 1.00 root  ",
+          "    ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:idx1(d, a) range:[\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\",\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\"], keep order:false",
+          "    └─Selection(Probe) 1.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.c, \"TOPIC\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan 1.25 cop[tikv] table:t keep order:false"
+>>>>>>> master
         ]
       }
     ]
@@ -459,7 +467,7 @@
   {
     "Name": "TestAnalyze",
     "Cases": [
-      "Analyze{Table(_tidb_rowid, a, _tidb_rowid)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
       "IndexReader(Index(t.b)[[-inf,2)])",
       "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
@@ -558,6 +566,7 @@
           "    └─TableRowIDScan(Probe) 2.00 cop[tikv] table:t19f3e4f1 keep order:false, stats:pseudo"
         ],
         "Warn": [
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",

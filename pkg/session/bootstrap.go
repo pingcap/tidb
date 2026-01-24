@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -58,6 +59,7 @@ import (
 // bootstrapOwnerKey is the key used by ddl owner mutex during boostrap.
 var bootstrapOwnerKey = "/tidb/distributeDDLOwnerLock/"
 
+<<<<<<< HEAD
 const (
 	// CreateUserTable is the SQL statement creates User table in system db.
 	// WARNING: There are some limitations on altering the schema of mysql.user table.
@@ -858,13 +860,14 @@ const (
 		index idx_table_id (table_id));`
 )
 
+=======
+>>>>>>> master
 // bootstrap initiates system DB for a store.
 func bootstrap(s sessionapi.Session) {
 	startTime := time.Now()
 	err := InitMDLVariableForBootstrap(s.GetStore())
 	if err != nil {
-		logutil.BgLogger().Fatal("init metadata lock error",
-			zap.Error(err))
+		logutil.BgLogger().Fatal("init metadata lock failed during bootstrap", zap.Error(err))
 	}
 	dom := domain.GetDomain(s)
 	bootLogger := logutil.SampleLoggerFactory(30*time.Second, 1)()
@@ -1025,71 +1028,6 @@ func acquireLock(store kv.Storage) (func(), error) {
 	}, nil
 }
 
-// upgrade function  will do some upgrade works, when the system is bootstrapped by low version TiDB server
-// For example, add new system variables into mysql.global_variables table.
-func upgrade(s sessionapi.Session) {
-	// Do upgrade works then update bootstrap version.
-	isNull, err := InitMDLVariableForUpgrade(s.GetStore())
-	if err != nil {
-		logutil.BgLogger().Fatal("[upgrade] init metadata lock failed", zap.Error(err))
-	}
-
-	var ver int64
-	ver, err = getBootstrapVersion(s)
-	terror.MustNil(err)
-	if ver >= currentBootstrapVersion {
-		// It is already bootstrapped/upgraded by a higher version TiDB server.
-		return
-	}
-
-	printClusterState(s, ver)
-
-	// when upgrade from v6.4.0 or earlier, enables metadata lock automatically,
-	// but during upgrade we disable it.
-	if isNull {
-		upgradeToVer99Before(s)
-	}
-
-	// It is only used in test.
-	upgradeFns := addMockBootstrapVersionForTest(s)
-	for _, verFn := range upgradeFns {
-		if ver < verFn.version {
-			verFn.fn(s, ver)
-			logutil.BgLogger().Info("upgrade to bootstrap version.",
-				zap.Int64("old-start-version", ver),
-				zap.Int64("in-progress-version", verFn.version),
-				zap.Int64("target-version", currentBootstrapVersion))
-		}
-	}
-	if isNull {
-		upgradeToVer99After(s)
-	}
-
-	updateBootstrapVer(s)
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
-	_, err = s.ExecuteInternal(ctx, "COMMIT")
-
-	if err != nil {
-		sleepTime := 1 * time.Second
-		logutil.BgLogger().Info("update bootstrap ver failed",
-			zap.Error(err), zap.Duration("sleeping time", sleepTime))
-		time.Sleep(sleepTime)
-		// Check if TiDB is already upgraded.
-		v, err1 := getBootstrapVersion(s)
-		if err1 != nil {
-			logutil.BgLogger().Fatal("upgrade failed", zap.Error(err1))
-		}
-		if v >= currentBootstrapVersion {
-			// It is already bootstrapped/upgraded by a higher version TiDB server.
-			return
-		}
-		logutil.BgLogger().Fatal("[upgrade] upgrade failed",
-			zap.Int64("from", ver),
-			zap.Int64("to", currentBootstrapVersion),
-			zap.Error(err))
-	}
-}
-
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessionapi.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -1137,8 +1075,8 @@ var systemDatabases = []DatabaseBasicInfo{
 
 // tablesInSystemDatabase contains the definitions of system tables in the mysql
 // database, or the system database, except DDL related tables, see ddlTableVersionTables.
-// TODO: the reserved ID will be used later.
 var tablesInSystemDatabase = []TableBasicInfo{
+<<<<<<< HEAD
 	{ID: metadef.UserTableID, Name: "user", SQL: CreateUserTable},
 	{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: CreatePasswordHistoryTable},
 	{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: CreateGlobalPrivTable},
@@ -1192,6 +1130,60 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: CreateTiDBKernelOptionsTable},
 	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: CreateTiDBWorkloadValuesTable},
 	{ID: metadef.TiDBSoftDeleteTableStatusTableID, Name: "tidb_softdelete_table_status", SQL: CreateTiDBSoftDeleteTableStatusTable},
+=======
+	{ID: metadef.UserTableID, Name: "user", SQL: metadef.CreateUserTable},
+	{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: metadef.CreatePasswordHistoryTable},
+	{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: metadef.CreateGlobalPrivTable},
+	{ID: metadef.DBTableID, Name: "db", SQL: metadef.CreateDBTable},
+	{ID: metadef.TablesPrivTableID, Name: "tables_priv", SQL: metadef.CreateTablesPrivTable},
+	{ID: metadef.ColumnsPrivTableID, Name: "columns_priv", SQL: metadef.CreateColumnsPrivTable},
+	{ID: metadef.GlobalVariablesTableID, Name: "global_variables", SQL: metadef.CreateGlobalVariablesTable},
+	{ID: metadef.TiDBTableID, Name: "tidb", SQL: metadef.CreateTiDBTable},
+	{ID: metadef.HelpTopicTableID, Name: "help_topic", SQL: metadef.CreateHelpTopicTable},
+	{ID: metadef.StatsMetaTableID, Name: "stats_meta", SQL: metadef.CreateStatsMetaTable},
+	{ID: metadef.StatsHistogramsTableID, Name: "stats_histograms", SQL: metadef.CreateStatsHistogramsTable},
+	{ID: metadef.StatsBucketsTableID, Name: "stats_buckets", SQL: metadef.CreateStatsBucketsTable},
+	{ID: metadef.GCDeleteRangeTableID, Name: "gc_delete_range", SQL: metadef.CreateGCDeleteRangeTable},
+	{ID: metadef.GCDeleteRangeDoneTableID, Name: "gc_delete_range_done", SQL: metadef.CreateGCDeleteRangeDoneTable},
+	{ID: metadef.StatsFeedbackTableID, Name: "stats_feedback", SQL: metadef.CreateStatsFeedbackTable},
+	{ID: metadef.RoleEdgesTableID, Name: "role_edges", SQL: metadef.CreateRoleEdgesTable},
+	{ID: metadef.DefaultRolesTableID, Name: "default_roles", SQL: metadef.CreateDefaultRolesTable},
+	{ID: metadef.BindInfoTableID, Name: "bind_info", SQL: metadef.CreateBindInfoTable},
+	{ID: metadef.StatsTopNTableID, Name: "stats_top_n", SQL: metadef.CreateStatsTopNTable},
+	{ID: metadef.ExprPushdownBlacklistTableID, Name: "expr_pushdown_blacklist", SQL: metadef.CreateExprPushdownBlacklistTable},
+	{ID: metadef.OptRuleBlacklistTableID, Name: "opt_rule_blacklist", SQL: metadef.CreateOptRuleBlacklistTable},
+	{ID: metadef.StatsExtendedTableID, Name: "stats_extended", SQL: metadef.CreateStatsExtendedTable},
+	{ID: metadef.StatsFMSketchTableID, Name: "stats_fm_sketch", SQL: metadef.CreateStatsFMSketchTable},
+	{ID: metadef.GlobalGrantsTableID, Name: "global_grants", SQL: metadef.CreateGlobalGrantsTable},
+	{ID: metadef.CapturePlanBaselinesBlacklistTableID, Name: "capture_plan_baselines_blacklist", SQL: metadef.CreateCapturePlanBaselinesBlacklistTable},
+	{ID: metadef.ColumnStatsUsageTableID, Name: "column_stats_usage", SQL: metadef.CreateColumnStatsUsageTable},
+	{ID: metadef.TableCacheMetaTableID, Name: "table_cache_meta", SQL: metadef.CreateTableCacheMetaTable},
+	{ID: metadef.AnalyzeOptionsTableID, Name: "analyze_options", SQL: metadef.CreateAnalyzeOptionsTable},
+	{ID: metadef.StatsHistoryTableID, Name: "stats_history", SQL: metadef.CreateStatsHistoryTable},
+	{ID: metadef.StatsMetaHistoryTableID, Name: "stats_meta_history", SQL: metadef.CreateStatsMetaHistoryTable},
+	{ID: metadef.AnalyzeJobsTableID, Name: "analyze_jobs", SQL: metadef.CreateAnalyzeJobsTable},
+	{ID: metadef.AdvisoryLocksTableID, Name: "advisory_locks", SQL: metadef.CreateAdvisoryLocksTable},
+	{ID: metadef.PlanReplayerStatusTableID, Name: "plan_replayer_status", SQL: metadef.CreatePlanReplayerStatusTable},
+	{ID: metadef.PlanReplayerTaskTableID, Name: "plan_replayer_task", SQL: metadef.CreatePlanReplayerTaskTable},
+	{ID: metadef.StatsTableLockedTableID, Name: "stats_table_locked", SQL: metadef.CreateStatsTableLockedTable},
+	{ID: metadef.TiDBTTLTableStatusTableID, Name: "tidb_ttl_table_status", SQL: metadef.CreateTiDBTTLTableStatusTable},
+	{ID: metadef.TiDBTTLTaskTableID, Name: "tidb_ttl_task", SQL: metadef.CreateTiDBTTLTaskTable},
+	{ID: metadef.TiDBTTLJobHistoryTableID, Name: "tidb_ttl_job_history", SQL: metadef.CreateTiDBTTLJobHistoryTable},
+	{ID: metadef.TiDBGlobalTaskTableID, Name: "tidb_global_task", SQL: metadef.CreateTiDBGlobalTaskTable},
+	{ID: metadef.TiDBGlobalTaskHistoryTableID, Name: "tidb_global_task_history", SQL: metadef.CreateTiDBGlobalTaskHistoryTable},
+	{ID: metadef.TiDBImportJobsTableID, Name: "tidb_import_jobs", SQL: metadef.CreateTiDBImportJobsTable},
+	{ID: metadef.TiDBRunawayWatchTableID, Name: "tidb_runaway_watch", SQL: metadef.CreateTiDBRunawayWatchTable},
+	{ID: metadef.TiDBRunawayQueriesTableID, Name: "tidb_runaway_queries", SQL: metadef.CreateTiDBRunawayQueriesTable},
+	{ID: metadef.TiDBTimersTableID, Name: "tidb_timers", SQL: metadef.CreateTiDBTimersTable},
+	{ID: metadef.TiDBRunawayWatchDoneTableID, Name: "tidb_runaway_watch_done", SQL: metadef.CreateTiDBRunawayWatchDoneTable},
+	{ID: metadef.DistFrameworkMetaTableID, Name: "dist_framework_meta", SQL: metadef.CreateDistFrameworkMetaTable},
+	{ID: metadef.RequestUnitByGroupTableID, Name: "request_unit_by_group", SQL: metadef.CreateRequestUnitByGroupTable},
+	{ID: metadef.TiDBPITRIDMapTableID, Name: "tidb_pitr_id_map", SQL: metadef.CreateTiDBPITRIDMapTable},
+	{ID: metadef.TiDBRestoreRegistryTableID, Name: "tidb_restore_registry", SQL: metadef.CreateTiDBRestoreRegistryTable},
+	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
+	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
+	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
+>>>>>>> master
 	// NOTE: if you need to add more tables to 'mysql' database, please also add
 	// an entry to versionedBootstrapSchemas, to make sure the table is created
 	// correctly in nextgen kennel.
@@ -1276,11 +1268,23 @@ func doDDLWorks(s sessionapi.Session) {
 	// Create bind_info table.
 	insertBuiltinBindInfoRow(s)
 	// Create `mysql.tidb_mdl_view` view.
-	mustExecute(s, CreateTiDBMDLView)
+	mustExecute(s, metadef.CreateTiDBMDLView)
 	// create `sys.schema_unused_indexes` view
-	mustExecute(s, CreateSchemaUnusedIndexesView)
+	mustExecute(s, metadef.CreateSchemaUnusedIndexesView)
 	// Create a test database.
 	mustExecute(s, "CREATE DATABASE IF NOT EXISTS test")
+}
+
+func checkSystemTableConstraint(tblInfo *model.TableInfo) error {
+	if tblInfo.Partition != nil {
+		return errors.New("system table should not be partitioned table")
+	}
+	if tblInfo.SepAutoInc() {
+		// AUTO_ID_CACHE=1 is implemented through GRPC service and requires owner
+		// election, system tables should not depend on that.
+		return errors.New("system table should not use AUTO_ID_CACHE=1")
+	}
+	return nil
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

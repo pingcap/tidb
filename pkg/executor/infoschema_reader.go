@@ -710,6 +710,11 @@ func (e *memtableRetriever) setDataFromOneTable(
 			policyName = table.PlacementPolicyRef.Name.O
 		}
 
+		var affinity any
+		if info := table.Affinity; info != nil {
+			affinity = info.Level
+		}
+
 		rowCount, avgRowLength, dataLength, indexLength := cache.TableRowStatsCache.EstimateDataLength(table)
 
 		record := types.MakeDatums(
@@ -739,6 +744,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			policyName,            // TIDB_PLACEMENT_POLICY_NAME
 			table.Mode.String(),   // TIDB_TABLE_MODE
+			affinity,              // TIDB_AFFINITY
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -770,6 +776,7 @@ func (e *memtableRetriever) setDataFromOneTable(
 			pkType,                // TIDB_PK_TYPE
 			nil,                   // TIDB_PLACEMENT_POLICY_NAME
 			nil,                   // TIDB_TABLE_MODE
+			nil,                   // TIDB_AFFINITY
 		)
 		rows = append(rows, record)
 		e.recordMemoryConsume(record)
@@ -875,6 +882,7 @@ func (e *memtableRetriever) setDataFromTables(ctx context.Context, sctx sessionc
 					nil,                   // TIDB_PK_TYPE
 					nil,                   // TIDB_PLACEMENT_POLICY_NAME
 					nil,                   // TIDB_TABLE_MODE
+					nil,                   // TIDB_AFFINITY
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)
@@ -1310,6 +1318,11 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 			return errors.Trace(ctx.Err())
 		}
 
+		var affinity any
+		if info := table.Affinity; info != nil {
+			affinity = info.Level
+		}
+
 		var rowCount, dataLength, indexLength uint64
 		if table.GetPartitionInfo() == nil {
 			rowCount = cache.TableRowStatsCache.GetTableRows(table.ID)
@@ -1350,6 +1363,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 				nil,                   // TABLESPACE_NAME
 				nil,                   // TIDB_PARTITION_ID
 				nil,                   // TIDB_PLACEMENT_POLICY_NAME
+				affinity,              // TIDB_AFFINITY
 			)
 			rows = append(rows, record)
 			e.recordMemoryConsume(record)
@@ -1444,6 +1458,7 @@ func (e *memtableRetriever) setDataFromPartitions(ctx context.Context, sctx sess
 					nil,                   // TABLESPACE_NAME
 					pi.ID,                 // TIDB_PARTITION_ID
 					policyName,            // TIDB_PLACEMENT_POLICY_NAME
+					affinity,              // TIDB_AFFINITY
 				)
 				rows = append(rows, record)
 				e.recordMemoryConsume(record)

@@ -369,7 +369,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 	ctx := p.SCtx()
 	if p.Table.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(p.Table)
-		idxCols, idxColLens := expression.IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)
+		idxCols, idxColLens := util.IndexInfo2PrefixCols(p.Columns, p.Schema().Columns, pkIdx)
 		for _, cond := range access {
 			newCond, err := expression.SubstituteCorCol2Constant(ctx.GetExprCtx(), cond)
 			if err != nil {
@@ -636,7 +636,16 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType,
 // GetScanRowSize is to get the row size when to scan.
 func (p *PhysicalTableScan) GetScanRowSize() float64 {
 	if p.StoreType == kv.TiKV {
-		return cardinality.GetTableAvgRowSize(p.SCtx(), p.TblColHists, p.TblCols, p.StoreType, true)
+		cols := p.TblCols
+		// _tidb_commit_ts is not a real extra column stored in the disk, and it should not bring extra cost, so we
+		// exclude it from the cost here.
+		for i, col := range cols {
+			if col.ID == model.ExtraCommitTSID {
+				cols = slices.Delete(slices.Clone(cols), i, i+1)
+				break
+			}
+		}
+		return cardinality.GetTableAvgRowSize(p.SCtx(), p.TblColHists, cols, p.StoreType, true)
 	}
 	// If `p.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 	// This logic can be ensured in column pruning.

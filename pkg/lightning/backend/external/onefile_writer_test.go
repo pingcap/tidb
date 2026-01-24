@@ -25,12 +25,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -41,7 +42,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	// 1. write into one file.
 	// 2. read kv file and check result.
@@ -78,12 +79,12 @@ func TestOnefileWriterBasic(t *testing.T) {
 	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
@@ -121,7 +122,7 @@ func TestOnefileWriterStat(t *testing.T) {
 func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance uint64, memSizeLimit uint64, prefix string) {
 	var kvAndStat [2]string
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(keysDistance).
@@ -145,12 +146,12 @@ func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance ui
 	kvReader, err := NewKVReader(ctx, kvAndStat[0], memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
@@ -186,7 +187,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	// 4. check duplicate key.
 	var kvAndStats [][2]string
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(1000).
 		SetOnCloseFunc(func(summary *WriterSummary) { kvAndStats = summary.MultipleFilesStats[0].Filenames }).
@@ -204,13 +205,13 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		require.NoError(t, writer.WriteRow(ctx, key, val, dbkv.IntHandle(i)))
 	}
 	require.NoError(t, writer.Close(ctx))
-	readBufSizeBak := defaultReadBufferSize
+	readBufSizeBak := DefaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		defaultReadBufferSize = readBufSizeBak
+		DefaultReadBufferSize = readBufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
-	defaultReadBufferSize = 100
+	DefaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
 
 	collector := &execute.TestCollector{}
@@ -229,7 +230,6 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 		"mergeID",
 		1000,
 		func(summary *WriterSummary) { onefile = summary.MultipleFilesStats[0].Filenames[0] },
-		dummyOnReaderCloseFunc,
 		collector,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
@@ -239,20 +239,20 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	require.EqualValues(t, kvCount, collector.Rows.Load())
 	require.EqualValues(t, kvSize, collector.Bytes.Load())
 
-	kvs := make([]kvPair, 0, kvCount)
+	kvs := make([]KVPair, 0, kvCount)
 
 	kvReader, err := NewKVReader(ctx, onefile[0], memStore, 0, 100)
 	require.NoError(t, err)
 	for range kvCount {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		clonedKey := make([]byte, len(key))
 		copy(clonedKey, key)
 		clonedVal := make([]byte, len(value))
 		copy(clonedVal, value)
-		kvs = append(kvs, kvPair{key: clonedKey, value: clonedVal})
+		kvs = append(kvs, KVPair{Key: clonedKey, Value: clonedVal})
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
@@ -278,7 +278,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	// 4. check the writeSummary.
 	var kvAndStat [2]string
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(1000).
 		SetOnCloseFunc(func(summary *WriterSummary) { kvAndStat = summary.MultipleFilesStats[0].Filenames[0] }).
@@ -316,13 +316,13 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	onClose := func(summary *WriterSummary) {
 		resSummary = summary
 	}
-	readBufSizeBak := defaultReadBufferSize
+	readBufSizeBak := DefaultReadBufferSize
 	memLimitBak := defaultOneWriterMemSizeLimit
 	t.Cleanup(func() {
-		defaultReadBufferSize = readBufSizeBak
+		DefaultReadBufferSize = readBufSizeBak
 		defaultOneWriterMemSizeLimit = memLimitBak
 	})
-	defaultReadBufferSize = 100
+	DefaultReadBufferSize = 100
 	defaultOneWriterMemSizeLimit = 1000
 	require.NoError(t, mergeOverlappingFilesInternal(
 		ctx,
@@ -333,7 +333,6 @@ func TestOnefileWriterManyRows(t *testing.T) {
 		"mergeID",
 		1000,
 		onClose,
-		dummyOnReaderCloseFunc,
 		nil,
 		true,
 		engineapi.OnDuplicateKeyIgnore,
@@ -345,12 +344,12 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	kvReader, err := NewKVReader(ctx, kvAndStat2[0], memStore, 0, bufSize)
 	require.NoError(t, err)
 	for i := range kvCnt {
-		key, value, err := kvReader.nextKV()
+		key, value, err := kvReader.NextKV()
 		require.NoError(t, err)
 		require.Equal(t, kvs[i].Key, key)
 		require.Equal(t, kvs[i].Val, value)
 	}
-	_, _, err = kvReader.nextKV()
+	_, _, err = kvReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 	require.NoError(t, kvReader.Close())
 
@@ -374,7 +373,7 @@ func TestOnefilePropOffset(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 200
 
 	// 1. write into one file.
@@ -431,7 +430,7 @@ func (w *testOneFileWriter) WriteRow(ctx context.Context, key, val []byte, _ dbk
 }
 
 func TestOnefileWriterOnDup(t *testing.T) {
-	getWriterFn := func(store storage.ExternalStorage, b *WriterBuilder) testWriter {
+	getWriterFn := func(store storeapi.Storage, b *WriterBuilder) testWriter {
 		writer := b.BuildOneFile(store, "/onefile", "0")
 		writer.InitPartSizeAndLogger(context.Background(), 1024)
 		return &testOneFileWriter{OneFileWriter: writer}
@@ -442,7 +441,7 @@ func TestOnefileWriterOnDup(t *testing.T) {
 
 func TestOnefileWriterDupError(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
@@ -471,9 +470,9 @@ func TestOnefileWriterDupError(t *testing.T) {
 func TestOneFileWriterOnDupRemove(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	var summary *WriterSummary
-	doGetWriter := func(store storage.ExternalStorage, builder *WriterBuilder) *OneFileWriter {
+	doGetWriter := func(store storeapi.Storage, builder *WriterBuilder) *OneFileWriter {
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
 		writer := builder.BuildOneFile(store, "/onefile", "0")
 		writer.InitPartSizeAndLogger(ctx, 1024)
@@ -501,17 +500,17 @@ func TestOneFileWriterOnDupRemove(t *testing.T) {
 		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
 		writer := doGetWriter(store, builder)
 		input := []struct {
-			pair *kvPair
+			pair *KVPair
 			cnt  int
 		}{
-			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 1},
-			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 1},
-			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 3},
-			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 5},
+			{pair: &KVPair{Key: []byte("1111"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("2222"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("6666"), Value: []byte("vvvv")}, cnt: 3},
+			{pair: &KVPair{Key: []byte("7777"), Value: []byte("vvvv")}, cnt: 5},
 		}
 		for _, p := range input {
 			for i := 0; i < p.cnt; i++ {
-				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value))
+				require.NoError(t, writer.WriteRow(ctx, p.pair.Key, p.pair.Value))
 			}
 		}
 		require.NoError(t, writer.Close(ctx))
@@ -528,20 +527,20 @@ func TestOneFileWriterOnDupRemove(t *testing.T) {
 		builder := NewWriterBuilder().SetPropKeysDistance(4).SetMemorySizeLimit(240).SetBlockSize(240)
 		writer := doGetWriter(store, builder)
 		input := []struct {
-			pair *kvPair
+			pair *KVPair
 			cnt  int
 		}{
-			{pair: &kvPair{key: []byte("1111"), value: []byte("vvvv")}, cnt: 5},
-			{pair: &kvPair{key: []byte("2222"), value: []byte("vvvv")}, cnt: 3},
-			{pair: &kvPair{key: []byte("3333"), value: []byte("vvvv")}, cnt: 4},
-			{pair: &kvPair{key: []byte("4444"), value: []byte("vvvv")}, cnt: 4},
-			{pair: &kvPair{key: []byte("5555"), value: []byte("vvvv")}, cnt: 2},
-			{pair: &kvPair{key: []byte("6666"), value: []byte("vvvv")}, cnt: 1},
-			{pair: &kvPair{key: []byte("7777"), value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("1111"), Value: []byte("vvvv")}, cnt: 5},
+			{pair: &KVPair{Key: []byte("2222"), Value: []byte("vvvv")}, cnt: 3},
+			{pair: &KVPair{Key: []byte("3333"), Value: []byte("vvvv")}, cnt: 4},
+			{pair: &KVPair{Key: []byte("4444"), Value: []byte("vvvv")}, cnt: 4},
+			{pair: &KVPair{Key: []byte("5555"), Value: []byte("vvvv")}, cnt: 2},
+			{pair: &KVPair{Key: []byte("6666"), Value: []byte("vvvv")}, cnt: 1},
+			{pair: &KVPair{Key: []byte("7777"), Value: []byte("vvvv")}, cnt: 1},
 		}
 		for _, p := range input {
 			for i := 0; i < p.cnt; i++ {
-				require.NoError(t, writer.WriteRow(ctx, p.pair.key, p.pair.value))
+				require.NoError(t, writer.WriteRow(ctx, p.pair.Key, p.pair.Value))
 			}
 		}
 		require.NoError(t, writer.Close(ctx))

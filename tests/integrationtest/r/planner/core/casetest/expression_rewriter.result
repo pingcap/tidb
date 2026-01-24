@@ -32,12 +32,20 @@ a	b
 4	4
 explain format='plan_tree' select t1.a from t1 group by t1.a having (a, count(1)) in (select a, b from t2);
 id	task	access object	operator info
+<<<<<<< HEAD
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__expression_rewriter.t2.a, planner__core__casetest__expression_rewriter.t1.a) eq(planner__core__casetest__expression_rewriter.t2.b, Column#9)]
+=======
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__expression_rewriter.t2.a, planner__core__casetest__expression_rewriter.t1.a) eq(planner__core__casetest__expression_rewriter.t2.b, Column)]
+>>>>>>> master
 ├─HashAgg(Build)	root		group by:planner__core__casetest__expression_rewriter.t2.a, planner__core__casetest__expression_rewriter.t2.b, funcs:firstrow(planner__core__casetest__expression_rewriter.t2.a)->planner__core__casetest__expression_rewriter.t2.a, funcs:firstrow(planner__core__casetest__expression_rewriter.t2.b)->planner__core__casetest__expression_rewriter.t2.b
 │ └─TableReader	root		data:Selection
 │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__expression_rewriter.t2.a)), not(isnull(planner__core__casetest__expression_rewriter.t2.b))
 │     └─TableFullScan	cop[tikv]	table:t2	keep order:false
+<<<<<<< HEAD
 └─HashAgg(Probe)	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column#9, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
+=======
+└─HashAgg(Probe)	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
+>>>>>>> master
   └─TableReader	root		data:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__expression_rewriter.t1.a))
       └─TableFullScan	cop[tikv]	table:t1	keep order:false
@@ -46,10 +54,17 @@ a
 1
 explain format='plan_tree' select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
 id	task	access object	operator info
+<<<<<<< HEAD
 HashJoin	root		Null-aware anti semi join, left side:HashAgg, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(Column#9, planner__core__casetest__expression_rewriter.t2.b)]
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
 └─HashAgg(Probe)	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column#9, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
+=======
+HashJoin	root		Null-aware anti semi join, left side:HashAgg, equal:[eq(planner__core__casetest__expression_rewriter.t1.a, planner__core__casetest__expression_rewriter.t2.a) eq(Column, planner__core__casetest__expression_rewriter.t2.b)]
+├─TableReader(Build)	root		data:TableFullScan
+│ └─TableFullScan	cop[tikv]	table:t2	keep order:false
+└─HashAgg(Probe)	root		group by:planner__core__casetest__expression_rewriter.t1.a, funcs:count(1)->Column, funcs:firstrow(planner__core__casetest__expression_rewriter.t1.a)->planner__core__casetest__expression_rewriter.t1.a
+>>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false
 select t1.a from t1 group by t1.a having (a, count(1)) not in (select a, b from t2);
@@ -62,7 +77,13 @@ insert into t values ('2006-08-27 21:57:57', 0x373037343631313230);
 analyze table t all columns;
 explain format='plan_tree' select bit_or(a * b) from t;
 id	task	access object	operator info
+<<<<<<< HEAD
 StreamAgg	root		funcs:bit_or(Column#7)->Column#5
 └─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:bit_or(cast(mul(cast(planner__core__casetest__expression_rewriter.t.a, double BINARY), cast(planner__core__casetest__expression_rewriter.t.b, double BINARY)), bigint BINARY))->Column#7
+=======
+StreamAgg	root		funcs:bit_or(Column)->Column
+└─TableReader	root		data:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:bit_or(cast(mul(cast(planner__core__casetest__expression_rewriter.t.a, double BINARY), cast(planner__core__casetest__expression_rewriter.t.b, double BINARY)), bigint BINARY))->Column
+>>>>>>> master
     └─TableFullScan	cop[tikv]	table:t	keep order:false

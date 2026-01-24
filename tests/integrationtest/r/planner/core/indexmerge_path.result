@@ -7,11 +7,9 @@ set tidb_analyze_version=2;
 analyze table t;
 Level	Code	Message
 Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"
-Warning	1105	No predicate column has been collected yet for table planner__core__indexmerge_path.t, so only indexes and the columns composing the indexes will be analyzed
 analyze table t index idx;
 Level	Code	Message
 Note	1105	Analyze use auto adjusted sample rate 1.000000 for table planner__core__indexmerge_path.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"
-Warning	1105	No predicate column has been collected yet for table planner__core__indexmerge_path.t, so only indexes and the columns composing the indexes will be analyzed
 Warning	1105	The version 2 would collect all statistics not only the selected indexes
 set tidb_analyze_version=1;
 analyze table t;
@@ -405,7 +403,11 @@ create table t(a int, j json,
 index i_int((cast(j->'$.int' as signed array))));
 explain format='plan_tree' select (j->'$.int') from t where (1 member of (j->'$.int'));
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column#6
+=======
+Projection	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column
+>>>>>>> master
 └─IndexMerge	root		type: union
   ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[1,1], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -422,7 +424,11 @@ IndexMerge	root		type: union
   └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select (j->'$.int') from t where json_contains((j->'$.int'), '[1, 2, 3]');
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column#6
+=======
+Projection	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column
+>>>>>>> master
 └─IndexMerge	root		type: intersection
   ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[1,1], keep order:false, stats:pseudo
   ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[2,2], keep order:false, stats:pseudo
@@ -445,7 +451,11 @@ IndexMerge	root		type: intersection
   └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select (j->'$.int') from t where json_overlaps((j->'$.int'), '[1, 2, 3]');
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column#6
+=======
+Projection	root		json_extract(planner__core__indexmerge_path.t.j, $.int)->Column
+>>>>>>> master
 └─Selection	root		json_overlaps(json_extract(planner__core__indexmerge_path.t.j, "$.int"), cast("[1, 2, 3]", json BINARY))
   └─IndexMerge	root		type: union
     ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:i_int(cast(json_extract(`j`, _utf8mb4'$.int') as signed array))	range:[1,1], keep order:false, stats:pseudo

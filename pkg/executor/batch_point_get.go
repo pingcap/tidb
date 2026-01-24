@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"sync/atomic"
@@ -133,6 +134,16 @@ type cacheTableSnapshot struct {
 }
 
 func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+<<<<<<< HEAD
+=======
+	if len(options) > 0 {
+		var opt tikv.BatchGetOptions
+		opt.Apply(options)
+		if opt.ReturnCommitTS() {
+			return nil, errors.New("WithReturnCommitTS option is not supported for cacheTableSnapshot.BatchGet")
+		}
+	}
+>>>>>>> master
 	values := make(map[string]kv.ValueEntry)
 	if s.memBuffer == nil {
 		return values, nil
@@ -160,6 +171,16 @@ func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key, options
 }
 
 func (s cacheTableSnapshot) Get(ctx context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+<<<<<<< HEAD
+=======
+	if len(options) > 0 {
+		var opt tikv.GetOptions
+		opt.Apply(options)
+		if opt.ReturnCommitTS() {
+			return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for cacheTableSnapshot.Get")
+		}
+	}
+>>>>>>> master
 	return s.memBuffer.Get(ctx, key, options...)
 }
 
@@ -247,10 +268,16 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string]kv.ValueEntry
 	var indexKeys []kv.Key
 	var err error
+<<<<<<< HEAD
 	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+=======
+	batchGetter := e.batchGetter
+	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 {
+>>>>>>> master
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
 		defer cancel()
 	}
 	e.commitTSOffset = -1
@@ -477,7 +504,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			continue
 		}
-		e.values = append(e.values, val)
+		e.values = append(e.values, val.Value)
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)
@@ -547,11 +574,20 @@ type PessimisticLockCacheGetter struct {
 
 // Get implements the kv.Getter interface.
 func (getter *PessimisticLockCacheGetter) Get(_ context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+<<<<<<< HEAD
 	var getOptions tikv.GetOptions
 	getOptions.Apply(options)
 
 	if getOptions.ReturnCommitTS() {
 		return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
+=======
+	if len(options) > 0 {
+		var opt tikv.GetOptions
+		opt.Apply(options)
+		if opt.ReturnCommitTS() {
+			return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cacheBatchGetter.Get")
+		}
+>>>>>>> master
 	}
 
 	val, ok := getter.txnCtx.GetKeyInPessimisticLockCache(key)
@@ -568,11 +604,20 @@ type cacheBatchGetter struct {
 }
 
 func (b *cacheBatchGetter) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+<<<<<<< HEAD
 	var getOptions tikv.BatchGetOptions
 	getOptions.Apply(options)
 
 	if getOptions.ReturnCommitTS() {
 		return nil, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cache getter")
+=======
+	if len(options) > 0 {
+		var opt tikv.BatchGetOptions
+		opt.Apply(options)
+		if opt.ReturnCommitTS() {
+			return nil, errors.New("WithReturnCommitTS option is not supported for pessimistic lock cacheBatchGetter.BatchGet")
+		}
+>>>>>>> master
 	}
 
 	cacheDB := b.ctx.GetStore().GetMemCache()

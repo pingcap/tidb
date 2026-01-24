@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/join"
 	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/stretchr/testify/require"
@@ -38,7 +37,7 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+	tk.MustExec("set @@tidb_enable_clustered_index='INT_ONLY'")
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))
@@ -54,6 +53,10 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 	tk.MustExec("analyze table s all columns")
 	// Test IndexNestedLoopHashJoin keepOrder.
+	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
+	for i, row := range rs.Rows() {
+		require.Equal(t, fmt.Sprintf("%d", i), row[0].(string))
+	}
 	tk.MustQuery("explain format = 'brief' select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk").Check(testkit.Rows(
 		"IndexHashJoin 100.00 root  left outer join, inner:TableReader, left side:TableReader, outer key:test.t.a, inner key:test.s.a, equal cond:eq(test.t.a, test.s.a)",
 		"├─TableReader(Build) 100.00 root  data:TableFullScan",
@@ -61,10 +64,6 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 		"└─TableReader(Probe) 100.00 root  data:TableRangeScan",
 		"  └─TableRangeScan 100.00 cop[tikv] table:s range: decided by [test.t.a], keep order:false",
 	))
-	rs := tk.MustQuery("select /*+ INL_HASH_JOIN(s) */ * from t left join s on t.a=s.a order by t.pk")
-	for i, row := range rs.Rows() {
-		require.Equal(t, fmt.Sprintf("%d", i), row[0].(string))
-	}
 
 	// index hash join with semi join
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/MockOnlyEnableIndexHashJoinV2", "return(true)"))
@@ -86,9 +85,10 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 	tk.MustExec("analyze table t all columns")
 
 	// test semi join
-	tk.Session().GetSessionVars().InitChunkSize = 2
-	tk.Session().GetSessionVars().MaxChunkSize = 2
+	tk.MustExec("set @@tidb_init_chunk_size=2")
+	tk.MustExec("set @@tidb_max_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=2")
+<<<<<<< HEAD
 	tk.MustQuery("desc format = 'brief' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows(
 		"Sort 7.20 root  test.t.l_orderkey, test.t.l_linenumber",
 		"└─IndexHashJoin 7.20 root  semi join, inner:IndexLookUp, left side:TableReader, outer key:test.t.l_orderkey, inner key:test.t.l_orderkey, equal cond:eq(test.t.l_orderkey, test.t.l_orderkey), other cond:ne(test.t.l_suppkey, test.t.l_suppkey)",
@@ -110,7 +110,14 @@ func TestIndexNestedLoopHashJoin(t *testing.T) {
 		"    ├─IndexRangeScan(Build) 27.00 cop[tikv] table:l2, index:PRIMARY(l_orderkey, l_linenumber) range: decided by [eq(test.t.l_orderkey, test.t.l_orderkey)], keep order:false",
 		"    └─Selection(Probe) 27.00 cop[tikv]  not(isnull(test.t.l_suppkey))",
 		"      └─TableRowIDScan 27.00 cop[tikv] table:l2 keep order:false"))
+=======
+>>>>>>> master
 	tk.MustQuery("select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").Check(testkit.Rows("9"))
+	// Only check if IndexHashJoin is used, not the specific plan tree.
+	tk.MustQuery("desc format='plan_tree' select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey ) order by `l_orderkey`,`l_linenumber`;").CheckContain("IndexHashJoin")
+	tk.MustQuery("select * from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey )order by `l_orderkey`,`l_linenumber`;").Check(testkit.Rows("0 0 0 0", "0 1 0 1", "0 2 0 0", "1 0 1 0", "1 1 1 1", "1 2 1 0", "2 0 0 0", "2 1 0 1", "2 2 0 0"))
+	// Only check if IndexHashJoin is used, not the specific plan tree.
+	tk.MustQuery("desc format='plan_tree' select count(*) from t l1 where exists ( select * from t l2 where l2.l_orderkey = l1.l_orderkey and l2.l_suppkey <> l1.l_suppkey );").CheckContain("IndexHashJoin")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
 
 	// issue16586
@@ -432,7 +439,7 @@ func TestIssue31129(t *testing.T) {
 	tk.MustExec("set @@tidb_init_chunk_size=2")
 	tk.MustExec("set @@tidb_index_join_batch_size=10")
 	tk.MustExec("DROP TABLE IF EXISTS t, s")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+	tk.MustExec("set @@tidb_enable_clustered_index='INT_ONLY'")
 	tk.MustExec("create table t(pk int primary key, a int)")
 	for i := range 100 {
 		tk.MustExec(fmt.Sprintf("insert into t values(%d, %d)", i, i))

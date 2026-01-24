@@ -58,7 +58,7 @@ id	task	access object	operator info
 MemTableScan	root	table:STATEMENTS_SUMMARY	
 explain format='plan_tree' select * from information_schema.statements_summary where digest is null;
 id	task	access object	operator info
-Selection	root		isnull(Column#5)
+Selection	root		isnull(Column)
 └─MemTableScan	root	table:STATEMENTS_SUMMARY	
 explain format='plan_tree' select * from information_schema.statements_summary where digest = 'abcdefg';
 id	task	access object	operator info
@@ -85,10 +85,17 @@ KEY f (f)
 explain format='plan_tree' select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;
 id	task	access object	operator info
 Projection	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f
+<<<<<<< HEAD
 └─HashJoin	root		inner join, equal:[eq(executor__explain.tt123.e, Column#17)]
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─Projection(Probe)	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, cast(executor__explain.tt123.b, json BINARY)->Column#17
+=======
+└─HashJoin	root		inner join, equal:[eq(executor__explain.tt123.e, Column)]
+  ├─TableReader(Build)	root		data:TableFullScan
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─Projection(Probe)	root		executor__explain.tt123.id, executor__explain.tt123.a, executor__explain.tt123.b, executor__explain.tt123.c, executor__explain.tt123.d, executor__explain.tt123.e, executor__explain.tt123.f, cast(executor__explain.tt123.b, json BINARY)->Column
+>>>>>>> master
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t;
@@ -345,9 +352,15 @@ WHERE rn.id1 = '03'
 id	task	access object	operator info
 Update	root		N/A
 └─Projection	root		executor__explain.t1.id1, executor__explain.t1.id2, executor__explain.t1.id3, executor__explain.t1.id4, executor__explain.t1.id5, executor__explain.t1.id6, executor__explain.t1.id7, executor__explain.t1._tidb_rowid
+<<<<<<< HEAD
   └─Selection	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column#26, 0))
     └─HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
       ├─HashAgg(Build)	root		group by:executor__explain.t2.id2, funcs:count(1)->Column#26, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
+=======
+  └─Selection	root		eq(minus(executor__explain.t1.id6, ifnull(executor__explain.t1.id7, 0)), ifnull(Column, 0))
+    └─HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(executor__explain.t1.id2, executor__explain.t2.id2)]
+      ├─HashAgg(Build)	root		group by:executor__explain.t2.id2, funcs:count(1)->Column, funcs:firstrow(executor__explain.t2.id2)->executor__explain.t2.id2
+>>>>>>> master
       │ └─IndexJoin	root		inner join, inner:IndexReader, outer key:executor__explain.t2.id10, inner key:executor__explain.t3.id20, equal cond:eq(executor__explain.t2.id10, executor__explain.t3.id20)
       │   ├─IndexHashJoin(Build)	root		inner join, inner:IndexLookUp, outer key:executor__explain.t1.id2, inner key:executor__explain.t2.id2, equal cond:eq(executor__explain.t1.id2, executor__explain.t2.id2)
       │   │ ├─Projection(Build)	root		executor__explain.t1.id2
@@ -373,7 +386,7 @@ IndexHashJoin	12.50	0	root		<execution_info>	inner join, inner:IndexLookUp, oute
 │ └─Selection	10.00	0	cop[tikv]		<execution_info>	eq(executor__explain.t.b, 2333)	<memory>	<disk>
 │   └─TableFullScan	10000.00	1	cop[tikv]	table:t1	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
 └─IndexLookUp(Probe)	12.50	0	root		<execution_info>		<memory>	<disk>
-  ├─Selection(Build)	12.50	0	cop[tikv]		<execution_info>	eq(2333, executor__explain.t.a)	<memory>	<disk>
+  ├─Selection(Build)	12.50	0	cop[tikv]		<execution_info>	eq(executor__explain.t.a, 2333)	<memory>	<disk>
   │ └─IndexRangeScan	12500.00	0	cop[tikv]	table:t2, index:a(a)	<execution_info>	range: decided by [eq(executor__explain.t.a, executor__explain.t.b)], keep order:false, stats:pseudo	<memory>	<disk>
   └─TableRowIDScan(Probe)	12.50	0	cop[tikv]	table:t2	<execution_info>	keep order:false, stats:pseudo	<memory>	<disk>
 drop table if exists t;
@@ -381,8 +394,13 @@ CREATE TABLE `t` (`a` mediumint(9) NOT NULL,`b` year(4) NOT NULL,`c` varbinary(6
 INSERT INTO `t` VALUES (2065948,1999,_binary '8jxN','rf',-54,-5656,'1987-07-03',259254,'7me坨'),(-8248164,2024,_binary 'zA5A','s)DAkX3',-93,-12983,'2027-12-18',299573,'LUf咲'),(-6131509,2023,_binary 'xdex#Y2','1th%h',-51,19149,'2013-10-28',428279,'矷莒X'),(7545837,1998,_binary 'PCVO','&(lJw6',30,4093,'1987-07-03',736235,'腏@TOIJ'),(-7449472,2029,_binary 'B7&jrl','EjbFfX!',80,-7590,'2011-11-03',765580,'堮ZQF_'),(-7176200,1988,_binary 'tiPglv7mX_#','CnCtNb',-25,NULL,'1987-07-03',842956,'Gq羣嗳殓'),(-115168,2036,_binary 'BqmX$-4It','!8#dvH',82,18787,'1991-09-20',921706,'椉2庘v'),(6665100,1987,_binary '4IJgk0fr4','(D',-73,28628,'1987-07-03',1149668,'摔玝S渉'),(-4065661,2021,_binary '8G%','xDO39xw#',-107,17356,'1970-12-20',1316239,'+0c35掬-阗'),(7622462,1990,_binary '&o+)s)D0','kjoS9Dzld',84,688,'1987-07-03',1403663,'$H鍿_M~'),(5269354,2018,_binary 'wq9hC8','s8XPrN+',-2,-31272,'2008-05-26',1534517,'y椁n躁Q'),(2065948,1982,_binary '8jxNjbksV','g$+i4dg',11,19800,'1987-07-03',1591457,'z^+H~薼A'),(4076971,2024,_binary '&!RrsH','7Mpvk',-63,-632,'2032-10-28',1611011,'鬰+EXmx'),(3522062,1981,_binary ')nq#!UiHKk8','j~wFe77ai',50,6951,'1987-07-03',1716854,'J'),(7859777,2012,_binary 'PBA5xgJ&G&','UM7o!u',18,-5978,'1987-07-03',1967012,'e)浢L獹'),(2065948,2028,_binary '8jxNjbk','JmsEki9t4',51,12002,'2017-12-23',1981288,'mp氏襚');
 explain format='plan_tree' SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column#12, Column#11, quote(executor__explain.t.i)->Column#13
 └─StreamAgg	root		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column#11, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
+=======
+Projection	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column, Column, quote(executor__explain.t.i)->Column
+└─StreamAgg	root		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
+>>>>>>> master
   └─Sort	root		executor__explain.t.i
     └─TableReader	root	partition:all	data:Selection
       └─Selection	cop[tikv]		or(gt(executor__explain.t.h, 240817), and(ge(executor__explain.t.i, "WVz"), le(executor__explain.t.i, "G#駧褉ZC領*lov")))
@@ -392,10 +410,17 @@ count(*)
 16
 explain format='plan_tree' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column#12, Column#11, quote(executor__explain.t.i)->Column#13
 └─HashAgg	root		group by:executor__explain.t.i, funcs:max(Column#16)->Column#11, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
   └─TableReader	root	partition:all	data:HashAgg
     └─HashAgg	cop[tikv]		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column#16
+=======
+Projection	root		istrue(or(not(ge(executor__explain.t.i, j筧8)), not(eq(executor__explain.t.i, 暈lH忧ll6))))->Column, Column, quote(executor__explain.t.i)->Column
+└─HashAgg	root		group by:executor__explain.t.i, funcs:max(Column)->Column, funcs:firstrow(executor__explain.t.i)->executor__explain.t.i
+  └─TableReader	root	partition:all	data:HashAgg
+    └─HashAgg	cop[tikv]		group by:executor__explain.t.i, funcs:max(executor__explain.t.e)->Column
+>>>>>>> master
       └─Selection	cop[tikv]		or(gt(executor__explain.t.h, 240817), and(ge(executor__explain.t.i, "WVz"), le(executor__explain.t.i, "G#駧褉ZC領*lov")))
         └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;

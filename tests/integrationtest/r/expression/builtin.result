@@ -2103,9 +2103,7 @@ format(NULL, 4)	format(12332.2, NULL)
 NULL	NULL
 select format(12332.2, 2,'es_EC');
 format(12332.2, 2,'es_EC')
-12,332.20
-Level	Code	Message
-Warning	1649	Unknown locale: 'es_EC'
+12.332,20
 select field(1, 2, 1), field(1, 0, NULL), field(1, NULL, 2, 1), field(NULL, 1, 2, NULL);
 field(1, 2, 1)	field(1, 0, NULL)	field(1, NULL, 2, 1)	field(NULL, 1, 2, NULL)
 2	0	3	0
@@ -3420,3 +3418,59 @@ SELECT UTC_TIMESTAMP(2147483647);
 Error 1426 (42000): Too-big precision 2147483647 specified for 'utc_timestamp'. Maximum is 6.
 SELECT UTC_TIMESTAMP(2147483648);
 Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use
+set sql_mode = 'NO_ZERO_IN_DATE';
+select date(0), date('0000-00-00');
+date(0)	date('0000-00-00')
+0000-00-00	0000-00-00
+show warnings;
+Level	Code	Message
+select date('0000-00-01'), date('0000-12-00'), date('2024-00-00');
+date('0000-00-01')	date('0000-12-00')	date('2024-00-00')
+NULL	NULL	NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-00-01 00:00:00.000000'
+Warning	1292	Incorrect datetime value: '0000-12-00 00:00:00.000000'
+Warning	1292	Incorrect datetime value: '2024-00-00 00:00:00.000000'
+select date('0000-12-01'), date('2024-00-01'), date('2024-12-00');
+date('0000-12-01')	date('2024-00-01')	date('2024-12-00')
+0000-12-01	NULL	NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2024-00-01 00:00:00.000000'
+Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00.000000'
+select date('2024-12-01');
+date('2024-12-01')
+2024-12-01
+show warnings;
+Level	Code	Message
+drop table if exists t;
+create table t(test_date DATETIME);
+SET sql_mode = '';
+INSERT INTO t VALUES (0),('0000-00-00'),('0000-00-01'),('0000-12-00'),('2024-00-00'),('0000-12-01'),('2024-00-01'),('2024-12-00'),('2024-12-01');
+SET sql_mode = 'NO_ZERO_IN_DATE';
+SELECT DATE(test_date) FROM t;
+DATE(test_date)
+0000-00-00
+0000-00-00
+NULL
+NULL
+NULL
+0000-12-01
+NULL
+NULL
+2024-12-01
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '0000-00-01 00:00:00'
+Warning	1292	Incorrect datetime value: '0000-12-00 00:00:00'
+Warning	1292	Incorrect datetime value: '2024-00-00 00:00:00'
+Warning	1292	Incorrect datetime value: '2024-00-01 00:00:00'
+Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00'
+drop table if exists t;
+SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
+GET_FORMAT(TIME, 'usa')	GET_FORMAT(TIME, 'USA')	GET_FORMAT(TIME, 'UsA')	GET_FORMAT(time, 'UsA')	GET_FORMAT(TIme, 'UsA')
+%h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p
+SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
+GET_FORMAT(DATE, 'jis')	GET_FORMAT(DATETIME, 'iso')	GET_FORMAT(TIMESTAMP, 'eur')	GET_FORMAT(TIME, 'internal')
+%Y-%m-%d	%Y-%m-%d %H:%i:%s	%Y-%m-%d %H.%i.%s	%H%i%s

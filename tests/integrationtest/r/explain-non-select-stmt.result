@@ -25,6 +25,10 @@ Update	root		N/A
 explain format = 'plan_tree' replace into t select a, 100 from t;
 id	task	access object	operator info
 Insert	root		N/A
+<<<<<<< HEAD
 └─Projection	root		explain-non-select-stmt.t.a, 100->Column#7
+=======
+└─Projection	root		explain-non-select-stmt.t.a, 100->Column
+>>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo

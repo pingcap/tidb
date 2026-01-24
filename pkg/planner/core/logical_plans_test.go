@@ -1996,7 +1996,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from t where d = 1 and f > 1 and g > 1 order by c, e",
-			result: "PRIMARY_KEY,c_d_e,f_g",
+			result: "PRIMARY_KEY,c_d_e,g,f_g",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 order by b",
@@ -2012,7 +2012,7 @@ func TestSkylinePruning(t *testing.T) {
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1",
-			result: "PRIMARY_KEY,b_c_global",
+			result: "PRIMARY_KEY,c_d_e,b_c_global",
 		},
 		{
 			sql:    "select * from pt2_global_index where b > 1 and c > 1 and d > 1",

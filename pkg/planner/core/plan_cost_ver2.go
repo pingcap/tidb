@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/paging"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -47,10 +48,9 @@ var GenPlanCostTrace func(p base.PhysicalPlan, costV *costusage.CostVer2, taskTy
 
 func getPlanCost(p base.PhysicalPlan, taskType property.TaskType, option *costusage.PlanCostOption) (float64, error) {
 	if p.SCtx().GetSessionVars().CostModelVersion == modelVer2 {
-		if p.SCtx().GetSessionVars().StmtCtx.EnableOptimizeTrace && option != nil {
+		if p.SCtx().GetSessionVars().StmtCtx.ExplainFormat == types.ExplainFormatCostTrace && option != nil {
 			option.WithCostFlag(costusage.CostFlagTrace)
 		}
-
 		planCost, err := p.GetPlanCostVer2(taskType, option)
 		if costusage.TraceCost(option) && GenPlanCostTrace != nil {
 			GenPlanCostTrace(p, &planCost, taskType, option)
@@ -143,6 +143,13 @@ func getPlanCostVer24PhysicalIndexScan(pp base.PhysicalPlan, taskType property.T
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexScanCostFactor)
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexScanCostFactor)
+	// Add a small tie-breaker cost based on the last 2 digits of the index ID to differentiate
+	// indexes that would otherwise cost the same (same predicates, and same length).
+	// This cost is intentionally not included in the trace output.
+	if p.Index != nil {
+		tieBreakerValue := float64(p.Index.ID%100) / 1000000.0
+		p.PlanCostVer2 = costusage.AddCostWithoutTrace(p.PlanCostVer2, tieBreakerValue)
+	}
 	return p.PlanCostVer2, nil
 }
 
@@ -166,6 +173,10 @@ func getPlanCostVer24PhysicalTableScan(pp base.PhysicalPlan, taskType property.T
 	for i, col := range columns {
 		if col.ID == model.ExtraCommitTSID {
 			columns = slices.Delete(slices.Clone(columns), i, i+1)
+<<<<<<< HEAD
+=======
+			break
+>>>>>>> master
 		}
 	}
 	rows := getCardinality(p, option.CostFlag)

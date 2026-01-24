@@ -553,7 +553,42 @@ func (m *dupeDetector) saveIndexHandles(ctx context.Context, handles pendingInde
 func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupKVStream, tableID int64, indexInfo *model.IndexInfo, algorithm config.DuplicateResolutionAlgorithm) error {
 	//nolint: errcheck
 	defer stream.Close()
+
+	type indexConflictRecord struct {
+		conflictInfo errormanager.DataConflictInfo
+		handle       tidbkv.Handle
+		rawHandle    []byte
+	}
+
 	indexHandles := makePendingIndexHandlesWithCapacity(0)
+	var (
+		currentKey     []byte
+		currentRecords map[string]indexConflictRecord
+		identDupCount  int
+	)
+	// currentRecords tracks distinct values for the current index key.
+	// We only flag conflicts when the same key maps to more than one value.
+	flushCurrentGroup := func() error {
+		// Persist conflicts only when a key produced multiple different values.
+		if len(currentRecords) < 2 {
+			currentKey = nil
+			currentRecords = nil
+			return nil
+		}
+		for _, record := range currentRecords {
+			indexHandles.append(record.conflictInfo, indexInfo.Name.O, record.handle, record.rawHandle)
+			if indexHandles.Len() >= defaultRecordConflictErrorBatch {
+				if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
+					return errors.Trace(err)
+				}
+				indexHandles.truncate()
+			}
+		}
+		currentKey = nil
+		currentRecords = nil
+		return nil
+	}
+
 	for {
 		key, val, err := stream.Next()
 		if errors.Cause(err) == io.EOF {
@@ -566,7 +601,24 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 		if err != nil {
 			return errors.Trace(err)
 		}
-		m.hasDupe.Store(true)
+
+		// flush previous group if key changes
+		if currentKey == nil || !bytes.Equal(currentKey, key) {
+			if err := flushCurrentGroup(); err != nil {
+				return errors.Trace(err)
+			}
+			currentKey = bytes.Clone(key)
+			currentRecords = make(map[string]indexConflictRecord)
+		}
+
+		// Skip duplicates that have identical key/value pairs but count them for logging.
+		// Due to the re-entrancy issue of `add index`, the same key-value pairs might be imported repeatedly.
+		// Therefore, we only consider pairs with the same key but different values ​​as duplicates.
+		valueKey := string(val)
+		if _, exists := currentRecords[valueKey]; exists {
+			identDupCount++
+			continue
+		}
 
 		h, err := m.decoder.DecodeHandleFromIndex(indexInfo, key, val)
 		if err != nil {
@@ -578,20 +630,31 @@ func (m *dupeDetector) RecordIndexConflictError(ctx context.Context, stream DupK
 			RawValue: val,
 			KeyData:  h.String(),
 		}
-		indexHandles.append(conflictInfo, indexInfo.Name.O,
-			h, tablecodec.EncodeRowKeyWithHandle(tableID, h))
 
-		if indexHandles.Len() >= defaultRecordConflictErrorBatch {
-			if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
-				return errors.Trace(err)
-			}
-			indexHandles.truncate()
+		currentRecords[valueKey] = indexConflictRecord{
+			conflictInfo: conflictInfo,
+			handle:       h,
+			rawHandle:    tablecodec.EncodeRowKeyWithHandle(tableID, h),
 		}
 
-		if algorithm == config.ErrorOnDup {
-			return newErrFoundIndexConflictRecords(key, val, m.tbl, indexInfo)
+		if len(currentRecords) == 2 {
+			// The second distinct value confirms this key is truly conflicting.
+			m.hasDupe.Store(true)
+			if algorithm == config.ErrorOnDup {
+				return newErrFoundIndexConflictRecords(key, val, m.tbl, indexInfo)
+			}
 		}
 	}
+
+	if err := flushCurrentGroup(); err != nil {
+		return errors.Trace(err)
+	}
+
+	if identDupCount > 0 {
+		m.logger.Warn("skip identical index duplicates", zap.String("category", "detect-dupe"),
+			zap.String("index", indexInfo.Name.O), zap.Int("count", identDupCount))
+	}
+
 	if indexHandles.Len() > 0 {
 		if err := m.saveIndexHandles(ctx, indexHandles); err != nil {
 			return errors.Trace(err)

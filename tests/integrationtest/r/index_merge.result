@@ -11,7 +11,11 @@ explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+<<<<<<< HEAD
   └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#11))
+=======
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column))
+>>>>>>> master
     └─HashJoin	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t1.c3)
       ├─TableReader(Build)	root		data:TableFullScan
       │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -31,7 +35,11 @@ explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+<<<<<<< HEAD
   └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#11))
+=======
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column))
+>>>>>>> master
     └─HashJoin	root		Null-aware anti left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c3, index_merge.t1.c3)]
       ├─TableReader(Build)	root		data:TableFullScan
       │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -57,7 +65,11 @@ Sort	root		index_merge.t1.c1
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#12
 └─MaxOneRow	root		
+<<<<<<< HEAD
   └─StreamAgg	root		funcs:max(index_merge.t1.c3)->Column#11
+=======
+  └─StreamAgg	root		funcs:max(index_merge.t1.c3)->Column
+>>>>>>> master
     └─TopN	root		index_merge.t1.c3:desc, offset:0, count:1
       └─TableReader	root		data:TopN
         └─TopN	cop[tikv]		index_merge.t1.c3:desc, offset:0, count:1
@@ -75,7 +87,11 @@ explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+<<<<<<< HEAD
   └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#12))
+=======
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column))
+>>>>>>> master
     └─HashJoin	root		left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
       ├─IndexReader(Build)	root		index:IndexFullScan
       │ └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -95,7 +111,11 @@ explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+<<<<<<< HEAD
   └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#12))
+=======
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column))
+>>>>>>> master
     └─HashJoin	root		anti left outer semi join, left side:IndexMerge, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
       ├─IndexReader(Build)	root		index:IndexFullScan
       │ └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
@@ -121,9 +141,15 @@ Sort	root		index_merge.t1.c1
     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#22
 └─MaxOneRow	root		
+<<<<<<< HEAD
   └─StreamAgg	root		funcs:count(Column#19)->Column#11
     └─IndexReader	root		index:StreamAgg
       └─StreamAgg	cop[tikv]		funcs:count(1)->Column#19
+=======
+  └─StreamAgg	root		funcs:count(Column)->Column
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:count(1)->Column
+>>>>>>> master
         └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 = (select count(1) from t2) order by 1;
 c1	c2	c3
@@ -136,11 +162,19 @@ c1	c2	c3
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ANY(select count(1) from t2) order by 1;
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
+<<<<<<< HEAD
 └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#12), if(ne(Column#13, 0), NULL, 0))), and(ne(Column#14, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
   ├─StreamAgg(Build)	root		funcs:min(Column#11)->Column#12, funcs:sum(0)->Column#13, funcs:count(1)->Column#14
   │ └─StreamAgg	root		funcs:count(Column#27)->Column#11
   │   └─IndexReader	root		index:StreamAgg
   │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#27
+=======
+└─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column), if(ne(Column, 0), NULL, 0))), and(ne(Column, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
+  ├─StreamAgg(Build)	root		funcs:min(Column)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
+  │ └─StreamAgg	root		funcs:count(Column)->Column
+  │   └─IndexReader	root		index:StreamAgg
+  │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column
+>>>>>>> master
   │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge(Probe)	root		type: union
     ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -158,11 +192,19 @@ c1	c2	c3
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > SOME(select count(1) from t2) order by 1;
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
+<<<<<<< HEAD
 └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column#12), if(ne(Column#13, 0), NULL, 0))), and(ne(Column#14, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
   ├─StreamAgg(Build)	root		funcs:min(Column#11)->Column#12, funcs:sum(0)->Column#13, funcs:count(1)->Column#14
   │ └─StreamAgg	root		funcs:count(Column#27)->Column#11
   │   └─IndexReader	root		index:StreamAgg
   │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#27
+=======
+└─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(and(lt(index_merge.t1.c2, 10), or(gt(index_merge.t1.c3, Column), if(ne(Column, 0), NULL, 0))), and(ne(Column, 0), if(isnull(index_merge.t1.c3), NULL, 1))))
+  ├─StreamAgg(Build)	root		funcs:min(Column)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
+  │ └─StreamAgg	root		funcs:count(Column)->Column
+  │   └─IndexReader	root		index:StreamAgg
+  │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column
+>>>>>>> master
   │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge(Probe)	root		type: union
     ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -180,11 +222,19 @@ c1	c2	c3
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
+<<<<<<< HEAD
 └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#12), if(ne(Column#13, 0), NULL, 1)), or(eq(Column#14, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
   ├─StreamAgg(Build)	root		funcs:max(Column#11)->Column#12, funcs:sum(0)->Column#13, funcs:count(1)->Column#14
   │ └─StreamAgg	root		funcs:count(Column#27)->Column#11
   │   └─IndexReader	root		index:StreamAgg
   │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#27
+=======
+└─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
+  ├─StreamAgg(Build)	root		funcs:max(Column)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
+  │ └─StreamAgg	root		funcs:count(Column)->Column
+  │   └─IndexReader	root		index:StreamAgg
+  │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column
+>>>>>>> master
   │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
   └─IndexMerge(Probe)	root		type: union
     ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -201,12 +251,21 @@ c1	c2	c3
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
+<<<<<<< HEAD
 └─Projection	root		index_merge.t1.c1, ScalarQueryCol#29(15)->Column#30
   └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column#17), if(ne(Column#18, 0), NULL, 1)), or(eq(Column#19, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
     ├─StreamAgg(Build)	root		funcs:max(Column#16)->Column#17, funcs:sum(0)->Column#18, funcs:count(1)->Column#19
     │ └─StreamAgg	root		funcs:count(Column#43)->Column#16
     │   └─IndexReader	root		index:StreamAgg
     │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column#43
+=======
+└─Projection	root		index_merge.t1.c1, ScalarQueryCol#29(15)->Column
+  └─HashJoin	root		CARTESIAN inner join, other cond:or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), or(and(gt(index_merge.t1.c3, Column), if(ne(Column, 0), NULL, 1)), or(eq(Column, 0), if(isnull(index_merge.t1.c3), NULL, 0)))))
+    ├─StreamAgg(Build)	root		funcs:max(Column)->Column, funcs:sum(0)->Column, funcs:count(1)->Column
+    │ └─StreamAgg	root		funcs:count(Column)->Column
+    │   └─IndexReader	root		index:StreamAgg
+    │     └─StreamAgg	cop[tikv]		funcs:count(1)->Column
+>>>>>>> master
     │       └─IndexFullScan	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
     └─IndexMerge(Probe)	root		type: union
       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -214,9 +273,15 @@ Sort	root		index_merge.t1.c1
       └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#29
 └─MaxOneRow	root		
+<<<<<<< HEAD
   └─StreamAgg	root		funcs:sum(Column#28)->Column#26
     └─IndexReader	root		index:StreamAgg
       └─StreamAgg	cop[tikv]		funcs:sum(index_merge.t2.c2)->Column#28
+=======
+  └─StreamAgg	root		funcs:sum(Column)->Column
+    └─IndexReader	root		index:StreamAgg
+      └─StreamAgg	cop[tikv]		funcs:sum(index_merge.t2.c2)->Column
+>>>>>>> master
         └─IndexFullScan	cop[tikv]	table:t2, index:c2(c2)	keep order:false, stats:pseudo
 select /*+ use_index_merge(t1) */ c1, (select sum(c2) from t2) from t1 where c1 < 10 or c2 < 10 and c3 > ALL(select count(1) from t2) order by 1;
 c1	(select sum(c2) from t2)
@@ -230,7 +295,11 @@ explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where c
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+<<<<<<< HEAD
   └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#16))
+=======
+  └─Selection	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column))
+>>>>>>> master
     └─HashJoin	root		CARTESIAN left outer semi join, left side:IndexMerge, other cond:eq(index_merge.t1.c3, index_merge.t2.c1)
       ├─HashJoin(Build)	root		inner join, equal:[eq(index_merge.t2.c2, index_merge.t2.c3)]
       │ ├─HashAgg(Build)	root		group by:index_merge.t2.c3, funcs:firstrow(index_merge.t2.c3)->index_merge.t2.c3
@@ -474,8 +543,8 @@ c1	c2	c3
 ///// MEMORY Table
 explain format = 'plan_tree' select count(c1) from (select /*+ use_index_merge(t_alias), stream_agg() */ count(1) c1 from information_schema.statements_summary where sum_latency >= 0 or max_latency >= 0 order by 1) dt;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#121)->Column#122
-└─StreamAgg	root		funcs:count(1)->Column#121
+StreamAgg	root		funcs:count(Column)->Column
+└─StreamAgg	root		funcs:count(1)->Column
   └─MemTableScan	root	table:STATEMENTS_SUMMARY	
 show warnings;
 Level	Code	Message
@@ -502,9 +571,15 @@ c1	c2	c3
 ///// GROUP BY
 explain format = 'plan_tree' select /*+ use_index_merge(t1) */ sum(c1) from t1 where (c1 < 10 or c2 < 10) and c3 < 10 group by c1 order by 1;
 id	task	access object	operator info
+<<<<<<< HEAD
 Sort	root		Column#6
 └─HashAgg	root		group by:Column#14, funcs:sum(Column#13)->Column#6
   └─Projection	root		cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#13, index_merge.t1.c1->Column#14
+=======
+Sort	root		Column
+└─HashAgg	root		group by:Column, funcs:sum(Column)->Column
+  └─Projection	root		cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column, index_merge.t1.c1->Column
+>>>>>>> master
     └─IndexMerge	root		type: union
       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
       ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,10), keep order:false, stats:pseudo
@@ -525,17 +600,28 @@ explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where t
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+<<<<<<< HEAD
   └─Apply	root		inner join, equal:[eq(Column#12, Column#11)]
     ├─Projection(Build)	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#12
+=======
+  └─Apply	root		inner join, equal:[eq(Column, Column)]
+    ├─Projection(Build)	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column
+>>>>>>> master
     │ └─IndexMerge	root		type: union
     │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
     │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
     │   └─Selection(Probe)	cop[tikv]		lt(index_merge.t1.c3, 10)
     │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─MaxOneRow(Probe)	root		
+<<<<<<< HEAD
       └─StreamAgg	root		group by:index_merge.t2.c1, funcs:avg(Column#19, Column#20)->Column#11
         └─IndexReader	root		index:StreamAgg
           └─StreamAgg	cop[tikv]		group by:index_merge.t2.c1, funcs:count(index_merge.t2.c1)->Column#19, funcs:sum(index_merge.t2.c1)->Column#20
+=======
+      └─StreamAgg	root		group by:index_merge.t2.c1, funcs:avg(Column, Column)->Column
+        └─IndexReader	root		index:StreamAgg
+          └─StreamAgg	cop[tikv]		group by:index_merge.t2.c1, funcs:count(index_merge.t2.c1)->Column, funcs:sum(index_merge.t2.c1)->Column
+>>>>>>> master
             └─IndexRangeScan	cop[tikv]	table:t2, index:c1(c1)	range: decided by [eq(index_merge.t1.c1, index_merge.t2.c1)], keep order:true, stats:pseudo
 select /*+ use_index_merge(t1) */ * from t1 where t1.c1 = (select avg(t2.c1) from t2 where t1.c1 = t2.c1 group by t2.c1) and (c1 < 10 or c2 < -1) and c3 < 10 order by 1;
 c1	c2	c3
@@ -548,16 +634,26 @@ explain format = 'plan_tree' select /*+ use_index_merge(t1) */ * from t1 where t
 id	task	access object	operator info
 Sort	root		index_merge.t1.c1
 └─Projection	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
+<<<<<<< HEAD
   └─Apply	root		inner join, equal:[eq(Column#13, Column#11)]
     ├─Projection(Build)	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column#13
+=======
+  └─Apply	root		inner join, equal:[eq(Column, Column)]
+    ├─Projection(Build)	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3, cast(index_merge.t1.c1, decimal(10,0) BINARY)->Column
+>>>>>>> master
     │ └─IndexMerge	root		type: union
     │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
     │   ├─IndexRangeScan(Build)	cop[tikv]	table:t1, index:c2(c2)	range:[-inf,-1), keep order:false, stats:pseudo
     │   └─Selection(Probe)	cop[tikv]		lt(index_merge.t1.c3, 10)
     │     └─TableRowIDScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TopN(Probe)	root		index_merge.t2.c1, offset:2, count:1
+<<<<<<< HEAD
       └─HashAgg	root		group by:Column#25, funcs:avg(Column#24)->Column#11, funcs:firstrow(Column#25)->index_merge.t2.c1
         └─Projection	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column#24, index_merge.t2.c1->Column#25
+=======
+      └─HashAgg	root		group by:Column, funcs:avg(Column)->Column, funcs:firstrow(Column)->index_merge.t2.c1
+        └─Projection	root		cast(index_merge.t2.c1, decimal(10,0) BINARY)->Column, index_merge.t2.c1->Column
+>>>>>>> master
           └─IndexMerge	root		type: union
             ├─Selection(Build)	cop[tikv]		eq(index_merge.t1.c1, index_merge.t2.c1)
             │ └─IndexRangeScan	cop[tikv]	table:t2, index:c1(c1)	range:[-inf,10), keep order:false, stats:pseudo
@@ -861,13 +957,13 @@ c1
 105
 explain format = 'plan_tree' with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 id	task	access object	operator info
-Sort	root		Column#16
+Sort	root		Column
 └─CTEFullScan	root	CTE:cte1	data:CTE_0
 CTE_0	root		Recursive CTE
-├─Projection(Seed Part)	root		1->Column#4, 1->Column#5, 1->Column#6
+├─Projection(Seed Part)	root		1->Column, 1->Column, 1->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		cast(plus(Column#7, 1), bigint BINARY)->Column#13, cast(plus(Column#8, 1), bigint BINARY)->Column#14, cast(plus(Column#9, 1), bigint BINARY)->Column#15
-  └─Selection	root		or(lt(Column#7, 10), and(lt(Column#8, 10), lt(Column#9, 10)))
+└─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column, cast(plus(Column, 1), bigint BINARY)->Column, cast(plus(Column, 1), bigint BINARY)->Column
+  └─Selection	root		or(lt(Column, 10), and(lt(Column, 10), lt(Column, 10)))
     └─CTETable	root		Scan on CTE_0
 show warnings;
 Level	Code	Message

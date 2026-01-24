@@ -48,81 +48,145 @@ TableReader	root		data:TableFullScan
 explain format = 'plan_tree' select a->'$.key0' from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
+<<<<<<< HEAD
 └─Projection	cop[tikv]		json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0)->Column#4
+=======
+└─Projection	cop[tikv]		json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0)->Column
+>>>>>>> master
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select a->>'$.key0' from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
+<<<<<<< HEAD
 └─Projection	cop[tikv]		json_unquote(cast(json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0), var_string(16777216)))->Column#4
+=======
+└─Projection	cop[tikv]		json_unquote(cast(json_extract(planner__core__casetest__pushdown__push_down.t2.a, $.key0), var_string(16777216)))->Column
+>>>>>>> master
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_length(a) from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
+<<<<<<< HEAD
 └─Projection	cop[tikv]		json_length(planner__core__casetest__pushdown__push_down.t2.a)->Column#4
+=======
+└─Projection	cop[tikv]		json_length(planner__core__casetest__pushdown__push_down.t2.a)->Column
+>>>>>>> master
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_valid(a) from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
+<<<<<<< HEAD
 └─Projection	cop[tikv]		json_valid(planner__core__casetest__pushdown__push_down.t2.a)->Column#4
+=======
+└─Projection	cop[tikv]		json_valid(planner__core__casetest__pushdown__push_down.t2.a)->Column
+>>>>>>> master
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_type(a) from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
+<<<<<<< HEAD
 └─Projection	cop[tikv]		json_type(planner__core__casetest__pushdown__push_down.t2.a)->Column#4
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_depth(a) from t2;
 id	task	access object	operator info
 Projection	root		json_depth(planner__core__casetest__pushdown__push_down.t2.a)->Column#4
+=======
+└─Projection	cop[tikv]		json_type(planner__core__casetest__pushdown__push_down.t2.a)->Column
+  └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select json_depth(a) from t2;
+id	task	access object	operator info
+Projection	root		json_depth(planner__core__casetest__pushdown__push_down.t2.a)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_contains(a, '$.key0')from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
+<<<<<<< HEAD
 └─Projection	cop[tikv]		json_contains(planner__core__casetest__pushdown__push_down.t2.a, cast($.key0, json BINARY))->Column#4
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_contains_path(a, 'one', '$.key0', '$.key1') from t2;
 id	task	access object	operator info
 Projection	root		json_contains_path(planner__core__casetest__pushdown__push_down.t2.a, one, $.key0, $.key1)->Column#4
+=======
+└─Projection	cop[tikv]		json_contains(planner__core__casetest__pushdown__push_down.t2.a, cast($.key0, json BINARY))->Column
+  └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select json_contains_path(a, 'one', '$.key0', '$.key1') from t2;
+id	task	access object	operator info
+Projection	root		json_contains_path(planner__core__casetest__pushdown__push_down.t2.a, one, $.key0, $.key1)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_keys(a) from t2;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		json_keys(planner__core__casetest__pushdown__push_down.t2.a)->Column#4
+=======
+Projection	root		json_keys(planner__core__casetest__pushdown__push_down.t2.a)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select 'ab' MEMBER OF(a) from t2;
 id	task	access object	operator info
 TableReader	root		data:Projection
+<<<<<<< HEAD
 └─Projection	cop[tikv]		json_memberof(cast(ab, json BINARY), planner__core__casetest__pushdown__push_down.t2.a)->Column#4
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_overlaps(a, a) from t2;
 id	task	access object	operator info
 Projection	root		json_overlaps(planner__core__casetest__pushdown__push_down.t2.a, planner__core__casetest__pushdown__push_down.t2.a)->Column#4
+=======
+└─Projection	cop[tikv]		json_memberof(cast(ab, json BINARY), planner__core__casetest__pushdown__push_down.t2.a)->Column
+  └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+explain format = 'plan_tree' select json_overlaps(a, a) from t2;
+id	task	access object	operator info
+Projection	root		json_overlaps(planner__core__casetest__pushdown__push_down.t2.a, planner__core__casetest__pushdown__push_down.t2.a)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_search(a, 'one', 'key0') from t2;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		json_search(planner__core__casetest__pushdown__push_down.t2.a, one, key0)->Column#4
+=======
+Projection	root		json_search(planner__core__casetest__pushdown__push_down.t2.a, one, key0)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select json_unquote(a) from t2;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		json_unquote(cast(planner__core__casetest__pushdown__push_down.t2.a, var_string(4294967295)))->Column#4
+=======
+Projection	root		json_unquote(cast(planner__core__casetest__pushdown__push_down.t2.a, var_string(4294967295)))->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format = 'plan_tree' select i * 2 from t;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		mul(planner__core__casetest__pushdown__push_down.t.i, 2)->Column#14
+=======
+Projection	root		mul(planner__core__casetest__pushdown__push_down.t.i, 2)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select DATE_FORMAT(t, '%Y-%m-%d %H') as date from t;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		date_format(planner__core__casetest__pushdown__push_down.t.t, %Y-%m-%d %H)->Column#14
+=======
+Projection	root		date_format(planner__core__casetest__pushdown__push_down.t.t, %Y-%m-%d %H)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select md5(s) from t;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		md5(planner__core__casetest__pushdown__push_down.t.s)->Column#14
+=======
+Projection	root		md5(planner__core__casetest__pushdown__push_down.t.s)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select c from t where a+1=3;
@@ -133,6 +197,7 @@ Projection	root		planner__core__casetest__pushdown__push_down.t.c
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select /*+ hash_agg()*/ count(b) from  (select id + 1 as b from t)A;
 id	task	access object	operator info
+<<<<<<< HEAD
 HashAgg	root		funcs:count(Column#17)->Column#15
 └─TableReader	root		data:HashAgg
   └─HashAgg	cop[tikv]		funcs:count(plus(planner__core__casetest__pushdown__push_down.t.id, 1))->Column#17
@@ -175,13 +240,62 @@ HashJoin	root		inner join, equal:[eq(Column#14, Column#28)]
 │   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
 │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─Projection(Probe)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#14
+=======
+HashAgg	root		funcs:count(Column)->Column
+└─TableReader	root		data:HashAgg
+  └─HashAgg	cop[tikv]		funcs:count(plus(planner__core__casetest__pushdown__push_down.t.id, 1))->Column
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ hash_agg()*/ count(*) from  (select id + 1 as b from t)A;
+id	task	access object	operator info
+HashAgg	root		funcs:count(Column)->Column
+└─TableReader	root		data:HashAgg
+  └─HashAgg	cop[tikv]		funcs:count(1)->Column
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ hash_agg()*/ sum(b) from  (select id + 1 as b from t)A;
+id	task	access object	operator info
+HashAgg	root		funcs:sum(Column)->Column
+└─TableReader	root		data:HashAgg
+  └─HashAgg	cop[tikv]		funcs:sum(plus(planner__core__casetest__pushdown__push_down.t.id, 1))->Column
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ stream_agg()*/ count(b) from  (select id + 1 as b from t)A;
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column)->Column
+└─TableReader	root		data:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(plus(planner__core__casetest__pushdown__push_down.t.id, 1))->Column
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ stream_agg()*/ count(*) from  (select id + 1 as b from t)A;
+id	task	access object	operator info
+StreamAgg	root		funcs:count(Column)->Column
+└─TableReader	root		data:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select /*+ stream_agg()*/ sum(b) from  (select id + 1 as b from t)A;
+id	task	access object	operator info
+StreamAgg	root		funcs:sum(Column)->Column
+└─TableReader	root		data:StreamAgg
+  └─StreamAgg	cop[tikv]		funcs:sum(plus(planner__core__casetest__pushdown__push_down.t.id, 1))->Column
+    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+explain format = 'plan_tree' select * from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
+id	task	access object	operator info
+HashJoin	root		inner join, equal:[eq(Column, Column)]
+├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+│ └─TableReader	root		data:Selection
+│   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
+│     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+└─Projection(Probe)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+>>>>>>> master
   └─TableReader	root		data:Selection
     └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t join (select id-2 as b from t) A on A.b=t.id;
 id	task	access object	operator info
+<<<<<<< HEAD
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#27)]
 ├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#27
+=======
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column)]
+├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+>>>>>>> master
 │ └─TableReader	root		data:Selection
 │   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
 │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -190,8 +304,13 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_dow
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t left join (select id-2 as b from t) A on A.b=t.id;
 id	task	access object	operator info
+<<<<<<< HEAD
 HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#27)]
 ├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#27
+=======
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column)]
+├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+>>>>>>> master
 │ └─TableReader	root		data:Selection
 │   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
 │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -199,8 +318,13 @@ HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t right join (select id-2 as b from t) A on A.b=t.id;
 id	task	access object	operator info
+<<<<<<< HEAD
 HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column#27)]
 ├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#27
+=======
+HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core__casetest__pushdown__push_down.t.id, Column)]
+├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+>>>>>>> master
 │ └─TableReader	root		data:TableFullScan
 │   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:Selection
@@ -208,6 +332,7 @@ HashJoin	root		right outer join, left side:TableReader, equal:[eq(planner__core_
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select A.b, B.b from (select id-2 as b from t) B join (select id-2 as b from t) A on A.b=B.b;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		Column#28, Column#14
 └─HashJoin	root		inner join, equal:[eq(Column#14, Column#28)]
   ├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#28
@@ -215,6 +340,15 @@ Projection	root		Column#28, Column#14
   │   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
   │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
   └─Projection(Probe)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column#14
+=======
+Projection	root		Column, Column
+└─HashJoin	root		inner join, equal:[eq(Column, Column)]
+  ├─Projection(Build)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+  │ └─TableReader	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
+  │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+  └─Projection(Probe)	root		minus(planner__core__casetest__pushdown__push_down.t.id, 2)->Column
+>>>>>>> master
     └─TableReader	root		data:Selection
       └─Selection	cop[tikv]		not(isnull(minus(planner__core__casetest__pushdown__push_down.t.id, 2)))
         └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -236,7 +370,11 @@ HashJoin	root		anti semi join, left side:TableReader, equal:[eq(planner__core__c
   └─TableFullScan	cop[tikv]	table:A	keep order:false, stats:pseudo
 explain format = 'plan_tree' SELECT FROM_UNIXTIME(name,'%Y-%m-%d')  FROM t;
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		from_unixtime(cast(planner__core__casetest__pushdown__push_down.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column#14
+=======
+Projection	root		from_unixtime(cast(planner__core__casetest__pushdown__push_down.t.name, decimal(65,6) BINARY), %Y-%m-%d)->Column
+>>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 CREATE TABLE `t4a8656d1` (
@@ -255,16 +393,27 @@ KEY `idx_4` (`col_1`(4))
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
 explain format='plan_tree' select 1, r0 as col_754 from (     select format(t4a8656d1.col_74, 1) as r0     from t4a8656d1     join tld47bc815 on t4a8656d1.col_74 = tld47bc815.col_1     where JSON_OVERLAPS(t4a8656d1.col_73, '[0.035131302371695955]')     group by t4a8656d1.col_74, t4a8656d1.col_73 ) as subquery where IsNull(subquery.r0);
 id	task	access object	operator info
+<<<<<<< HEAD
 Projection	root		1->Column#12, Column#11
 └─Projection	root		format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)->Column#11
   └─HashAgg	root		group by:planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, funcs:firstrow(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74)->planner__core__casetest__pushdown__push_down.t4a8656d1.col_74
     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column#15)]
+=======
+Projection	root		1->Column, Column
+└─Projection	root		format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)->Column
+  └─HashAgg	root		group by:planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, funcs:firstrow(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74)->planner__core__casetest__pushdown__push_down.t4a8656d1.col_74
+    └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, Column)]
+>>>>>>> master
       ├─Selection(Build)	root		isnull(format(cast(planner__core__casetest__pushdown__push_down.t4a8656d1.col_74, double BINARY), 1)), json_overlaps(planner__core__casetest__pushdown__push_down.t4a8656d1.col_73, cast("[0.035131302371695955]", json BINARY))
       │ └─IndexMerge	root		type: union
       │   ├─Selection(Build)	cop[tikv]		
       │   │ └─IndexRangeScan	cop[tikv]	table:t4a8656d1, index:idx_39(cast(`col_73` as double array), col_74)	range:[0.035131302371695955,0.035131302371695955], keep order:false, stats:pseudo
       │   └─TableRowIDScan(Probe)	cop[tikv]	table:t4a8656d1	keep order:false, stats:pseudo
+<<<<<<< HEAD
       └─Projection(Probe)	root		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column#15
+=======
+      └─Projection(Probe)	root		cast(planner__core__casetest__pushdown__push_down.tld47bc815.col_1, datetime(6) BINARY)->Column
+>>>>>>> master
         └─TableReader	root		data:TableFullScan
           └─TableFullScan	cop[tikv]	table:tld47bc815	keep order:false, stats:pseudo
 DROP TABLE IF EXISTS final_test_v2;
@@ -280,9 +429,15 @@ group_key	val
 10	100
 EXPLAIN FORMAT='BRIEF' SELECT group_key, ANY_VALUE(val) as val FROM final_test_v2 GROUP BY group_key HAVING val = 100 ORDER BY group_key;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 Sort	2.56	root		planner__core__casetest__pushdown__push_down.final_test_v2.group_key
 └─Projection	2.56	root		planner__core__casetest__pushdown__push_down.final_test_v2.group_key, any_value(planner__core__casetest__pushdown__push_down.final_test_v2.val)->Column#5
   └─HashAgg	2.56	root		group by:planner__core__casetest__pushdown__push_down.final_test_v2.group_key, funcs:firstrow(planner__core__casetest__pushdown__push_down.final_test_v2.val)->planner__core__casetest__pushdown__push_down.final_test_v2.val, funcs:firstrow(planner__core__casetest__pushdown__push_down.final_test_v2.group_key)->planner__core__casetest__pushdown__push_down.final_test_v2.group_key
+=======
+Sort	1.60	root		planner__core__casetest__pushdown__push_down.final_test_v2.group_key
+└─Projection	1.60	root		planner__core__casetest__pushdown__push_down.final_test_v2.group_key, any_value(planner__core__casetest__pushdown__push_down.final_test_v2.val)->Column#5
+  └─HashAgg	1.60	root		group by:planner__core__casetest__pushdown__push_down.final_test_v2.group_key, funcs:firstrow(planner__core__casetest__pushdown__push_down.final_test_v2.val)->planner__core__casetest__pushdown__push_down.final_test_v2.val, funcs:firstrow(planner__core__casetest__pushdown__push_down.final_test_v2.group_key)->planner__core__casetest__pushdown__push_down.final_test_v2.group_key
+>>>>>>> master
     └─Selection	3.20	root		eq(any_value(planner__core__casetest__pushdown__push_down.final_test_v2.val), 100)
       └─TableReader	4.00	root		data:TableFullScan
         └─TableFullScan	4.00	cop[tikv]	table:final_test_v2	keep order:false
