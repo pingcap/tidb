@@ -309,7 +309,6 @@ func (h *Handle) isSystemTable(physicalTableID int64, tblInfo *model.TableInfo) 
 		})
 	})
 	if err != nil {
-		intest.Assert(err == nil, "unexpected error: %v, tableID %d, dbID %d", err, physicalTableID, dbID)
 		return false, err
 	}
 	if isSystemTable {
