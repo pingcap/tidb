@@ -17,6 +17,7 @@ type ConflictDetector struct {
 }
 
 type edge struct {
+	idx uint64
 	// No need to store the original join operator,
 	// because we may generate a new join operator, so only join conditions are enough.
 	joinType base.JoinType
@@ -65,9 +66,15 @@ type rule struct {
 }
 
 type Node struct {
-	bitSet  BitSet
-	p       base.LogicalPlan
-	cumCost float64
+	bitSet    BitSet
+	p         base.LogicalPlan
+	cumCost   float64
+	usedEdges map[uint64]struct{}
+}
+
+func (n *Node) checkUsedEdges(edgeIdx uint64) bool {
+	_, used := n.usedEdges[edgeIdx]
+	return used
 }
 
 func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
@@ -174,6 +181,7 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 
 func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) *edge {
 	e := &edge{
+		idx:           uint64(len(d.innerEdges) + len(d.nonInnerEdges)),
 		joinType:      joinType,
 		leftVertexes:  leftVertexes,
 		rightVertexes: rightVertexes,
@@ -324,12 +332,18 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 		node2: node2,
 	}
 	for _, e := range d.innerEdges {
+		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
+			continue
+		}
 		if e.checkInnerEdge(node1, node2) {
 			result.appliedInnerEdges = append(result.appliedInnerEdges, e)
 			result.hasEQCond = result.hasEQCond || len(e.eqConds) > 0
 		}
 	}
 	for _, e := range d.nonInnerEdges {
+		if node1.checkUsedEdges(e.idx) || node2.checkUsedEdges(e.idx) {
+			continue
+		}
 		if e.checkNonInnerEdge(node1, node2) {
 			if result.appliedNonInnerEdge != nil {
 				return nil, errors.New("multiple non-inner edges applied between two nodes")
@@ -345,6 +359,7 @@ func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
 	if !e.checkRules(node1, node2) {
 		return false
 	}
+	// gjt todo refine this check
 	return e.tes.IsSubsetOf(node1.bitSet.Union(node2.bitSet))
 }
 
@@ -353,6 +368,7 @@ func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
 		return false
 	}
 	// gjt todo commutative?
+	// gjt todo refine this check
 	return e.leftVertexes.IsSubsetOf(node1.bitSet) && e.rightVertexes.IsSubsetOf(node2.bitSet)
 }
 
@@ -396,10 +412,18 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}
 	node1 := checkResult.node1
 	node2 := checkResult.node2
+	usedEdges := make(map[uint64]struct{}, numInnerEdges+numNonInnerEdges)
+	for _, e := range checkResult.appliedInnerEdges {
+		usedEdges[e.idx] = struct{}{}
+	}
+	if checkResult.appliedNonInnerEdge != nil {
+		usedEdges[checkResult.appliedNonInnerEdge.idx] = struct{}{}
+	}
 	return &Node{
-		bitSet:  node1.bitSet.Union(node2.bitSet),
-		p:       p,
-		cumCost: node1.cumCost + node2.cumCost + p.StatsInfo().RowCount,
+		bitSet:    node1.bitSet.Union(node2.bitSet),
+		p:         p,
+		cumCost:   node1.cumCost + node2.cumCost + p.StatsInfo().RowCount,
+		usedEdges: usedEdges,
 	}, nil
 }
 
