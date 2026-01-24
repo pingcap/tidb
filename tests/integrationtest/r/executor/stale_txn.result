@@ -1,4 +1,4 @@
-select * from information_schema.ddl_jobs as of timestamp now();
+select * from information_schema.ddl_jobs as of timestamp now(6) - interval 1 second;
 drop table if exists t1;
 create table t1 (id int primary key, v int);
 insert into t1 values(1, 10);
