@@ -151,7 +151,12 @@ func rollingbackModifyColumn(w *worker, d *ddlCtx, t *meta.Meta, job *model.Job)
 		// Give the this kind of ddl one more round to run, the dbterror.ErrCancelledDDLJob should be fetched from the bottom up.
 		return w.onModifyColumn(d, t, job)
 	}
+<<<<<<< HEAD
 	_, tblInfo, oldCol, jp, err := getModifyColumnInfo(t, job)
+=======
+
+	_, tblInfo, oldCol, err := getModifyColumnInfo(jobCtx.metaMut, job, args)
+>>>>>>> 567e139701f (ddl: add states to remove old objects during modifying column (#62549))
 	if err != nil {
 		return ver, err
 	}
