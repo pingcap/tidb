@@ -28,6 +28,38 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestStatsCacheProcess(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	testKit := testkit.NewTestKit(t, store)
+	testKit.MustExec("use test")
+	testKit.MustExec("create table t (c1 int, c2 int)")
+	testKit.MustExec("insert into t values(1, 2)")
+	analyzehelper.TriggerPredicateColumnsCollection(t, testKit, store, "t", "c1", "c2")
+	do := dom
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := do.StatsHandle().GetTableStats(tableInfo)
+	require.True(t, statsTbl.Pseudo)
+	require.Zero(t, statsTbl.Version)
+	currentVersion := do.StatsHandle().MaxTableStatsVersion()
+	testKit.MustExec("analyze table t")
+	statsTbl = do.StatsHandle().GetTableStats(tableInfo)
+	require.False(t, statsTbl.Pseudo)
+	require.NotZero(t, statsTbl.Version)
+	require.Equal(t, currentVersion, do.StatsHandle().MaxTableStatsVersion())
+	newVersion := do.StatsHandle().GetNextCheckVersionWithOffset()
+	require.Equal(t, currentVersion, newVersion, "analyze should not move forward the stats cache version")
+
+	// Insert more rows
+	testKit.MustExec("insert into t values(2, 3)")
+	require.NoError(t, do.StatsHandle().DumpStatsDeltaToKV(true))
+	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
+	newVersion = do.StatsHandle().MaxTableStatsVersion()
+	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
+}
+
 func TestStatsCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
