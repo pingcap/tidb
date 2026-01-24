@@ -190,11 +190,18 @@ show warnings;
 Level	Code	Message
 explain format = 'brief' select * from tn where a = 1 and b > 10 and b < 20 and c > 50 order by d limit 1;
 id	estRows	task	access object	operator info
+<<<<<<< HEAD
 TopN	0.83	root		planner__core__casetest__physicalplantest__physical_plan.tn.d, offset:0, count:1
 └─IndexReader	0.83	root		index:TopN
   └─TopN	0.83	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.tn.d, offset:0, count:1
     └─Selection	0.83	cop[tikv]		gt(planner__core__casetest__physicalplantest__physical_plan.tn.c, 50)
       └─IndexRangeScan	2.50	cop[tikv]	table:tn, index:a(a, b, c, d)	range:(1 10,1 20), keep order:false, stats:pseudo
+=======
+TopN	1.00	root		planner__core__casetest__physicalplantest__physical_plan.tn.d, offset:0, count:1
+└─IndexReader	1.00	root		index:Selection
+  └─Selection	1.00	cop[tikv]		gt(planner__core__casetest__physicalplantest__physical_plan.tn.c, 50)
+    └─IndexRangeScan	2.50	cop[tikv]	table:tn, index:a(a, b, c, d)	range:(1 10,1 20), keep order:false, stats:pseudo
+>>>>>>> c43df07ebf1 (planner: keep hist unchanged when deriving limit stats (#62537))
 show warnings;
 Level	Code	Message
 explain format = 'brief' select /*+ LIMIT_TO_COP() */ a from tn where a div 2 order by a limit 1;
