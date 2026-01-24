@@ -1071,3 +1071,43 @@ admin reload opt_rule_blacklist;
 --enable_warnings
 select distinct avg(nullif(77.15, PI()));
 --disable_warnings
+
+# TestIssue62672
+drop table if exists t_a;
+CREATE TABLE `t_a` (
+  `id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
+  `a` bigint(20) unsigned NOT NULL DEFAULT '0' COMMENT 'merchant id',
+  `b` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total amount',
+  `c` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'settlement amount',
+  `d` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total fee',
+  `e` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'settle time',
+  `f` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'create time',
+  `g` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'is deleted',
+  PRIMARY KEY (`id`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='settlement table';
+
+explain format = 'brief' SELECT
+  MAX(id) AS id,
+  LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+  a,
+  SUM(b) AS total_amount,
+  SUM(c) AS settlement_amount,
+  SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+  AND `f` <= 1753718399
+  AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
+
+SELECT
+  MAX(id) AS id,
+  LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
+  a,
+  SUM(b) AS total_amount,
+  SUM(c) AS settlement_amount,
+  SUM(d) AS total_fee
+FROM `t_a`
+WHERE `f` >= 1753632000
+  AND `f` <= 1753718399
+  AND `g` = 0
+GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
