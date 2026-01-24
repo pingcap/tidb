@@ -164,7 +164,6 @@ func TestInfo(t *testing.T) {
 
 	err = dom.refreshServerIDTTL(goCtx)
 	require.NoError(t, err)
-
 }
 
 func TestStatWorkRecoverFromPanic(t *testing.T) {
