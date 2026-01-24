@@ -580,3 +580,91 @@ func TestSkipAutoAnalyzeOutsideTheAvailableTime(t *testing.T) {
 		),
 	)
 }
+<<<<<<< HEAD
+=======
+
+const tiflashReplicaLease = 600 * time.Millisecond
+
+func TestAutoAnalyzeWithVectorIndex(t *testing.T) {
+	store := testkit.CreateMockStoreWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tiflash := infosync.NewMockTiFlash()
+	infosync.SetMockTiFlash(tiflash)
+	defer func() {
+		tiflash.Lock()
+		tiflash.StatusServer.Close()
+		tiflash.Unlock()
+	}()
+	dom := domain.GetDomain(tk.Session())
+	h := dom.StatsHandle()
+
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b vector, c vector(3), d vector(4));")
+	tk.MustExec("insert into t values(1, '[1, 2]', '[1, 3, 4]', '[1, 4, 5, 6]')")
+	tk.MustExec("analyze table t all columns")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.True(t, statsTbl.LastAnalyzeVersion > 0)
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("alter table t add index idx(a)")
+	// Normal Index can trigger auto analyze.
+	require.True(t, h.HandleAutoAnalyze())
+	tk.MustExec("alter table t set tiflash replica 1")
+	testkit.SetTiFlashReplica(t, dom, "test", "t")
+	tk.MustExec("alter table t add vector index vecIdx1((vec_cosine_distance(d))) USING HNSW;")
+	// Vector Index can not trigger auto analyze.
+	require.False(t, h.HandleAutoAnalyze())
+}
+
+func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	h := dom.StatsHandle()
+
+	// Trigger the sync load by query.
+	// set lease > 0 to trigger on-demand stats load.
+	h.SetLease(time.Millisecond)
+	// Set analyze version to 1.
+	tk.MustExec("set @@tidb_analyze_version = 1")
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a));")
+	tk.MustExec("insert into t values (1, 2);")
+	tk.MustExec("analyze table t")
+	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableInfo := tbl.Meta()
+	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.NotZero(t, statsTbl.LastAnalyzeVersion)
+	// FIXME: https://github.com/pingcap/tidb/issues/64400
+	require.Equal(t, statistics.Version0, statsTbl.StatsVer)
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
+	tk.MustQuery("select * from t force index(idx) where a = 1;").Check(testkit.Rows("1 2"))
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
+	// Set analyze version to 2.
+	tk.MustExec("set @@tidb_analyze_version = 2")
+	// Trigger auto analyze.
+	// Set the auto analyze min count to 0 to skip the threshold check.
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+	// Insert more rows to meet the auto analyze threshold.
+	tk.MustExec("insert into t values (3, 4), (5,6), (7,8);")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+	require.True(t, h.HandleAutoAnalyze())
+	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
+}
+>>>>>>> c11aa55845d (statistics: use the correct analyze version (#64399))
