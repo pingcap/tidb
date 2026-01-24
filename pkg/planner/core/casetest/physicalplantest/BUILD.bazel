@@ -9,8 +9,12 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
+<<<<<<< HEAD
     race = "on",
     shard_count = 33,
+=======
+    shard_count = 41,
+>>>>>>> d7169b2a324 (planner: PointGet will not skip the reuse chunk with enough total memory (#63921))
     deps = [
         "//pkg/config",
         "//pkg/domain",
@@ -29,6 +33,11 @@ go_test(
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "//pkg/util/hint",
+<<<<<<< HEAD
+=======
+        "//pkg/util/mock",
+        "//pkg/util/size",
+>>>>>>> d7169b2a324 (planner: PointGet will not skip the reuse chunk with enough total memory (#63921))
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
