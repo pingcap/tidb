@@ -16,6 +16,7 @@ package handle
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
@@ -309,6 +310,7 @@ func (h *Handle) isSystemTable(physicalTableID int64, tblInfo *model.TableInfo) 
 		})
 	})
 	if err != nil {
+		intest.Assert(strings.Contains(err.Error(), "session pool closed"), "unexpected error: %v, tableID %d, dbID %d", err, physicalTableID, dbID)
 		return false, err
 	}
 	if isSystemTable {
