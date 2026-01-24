@@ -317,9 +317,9 @@ func TestPlanStatsLoadTimeout(t *testing.T) {
 		require.Error(t, err) // fail sql for timeout when pseudo=false
 
 		testKit.MustExec("set global tidb_stats_load_pseudo_timeout=true")
-		require.NoError(t, failpoint.Enable("github.com/pingcap/executor/assertSyncStatsFailed", `return(true)`))
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertSyncStatsFailed", `return(true)`))
 		testKit.MustExec(sql) // not fail sql for timeout when pseudo=true
-		failpoint.Disable("github.com/pingcap/executor/assertSyncStatsFailed")
+		failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertSyncStatsFailed")
 
 		// Test Issue #50872.
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/assertSyncWaitFailed", `return(true)`))

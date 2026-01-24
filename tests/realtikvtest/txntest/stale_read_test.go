@@ -1223,10 +1223,10 @@ func TestStmtCtxStaleFlag(t *testing.T) {
 	}
 
 	for _, testcase := range testcases {
-		failpoint.Enable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness",
+		failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertStmtCtxIsStaleness",
 			fmt.Sprintf("return(%v)", testcase.hasStaleFlag))
 		tk.MustExec(testcase.sql)
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/exector/assertStmtCtxIsStaleness"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertStmtCtxIsStaleness"))
 		// assert stale read flag should be false after each statement execution
 		require.False(t, staleread.IsStmtStaleness(tk.Session()))
 	}

@@ -77,11 +77,11 @@ func TestStoreErr(t *testing.T) {
 	err = tk.QueryToErr("select count(*) from t")
 	require.Equal(t, context.Canceled, errors.Cause(err))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr", "1*return(\"tiflash0\")"))
 
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr", "return(\"tiflash0\")"))
 	err = tk.QueryToErr("select count(*) from t")
 	require.Error(t, err)
 }
@@ -108,11 +108,11 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr", "return(\"tiflash0\")"))
 
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash1", "return(\"tiflash1\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr", "return(\"tiflash0,tiflash1\")"))
 	err = tk.QueryToErr("select count(*) from t")
 	require.Error(t, err)
 }

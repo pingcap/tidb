@@ -251,9 +251,9 @@ func TestRegionsFromMeta(t *testing.T) {
 	}
 
 	// test no panic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/errGetRegionByIDEmpty", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/handler/errGetRegionByIDEmpty", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/errGetRegionByIDEmpty"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/handler/errGetRegionByIDEmpty"))
 	}()
 	resp1, err := ts.FetchStatus("/regions/meta")
 	require.NoError(t, err)

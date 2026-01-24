@@ -1266,6 +1266,9 @@ func (a *ExecStmt) handlePessimisticLockError(ctx context.Context, lockErr error
 
 	// Without this line of code, the result will still be correct. But it can ensure that the update time of for update read
 	// is determined which is beneficial for testing.
+	failpoint.Inject("ExecStmtGetTsError", func() {
+		failpoint.Return(nil, errors.New("mock GetStmtForUpdateTS error"))
+	})
 	if _, err = txnManager.GetStmtForUpdateTS(); err != nil {
 		return nil, err
 	}

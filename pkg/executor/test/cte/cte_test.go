@@ -69,9 +69,9 @@ func TestSpillToDisk(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testCTEStorageSpill"))
 		tk.MustExec("set tidb_mem_quota_query = 1073741824;")
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/testSortedRowContainerSpill", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/testSortedRowContainerSpill"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/testSortedRowContainerSpill"))
 	}()
 
 	// Use duplicated rows to test UNION DISTINCT.
