@@ -15,6 +15,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"sync"
 
@@ -83,6 +84,7 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 
 	// no need to protect sg.resPool, even the sg.resPool is closed, the ctx still need to
 	// Put into resPool, because when resPool is closing, it will wait all the ctx returns, then resPool finish closing.
+	ctx.RollbackTxn(context.Background())
 	sg.resPool.Put(ctx.(pools.Resource))
 	infosync.DeleteInternalSession(ctx)
 }
