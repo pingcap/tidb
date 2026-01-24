@@ -15,6 +15,7 @@
 package placement
 
 import (
+	"bytes"
 	"encoding/hex"
 	"fmt"
 	"reflect"
@@ -1458,4 +1459,23 @@ func TestTidy2(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestGetRangeStartAndEndKeyHex(t *testing.T) {
+	startKey, endKey := GetRangeStartAndEndKeyHex(TiDBBundleRangePrefixForMeta)
+
+	// Check that startKey is properly encoded in table mode
+	startKeyBytes, err := hex.DecodeString(startKey)
+	require.NoError(t, err)
+
+	// Both keys should be valid codec encoded bytes
+	_, startKeyDecoded, err := codec.DecodeBytes(startKeyBytes, nil)
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(metaPrefix, startKeyDecoded), "metaPrefix and startKeyDecoded should have the same content")
+
+	endKeyBytes, err := hex.DecodeString(endKey)
+	require.NoError(t, err)
+	_, endKeyDecoded, err := codec.DecodeBytes(endKeyBytes, nil)
+	require.NoError(t, err)
+	require.True(t, bytes.Equal(tablecodec.GenTablePrefix(0), endKeyDecoded), "tablePrefix and endKeyDecoded should have the same content")
 }
