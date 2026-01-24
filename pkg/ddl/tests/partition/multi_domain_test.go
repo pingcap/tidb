@@ -1009,15 +1009,25 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	require.NoError(t, err)
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 	require.NoError(t, err)
-	tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
 	ctx = tkO.Session()
 	is = domain.GetDomain(ctx).InfoSchema()
 	tbl, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
 	newTableID := tbl.Meta().ID
 	if tableID != newTableID {
-		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
+		deadline := time.Now().Add(30 * time.Second)
+		for haveAnyEntriesForTableID(t, tkO, tableID) {
+			if time.Now().After(deadline) {
+				require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
+			}
+			err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
+			require.NoError(t, err)
+			time.Sleep(500 * time.Millisecond)
+		}
 	}
+	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
+	require.NoError(t, err)
+	tkO.MustQuery(`select * from mysql.gc_delete_range`).Check(testkit.Rows())
 	checkTableAndIndexEntries(t, tkO, originalPartitions)
 
 	if postFn != nil {
@@ -1045,6 +1055,21 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 	domOwner.Close()
 	domNonOwner.Close()
 	store.Close()
+}
+
+func haveAnyEntriesForTableID(t *testing.T, tk *testkit.TestKit, tableID int64) bool {
+	start := tablecodec.EncodeTablePrefix(tableID)
+	end := tablecodec.EncodeTablePrefix(tableID + 1)
+
+	ctx := tk.Session()
+	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
+	txn, err := ctx.Txn(true)
+	require.NoError(t, err)
+
+	it, err := txn.Iter(start, end)
+	require.NoError(t, err)
+	defer it.Close()
+	return it.Valid()
 }
 
 // HaveEntriesForTableIndex returns number of entries in the KV range of table+index or just the table if index is 0.
