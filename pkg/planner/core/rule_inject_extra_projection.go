@@ -187,8 +187,7 @@ func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDes
 	child := aggPlan.Children()[0]
 	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
 	proj := PhysicalProjection{
-		Exprs:                projExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: projExprs,
 	}.Init(aggPlan.SCtx(), child.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), aggPlan.QueryBlockOffset(), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
@@ -221,8 +220,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 		topProjExprs = append(topProjExprs, col)
 	}
 	topProj := PhysicalProjection{
-		Exprs:                topProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: topProjExprs,
 	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
@@ -254,8 +252,7 @@ func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalP
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
-		Exprs:                bottomProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: bottomProjExprs,
 	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
@@ -304,8 +301,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
 	bottomProj := PhysicalProjection{
-		Exprs:                bottomProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: bottomProjExprs,
 	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
@@ -317,8 +313,7 @@ func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*ut
 		topProjExprs = append(topProjExprs, col)
 	}
 	topProj := PhysicalProjection{
-		Exprs:                topProjExprs,
-		AvoidColumnEvaluator: false,
+		Exprs: topProjExprs,
 	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
 	topProj.SetSchema(childPlan.Schema().Clone())
 	topProj.SetChildren(bottomProj)
