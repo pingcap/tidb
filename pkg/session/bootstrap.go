@@ -852,6 +852,8 @@ const (
 	tidbDefOOMAction = "default_oom_action"
 	// The variable name in mysql.tidb table and it records the current DDLTableVersion
 	tidbDDLTableVersion = "ddl_table_version"
+	// The variable name in mysql.tidb table and it records the cluster id of this cluster
+	tidbClusterID = "cluster_id"
 	// Const for TiDB server version 2.
 	version2  = 2
 	version3  = 3
@@ -1243,11 +1245,33 @@ const (
 	// ...
 
 	// next version should start with 239
+<<<<<<< HEAD
+=======
+
+	// version 239
+	// add modify_params to tidb_global_task and tidb_global_task_history.
+	version239 = 239
+
+	// version 240
+	// Add indexes to mysql.analyze_jobs to speed up the query.
+	version240 = 240
+
+	// Add index on user field for some mysql tables.
+	version241 = 241
+
+	// version 242
+	//   insert `cluster_id` into the `mysql.tidb` table.
+	version242 = 242
+>>>>>>> f6bf8e8bec5 (bootstrap: add `cluster_id` to the `mysql.tidb` table (#59511))
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
+<<<<<<< HEAD
 var currentBootstrapVersion int64 = version223
+=======
+var currentBootstrapVersion int64 = version242
+>>>>>>> f6bf8e8bec5 (bootstrap: add `cluster_id` to the `mysql.tidb` table (#59511))
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1421,11 +1445,18 @@ var (
 		upgradeToVer216,
 		upgradeToVer217,
 		upgradeToVer218,
+<<<<<<< HEAD
 		upgradeToVer219,
 		upgradeToVer220,
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+=======
+		upgradeToVer239,
+		upgradeToVer240,
+		upgradeToVer241,
+		upgradeToVer242,
+>>>>>>> f6bf8e8bec5 (bootstrap: add `cluster_id` to the `mysql.tidb` table (#59511))
 	}
 )
 
@@ -3302,6 +3333,30 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+// writeClusterID writes cluster id into mysql.tidb
+func writeClusterID(s sessiontypes.Session) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(internalSQLTimeout)*time.Second)
+	defer cancel()
+
+	clusterID := s.GetDomain().(*domain.Domain).GetPDClient().GetClusterID(ctx)
+
+	mustExecute(s, `INSERT HIGH_PRIORITY INTO %n.%n VALUES (%?, %?, "TiDB Cluster ID.") ON DUPLICATE KEY UPDATE VARIABLE_VALUE= %?`,
+		mysql.SystemDB,
+		mysql.TiDBTable,
+		tidbClusterID,
+		clusterID,
+		clusterID,
+	)
+}
+
+func upgradeToVer242(s sessiontypes.Session, ver int64) {
+	if ver >= version242 {
+		return
+	}
+
+	writeClusterID(s)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3552,6 +3607,8 @@ func doDMLWorks(s sessiontypes.Session) {
 	writeStmtSummaryVars(s)
 
 	writeDDLTableVersion(s)
+
+	writeClusterID(s)
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
 	_, err := s.ExecuteInternal(ctx, "COMMIT")
