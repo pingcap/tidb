@@ -457,7 +457,18 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 				var e Expression
 				var err error
 				if v.FuncName.L == ast.Cast {
+<<<<<<< HEAD
 					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, v.Function.IsExplicitCharset())
+=======
+					// If the newArg is a ScalarFunction(cast), BuildCastFunctionWithCheck will modify the newArg.RetType,
+					// So we need to deep copy RetType.
+					// TODO: Expression interface needs a deep copy method.
+					if newArgFunc, ok := newArg.(*ScalarFunction); ok {
+						newArgFunc.RetType = newArgFunc.RetType.DeepCopy()
+						newArg = newArgFunc
+					}
+					e, err = BuildCastFunctionWithCheck(ctx, newArg, v.RetType, false, v.Function.IsExplicitCharset())
+>>>>>>> 73ee7e2d2b0 (expression: fix unexpected modification of shared return type of cast expr (#63072))
 					terror.Log(err)
 				} else {
 					// for grouping function recreation, use clone (meta included) instead of newFunction
