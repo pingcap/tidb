@@ -142,6 +142,7 @@ func (param *MySQLConnectParam) Connect() (*sql.DB, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
+	db.SetMaxIdleConns(128)
 	return db, nil
 }
 
