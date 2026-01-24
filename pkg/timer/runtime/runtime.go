@@ -234,7 +234,7 @@ func (rt *TimerGroupRuntime) fullRefreshTimers() {
 	rt.fullRefreshTimerCounter.Inc()
 	timers, err := rt.store.List(rt.ctx, rt.cond)
 	if err != nil {
-		rt.logger.Error("error occurs when fullRefreshTimers", zap.Error(err))
+		rt.logger.Warn("error occurs when fullRefreshTimers", zap.Error(err))
 		return
 	}
 	rt.cache.fullUpdateTimers(timers)
