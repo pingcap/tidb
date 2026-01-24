@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -213,12 +214,9 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
-<<<<<<< HEAD
 // hasDeletedExpiredRows is only used in test.
 var hasDeletedExpiredRows = atomic.Bool{}
 
-=======
->>>>>>> master
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
 		tableName = "tidb_runaway_queries"
@@ -240,7 +238,6 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
-<<<<<<< HEAD
 
 	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
 		if val.(bool) {
@@ -250,8 +247,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 			return
 		}
 	})
-=======
->>>>>>> master
+
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)

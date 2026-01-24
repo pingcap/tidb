@@ -117,14 +117,9 @@ const (
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
 	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
-<<<<<<< HEAD
-	ActionAlterTableSoftDeleteInfo              ActionType = 78
-	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 79
-=======
 	ActionAlterTableAffinity                    ActionType = 78
-	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
-	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
->>>>>>> master
+	ActionAlterTableSoftDeleteInfo              ActionType = 79
+	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -191,11 +186,6 @@ var ActionMap = map[ActionType]string{
 	ActionReorganizePartition:                   "alter table reorganize partition",
 	ActionAlterTTLInfo:                          "alter table ttl",
 	ActionAlterTTLRemove:                        "alter table no_ttl",
-<<<<<<< HEAD
-	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
-	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
-=======
->>>>>>> master
 	ActionCreateResourceGroup:                   "create resource group",
 	ActionAlterResourceGroup:                    "alter resource group",
 	ActionDropResourceGroup:                     "drop resource group",
@@ -206,12 +196,9 @@ var ActionMap = map[ActionType]string{
 	ActionAlterTableMode:                        "alter table mode",
 	ActionRefreshMeta:                           "refresh meta",
 	ActionModifySchemaReadOnly:                  "modify schema read only",
-<<<<<<< HEAD
-=======
 	ActionAlterTableAffinity:                    "alter table affinity",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
->>>>>>> master
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

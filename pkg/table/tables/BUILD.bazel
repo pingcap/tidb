@@ -80,11 +80,7 @@ go_test(
     ],
     embed = [":tables"],
     flaky = True,
-<<<<<<< HEAD
-    shard_count = 37,
-=======
     shard_count = 43,
->>>>>>> master
     deps = [
         "//pkg/ddl",
         "//pkg/domain",

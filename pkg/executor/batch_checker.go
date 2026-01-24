@@ -285,7 +285,6 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 
 // getOldRow gets the table record row from storage for batch check.
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
-<<<<<<< HEAD
 func getOldRow(
 	ctx context.Context,
 	sctx sessionctx.Context,
@@ -300,11 +299,6 @@ func getOldRow(
 		options = append(options, kv.WithReturnCommitTS())
 	}
 	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle), options...)
-=======
-func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
-	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := kv.GetValue(ctx, txn, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
->>>>>>> master
 	if err != nil {
 		return nil, 0, err
 	}

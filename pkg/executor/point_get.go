@@ -713,7 +713,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		// if the query has max execution time set, we need to set the context deadline for the get request
 		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
 		defer cancel()
-<<<<<<< HEAD
 		ctx = ctxWithTimeout
 	}
 	var avoidAllocation [1]kv.GetOption
@@ -722,11 +721,6 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		opts = append(opts, kv.WithReturnCommitTS())
 	}
 	return e.snapshot.Get(ctx, key, opts...)
-=======
-		return kv.GetValue(ctxWithTimeout, e.snapshot, key)
-	}
-	return kv.GetValue(ctx, e.snapshot, key)
->>>>>>> master
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {
@@ -758,11 +752,7 @@ func (e *PointGetExecutor) verifyTxnScope() error {
 func DecodeRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, tblInfo *model.TableInfo,
 	handle kv.Handle, rowVal []byte, commitTS uint64, chk *chunk.Chunk, rd *rowcodec.ChunkDecoder) error {
 	if rowcodec.IsNewFormat(rowVal) {
-<<<<<<< HEAD
 		return rd.DecodeToChunk(rowVal, commitTS, handle, chk)
-=======
-		return rd.DecodeToChunk(rowVal, 0, handle, chk)
->>>>>>> master
 	}
 	return decodeOldRowValToChunk(sctx, schema, tblInfo, handle, rowVal, commitTS, chk)
 }

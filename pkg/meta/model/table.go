@@ -97,7 +97,6 @@ var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
 // ExtraCommitTSName is the name of ExtraCommitTSID Column.
 var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 
-<<<<<<< HEAD
 // ExtraOriginTSName is the name of ExtraOriginTSID Column.
 var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
 
@@ -124,8 +123,6 @@ func IsSoftDeleteColumn(x ast.CIStr) bool {
 	return x == ExtraSoftDeleteTimeName
 }
 
-=======
->>>>>>> master
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
 // so a distance column will be added to table_scan. this field is used in the action.
@@ -234,11 +231,6 @@ type TableInfo struct {
 	ExchangePartitionInfo *ExchangePartitionInfo `json:"exchange_partition_info"`
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
-
-	// IsActiveActive means the table is active-active table.
-	IsActiveActive bool `json:"is_active_active,omitempty"`
-	// SoftdeleteInfo is softdelete TTL. It is required if IsActiveActive == true.
-	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 
 	// Affinity stores the affinity info for the table
 	// If it is nil, it means no affinity
@@ -1524,7 +1516,6 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 
 // SoftdeleteInfo records the Softdelete config.
 type SoftdeleteInfo struct {
-<<<<<<< HEAD
 	// Retention specifies how long soft-deleted data is kept.
 	Retention     string           `json:"retention,omitempty"`
 	RetentionUnit ast.TimeUnitType `json:"retention_unit,omitempty"`
@@ -1577,17 +1568,6 @@ func (s *SoftdeleteInfo) GetJobInterval() (time.Duration, error) {
 		return duration.ParseDuration(DefaultSoftDeleteJobInterval)
 	}
 	return duration.ParseDuration(s.JobInterval)
-=======
-	Retention string `json:"retention,omitempty"`
-	// JobEnable is used to control the cleanup JobEnable
-	JobEnable   bool   `json:"job_enable,omitempty"`
-	JobInterval string `json:"job_interval,omitempty"`
-}
-
-// Clone clones TTLInfo
-func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
-	cloned := *t
-	return &cloned
 }
 
 // TableAffinityInfo indicates the data affinity information of the table.
@@ -1617,5 +1597,4 @@ func NewTableAffinityInfoWithLevel(level string) (*TableAffinityInfo, error) {
 func (t *TableAffinityInfo) Clone() *TableAffinityInfo {
 	cloned := *t
 	return &cloned
->>>>>>> master
 }

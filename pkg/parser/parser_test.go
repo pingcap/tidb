@@ -8193,7 +8193,6 @@ func TestPartialIndex(t *testing.T) {
 	RunTest(t, cases, false)
 }
 
-<<<<<<< HEAD
 func TestRecoverValuesStmt(t *testing.T) {
 	cases := []testCase{
 		{"recover values from t where a > 1", true, "RECOVER VALUES FROM `t` WHERE `a`>1"},
@@ -8202,7 +8201,8 @@ func TestRecoverValuesStmt(t *testing.T) {
 		{"recover values from t123 where a > (select b from t)", true, "RECOVER VALUES FROM `t123` WHERE `a`>(SELECT `b` FROM `t`)"},
 	}
 	RunTest(t, cases, false)
-=======
+}
+
 func TestTableAffinityOption(t *testing.T) {
 	table := []testCase{
 		// create table with affinity option
@@ -8227,5 +8227,4 @@ func TestTableAffinityOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
->>>>>>> master
 }

@@ -13152,7 +13152,6 @@ TableOption:
 		}
 		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
 	}
-<<<<<<< HEAD
 |	"SOFTDELETE" EqOpt "RETENTION" NUM TimeUnit
 	{
 		$$ = &ast.TableOption{
@@ -13201,7 +13200,7 @@ TableOption:
 			yylex.AppendError(yylex.Errorf("The ACTIVE_ACTIVE option must be 'ON' or 'OFF'"))
 			return 1
 		}
-=======
+	}
 |	"AUTOEXTEND_SIZE" EqOpt StringName
 	{
 		// Parse it but will ignore it
@@ -13257,7 +13256,6 @@ TableOption:
 		$$ = &ast.TableOption{Tp: ast.TableOptionIetfQuotes, StrValue: $3}
 		yylex.AppendError(yylex.Errorf("The IETF_QUOTES option is parsed but ignored by all storage engines."))
 		parser.lastErrorAsWarn()
->>>>>>> master
 	}
 
 ForceOpt:

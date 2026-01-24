@@ -389,7 +389,6 @@ func NewExtraCommitTSColInfo() *ColumnInfo {
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
 }
-<<<<<<< HEAD
 
 // NewExtraOriginTSColInfo mocks a column info for extra origin ts column.
 func NewExtraOriginTSColInfo() *ColumnInfo {
@@ -418,5 +417,3 @@ func NewExtraSoftDeleteTimeColInfo() *ColumnInfo {
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
 }
-=======
->>>>>>> master

@@ -3071,7 +3071,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
-<<<<<<< HEAD
 	case TableOptionSoftDelete:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE ")
@@ -3095,7 +3094,39 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 	case TableOptionSoftDeleteJobInterval:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL ")
-=======
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionAffinity:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
+			ctx.WriteKeyWord("AFFINITY ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+	case TableOptionSoftDeleteJobEnable:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case TableOptionActiveActive:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
 	case TableOptionAutoextendSize:
 		ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
 		ctx.WritePlain("= ")
@@ -3132,39 +3163,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain("= ")
 		ctx.WritePlainf("%d", n.UintValue)
 		return nil
-	case TableOptionAffinity:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
-			ctx.WriteKeyWord("AFFINITY ")
->>>>>>> master
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-			return nil
-		})
-<<<<<<< HEAD
-	case TableOptionSoftDeleteJobEnable:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
-			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
-			ctx.WritePlain("= ")
-			if n.BoolValue {
-				ctx.WriteString("ON")
-			} else {
-				ctx.WriteString("OFF")
-			}
-			return nil
-		})
-	case TableOptionActiveActive:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
-			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
-			ctx.WritePlain("= ")
-			if n.BoolValue {
-				ctx.WriteString("ON")
-			} else {
-				ctx.WriteString("OFF")
-			}
-			return nil
-		})
-=======
->>>>>>> master
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}

@@ -789,6 +789,26 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateTiDBSoftDeleteTableStatusTable is a table about softdelete job schedule
+	CreateTiDBSoftDeleteTableStatusTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_softdelete_table_status (
+		table_id bigint(64) PRIMARY KEY,
+		parent_table_id bigint(64),
+		table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+		last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 )
 
 // all below are related to DDL or DXF tables

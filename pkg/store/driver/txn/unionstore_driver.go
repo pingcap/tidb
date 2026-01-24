@@ -57,13 +57,10 @@ func (m *memBuffer) UpdateFlags(k kv.Key, ops ...kv.FlagsOp) {
 	m.MemBuffer.UpdateFlags(k, getTiKVFlagsOps(ops)...)
 }
 
-<<<<<<< HEAD
-=======
 func (m *memBuffer) UpdateAssertionFlags(k kv.Key, op kv.AssertionOp) {
 	m.MemBuffer.UpdateFlags(k, getTiKVAssertionOp(op))
 }
 
->>>>>>> master
 func (m *memBuffer) Get(ctx context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
 	data, err := m.MemBuffer.Get(ctx, key, options...)
 	return data, derr.ToTiDBErr(err)
