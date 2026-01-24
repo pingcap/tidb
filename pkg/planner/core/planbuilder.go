@@ -2199,6 +2199,32 @@ func (b *PlanBuilder) getMustAnalyzedColumns(tbl *resolve.TableNameW, cols *calc
 		if err != nil {
 			return nil, err
 		}
+<<<<<<< HEAD
+=======
+		virtualExprs := make([]expression.Expression, 0, len(tblInfo.Columns))
+		for _, idx := range tblInfo.Indices {
+			if idx.State != model.StatePublic || idx.MVIndex || idx.IsColumnarIndex() {
+				continue
+			}
+			for _, idxCol := range idx.Columns {
+				colInfo := tblInfo.Columns[idxCol.Offset]
+				cols.data[colInfo.ID] = struct{}{}
+				if expr := columns[idxCol.Offset].VirtualExpr; expr != nil {
+					virtualExprs = append(virtualExprs, expr)
+				}
+			}
+		}
+		for len(virtualExprs) > 0 {
+			relatedCols := expression.ExtractColumnsFromExpressions(virtualExprs, nil)
+			virtualExprs = virtualExprs[:0]
+			for _, col := range relatedCols {
+				cols.data[col.ID] = struct{}{}
+				if col.VirtualExpr != nil {
+					virtualExprs = append(virtualExprs, col.VirtualExpr)
+				}
+			}
+		}
+>>>>>>> 2a522358ceb (planner,expression: remove duplicates in the ExtractColumnsFromExpressions (#62791))
 	}
 	if tblInfo.PKIsHandle {
 		pkCol := tblInfo.GetPkColInfo()
