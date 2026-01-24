@@ -288,7 +288,7 @@ func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName 
 		switch element := item.(type) {
 		case *ast.HintTable:
 			// Direct table reference in LEADING hint
-			dbMatch := element.DBName.L == "" || element.DBName.L == dbName
+			dbMatch := element.DBName.L == "" || element.DBName.L == dbName || element.DBName.L == "*"
 			tableMatch := element.TableName.L == tableName
 			if dbMatch && tableMatch {
 				return true
