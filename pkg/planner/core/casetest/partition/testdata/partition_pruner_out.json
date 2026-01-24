@@ -215,6 +215,30 @@
           "└─Selection 250.00 cop[tikv]  ge(test_partition.t10.a, 0), le(test_partition.t10.a, 15218001646226433652)",
           "  └─TableFullScan 10000.00 cop[tikv] table:t10 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t11 where a is null",
+        "Result": [
+          "TableReader 10.00 root partition:all data:Selection",
+          "└─Selection 10.00 cop[tikv]  isnull(test_partition.t11.a)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t11 where a is null and b = 2",
+        "Result": [
+          "TableReader 0.01 root partition:p0 data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test_partition.t11.b, 2), isnull(test_partition.t11.a)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'brief' select * from t11 where a = 1 and b = 2",
+        "Result": [
+          "TableReader 0.01 root partition:p0 data:Selection",
+          "└─Selection 0.01 cop[tikv]  eq(test_partition.t11.a, 1), eq(test_partition.t11.b, 2)",
+          "  └─TableFullScan 10000.00 cop[tikv] table:t11 keep order:false, stats:pseudo"
+        ]
       }
     ]
   },
