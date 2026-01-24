@@ -6797,6 +6797,7 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260123000903-a6b6f87a1b79.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260123000903-a6b6f87a1b79.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260123000903-a6b6f87a1b79.zip",
+            "https://proxy.golang.org/github.com/pingcap/kvproto/@v/v0.0.0-20260123000903-a6b6f87a1b79.zip",
         ],
     )
     go_repository(
