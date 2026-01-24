@@ -1,4 +1,4 @@
-// Copyright 2021 PingCAP, Inc.
+// Copyright 2024 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,17 +15,32 @@
 package collate
 
 import (
+	_ "embed"
+	"encoding/binary"
 	"unicode/utf8"
 
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 )
 
-type gbkChineseCICollator struct {
+//go:embed gb18030_weight.data
+var gb18030WeightData []byte
+
+const (
+	// Unicode code points up to U+10FFFF can be encoded as GB18030.
+	gb18030MaxCodePoint = 0x10FFFF
+)
+
+type gb18030ChineseCICollator struct {
+}
+
+// Clone implements Collator interface.
+func (*gb18030ChineseCICollator) Clone() Collator {
+	return new(gb18030ChineseCICollator)
 }
 
 // Compare implements Collator interface.
-func (*gbkChineseCICollator) Compare(a, b string) int {
+func (*gb18030ChineseCICollator) Compare(a, b string) int {
 	a = truncateTailingSpace(a)
 	b = truncateTailingSpace(b)
 
@@ -43,7 +58,7 @@ func (*gbkChineseCICollator) Compare(a, b string) int {
 		ai = ai + r1Len
 		bi = bi + r2Len
 
-		cmp := int(gbkChineseCISortKey(r1)) - int(gbkChineseCISortKey(r2))
+		cmp := int(gb18030ChineseCISortKey(r1)) - int(gb18030ChineseCISortKey(r2))
 		if cmp != 0 {
 			return sign(cmp)
 		}
@@ -52,12 +67,12 @@ func (*gbkChineseCICollator) Compare(a, b string) int {
 }
 
 // Key implements Collator interface.
-func (g *gbkChineseCICollator) Key(str string) []byte {
+func (g *gb18030ChineseCICollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
 // KeyWithoutTrimRightSpace implement Collator interface.
-func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
+func (*gb18030ChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
 	i, rLen := 0, 0
 	r := rune(0)
@@ -69,41 +84,47 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 		}
 
 		i = i + rLen
-		u16 := gbkChineseCISortKey(r)
-		if u16 > 0xFF {
-			buf = append(buf, byte(u16>>8))
+		u32 := gb18030ChineseCISortKey(r)
+		if u32 > 0xFFFFFF {
+			buf = append(buf, byte(u32>>24))
 		}
-		buf = append(buf, byte(u16))
+		if u32 > 0xFFFF {
+			buf = append(buf, byte(u32>>16))
+		}
+		if u32 > 0xFF {
+			buf = append(buf, byte(u32>>8))
+		}
+		buf = append(buf, byte(u32))
 	}
 	return buf
 }
 
 // Pattern implements Collator interface.
-func (*gbkChineseCICollator) Pattern() WildcardPattern {
-	return &gbkChineseCIPattern{}
+func (*gb18030ChineseCICollator) Pattern() WildcardPattern {
+	return &gb18030ChineseCIPattern{}
 }
 
-type gbkChineseCIPattern struct {
+type gb18030ChineseCIPattern struct {
 	patChars []rune
 	patTypes []byte
 }
 
 // Compile implements WildcardPattern interface.
-func (p *gbkChineseCIPattern) Compile(patternStr string, escape byte) {
+func (p *gb18030ChineseCIPattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = stringutil.CompilePatternInner(patternStr, escape)
 }
 
 // DoMatch implements WildcardPattern interface.
-func (p *gbkChineseCIPattern) DoMatch(str string) bool {
+func (p *gb18030ChineseCIPattern) DoMatch(str string) bool {
 	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
-		return gbkChineseCISortKey(a) == gbkChineseCISortKey(b)
+		return gb18030ChineseCISortKey(a) == gb18030ChineseCISortKey(b)
 	})
 }
 
-func gbkChineseCISortKey(r rune) uint16 {
-	if r > 0xFFFF {
+func gb18030ChineseCISortKey(r rune) uint32 {
+	if r > gb18030MaxCodePoint {
 		return 0x3F
 	}
 
-	return gbkChineseCISortKeyTable[r]
+	return binary.LittleEndian.Uint32(gb18030WeightData[4*r : 4*r+4])
 }
