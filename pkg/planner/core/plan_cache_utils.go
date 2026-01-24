@@ -743,6 +743,7 @@ type PlanCacheStmt struct {
 	ForUpdateRead       bool
 	SnapshotTSEvaluator func(context.Context, sessionctx.Context) (uint64, error)
 
+	// BindingInfo caches normalization results for binding matching across executions.
 	BindingInfo bindinfo.BindingMatchInfo
 
 	// the different between NormalizedSQL, NormalizedSQL4PC and StmtText:
