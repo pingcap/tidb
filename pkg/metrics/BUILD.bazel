@@ -29,7 +29,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/metrics",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/disttask/framework/proto",
         "//pkg/lightning/metric",
         "//pkg/parser/terror",
         "//pkg/timer/metrics",

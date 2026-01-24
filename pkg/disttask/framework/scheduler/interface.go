@@ -29,6 +29,8 @@ type TaskManager interface {
 	// to make sure lower rank tasks can be scheduled if resource is enough.
 	// The returned tasks are sorted by task order, see proto.Task.
 	GetTopUnfinishedTasks(ctx context.Context) ([]*proto.TaskBase, error)
+	// GetAllTasks gets all tasks with basic columns.
+	GetAllTasks(ctx context.Context) ([]*proto.TaskBase, error)
 	// GetAllSubtasks gets all subtasks with basic columns.
 	GetAllSubtasks(ctx context.Context) ([]*proto.SubtaskBase, error)
 	GetTasksInStates(ctx context.Context, states ...any) (task []*proto.Task, err error)

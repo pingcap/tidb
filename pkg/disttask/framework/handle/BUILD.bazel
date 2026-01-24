@@ -8,7 +8,6 @@ go_library(
     deps = [
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/storage",
-        "//pkg/metrics",
         "//pkg/util/backoff",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
