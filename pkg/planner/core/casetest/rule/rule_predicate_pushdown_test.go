@@ -18,6 +18,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
@@ -55,5 +56,48 @@ func TestConstantPropagateWithCollation(t *testing.T) {
 		tk.MustExec(`create table foo(a int, b int, c int, primary key(a));`)
 		tk.MustExec(`create table bar(a int, b int, c int, primary key(a));`)
 		runPredicatePushdownTestData(t, tk, cascades, "TestConstantPropagateWithCollation")
+	})
+}
+
+func TestPredicatePushDown(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		testKit.MustExec("use test")
+
+		testKit.MustExec("drop table if exists crm_rd_150m")
+		testKit.MustExec(`CREATE TABLE crm_rd_150m (
+	product varchar(256) DEFAULT NULL,
+		uks varchar(16) DEFAULT NULL,
+		brand varchar(256) DEFAULT NULL,
+		cin varchar(16) DEFAULT NULL,
+		created_date timestamp NULL DEFAULT NULL,
+		quantity int(11) DEFAULT NULL,
+		amount decimal(11,0) DEFAULT NULL,
+		pl_date timestamp NULL DEFAULT NULL,
+		customer_first_date timestamp NULL DEFAULT NULL,
+		recent_date timestamp NULL DEFAULT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;`)
+
+		// Create virtual tiflash replica info.
+		testkit.SetTiFlashReplica(t, dom, "test", "crm_rd_150m")
+
+		testKit.MustExec("set @@session.tidb_isolation_read_engines = 'tiflash'")
+		testKit.MustExec("explain format = 'brief' SELECT /* issue:15110 */ count(*) FROM crm_rd_150m dataset_48 WHERE (CASE WHEN (month(dataset_48.customer_first_date)) <= 30 THEN '新客' ELSE NULL END) IS NOT NULL;")
+
+		testKit.MustExec("drop table if exists t31202")
+		testKit.MustExec("create table t31202(a int primary key, b int);")
+
+		// Set the hacked TiFlash replica for explain tests.
+		testkit.SetTiFlashReplica(t, dom, "test", "t31202")
+
+		testKit.MustQuery("explain format = 'brief' select /* issue:31202 */ * from t31202;").Check(testkit.Rows(
+			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─TableFullScan 10000.00 mpp[tiflash] table:t31202 keep order:false, stats:pseudo"))
+
+		testKit.MustExec("set @@session.tidb_isolation_read_engines = 'tikv'")
+		testKit.MustQuery("explain format = 'brief' select /* issue:31202 */ * from t31202 use index (primary);").Check(testkit.Rows(
+			"TableReader 10000.00 root  data:TableFullScan",
+			"└─TableFullScan 10000.00 cop[tikv] table:t31202 keep order:false, stats:pseudo"))
+		testKit.MustExec("drop table if exists t31202")
 	})
 }

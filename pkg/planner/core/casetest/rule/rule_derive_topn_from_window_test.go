@@ -15,11 +15,13 @@
 package rule
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/stretchr/testify/require"
 )
 
 type Input []string
@@ -49,5 +51,30 @@ func TestPushDerivedTopnFlash(t *testing.T) {
 			})
 			plan.Check(testkit.Rows(output[i].Plan...))
 		}
+	})
+}
+
+func TestTopNPushdown(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+
+		testKit.MustExec(`drop table if exists t3`)
+		testKit.MustExec(`CREATE TABLE t3(c0 INT, primary key(c0))`)
+		testKit.MustExec(`insert into t3 values(1), (2), (3), (4), (5), (6), (7), (8), (9), (10)`)
+		rs := testKit.MustQuery(`SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).Rows()
+		lastVal := -1.0
+		for _, r := range rs {
+			v := r[0].(string)
+			val, err := strconv.ParseFloat(v, 64)
+			require.NoError(t, err)
+			require.True(t, val >= lastVal)
+			lastVal = val
+		}
+
+		testKit.MustQuery(`explain format='brief' SELECT /* issue:37986 */ v2.c0 FROM (select rand() as c0 from t3) v2 order by v2.c0 limit 10`).
+			Check(testkit.Rows(`TopN 10.00 root  Column#3, offset:0, count:10`,
+				`└─Projection 10000.00 root  rand()->Column#3`,
+				`  └─TableReader 10000.00 root  data:TableFullScan`,
+				`    └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 	})
 }

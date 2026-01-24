@@ -64,3 +64,16 @@ func TestOuterToSemiJoin(tt *testing.T) {
 		}
 	})
 }
+
+func TestSemiJoinRewrite(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+
+		tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
+		tk.MustExec(`create table t2 (id bigint(20), k int)`)
+
+		// issue:58829
+		// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
+		tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ /* issue:58829 */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+	})
+}
