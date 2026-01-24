@@ -156,6 +156,8 @@ type HashAggExec struct {
 	isChildDrained bool
 
 	invalidMemoryUsageForTrackingTest bool
+
+	FileNamePrefixForTest string
 }
 
 // Close implements the Executor Close interface.
@@ -275,7 +277,7 @@ func (e *HashAggExec) initForUnparallelExec() {
 	e.offsetOfSpilledChks, e.numOfSpilledChks = 0, 0
 	e.executed.Store(false)
 	e.isChildDrained = false
-	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)))
+	e.dataInDisk = chunk.NewDataInDiskByChunks(exec.RetTypes(e.Children(0)), e.FileNamePrefixForTest)
 
 	e.tmpChkForSpill = exec.TryNewCacheChunk(e.Children(0))
 	if vars := e.Ctx().GetSessionVars(); vars.TrackAggregateMemoryUsage && variable.EnableTmpStorageOnOOM.Load() {
@@ -300,23 +302,24 @@ func (e *HashAggExec) initPartialWorkers(partialConcurrency int, finalConcurrenc
 		}
 
 		e.partialWorkers[i] = HashAggPartialWorker{
-			baseHashAggWorker:    newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
-			idForTest:            i,
-			ctx:                  ctx,
-			inputCh:              e.partialInputChs[i],
-			outputChs:            e.partialOutputChs,
-			giveBackCh:           e.inputCh,
-			BInMaps:              make([]int, finalConcurrency),
-			partialResultsBuffer: make([][]aggfuncs.PartialResult, 0, 2048),
-			globalOutputCh:       e.finalOutputCh,
-			partialResultsMap:    partialResultsMap,
-			groupByItems:         e.GroupByItems,
-			chk:                  exec.TryNewCacheChunk(e.Children(0)),
-			groupKey:             make([][]byte, 0, 8),
-			serializeHelpers:     aggfuncs.NewSerializeHelper(),
-			isSpillPrepared:      false,
-			spillHelper:          e.spillHelper,
-			inflightChunkSync:    e.inflightChunkSync,
+			baseHashAggWorker:     newBaseHashAggWorker(e.finishCh, e.PartialAggFuncs, e.MaxChunkSize(), e.memTracker),
+			idForTest:             i,
+			ctx:                   ctx,
+			inputCh:               e.partialInputChs[i],
+			outputChs:             e.partialOutputChs,
+			giveBackCh:            e.inputCh,
+			BInMaps:               make([]int, finalConcurrency),
+			partialResultsBuffer:  make([][]aggfuncs.PartialResult, 0, 2048),
+			globalOutputCh:        e.finalOutputCh,
+			partialResultsMap:     partialResultsMap,
+			groupByItems:          e.GroupByItems,
+			chk:                   e.NewChunkWithCapacity(e.Children(0).RetFieldTypes(), 0, e.MaxChunkSize()),
+			groupKey:              make([][]byte, 0, 8),
+			serializeHelpers:      aggfuncs.NewSerializeHelper(),
+			isSpillPrepared:       false,
+			spillHelper:           e.spillHelper,
+			inflightChunkSync:     e.inflightChunkSync,
+			fileNamePrefixForTest: e.FileNamePrefixForTest,
 		}
 
 		memUsage += e.partialWorkers[i].chk.MemoryUsage()
@@ -469,6 +472,17 @@ func (e *HashAggExec) fetchChildData(ctx context.Context, waitGroup *sync.WaitGr
 
 			for i := range e.partialWorkers {
 				e.spillHelper.addListInDisks(e.partialWorkers[i].spilledChunksIO)
+				e.partialWorkers[i].spilledChunksIO = e.partialWorkers[i].spilledChunksIO[:0]
+			}
+		}
+
+		// When error happens, some disk files may not be closed.
+		// We need to manually check and close them.
+		for i := range e.partialWorkers {
+			if len(e.partialWorkers[i].spilledChunksIO) > 0 {
+				for _, disk := range e.partialWorkers[i].spilledChunksIO {
+					disk.Close()
+				}
 			}
 		}
 

@@ -63,6 +63,8 @@ type SortExec struct {
 	// The multi-way merge algorithm can refer to https://en.wikipedia.org/wiki/K-way_merge_algorithm
 	multiWayMerge *multiWayMerger
 
+	FileNamePrefixForTest string
+
 	Unparallel struct {
 		Idx int
 
@@ -172,7 +174,7 @@ func (e *SortExec) Open(ctx context.Context) error {
 		e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 		e.Parallel.closeSync = make(chan struct{})
 		e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
-		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
+		e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel, e.FileNamePrefixForTest)
 		e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 		for i := range e.Parallel.sortedRowsIters {
 			e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
@@ -187,7 +189,8 @@ func (e *SortExec) Open(ctx context.Context) error {
 
 // InitInParallelModeForTest is a function for test
 // After system variable is added, we can delete this function
-func (e *SortExec) InitInParallelModeForTest() {
+func (e *SortExec) InitInParallelModeForTest(fileNamePrefixForTest string) {
+	e.FileNamePrefixForTest = fileNamePrefixForTest
 	e.Parallel.workers = make([]*parallelSortWorker, e.Ctx().GetSessionVars().ExecutorConcurrency)
 	e.Parallel.chunkChannel = make(chan *chunkWithMemoryUsage, e.Ctx().GetSessionVars().ExecutorConcurrency)
 	e.Parallel.fetcherAndWorkerSyncer = &sync.WaitGroup{}
@@ -195,7 +198,7 @@ func (e *SortExec) InitInParallelModeForTest() {
 	e.Parallel.resultChannel = make(chan rowWithError, e.MaxChunkSize())
 	e.Parallel.closeSync = make(chan struct{})
 	e.Parallel.merger = newMultiWayMerger(&memorySource{sortedRowsIters: e.Parallel.sortedRowsIters}, e.lessRow)
-	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel)
+	e.Parallel.spillHelper = newParallelSortSpillHelper(e, exec.RetTypes(e), e.finishCh, e.lessRow, e.Parallel.resultChannel, fileNamePrefixForTest)
 	e.Parallel.spillAction = newParallelSortSpillDiskAction(e.Parallel.spillHelper)
 	for i := range e.Parallel.sortedRowsIters {
 		e.Parallel.sortedRowsIters[i] = chunk.NewIterator4Slice(nil)
@@ -548,7 +551,7 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 		}
 	}
 
-	e.curPartition = newSortPartition(fields, byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit)
+	e.curPartition = newSortPartition(fields, byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit, e.FileNamePrefixForTest)
 	e.curPartition.getMemTracker().AttachTo(e.memTracker)
 	e.curPartition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.Unparallel.spillAction = e.curPartition.actionSpill()
