@@ -1,7 +1,7 @@
 # TestIssue35686
 ## This query should not panic
 --disable_result_log
-select * from information_schema.ddl_jobs as of timestamp now(6) - interval 1 second;
+select * from information_schema.ddl_jobs as of timestamp now(6) - interval 1 microsecond;
 --enable_result_log
 
 # TestIssue31954
