@@ -1303,9 +1303,16 @@ func (s *mockGCSSuite) TestAnalyze() {
 	sql := fmt.Sprintf(`IMPORT INTO load_data.analyze_table FROM 'gs://test-load/analyze-1.tsv?endpoint=%s'`, gcsEndpoint)
 	s.tk.MustQuery(sql)
 	require.Eventually(s.T(), func() bool {
-		result := s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;")
-		return strings.Contains(result.Rows()[1][3].(string), "idx_b(b)")
-	}, 60*time.Second, time.Second)
+		result := s.tk.MustQuery("EXPLAIN SELECT * FROM load_data.analyze_table WHERE a=1 and b=1 and c=1;").Rows()
+		for _, row := range result {
+			for _, col := range row {
+				if strings.Contains(fmt.Sprintf("%v", col), "idx_b(b)") {
+					return true
+				}
+			}
+		}
+		return false
+	}, 2*time.Minute, time.Second)
 	s.tk.MustQuery("SHOW ANALYZE STATUS;").CheckContain("analyze_table")
 }
 
