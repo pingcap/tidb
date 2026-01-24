@@ -44,6 +44,14 @@ func newSlowQueryLogger(cfg *LogConfig) (*zap.Logger, *log.ZapProperties, error)
 	return sqLogger, prop, nil
 }
 
+func newSlowQueryLoggerFromZapLogger(l *zap.Logger, p *log.ZapProperties) *zap.Logger {
+	newCore := log.NewTextCore(&slowLogEncoder{}, p.Syncer, p.Level)
+	sqLogger := l.WithOptions(zap.WrapCore(func(zapcore.Core) zapcore.Core {
+		return newCore
+	}))
+	return sqLogger
+}
+
 func newSlowQueryLogConfig(cfg *LogConfig) *log.Config {
 	// copy the global log config to slow log config
 	// if the filename of slow log config is empty, slow log will behave the same as global log.
