@@ -442,7 +442,7 @@ func (w *backfillWorker) run(d *ddlCtx, bf backfiller, job *model.Job) {
 			return
 		}
 		curTaskID = task.id
-		d.setDDLLabelForTopSQL(job.ID, job.Query)
+		d.setDDLLabelForTopProfiling(job.ID, job.Query)
 
 		logger.Debug("backfill worker got task", zap.Int("workerID", w.GetCtx().id), zap.Stringer("task", task))
 		failpoint.Inject("mockBackfillRunErr", func() {

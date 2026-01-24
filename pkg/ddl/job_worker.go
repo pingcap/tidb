@@ -484,8 +484,8 @@ func finishRecoverSchema(w *worker, job *model.Job) error {
 	return nil
 }
 
-func (w *ReorgContext) setDDLLabelForTopSQL(jobQuery string) {
-	if !topsqlstate.TopSQLEnabled() || jobQuery == "" {
+func (w *ReorgContext) setDDLLabelForTopProfiling(jobQuery string) {
+	if !topsqlstate.TopProfilingEnabled() || jobQuery == "" {
 		return
 	}
 
@@ -563,7 +563,7 @@ func (w *worker) prepareTxn(job *model.Job) (kv.Transaction, error) {
 	if w.tp != generalWorker && job.IsRunning() {
 		txn.SetDiskFullOpt(kvrpcpb.DiskFullOpt_NotAllowedOnFull)
 	}
-	w.setDDLLabelForTopSQL(job.ID, job.Query)
+	w.setDDLLabelForTopProfiling(job.ID, job.Query)
 	w.setDDLSourceForDiagnosis(job.ID, job.Type)
 	jobContext := w.jobContext(job.ID, job.ReorgMeta)
 	if tagger := w.getResourceGroupTaggerForTopSQL(job.ID); tagger != nil {

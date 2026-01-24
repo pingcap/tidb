@@ -1571,7 +1571,7 @@ func checkIfTableReorgWorkCanSkip(
 	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
-	ctx.setDDLLabelForTopSQL(job.Query)
+	ctx.setDDLLabelForTopProfiling(job.Query)
 	if isEmpty, err := checkIfTableIsEmpty(ctx, store, tbl, startTS); err != nil || !isEmpty {
 		return false
 	}
@@ -1667,7 +1667,7 @@ func checkIfTempIndexReorgWorkCanSkip(
 	startTS := txn.StartTS()
 	ctx := NewReorgContext()
 	ctx.resourceGroupName = job.ReorgMeta.ResourceGroupName
-	ctx.setDDLLabelForTopSQL(job.Query)
+	ctx.setDDLLabelForTopProfiling(job.Query)
 	firstIdxID := allIndexInfos[0].ID
 	lastIdxID := allIndexInfos[len(allIndexInfos)-1].ID
 	var globalIdxIDs []int64
