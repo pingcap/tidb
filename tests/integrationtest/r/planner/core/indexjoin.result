@@ -1172,7 +1172,7 @@ Sort	root		planner__core__indexjoin.td89f296a.col_64, Column, Column, Column
     │   └─TableFullScan	cop[tikv]	table:td89f296a	keep order:false, stats:pseudo
     └─Projection(Probe)	root		planner__core__indexjoin.tac9d3b07.col_61, ifnull(cast(cast(planner__core__indexjoin.tac9d3b07.col_61, bigint BINARY), bigint UNSIGNED BINARY), 18446744073709551615)->Column
       └─IndexLookUp	root		
-        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#16)], keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#18)], keep order:false, stats:pseudo
         └─TableRowIDScan(Probe)	cop[tikv]	table:tac9d3b07	keep order:false, stats:pseudo
 select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 r0	r1	r2	r3

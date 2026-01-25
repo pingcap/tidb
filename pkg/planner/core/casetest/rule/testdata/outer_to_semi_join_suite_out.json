@@ -648,6 +648,24 @@
         "Result": [
           "1 10"
         ]
+      },
+      {
+        "SQL": "SELECT * FROM t1 LEFT JOIN (t2 LEFT JOIN t3 ON t3.i = t2.i) ON t2.i = t1.i WHERE t3.i IS NULL",
+        "Plan": [
+          "Selection root  isnull(test.t3.i)",
+          "└─HashJoin root  left outer join, left side:TableReader, equal:[eq(test.t1.i, test.t2.i)]",
+          "  ├─TableReader(Build) root  data:TableFullScan",
+          "  │ └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  left outer join, left side:TableReader, equal:[eq(test.t2.i, test.t3.i)]",
+          "    ├─TableReader(Build) root  data:TableFullScan",
+          "    │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  data:TableFullScan",
+          "      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Result": [
+          "3 3 <nil>",
+          "2 <nil> <nil>"
+        ]
       }
     ]
   }
