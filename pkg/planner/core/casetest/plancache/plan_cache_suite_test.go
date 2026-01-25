@@ -402,10 +402,10 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf("drop table if exists %s", t2Name))
 	tk.MustExec(fmt.Sprintf("create table %s (a int, b int)", t1Name))
 	tk.MustExec(fmt.Sprintf("create table %s (a int, b int, key(b, a))", t2Name))
-	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s left join %s on %s.a=%s.a where %s.b in (?)'",
+	tk.MustExec(fmt.Sprintf("prepare st from 'select * from %s left join %s on %s.a=%s.a where %s.b in (?, ?)'",
 		t1Name, t2Name, t1Name, t2Name, t2Name))
-	tk.MustExec("set @b=1")
-	tk.MustExec("execute st using @b")
+	tk.MustExec("set @b=1, @c=2")
+	tk.MustExec("execute st using @b, @c")
 
 	tkProcess := tk.Session().ShowProcess()
 	ps := []*sessmgr.ProcessInfo{tkProcess}
