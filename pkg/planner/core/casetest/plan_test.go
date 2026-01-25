@@ -224,6 +224,7 @@ func TestPlanDigest4InList(t *testing.T) {
 		tk.MustExec("create table t (a int);")
 		tk.MustExec("set global tidb_ignore_inlist_plan_digest=true;")
 		tk.Session().GetSessionVars().PlanID.Store(0)
+		var queriesGroup1, queriesGroup2 []string
 		queriesGroup1 = []string{
 			"select * from t where a in (1, 2);",
 			"select a in (1, 2) from t;",
