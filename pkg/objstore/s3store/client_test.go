@@ -16,6 +16,8 @@ package s3store
 
 import (
 	"context"
+	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -23,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 	"github.com/pingcap/errors"
+	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/stretchr/testify/require"
@@ -217,6 +220,157 @@ func TestClientListObjects(t *testing.T) {
 	_, err = cli.ListObjects(ctx, "target", nil, 100)
 	require.ErrorContains(t, err, "mock list error")
 	require.True(t, s.Controller.Satisfied())
+}
+
+func assertContentMD5Option(t *testing.T, optFns []func(*s3.Options), expect bool) {
+	t.Helper()
+	if !expect {
+		require.Len(t, optFns, 0)
+		return
+	}
+	require.Len(t, optFns, 1)
+	require.Equal(t, reflect.ValueOf(withContentMD5).Pointer(), reflect.ValueOf(optFns[0]).Pointer())
+}
+
+func TestContentMD5OptionForS3Compatible(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("PutObject", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			s3Compatible bool
+		}{
+			{name: "official_s3", s3Compatible: false},
+			{name: "s3_compatible", s3Compatible: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := CreateS3Suite(t)
+				cli := &s3Client{
+					svc:          s.MockS3,
+					BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+					options:      &backuppb.S3{Bucket: "bucket"},
+					s3Compatible: tc.s3Compatible,
+				}
+
+				s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.Equal(t, "prefix/object", aws.ToString(input.Key))
+						assertContentMD5Option(t, optFns, tc.s3Compatible)
+						return &s3.PutObjectOutput{}, nil
+					})
+
+				require.NoError(t, cli.PutObject(ctx, "object", []byte("data")))
+				require.True(t, s.Controller.Satisfied())
+			})
+		}
+	})
+
+	t.Run("CheckPutAndDeleteObject", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			s3Compatible bool
+		}{
+			{name: "official_s3", s3Compatible: false},
+			{name: "s3_compatible", s3Compatible: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := CreateS3Suite(t)
+				cli := &s3Client{
+					svc:          s.MockS3,
+					BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+					s3Compatible: tc.s3Compatible,
+				}
+
+				s.MockS3.EXPECT().PutObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.PutObjectInput, optFns ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.True(t, strings.HasPrefix(aws.ToString(input.Key), "prefix/perm-check/"))
+						assertContentMD5Option(t, optFns, tc.s3Compatible)
+						return &s3.PutObjectOutput{}, nil
+					})
+				s.MockS3.EXPECT().DeleteObject(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.DeleteObjectInput, _ ...func(*s3.Options)) (*s3.DeleteObjectOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.True(t, strings.HasPrefix(aws.ToString(input.Key), "prefix/perm-check/"))
+						return &s3.DeleteObjectOutput{}, nil
+					})
+
+				require.NoError(t, cli.CheckPutAndDeleteObject(ctx))
+				require.True(t, s.Controller.Satisfied())
+			})
+		}
+	})
+
+	t.Run("MultipartWriterUploadPart", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			s3Compatible bool
+		}{
+			{name: "official_s3", s3Compatible: false},
+			{name: "s3_compatible", s3Compatible: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := CreateS3Suite(t)
+				cli := &s3Client{
+					svc:          s.MockS3,
+					BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+					options:      &backuppb.S3{Bucket: "bucket"},
+					s3Compatible: tc.s3Compatible,
+				}
+
+				s.MockS3.EXPECT().CreateMultipartUpload(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.CreateMultipartUploadInput, _ ...func(*s3.Options)) (*s3.CreateMultipartUploadOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.Equal(t, "prefix/object", aws.ToString(input.Key))
+						return &s3.CreateMultipartUploadOutput{
+							Bucket:   input.Bucket,
+							Key:      input.Key,
+							UploadId: aws.String("upload-id"),
+						}, nil
+					})
+				s.MockS3.EXPECT().UploadPart(gomock.Any(), gomock.Any(), gomock.Any()).
+					DoAndReturn(func(_ context.Context, input *s3.UploadPartInput, optFns ...func(*s3.Options)) (*s3.UploadPartOutput, error) {
+						require.Equal(t, "bucket", aws.ToString(input.Bucket))
+						require.Equal(t, "prefix/object", aws.ToString(input.Key))
+						assertContentMD5Option(t, optFns, tc.s3Compatible)
+						return &s3.UploadPartOutput{ETag: aws.String("etag")}, nil
+					})
+
+				w, err := cli.MultipartWriter(ctx, "object")
+				require.NoError(t, err)
+				_, err = w.Write(ctx, []byte("part"))
+				require.NoError(t, err)
+				require.True(t, s.Controller.Satisfied())
+			})
+		}
+	})
+
+	t.Run("MultipartUploaderClientOptions", func(t *testing.T) {
+		for _, tc := range []struct {
+			name         string
+			s3Compatible bool
+		}{
+			{name: "official_s3", s3Compatible: false},
+			{name: "s3_compatible", s3Compatible: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				s := CreateS3Suite(t)
+				cli := &s3Client{
+					svc:          s.MockS3,
+					BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
+					s3Compatible: tc.s3Compatible,
+				}
+
+				up := cli.MultipartUploader("object", 5*1024*1024, 2)
+				mp, ok := up.(*multipartUploader)
+				require.True(t, ok)
+
+				assertContentMD5Option(t, mp.uploader.ClientOptions, tc.s3Compatible)
+				require.True(t, s.Controller.Satisfied())
+			})
+		}
+	})
 }
 
 func TestClientCopyObject(t *testing.T) {

@@ -20,6 +20,7 @@ go_library(
         "//br/pkg/checksum",
         "//br/pkg/conn",
         "//br/pkg/errors",
+        "//br/pkg/gc",
         "//br/pkg/glue",
         "//br/pkg/logutil",
         "//br/pkg/metautil",

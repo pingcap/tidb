@@ -50,9 +50,6 @@ var (
 )
 
 const (
-	// KS3SDKProvider ks3 sdk does not expose context, we use hardcoded timeout
-	// for network request
-	KS3SDKProvider      = "ks3-sdk"
 	maxSkipOffsetByRead = 1 << 16 // 64KB
 	// max number of retries when meets error
 	maxErrorRetries = 3
