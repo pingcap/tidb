@@ -72,6 +72,8 @@ type FMSketch struct {
 	// The maximum size of the hashset. If the size exceeds this value, the mask will be moved to the next level.
 	// And the hashset will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
 	maxSize int
+
+	buf []byte
 }
 
 // NewFMSketch returns a new FM sketch.
@@ -135,7 +137,10 @@ func (s *FMSketch) insertHashValue(hashVal uint64) {
 
 // InsertValue inserts a value into the FM sketch.
 func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) error {
-	bytes, err := codec.EncodeValue(sc.TimeZone(), nil, value)
+	s.buf = s.buf[:0]
+	var err error
+
+	s.buf, err = codec.EncodeValue(sc.TimeZone(), s.buf, value)
 	err = sc.HandleError(err)
 	if err != nil {
 		return errors.Trace(err)
@@ -143,7 +148,7 @@ func (s *FMSketch) InsertValue(sc *stmtctx.StatementContext, value types.Datum) 
 	hashFunc := murmur3Pool.Get().(hash.Hash64)
 	hashFunc.Reset()
 	defer murmur3Pool.Put(hashFunc)
-	_, err = hashFunc.Write(bytes)
+	_, err = hashFunc.Write(s.buf)
 	if err != nil {
 		return errors.Trace(err)
 	}
