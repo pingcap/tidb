@@ -173,17 +173,41 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 	}
 
 	// Multiple vertexes, starts to reorder.
+	vertexMap := make(map[int]base.LogicalPlan, len(joinGroup.vertexes))
 	for i, v := range joinGroup.vertexes {
 		// Make sure the vertexes are all optimized.
+		oldID := v.ID()
 		if joinGroup.vertexes[i], err = optimizeRecursive(v); err != nil {
 			return nil, err
 		}
+		vertexMap[oldID] = joinGroup.vertexes[i]
 	}
-	// gjt todo set children?
+	if len(vertexMap) > 0 {
+		joinGroup.root = replaceJoinGroupVertexes(joinGroup.root, vertexMap)
+	}
 	if p, err = optimizeForJoinGroup(p.SCtx(), joinGroup); err != nil {
 		return nil, err
 	}
 	return p, nil
+}
+
+func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.LogicalPlan) base.LogicalPlan {
+	if root == nil {
+		return nil
+	}
+	if replacement, ok := vertexMap[root.ID()]; ok {
+		return replacement
+	}
+	children := root.Children()
+	if len(children) == 0 {
+		return root
+	}
+	newChildren := make([]base.LogicalPlan, len(children))
+	for i, child := range children {
+		newChildren[i] = replaceJoinGroupVertexes(child, vertexMap)
+	}
+	root.SetChildren(newChildren...)
+	return root
 }
 
 func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
