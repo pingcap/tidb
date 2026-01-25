@@ -365,7 +365,16 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		}
 	}
 	// gjt todo better policy
-	if !detector.CheckAllEdgesUsed(curJoinTree) {
+	usedEdges := make(map[uint64]struct{})
+	if curJoinTree != nil && curJoinTree.usedEdges != nil {
+		maps.Copy(usedEdges, curJoinTree.usedEdges)
+	}
+	for _, node := range bushyJoinTreeNodes {
+		if node != nil && node.usedEdges != nil {
+			maps.Copy(usedEdges, node.usedEdges)
+		}
+	}
+	if !detector.CheckAllEdgesUsed(usedEdges) {
 		return group.root, nil
 	}
 	if len(bushyJoinTreeNodes) > 0 {

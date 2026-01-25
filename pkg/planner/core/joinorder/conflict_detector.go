@@ -516,17 +516,17 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	return join, nil
 }
 
-func (d *ConflictDetector) CheckAllEdgesUsed(curJoinTree *Node) bool {
+func (d *ConflictDetector) CheckAllEdgesUsed(usedEdges map[uint64]struct{}) bool {
 	for _, e := range d.innerEdges {
 		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
-			if _, ok := curJoinTree.usedEdges[e.idx]; !ok {
+			if _, ok := usedEdges[e.idx]; !ok {
 				return false
 			}
 		}
 	}
 	for _, e := range d.nonInnerEdges {
 		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
-			if _, ok := curJoinTree.usedEdges[e.idx]; !ok {
+			if _, ok := usedEdges[e.idx]; !ok {
 				return false
 			}
 		}
