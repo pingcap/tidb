@@ -51,7 +51,6 @@ func NewMockStorage(tikvStore *tikv.KVStore, keyspaceMeta *keyspacepb.KeyspaceMe
 	if err != nil {
 		return nil, err
 	}
-
 	coprStore, err := copr.NewStore(tikvStore, tlsConfig, &coprConfig)
 	if err != nil {
 		return nil, err
