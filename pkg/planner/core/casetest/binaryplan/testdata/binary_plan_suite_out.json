@@ -68,19 +68,19 @@
         "SQL": "explain analyze format = 'binary' select sum(t.a) from t join t2",
         "BinaryPlan": {
           "main": {
-            "name": "HashAgg_11",
+            "name": "HashAgg_12",
             "children": [
               {
-                "name": "Projection_53",
+                "name": "Projection_60",
                 "children": [
                   {
-                    "name": "HashJoin_28",
+                    "name": "HashJoin_31",
                     "children": [
                       {
-                        "name": "IndexReader_33",
+                        "name": "IndexReader_36",
                         "children": [
                           {
-                            "name": "IndexFullScan_32",
+                            "name": "IndexFullScan_35",
                             "cost": 1628000.000001,
                             "est_rows": 10000,
                             "act_rows": 2,
@@ -97,13 +97,13 @@
                         "act_rows": 2,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "index:IndexFullScan_32"
+                        "operator_info": "index:IndexFullScan_35"
                       },
                       {
-                        "name": "TableReader_35",
+                        "name": "TableReader_38",
                         "children": [
                           {
-                            "name": "TableFullScan_34",
+                            "name": "TableFullScan_37",
                             "cost": 4546159.475587022,
                             "est_rows": 10000,
                             "act_rows": 4,
@@ -120,7 +120,7 @@
                         "act_rows": 4,
                         "task_type": 1,
                         "store_type": 1,
-                        "operator_info": "data:TableFullScan_34"
+                        "operator_info": "data:TableFullScan_37"
                       }
                     ],
                     "cost": 1128387.631705868,
@@ -136,15 +136,15 @@
                 "act_rows": 8,
                 "task_type": 1,
                 "store_type": 1,
-                "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#8"
+                "operator_info": "cast(test.t.a, decimal(10,0) BINARY)->Column#10"
               }
             ],
-            "cost": 1997129896.2117057,
+            "cost": 2007109896.2117057,
             "est_rows": 1,
             "act_rows": 1,
             "task_type": 1,
             "store_type": 1,
-            "operator_info": "funcs:sum(Column#8)->Column#7"
+            "operator_info": "funcs:sum(Column#10)->Column#9"
           },
           "with_runtime_stats": true
         }

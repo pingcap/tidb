@@ -127,14 +127,14 @@ func TestJoinWithNullEQ(t *testing.T) {
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows(
-			"HashJoin 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
+			"HashJoin 15625.00 root  inner join, equal:[nulleq(Column#7, test.tt0.c0)]",
 			"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 			"│ └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
-			"└─HashJoin(Probe) 12500.00 root  left outer join, left side:Projection, equal:[eq(Column#8, Column#9)]",
-			"  ├─Projection(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
+			"└─HashJoin(Probe) 12500.00 root  left outer join, left side:Projection, equal:[eq(Column#11, Column#12)]",
+			"  ├─Projection(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#11",
 			"  │ └─TableReader 10000.00 root  data:TableFullScan",
 			"  │   └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
-			"  └─Projection(Probe) 10000.00 root  0->Column#5, 0->Column#9",
+			"  └─Projection(Probe) 10000.00 root  0->Column#7, 0->Column#12",
 			"    └─TableReader 10000.00 root  data:TableFullScan",
 			"      └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
 		testKit.MustQuery(`SELECT * FROM tt1
@@ -171,7 +171,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 
 		// join keys are kept
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t1.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#9`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
@@ -180,7 +180,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t2.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#9`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
@@ -189,7 +189,7 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1, t2 where t1.a=1 and t1.a=t2.a`).Check(testkit.Rows(
-			`Projection root  1->Column#9`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
@@ -231,7 +231,7 @@ func TestIssue60076And63314(t *testing.T) {
 
 		tk.MustQuery(`explain format='plan_tree' select /*+ leading(t1, t3) */ 1 from
 			t1 left join t2 on t1.a=t2.a join t3 on t1.b=t3.b where t1.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#13`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  left outer join, left side:HashJoin, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,

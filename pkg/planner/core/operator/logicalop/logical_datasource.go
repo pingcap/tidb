@@ -123,6 +123,11 @@ type DataSource struct {
 
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
+
+	// InterestingColumns stores columns from this DataSource that are used in the query.
+	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
+	// index pruning early in the planning phase - which is an approximate heuristic.
+	InterestingColumns []*expression.Column
 }
 
 // Init initializes DataSource.
@@ -561,6 +566,17 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
+	}
+}
+
+// NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
+func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	return &expression.Column{
+		RetType:  tp,
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraCommitTSID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
 	}
 }
 

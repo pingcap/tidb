@@ -263,14 +263,14 @@ create table t1(a varchar(20) collate utf8mb4_bin, index ia(a));
 insert into t1 value('测试'),('测试  '),('xxx ');
 explain format = 'plan_tree' select *,length(a) from t1 where a like '测试 %';
 id	task	access object	operator info
-Projection	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
+Projection	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column
 └─UnionScan	root		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试 %", 92)
       └─IndexRangeScan	cop[tikv]	table:t1, index:ia(a)	range:["测试","测试!"), keep order:false, stats:pseudo
 explain format = 'plan_tree' select *,length(a) from t1 where a like '测试';
 id	task	access object	operator info
-Projection	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column#3
+Projection	root		planner__core__issuetest__planner_issue.t1.a, length(planner__core__issuetest__planner_issue.t1.a)->Column
 └─UnionScan	root		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t1.a, "测试", 92)
@@ -295,14 +295,14 @@ create table t2(a varchar(20) collate gbk_chinese_ci, index ia(a));
 insert into t2 value('测试'),('测试  ');
 explain format = 'plan_tree' select *,length(a) from t2 where a like '测试 %';
 id	task	access object	operator info
-Projection	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+Projection	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column
 └─UnionScan	root		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试 %", 92)
       └─IndexRangeScan	cop[tikv]	table:t2, index:ia(a)	range:["\x89\a\xba%","\x89\a\xba%!"), keep order:false, stats:pseudo
 explain format = 'plan_tree' select *,length(a) from t2 where a like '测试';
 id	task	access object	operator info
-Projection	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column#3
+Projection	root		planner__core__issuetest__planner_issue.t2.a, length(to_binary(planner__core__issuetest__planner_issue.t2.a))->Column
 └─UnionScan	root		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		like(planner__core__issuetest__planner_issue.t2.a, "测试", 92)
@@ -651,14 +651,14 @@ set tidb_executor_concurrency = 1;
 set tidb_window_concurrency = 100;
 explain format='plan_tree' select * from (SELECT DISTINCT cc2 as a, cc2 as b, cc1 as c FROM t2 UNION ALL SELECT count(1) over (partition by cc1), cc2, cc1 FROM t1) x order by a,b,c;
 id	task	access object	operator info
-Sort	root		Column#8, Column#9, Column#10
+Sort	root		Column, Column, Column
 └─Union	root		
-  ├─Projection	root		test.t2.cc2->Column#8, test.t2.cc2->Column#9, test.t2.cc1->Column#10
+  ├─Projection	root		test.t2.cc2->Column, test.t2.cc2->Column, test.t2.cc1->Column
   │ └─TableReader	root		data:TableFullScan
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─Projection	root		cast(Column#7, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#8, test.t1.cc2->Column#9, test.t1.cc1->Column#10
+  └─Projection	root		cast(Column, text BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column, test.t1.cc2->Column, test.t1.cc1->Column
     └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
-      └─Window	root		count(1)->Column#7 over(partition by test.t1.cc1)
+      └─Window	root		count(1)->Column#9 over(partition by test.t1.cc1)
         └─Sort	root		test.t1.cc1
           └─ShuffleReceiver	root		
             └─TableReader	root		data:TableFullScan
@@ -707,12 +707,12 @@ JOIN tceb7972c ON tceb7972c.col_19 = t61a85298.col_71
 WHERE 16739493649928310215 MEMBER OF (derived_table.col_60767)
 OR NOT (JSON_CONTAINS(derived_table.col_60767, '6019730272580550835'));
 id	task	access object	operator info
-Projection	root		1->Column#18
-└─HashJoin	root		inner join, equal:[eq(test.tceb7972c.col_19, Column#19)]
+Projection	root		1->Column
+└─HashJoin	root		inner join, equal:[eq(test.tceb7972c.col_19, Column)]
   ├─TableReader(Build)	root	partition:all	data:Selection
   │ └─Selection	cop[tikv]		or(json_memberof(cast(16739493649928310215, json BINARY), test.tceb7972c.col_17), not(istrue_with_null(json_contains(test.tceb7972c.col_17, cast("6019730272580550835", json BINARY)))))
   │   └─TableFullScan	cop[tikv]	table:tceb7972c	keep order:false, stats:partial[col_17:missing]
-  └─Projection(Probe)	root		cast(test.t61a85298.col_71, double BINARY)->Column#19
+  └─Projection(Probe)	root		cast(test.t61a85298.col_71, double BINARY)->Column
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t61a85298	keep order:false, stats:pseudo
 drop table if exists t0, t1;
@@ -929,7 +929,7 @@ HashJoin	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
 └─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
   ├─Selection(Build)	root		not(isnull(test.t4.c))
   │ └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
-  │   └─Window	root		row_number()->Column#26 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+  │   └─Window	root		row_number()->Column#30 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
   │     └─Sort	root		test.t4.b, test.t4.e
   │       └─ShuffleReceiver	root		
   │         └─TableReader	root		data:Selection
@@ -954,7 +954,7 @@ create table t4 like t1;
 set @@tidb_opt_join_reorder_threshold=5;
 explain format='plan_tree' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
 id	task	access object	operator info
-Projection	root		1->Column#13
+Projection	root		1->Column
 └─HashJoin	root		CARTESIAN inner join
   ├─HashJoin(Build)	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
   │ ├─TableReader(Build)	root		data:Selection

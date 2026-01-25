@@ -147,10 +147,9 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 		}
 
 		if tbInfo.Affinity != nil {
-			// If the affinity is set, update the table affinity group in PD
-			if err = updateTableAffinityGroupInPD(tbInfo); err != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
 				job.State = model.JobStateCancelled
-				return tbInfo, errors.Wrapf(err, "failed to update table affinity group in PD")
+				return tbInfo, errors.Wrapf(err, "failed to create table affinity groups in PD")
 			}
 		}
 
@@ -770,9 +769,19 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
 	}
-	return tbInfo, err
+
+	if err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
+		return nil, err
+	}
+	return tbInfo, nil
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
@@ -1269,7 +1278,10 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Partition = &pi
 	}
 
-	if referTblInfo.TTLInfo != nil {
+	// for issue #64948, temporary table does not support TLL, we should remove it
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TTLInfo = nil
+	} else if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
 

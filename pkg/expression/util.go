@@ -2337,3 +2337,25 @@ func IsConstNull(expr Expression) bool {
 	}
 	return false
 }
+
+// IsColOpCol is to whether ScalarFunction meets col op col condition.
+func IsColOpCol(sf *ScalarFunction) (_, _ *Column, _ bool) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2, ok2 := args[1].(*Column)
+		col1, ok1 := args[0].(*Column)
+		return col1, col2, ok1 && ok2
+	}
+	return nil, nil, false
+}
+
+// ExtractColumnsFromColOpCol is to extract columns from col op col condition.
+func ExtractColumnsFromColOpCol(sf *ScalarFunction) (_, _ *Column) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2 := args[1].(*Column)
+		col1 := args[0].(*Column)
+		return col1, col2
+	}
+	return nil, nil
+}

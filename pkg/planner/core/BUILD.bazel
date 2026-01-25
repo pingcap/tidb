@@ -1,5 +1,10 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+exports_files(
+    ["plan_clone_utils.go"],
+    visibility = ["//pkg/planner/core/casetest/plancache:__pkg__"],
+)
+
 go_library(
     name = "core",
     srcs = [
@@ -55,7 +60,6 @@ go_library(
         "rule_join_reorder.go",
         "rule_join_reorder_dp.go",
         "rule_join_reorder_greedy.go",
-        "rule_max_min_eliminate.go",
         "rule_outer_to_inner_join.go",
         "rule_predicate_push_down.go",
         "rule_push_down_sequence.go",
@@ -76,7 +80,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/core",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/storage",
         "//pkg/bindinfo",
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -96,6 +99,8 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
+        "//pkg/objstore/s3like",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
@@ -184,6 +189,7 @@ go_library(
         "//pkg/util/syncutil",
         "//pkg/util/texttree",
         "//pkg/util/tracing",
+        "//pkg/util/zeropool",
         "@com_github_bits_and_blooms_bitset//:bitset",
         "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
@@ -210,9 +216,6 @@ go_test(
         "expression_test.go",
         "find_best_task_test.go",
         "hint_test.go",
-        "indexmerge_intersection_test.go",
-        "indexmerge_path_test.go",
-        "indexmerge_test.go",
         "integration_partition_test.go",
         "integration_test.go",
         "logical_plans_test.go",
@@ -221,11 +224,6 @@ go_test(
         "physical_plan_test.go",
         "plan_cache_instance_test.go",
         "plan_cache_lru_test.go",
-        "plan_cache_param_test.go",
-        "plan_cache_partition_table_test.go",
-        "plan_cache_rebuild_test.go",
-        "plan_cache_test.go",
-        "plan_cacheable_checker_test.go",
         "plan_cost_ver1_test.go",
         "plan_cost_ver2_test.go",
         "plan_replayer_capture_test.go",
@@ -236,6 +234,7 @@ go_test(
         "rule_generate_column_substitute_test.go",
         "rule_join_reorder_dp_test.go",
         "runtime_filter_generator_test.go",
+        "stats_test.go",
         "stringer_test.go",
         "task_test.go",
         "util_test.go",
@@ -254,7 +253,6 @@ go_test(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/domain",
-        "//pkg/domain/infosync",
         "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
@@ -283,6 +281,7 @@ go_test(
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/partitionpruning",
         "//pkg/session",
+        "//pkg/session/sessionapi",
         "//pkg/session/sessmgr",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
@@ -300,7 +299,6 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
         "//pkg/types",
-        "//pkg/types/parser_driver",
         "//pkg/util",
         "//pkg/util/benchdaily",
         "//pkg/util/chunk",

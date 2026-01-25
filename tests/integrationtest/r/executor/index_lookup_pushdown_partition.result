@@ -1,5 +1,9 @@
 drop table if exists tp1, tp2;
 set @@tidb_scatter_region='table';
+set @@tidb_partition_prune_mode = 'dynamic';
+select @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+dynamic
 create table tp1 (a int primary key, b int, c int, key b(b), key c(c) global) partition by hash(a) partitions 4;
 insert into tp1 values (1, 10, 10), (2, 9, 20), (3, 8, 30), (4, 7, 40), (5, 6, 50), (6, 5, 60);
 explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 where b < 10 and a > 1 limit 3;
@@ -75,7 +79,7 @@ id1 varchar(32),
 id2 int,
 a int,
 b int,
-primary key (id1, id2),
+primary key (id1, id2) CLUSTERED,
 index a(a)
 )
 PARTITION BY RANGE COLUMNS (id1) (
@@ -96,7 +100,7 @@ insert into tp2 values
 explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 where a > 33 limit 5;
 id	estRows	task	access object	operator info
 IndexLookUp_16	5.00	root	partition:all	limit embedded(offset:0, count:5)
-├─LocalIndexLookUp_18(Build)	5.00	cop[tikv]		index handle offsets:[1]
+├─LocalIndexLookUp_18(Build)	5.00	cop[tikv]		index handle offsets:[]
 │ ├─Limit_15(Build)	5.00	cop[tikv]		offset:0, count:5
 │ │ └─IndexRangeScan_13	5.00	cop[tikv]	table:tp2, index:a(a)	range:(33,+inf], keep order:false, stats:pseudo
 │ └─TableRowIDScan_17(Probe)	5.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
@@ -111,7 +115,7 @@ e	5	55	50
 explain select /*+ index_lookup_pushdown(tp2, a) */ * from tp2 partition (p1);
 id	estRows	task	access object	operator info
 IndexLookUp_7	10000.00	root	partition:p1	
-├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+├─LocalIndexLookUp_9(Build)	10000.00	cop[tikv]		index handle offsets:[]
 │ ├─IndexFullScan_5(Build)	10000.00	cop[tikv]	table:tp2, index:a(a)	keep order:false, stats:pseudo
 │ └─TableRowIDScan_8(Probe)	10000.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
 └─TableRowIDScan_6(Probe)	0.00	cop[tikv]	table:tp2	keep order:false, stats:pseudo
@@ -136,4 +140,110 @@ a	b	c
 2	9	20
 6	5	60
 3	8	30
+begin;
+insert into tp1 values (10, 11, 12), (20, 21, 22), (30, 31, 32), (40, 41, 42);
+explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
+id	estRows	task	access object	operator info
+TopN_11	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+└─UnionScan_16	10000.00	root		
+  └─IndexLookUp_19	10000.00	root	partition:all	
+    ├─LocalIndexLookUp_21(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+    │ ├─IndexFullScan_17(Build)	10000.00	cop[tikv]	table:tp1, index:b(b)	keep order:false, stats:pseudo
+    │ └─TableRowIDScan_20(Probe)	10000.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+    └─TableRowIDScan_18(Probe)	0.00	cop[tikv]	table:tp1	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
+a	b	c
+1	10	10
+10	11	12
+2	9	20
+20	21	22
+3	8	30
+set @@tidb_partition_prune_mode = 'static';
+select @@tidb_partition_prune_mode;
+@@tidb_partition_prune_mode
+static
+explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
+id	estRows	task	access object	operator info
+TopN_25	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+└─PartitionUnion_30	20.00	root		
+  ├─TopN_34	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─UnionScan_39	10000.00	root		
+  │   └─IndexLookUp_42	10000.00	root		
+  │     ├─LocalIndexLookUp_44(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+  │     │ ├─IndexFullScan_40(Build)	10000.00	cop[tikv]	table:tp1, partition:p0, index:b(b)	keep order:false, stats:pseudo
+  │     │ └─TableRowIDScan_43(Probe)	10000.00	cop[tikv]	table:tp1, partition:p0	keep order:false, stats:pseudo
+  │     └─TableRowIDScan_41(Probe)	0.00	cop[tikv]	table:tp1, partition:p0	keep order:false, stats:pseudo
+  ├─TopN_48	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─UnionScan_53	10000.00	root		
+  │   └─IndexLookUp_56	10000.00	root		
+  │     ├─LocalIndexLookUp_58(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+  │     │ ├─IndexFullScan_54(Build)	10000.00	cop[tikv]	table:tp1, partition:p1, index:b(b)	keep order:false, stats:pseudo
+  │     │ └─TableRowIDScan_57(Probe)	10000.00	cop[tikv]	table:tp1, partition:p1	keep order:false, stats:pseudo
+  │     └─TableRowIDScan_55(Probe)	0.00	cop[tikv]	table:tp1, partition:p1	keep order:false, stats:pseudo
+  ├─TopN_62	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─UnionScan_67	10000.00	root		
+  │   └─IndexLookUp_70	10000.00	root		
+  │     ├─LocalIndexLookUp_72(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+  │     │ ├─IndexFullScan_68(Build)	10000.00	cop[tikv]	table:tp1, partition:p2, index:b(b)	keep order:false, stats:pseudo
+  │     │ └─TableRowIDScan_71(Probe)	10000.00	cop[tikv]	table:tp1, partition:p2	keep order:false, stats:pseudo
+  │     └─TableRowIDScan_69(Probe)	0.00	cop[tikv]	table:tp1, partition:p2	keep order:false, stats:pseudo
+  └─TopN_76	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+    └─UnionScan_81	10000.00	root		
+      └─IndexLookUp_84	10000.00	root		
+        ├─LocalIndexLookUp_86(Build)	10000.00	cop[tikv]		index handle offsets:[1]
+        │ ├─IndexFullScan_82(Build)	10000.00	cop[tikv]	table:tp1, partition:p3, index:b(b)	keep order:false, stats:pseudo
+        │ └─TableRowIDScan_85(Probe)	10000.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
+        └─TableRowIDScan_83(Probe)	0.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
+a	b	c
+1	10	10
+10	11	12
+2	9	20
+20	21	22
+3	8	30
+rollback;
+explain select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
+id	estRows	task	access object	operator info
+TopN_20	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+└─PartitionUnion_25	20.00	root		
+  ├─TopN_28	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─IndexLookUp_37	5.00	root		
+  │   ├─TopN_38(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │   │ └─LocalIndexLookUp_40	10000.00	cop[tikv]		index handle offsets:[1]
+  │   │   ├─IndexFullScan_34(Build)	10000.00	cop[tikv]	table:tp1, partition:p0, index:b(b)	keep order:false, stats:pseudo
+  │   │   └─TableRowIDScan_39(Probe)	10000.00	cop[tikv]	table:tp1, partition:p0	keep order:false, stats:pseudo
+  │   └─TopN_36(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │     └─TableRowIDScan_35	0.00	cop[tikv]	table:tp1, partition:p0	keep order:false, stats:pseudo
+  ├─TopN_47	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─IndexLookUp_56	5.00	root		
+  │   ├─TopN_57(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │   │ └─LocalIndexLookUp_59	10000.00	cop[tikv]		index handle offsets:[1]
+  │   │   ├─IndexFullScan_53(Build)	10000.00	cop[tikv]	table:tp1, partition:p1, index:b(b)	keep order:false, stats:pseudo
+  │   │   └─TableRowIDScan_58(Probe)	10000.00	cop[tikv]	table:tp1, partition:p1	keep order:false, stats:pseudo
+  │   └─TopN_55(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │     └─TableRowIDScan_54	0.00	cop[tikv]	table:tp1, partition:p1	keep order:false, stats:pseudo
+  ├─TopN_66	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │ └─IndexLookUp_75	5.00	root		
+  │   ├─TopN_76(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │   │ └─LocalIndexLookUp_78	10000.00	cop[tikv]		index handle offsets:[1]
+  │   │   ├─IndexFullScan_72(Build)	10000.00	cop[tikv]	table:tp1, partition:p2, index:b(b)	keep order:false, stats:pseudo
+  │   │   └─TableRowIDScan_77(Probe)	10000.00	cop[tikv]	table:tp1, partition:p2	keep order:false, stats:pseudo
+  │   └─TopN_74(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+  │     └─TableRowIDScan_73	0.00	cop[tikv]	table:tp1, partition:p2	keep order:false, stats:pseudo
+  └─TopN_85	5.00	root		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+    └─IndexLookUp_94	5.00	root		
+      ├─TopN_95(Build)	5.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+      │ └─LocalIndexLookUp_97	10000.00	cop[tikv]		index handle offsets:[1]
+      │   ├─IndexFullScan_91(Build)	10000.00	cop[tikv]	table:tp1, partition:p3, index:b(b)	keep order:false, stats:pseudo
+      │   └─TableRowIDScan_96(Probe)	10000.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
+      └─TopN_93(Probe)	0.00	cop[tikv]		executor__index_lookup_pushdown_partition.tp1.c, offset:0, count:5
+        └─TableRowIDScan_92	0.00	cop[tikv]	table:tp1, partition:p3	keep order:false, stats:pseudo
+select /*+ index_lookup_pushdown(tp1, b) */ * from tp1 order by c limit 5;
+a	b	c
+1	10	10
+2	9	20
+3	8	30
+4	7	40
+5	6	50
 set @@tidb_scatter_region=default;
+set @@tidb_partition_prune_mode = default;

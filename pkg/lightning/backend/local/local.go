@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -124,6 +124,10 @@ var (
 
 	// Unlimited RPC receive message size for TiKV importer
 	unlimitedRPCRecvMsgSize = math.MaxInt32
+
+	// ForcePartitionRegionThreshold is the threshold of regions to force partition range.
+	// It is exported for testing.
+	ForcePartitionRegionThreshold = 100
 )
 
 // importClientFactory is factory to create new import client for specific store.
@@ -832,6 +836,11 @@ func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
 	return local.engineMgr.flushAllEngines(parentCtx)
 }
 
+// CleanupAllLocalEngines closes and removes all local engines, used for best-effort cleanup on error.
+func (local *Backend) CleanupAllLocalEngines(ctx context.Context) error {
+	return local.engineMgr.cleanupAllLocalEngines(ctx)
+}
+
 // RetryImportDelay returns the delay time before retrying to import a file.
 func (*Backend) RetryImportDelay() time.Duration {
 	return defaultRetryBackoffTime
@@ -890,21 +899,37 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 	}
 
 	addTableSplitRange := func() {
-		var firstErr error
-		successStores := make([]string, 0, len(clients))
-		failedStores := make([]string, 0, len(clients))
-		for i, c := range clients {
-			_, err := c.AddForcePartitionRange(subctx, addReq)
-			if err == nil {
-				successStores = append(successStores, storeAddrs[i])
-				failpoint.InjectCall("AddPartitionRangeForTable")
-			} else {
-				failedStores = append(failedStores, storeAddrs[i])
-				if firstErr == nil {
-					firstErr = err
-				}
-			}
+		var (
+			firstErr      error
+			mu            sync.Mutex
+			successStores = make([]string, 0, len(clients))
+			failedStores  = make([]string, 0, len(clients))
+		)
+		concurrency := int(local.WorkerConcurrency.Load())
+		if concurrency <= 0 {
+			concurrency = 1
 		}
+		eg, _ := util.NewErrorGroupWithRecoverWithCtx(subctx)
+		eg.SetLimit(concurrency)
+		for i, c := range clients {
+			client, addr := c, storeAddrs[i]
+			eg.Go(func() error {
+				failpoint.InjectCall("AddPartitionRangeForTable")
+				_, err := client.AddForcePartitionRange(subctx, addReq)
+				mu.Lock()
+				defer mu.Unlock()
+				if err == nil {
+					successStores = append(successStores, addr)
+				} else {
+					failedStores = append(failedStores, addr)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+				return nil
+			})
+		}
+		_ = eg.Wait()
 		tidblogutil.Logger(subctx).Info("call AddForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -931,21 +956,37 @@ func (local *Backend) forceTableSplitRange(ctx context.Context,
 		cancel()
 		wg.Wait()
 
-		var firstErr error
-		successStores := make([]string, 0, len(clients))
-		failedStores := make([]string, 0, len(clients))
-		for i, c := range clients {
-			_, err := c.RemoveForcePartitionRange(ctx, removeReq)
-			if err == nil {
-				successStores = append(successStores, storeAddrs[i])
-				failpoint.InjectCall("RemovePartitionRangeRequest")
-			} else {
-				failedStores = append(failedStores, storeAddrs[i])
-				if firstErr == nil {
-					firstErr = err
-				}
-			}
+		var (
+			firstErr      error
+			mu            sync.Mutex
+			successStores = make([]string, 0, len(clients))
+			failedStores  = make([]string, 0, len(clients))
+		)
+		concurrency := int(local.WorkerConcurrency.Load())
+		if concurrency <= 0 {
+			concurrency = 1
 		}
+		eg, _ := util.NewErrorGroupWithRecoverWithCtx(ctx)
+		eg.SetLimit(concurrency)
+		for i, c := range clients {
+			client, addr := c, storeAddrs[i]
+			eg.Go(func() error {
+				failpoint.InjectCall("RemovePartitionRangeRequest")
+				_, err := client.RemoveForcePartitionRange(ctx, removeReq)
+				mu.Lock()
+				defer mu.Unlock()
+				if err == nil {
+					successStores = append(successStores, addr)
+				} else {
+					failedStores = append(failedStores, addr)
+					if firstErr == nil {
+						firstErr = err
+					}
+				}
+				return nil
+			})
+		}
+		_ = eg.Wait()
 		tidblogutil.Logger(ctx).Info("call RemoveForcePartitionRange",
 			zap.Strings("success stores", successStores),
 			zap.Strings("failed stores", failedStores),
@@ -1293,12 +1334,6 @@ func verifyImportedStatistics(e engineapi.Engine, importedKVCount int64) error {
 		failpoint.Inject("skipOnDuplicateKeyCheck", func(_ failpoint.Value) {
 			failpoint.Return(nil)
 		})
-		onDup := extEngine.GetOnDup()
-		if onDup == engineapi.OnDuplicateKeyRecord || onDup == engineapi.OnDuplicateKeyRemove {
-			return errors.Errorf("OnDuplicateKeyRecord and OnDuplicateKeyRemove are not yet implemented for local backend. " +
-				"When implementing these options, please also implement the statistics verification for them.")
-		}
-
 		// Verify the imported statistics after import.
 		// For external engine, use the total number of KVs loaded in LoadIngestData
 		// (i.e., len(e.memKVsAndBuffers.kvs) across all batches) as the expected count.
@@ -1357,8 +1392,12 @@ func (local *Backend) ImportEngine(
 	intest.Assert(len(splitKeys) > 0)
 	startKey, endKey := splitKeys[0], splitKeys[len(splitKeys)-1]
 
-	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 {
-		tidblogutil.Logger(ctx).Info("force table split range",
+	forceSplitThreshold := ForcePartitionRegionThreshold
+	failpoint.InjectCall("ForcePartitionRegionThreshold", &forceSplitThreshold)
+	// We only force partition range when the table is large enough (>= 100 regions).
+	// This is to avoid unnecessary RPC calls for small tables.
+	if kerneltype.IsClassic() && len(startKey) > 0 && len(endKey) > 0 && len(splitKeys)-1 >= forceSplitThreshold {
+		tidblogutil.Logger(ctx).Info("force partition range",
 			zap.String("startKey", redact.Key(startKey)),
 			zap.String("endKey", redact.Key(endKey)))
 		stores, err := local.pdCli.GetAllStores(ctx, opt.WithExcludeTombstone())

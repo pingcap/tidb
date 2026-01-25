@@ -31,11 +31,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	fstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -293,6 +293,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowImportGroups(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -348,6 +350,9 @@ func (e *ShowExec) fetchShowBind() error {
 		return cmpResult > 0
 	})
 	for _, hint := range bindings {
+		if hint == nil { // if the binding cache doesn't have enough memory, it might return nil
+			continue
+		}
 		stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
 		if err != nil {
 			return err
@@ -2427,7 +2432,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	if runInfo != nil {
 		// running import job
 		result.AppendUint64(8, uint64(runInfo.ImportRows))
-	} else if info.Status == importer.JobStatusFinished {
+	} else if info.IsSuccess() {
 		// successful import job
 		result.AppendUint64(8, uint64(info.Summary.ImportedRows))
 	} else {
@@ -2435,7 +2440,19 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		result.AppendNull(8)
 	}
 
-	result.AppendString(9, info.ErrorMessage)
+	if info.IsSuccess() {
+		msgItems := make([]string, 0, 1)
+		if info.Summary.ConflictRowCnt > 0 {
+			msgItems = append(msgItems, fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictRowCnt))
+		}
+		if info.Summary.TooManyConflicts {
+			msgItems = append(msgItems, "Too many conflicted rows, checksum skipped.")
+		}
+		result.AppendString(9, strings.Join(msgItems, " "))
+	} else {
+		result.AppendString(9, info.ErrorMessage)
+	}
+
 	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
 		result.AppendNull(11)

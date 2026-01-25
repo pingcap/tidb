@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -754,6 +755,26 @@ type candidatePath struct {
 	matchPropResult   property.PhysicalPropMatchResult
 
 	indexJoinCols int // how many index columns are used in access conditions in this IndexJoin.
+
+	// partialOrderMatch records the partial order match result for TopN optimization.
+	// When this field is not nil, it means this path can provide partial order using prefix index.
+	partialOrderMatch *PartialOrderMatchResult
+}
+
+// PartialOrderMatchResult records the result of matching partial order for TopN optimization.
+type PartialOrderMatchResult struct {
+	// Matched indicates whether the index can provide partial order
+	Matched bool
+	// PrefixColID is the last and only one prefix column ID of index, only used for executor part
+	// For example:
+	// Query ORDER BY a,b,c
+	// Index: a, b, c(10)
+	// ColIds: a=0, b=1, c=2
+	// PrefixColID: 2, the col id of c
+	// PrefixLen: 10, the col length of c in index
+	PrefixColID int64
+	// PrefixLen is the prefix length in bytes for prefix index,  only used for executor part
+	PrefixLen int
 }
 
 func compareBool(l, r bool) int {
@@ -1040,6 +1061,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 		return property.PropMatched
 	}
+
+	// Match SortItems physical property.
 	all, _ := prop.AllSameOrder()
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
@@ -1138,6 +1161,82 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 		}
 	}
 	return matchResult
+}
+
+// matchPartialOrderProperty checks if the index can provide partial order for TopN optimization.
+// Unlike matchProperty, this function allows prefix index to match ORDER BY columns.
+// partialOrderInfo being non-nil indicates that partial order optimization is enabled.
+// The current implementation primarily supports cases where
+// the index can **completely match** the **prefix** of the order by column.
+// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
+// For example:
+// query: order by a, b
+// index: prefix(a)
+// index: a, prefix(b)
+// TODO
+// Case 2: Composite index INDEX idx(a, b) matches ORDER BY a, b, c (index provides order for a, b)
+// In fact, there is a Case3 that can also be supported, but it will not be explained in detail here.
+// Please refer to the design document for details.
+func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property.PartialOrderInfo) *PartialOrderMatchResult {
+	if partialOrderInfo == nil || path.Index == nil || len(path.IdxCols) == 0 {
+		return nil
+	}
+
+	sortItems := partialOrderInfo.SortItems
+	if len(sortItems) == 0 {
+		return nil
+	}
+
+	allSameOrder, _ := partialOrderInfo.AllSameOrder()
+	if !allSameOrder {
+		return nil
+	}
+
+	// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
+	// Check if index columns can match ORDER BY columns (allowing prefix index)
+	// Constraint 1: The number of index columns must be <= the number of ORDER BY columns
+	if len(path.IdxCols) > len(sortItems) {
+		return nil
+	}
+	// Constraint 2: The last column of the index must be a prefix column
+	if path.IdxColLens[len(path.IdxCols)-1] == types.UnspecifiedLength {
+		// The last column is not a prefix column, skip this index
+		return nil
+	}
+	// Extract ORDER BY columns
+	orderByCols := make([]*expression.Column, 0, len(sortItems))
+	for _, item := range sortItems {
+		orderByCols = append(orderByCols, item.Col)
+	}
+
+	var prefixColumnID int64
+	var prefixLen int
+	for i := range len(path.IdxCols) {
+		// check if the same column
+		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
+			return nil
+		}
+
+		// meet prefix index column, match termination
+		if path.IdxColLens[i] != types.UnspecifiedLength {
+			// If we meet a prefix column but it's not the last index column, it's not supported.
+			// e.g. prefix(a), b cannot provide partial order for ORDER BY a, b.
+			if i != len(path.IdxCols)-1 {
+				return nil
+			}
+			// Encountered a prefix index column.
+			// This prefix index column can provide partial order, but subsequent columns cannot match.
+			prefixColumnID = path.IdxCols[i].UniqueID
+			prefixLen = path.IdxColLens[i]
+			return &PartialOrderMatchResult{
+				Matched:     true,
+				PrefixColID: prefixColumnID,
+				PrefixLen:   prefixLen,
+			}
+		}
+	}
+
+	return nil
 }
 
 // GroupRangesByCols groups the ranges by the values of the columns specified by groupByColIdxs.
@@ -1431,14 +1530,27 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		if path.IsTablePath() {
 			currentCandidate = getTableCandidate(ds, path, prop)
 		} else {
-			if !(len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan) {
-				continue
-			}
+			// Check if candidate path match the partial order property
+			// To consider an index for partial order optimization, the following conditions must be met together:
+			// 1. OptPartialOrderedIndexForTopN should be enabled.
+			// 2. Physical property should has PartialOrderInfo
+			// 3. The path should match PartialOrderInfo
+			// TODO: use the PartialOrderMatchResult in the further PR to construct the special TopN and Limit executor
+			matchPartialOrderIndex := ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN &&
+				prop.PartialOrderInfo != nil &&
+				matchPartialOrderProperty(path, prop.PartialOrderInfo) != nil
+
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
 			// 1. This path's access cond is not nil.
 			// 2. We have a non-empty prop to match.
 			// 3. This index is forced to choose.
 			// 4. The needed columns are all covered by index columns(and handleCol).
+			// 5. Match PartialOrderInfo physical property to be considered for partial order optimization (new condition).
+			keepIndex := len(path.AccessConds) > 0 || !prop.IsSortItemEmpty() || path.Forced || path.IsSingleScan || matchPartialOrderIndex
+			if !keepIndex {
+				// If none of the above conditions are met, this index will be directly pruned here.
+				continue
+			}
 			currentCandidate = getIndexCandidate(ds, path, prop)
 		}
 		pruned := false
@@ -1466,11 +1578,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 	}
 
 	// If we've forced an index merge - we want to keep these plans
-	preferMerge := len(ds.IndexMergeHints) > 0 || fixcontrol.GetBoolWithDefault(
-		ds.SCtx().GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix52869,
-		false,
-	)
+	preferMerge := rule.ShouldPreferIndexMerge(ds)
 	if preferRange {
 		// Override preferRange with the following limitations to scope
 		preferRange = preferMerge || idxMissingStats || ds.TableStats.HistColl.Pseudo || ds.TableStats.RowCount < 1
@@ -1641,7 +1749,9 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	if prop == nil {
 		return nil, nil
 	}
-	if ds.IsForUpdateRead && ds.SCtx().GetSessionVars().TxnCtx.IsExplicit {
+	sessionVars := ds.SCtx().GetSessionVars()
+	_, isolationReadEnginesHasTiKV := sessionVars.GetIsolationReadEngines()[kv.TiKV]
+	if ds.IsForUpdateRead && sessionVars.TxnCtx.IsExplicit && isolationReadEnginesHasTiKV {
 		hasPointGetPath := false
 		for _, path := range ds.PossibleAccessPaths {
 			if isPointGetPath(ds, path) {

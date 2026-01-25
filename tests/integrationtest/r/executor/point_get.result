@@ -146,7 +146,7 @@ select * from t where a = "a  ";
 a	b
 explain format='plan_tree' select hex(a), hex(b) from t where a = "a\0";
 id	task	access object	operator info
-Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+Projection	root		hex(executor__point_get.t.a)->Column, hex(executor__point_get.t.b)->Column
 └─Point_Get	root	table:t, index:PRIMARY(a)	
 select hex(a), hex(b) from t where a = "a\0";
 hex(a)	hex(b)
@@ -206,7 +206,7 @@ select * from t tmp where a = "a  ";
 a	b
 explain format='plan_tree' select hex(a), hex(b) from t tmp where a = "a\0";
 id	task	access object	operator info
-Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+Projection	root		hex(executor__point_get.t.a)->Column, hex(executor__point_get.t.b)->Column
 └─Point_Get	root	table:t, index:PRIMARY(a)	
 select hex(a), hex(b) from t tmp where a = "a\0";
 hex(a)	hex(b)
@@ -272,7 +272,7 @@ select * from t where a = "a  ";
 a	b
 explain format='plan_tree' select hex(a), hex(b) from t where a = "a\0";
 id	task	access object	operator info
-Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+Projection	root		hex(executor__point_get.t.a)->Column, hex(executor__point_get.t.b)->Column
 └─IndexLookUp	root		
   ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -303,7 +303,7 @@ select * from t tmp where a = "a  ";
 a	b
 explain format='plan_tree' select hex(a), hex(b) from t tmp where a = "a\0";
 id	task	access object	operator info
-Projection	root		hex(executor__point_get.t.a)->Column#4, hex(executor__point_get.t.b)->Column#5
+Projection	root		hex(executor__point_get.t.a)->Column, hex(executor__point_get.t.b)->Column
 └─IndexLookUp	root		
   ├─IndexRangeScan(Build)	cop[tikv]	table:tmp, index:idx_1(a)	range:["a\x00","a\x00"], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:tmp	keep order:false, stats:pseudo
@@ -577,7 +577,7 @@ explain format = 'plan_tree' select * from t2 where a in ('111','222') union all
 id	task	access object	operator info
 Union	root		
 ├─Batch_Point_Get	root	table:t2, clustered index:PRIMARY(a)	keep order:false, desc:false
-└─Projection	root		cast(executor__point_get.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column#6, executor__point_get.t1.c->Column#7
+└─Projection	root		cast(executor__point_get.t1.a, varchar(20) BINARY CHARACTER SET utf8mb4 COLLATE utf8mb4_bin)->Column, executor__point_get.t1.c->Column
   └─Batch_Point_Get	root	table:t1, clustered index:PRIMARY(a, b)	keep order:false, desc:false
 select * from t2 where a in ('111','222') union all select a,c from t1 where (a,b) in ((1,1),(2,2));
 a	b
