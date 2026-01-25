@@ -1,6 +1,8 @@
 package joinorder
 
 import (
+	"maps"
+
 	"github.com/pingcap/errors"
 
 	"github.com/pingcap/tidb/pkg/expression"
@@ -158,7 +160,11 @@ func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVert
 		tmp.eqConds = append(tmp.eqConds, cond.(*expression.ScalarFunction))
 		res = append(res, tmp)
 	}
-	for _, cond := range joinop.OtherConditions {
+	nonEQConds := make([]expression.Expression, 0, len(joinop.LeftConditions)+len(joinop.RightConditions)+len(joinop.OtherConditions))
+	nonEQConds = append(nonEQConds, joinop.OtherConditions...)
+	nonEQConds = append(nonEQConds, joinop.LeftConditions...)
+	nonEQConds = append(nonEQConds, joinop.RightConditions...)
+	for _, cond := range nonEQConds {
 		condArg[0] = cond
 		tmp := d.makeEdge(base.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
 		tmp.nonEQConds = append(tmp.nonEQConds, cond)
@@ -420,13 +426,15 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}
 	node1 := checkResult.node1
 	node2 := checkResult.node2
-	usedEdges := make(map[uint64]struct{}, numInnerEdges+numNonInnerEdges)
+	usedEdges := make(map[uint64]struct{}, numInnerEdges+numNonInnerEdges+len(node1.usedEdges)+len(node2.usedEdges))
 	for _, e := range checkResult.appliedInnerEdges {
 		usedEdges[e.idx] = struct{}{}
 	}
 	if checkResult.appliedNonInnerEdge != nil {
 		usedEdges[checkResult.appliedNonInnerEdge.idx] = struct{}{}
 	}
+	maps.Copy(usedEdges, node1.usedEdges)
+	maps.Copy(usedEdges, node2.usedEdges)
 	return &Node{
 		bitSet:    node1.bitSet.Union(node2.bitSet),
 		p:         p,
@@ -508,22 +516,22 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	return join, nil
 }
 
-func (d *ConflictDetector) CheckAllEdgesUsed(curJoinTree *Node) error {
+func (d *ConflictDetector) CheckAllEdgesUsed(curJoinTree *Node) bool {
 	for _, e := range d.innerEdges {
 		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
 			if _, ok := curJoinTree.usedEdges[e.idx]; !ok {
-				return errors.New("not all inner join edges used in join tree")
+				return false
 			}
 		}
 	}
 	for _, e := range d.nonInnerEdges {
 		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {
 			if _, ok := curJoinTree.usedEdges[e.idx]; !ok {
-				return errors.New("not all non-inner join edges used in join tree")
+				return false
 			}
 		}
 	}
-	return nil
+	return true
 }
 
 // gjt todo duplicated function with old implementation

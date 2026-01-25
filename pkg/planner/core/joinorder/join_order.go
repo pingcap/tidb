@@ -46,7 +46,12 @@ type joinGroup struct {
 func (g *joinGroup) merge(other *joinGroup) {
 	g.vertexes = append(g.vertexes, other.vertexes...)
 	g.leadingHints = append(g.leadingHints, other.leadingHints...)
-	maps.Copy(g.vertexHints, other.vertexHints)
+	if len(other.vertexHints) > 0 {
+		if g.vertexHints == nil {
+			g.vertexHints = make(map[int]*vertexJoinMethodHint, len(other.vertexHints))
+		}
+		maps.Copy(g.vertexHints, other.vertexHints)
+	}
 	g.allInnerJoin = g.allInnerJoin && other.allInnerJoin
 }
 
@@ -336,11 +341,11 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		}
 	}
 	// gjt todo better policy
+	if !detector.CheckAllEdgesUsed(curJoinTree) {
+		return group.root, nil
+	}
 	if len(bushyJoinTreeNodes) > 0 {
 		return makeBushyTree(j.ctx, bushyJoinTreeNodes)
-	}
-	if err := detector.CheckAllEdgesUsed(curJoinTree); err != nil {
-		return nil, err
 	}
 	return curJoinTree.p, nil
 }
