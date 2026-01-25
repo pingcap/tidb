@@ -203,6 +203,14 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 	// setup TES. Only consider EqualConditions and NAEQConditions.
 	// OtherConditions are not edges.
 	e.tes = d.calcTES(conds)
+	// For degenerate predicates (only one side referenced), force TES to include
+	// both sides so the edge can't connect unrelated subsets.
+	if !e.tes.HasIntersect(e.leftVertexes) {
+		e.tes = e.tes.Union(e.leftVertexes)
+	}
+	if !e.tes.HasIntersect(e.rightVertexes) {
+		e.tes = e.tes.Union(e.rightVertexes)
+	}
 
 	if joinType == base.InnerJoin {
 		d.innerEdges = append(d.innerEdges, e)
@@ -374,7 +382,9 @@ func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
 		return false
 	}
 	// gjt todo refine this check
-	return e.tes.IsSubsetOf(node1.bitSet.Union(node2.bitSet))
+	return e.tes.IsSubsetOf(node1.bitSet.Union(node2.bitSet)) &&
+		e.tes.HasIntersect(node1.bitSet) &&
+		e.tes.HasIntersect(node2.bitSet)
 }
 
 func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
