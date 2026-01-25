@@ -15,12 +15,11 @@
 package statistics
 
 import (
-	"hash"
-
 	"github.com/dolthub/swiss"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/zeebo/xxh3"
 )
 
 // FMSketchVec is a vectorized version of FMSketch that can efficiently process
@@ -58,12 +57,12 @@ func NewFMSketchVec(maxSize int) *FMSketchVec {
 }
 
 func (s *FMSketchVec) InsertValueVec(sc *stmtctx.StatementContext, values []types.Datum) (err error) {
+	n := len(values)
 	// vec encoding
-	s.hashVals = s.hashVals[:0]
-	if len(s.bufs) < len(values) {
-		s.bufs = make([][]byte, len(values))
+	if len(s.bufs) < n {
+		s.bufs = make([][]byte, n)
 	}
-	for i := 0; i < len(s.bufs); i++ {
+	for i := 0; i < n; i++ {
 		s.bufs[i] = s.bufs[i][:0]
 	}
 	s.bufs, err = codec.EncodeStringVec(s.bufs, values, false)
@@ -72,19 +71,13 @@ func (s *FMSketchVec) InsertValueVec(sc *stmtctx.StatementContext, values []type
 	}
 
 	// vec hash
-	hashFunc := murmur3Pool.Get().(hash.Hash64)
-	defer murmur3Pool.Put(hashFunc)
-	for i := 0; i < len(s.bufs); i++ {
-		hashFunc.Reset()
-		_, err = hashFunc.Write(s.bufs[i])
-		if err != nil {
-			return err
-		}
-		s.hashVals = append(s.hashVals, hashFunc.Sum64())
+	if len(s.hashVals) < n {
+		s.hashVals = make([]uint64, n)
 	}
+	xxHash3(s.bufs, s.hashVals)
 
 	// vec insert
-	s.insertHashValue(s.hashVals)
+	s.insertHashValue(s.hashVals[:n])
 	return nil
 }
 
@@ -109,5 +102,15 @@ func (s *FMSketchVec) insertHashValue(hashVals []uint64) {
 			}
 			return false
 		})
+	}
+}
+
+// xxHash3 computes xxHash3 hash values for multiple byte slices in a vectorized manner.
+// It hashes each byte slice in vals and stores the resulting 64-bit hash values in hashVals.
+// The caller must ensure hashVals has at least len(vals) length to avoid panics.
+func xxHash3(vals [][]byte, hashVals []uint64) {
+	// Vectorized hashing: process each byte slice
+	for i := 0; i < len(vals); i++ {
+		hashVals[i] = xxh3.Hash(vals[i])
 	}
 }
