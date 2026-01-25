@@ -258,11 +258,11 @@ func TestPlanDigest4InList(t *testing.T) {
 		tk.MustExec("create table t4(a int, b int, c int, primary key (a, b) clustered);")
 		tk.MustExec("create table t5(a int, b int, c int, key idx_a_b (a, b));")
 		tk.Session().GetSessionVars().PlanID.Store(0)
-		queriesGroup1 := []string{
+		queriesGroup1 = []string{
 			"explain select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 1;",
 			"explain select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 1;",
 		}
-		queriesGroup2 := []string{
+		queriesGroup2 = []string{
 			"explain select /* issue:47634 */ /*+ inl_join(t4) */ * from t3 join t4 on t3.b = t4.b where t4.a = 2;",
 			"explain select /* issue:47634 */ /*+ inl_join(t5) */ * from t3 join t5 on t3.b = t5.b where t5.a = 2;",
 		}
