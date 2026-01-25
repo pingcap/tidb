@@ -130,21 +130,12 @@ func SubTestFMSketchCoding() func(*testing.T) {
 }
 
 // generateTestData creates test data with various types for benchmarking
-func generateTestData(size int) []types.Datum {
-	data := make([]types.Datum, 0, size)
-	for i := 0; i < size; i++ {
-		// Mix different types to simulate real-world scenarios
-		switch i % 5 {
-		case 0:
-			data = append(data, types.NewIntDatum(int64(i)))
-		case 1:
-			data = append(data, types.NewStringDatum(string(rune('a'+i%26))))
-		case 2:
-			data = append(data, types.NewFloat64Datum(float64(i)*1.5))
-		case 3:
-			data = append(data, types.NewBytesDatum([]byte{byte(i), byte(i >> 8), byte(i >> 16)}))
-		case 4:
-			data = append(data, types.NewUintDatum(uint64(i)))
+func generateTestData(numBatch, batchSize int) [][]types.Datum {
+	data := make([][]types.Datum, numBatch)
+	for i := 0; i < numBatch; i++ {
+		data[i] = make([]types.Datum, batchSize)
+		for j := 0; j < batchSize; j++ {
+			data[i][j] = types.NewStringDatum(string(rune('a' + i%26)))
 		}
 	}
 	return data
@@ -154,15 +145,15 @@ func generateTestData(size int) []types.Datum {
 // method called in a loop for multiple values.
 func BenchmarkFMSketch_InsertValue(b *testing.B) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	maxSize := 1000
-	testData := generateTestData(1000)
-	sketch := NewFMSketch(maxSize)
+	testData := generateTestData(1000, 1000)
+	sketch := NewFMSketch(1000)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		for _, value := range testData {
+		batch := testData[i%len(testData)]
+		for _, value := range batch {
 			_ = sketch.InsertValue(sc, value)
 		}
 	}
@@ -172,15 +163,14 @@ func BenchmarkFMSketch_InsertValue(b *testing.B) {
 // method that processes multiple values in batch.
 func BenchmarkFMSketchVec_InsertValueVec(b *testing.B) {
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	maxSize := 1000
-	testData := generateTestData(1000)
-	sketchVec := NewFMSketchVec(maxSize)
+	testData := generateTestData(1000, 1000)
+	sketchVec := NewFMSketchVec(1000)
 
 	b.ResetTimer()
 	b.ReportAllocs()
 
 	for i := 0; i < b.N; i++ {
-		_ = sketchVec.InsertValueVec(sc, testData)
-		// Note: FMSketchVec doesn't have DestroyAndPutToPool yet, but we can add it if needed
+		batch := testData[i%len(testData)]
+		_ = sketchVec.InsertValueVec(sc, batch)
 	}
 }
