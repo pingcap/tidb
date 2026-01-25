@@ -245,7 +245,8 @@ func (b *PlanBuilder) buildExpand(p base.LogicalPlan, gbyItems []expression.Expr
 }
 
 func (b *PlanBuilder) buildAggregation(ctx context.Context, p base.LogicalPlan, aggFuncList []*ast.AggregateFuncExpr, gbyItems []expression.Expression,
-	correlatedAggMap map[*ast.AggregateFuncExpr]int) (base.LogicalPlan, map[int]int, error) {
+	correlatedAggMap map[*ast.AggregateFuncExpr]int,
+) (base.LogicalPlan, map[int]int, error) {
 	b.optFlag |= rule.FlagBuildKeyInfo
 	b.optFlag |= rule.FlagPushDownAgg
 	// We may apply aggregation eliminate optimization.
@@ -431,7 +432,7 @@ func (b *PlanBuilder) buildTableRefs(ctx context.Context, from *ast.TableRefsCla
 }
 
 func (b *PlanBuilder) buildResultSetNode(ctx context.Context, node ast.ResultSetNode, isCTE bool) (p base.LogicalPlan, err error) {
-	//If it is building the CTE queries, we will mark them.
+	// If it is building the CTE queries, we will mark them.
 	b.isCTE = isCTE
 	switch x := node.(type) {
 	case *ast.Join:
@@ -560,7 +561,6 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	// Add join reorder flag regardless of inner join or outer join.
 	b.optFlag = b.optFlag | rule.FlagJoinReOrder
 	b.optFlag |= rule.FlagPredicateSimplification
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 	b.optFlag |= rule.FlagEmptySelectionEliminator
 
 	leftPlan, err := b.buildResultSetNode(ctx, joinNode.Left, false)
@@ -1294,7 +1294,8 @@ func (b *PlanBuilder) implicitProjectGroupingSetCols(projSchema *expression.Sche
 
 // buildProjection returns a Projection plan and non-aux columns length.
 func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, fields []*ast.SelectField, mapper map[*ast.AggregateFuncExpr]int,
-	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool) (base.LogicalPlan, []expression.Expression, int, error) {
+	windowMapper map[*ast.WindowFuncExpr]int, considerWindow bool, expandGenerateColumn bool,
+) (base.LogicalPlan, []expression.Expression, int, error) {
 	err := b.preprocessUserVarTypes(ctx, p, fields, mapper)
 	if err != nil {
 		return nil, nil, 0, err
@@ -1728,12 +1729,12 @@ func (b *PlanBuilder) buildSetOpr(ctx context.Context, setOpr *ast.SetOprStmt) (
 func (b *PlanBuilder) buildSemiJoinForSetOperator(
 	leftOriginPlan base.LogicalPlan,
 	rightPlan base.LogicalPlan,
-	joinType base.JoinType) (leftPlan base.LogicalPlan, err error) {
+	joinType base.JoinType,
+) (leftPlan base.LogicalPlan, err error) {
 	leftPlan, err = b.buildDistinct(leftOriginPlan, leftOriginPlan.Schema().Len())
 	if err != nil {
 		return nil, err
 	}
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 	joinPlan := logicalop.LogicalJoin{JoinType: joinType}.Init(b.ctx, b.getSelectOffset())
 	joinPlan.SetChildren(leftPlan, rightPlan)
 	joinPlan.SetSchema(leftPlan.Schema())
@@ -1928,7 +1929,8 @@ func (b *PlanBuilder) buildSort(ctx context.Context, p base.LogicalPlan, byItems
 }
 
 func (b *PlanBuilder) buildSortWithCheck(ctx context.Context, p base.LogicalPlan, byItems []*ast.ByItem, aggMapper map[*ast.AggregateFuncExpr]int, windowMapper map[*ast.WindowFuncExpr]int,
-	projExprs []expression.Expression, oldLen int, hasDistinct bool) (*logicalop.LogicalSort, error) {
+	projExprs []expression.Expression, oldLen int, hasDistinct bool,
+) (*logicalop.LogicalSort, error) {
 	if _, isUnion := p.(*logicalop.LogicalUnionAll); isUnion {
 		b.curClause = globalOrderByClause
 	} else {
@@ -2076,7 +2078,8 @@ func CheckParamTypeInt64orUint64(param *driver.ParamMarkerExpr) (bool, uint64) {
 }
 
 func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (count uint64,
-	offset uint64, err error) {
+	offset uint64, err error,
+) {
 	var isExpectedType bool
 	if limit.Count != nil {
 		count, _, isExpectedType = getUintFromNode(ctx, limit.Count, true)
@@ -2401,7 +2404,8 @@ func (a *havingWindowAndOrderbyExprResolver) Leave(n ast.Node) (node ast.Node, o
 // If we found some columns that are not in select fields, we will append it to select fields and update the colMapper.
 // When we rewrite the order by / having expression, we will find column in map at first.
 func (b *PlanBuilder) resolveHavingAndOrderBy(ctx context.Context, sel *ast.SelectStmt, p base.LogicalPlan) (
-	havingAggMapper, _ map[*ast.AggregateFuncExpr]int, err error) {
+	havingAggMapper, _ map[*ast.AggregateFuncExpr]int, err error,
+) {
 	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
 		selectFields: sel.Fields.Fields,
@@ -2555,7 +2559,8 @@ func (b *PlanBuilder) extractCorrelatedAggFuncs(ctx context.Context, p base.Logi
 
 // resolveWindowFunction will process window functions and resolve the columns that don't exist in select fields.
 func (b *PlanBuilder) resolveWindowFunction(sel *ast.SelectStmt, p base.LogicalPlan) (
-	map[*ast.AggregateFuncExpr]int, error) {
+	map[*ast.AggregateFuncExpr]int, error,
+) {
 	extractor := &havingWindowAndOrderbyExprResolver{
 		p:            p,
 		selectFields: sel.Fields.Fields,
@@ -3586,7 +3591,8 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 					Schema: name.DBName,
 					Table:  name.TblName,
 					Name:   name.ColName,
-				}}
+				},
+			}
 			colName.SetType(col.GetStaticType())
 			field := &ast.SelectField{Expr: colName}
 			field.SetText(nil, name.ColName.O)
@@ -5070,7 +5076,7 @@ func (b *PlanBuilder) buildProjUponView(_ context.Context, dbName ast.CIStr, tab
 // buildApplyWithJoinType builds apply plan with outerPlan and innerPlan, which apply join with particular join type for
 // every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPlan, tp base.JoinType, markNoDecorrelate bool) base.LogicalPlan {
-	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConvertOuterToInnerJoin | rule.FlagConstantPropagation
+	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate | rule.FlagConstantPropagation
 	ap := logicalop.LogicalApply{LogicalJoin: logicalop.LogicalJoin{JoinType: tp}, NoDecorrelate: markNoDecorrelate}.Init(b.ctx, b.getSelectOffset())
 	ap.SetChildren(outerPlan, innerPlan)
 	ap.SetOutputNames(make([]*types.FieldName, outerPlan.Schema().Len()+innerPlan.Schema().Len()))
@@ -5091,7 +5097,8 @@ func (b *PlanBuilder) buildApplyWithJoinType(outerPlan, innerPlan base.LogicalPl
 
 // buildSemiApply builds apply plan with outerPlan and innerPlan, which apply semi-join for every row from outerPlan and the whole innerPlan.
 func (b *PlanBuilder) buildSemiApply(outerPlan, innerPlan base.LogicalPlan, condition []expression.Expression,
-	asScalar, not, considerRewrite, markNoDecorrelate bool) (base.LogicalPlan, error) {
+	asScalar, not, considerRewrite, markNoDecorrelate bool,
+) (base.LogicalPlan, error) {
 	b.optFlag = b.optFlag | rule.FlagPredicatePushDown | rule.FlagBuildKeyInfo | rule.FlagDecorrelate
 
 	join, err := b.buildSemiJoin(outerPlan, innerPlan, condition, asScalar, not, considerRewrite)
@@ -5134,7 +5141,6 @@ func (b *PlanBuilder) buildMaxOneRow(p base.LogicalPlan) base.LogicalPlan {
 }
 
 func (b *PlanBuilder) buildSemiJoin(outerPlan, innerPlan base.LogicalPlan, onCondition []expression.Expression, asScalar, not, forceRewrite bool) (*logicalop.LogicalJoin, error) {
-	b.optFlag |= rule.FlagConvertOuterToInnerJoin
 	joinPlan := logicalop.LogicalJoin{}.Init(b.ctx, b.getSelectOffset())
 	for i, expr := range onCondition {
 		onCondition[i] = expr.Decorrelate(outerPlan.Schema())
@@ -5850,7 +5856,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		tbInfoList := make(map[string]*ast.TableName)
 		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
 		for _, tn := range ds.Tables.Tables {
-			var canUpdate, foundMatch = false, false
+			canUpdate, foundMatch := false, false
 			name := tn.Name.L
 			if tn.Schema.L == "" {
 				canUpdate, foundMatch = updatableList[name]
@@ -6002,7 +6008,8 @@ func getWindowName(name string) string {
 // buildProjectionForWindow builds the projection for expressions in the window specification that is not an column,
 // so after the projection, window functions only needs to deal with columns.
 func (b *PlanBuilder) buildProjectionForWindow(ctx context.Context, p base.LogicalPlan, spec *ast.WindowSpec, args []ast.ExprNode, aggMap map[*ast.AggregateFuncExpr]int) (
-	_ base.LogicalPlan, _, _ []property.SortItem, newArgList []expression.Expression, err error) {
+	_ base.LogicalPlan, _, _ []property.SortItem, newArgList []expression.Expression, err error,
+) {
 	b.optFlag |= rule.FlagEliminateProjection
 
 	var partitionItems, orderItems []*ast.ByItem
@@ -6865,7 +6872,8 @@ func (e *tableListExtractor) Enter(n ast.Node) (_ ast.Node, skipChildren bool) {
 		if newName := x.NewName; newName != "" {
 			e.tableNames = append(e.tableNames, &ast.TableName{
 				Schema: x.Table.Schema,
-				Name:   ast.NewCIStr(newName)})
+				Name:   ast.NewCIStr(newName),
+			})
 		}
 
 	case *ast.GrantStmt:
