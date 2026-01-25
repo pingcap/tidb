@@ -36,7 +36,6 @@ type kvStore struct {
 	store          *tikv.KVStore
 	mppStoreCnt    *mppStoreCnt
 	TiCIShardCache *TiCIShardCache
-	codec          tikv.Codec
 }
 
 // GetRegionCache returns the region cache instance.
@@ -69,7 +68,7 @@ type Store struct {
 }
 
 // NewStore creates a new store instance.
-func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.CoprocessorCache, codec tikv.Codec) (*Store, error) {
+func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.CoprocessorCache) (*Store, error) {
 	coprCache, err := newCoprCache(coprCacheConfig)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -96,7 +95,7 @@ func NewStore(s *tikv.KVStore, tls *tls.Config, coprCacheConfig *config.Coproces
 
 	/* #nosec G404 */
 	return &Store{
-		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient), codec: codec},
+		kvStore:         &kvStore{store: s, mppStoreCnt: &mppStoreCnt{}, TiCIShardCache: NewTiCIShardCache(ticiClient)},
 		coprCache:       coprCache,
 		replicaReadSeed: rand.Uint32(),
 		numcpu:          runtime.GOMAXPROCS(0),
