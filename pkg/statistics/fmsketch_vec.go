@@ -44,7 +44,7 @@ type FMSketchVec struct {
 	// And the hashset will only keep the hashed values with trailing zeroes greater than or equal to the new mask.
 	maxSize int
 
-	buf      []byte
+	bufs     [][]byte
 	hashVals []uint64
 }
 
@@ -58,24 +58,32 @@ func NewFMSketchVec(maxSize int) *FMSketchVec {
 }
 
 func (s *FMSketchVec) InsertValueVec(sc *stmtctx.StatementContext, values []types.Datum) (err error) {
+	// vec encoding
+	s.hashVals = s.hashVals[:0]
+	if len(s.bufs) < len(values) {
+		s.bufs = make([][]byte, len(values))
+	}
+	for i := 0; i < len(s.bufs); i++ {
+		s.bufs[i] = s.bufs[i][:0]
+	}
+	s.bufs, err = codec.EncodeStringVec(s.bufs, values, false)
+	if err != nil {
+		return err
+	}
+
+	// vec hash
 	hashFunc := murmur3Pool.Get().(hash.Hash64)
 	defer murmur3Pool.Put(hashFunc)
-
-	s.hashVals = s.hashVals[:0]
-	for _, val := range values {
+	for i := 0; i < len(s.bufs); i++ {
 		hashFunc.Reset()
-		s.buf = s.buf[:0]
-		s.buf, err = codec.EncodeValue(sc.TimeZone(), s.buf, val)
-		if err != nil {
-			return err
-		}
-		_, err = hashFunc.Write(s.buf)
+		_, err = hashFunc.Write(s.bufs[i])
 		if err != nil {
 			return err
 		}
 		s.hashVals = append(s.hashVals, hashFunc.Sum64())
 	}
 
+	// vec insert
 	s.insertHashValue(s.hashVals)
 	return nil
 }
