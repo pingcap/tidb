@@ -20,12 +20,10 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"testing"
 	"time"
 
@@ -198,23 +196,13 @@ func tryMakeImage(t testing.TB, opts ...mockstore.MockTiKVStoreOption) {
 	}
 }
 
-func tryMakeImageOnce(t testing.TB) (retry bool, err error) {
-	const lockFile = "/tmp/tidb-unistore-bootstraped-image-lock-file"
-	lock, err := os.Create(lockFile)
-	if err != nil {
-		return true, nil
-	}
-	defer func() { err = os.Remove(lockFile) }()
-	defer lock.Close()
+// tryMakeImageOnce is implemented in platform-specific files:
+// - mockstore_unix.go for Unix/Linux/macOS
+// - mockstore_windows.go for Windows
 
-	// Prevent other process from creating the image concurrently
-	err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-	if err != nil {
-		return true, nil
-	}
-	defer func() { err = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
-
-	// Now this is the only instance to do the operation.
+// createMockStoreImage creates the bootstrapped mock store image.
+// This is platform-independent logic shared between Unix and Windows implementations.
+func createMockStoreImage(t testing.TB) (retry bool, err error) {
 	store, err := mockstore.NewMockStore(
 		mockstore.WithStoreType(mockstore.EmbedUnistore),
 		mockstore.WithPath(mockstore.ImageFilePath))

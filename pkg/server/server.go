@@ -128,6 +128,7 @@ type Server struct {
 	listener          net.Listener
 	socket            net.Listener
 	concurrentLimiter *util.TokenLimiter
+	flightSQL         any // FlightSQL state, set by build-tagged files
 
 	rwlock  sync.RWMutex
 	clients map[uint64]*clientConn
@@ -183,6 +184,16 @@ func (s *Server) ListenAddr() net.Addr {
 // StatusListenerAddr returns the server's status listener's network address.
 func (s *Server) StatusListenerAddr() net.Addr {
 	return s.statusListener.Addr()
+}
+
+// FlightSQLListenerAddr returns the server's Flight SQL listener's network address.
+func (s *Server) FlightSQLListenerAddr() net.Addr {
+	return getFlightSQLListenerAddr(s)
+}
+
+// FlightSQLPort returns the server's Flight SQL port.
+func (s *Server) FlightSQLPort() uint {
+	return getFlightSQLPort(s)
 }
 
 // BitwiseXorCapability gets the capability of the server.
@@ -364,6 +375,11 @@ func (s *Server) initTiDBListener() (err error) {
 		}
 	}
 
+	// Initialize FlightSQL listener if enabled via build tag
+	if err = initFlightSQLListener(s); err != nil {
+		return errors.Trace(err)
+	}
+
 	if s.cfg.Socket != "" {
 		if err := cleanupStaleSocket(s.cfg.Socket); err != nil {
 			return errors.Trace(err)
@@ -497,6 +513,8 @@ func (s *Server) Run(dom *domain.Domain) error {
 	terror.RegisterFinish()
 	go s.startNetworkListener(s.listener, false, errChan)
 	go s.startNetworkListener(s.socket, true, errChan)
+	// Start FlightSQL server if enabled via build tag
+	go startFlightSQLServer(s, errChan)
 	if RunInGoTest && !isClosed(RunInGoTestChan) {
 		close(RunInGoTestChan)
 	}
@@ -649,6 +667,8 @@ func (s *Server) closeListener() {
 		terror.Log(errors.Trace(err))
 		s.statusServer.Store(nil)
 	}
+	// Close FlightSQL server if enabled via build tag
+	closeFlightSQLServer(s)
 	if s.grpcServer != nil {
 		s.grpcServer.Stop()
 		s.grpcServer = nil
