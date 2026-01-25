@@ -14,6 +14,7 @@ type ConflictDetector struct {
 	groupVertexes []*Node
 	innerEdges    []*edge
 	nonInnerEdges []*edge
+	allInnerJoin  bool
 }
 
 type edge struct {
@@ -27,6 +28,8 @@ type edge struct {
 
 	tes   BitSet
 	rules []*rule
+	// If all joins in the group are inner joins, conflict rules are unnecessary.
+	skipRules bool
 
 	leftEdges     []*edge
 	rightEdges    []*edge
@@ -88,6 +91,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		return nil, errors.Errorf("too many vertexes in join group: %d, exceeds maximum supported 64", len(group.vertexes))
 	}
 	d.groupRoot = group.root
+	d.allInnerJoin = group.allInnerJoin
 
 	vertexMap := make(map[int]*Node, len(group.vertexes))
 	for i, v := range group.vertexes {
@@ -187,6 +191,7 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 		rightVertexes: rightVertexes,
 		leftEdges:     leftEdges,
 		rightEdges:    rightEdges,
+		skipRules:     d.allInnerJoin,
 	}
 
 	// setup TES. Only consider EqualConditions and NAEQConditions.
@@ -202,6 +207,9 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 	// gjt todo: handle CrossProduct
 
 	// setup conflict rules
+	if d.allInnerJoin {
+		return e
+	}
 	for _, child := range leftEdges {
 		if !assoc(child, e) {
 			e.rules = append(e.rules, rightToLeftRule(child))
@@ -356,7 +364,7 @@ func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnection
 }
 
 func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
-	if !e.checkRules(node1, node2) {
+	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
 	// gjt todo refine this check
@@ -364,7 +372,7 @@ func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
 }
 
 func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
-	if !e.checkRules(node1, node2) {
+	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
 	// gjt todo commutative?

@@ -129,8 +129,9 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroup {
 
 func makeSingleGroup(p base.LogicalPlan) *joinGroup {
 	return &joinGroup{
-		root:     p,
-		vertexes: []base.LogicalPlan{p},
+		root:         p,
+		vertexes:     []base.LogicalPlan{p},
+		allInnerJoin: true,
 	}
 }
 
