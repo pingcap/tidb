@@ -719,6 +719,12 @@ func (hg *Histogram) TotalRowCount() float64 {
 // topNCount is the TopN total count to include in the histogram row count (pass 0 to exclude TopN).
 func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uint64) (float64, bool) {
 	histRowCount := hg.NotNullCount() + float64(hg.NullCount) + float64(topNCount)
+	isNegative := realtimeRowCount < int64(histRowCount)
+	// Avoid division by zero. This should not happen since we
+	// only call this function when we have data in the histogram.
+	if histRowCount == 0 {
+		return 0, isNegative
+	}
 	// Calculate the percentage of NULLs in the original row count
 	// Assume that 50% of the newly added rows are NULLs
 	nullsRatio := (float64(hg.NullCount) / histRowCount) * 0.5
@@ -728,7 +734,6 @@ func (hg *Histogram) AbsRowCountDifference(realtimeRowCount int64, topNCount uin
 	addedRows := math.Abs(float64(realtimeRowCount) - histRowCount)
 	// Adjust the added rows by the NULLs and topN ratios
 	addedRows = addedRows * (1 - nullsRatio - topNRatio)
-	isNegative := realtimeRowCount < int64(histRowCount)
 	return addedRows, isNegative
 }
 
@@ -1047,7 +1052,8 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 // on the left side of the histogram. The predicate range [l, r] overlaps with
 // the region (boundL, histL), and we calculate the percentage of the shaded area.
 func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64 {
-	if l >= histL || r <= boundL {
+	// Defensive checks - caller should ensure the arguments are valid.
+	if l >= histL || r <= boundL || histWidth <= 0 {
 		return 0
 	}
 	actualL := math.Max(l, boundL)
@@ -1060,7 +1066,8 @@ func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64
 // on the right side of the histogram. The predicate range [l, r] overlaps with
 // the region (histR, boundR), and we calculate the percentage of the shaded area.
 func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float64 {
-	if l >= boundR || r <= histR {
+	// Defensive checks - caller should ensure the arguments are valid.
+	if l >= boundR || r <= histR || histWidth <= 0 {
 		return 0
 	}
 	actualL := math.Max(l, histR)
@@ -1074,6 +1081,10 @@ func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float6
 // Since "time decay" typically occurs on the right side of the histogram,
 // we only need to calculate the adjustment for the right side.
 func calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth float64) float64 {
+	// Defensive checks - caller should ensure the argument is valid.
+	if histWidth <= 0 {
+		return 0
+	}
 	adjRight := histR + predWidth
 	adjRight = math.Min(adjRight, boundR)
 	histWidthSq := math.Pow(histWidth, 2)
@@ -1140,9 +1151,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Step 2: Calculate "one value"
 	// oneValue assumes "one value qualifies", and is used as a lower bound.
 	// outOfRangeBetweenRate (100) avoids an artificially low NDV.
-	// TODO: If we have a large number of added rows, the NDV maybe underestimated.
+	// TODO: If we have a large number of added rows, the NDV may be underestimated.
 	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
 	if float64(histNDV) < outOfRangeBetweenRate {
+		// If NDV is low, it may no longer be representative of the data since ANALYZE
+		// was last run. Use a default value against realtimeRowCount.
+		// If NDV is not representitative, then hg.NotNullCount may not be either.
 		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
 	}
 
@@ -1197,20 +1211,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// minimum of oneValue, and return the max as worst case.
 		histInvalid = true
 	}
-	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
-	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
-	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
-	histWidth := histR - histL
-	// If we find that the histogram width is too small or too large - we still may need to consider
-	// the impact of modifications to the table
-	if histWidth <= 0 || math.IsInf(histWidth, 1) {
-		histInvalid = true
-	} else if math.IsInf(predWidth, 1) || predWidth > histWidth {
-		predWidth = histWidth
-	}
-	boundL := histL - histWidth
-	boundR := histR + histWidth
-
 	// For datetime columns, cap the right side to now() to ensure reasonable estimates
 	// for future-dated ranges (e.g., '2023-01-01' to '9999-12-31')
 	if lDatum.Kind() == types.KindMysqlTime {
@@ -1229,6 +1229,20 @@ func (hg *Histogram) OutOfRangeRowCount(
 			statslogutil.StatsLogger().Warn("failed to get current time for datetime range estimation, continuing without capping to now()", zap.Error(err))
 		}
 	}
+
+	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
+	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
+	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
+	histWidth := histR - histL
+	// If we find that the histogram width is too small or too large - we still may need to consider
+	// the impact of modifications to the table
+	if histWidth <= 0 || math.IsInf(histWidth, 1) {
+		histInvalid = true
+	} else if math.IsInf(predWidth, 1) || predWidth > histWidth {
+		predWidth = histWidth
+	}
+	boundL := histL - histWidth
+	boundR := histR + histWidth
 
 	var leftPercent, rightPercent, timeAdjRight, estRows float64
 
