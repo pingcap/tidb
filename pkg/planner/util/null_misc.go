@@ -343,8 +343,8 @@ func isOpaqueInfoFuncName(name string) bool {
 //            Yes
 //            v
 // +------------------------+
-// | Structural analysis    |--NullRejecting--> true
-// | (NonTrue/MustNull)     |--NotNullRejecting/Undecided--> false (conservative)
+// | Structural analysis    |--Preserving--> true (null-rejecting)
+// | (NonTrue/MustNull)     |--Hiding/Undecided--> false (conservative)
 // +------------------------+
 
 // isNullRejectedExpr decides whether `predicate` is null-rejecting w.r.t. the `innerSchema`.
@@ -355,7 +355,8 @@ func isOpaqueInfoFuncName(name string) bool {
 //  3. Quick bailout: if the predicate does NOT reference any inner column → false.
 //  4. Structural decision: syntactic rules using NonTrue/MustNull framework
 //     (comparisons/LIKE/REGEXP/<=>/AND/OR/NOT/IS NULL/IS NOT NULL ...).
-//     If undecided, return false conservatively.
+//     Key insight: Preserving + MustNull(inner) = null-rejecting.
+//     If Hiding or Undecided, return false conservatively.
 func isNullRejectedExpr(
 	ctx base.PlanContext,
 	innerSchema *expression.Schema,
@@ -383,8 +384,9 @@ func isNullRejectedExpr(
 
 	// (4) Structural (syntactic) decision
 	// The switch is exhaustive, so the result is always determined here.
+	// Preserving means NULL is preserved, which combined with MustNull(inner) makes it null-rejecting.
 	result := isNullRejectingByStructure(predicate, innerSchema)
-	return result == NullRejecting
+	return result == Preserving
 }
 
 // evaluateConstantPredicate evaluates a constant predicate under 3VL.
@@ -537,17 +539,28 @@ func isNullPropagatingWRTInner(e expression.Expression, inner *expression.Schema
 	}
 }
 
-// NullRejectionResult represents the result of structural null-rejection analysis
+// NullRejectionResult represents the result of structural null-rejection analysis.
+// Following winoros's suggestion, we use a simplified 2-state + undecided model:
+//   - Preserving: NULL values are preserved/propagated (may be null-rejecting)
+//   - Hiding: NULL values are hidden/transformed to non-NULL (not null-rejecting)
+//   - Undecided: cannot determine from structure (conservative: treat as not null-rejecting)
 type NullRejectionResult int
 
 const (
 	// Undecided means we cannot determine from structure alone.
-	// The caller treats this as NotNullRejecting (conservative default).
+	// The caller treats this as not null-rejecting (conservative default).
 	Undecided NullRejectionResult = iota
-	// NotNullRejecting means the predicate definitely does not reject NULL values
-	NotNullRejecting
-	// NullRejecting means the predicate definitely rejects NULL values
-	NullRejecting
+
+	// Preserving means NULL inputs produce NULL outputs.
+	// This is a necessary condition for null-rejection.
+	// Examples: column, NOT, comparisons (=, >, <), arithmetic (+, -, *), LIKE, REGEXP
+	// Combined with MustNull(inner), this becomes null-rejecting.
+	Preserving
+
+	// Hiding means NULL inputs may produce non-NULL outputs.
+	// This makes the predicate NOT null-rejecting.
+	// Examples: istrue_with_null, coalesce, AND/OR (short-circuit), IS NULL, <=>, CASE/IF
+	Hiding
 )
 
 // checkNullPreservingArgs checks if a NULL-preserving function is null-rejecting
@@ -559,7 +572,7 @@ const (
 //   - inner: inner schema to check against
 //   - maxArgsToCheck: maximum number of arguments to check (use -1 for all)
 //
-// Returns NullRejecting if any arg propagates NULL, Undecided otherwise.
+// Returns Preserving if any arg propagates NULL, Undecided otherwise.
 func checkNullPreservingArgs(
 	args []expression.Expression, inner *expression.Schema, maxArgsToCheck int,
 ) NullRejectionResult {
@@ -568,7 +581,7 @@ func checkNullPreservingArgs(
 	}
 	for i := range maxArgsToCheck {
 		if isNullPropagatingWRTInner(args[i], inner) {
-			return NullRejecting
+			return Preserving
 		}
 	}
 	return Undecided
@@ -577,9 +590,9 @@ func checkNullPreservingArgs(
 // isNullRejectingByStructure tries to decide *syntactically* whether predicate `p`
 // is NULL-rejecting w.r.t. `inner`. It returns:
 //
-//	NullRejecting    → definitely NULL-rejecting
-//	NotNullRejecting → definitely NOT NULL-rejecting
-//	Undecided        → cannot determine structurally (treated as NotNullRejecting by caller)
+//	Preserving   → NULL is preserved (may be null-rejecting if combined with MustNull)
+//	Hiding       → NULL is hidden (NOT null-rejecting)
+//	Undecided    → cannot determine structurally (treated as not null-rejecting by caller)
 //
 // This implements the two-set framework (NonTrue/MustNull) for sound null-rejection analysis.
 // The rules are deliberately conservative: if we cannot be *certain* from the
@@ -610,8 +623,9 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 
 	// ---- 2) Null-safe equal `<=>` -------------------------------------------
 	// By definition it does not reject NULLs (NULL <=> NULL is TRUE).
+	// This is Hiding because it explicitly handles NULL.
 	case ast.NullEQ:
-		return NotNullRejecting
+		return Hiding
 
 	// ---- 3) IN / NOT IN -----------------------------------------------------
 	// Defer IN to higher-level isNullRejectedInList() in IsNullRejected.
@@ -620,14 +634,15 @@ func isNullRejectingByStructure(p expression.Expression, inner *expression.Schem
 
 	// ---- 4) IS NULL (accept-NULL test) --------------------------------------
 	// Framework: NonTrue(IS NULL) = ∅. When A=U, IS NULL(A) = T.
+	// This is Hiding because it explicitly handles NULL (returns TRUE for NULL).
 	case ast.IsNull:
-		return NotNullRejecting
+		return Hiding
 
 	// ---- 5) IS TRUE / IS FALSE / IS NOT NULL (reject-NULL tests) -----------
 	// Framework: NonTrue(Test_reject_NULL(A)) ⊇ MustNull(A)
 	case ast.IsFalsity, ast.IsTruthWithoutNull, ast.IsTruthWithNull:
 		if len(args) > 0 && isNullPropagatingWRTInner(args[0], inner) {
-			return NullRejecting
+			return Preserving
 		}
 		return Undecided
 
@@ -664,25 +679,28 @@ func handleNullPreservingComparison(
 }
 
 // handleLogicAnd handles AND with union semantics: NonTrue(A AND B) = NonTrue(A) ∪ NonTrue(B)
+// AND is Hiding due to short-circuit: FALSE AND NULL = FALSE (hides NULL)
+// But if either operand is null-preserving w.r.t. inner, the whole can be null-rejecting.
 func handleLogicAnd(args []expression.Expression, inner *expression.Schema) NullRejectionResult {
 	if len(args) < 2 {
 		return Undecided
 	}
 
 	left := isNullRejectingByStructure(args[0], inner)
-	// Short-circuit: if left is NullRejecting, the whole is NullRejecting
-	if left == NullRejecting {
-		return NullRejecting
+	// Short-circuit: if left is Preserving, the whole is Preserving (union)
+	if left == Preserving {
+		return Preserving
 	}
 
 	right := isNullRejectingByStructure(args[1], inner)
-	if right == NullRejecting {
-		return NullRejecting
+	if right == Preserving {
+		return Preserving
 	}
 
-	// Both sides determined but neither is NullRejecting
+	// Both sides determined but neither is Preserving
+	// AND can hide NULL (FALSE AND NULL = FALSE), so it's Hiding
 	if left != Undecided && right != Undecided {
-		return NotNullRejecting
+		return Hiding
 	}
 
 	return Undecided
@@ -699,31 +717,34 @@ func handleLogicXor(args []expression.Expression, inner *expression.Schema) Null
 }
 
 // handleLogicOr handles OR with intersection semantics: NonTrue(A OR B) = NonTrue(A) ∩ NonTrue(B)
+// OR is Hiding due to short-circuit: TRUE OR NULL = TRUE (hides NULL)
+// Only if BOTH operands are null-preserving w.r.t. inner, the whole is null-rejecting.
 func handleLogicOr(args []expression.Expression, inner *expression.Schema) NullRejectionResult {
 	if len(args) < 2 {
 		return Undecided
 	}
 
 	left := isNullRejectingByStructure(args[0], inner)
-	// Short-circuit: if left is NotNullRejecting, the whole cannot be NullRejecting
-	if left == NotNullRejecting {
-		return NotNullRejecting
+	// Short-circuit: if left is Hiding, the whole cannot be Preserving (intersection fails)
+	if left == Hiding {
+		return Hiding
 	}
 
 	right := isNullRejectingByStructure(args[1], inner)
-	if right == NotNullRejecting {
-		return NotNullRejecting
+	if right == Hiding {
+		return Hiding
 	}
 
-	// Both sides must be NullRejecting for intersection
-	if left == NullRejecting && right == NullRejecting {
-		return NullRejecting
+	// Both sides must be Preserving for intersection
+	if left == Preserving && right == Preserving {
+		return Preserving
 	}
 
 	return Undecided
 }
 
 // handleUnaryNot handles NOT with MustNull semantics: NonTrue(NOT A) = MustNull(A)
+// NOT is Preserving: NOT(NULL) = NULL
 func handleUnaryNot(args []expression.Expression, inner *expression.Schema) NullRejectionResult {
 	if len(args) == 0 {
 		return Undecided
@@ -732,15 +753,32 @@ func handleUnaryNot(args []expression.Expression, inner *expression.Schema) Null
 	child := args[0]
 	childPeeled := peelTransparentWrappers(child)
 
-	// Special handling for NOT (IS NULL) and NOT (IN)
+	// CRITICAL: Unwrap istrue_with_null introduced by PushDownNot
+	// PushDownNot transforms: not(X) → not(istrue_with_null(X))
+	// For null-rejection detection, we need to check the original X because:
+	// - not(X) when X=NULL: not(NULL) = NULL (null-rejecting) ✓
+	// - not(istrue_with_null(X)) when X=NULL: not(istrue_with_null(NULL)) = not(FALSE) = TRUE (not null-rejecting) ✗
+	// By unwrapping, we restore the correct null-rejection semantics.
 	if childSF, ok := childPeeled.(*expression.ScalarFunction); ok {
+		if childSF.FuncName.L == ast.IsTruthWithNull {
+			// Unwrap istrue_with_null and check the inner expression directly
+			if len(childSF.GetArgs()) > 0 {
+				unwrapped := childSF.GetArgs()[0]
+				if isNullPropagatingWRTInner(unwrapped, inner) {
+					return Preserving
+				}
+			}
+			return Undecided
+		}
+
+		// Special handling for NOT (IS NULL) and NOT (IN)
 		switch childSF.FuncName.L {
 		case ast.IsNull:
 			// NOT (X IS NULL) ≡ X IS NOT NULL (reject-NULL test)
 			if len(childSF.GetArgs()) > 0 && isNullPropagatingWRTInner(childSF.GetArgs()[0], inner) {
-				return NullRejecting
+				return Preserving
 			}
-			return NotNullRejecting
+			return Hiding
 		case ast.In:
 			// NOT (IN(...)) → defer to fallback
 			return Undecided
@@ -748,8 +786,9 @@ func handleUnaryNot(args []expression.Expression, inner *expression.Schema) Null
 	}
 
 	// General NOT: NonTrue(NOT A) = MustNull(A)
+	// NOT is Preserving, so if the child propagates NULL, NOT propagates it too
 	if isNullPropagatingWRTInner(child, inner) {
-		return NullRejecting
+		return Preserving
 	}
 	return Undecided
 }
