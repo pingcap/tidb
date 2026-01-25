@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"context"
 	"crypto/tls"
 	"math/rand"
 	"runtime"
@@ -29,6 +30,7 @@ import (
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -56,7 +58,40 @@ func (s *kvStore) CheckVisibility(startTime uint64) error {
 
 // GetTiKVClient gets the client instance.
 func (s *kvStore) GetTiKVClient() tikv.Client {
-	return s.store.GetTiKVClient()
+	client := s.store.GetTiKVClient()
+	return &tikvClient{c: client}
+}
+
+type tikvClient struct {
+	c tikv.Client
+}
+
+func (c *tikvClient) Close() error {
+	err := c.c.Close()
+	return derr.ToTiDBErr(err)
+}
+
+func (c *tikvClient) CloseAddr(addr string) error {
+	err := c.c.CloseAddr(addr)
+	return derr.ToTiDBErr(err)
+}
+
+// SendRequest sends Request.
+func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.Request, timeout time.Duration) (*tikvrpc.Response, error) {
+	res, err := c.c.SendRequest(ctx, addr, req, timeout)
+	return res, derr.ToTiDBErr(err)
+}
+
+// SendRequestAsync sends Request asynchronously.
+func (c *tikvClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	cb.Inject(func(res *tikvrpc.Response, err error) (*tikvrpc.Response, error) {
+		return res, derr.ToTiDBErr(err)
+	})
+	c.c.SendRequestAsync(ctx, addr, req, cb)
+}
+
+func (c *tikvClient) SetEventListener(listener tikv.ClientEventListener) {
+	c.c.SetEventListener(listener)
 }
 
 // Store wraps tikv.KVStore and provides coprocessor utilities.
