@@ -509,7 +509,8 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan, vertexHints map[int]*vertexJoinMethodHint) (*logicalop.LogicalJoin, error) {
 	offset := left.QueryBlockOffset()
 	if offset != right.QueryBlockOffset() {
-		return nil, errors.Errorf("cannot make join with different query block offsets: %d and %d", offset, right.QueryBlockOffset())
+		// gjt todo ok?
+		offset = -1
 	}
 
 	// gjt todo other members?
