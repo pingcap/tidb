@@ -208,3 +208,38 @@ func TestExecCounter_AddExecCount_Take(t *testing.T) {
 	m = stats.Take()
 	assert.Len(t, m, 0)
 }
+
+func TestNetworkBytesAccumulation(t *testing.T) {
+	stats := CreateStatementStats()
+	sqlDigest := []byte("SQL-1")
+	planDigest := []byte("PLAN-1")
+
+	// Test NetworkInBytes accumulation in OnExecutionBegin
+	// Call OnExecutionBegin multiple times with different network input bytes
+	stats.OnExecutionBegin(sqlDigest, planDigest, 100)
+	stats.OnExecutionBegin(sqlDigest, planDigest, 200)
+	stats.OnExecutionBegin(sqlDigest, planDigest, 300)
+
+	m := stats.Take()
+	assert.Len(t, m, 1)
+	key := SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)}
+	item := m[key]
+	assert.NotNil(t, item)
+	// NetworkInBytes should be accumulated: 100 + 200 + 300 = 600
+	assert.Equal(t, uint64(600), item.NetworkInBytes)
+	assert.Equal(t, uint64(3), item.ExecCount)
+
+	// Test NetworkOutBytes accumulation in OnExecutionFinished
+	// Call OnExecutionFinished multiple times with different network output bytes
+	stats.OnExecutionFinished(sqlDigest, planDigest, time.Second, 50)
+	stats.OnExecutionFinished(sqlDigest, planDigest, time.Second, 150)
+	stats.OnExecutionFinished(sqlDigest, planDigest, time.Second, 250)
+
+	m = stats.Take()
+	assert.Len(t, m, 1)
+	item = m[key]
+	assert.NotNil(t, item)
+	// NetworkOutBytes should be accumulated: 50 + 150 + 250 = 450
+	assert.Equal(t, uint64(450), item.NetworkOutBytes)
+	assert.Equal(t, uint64(3), item.DurationCount)
+}

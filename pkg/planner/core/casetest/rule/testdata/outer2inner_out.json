@@ -122,14 +122,13 @@
       {
         "SQL": "select * from t2 left outer join t1 on a1=a2 where coalesce(b1,2)  > 2; -- false condition for b1=NULL",
         "Plan": [
-          "Projection 9990.00 root  test.t2.a2, test.t2.b2, test.t2.c2, test.t1.a1, test.t1.b1, test.t1.c1",
-          "└─HashJoin 9990.00 root  inner join, equal:[eq(test.t1.a1, test.t2.a2)]",
-          "  ├─TableReader(Build) 7992.00 root  data:Selection",
-          "  │ └─Selection 7992.00 cop[tikv]  gt(coalesce(test.t1.b1, 2), 2), not(isnull(test.t1.a1))",
+          "Selection 9990.00 root  gt(coalesce(test.t1.b1, 2), 2)",
+          "└─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t2.a2, test.t1.a1)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a1))",
           "  │   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root  data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a2))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ]
       },
       {
@@ -254,9 +253,9 @@
       {
         "SQL": "select sum(l_extendedprice) / 7.0 as avg_yearly from lineitem, part where p_partkey = l_partkey and p_brand = 'Brand#44' and p_container = 'WRAP PKG' and l_quantity < ( select 0.2 * avg(l_quantity) from lineitem where l_partkey = p_partkey) -- Q17 in TPCH. null filter on derived outer join",
         "Plan": [
-          "Projection 1.00 root  div(Column#15, 7.0)->Column#16",
-          "└─StreamAgg 1.00 root  funcs:sum(test.lineitem.l_extendedprice)->Column#15",
-          "  └─HashJoin 1.25 root  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)], other cond:lt(test.lineitem.l_quantity, mul(0.2, Column#13))",
+          "Projection 1.00 root  div(Column#18, 7.0)->Column#19",
+          "└─StreamAgg 1.00 root  funcs:sum(test.lineitem.l_extendedprice)->Column#18",
+          "  └─HashJoin 1.25 root  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)], other cond:lt(test.lineitem.l_quantity, mul(0.2, Column#16))",
           "    ├─HashJoin(Build) 1.25 root  inner join, equal:[eq(test.part.p_partkey, test.lineitem.l_partkey)]",
           "    │ ├─TableReader(Build) 1.00 root  data:Selection",
           "    │ │ └─Selection 1.00 cop[tikv]  eq(test.part.p_brand, \"Brand#44\"), eq(test.part.p_container, \"WRAP PKG\"), not(isnull(test.part.p_partkey))",
@@ -264,9 +263,9 @@
           "    │ └─TableReader(Probe) 9990.00 root  data:Selection",
           "    │   └─Selection 9990.00 cop[tikv]  not(isnull(test.lineitem.l_partkey))",
           "    │     └─TableFullScan 10000.00 cop[tikv] table:lineitem keep order:false, stats:pseudo",
-          "    └─HashAgg(Probe) 7992.00 root  group by:test.lineitem.l_partkey, funcs:avg(Column#19, Column#20)->Column#13, funcs:firstrow(test.lineitem.l_partkey)->test.lineitem.l_partkey",
+          "    └─HashAgg(Probe) 7992.00 root  group by:test.lineitem.l_partkey, funcs:avg(Column#22, Column#23)->Column#16, funcs:firstrow(test.lineitem.l_partkey)->test.lineitem.l_partkey",
           "      └─TableReader 7992.00 root  data:HashAgg",
-          "        └─HashAgg 7992.00 cop[tikv]  group by:test.lineitem.l_partkey, funcs:count(test.lineitem.l_quantity)->Column#19, funcs:sum(test.lineitem.l_quantity)->Column#20",
+          "        └─HashAgg 7992.00 cop[tikv]  group by:test.lineitem.l_partkey, funcs:count(test.lineitem.l_quantity)->Column#22, funcs:sum(test.lineitem.l_quantity)->Column#23",
           "          └─Selection 9990.00 cop[tikv]  not(isnull(test.lineitem.l_partkey))",
           "            └─TableFullScan 10000.00 cop[tikv] table:lineitem keep order:false, stats:pseudo"
         ]
@@ -275,7 +274,7 @@
         "SQL": "WITH cte AS ( SELECT alias1.col_date AS field1 FROM d AS alias1 LEFT JOIN dd AS alias2 ON alias1.col_blob_key=alias2.col_blob_key WHERE alias1.col_varchar_key IS NULL OR alias1.col_blob_key >= 'a') SELECT * FROM d AS outr1 LEFT OUTER JOIN dd AS outr2 ON (outr1.col_date=outr2.col_date) JOIN cte AS outrcte ON outr2.col_blob_key=outrcte.field1 -- nested complex case",
         "Plan": [
           "Projection 6523.44 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, test.d.col_date",
-          "└─HashJoin 6523.44 root  inner join, equal:[eq(test.d.col_date, Column#41)]",
+          "└─HashJoin 6523.44 root  inner join, equal:[eq(test.d.col_date, Column#47)]",
           "  ├─HashJoin(Build) 4175.00 root  left outer join, left side:TableReader, equal:[eq(test.d.col_blob_key, test.dd.col_blob_key)]",
           "  │ ├─TableReader(Build) 3340.00 root  data:Selection",
           "  │ │ └─Selection 3340.00 cop[tikv]  or(isnull(test.d.col_varchar_key), ge(test.d.col_blob_key, \"a\"))",
@@ -283,22 +282,21 @@
           "  │ └─TableReader(Probe) 9990.00 root  data:Selection",
           "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob_key))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:alias2 keep order:false, stats:pseudo",
-          "  └─Projection(Probe) 12487.50 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, cast(test.dd.col_blob_key, datetime(6) BINARY)->Column#41",
-          "    └─HashJoin 12487.50 root  inner join, equal:[eq(test.d.col_date, test.dd.col_date)]",
+          "  └─Projection(Probe) 12487.50 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, cast(test.dd.col_blob_key, datetime(6) BINARY)->Column#47",
+          "    └─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.d.col_date, test.dd.col_date)]",
           "      ├─TableReader(Build) 9990.00 root  data:Selection",
           "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_date))",
           "      │   └─TableFullScan 10000.00 cop[tikv] table:outr2 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 9990.00 root  data:Selection",
-          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.d.col_date))",
-          "          └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
         ]
       },
       {
         "SQL": "with cte as (select count(a2) as cnt,b2-5 as b3 from t1 left outer join t2 on a1=a2 group by b3) select * from cte where b3 > 1 -- aggregate case.",
         "Plan": [
-          "Projection 6393.60 root  Column#21, minus(test.t2.b2, 5)->Column#22",
-          "└─HashAgg 6393.60 root  group by:Column#26, funcs:count(Column#24)->Column#21, funcs:firstrow(Column#25)->test.t2.b2",
-          "  └─Projection 9990.00 root  test.t2.a2->Column#24, test.t2.b2->Column#25, minus(test.t2.b2, 5)->Column#26",
+          "Projection 6393.60 root  Column#25, minus(test.t2.b2, 5)->Column#26",
+          "└─HashAgg 6393.60 root  group by:Column#30, funcs:count(Column#28)->Column#25, funcs:firstrow(Column#29)->test.t2.b2",
+          "  └─Projection 9990.00 root  test.t2.a2->Column#28, test.t2.b2->Column#29, minus(test.t2.b2, 5)->Column#30",
           "    └─HashJoin 9990.00 root  inner join, equal:[eq(test.t2.a2, test.t1.a1)]",
           "      ├─TableReader(Build) 7992.00 root  data:Selection",
           "      │ └─Selection 7992.00 cop[tikv]  gt(minus(test.t2.b2, 5), 1), not(isnull(test.t2.a2))",
@@ -316,12 +314,12 @@
           "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob))",
           "│   └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo",
           "└─HashAgg(Probe) 63872064.00 root  group by:test.dd.col_blob_key, funcs:firstrow(test.dd.col_blob_key)->test.dd.col_blob_key",
-          "  └─HashJoin 99800100.00 root  inner join, equal:[eq(Column#21, Column#20)]",
-          "    ├─Projection(Build) 79920000.00 root  cast(test.d.col_date, double BINARY)->Column#20",
+          "  └─HashJoin 99800100.00 root  inner join, equal:[eq(Column#24, Column#23)]",
+          "    ├─Projection(Build) 79920000.00 root  cast(test.d.col_date, double BINARY)->Column#23",
           "    │ └─TableReader 79920000.00 root  data:Selection",
           "    │   └─Selection 79920000.00 cop[tikv]  gt(test.dd.col_int_key, 6)",
           "    │     └─TableFullScan 99900000.00 cop[tikv] table:innrcte keep order:false, stats:pseudo",
-          "    └─Projection(Probe) 79840080.00 root  test.dd.col_blob_key, cast(test.dd.pk, double BINARY)->Column#21",
+          "    └─Projection(Probe) 79840080.00 root  test.dd.col_blob_key, cast(test.dd.pk, double BINARY)->Column#24",
           "      └─TableReader 79840080.00 root  data:Selection",
           "        └─Selection 79840080.00 cop[tikv]  gt(test.dd.col_int_key, 6), not(isnull(test.dd.col_blob_key))",
           "          └─TableFullScan 99900000.00 cop[tikv] table:innr1 keep order:false, stats:pseudo"
@@ -495,13 +493,13 @@
       {
         "SQL": "select t1.c1 in (select count(s.b1) from t1 s where s.a1 = t1.a1) from t1 -- subquery test that generates outer join and not converted",
         "Plan": [
-          "Projection 10000.00 root  Column#14",
-          "└─Apply 10000.00 root  CARTESIAN left outer semi join, left side:TableReader, other cond:eq(test.t1.c1, Column#13)",
+          "Projection 10000.00 root  Column#17",
+          "└─Apply 10000.00 root  CARTESIAN left outer semi join, left side:TableReader, other cond:eq(test.t1.c1, Column#16)",
           "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "  │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─StreamAgg(Probe) 10000.00 root  funcs:count(Column#16)->Column#13",
+          "  └─StreamAgg(Probe) 10000.00 root  funcs:count(Column#19)->Column#16",
           "    └─TableReader 10000.00 root  data:StreamAgg",
-          "      └─StreamAgg 10000.00 cop[tikv]  funcs:count(test.t1.b1)->Column#16",
+          "      └─StreamAgg 10000.00 cop[tikv]  funcs:count(test.t1.b1)->Column#19",
           "        └─Selection 100000.00 cop[tikv]  eq(test.t1.a1, test.t1.a1)",
           "          └─TableFullScan 100000000.00 cop[tikv] table:s keep order:false, stats:pseudo"
         ]
@@ -521,12 +519,12 @@
       {
         "SQL": "select count(*) from t1 where t1.a1+100 > ( select count(*) from t2 where t1.a1=t2.a2 and t1.b1=t2.b2) group by t1.b1 -- filter not filtering over derived outer join",
         "Plan": [
-          "HashAgg 6400.00 root  group by:test.t1.b1, funcs:count(1)->Column#10",
-          "└─Selection 8000.00 root  gt(plus(test.t1.a1, 100), ifnull(Column#9, 0))",
+          "HashAgg 6400.00 root  group by:test.t1.b1, funcs:count(1)->Column#12",
+          "└─Selection 8000.00 root  gt(plus(test.t1.a1, 100), ifnull(Column#11, 0))",
           "  └─HashJoin 10000.00 root  left outer join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2) eq(test.t1.b1, test.t2.b2)]",
-          "    ├─HashAgg(Build) 7984.01 root  group by:test.t2.a2, test.t2.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.t2.a2)->test.t2.a2, funcs:firstrow(test.t2.b2)->test.t2.b2",
+          "    ├─HashAgg(Build) 7984.01 root  group by:test.t2.a2, test.t2.b2, funcs:count(Column#13)->Column#11, funcs:firstrow(test.t2.a2)->test.t2.a2, funcs:firstrow(test.t2.b2)->test.t2.b2",
           "    │ └─TableReader 7984.01 root  data:HashAgg",
-          "    │   └─HashAgg 7984.01 cop[tikv]  group by:test.t2.a2, test.t2.b2, funcs:count(1)->Column#11",
+          "    │   └─HashAgg 7984.01 cop[tikv]  group by:test.t2.a2, test.t2.b2, funcs:count(1)->Column#13",
           "    │     └─Selection 9980.01 cop[tikv]  not(isnull(test.t2.a2)), not(isnull(test.t2.b2))",
           "    │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
           "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
@@ -536,8 +534,8 @@
       {
         "SQL": "with cte as (select count(a2) as cnt,ifnull(b2,5) as b2 from t1 left outer join t2 on a1=a2 group by b2) select * from cte where b2 > 1  -- non null filter on group by",
         "Plan": [
-          "Projection 6393.60 root  Column#21, ifnull(test.t2.b2, 5)->Column#22",
-          "└─HashAgg 6393.60 root  group by:test.t2.b2, funcs:count(test.t2.a2)->Column#21, funcs:firstrow(test.t2.b2)->test.t2.b2",
+          "Projection 6393.60 root  Column#25, ifnull(test.t2.b2, 5)->Column#26",
+          "└─HashAgg 6393.60 root  group by:test.t2.b2, funcs:count(test.t2.a2)->Column#25, funcs:firstrow(test.t2.b2)->test.t2.b2",
           "  └─Selection 9990.00 root  gt(ifnull(test.t2.b2, 5), 1)",
           "    └─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2)]",
           "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
@@ -550,9 +548,9 @@
       {
         "SQL": "with cte as (select count(a2) as cnt,ifnull(b2,5) as b2 from t1 left outer join t2 on a1=a2 group by b2) select * from cte where cnt > 1 -- filter on aggregates not applicable",
         "Plan": [
-          "Projection 6393.60 root  Column#21, ifnull(test.t2.b2, 5)->Column#22",
-          "└─Selection 6393.60 root  gt(Column#21, 1)",
-          "  └─HashAgg 7992.00 root  group by:test.t2.b2, funcs:count(test.t2.a2)->Column#21, funcs:firstrow(test.t2.b2)->test.t2.b2",
+          "Projection 6393.60 root  Column#25, ifnull(test.t2.b2, 5)->Column#26",
+          "└─Selection 6393.60 root  gt(Column#25, 1)",
+          "  └─HashAgg 7992.00 root  group by:test.t2.b2, funcs:count(test.t2.a2)->Column#25, funcs:firstrow(test.t2.b2)->test.t2.b2",
           "    └─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.t1.a1, test.t2.a2)]",
           "      ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "      │ └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
@@ -632,7 +630,7 @@
           "HashJoin 800000000000.00 root  CARTESIAN semi join, left side:Projection",
           "├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "│ └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
-          "└─Projection(Probe) 1000000000000.00 root  1->Column#28",
+          "└─Projection(Probe) 1000000000000.00 root  1->Column#35",
           "  └─HashJoin 1000000000000.00 root  CARTESIAN inner join, other cond:le(1, cast(case(istrue_with_null(cast(case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), from_binary(inet6_aton(test.t1.c_foveoe)), test.t1.c_cz), double BINARY)), \"1\", case(istrue_with_null(cast(test.t1.c_jbb, double BINARY)), from_binary(inet6_aton(test.t1.c_foveoe)), test.t1.c_cz)), double BINARY))",
           "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
           "    │ └─TableFullScan 10000.00 cop[tikv] table:ref_0 keep order:false, stats:pseudo",

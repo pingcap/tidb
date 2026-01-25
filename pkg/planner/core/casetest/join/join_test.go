@@ -127,14 +127,14 @@ func TestJoinWithNullEQ(t *testing.T) {
          LEFT JOIN (SELECT (0) AS col_0
                           FROM tt0) as subQuery1 ON ((subQuery1.col_0) = (tt1.c0))
          INNER JOIN tt0 ON (subQuery1.col_0 <=> tt0.c0);`).Check(testkit.Rows(
-			"HashJoin 15625.00 root  inner join, equal:[nulleq(Column#5, test.tt0.c0)]",
+			"HashJoin 15625.00 root  inner join, equal:[nulleq(Column#7, test.tt0.c0)]",
 			"├─TableReader(Build) 10000.00 root  data:TableFullScan",
 			"│ └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo",
-			"└─HashJoin(Probe) 12500.00 root  left outer join, left side:Projection, equal:[eq(Column#8, Column#9)]",
-			"  ├─Projection(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#8",
+			"└─HashJoin(Probe) 12500.00 root  left outer join, left side:Projection, equal:[eq(Column#11, Column#12)]",
+			"  ├─Projection(Build) 10000.00 root  test.tt1.c0, cast(test.tt1.c0, double BINARY)->Column#11",
 			"  │ └─TableReader 10000.00 root  data:TableFullScan",
 			"  │   └─TableFullScan 10000.00 cop[tikv] table:tt1 keep order:false, stats:pseudo",
-			"  └─Projection(Probe) 10000.00 root  0->Column#5, 0->Column#9",
+			"  └─Projection(Probe) 10000.00 root  0->Column#7, 0->Column#12",
 			"    └─TableReader 10000.00 root  data:TableFullScan",
 			"      └─TableFullScan 10000.00 cop[tikv] table:tt0 keep order:false, stats:pseudo"))
 		testKit.MustQuery(`SELECT * FROM tt1

@@ -1245,10 +1245,10 @@
           "6 7"
         ],
         "Plan": [
-          "Projection_4 8000.00 root  test.t.b, Column#5",
-          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
+          "Projection_4 8000.00 root  test.t.b, Column#6",
+          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
           "  └─TableReader_14 8000.00 root  data:HashAgg_6",
-          "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 1))->Column#6",
+          "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 1))->Column#7",
           "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "0"
@@ -1263,10 +1263,10 @@
           "6 11"
         ],
         "Plan": [
-          "Projection_4 8000.00 root  test.t.b, Column#5",
-          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#6)->Column#5, funcs:firstrow(test.t.b)->test.t.b",
+          "Projection_4 8000.00 root  test.t.b, Column#6",
+          "└─HashAgg_13 8000.00 root  group by:test.t.b, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
           "  └─TableReader_14 8000.00 root  data:HashAgg_6",
-          "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 5))->Column#6",
+          "    └─HashAgg_6 8000.00 cop[tikv]  group by:test.t.b, funcs:sum(plus(test.t.c, 5))->Column#7",
           "      └─TableFullScan_12 10000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "FromCache": "1"
