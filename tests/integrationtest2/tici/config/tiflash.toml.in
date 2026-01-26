@@ -1,3 +1,6 @@
+[storage.main]
+dir = ["${TIFLASH_STORAGE_DIR}"]
+
 [tici.reader_node]
 heartbeat_interval = "3s"
 max_heartbeat_retries = 3

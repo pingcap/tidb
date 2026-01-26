@@ -336,9 +336,9 @@ start_tiflash_server() {
     echo "Starting TiFlash server..."
     mkdir -p $TIFLASH_DATA_DIR
     if [ -n "$TIFLASH_CONFIG" ]; then
-        $tiflash_bin --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log --config-file="$TIFLASH_CONFIG" &
+        $tiflash_bin server --data-dir="$TIFLASH_DATA_DIR" --log-file=tiflash.log --config-file="$TIFLASH_CONFIG" &
     else
-        $tiflash_bin --data-dir=$TIFLASH_DATA_DIR --log-file=tiflash.log &
+        $tiflash_bin server --data-dir="$TIFLASH_DATA_DIR" --log-file=tiflash.log &
     fi
 
     sleep 5  # Wait for TiFlash to connect
@@ -401,6 +401,7 @@ function prepare_tici_config() {
         export S3_BUCKET="$MINIO_BUCKET"
         export S3_PREFIX="tici_default_prefix"
         export TIDB_PORT="${TIDB_PORT:-4000}"
+        export TIFLASH_STORAGE_DIR="${TIFLASH_STORAGE_DIR:-./data/tiflashdata}"
         # TiCI may fall back to AWS default credential chain when keys are empty,
         # so keep AWS envs aligned with MinIO to avoid 403 errors.
         export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
