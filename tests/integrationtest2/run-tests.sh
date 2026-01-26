@@ -404,7 +404,7 @@ function prepare_tici_config() {
             source "$TICI_CONFIG_DIR/env.sh"
         fi
         if [ -z "${S3_USE_PATH_STYLE:-}" ]; then export S3_USE_PATH_STYLE=true; fi
-        if [ -z "${S3_ENDPOINT:-}" ]; then export S3_ENDPOINT="http://127.0.0.1:9000"; fi
+        if [ -z "${S3_ENDPOINT:-}" ]; then export S3_ENDPOINT="$MINIO_ENDPOINT"; fi
         if [ -z "${S3_REGION:-}" ]; then export S3_REGION="us-east-1"; fi
         if [ -z "${S3_ACCESS_KEY:-}" ]; then export S3_ACCESS_KEY="minioadmin"; fi
         if [ -z "${S3_SECRET_KEY:-}" ]; then export S3_SECRET_KEY="minioadmin"; fi
