@@ -15,12 +15,17 @@
 package priorityqueue_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/metadef"
+	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
+	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -385,4 +390,65 @@ func insertFailedJobWithStartTime(
 			startTime,
 		)
 	}
+}
+
+func TestLastFailedAnalysisDurationResetsTimeZoneOnReuse(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.time_zone='UTC'")
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
+	tk.MustExec(`
+		INSERT INTO mysql.analyze_jobs (
+			table_schema,
+			table_name,
+			partition_name,
+			job_info,
+			start_time,
+			end_time,
+			state,
+			fail_reason,
+			instance
+		) VALUES (
+			'db_reset',
+			'tbl_reset',
+			'',
+			'job',
+			NOW(),
+			NOW(),
+			'failed',
+			'err',
+			'instance'
+		);
+	`)
+
+	pool := syssession.NewAdvancedSessionPool(1, func() (syssession.SessionContext, error) {
+		se, err := session.CreateSession4Test(store)
+		if err != nil {
+			return nil, err
+		}
+		sctx, ok := se.(syssession.SessionContext)
+		if !ok {
+			return nil, errors.New("unexpected session type")
+		}
+		return sctx, nil
+	})
+	t.Cleanup(pool.Close)
+
+	// Simulate a bad session state: time_zone forced to a non-global value.
+	require.NoError(t, pool.WithSession(func(se *syssession.Session) error {
+		return se.WithSessionContext(func(sctx sessionctx.Context) error {
+			return sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "Asia/Shanghai")
+		})
+	}))
+
+	var dur time.Duration
+	err := statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
+		var err error
+		dur, err = priorityqueue.GetLastFailedAnalysisDuration(sctx, "db_reset", "tbl_reset")
+		require.Equal(t, "UTC", sctx.GetSessionVars().Location().String())
+		require.Equal(t, sctx.GetSessionVars().Location().String(), sctx.GetSessionVars().StmtCtx.TimeZone().String())
+		return err
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, dur, time.Duration(0))
 }

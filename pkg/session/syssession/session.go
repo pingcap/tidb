@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -263,6 +264,15 @@ func (s *session) CheckNoPendingTxn() error {
 func (s *session) OwnerResetState(ctx context.Context, caller sessionOwner) error {
 	return s.OwnerWithSctx(caller, func(sctx SessionContext) error {
 		sctx.RollbackTxn(ctx)
+		// Reset time-related session vars to avoid cross-task contamination when sessions are reused.
+		globalTZ, err := sctx.GetSessionVars().GetGlobalSystemVar(ctx, vardef.TimeZone)
+		if err != nil {
+			return err
+		}
+		if err := sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, globalTZ); err != nil {
+			return err
+		}
+		sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
 		return nil
 	})
 }
