@@ -470,6 +470,64 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}, nil
 }
 
+func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []*expression.ScalarFunction) ([]*expression.ScalarFunction, error) {
+	if len(eqConds) == 0 {
+		return nil, nil
+	}
+	res := make([]*expression.ScalarFunction, 0, len(eqConds))
+	for _, cond := range eqConds {
+		args := cond.GetArgs()
+		if len(args) != 2 {
+			return nil, errors.Errorf("unexpected eq condition args: %d", len(args))
+		}
+		if expression.ExprFromSchema(args[0], left.Schema()) && expression.ExprFromSchema(args[1], right.Schema()) {
+			res = append(res, cond)
+			continue
+		}
+		if expression.ExprFromSchema(args[1], left.Schema()) && expression.ExprFromSchema(args[0], right.Schema()) {
+			swapped, ok := expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(), args[1], args[0]).(*expression.ScalarFunction)
+			if !ok {
+				return nil, errors.New("failed to build swapped eq condition")
+			}
+			_, isCol0 := swapped.GetArgs()[0].(*expression.Column)
+			_, isCol1 := swapped.GetArgs()[1].(*expression.Column)
+			if !isCol0 || !isCol1 {
+				var lCol, rCol expression.Expression
+				if !isCol0 {
+					left, rCol = injectExpr(left, swapped.GetArgs()[0])
+				}
+				if !isCol1 {
+					right, lCol = injectExpr(right, swapped.GetArgs()[1])
+				}
+				swapped = expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(),
+					rCol, lCol).(*expression.ScalarFunction)
+			}
+			res = append(res, swapped)
+			continue
+		}
+		return nil, errors.New("eq condition does not match join sides")
+	}
+	return res, nil
+}
+
+// gjt todo duplicated code with old implementation
+func injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*logicalop.LogicalProjection)
+	if !ok {
+		proj = logicalop.LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	return proj, proj.AppendExpr(expr)
+}
+func cols2Exprs(cols []*expression.Column) []expression.Expression {
+	exprs := make([]expression.Expression, 0, len(cols))
+	for _, c := range cols {
+		exprs = append(exprs, c)
+	}
+	return exprs
+}
+
 func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*vertexJoinMethodHint) (*logicalop.LogicalJoin, error) {
 	e := checkResult.appliedNonInnerEdge
 	left := checkResult.node1.p
@@ -479,7 +537,11 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	if err != nil {
 		return nil, err
 	}
-	join.EqualConditions = e.eqConds
+	alignedEQConds, err := alignEQConds(ctx, left, right, e.eqConds)
+	if err != nil {
+		return nil, err
+	}
+	join.EqualConditions = alignedEQConds
 	for _, cond := range e.nonEQConds {
 		fromLeft := expression.ExprFromSchema(cond, left.Schema())
 		fromRight := expression.ExprFromSchema(cond, right.Schema())
@@ -501,7 +563,11 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 			Conditions: []expression.Expression{}, // gjt todo reserve space
 		}
 		for _, e := range checkResult.appliedInnerEdges {
-			eqExprs := expression.ScalarFuncs2Exprs(e.eqConds)
+			alignedEQConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+			if err != nil {
+				return nil, err
+			}
+			eqExprs := expression.ScalarFuncs2Exprs(alignedEQConds)
 			selection.Conditions = append(selection.Conditions, eqExprs...)
 			selection.Conditions = append(selection.Conditions, e.nonEQConds...)
 		}
@@ -515,7 +581,11 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		return nil, err
 	}
 	for _, e := range checkResult.appliedInnerEdges {
-		join.EqualConditions = append(join.EqualConditions, e.eqConds...)
+		alignedEQConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+		if err != nil {
+			return nil, err
+		}
+		join.EqualConditions = append(join.EqualConditions, alignedEQConds...)
 		for _, cond := range e.nonEQConds {
 			join.OtherConditions = append(join.OtherConditions, cond)
 		}
