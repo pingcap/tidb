@@ -254,8 +254,8 @@ func GetInternalResourceGroupTaggerForTopSQL() tikvrpc.ResourceGroupTagger {
 	return tagger
 }
 
-// IsInternalResourceGroupTaggerForTopSQL use for testing.
-func IsInternalResourceGroupTaggerForTopSQL(tag []byte) bool {
+// IsInternalResourceGroupTaggerForTopProfiling use for testing.
+func IsInternalResourceGroupTaggerForTopProfiling(tag []byte) bool {
 	return bytes.Equal(tag, internalResourceGroupTag)
 }
 

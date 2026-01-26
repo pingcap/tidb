@@ -2425,7 +2425,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
 	cmdByte := byte(atomic.LoadUint32(&s.GetSessionVars().CommandValue))
-	if topsqlstate.TopSQLEnabled() {
+	if topsqlstate.TopProfilingEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
 	}
