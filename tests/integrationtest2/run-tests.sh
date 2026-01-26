@@ -396,8 +396,8 @@ function prepare_tici_config() {
         if [ -z "${S3_USE_PATH_STYLE:-}" ]; then export S3_USE_PATH_STYLE=true; fi
         if [ -z "${S3_ENDPOINT:-}" ]; then export S3_ENDPOINT="$MINIO_ENDPOINT"; fi
         if [ -z "${S3_REGION:-}" ]; then export S3_REGION="us-east-1"; fi
-        if [ -z "${S3_ACCESS_KEY:-}" ]; then export S3_ACCESS_KEY="minioadmin"; fi
-        if [ -z "${S3_SECRET_KEY:-}" ]; then export S3_SECRET_KEY="minioadmin"; fi
+        if [ -z "${S3_ACCESS_KEY:-}" ]; then export S3_ACCESS_KEY="$MINIO_ACCESS_KEY"; fi
+        if [ -z "${S3_SECRET_KEY:-}" ]; then export S3_SECRET_KEY="$MINIO_SECRET_KEY"; fi
         if [ -z "${S3_BUCKET:-}" ]; then export S3_BUCKET="ticidefaultbucket"; fi
         if [ -z "${S3_PREFIX:-}" ]; then export S3_PREFIX="tici_default_prefix"; fi
         if [ -z "${TIDB_PORT:-}" ]; then export TIDB_PORT="4000"; fi
