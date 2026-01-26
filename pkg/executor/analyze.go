@@ -133,7 +133,7 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	taskCh := make(chan *analyzeTask, buildStatsConcurrency)
 	resultsCh := make(chan *statistics.AnalyzeResults, 1)
 	for range buildStatsConcurrency {
-		e.wg.Run(func() { e.analyzeWorker(taskCh, resultsCh) })
+		e.wg.Run(func() { e.analyzeWorker(ctx, taskCh, resultsCh) })
 	}
 	pruneMode := variable.PartitionPruneMode(sessionVars.PartitionPruneMode.Load())
 	// needGlobalStats used to indicate whether we should merge the partition-level stats to global-level stats.

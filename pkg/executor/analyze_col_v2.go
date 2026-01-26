@@ -216,7 +216,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	err error,
 ) {
 	// Open memory tracker and resultHandler.
-	if err = e.open(ranges); err != nil {
+	if err = e.open(ctx, ranges); err != nil {
 		return 0, nil, nil, nil, nil, err
 	}
 	defer func() {
