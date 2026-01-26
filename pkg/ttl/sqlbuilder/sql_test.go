@@ -477,8 +477,8 @@ func TestSoftDeleteSQLActiveActiveSafety(t *testing.T) {
 
 	minCheckpointTS := uint64(123)
 	checkContains := func(t *testing.T, sql string) {
-		require.Contains(t, sql, fmt.Sprintf("LEAST(tidb_current_tso(), %d)", minCheckpointTS))
-		require.Contains(t, sql, "> IFNULL(_tidb_origin_ts, _tidb_commit_ts)")
+		require.Contains(t, sql, fmt.Sprintf("%d > IFNULL(_tidb_origin_ts, _tidb_commit_ts)", minCheckpointTS))
+		require.Contains(t, sql, "tidb_current_tso() > IFNULL(_tidb_origin_ts, 0)")
 	}
 
 	t.Run("Cleanup", func(t *testing.T) {
