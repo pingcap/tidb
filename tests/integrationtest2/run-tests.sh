@@ -55,6 +55,8 @@ PD_LOG_FILE="./logs/pd.log"
 PD_LOG_FILE2="./logs/pd2.log"
 TICDC_LOG_FILE="./logs/ticdc.log"
 TICI_LOG_FILE="./logs/tici.log"
+TICI_META_LOG_FILE="${TICI_META_LOG_FILE:-./logs/tici-meta.log}"
+TICI_WORKER_LOG_FILE="${TICI_WORKER_LOG_FILE:-./logs/tici-worker.log}"
 MINIO_LOG_FILE="./logs/minio.log"
 
 rm -rf ./logs
@@ -438,7 +440,8 @@ function prepare_tici_config() {
 }
 
 function start_tici_server() {
-    log_file=${1:-$TICI_LOG_FILE}
+    meta_log_file=${1:-$TICI_META_LOG_FILE}
+    worker_log_file=${2:-$TICI_WORKER_LOG_FILE}
     local tici_bin
 
     tici_bin=$(resolve_bin "$TICI_BIN") || {
@@ -470,7 +473,7 @@ function start_tici_server() {
         --status-port "$meta_status_port" \
         --advertise-host "$meta_host" \
         --pd-addr "$pd_addr" \
-        $TICI_META_ARGS > "$log_file" 2>&1 &
+        $TICI_META_ARGS > "$meta_log_file" 2>&1 &
     TICI_META_PID=$!
     echo "tici-meta(PID: $TICI_META_PID) started"
 
@@ -481,7 +484,7 @@ function start_tici_server() {
         --status-port "$worker_status_port" \
         --advertise-host "$worker_host" \
         --pd-addr "$pd_addr" \
-        $TICI_WORKER_ARGS >> "$log_file" 2>&1 &
+        $TICI_WORKER_ARGS > "$worker_log_file" 2>&1 &
     TICI_WORKER_PID=$!
     echo "tici-worker(PID: $TICI_WORKER_PID) started"
 }
