@@ -648,38 +648,38 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 				resultCh <- &samplingMergeResult{collector: retCollector}
 				return
 			}
-		// Unmarshal the data.
-		dataSize := int64(cap(data))
-		colResp := &tipb.AnalyzeColumnsResp{}
-		err := colResp.Unmarshal(data)
-		if err != nil {
-			resultCh <- &samplingMergeResult{err: err}
-			return
-		}
-		// Consume the memory of the data.
-		colRespSize := int64(colResp.Size())
-		e.memTracker.Consume(colRespSize)
+			// Unmarshal the data.
+			dataSize := int64(cap(data))
+			colResp := &tipb.AnalyzeColumnsResp{}
+			err := colResp.Unmarshal(data)
+			if err != nil {
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
+			// Consume the memory of the data.
+			colRespSize := int64(colResp.Size())
+			e.memTracker.Consume(colRespSize)
 
-		// Update processed rows.
-		subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
-		subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
-		statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
+			// Update processed rows.
+			subCollector := statistics.NewRowSampleCollector(int(e.analyzePB.ColReq.SampleSize), e.analyzePB.ColReq.GetSampleRate(), l)
+			subCollector.Base().FromProto(colResp.RowCollector, e.memTracker)
+			statsHandle.UpdateAnalyzeJobProgress(e.job, subCollector.Base().Count)
 
-		// Print collect log.
-		oldRetCollectorSize := retCollector.Base().MemSize
-		oldRetCollectorCount := retCollector.Base().Count
-		retCollector.MergeCollector(subCollector)
-		newRetCollectorCount := retCollector.Base().Count
-		printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
-			e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
-			"merge subCollector in concurrency in AnalyzeColumnsExecV2", index)
+			// Print collect log.
+			oldRetCollectorSize := retCollector.Base().MemSize
+			oldRetCollectorCount := retCollector.Base().Count
+			retCollector.MergeCollector(subCollector)
+			newRetCollectorCount := retCollector.Base().Count
+			printAnalyzeMergeCollectorLog(oldRetCollectorCount, newRetCollectorCount, subCollector.Base().Count,
+				e.tableID.TableID, e.tableID.PartitionID, e.TableID.IsPartitionTable(),
+				"merge subCollector in concurrency in AnalyzeColumnsExecV2", index)
 
-		// Consume the memory of the result.
-		newRetCollectorSize := retCollector.Base().MemSize
-		subCollectorSize := subCollector.Base().MemSize
-		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
-		e.memTracker.Release(dataSize + colRespSize)
-		subCollector.DestroyAndPutToPool()
+			// Consume the memory of the result.
+			newRetCollectorSize := retCollector.Base().MemSize
+			subCollectorSize := subCollector.Base().MemSize
+			e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
+			e.memTracker.Release(dataSize + colRespSize)
+			subCollector.DestroyAndPutToPool()
 		case <-ctx.Done():
 			err := context.Cause(ctx)
 			if err != nil {
