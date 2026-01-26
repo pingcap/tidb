@@ -426,16 +426,9 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 							}
 						}
 					}
-					if handleCol != nil {
-						indexCols = append(indexCols, handleCol.Clone().(*expression.Column))
-					} else {
-						indexCols = append(indexCols, &expression.Column{
-							RetType:  types.NewFieldType(mysql.TypeLonglong),
-							ID:       model.ExtraHandleID,
-							UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-							OrigName: model.ExtraHandleName.O,
-						})
-					}
+				}
+				if handleCol != nil {
+					indexCols = append(indexCols, handleCol.Clone().(*expression.Column))
 				} else {
 					indexCols = append(indexCols, &expression.Column{
 						RetType:  types.NewFieldType(mysql.TypeLonglong),
