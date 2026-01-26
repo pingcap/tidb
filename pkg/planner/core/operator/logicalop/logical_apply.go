@@ -220,7 +220,44 @@ func (la *LogicalApply) ExtractFD() *fd.FDSet {
 
 // GetBaseLogicalPlan inherits BaseLogicalPlan.LogicalPlan.<23rd> implementation.
 
-// ConvertOuterToInnerJoin inherits BaseLogicalPlan.LogicalPlan.<24th> implementation.
+// ConvertOuterToInnerJoin implements base.LogicalPlan.<24th> interface.
+// For Apply nodes, we must be conservative when converting outer to inner joins
+// because correlated columns introduce complex dependencies that may not be
+// correctly handled by the standard null-rejection logic.
+//
+// Specifically, when the Apply's right child (probe side) contains subqueries
+// that reference correlated columns from the left child (build side), we cannot
+// safely convert LEFT OUTER JOIN to INNER JOIN based solely on null-rejection
+// analysis of the outer predicates. The correlated column's value changes for
+// each row from the left side, which means:
+//  1. The subquery result may be NULL for some left rows and non-NULL for others
+//  2. A WHERE clause predicate may appear null-rejecting on the combined result,
+//     but actually depends on the specific correlation values
+//
+// Example (from TestIssue58836):
+//
+//	SELECT 'ok' FROM dual
+//	WHERE ('1',1) IN (
+//	  SELECT row_number() OVER () as id,
+//	         (SELECT '1' FROM dual WHERE id IN (2)) as name
+//	  FROM t
+//	)
+//
+// Here, 'id' in the subquery is a CorrelatedColumn. The Apply must stay as
+// LEFT OUTER JOIN to preserve NULL values from the subquery when id != 2.
+func (la *LogicalApply) ConvertOuterToInnerJoin(predicates []expression.Expression) base.LogicalPlan {
+	// For Apply with correlated columns, we take a conservative approach:
+	// Do NOT attempt to convert the Apply itself from outer to inner join,
+	// but still recursively simplify child nodes (which may not involve correlation).
+
+	// Recursively convert children
+	for i, child := range la.Children() {
+		la.SetChild(i, child.ConvertOuterToInnerJoin(predicates))
+	}
+
+	// Return the Apply node unchanged (do not convert its join type)
+	return la
+}
 
 // *************************** end implementation of logicalPlan interface ***************************
 

@@ -283,12 +283,13 @@
           "  │   └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_blob_key))",
           "  │     └─TableFullScan 10000.00 cop[tikv] table:alias2 keep order:false, stats:pseudo",
           "  └─Projection(Probe) 12487.50 root  test.d.pk, test.d.col_blob, test.d.col_blob_key, test.d.col_varchar_key, test.d.col_date, test.d.col_int_key, test.dd.pk, test.dd.col_blob, test.dd.col_blob_key, test.dd.col_date, test.dd.col_int_key, cast(test.dd.col_blob_key, datetime(6) BINARY)->Column#47",
-          "    └─HashJoin 12487.50 root  left outer join, left side:TableReader, equal:[eq(test.d.col_date, test.dd.col_date)]",
+          "    └─HashJoin 12487.50 root  inner join, equal:[eq(test.d.col_date, test.dd.col_date)]",
           "      ├─TableReader(Build) 9990.00 root  data:Selection",
           "      │ └─Selection 9990.00 cop[tikv]  not(isnull(test.dd.col_date))",
           "      │   └─TableFullScan 10000.00 cop[tikv] table:outr2 keep order:false, stats:pseudo",
-          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "        └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
+          "      └─TableReader(Probe) 9990.00 root  data:Selection",
+          "        └─Selection 9990.00 cop[tikv]  not(isnull(test.d.col_date))",
+          "          └─TableFullScan 10000.00 cop[tikv] table:outr1 keep order:false, stats:pseudo"
         ]
       },
       {
