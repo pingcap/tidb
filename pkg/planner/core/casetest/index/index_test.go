@@ -226,9 +226,6 @@ func TestRangeIntersection(t *testing.T) {
 
 func TestIssue65791(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		if cascades == "on" {
-			return
-		}
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t0, t1, t2, t3")
 		tk.MustExec(`create table t0 (
