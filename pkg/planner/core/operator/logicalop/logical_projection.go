@@ -341,6 +341,12 @@ func (p *LogicalProjection) PreparePossibleProperties(_ *expression.Schema, chil
 			oldCols = append(oldCols, col)
 		}
 	}
+	if childProperties == nil {
+		return &base.PossiblePropertiesInfo{
+			Order:      [][]*expression.Column{},
+			HasTiflash: p.hasTiflash,
+		}
+	}
 	p.hasTiflash = childProperties.HasTiflash
 	tmpSchema := expression.NewSchema(oldCols...)
 	newProperties := make([][]*expression.Column, 0, len(childProperties.Order))
