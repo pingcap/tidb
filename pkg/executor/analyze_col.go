@@ -64,11 +64,11 @@ type AnalyzeColumnsExec struct {
 	memTracker *memory.Tracker
 }
 
-func analyzeColumnsPushDownEntry(ctx context.Context,gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
+func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownV2(gp)
+		return e.toV2().analyzeColumnsPushDownV2(ctx, gp)
 	}
-	return e.toV1().analyzeColumnsPushDownV1()
+	return e.toV1().analyzeColumnsPushDownV1(ctx)
 }
 
 func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
@@ -83,12 +83,12 @@ func (e *AnalyzeColumnsExec) toV2() *AnalyzeColumnsExecV2 {
 	}
 }
 
-func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
+func (e *AnalyzeColumnsExec) open(ctx context.Context, ranges []*ranger.Range) error {
 	e.memTracker = memory.NewTracker(int(e.ctx.GetSessionVars().PlanID.Load()), -1)
 	e.memTracker.AttachTo(e.ctx.GetSessionVars().StmtCtx.MemTracker)
 	e.resultHandler = &tableResultHandler{}
 	firstPartRanges, secondPartRanges := distsql.SplitRangesAcrossInt64Boundary(ranges, true, false, !hasPkHist(e.handleCols))
-	firstResult, err := e.buildResp(firstPartRanges)
+	firstResult, err := e.buildResp(ctx, firstPartRanges)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 		return nil
 	}
 	var secondResult distsql.SelectResult
-	secondResult, err = e.buildResp(secondPartRanges)
+	secondResult, err = e.buildResp(ctx, secondPartRanges)
 	if err != nil {
 		return err
 	}
@@ -106,7 +106,7 @@ func (e *AnalyzeColumnsExec) open(ranges []*ranger.Range) error {
 	return nil
 }
 
-func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectResult, error) {
+func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Range) (distsql.SelectResult, error) {
 	var builder distsql.RequestBuilder
 	reqBuilder := builder.SetHandleRangesForTables(e.ctx.GetDistSQLCtx(), []int64{e.TableID.GetStatisticsID()}, e.handleCols != nil && !e.handleCols.IsInt(), ranges)
 	builder.SetResourceGroupTagger(e.ctx.GetSessionVars().StmtCtx.GetResourceGroupTagger())
@@ -130,7 +130,6 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	if err != nil {
 		return nil, err
 	}
-	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return nil, err
@@ -138,8 +137,8 @@ func (e *AnalyzeColumnsExec) buildResp(ranges []*ranger.Range) (distsql.SelectRe
 	return result, nil
 }
 
-func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
-	if err = e.open(ranges); err != nil {
+func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Range, needExtStats bool) (hists []*statistics.Histogram, cms []*statistics.CMSketch, topNs []*statistics.TopN, fms []*statistics.FMSketch, extStats *statistics.ExtendedStatsColl, err error) {
+	if err = e.open(ctx, ranges); err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 	defer func() {
@@ -188,7 +187,7 @@ func (e *AnalyzeColumnsExec) buildStats(ranges []*ranger.Range, needExtStats boo
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
 			time.Sleep(1000 * time.Second)
 		})
-		data, err1 := e.resultHandler.nextRaw(context.TODO())
+		data, err1 := e.resultHandler.nextRaw(ctx)
 		if err1 != nil {
 			return nil, nil, nil, nil, nil, err1
 		}
@@ -309,7 +308,7 @@ type AnalyzeColumnsExecV1 struct {
 	*AnalyzeColumnsExec
 }
 
-func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeResults {
+func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1(ctx context.Context) *statistics.AnalyzeResults {
 	var ranges []*ranger.Range
 	if hc := e.handleCols; hc != nil {
 		if hc.IsInt() {
@@ -321,7 +320,7 @@ func (e *AnalyzeColumnsExecV1) analyzeColumnsPushDownV1() *statistics.AnalyzeRes
 		ranges = ranger.FullIntRange(false)
 	}
 	collExtStats := e.ctx.GetSessionVars().EnableExtendedStats
-	hists, cms, topNs, fms, extStats, err := e.buildStats(ranges, collExtStats)
+	hists, cms, topNs, fms, extStats, err := e.buildStats(ctx, ranges, collExtStats)
 	if err != nil {
 		return &statistics.AnalyzeResults{Err: err, Job: e.job}
 	}

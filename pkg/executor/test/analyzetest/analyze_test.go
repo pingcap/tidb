@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	goerrors "errors"
 	"strconv"
 	"strings"
 	"testing"
@@ -141,6 +142,41 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
+}
+
+func TestAnalyzeCancelOnCtx(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("analyze V1 cannot support in the next gen")
+	}
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("insert into t values (1), (2)")
+	tk.MustExec("set @@tidb_analyze_version = 1")
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+		done <- err
+	}()
+	cancel()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		require.True(t, goerrors.Is(err, context.Canceled))
+	case <-time.After(5 * time.Second):
+		t.Fatal("analyze does not stop after context canceled")
+	}
 }
 
 func TestAnalyzeParameters(t *testing.T) {
