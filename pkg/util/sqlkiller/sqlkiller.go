@@ -102,7 +102,11 @@ func (killer *SQLKiller) GetKillEventCtx(parent context.Context) context.Context
 		killer.killEvent.ctx, killer.killEvent.cancelFn = context.WithCancelCause(parent)
 	}
 	if killer.killEvent.triggered {
-		killer.killEvent.cancelFn(errKilled)
+		err := killer.getKillError(atomic.LoadUint32(&killer.Signal))
+		if err == nil {
+			err = errKilled
+		}
+		killer.killEvent.cancelFn(err)
 	}
 
 	return killer.killEvent.ctx
