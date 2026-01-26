@@ -30,7 +30,7 @@ TICDC_BIN="./third_bin/cdc"
 TIFLASH_BIN_DEFAULT="./third_bin/tiflash"
 TICI_BIN_DEFAULT="./third_bin/tici-server"
 MINIO_BIN_DEFAULT="./third_bin/minio"
-MINIO_MC_BIN_DEFAULT=""
+MINIO_MC_BIN_DEFAULT="./third_bin/mc"
 
 # Variables to set data directories
 PD_DATA_DIR="./data/pd_data"
@@ -315,22 +315,12 @@ start_tikv_server() {
 	echo "Starting TiKV server..."
     mkdir -p $data_dir
 
-	if [ -n "$TIKV_CONFIG" ]; then
-        $TIKV_BIN --config="$TIKV_CONFIG" \
-            --pd="http://127.0.0.1:$pd_client_port" \
-            --addr="127.0.0.1:$tikv_port" \
-            --advertise-addr="127.0.0.1:$tikv_port" \
-            --status-addr="127.0.0.1:$tikv_status_port" \
-            --data-dir="$data_dir" \
-            --log-file="$log_dir" &
-    else
-        $TIKV_BIN --pd="http://127.0.0.1:$pd_client_port" \
-            --addr="127.0.0.1:$tikv_port" \
-            --advertise-addr="127.0.0.1:$tikv_port" \
-            --status-addr="127.0.0.1:$tikv_status_port" \
-            --data-dir="$data_dir" \
-            --log-file="$log_dir" &
-    fi
+    $TIKV_BIN --pd="http://127.0.0.1:$pd_client_port" \
+       --addr="127.0.0.1:$tikv_port" \
+       --advertise-addr="127.0.0.1:$tikv_port" \
+       --status-addr="127.0.0.1:$tikv_status_port" \
+       --data-dir="$data_dir" \
+       --log-file="$log_dir" &
     sleep 5  # Wait for TiKV to connect to PD
 }
 
@@ -511,7 +501,7 @@ function start_minio() {
     "$minio_bin" server "$MINIO_DATA_DIR" --address ":$MINIO_PORT" > "$MINIO_LOG_FILE" 2>&1 &
     MINIO_PID=$!
 
-    for i in {1..60}; do
+    for i in {1..10}; do
         if (exec 3<>"/dev/tcp/127.0.0.1/$MINIO_PORT") 2>/dev/null; then
             exec 3>&-
             echo "MinIO is up (port $MINIO_PORT reachable)"
