@@ -269,6 +269,10 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
 	}
+	ni.AffectColumn = make([]*IndexColumn, len(index.AffectColumn))
+	for i := range index.AffectColumn {
+		ni.AffectColumn[i] = index.AffectColumn[i].Clone()
+	}
 	return &ni
 }
 

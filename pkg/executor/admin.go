@@ -374,6 +374,18 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 		}
 		iter := chunk.NewIterator4Chunk(e.srcChunk)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
+			// TODO: it's possible to push down the condition.
+			if e.index.Meta().HasCondition() {
+				ok, err := e.index.MeetPartialConditionWithChunk(row)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					// Skip partial index not match row
+					continue
+				}
+			}
+
 			if result.scanRowCount >= int64(e.batchSize) {
 				return e.recoverRows, nil
 			}

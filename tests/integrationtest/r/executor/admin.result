@@ -231,3 +231,11 @@ Error 8273 (HY000): Validation of partial indexes requires tidb_enable_fast_tabl
 set tidb_enable_fast_table_check = 'ON';
 admin check index t idx;
 admin check table t;
+drop table if exists t;
+create table t (col0 int, col1 int, key idx(col1) where col0 > 0);
+insert into t values (NULL, NULL);
+insert into t values (-1, -1);
+insert into t values (1, 1);
+admin recover index t idx;
+ADDED_COUNT	SCAN_COUNT
+0	1
