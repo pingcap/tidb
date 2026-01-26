@@ -397,28 +397,42 @@ function wait_for_port_ready() {
 }
 
 function prepare_tici_config() {
-    if [ -z "$TICI_META_CONFIG" ] || [ -z "$TICI_WORKER_CONFIG" ] || [ -z "$TIFLASH_CONFIG" ]; then
-        if [ -d "$TICI_CONFIG_DIR" ]; then
-            if [ -f "$TICI_CONFIG_DIR/env.sh" ]; then
-                source "$TICI_CONFIG_DIR/env.sh"
+    if [ -d "$TICI_CONFIG_DIR" ]; then
+        if [ -f "$TICI_CONFIG_DIR/env.sh" ]; then
+            source "$TICI_CONFIG_DIR/env.sh"
+        fi
+        if [ -z "${S3_USE_PATH_STYLE:-}" ]; then export S3_USE_PATH_STYLE=true; fi
+        if [ -z "${S3_ENDPOINT:-}" ]; then export S3_ENDPOINT="http://127.0.0.1:9000"; fi
+        if [ -z "${S3_REGION:-}" ]; then export S3_REGION="us-east-1"; fi
+        if [ -z "${S3_ACCESS_KEY:-}" ]; then export S3_ACCESS_KEY="minioadmin"; fi
+        if [ -z "${S3_SECRET_KEY:-}" ]; then export S3_SECRET_KEY="minioadmin"; fi
+        if [ -z "${S3_BUCKET:-}" ]; then export S3_BUCKET="ticidefaultbucket"; fi
+        if [ -z "${S3_PREFIX:-}" ]; then export S3_PREFIX="tici_default_prefix"; fi
+        if [ -z "${TIDB_PORT:-}" ]; then export TIDB_PORT="4000"; fi
+        if [ -n "${upstream_pd_client_port:-}" ]; then
+            export PD_ADDR="127.0.0.1:$upstream_pd_client_port"
+        fi
+        export PD_ADDR="${PD_ADDR:-127.0.0.1:2379}"
+        if [ -z "$PD_ADDR" ]; then
+            echo "PD_ADDR is empty; cannot start tici meta/worker" >&2
+            exit 1
+        fi
+        if command -v envsubst >/dev/null 2>&1; then
+            if [ -f "$TICI_CONFIG_DIR/meta.toml.in" ]; then
+                envsubst < "$TICI_CONFIG_DIR/meta.toml.in" > "$TICI_CONFIG_DIR/meta.toml"
+                TICI_META_CONFIG="${TICI_META_CONFIG:-$TICI_CONFIG_DIR/meta.toml}"
             fi
-            if command -v envsubst >/dev/null 2>&1; then
-                if [ -f "$TICI_CONFIG_DIR/meta.toml.in" ]; then
-                    envsubst < "$TICI_CONFIG_DIR/meta.toml.in" > "$TICI_CONFIG_DIR/meta.toml"
-                    TICI_META_CONFIG="${TICI_META_CONFIG:-$TICI_CONFIG_DIR/meta.toml}"
-                fi
-                if [ -f "$TICI_CONFIG_DIR/worker.toml.in" ]; then
-                    envsubst < "$TICI_CONFIG_DIR/worker.toml.in" > "$TICI_CONFIG_DIR/worker.toml"
-                    TICI_WORKER_CONFIG="${TICI_WORKER_CONFIG:-$TICI_CONFIG_DIR/worker.toml}"
-                fi
-                if [ -f "$TICI_CONFIG_DIR/tiflash.toml.in" ]; then
-                    envsubst < "$TICI_CONFIG_DIR/tiflash.toml.in" > "$TICI_CONFIG_DIR/tiflash.toml"
-                    TIFLASH_CONFIG="${TIFLASH_CONFIG:-$TICI_CONFIG_DIR/tiflash.toml}"
-                fi
-            else
-                echo "envsubst not found; cannot render TiCI configs" >&2
-                exit 1
+            if [ -f "$TICI_CONFIG_DIR/worker.toml.in" ]; then
+                envsubst < "$TICI_CONFIG_DIR/worker.toml.in" > "$TICI_CONFIG_DIR/worker.toml"
+                TICI_WORKER_CONFIG="${TICI_WORKER_CONFIG:-$TICI_CONFIG_DIR/worker.toml}"
             fi
+            if [ -f "$TICI_CONFIG_DIR/tiflash.toml.in" ]; then
+                envsubst < "$TICI_CONFIG_DIR/tiflash.toml.in" > "$TICI_CONFIG_DIR/tiflash.toml"
+                TIFLASH_CONFIG="${TIFLASH_CONFIG:-$TICI_CONFIG_DIR/tiflash.toml}"
+            fi
+        else
+            echo "envsubst not found; cannot render TiCI configs" >&2
+            exit 1
         fi
     fi
 }
@@ -437,13 +451,37 @@ function start_tici_server() {
         exit 1
     fi
 
+    local pd_addr="${PD_ADDR:-127.0.0.1:2379}"
+    local meta_host="${TICI_META_HOST:-127.0.0.1}"
+    local meta_port="${TICI_META_PORT:-8500}"
+    local meta_status_port="${TICI_META_STATUS_PORT:-8501}"
+    local worker_host="${TICI_WORKER_HOST:-127.0.0.1}"
+    local worker_port="${TICI_WORKER_PORT:-8510}"
+    local worker_status_port="${TICI_WORKER_STATUS_PORT:-8511}"
+    if [ -z "$pd_addr" ]; then
+        echo "PD_ADDR is empty; cannot start tici meta/worker" >&2
+        exit 1
+    fi
+
     echo "Starting tici meta..."
-    $tici_bin meta --config "$TICI_META_CONFIG" $TICI_META_ARGS > "$log_file" 2>&1 &
+    $tici_bin meta --config "$TICI_META_CONFIG" \
+        --host "$meta_host" \
+        --port "$meta_port" \
+        --status-port "$meta_status_port" \
+        --advertise-host "$meta_host" \
+        --pd-addr "$pd_addr" \
+        $TICI_META_ARGS > "$log_file" 2>&1 &
     TICI_META_PID=$!
     echo "tici-meta(PID: $TICI_META_PID) started"
 
     echo "Starting tici worker..."
-    $tici_bin worker --config "$TICI_WORKER_CONFIG" $TICI_WORKER_ARGS >> "$log_file" 2>&1 &
+    $tici_bin worker --config "$TICI_WORKER_CONFIG" \
+        --host "$worker_host" \
+        --port "$worker_port" \
+        --status-port "$worker_status_port" \
+        --advertise-host "$worker_host" \
+        --pd-addr "$pd_addr" \
+        $TICI_WORKER_ARGS >> "$log_file" 2>&1 &
     TICI_WORKER_PID=$!
     echo "tici-worker(PID: $TICI_WORKER_PID) started"
 }

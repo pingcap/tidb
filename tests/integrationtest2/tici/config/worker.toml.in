@@ -1,3 +1,6 @@
+[server]
+pd-addr = "${PD_ADDR}"
+
 [s3]
 endpoint = "${S3_ENDPOINT}"
 region = "${S3_REGION}"
