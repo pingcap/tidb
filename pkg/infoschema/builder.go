@@ -943,6 +943,13 @@ func (b *Builder) deleteReferredForeignKeys(dbInfo *model.DBInfo, tableID int64)
 	dbInfo.Deprecated.Tables = tables
 }
 
+// SetSchemaVersion updates the schema version of the building infoschema.
+// It is useful when we intentionally skip applying some schema diffs but still
+// need to advance the schema version to reflect where the infoschema is synced to.
+func (b *Builder) SetSchemaVersion(version int64) {
+	b.infoSchema.schemaMetaVersion = version
+}
+
 // Build builds and returns the built infoschema.
 func (b *Builder) Build(schemaTS uint64) InfoSchema {
 	if b.enableV2 {
