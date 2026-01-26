@@ -3468,9 +3468,37 @@ Warning	1292	Incorrect datetime value: '2024-00-00 00:00:00'
 Warning	1292	Incorrect datetime value: '2024-00-01 00:00:00'
 Warning	1292	Incorrect datetime value: '2024-12-00 00:00:00'
 drop table if exists t;
+set sql_mode = default;
 SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
 GET_FORMAT(TIME, 'usa')	GET_FORMAT(TIME, 'USA')	GET_FORMAT(TIME, 'UsA')	GET_FORMAT(time, 'UsA')	GET_FORMAT(TIme, 'UsA')
 %h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p	%h:%i:%s %p
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
 GET_FORMAT(DATE, 'jis')	GET_FORMAT(DATETIME, 'iso')	GET_FORMAT(TIMESTAMP, 'eur')	GET_FORMAT(TIME, 'internal')
 %Y-%m-%d	%Y-%m-%d %H:%i:%s	%Y-%m-%d %H.%i.%s	%H%i%s
+SELECT DATE_FORMAT('2023-10-30', ''),DATE_FORMAT('2023-10-32', ''),DATE_FORMAT('0000-00-00', ''),DATE_FORMAT('0', ''),DATE_FORMAT(0, ''),DATE_FORMAT(0.0, '');
+DATE_FORMAT('2023-10-30', '')	DATE_FORMAT('2023-10-32', '')	DATE_FORMAT('0000-00-00', '')	DATE_FORMAT('0', '')	DATE_FORMAT(0, '')	DATE_FORMAT(0.0, '')
+NULL	NULL	NULL	NULL	NULL	NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2023-10-32'
+Warning	1292	Incorrect datetime value: '0000-00-00 00:00:00.000000'
+Warning	1292	Incorrect time value: '0'
+DROP TABLE IF EXISTS t;
+CREATE TABLE t (d VARCHAR(20),fmt VARCHAR(20));
+INSERT INTO t VALUES ('2023-10-30', ''),('2023-10-32', ''),('0000-00-00', ''),('0', ''),(0, ''),(0.0, '');
+SELECT d, fmt, DATE_FORMAT(d, fmt) AS result FROM t;
+d	fmt	result
+2023-10-30		NULL
+2023-10-32		NULL
+0000-00-00		NULL
+0		NULL
+0		NULL
+0.0		NULL
+show warnings;
+Level	Code	Message
+Warning	1292	Incorrect datetime value: '2023-10-32'
+Warning	1292	Incorrect datetime value: '0000-00-00 00:00:00.000000'
+Warning	1292	Incorrect time value: '0'
+Warning	1292	Incorrect time value: '0'
+Warning	1292	Incorrect datetime value: '0.0'
+DROP TABLE IF EXISTS t;
