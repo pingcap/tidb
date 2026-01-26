@@ -198,7 +198,16 @@ func (s *StmtSummary) SetMaxStmtCount(v uint32) error {
 	}
 	s.optMaxStmtCount.Store(v)
 	s.windowLock.Lock()
-	_ = s.window.lru.SetCapacity(uint(v))
+	fifoCap := uint(v) / 3
+	if fifoCap < 1 {
+		fifoCap = 1
+	}
+	lruCap := uint(v) - fifoCap
+	if lruCap < 1 {
+		lruCap = 1
+	}
+	_ = s.window.fifo.SetCapacity(fifoCap)
+	_ = s.window.lru.SetCapacity(lruCap)
 	s.windowLock.Unlock()
 
 	return nil
@@ -253,18 +262,23 @@ func (s *StmtSummary) Add(info *stmtsummary.StmtExecInfo) {
 	v, exist := s.window.lru.Get(k)
 	if exist {
 		record = v.(*lockedStmtRecord)
+		stmtsummary.StmtDigestKeyPool.Put(k)
 	} else {
-		record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
-		s.window.lru.Put(k, record)
+		v, exist := s.window.fifo.Get(k)
+		if exist {
+			record = v.(*lockedStmtRecord)
+			s.window.fifo.Delete(k)
+			s.window.lru.Put(k, record)
+		} else {
+			record = &lockedStmtRecord{StmtRecord: NewStmtRecord(info)}
+			s.window.fifo.Put(k, record)
+		}
 	}
 	s.windowLock.Unlock()
 
 	record.Lock()
 	record.Add(info)
 	record.Unlock()
-	if exist {
-		stmtsummary.StmtDigestKeyPool.Put(k)
-	}
 }
 
 // Evicted returns the number of statements evicted for the current
@@ -295,6 +309,12 @@ func (s *StmtSummary) Clear() {
 func (s *StmtSummary) ClearInternal() {
 	s.windowLock.Lock()
 	defer s.windowLock.Unlock()
+	for _, k := range s.window.fifo.Keys() {
+		v, _ := s.window.fifo.Get(k)
+		if v.(*lockedStmtRecord).IsInternal {
+			s.window.fifo.Delete(k)
+		}
+	}
 	for _, k := range s.window.lru.Keys() {
 		v, _ := s.window.lru.Get(k)
 		if v.(*lockedStmtRecord).IsInternal {
@@ -321,7 +341,7 @@ func (s *StmtSummary) flush() {
 	s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
 	s.windowLock.Unlock()
 
-	if window.lru.Size() > 0 {
+	if window.Size() > 0 {
 		s.storage.persist(window, now)
 	}
 	err := s.storage.sync()
@@ -353,7 +373,7 @@ func (s *StmtSummary) rotateLoop() {
 func (s *StmtSummary) rotate(now time.Time) {
 	w := s.window
 	s.window = newStmtWindow(now, uint(s.MaxStmtCount()))
-	size := w.lru.Size()
+	size := w.Size()
 	if size > 0 {
 		// Persist window asynchronously.
 		s.closeWg.Add(1)
@@ -369,29 +389,58 @@ func (s *StmtSummary) rotate(now time.Time) {
 // according to the LRU strategy. All evicted data will be aggregated
 // into stmtEvicted.
 type stmtWindow struct {
-	begin   time.Time
+	begin time.Time
+	// fifo is the Probationary Queue (FIFO).
+	fifo *kvcache.SimpleLRUCache // *StmtDigestKey => *lockedStmtRecord
+	// lru is the Main Queue (LRU).
 	lru     *kvcache.SimpleLRUCache // *StmtDigestKey => *lockedStmtRecord
 	evicted *stmtEvicted
 }
 
 func newStmtWindow(begin time.Time, capacity uint) *stmtWindow {
+	fifoCap := capacity / 3
+	if fifoCap < 1 {
+		fifoCap = 1
+	}
+	lruCap := capacity - fifoCap
+	if lruCap < 1 {
+		lruCap = 1
+	}
+
 	w := &stmtWindow{
 		begin:   begin,
-		lru:     kvcache.NewSimpleLRUCache(capacity, 0, 0),
+		fifo:    kvcache.NewSimpleLRUCache(fifoCap, 0, 0),
+		lru:     kvcache.NewSimpleLRUCache(lruCap, 0, 0),
 		evicted: newStmtEvicted(),
 	}
-	w.lru.SetOnEvict(func(k kvcache.Key, v kvcache.Value) {
+	onEvict := func(k kvcache.Key, v kvcache.Value) {
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		defer r.Unlock()
 		w.evicted.add(k.(*stmtsummary.StmtDigestKey), r.StmtRecord)
-	})
+	}
+	w.fifo.SetOnEvict(onEvict)
+	w.lru.SetOnEvict(onEvict)
 	return w
 }
 
 func (w *stmtWindow) clear() {
+	w.fifo.DeleteAll()
 	w.lru.DeleteAll()
 	w.evicted = newStmtEvicted()
+}
+
+func (w *stmtWindow) Size() int {
+	return w.fifo.Size() + w.lru.Size()
+}
+
+func (w *stmtWindow) Values() []kvcache.Value {
+	v1 := w.lru.Values()
+	v2 := w.fifo.Values()
+	res := make([]kvcache.Value, 0, len(v1)+len(v2))
+	res = append(res, v1...)
+	res = append(res, v2...)
+	return res
 }
 
 type stmtStorage interface {

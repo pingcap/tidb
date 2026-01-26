@@ -49,7 +49,7 @@ func newStmtLogStorage(cfg *log.Config) *stmtLogStorage {
 
 func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
 	begin := w.begin.Unix()
-	for _, v := range w.lru.Values() {
+	for _, v := range w.Values() {
 		r := v.(*lockedStmtRecord)
 		r.Lock()
 		r.Begin = begin

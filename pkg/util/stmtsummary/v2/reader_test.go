@@ -232,7 +232,7 @@ func TestMemReader(t *testing.T) {
 		{Name: ast.NewCIStr(ExecCountStr)},
 	}
 
-	ss := NewStmtSummary4Test(3)
+	ss := NewStmtSummary4Test(4) // Capacity 4 => FIFO=1, LRU=3. Keeps 3 items.
 	defer ss.Close()
 
 	ss.Add(GenerateStmtExecInfo4Test("digest1"))

@@ -101,7 +101,7 @@ func (r *MemReader) Rows() [][]types.Datum {
 		r.s.windowLock.Unlock()
 		return nil
 	}
-	values := w.lru.Values()
+	values := w.Values()
 	evicted := w.evicted
 	r.s.windowLock.Unlock()
 	rows := make([][]types.Datum, 0, len(values)+1)
