@@ -128,6 +128,11 @@ type execStartTimeCtxKeyType struct{}
 // ExecStartTimeCtxKey indicates stmt start execution time.
 var ExecStartTimeCtxKey = execStartTimeCtxKeyType{}
 
+type isRetryingCtx struct{}
+
+// IsRetryingCtxKey indicates whether the current execution is a retry.
+var IsRetryingCtxKey = isRetryingCtx{}
+
 type prepareStmtIDCtxKeyType struct{}
 
 // PrepareStmtIDCtxKey indicates the prepared statement ID.
