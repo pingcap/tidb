@@ -78,9 +78,6 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 
 func TestIndexMergePKHandleNoExtraRowID(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
-		if cascades == "off" {
-			return
-		}
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists t0, t1, t2, t3")
 		tk.MustExec(`create table t0 (
