@@ -187,6 +187,7 @@ func TestIllegalFunctions4GeneratedColumns(t *testing.T) {
 		"make_set",
 		"makedate",
 		"maketime",
+		"match_against",
 		"md5",
 		"microsecond",
 		"mid",
