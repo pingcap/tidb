@@ -393,14 +393,18 @@ function prepare_tici_config() {
         if [ -f "$TICI_CONFIG_DIR/env.sh" ]; then
             source "$TICI_CONFIG_DIR/env.sh"
         fi
-        if [ -z "${S3_USE_PATH_STYLE:-}" ]; then export S3_USE_PATH_STYLE=true; fi
-        if [ -z "${S3_ENDPOINT:-}" ]; then export S3_ENDPOINT="$MINIO_ENDPOINT"; fi
-        if [ -z "${S3_REGION:-}" ]; then export S3_REGION="us-east-1"; fi
-        if [ -z "${S3_ACCESS_KEY:-}" ]; then export S3_ACCESS_KEY="$MINIO_ACCESS_KEY"; fi
-        if [ -z "${S3_SECRET_KEY:-}" ]; then export S3_SECRET_KEY="$MINIO_SECRET_KEY"; fi
-        if [ -z "${S3_BUCKET:-}" ]; then export S3_BUCKET="ticidefaultbucket"; fi
-        if [ -z "${S3_PREFIX:-}" ]; then export S3_PREFIX="tici_default_prefix"; fi
-        if [ -z "${TIDB_PORT:-}" ]; then export TIDB_PORT="4000"; fi
+        export S3_USE_PATH_STYLE=true
+        export S3_ENDPOINT="$MINIO_ENDPOINT"
+        export S3_REGION="${S3_REGION:-us-east-1}"
+        export S3_ACCESS_KEY="$MINIO_ACCESS_KEY"
+        export S3_SECRET_KEY="$MINIO_SECRET_KEY"
+        export S3_BUCKET="$MINIO_BUCKET"
+        export S3_PREFIX="tici_default_prefix"
+        export TIDB_PORT="${TIDB_PORT:-4000}"
+        # TiCI may fall back to AWS default credential chain when keys are empty,
+        # so keep AWS envs aligned with MinIO to avoid 403 errors.
+        export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
+        export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
         if [ -n "${upstream_pd_client_port:-}" ]; then
             export PD_ADDR="127.0.0.1:$upstream_pd_client_port"
         fi
