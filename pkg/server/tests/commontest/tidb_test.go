@@ -1933,7 +1933,7 @@ func setupForTestTopSQLStatementStats(t *testing.T) (*servertestkit.TidbTestSuit
 	}
 	unistoreRPCClientSendHook := func(req *tikvrpc.Request) {
 		tag := req.GetResourceGroupTag()
-		if len(tag) == 0 || ddlutil.IsInternalResourceGroupTaggerForTopSQL(tag) {
+		if len(tag) == 0 || ddlutil.IsInternalResourceGroupTaggerForTopProfiling(tag) {
 			// Ignore for internal background request.
 			return
 		}
