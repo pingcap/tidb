@@ -248,9 +248,9 @@ func (e *executorStats) RuntimeStats() *execdetails.BasicRuntimeStats {
 	return e.runtimeStats
 }
 
-// RegisterSQLAndPlanInExecForTopSQL registers the current SQL and Plan on top sql
-func (e *executorStats) RegisterSQLAndPlanInExecForTopSQL() {
-	if topsqlstate.TopSQLEnabled() && e.isSQLAndPlanRegistered.CompareAndSwap(false, true) {
+// RegisterSQLAndPlanInExecForTopProfiling registers the current SQL and Plan on top profiling.
+func (e *executorStats) RegisterSQLAndPlanInExecForTopProfiling() {
+	if topsqlstate.TopProfilingEnabled() && e.isSQLAndPlanRegistered.CompareAndSwap(false, true) {
 		topsql.RegisterSQL(e.normalizedSQL, e.sqlDigest, e.inRestrictedSQL)
 		if len(e.normalizedPlan) > 0 {
 			topsql.RegisterPlan(e.normalizedPlan, e.planDigest)
@@ -456,7 +456,7 @@ func Next(ctx context.Context, e Executor, req *chunk.Chunk) (err error) {
 	r, ctx := tracing.StartRegionEx(ctx, reflect.TypeOf(e).String()+".Next")
 	defer r.End()
 
-	e.RegisterSQLAndPlanInExecForTopSQL()
+	e.RegisterSQLAndPlanInExecForTopProfiling()
 	err = e.Next(ctx, req)
 
 	if err != nil {
