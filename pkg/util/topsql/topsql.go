@@ -51,25 +51,22 @@ func init() {
 	singleTargetDataSink = reporter.NewSingleTargetDataSink(remoteReporter)
 }
 
-// SetupTopSQL sets up the top-sql worker.
-func SetupTopSQL(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater) {
+// SetupTopProfiling sets up the Top Profiling pipeline.
+//
+// NOTE: Despite the legacy package name, this initializer wires the collectors
+// and reporters shared by TopSQL (and future TopRU).
+func SetupTopProfiling(keyspaceName []byte, updater collector.ProcessCPUTimeUpdater) {
 	globalTopProfilingReport.BindKeyspaceName(keyspaceName)
 	globalTopProfilingReport.BindProcessCPUTimeUpdater(updater)
 	globalTopProfilingReport.Start()
 	singleTargetDataSink.Start()
 
 	stmtstats.RegisterCollector(globalTopProfilingReport)
-	// Register reporter as RUCollector to receive RU increments from aggregator.
-	// This wires the TopRU data flow: aggregator -> reporter -> agent.
-	// Type assertion ensures backward compatibility if reporter doesn't implement RUCollector.
-	if ruCollector, ok := globalTopProfilingReport.(stmtstats.RUCollector); ok {
-		stmtstats.RegisterRUCollector(ruCollector)
-	}
 	stmtstats.SetupAggregator()
 }
 
-// SetupTopSQLForTest sets up the global top-sql reporter, it's exporting for test.
-func SetupTopSQLForTest(r reporter.TopSQLReporter) {
+// SetupTopProfilingForTest sets up the global reporter for tests.
+func SetupTopProfilingForTest(r reporter.TopSQLReporter) {
 	globalTopProfilingReport = r
 }
 

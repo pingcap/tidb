@@ -453,7 +453,7 @@ func (dc *ddlCtx) isOwner() bool {
 	return isOwner
 }
 
-func (dc *ddlCtx) setDDLLabelForTopProfiling(jobID int64, jobQuery string) {
+func (dc *ddlCtx) attachTopProfilingInfo(jobID int64, jobQuery string) {
 	dc.jobCtx.Lock()
 	defer dc.jobCtx.Unlock()
 	ctx, exists := dc.jobCtx.jobCtxMap[jobID]
@@ -461,7 +461,7 @@ func (dc *ddlCtx) setDDLLabelForTopProfiling(jobID int64, jobQuery string) {
 		ctx = NewReorgContext()
 		dc.jobCtx.jobCtxMap[jobID] = ctx
 	}
-	ctx.setDDLLabelForTopProfiling(jobQuery)
+	ctx.attachTopProfilingInfo(jobQuery)
 }
 
 func (dc *ddlCtx) setDDLSourceForDiagnosis(jobID int64, jobType model.ActionType) {
