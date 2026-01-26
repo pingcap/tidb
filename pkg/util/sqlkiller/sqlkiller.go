@@ -133,9 +133,11 @@ func (killer *SQLKiller) resetKillEvent() {
 		close(killer.killEvent.ch)
 	}
 	if !killer.killEvent.triggered && killer.killEvent.ctx != nil && killer.killEvent.cancelFn != nil {
-		killer.killEvent.cancelFn(errors.New("sql killer: killed by reseting sql killer"))
+		killer.killEvent.cancelFn(errors.New("sql killer: killed by resetting sql killer"))
 	}
 	killer.killEvent.ch = nil
+	killer.killEvent.ctx = nil
+	killer.killEvent.cancelFn = nil
 	killer.killEvent.triggered = false
 	killer.killEvent.desc = ""
 }

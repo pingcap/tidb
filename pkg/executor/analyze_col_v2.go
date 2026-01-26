@@ -676,13 +676,18 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 		e.memTracker.Release(dataSize + colRespSize)
 		subCollector.DestroyAndPutToPool()
 	case <-ctx.Done():
-		err := ctx.Err()
+		err := context.Cause(ctx)
+		if err != nil {
+			resultCh <- &samplingMergeResult{err: err}
+			return
+		}
+		err = ctx.Err()
 		if err != nil {
 			resultCh <- &samplingMergeResult{err: err}
 			return
 		}
 		if intest.InTest {
-			panic("this ctx should be canncelled with the error")
+			panic("this ctx should be canceled with the error")
 		}
 	}
 	resultCh <- &samplingMergeResult{collector: retCollector}

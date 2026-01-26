@@ -38,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/exeerrors"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
@@ -504,6 +505,43 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	return err
 }
 
+func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error {
+	select {
+	case <-ctx.Done():
+		if err := context.Cause(ctx); err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return exeerrors.ErrQueryInterrupted
+	case <-errExitCh:
+		return exeerrors.ErrQueryInterrupted
+	default:
+		return nil
+	}
+}
+
+func (e *AnalyzeExec) sendAnalyzeResult(ctx context.Context, statsHandle *handle.Handle, resultsCh chan<- *statistics.AnalyzeResults, result *statistics.AnalyzeResults) {
+	select {
+	case resultsCh <- result:
+		return
+	case <-ctx.Done():
+	case <-e.errExitCh:
+	}
+	err := result.Err
+	if err == nil {
+		err = context.Cause(ctx)
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil {
+		err = exeerrors.ErrQueryInterrupted
+	}
+	finishJobWithLog(statsHandle, result.Job, err)
+}
+
 // ctx must be from SQLKiller.GetKillEventCtx
 func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeTask, resultsCh chan<- *statistics.AnalyzeResults) {
 	var task *analyzeTask
@@ -526,34 +564,24 @@ func (e *AnalyzeExec) analyzeWorker(ctx context.Context, taskCh <-chan *analyzeT
 	}()
 	for {
 		var ok bool
-		select {
-		case task, ok = <-taskCh:
-			if !ok {
-				return
-			}
+		task, ok = <-taskCh
+		if !ok {
+			return
+		}
+		if err := analyzeWorkerExitErr(ctx, e.errExitCh); err != nil {
+			finishJobWithLog(statsHandle, task.job, err)
+			return
 		}
 		failpoint.Inject("handleAnalyzeWorkerPanic", nil)
 		switch task.taskType {
 		case colTask:
-			select {
-			case <-ctx.Done():
-				return
-			case <-e.errExitCh:
-				return
-			default:
-				statsHandle.StartAnalyzeJob(task.job)
-				resultsCh <- analyzeColumnsPushDownEntry(ctx, e.gp, task.colExec)
-			}
+			statsHandle.StartAnalyzeJob(task.job)
+			result := analyzeColumnsPushDownEntry(ctx, e.gp, task.colExec)
+			e.sendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		case idxTask:
-			select {
-			case <-ctx.Done():
-				return
-			case <-e.errExitCh:
-				return
-			default:
-				statsHandle.StartAnalyzeJob(task.job)
-				resultsCh <- analyzeIndexPushdown(ctx, task.idxExec)
-			}
+			statsHandle.StartAnalyzeJob(task.job)
+			result := analyzeIndexPushdown(ctx, task.idxExec)
+			e.sendAnalyzeResult(ctx, statsHandle, resultsCh, result)
 		}
 	}
 }

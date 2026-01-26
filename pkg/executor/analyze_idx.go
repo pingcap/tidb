@@ -96,7 +96,7 @@ func analyzeIndexPushdown(ctx context.Context, idxExec *AnalyzeIndexExec) *stati
 }
 
 func (e *AnalyzeIndexExec) buildStats(ctx context.Context, ranges []*ranger.Range, considerNull bool) (hist *statistics.Histogram, cms *statistics.CMSketch, fms *statistics.FMSketch, topN *statistics.TopN, err error) {
-	if err = e.open(ranges, considerNull); err != nil {
+	if err = e.open(ctx, ranges, considerNull); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	defer func() {
@@ -122,14 +122,14 @@ func (e *AnalyzeIndexExec) buildStats(ctx context.Context, ranges []*ranger.Rang
 	return hist, cms, fms, topN, nil
 }
 
-func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error {
-	err := e.fetchAnalyzeResult(ranges, false)
+func (e *AnalyzeIndexExec) open(ctx context.Context, ranges []*ranger.Range, considerNull bool) error {
+	err := e.fetchAnalyzeResult(ctx, ranges, false)
 	if err != nil {
 		return err
 	}
 	if considerNull && len(e.idxInfo.Columns) == 1 {
 		ranges = ranger.NullRange()
-		err = e.fetchAnalyzeResult(ranges, true)
+		err = e.fetchAnalyzeResult(ctx, ranges, true)
 		if err != nil {
 			return err
 		}
@@ -140,7 +140,7 @@ func (e *AnalyzeIndexExec) open(ranges []*ranger.Range, considerNull bool) error
 // fetchAnalyzeResult builds and dispatches the `kv.Request` from given ranges, and stores the `SelectResult`
 // in corresponding fields based on the input `isNullRange` argument, which indicates if the range is the
 // special null range for single-column index to get the null count.
-func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRange bool) error {
+func (e *AnalyzeIndexExec) fetchAnalyzeResult(ctx context.Context, ranges []*ranger.Range, isNullRange bool) error {
 	var builder distsql.RequestBuilder
 	var kvReqBuilder *distsql.RequestBuilder
 	if e.isCommonHandle && e.idxInfo.Primary {
@@ -166,7 +166,6 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ranges []*ranger.Range, isNullRang
 	if err != nil {
 		return err
 	}
-	ctx := context.TODO()
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
 		return err
@@ -206,13 +205,17 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, resul
 		})
 		select {
 		case <-killerCtx.Done():
-			return nil, nil, nil, nil, killerCtx.Err()
+			err := context.Cause(killerCtx)
+			if err == nil {
+				err = killerCtx.Err()
+			}
+			return nil, nil, nil, nil, err
 		default:
 		}
 		failpoint.Inject("mockSlowAnalyzeIndex", func() {
 			time.Sleep(1000 * time.Second)
 		})
-		data, err := result.NextRaw(context.TODO())
+		data, err := result.NextRaw(killerCtx)
 		if err != nil {
 			return nil, nil, nil, nil, err
 		}
@@ -243,7 +246,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, resul
 }
 
 func (e *AnalyzeIndexExec) buildSimpleStats(killerCtx context.Context, ranges []*ranger.Range, considerNull bool) (fms *statistics.FMSketch, nullHist *statistics.Histogram, err error) {
-	if err = e.open(ranges, considerNull); err != nil {
+	if err = e.open(killerCtx, ranges, considerNull); err != nil {
 		return nil, nil, err
 	}
 	defer func() {
