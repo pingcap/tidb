@@ -1562,7 +1562,6 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 
 	if task.rangeVersions != nil {
 		copReq.RangeVersions = task.rangeVersions
-		task.requestSource.SetExplicitRequestSourceType("tici")
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
