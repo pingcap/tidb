@@ -16,6 +16,7 @@ package staleread
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/failpoint"
@@ -52,6 +53,28 @@ func CalculateAsOfTsExpr(ctx context.Context, sctx planctx.PlanContext, tsExpr a
 		return 0, plannererrors.ErrAsOf.FastGenWithCause("as of timestamp cannot be NULL")
 	}
 
+	// We first try to parse as a datetime, and only fall back to parsing as a raw TSO if the datetime conversion fails.
+	// Note that this behaves differently than `tidb_snapshot` for compact dates such as 'YYYYMMDDHHMMSS' or 'YYYYMMDDHH',
+	// that can parse both as date time and integers. `tidb_snapshot` treats them as integers, while we parse them as datetimes,
+	// to maintain backwards compatibility.
+	ts, datetimeErr := parseTsExprAsDatetime(ctx, sctx, tsVal)
+	if datetimeErr == nil {
+		return ts, nil
+	}
+
+	// If datetime conversion failed, try to parse as a raw TSO (large integer).
+	if tsVal.Kind() == types.KindString || tsVal.Kind() == types.KindBytes {
+		if tso, err := strconv.ParseUint(tsVal.GetString(), 10, 64); err == nil {
+			return tso, nil
+		}
+	}
+
+	return 0, datetimeErr
+}
+
+// parseTsExprAsDatetime tries to parse the value as a datetime and convert it to TSO.
+// It handles all valid datetime formats including compact format like YYYYMMDDHHMMSS.
+func parseTsExprAsDatetime(_ context.Context, sctx planctx.PlanContext, tsVal types.Datum) (uint64, error) {
 	toTypeTimestamp := types.NewFieldType(mysql.TypeTimestamp)
 	// We need at least the millisecond here, so set fsp to 3.
 	toTypeTimestamp.SetDecimal(3)
