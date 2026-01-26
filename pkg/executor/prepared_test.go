@@ -825,7 +825,7 @@ func TestIssue29101(t *testing.T) {
 	ps = []*sessmgr.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use index-join
-		`StreamAgg_14 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#11`,
+		`StreamAgg_14 1.00 root  funcs:count(distinct test.stock.s_i_id)->Column#13`,
 		`└─IndexJoin_43 1.25 root  inner join, inner:IndexLookUp_36, outer key:test.order_line.ol_i_id, inner key:test.stock.s_i_id, equal cond:eq(test.order_line.ol_i_id, test.stock.s_i_id)`,
 		`  ├─IndexLookUp_32(Build) 1.25 root  `,
 		`  │ ├─IndexRangeScan_30(Build) 1.25 cop[tikv] table:order_line, index:PRIMARY(ol_w_id, ol_d_id, ol_o_id, ol_number) range:[391 1 3038,391 1 3058), keep order:false, stats:pseudo`,
