@@ -406,16 +406,44 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	}
 
 	if isDoubleRead || p.Index.Global {
-		// If it's double read case, the first index must return handle. So we should add extra handle column
+		// If it's double read case, the first index must return handle. So we should add handle column
 		// if there isn't a handle column.
 		if !setHandle {
 			if !p.Table.IsCommonHandle {
-				indexCols = append(indexCols, &expression.Column{
-					RetType:  types.NewFieldType(mysql.TypeLonglong),
-					ID:       model.ExtraHandleID,
-					UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-					OrigName: model.ExtraHandleName.O,
-				})
+				var handleCol *expression.Column
+				if p.Table.PKIsHandle {
+					handleCol = p.PkIsHandleCol
+					if handleCol == nil {
+						if pkInfo := p.Table.GetPkColInfo(); pkInfo != nil {
+							handleCol = expression.ColInfo2Col(p.DataSourceSchema.Columns, pkInfo)
+							if handleCol == nil {
+								handleCol = &expression.Column{
+									RetType:  pkInfo.FieldType.Clone(),
+									ID:       pkInfo.ID,
+									UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+									OrigName: pkInfo.Name.O,
+								}
+							}
+						}
+					}
+					if handleCol != nil {
+						indexCols = append(indexCols, handleCol.Clone().(*expression.Column))
+					} else {
+						indexCols = append(indexCols, &expression.Column{
+							RetType:  types.NewFieldType(mysql.TypeLonglong),
+							ID:       model.ExtraHandleID,
+							UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+							OrigName: model.ExtraHandleName.O,
+						})
+					}
+				} else {
+					indexCols = append(indexCols, &expression.Column{
+						RetType:  types.NewFieldType(mysql.TypeLonglong),
+						ID:       model.ExtraHandleID,
+						UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+						OrigName: model.ExtraHandleName.O,
+					})
+				}
 			}
 		}
 		// If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.

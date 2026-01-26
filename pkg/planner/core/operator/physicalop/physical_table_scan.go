@@ -883,7 +883,11 @@ func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expre
 func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
-		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
+			handleCols = ds.UnMutableHandleCols
+		} else {
+			handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+		}
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
