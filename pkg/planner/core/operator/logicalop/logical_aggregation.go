@@ -274,6 +274,11 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 		la.PossibleProperties = [][]*expression.Column{nil}
 		return nil
 	}
+	if childProps == nil {
+		return &base.PossiblePropertiesInfo{
+			HasTiflash: la.hasTiflash,
+		}
+	}
 	resultProperties := make([][]*expression.Column, 0, len(childProps.Order))
 	groupByCols := la.GetGroupByCols()
 	for _, possibleChildProperty := range childProps.Order {
