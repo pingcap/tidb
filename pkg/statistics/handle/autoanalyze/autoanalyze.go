@@ -799,6 +799,34 @@ func startAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 	job.StartTime = time.Now()
 	job.Progress.SetLastDumpTime(job.StartTime)
+	tzVar := "<unset>"
+	if v, ok := sctx.GetSessionVars().GetSystemVar(vardef.TimeZone); ok {
+		tzVar = v
+	}
+	sqlTZ := "<unknown>"
+	if rows, _, err := statsutil.ExecRows(sctx, "SELECT @@TIME_ZONE"); err != nil {
+		statslogutil.StatsLogger().Warn(
+			"StartAnalyzeJob read @@time_zone failed",
+			zap.String("table_schema", job.DBName),
+			zap.String("table_name", job.TableName),
+			zap.Uint64("job_id", *job.ID),
+			zap.Error(err),
+		)
+	} else if len(rows) > 0 && !rows[0].IsNull(0) {
+		sqlTZ = rows[0].GetString(0)
+	}
+	statslogutil.StatsLogger().Info(
+		"StartAnalyzeJob timezones",
+		zap.String("table_schema", job.DBName),
+		zap.String("table_name", job.TableName),
+		zap.String("partition_name", job.PartitionName),
+		zap.Uint64("job_id", *job.ID),
+		zap.String("session_tz_var", tzVar),
+		zap.String("session_tz", sctx.GetSessionVars().Location().String()),
+		zap.String("stmt_tz", sctx.GetSessionVars().StmtCtx.TimeZone().String()),
+		zap.String("sql_time_zone", sqlTZ),
+		zap.String("system_tz", timeutil.SystemLocation().String()),
+	)
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
 	_, _, err := statsutil.ExecRows(sctx, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
 	if err != nil {

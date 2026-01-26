@@ -18,7 +18,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"go.uber.org/zap"
 )
 
 // NoRecord is used to indicate that there is no related record in mysql.analyze_jobs.
@@ -133,6 +135,15 @@ func GetLastFailedAnalysisDuration(
 		query = LastFailedDurationQueryForPartition
 		params = append(params, schema, tableName, partitionNames)
 	}
+
+	statslogutil.StatsLogger().Info(
+		"GetLastFailedAnalysisDuration timezones",
+		zap.String("schema", schema),
+		zap.String("table", tableName),
+		zap.Strings("partitions", partitionNames),
+		zap.String("session_tz", sctx.GetSessionVars().Location().String()),
+		zap.String("stmt_tz", sctx.GetSessionVars().StmtCtx.TimeZone().String()),
+	)
 
 	rows, _, err := util.ExecRows(sctx, query, params...)
 	if err != nil {
