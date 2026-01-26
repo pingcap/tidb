@@ -16,7 +16,9 @@ package indexmerge
 
 import (
 	"context"
+	"fmt"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/domain"
@@ -71,6 +73,130 @@ func TestIndexMergeWithOrderProperty(t *testing.T) {
 			// Expect no warnings.
 			testKit.MustQuery("show warnings").Check(testkit.Rows())
 		}
+	})
+}
+
+func TestIndexMergePKHandleNoExtraRowID(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		if cascades == "on" {
+			return
+		}
+		tk.MustExec("use test")
+		tk.MustExec("drop table if exists t0, t1, t2, t3")
+		tk.MustExec(`create table t0 (
+  id bigint not null,
+  k0 bigint not null,
+  k1 date not null,
+  k2 date not null,
+  p0 float not null,
+  p1 decimal(12,2) not null,
+  primary key (id) clustered,
+  key idx_k0_0 (k0),
+  key idx_p1_1 (p1),
+  key idx_p0_4 (p0),
+  key idx_id_5 (id),
+  key idx_k1_15 (k1),
+  key idx_k2_16 (k2),
+  key idx_p0_p1_k1_18 (p0,p1,k1),
+  key idx_k0_k2_p0_18 (k0,k2,p0),
+  key idx_k2_k0_k1_18 (k2,k0,k1),
+  key idx_k2_k1_p0_18 (k2,k1,p0),
+  key idx_k2_p1_p0_18 (k2,p1,p0),
+  key idx_k0_k1_p1_18 (k0,k1,p1),
+  key idx_k2_p0_18 (k2,p0),
+  key idx_k1_p0_p1_18 (k1,p0,p1),
+  key idx_k0_p0_k1_18 (k0,p0,k1),
+  key idx_k1_k2_18 (k1,k2),
+  key idx_k0_k1_18 (k0,k1),
+  key idx_k2_p1_18 (k2,p1),
+  key idx_k0_k2_18 (k0,k2),
+  key idx_p1_k2_18 (p1,k2)
+)`)
+		tk.MustExec(`create table t1 (
+  id bigint not null,
+  k0 bigint not null,
+  d0 date not null,
+  d1 datetime not null,
+  primary key (id) clustered,
+  key idx_d0_2 (d0),
+  key idx_k0_3 (k0),
+  key idx_d1_7 (d1),
+  key idx_id_10 (id),
+  key idx_k0_d1_18 (k0,d1),
+  key idx_d0_d1_k0_18 (d0,d1,k0),
+  key idx_d0_k0_18 (d0,k0),
+  key idx_k0_d0_d1_18 (k0,d0,d1),
+  key idx_d0_d1_18 (d0,d1),
+  key idx_k0_d0_18 (k0,d0),
+  key idx_d1_k0_18 (d1,k0),
+  key idx_d1_k0_d0_18 (d1,k0,d0),
+  key idx_d1_d0_k0_18 (d1,d0,k0),
+  key idx_d1_d0_18 (d1,d0)
+)`)
+		tk.MustExec(`create table t2 (
+  id bigint not null,
+  k1 date not null,
+  d0 tinyint(1) not null,
+  d1 decimal(12,2) not null,
+  primary key (id) clustered,
+  key idx_k1_6 (k1),
+  key idx_d0_13 (d0),
+  key idx_id_14 (id),
+  key idx_d1_17 (d1),
+  key idx_d1_d0_k1_18 (d1,d0,k1),
+  key idx_k1_d0_d1_18 (k1,d0,d1),
+  key idx_d0_d1_k1_18 (d0,d1,k1),
+  key idx_d0_k1_d1_18 (d0,k1,d1),
+  key idx_d1_d0_18 (d1,d0),
+  key idx_k1_d1_d0_18 (k1,d1,d0),
+  key idx_d0_d1_18 (d0,d1),
+  key idx_d1_k1_18 (d1,k1),
+  key idx_k1_d0_18 (k1,d0)
+)`)
+		tk.MustExec(`create table t3 (
+  id bigint not null,
+  k2 date not null,
+  d0 date not null,
+  d1 varchar(64) not null,
+  primary key (id) clustered,
+  key idx_k2_d0_d1_8 (k2,d0,d1),
+  key idx_d1_8 (d1),
+  key idx_id_9 (id),
+  key idx_d0_11 (d0),
+  key idx_k2_12 (k2),
+  key idx_d1_d0_k2_18 (d1,d0,k2),
+  key idx_d0_k2_d1_18 (d0,k2,d1),
+  key idx_k2_d1_18 (k2,d1),
+  key idx_d0_d1_k2_18 (d0,d1,k2),
+  key idx_d0_k2_18 (d0,k2),
+  key idx_d0_d1_18 (d0,d1),
+  key idx_d1_d0_18 (d1,d0),
+  key idx_k2_d0_18 (k2,d0)
+)`)
+		tk.MustExec("insert into t0 values (1, 65, '2024-01-01', '2024-01-25', 1.23, 10.00)")
+		tk.MustExec("insert into t1 values (1, 65, '2024-02-01', '2024-02-01 10:00:00')")
+		tk.MustExec("insert into t2 values (1, '2024-01-01', 1, 10.00)")
+		tk.MustExec("insert into t3 values (1, '2024-01-25', '2024-03-01', 'x')")
+		tk.MustExec("analyze table t0, t1, t2, t3 all columns")
+		tk.MustExec("set tidb_enable_index_merge=1")
+
+		query := "select /* issue:65791 */ " +
+			"(1) as cnt, (1) as sum1, t3.d0 as g1, t0.p0 as g2 " +
+			"from ((t0 join t2 on t0.k1 = t2.k1) " +
+			"join t1 on t0.k0 = t1.k0) " +
+			"join t3 on t0.k2 = t3.k2 " +
+			"where ((t0.k0 in (65)) or (t0.k2 in ('2024-01-25')))"
+		explainRows := tk.MustQuery("explain format='brief' " + query).Rows()
+		require.NotEmpty(t, explainRows)
+		foundIndexMerge := false
+		for _, row := range explainRows {
+			if strings.Contains(fmt.Sprint(row...), "IndexMerge") {
+				foundIndexMerge = true
+				break
+			}
+		}
+		require.True(t, foundIndexMerge)
+		tk.MustQuery(query).Check(testkit.Rows("1 1 2024-03-01 1.23"))
 	})
 }
 
