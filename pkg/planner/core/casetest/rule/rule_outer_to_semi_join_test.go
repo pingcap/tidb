@@ -71,9 +71,13 @@ func TestSemiJoinRewrite(t *testing.T) {
 
 		tk.MustExec(`create table t1 (id varchar(64) not null,  key(id))`)
 		tk.MustExec(`create table t2 (id bigint(20), k int)`)
+		tk.MustExec(`insert into t1 values ("1"), ("2"), ("3")`)
+		tk.MustExec(`insert into t2 values (1, 1), (2, 0)`)
 
 		// issue:58829
 		// the semi_join_rewrite hint can convert the semi-join to inner-join and finally allow the optimizer to choose the IndexJoin
 		tk.MustHavePlan(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ /* issue:58829 */ cast(id as char) from t2 where k=1)`, "IndexHashJoin")
+		tk.MustExec(`delete from t1 where t1.id in (select /*+ semi_join_rewrite() */ cast(id as char) from t2 where k=1)`)
+		tk.MustQuery(`select id from t1 order by id`).Check(testkit.Rows("2", "3"))
 	})
 }
