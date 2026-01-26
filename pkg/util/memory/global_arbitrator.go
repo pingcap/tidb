@@ -207,7 +207,6 @@ func HandleGlobalMemArbitratorRuntime() {
 		}
 		return
 	}
-	fetchGCStats()
 	m.HandleRuntimeStats(SampleRuntimeMemStats())
 	reportGlobalMemArbitratorMetrics()
 }

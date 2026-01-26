@@ -1688,14 +1688,8 @@ func (s *session) ParseSQL(ctx context.Context, sql string, params ...parser.Par
 			}
 		}
 
-		arbitratorOutOfQuota := !globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
+		globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, parseSQLMemQuota)
 		defer globalMemArbitrator.ConsumeQuotaFromAwaitFreePool(uid, -parseSQLMemQuota)
-
-		if arbitratorOutOfQuota { // for SQL which needs to be controlled by mem-arbitrator
-			if s.sessionPlanCache != nil {
-				s.sessionPlanCache.DeleteAll()
-			}
-		}
 	}
 
 	defer tracing.StartRegion(ctx, "ParseSQL").End()

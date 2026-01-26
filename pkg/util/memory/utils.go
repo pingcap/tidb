@@ -18,7 +18,6 @@ import (
 	"container/list"
 	"math/bits"
 	"runtime"
-	"runtime/debug"
 	"runtime/metrics"
 	"sync"
 	"sync/atomic"
@@ -261,89 +260,34 @@ type RuntimeMemStats struct {
 	LastGC int64
 }
 
-// SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW and approximate `LastGC`
-//
-//go:norace
-func SampleRuntimeMemStats() RuntimeMemStats {
-	metrics.Read(heapSample) // It is safe to execute multiple Read calls concurrently because their arguments share no underlying memory.
-	return RuntimeMemStats{
-		HeapAlloc: int64(heapSample[0].Value.Uint64()),
-		HeapInuse: int64(heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64()), // inuse = alloc + unused
-		TotalFree: int64(heapSample[5].Value.Uint64()),
-		MemOffHeap: int64(heapSample[4].Value.Uint64()) -
-			int64(heapSample[0].Value.Uint64()) -
-			int64(heapSample[1].Value.Uint64()) -
-			int64(heapSample[2].Value.Uint64()) -
-			int64(heapSample[3].Value.Uint64()),
-		LastGC: gcStats.cache.lastGC.Load(),
-	}
+var metricsMemStats struct {
+	heapSample []metrics.Sample
+	sync.Mutex
 }
 
-var heapSample = []metrics.Sample{
-	// heap alloc
-	{Name: "/memory/classes/heap/objects:bytes"},
-	// heap available
-	{Name: "/memory/classes/heap/unused:bytes"}, // unused
-	{Name: "/memory/classes/heap/free:bytes"},
-	{Name: "/memory/classes/heap/released:bytes"},
-	// memory total
-	{Name: "/memory/classes/total:bytes"},
-	// total free
-	{Name: "/gc/heap/frees:bytes"},
-}
-
-var gcStats = struct {
-	cond struct {
-		sync.Cond
-		sync.Mutex
-		updating bool
-	}
-	cache struct {
-		debug.GCStats
-		lastGC atomic.Int64
-		sync.Mutex
-	}
-}{}
-
-func fetchGCStats() {
+// SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
+func SampleRuntimeMemStats() (s RuntimeMemStats) {
 	{
-		gcStats.cond.Lock()
+		metricsMemStats.Lock()
 
-		if gcStats.cond.updating {
-			for gcStats.cond.updating {
-				gcStats.cond.Wait()
-			}
-			gcStats.cond.Unlock()
-			return
+		metrics.Read(metricsMemStats.heapSample)
+		s = RuntimeMemStats{
+			HeapAlloc: int64(metricsMemStats.heapSample[0].Value.Uint64()),
+			HeapInuse: int64(metricsMemStats.heapSample[0].Value.Uint64() + metricsMemStats.heapSample[1].Value.Uint64()), // inuse = alloc + unused
+			TotalFree: int64(metricsMemStats.heapSample[5].Value.Uint64()),
+			MemOffHeap: int64(metricsMemStats.heapSample[4].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[0].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[1].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[2].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[3].Value.Uint64()),
 		}
-		gcStats.cond.updating = true
 
-		gcStats.cond.Unlock()
+		metricsMemStats.Unlock()
 	}
 
-	{
-		gcStats.cache.Lock()
+	s.LastGC = int64(ReadMemStats().LastGC)
 
-		debug.ReadGCStats(&gcStats.cache.GCStats)
-		gcStats.cache.lastGC.Store(gcStats.cache.GCStats.LastGC.UnixNano())
-
-		gcStats.cache.Unlock()
-	}
-
-	{
-		gcStats.cond.Lock()
-
-		gcStats.cond.updating = false
-		gcStats.cond.Broadcast()
-
-		gcStats.cond.Unlock()
-	}
-}
-
-// LastGC returns the last GC time in unix nano seconds
-func LastGC() int64 {
-	fetchGCStats()
-	return gcStats.cache.lastGC.Load()
+	return s
 }
 
 // IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
@@ -358,12 +302,16 @@ func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
 }
 
 func init() {
-	gcStats.cond.L = &gcStats.cond.Mutex
-	fetchGCStats()
-	SampleRuntimeMemStats()
-	for i := range heapSample {
-		if heapSample[i].Value.Kind() != metrics.KindUint64 {
-			panic("unexpected metric kind")
-		}
+	metricsMemStats.heapSample = []metrics.Sample{
+		// heap alloc
+		{Name: "/memory/classes/heap/objects:bytes"},
+		// heap available
+		{Name: "/memory/classes/heap/unused:bytes"}, // unused
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		// memory total
+		{Name: "/memory/classes/total:bytes"},
+		// total free
+		{Name: "/gc/heap/frees:bytes"},
 	}
 }
