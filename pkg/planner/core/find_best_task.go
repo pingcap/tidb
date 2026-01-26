@@ -1150,10 +1150,18 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 // the index can **completely match** the **prefix** of the order by column.
 // Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
 // For example:
-//   query: order by a, b
-//   index: a, b(10)
+//
+//	query: order by a, b
+//	index: a(10)
+//	index: a, b(10)
+//
 // On success, this function updates `partialOrderInfo.PrefixColID` and `partialOrderInfo.PrefixLen`
 // and returns true. Otherwise it returns false and leaves `partialOrderInfo` unchanged.
+
+// TODO
+// Case 2: Composite index INDEX idx(a, b) matches ORDER BY a, b, c (index provides order for a, b)
+// In fact, there is a Case3 that can also be supported, but it will not be explained in detail here.
+// Please refer to the design document for details.
 func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property.PartialOrderInfo) bool {
 	if partialOrderInfo == nil || path.Index == nil || len(path.IdxCols) == 0 {
 		return false
@@ -2207,23 +2215,30 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		// If it's parent requires double read task, return max cost.
 		return base.InvalidTask, nil
 	}
+	// Check if sort items can be matched. If not, return Invalid task
 	if !prop.IsSortItemEmpty() && !candidate.matchPropResult.Matched() {
 		return base.InvalidTask, nil
 	}
 	// If we need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
-	if prop.IsSortItemEmpty() && candidate.path.ForceKeepOrder {
+	if !prop.NeedKeepOrder() && candidate.path.ForceKeepOrder {
 		return base.InvalidTask, nil
 	}
 	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
-	if !prop.IsSortItemEmpty() && candidate.path.ForceNoKeepOrder {
+	if prop.NeedKeepOrder() && candidate.path.ForceNoKeepOrder {
 		return base.InvalidTask, nil
 	}
+	// For partial order property
+	// We **don't need to check** the partial order property is matched in here.
+	// Because if the index scan cannot satisfy partial order, it will be pruned at the SkylinePruning phase
+	// (which is previous phase then this function).
+	// So, if an index can enter this function and also contains the requirement of a partial order property,
+	// then it must meet the requirements.
 
 	// needKeepOrder handles both normal sort (SortItems) and partial order (PartialOrderInfo)
 	needKeepOrder := prop.NeedKeepOrder()
 
 	path := candidate.path
-	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, needKeepOrder, candidate.path.IsSingleScan)
+	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan, needKeepOrder)
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,
@@ -2235,10 +2250,6 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 		PartitionNames: ds.PartitionNames,
 		Columns:        ds.TblCols,
 		ColumnNames:    ds.OutputNames(),
-	}
-	if needKeepOrder {
-		// ensure Desc is correctly set even when using PartialOrderInfo (SortItems can be empty)
-		is.Desc = prop.GetSortDesc()
 	}
 
 	if !candidate.path.IsSingleScan {

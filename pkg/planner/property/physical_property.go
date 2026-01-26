@@ -332,12 +332,20 @@ type PartialOrderInfo struct {
 	// SortItems are the ORDER BY columns from TopN
 	SortItems []*SortItem
 
-	// PrefixColID is the UniqueID of the prefix index column
-	// This field is set by matchPartialOrderProperty in skylinePruning
+	// Those following two fields are set by matchPartialOrderProperty in skylinePruning
+	// **Only index can match** the PartialOrderInfo physical property, **following fields are set**.
+
+	// PrefixColID is the last and only one prefix column ID of index,
+	// only used for executor part.
+	// For example:
+	// Query ORDER BY a,b,c
+	// Index: a, b, c(10)
+	// ColIds: a=0, b=1, c=2
+	// PrefixColID: 2, the col id of c
+	// PrefixLen: 10, the col length of c in index
 	PrefixColID int64
 
-	// PrefixLen is the length (in bytes) of the prefix index
-	// This field is set by matchPartialOrderProperty in skylinePruning
+	// PrefixLen is the prefix length in bytes for prefix index, only used for executor part
 	PrefixLen int
 }
 

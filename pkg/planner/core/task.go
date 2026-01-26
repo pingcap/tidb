@@ -1342,17 +1342,23 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 
 // handlePartialOrderTopN handles the partial order TopN scenario.
 // It fills the partial-order-related fields on the TopN itself and, when possible,
-// pushes down a special Limit (N+Offset) with prefix information to the index side.
+// pushes down a special Limit with prefix information to the index side.
+// There are two different cases:
+// Case1: Two phase TopN
+// TopN(with partial info)
+//
+//	└─IndexLookUp
+//	    └─Limit(with partial info)
+//	└─...
+//
+// Case2: One phase TopN
+// TopN(with partial info)
+//
+//	└─IndexPlan
+//	└─TablePlan
 func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask,
 	partialOrderInfo *property.PartialOrderInfo) base.Task {
-
-	if partialOrderInfo == nil {
-		rootTask := copTask.ConvertToRootTask(p.SCtx())
-		return attachPlan2Task(p, rootTask)
-	}
-
-	// PartialOrderedLimit = Count + Offset. Executor will handle "read X more rows"
-	// internally based on this value and PrefixColID/PrefixLen.
+	// Update TopN itself with partial order info.
 	partialOrderedLimit := p.Count + p.Offset
 	p.PartialOrderedLimit = partialOrderedLimit
 	p.PrefixColID = partialOrderInfo.PrefixColID
@@ -1372,10 +1378,14 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 	}
 
 	if canPushLimit {
-		// Estimate X only for statistics; actual Limit.Count is still Count+Offset.
+		// Two-layer mode: TiDB TopN(with partial order info.) + TiKV limit(with partial order info.)
+		// The estRows of partial order TopN : N + X
+		// N: The partialOrderedLimit, N means the value of TopN, N = Count + Offset.
+		// X: The estimated extra rows to read to fulfill the TopN.
+		// We need to read more prefix values that are the same as the last line
+		// to ensure the correctness of the final calculation of the Top n rows.
 		maxX := estimateMaxXForPartialOrder(p.SCtx(), copTask)
 		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
-
 		childProfile := copTask.IndexPlan.StatsInfo()
 		stats := property.DeriveLimitStats(childProfile, estimatedRows)
 
@@ -1396,76 +1406,10 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 }
 
 // estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
-// This value is only used for statistics (row count estimation) and does not affect the actual
-// PartialOrderedLimit, which is always Count + Offset.
+// This value is used for statistics (row count estimation).
 func estimateMaxXForPartialOrder(ctx base.PlanContext, copTask *physicalop.CopTask) uint64 {
-	if copTask == nil || copTask.IndexPlan == nil {
-		return 1000
-	}
-
-	// Extract the underlying PhysicalIndexScan from IndexPlan (possibly beneath a Selection).
-	indexPlan := copTask.IndexPlan
-	var indexScan *physicalop.PhysicalIndexScan
-	if is, ok := indexPlan.(*physicalop.PhysicalIndexScan); ok {
-		indexScan = is
-	} else if sel, ok := indexPlan.(*physicalop.PhysicalSelection); ok {
-		if is, ok := sel.Children()[0].(*physicalop.PhysicalIndexScan); ok {
-			indexScan = is
-		}
-	}
-	if indexScan == nil {
-		return 1000
-	}
-
-	statsTbl := indexScan.StatsTable()
-	if statsTbl == nil {
-		return 1000
-	}
-
-	idx := statsTbl.GetIdx(indexScan.Index.ID)
-	if idx == nil {
-		return 1000
-	}
-
-	totalRows := float64(statsTbl.RealtimeCount)
-	if totalRows <= 0 {
-		return 1000
-	}
-
-	// Use average rows per prefix as a baseline: totalRows / NDV.
-	ndv := float64(idx.NDV)
-	if ndv <= 0 {
-		ndv = 1
-	}
-	avgRowsPerPrefix := totalRows / ndv
-
-	// Use TopN statistics' maximum frequency as another signal.
-	var maxTopNCount uint64
-	if idx.TopN != nil {
-		for _, item := range idx.TopN.TopN {
-			if item.Count > maxTopNCount {
-				maxTopNCount = item.Count
-			}
-		}
-	}
-
-	estimatedX := uint64(avgRowsPerPrefix * 1.5)
-	if maxTopNCount > estimatedX {
-		estimatedX = maxTopNCount
-	}
-
-	// Cap X to at most 10% of total rows.
-	maxAllowed := uint64(totalRows * 0.1)
-	if maxAllowed == 0 {
-		maxAllowed = 1
-	}
-	if estimatedX > maxAllowed {
-		estimatedX = maxAllowed
-	}
-	if estimatedX == 0 {
-		estimatedX = 1
-	}
-	return estimatedX
+	// TODO: implement it by TopN/buckets and adjust it by session variable.
+	return 0
 }
 
 // attach2Task4PhysicalProjection implements PhysicalPlan interface.
