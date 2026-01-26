@@ -1615,21 +1615,31 @@ type bypassDataSourceExecutor interface {
 
 func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
 	tbl := x.Table()
-	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-		cachedTable := tbl.(table.CachedTable)
-		// Determine whether the cache can be used.
-		leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
-		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
-		if cacheData != nil {
-			vars.StmtCtx.ReadFromTableCache = true
-			x.setDummy()
-			us.cacheTable = cacheData
-		} else if loading {
+	if tbl.Meta().TableCacheStatusType != model.TableCacheStatusEnable {
+		return
+	}
+
+	for _, col := range us.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			// Cached table uses mem-buffer scan APIs, which can't provide `_tidb_commit_ts`.
+			// For correctness, bypass the cached table if `_tidb_commit_ts` is required.
 			return
-		} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
-			store := b.ctx.GetStore()
-			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 		}
+	}
+
+	cachedTable := tbl.(table.CachedTable)
+	// Determine whether the cache can be used.
+	leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
+	cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
+	if cacheData != nil {
+		vars.StmtCtx.ReadFromTableCache = true
+		x.setDummy()
+		us.cacheTable = cacheData
+	} else if loading {
+		return
+	} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
+		store := b.ctx.GetStore()
+		cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 	}
 }
 
@@ -5708,6 +5718,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		handles:            handles,
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
+		commitTSOffset:     -1,
 	}
 
 	e.snapshot, err = b.getSnapshot()
@@ -5743,7 +5754,17 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		b.err = err
 		return nil
 	}
-	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSOffset = i
+			break
+		}
+	}
+
+	// Cached table uses mem-buffer scan/get APIs, which can't provide `_tidb_commit_ts`.
+	// For correctness, bypass the cached table if `_tidb_commit_ts` is required.
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable && e.commitTSOffset < 0 {
 		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}
