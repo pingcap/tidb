@@ -44,8 +44,13 @@ func TestTheSessionIsoation(t *testing.T) {
 		}
 	})
 
+<<<<<<< HEAD
 	require.NoError(t, glueSe.CreateDatabase(ctx, &model.DBInfo{
 		Name: pmodel.NewCIStr("test_db"),
+=======
+	require.NoError(t, glueSe.CreateDatabaseOnExistError(ctx, &model.DBInfo{
+		Name: ast.NewCIStr("test_db"),
+>>>>>>> dace5507771 (br: PITR table filter reuses database id if it exists (#65631))
 	}))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test_db")
