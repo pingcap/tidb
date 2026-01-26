@@ -322,7 +322,7 @@ func TestIssue65791(t *testing.T) {
 		tk.MustExec("insert into t1 values (1, 65, '2024-02-01', '2024-02-01 10:00:00')")
 		tk.MustExec("insert into t2 values (1, '2024-01-01', 1, 10.00)")
 		tk.MustExec("insert into t3 values (1, '2024-01-25', '2024-03-01', 'x')")
-		tk.MustExec("analyze table t0, t1, t2, t3")
+		tk.MustExec("analyze table t0, t1, t2, t3 all columns")
 		tk.MustExec("set tidb_enable_index_merge=1")
 
 		query := "select /* issue:65791 */ " +
