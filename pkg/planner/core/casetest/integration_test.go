@@ -121,6 +121,7 @@ func TestVerboseExplain(t *testing.T) {
 		h := dom.StatsHandle()
 		err = statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
+		tk.MustExec("set @@tidb_allow_mpp = 1")
 		tk.MustExec("set @@tidb_enforce_mpp = 1")
 
 		tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "partsupp", L: "partsupp"})
