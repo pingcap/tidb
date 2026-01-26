@@ -12,6 +12,7 @@ go_library(
         "//br/pkg/restore/internal/prealloc_table_id",
         "//br/pkg/utils",
         "//pkg/ddl",
+        "//pkg/infoschema",
         "//pkg/kv",
         "//pkg/meta/model",
         "//pkg/parser/model",
