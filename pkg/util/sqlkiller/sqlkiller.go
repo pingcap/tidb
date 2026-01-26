@@ -15,7 +15,6 @@
 package sqlkiller
 
 import (
-	"context"
 	"math/rand"
 	"sync"
 	"sync/atomic"
@@ -51,8 +50,6 @@ type SQLKiller struct {
 	Finish    func()
 	killEvent struct {
 		ch       chan struct{}
-		cancelFn context.CancelCauseFunc
-		ctx      context.Context
 		desc     string
 		sync.Mutex
 		triggered bool
@@ -88,30 +85,6 @@ func (killer *SQLKiller) GetKillEventChan() <-chan struct{} {
 	return killer.killEvent.ch
 }
 
-// GetKillEventCtx returns a context which will be canceled when the kill signal is sent.
-func (killer *SQLKiller) GetKillEventCtx(parent context.Context) context.Context {
-	killer.killEvent.Lock()
-	defer killer.killEvent.Unlock()
-
-	if killer.killEvent.ctx != nil {
-		return killer.killEvent.ctx
-	}
-	if parent == nil {
-		killer.killEvent.ctx, killer.killEvent.cancelFn = context.WithCancelCause(context.Background())
-	} else {
-		killer.killEvent.ctx, killer.killEvent.cancelFn = context.WithCancelCause(parent)
-	}
-	if killer.killEvent.triggered {
-		err := killer.getKillError(atomic.LoadUint32(&killer.Signal))
-		if err == nil {
-			err = errKilled
-		}
-		killer.killEvent.cancelFn(err)
-	}
-
-	return killer.killEvent.ctx
-}
-
 func (killer *SQLKiller) triggerKillEvent() {
 	killer.killEvent.Lock()
 	defer killer.killEvent.Unlock()
@@ -123,13 +96,6 @@ func (killer *SQLKiller) triggerKillEvent() {
 	if killer.killEvent.ch != nil {
 		close(killer.killEvent.ch)
 	}
-	if killer.killEvent.ctx != nil && killer.killEvent.cancelFn != nil {
-		err := killer.getKillError(atomic.LoadUint32(&killer.Signal))
-		if err == nil {
-			err = errKilled
-		}
-		killer.killEvent.cancelFn(err)
-	}
 	killer.killEvent.triggered = true
 }
 
@@ -140,12 +106,7 @@ func (killer *SQLKiller) resetKillEvent() {
 	if !killer.killEvent.triggered && killer.killEvent.ch != nil {
 		close(killer.killEvent.ch)
 	}
-	if !killer.killEvent.triggered && killer.killEvent.ctx != nil && killer.killEvent.cancelFn != nil {
-		killer.killEvent.cancelFn(errors.New("sql killer: killed by resetting sql killer"))
-	}
 	killer.killEvent.ch = nil
-	killer.killEvent.ctx = nil
-	killer.killEvent.cancelFn = nil
 	killer.killEvent.triggered = false
 	killer.killEvent.desc = ""
 }
