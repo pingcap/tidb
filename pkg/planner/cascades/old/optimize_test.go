@@ -189,7 +189,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	gatherProp, ok := propMap[gatherGroup]
 	require.True(t, ok)
 	// We have 2 props for Group1: [f], [a]
-	require.Len(t, gatherProp, 2)
+	require.Len(t, gatherProp.Order, 2)
 	for _, prop := range gatherProp.Order {
 		require.Len(t, prop, 1)
 		require.True(t, prop[0].EqualColumn(columnA) || prop[0].EqualColumn(columnF))
