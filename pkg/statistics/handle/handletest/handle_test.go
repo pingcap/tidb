@@ -1430,7 +1430,16 @@ func TestInitStatsLite(t *testing.T) {
 	require.True(t, colBStats1.IsFullLoad())
 	idxBStats1 := statsTbl2.GetIdx(idxBID)
 	require.True(t, idxBStats1.IsFullLoad())
+<<<<<<< HEAD
 	require.True(t, colCStats.IsAllEvicted())
+=======
+	// Column c stats and idxc(c) index stats should be nil because idxc(c) is pruned (column c is not in the WHERE clause,
+	// so it's not an interesting column). With index pruning enabled, pruned indexes don't trigger
+	// column or index stats loading.
+	require.Nil(t, colCStats)
+	idxCStats := statsTbl2.GetIdx(idxCID)
+	require.Nil(t, idxCStats)
+>>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999))
 
 	// sync stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
@@ -1604,4 +1613,297 @@ func TestStatsCacheShouldNotCacheTemporaryTable(t *testing.T) {
 	require.Equal(t, 1, h.Len())
 	tk.MustExec("analyze table gt")
 	require.Equal(t, 2, h.Len())
+}
+
+func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
+	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
+	config.GetGlobalConfig().Performance.LiteInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = oriVal
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// Create a table with many indexes (more than 10 indexes starting with 'a'
+	// to trigger pruning since defaultMaxIndexes = 10)
+	tk.MustExec(`CREATE TABLE t(
+		a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int, l int, m int,
+		KEY ia (a), KEY iab (a, b), KEY iac (a, c), KEY iad (a, d),
+		KEY iae (a, e), KEY iaf (a, f), KEY iag (a, g), KEY iah (a, h),
+		KEY iai (a, i), KEY iaj (a, j), KEY iak (a, k), KEY ial (a, l), KEY iam (a, m),
+		KEY ib (b), KEY ibc (b, c), KEY ibd (b, d), KEY ibe (b, e),
+		KEY ic (c), KEY icd (c, d), KEY ice (c, e), KEY icf (c, f),
+		KEY id (d), KEY ide (d, e), KEY idf (d, f),
+		KEY ie (e), KEY ief (e, f),
+		KEY if_idx (f)
+	)`)
+	tk.MustExec("insert into t values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
+
+	h := dom.StatsHandle()
+	h.SetLease(time.Millisecond)
+	defer func() {
+		h.SetLease(0)
+	}()
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+
+	// Build maps for index name to ID
+	indexNameToID := make(map[string]int64)
+	for _, idx := range tblInfo.Indices {
+		indexNameToID[idx.Name.L] = idx.ID
+	}
+
+	tk.MustExec("analyze table t with 2 topn, 2 buckets")
+
+	// Check all stats are evicted initially
+	tblStats0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	checkAllEvicted(t, tblStats0)
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(context.Background()))
+
+	// After InitStatsLite, check stats are evicted
+	tblStats1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	checkAllEvicted(t, tblStats1)
+	require.Equal(t, int(statistics.Version2), tblStats1.StatsVer)
+
+	// Enable async stats load and aggressive index pruning
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustExec("set @@tidb_opt_index_prune_threshold = 1")
+
+	// Run a query that only uses column 'a'
+	tk.MustExec("explain select * from t where a > 1")
+	require.NoError(t, h.LoadNeededHistograms(is))
+
+	// Check which indexes have stats loaded
+	tblStats2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+
+	// Count how many indexes starting with 'a' are loaded vs pruned
+	// We have 13 indexes starting with 'a': ia, iab, iac, iad, iae, iaf, iag, iah, iai, iaj, iak, ial, iam
+	// With threshold=1 and defaultMaxIndexes=10, at most 10 can be kept
+	allAIndexes := []string{"ia", "iab", "iac", "iad", "iae", "iaf", "iag", "iah", "iai", "iaj", "iak", "ial", "iam"}
+	loadedCount := 0
+	prunedCount := 0
+	for _, idxName := range allAIndexes {
+		idxID := indexNameToID[idxName]
+		idxStats := tblStats2.GetIdx(idxID)
+		if idxStats != nil && idxStats.IsFullLoad() {
+			loadedCount++
+			t.Logf("index %s (id=%d) is loaded", idxName, idxID)
+		} else {
+			prunedCount++
+			t.Logf("index %s (id=%d) is pruned (not loaded)", idxName, idxID)
+		}
+	}
+
+	// With 13 indexes and maxToKeep=10, some must be pruned
+	require.Greater(t, loadedCount, 0, "at least some indexes starting with 'a' should be loaded")
+	require.Greater(t, prunedCount, 0, "at least some indexes starting with 'a' should be pruned (we have 13 but maxToKeep=10)")
+	require.LessOrEqual(t, loadedCount, 10, "at most 10 indexes can be kept due to defaultMaxIndexes")
+
+	// Indexes NOT starting with 'a' should NOT be loaded (they were pruned due to no coverage)
+	for _, idxName := range []string{"ib", "ibc", "ibd", "ibe", "ic", "icd", "ice", "icf", "id", "ide", "idf", "ie", "ief", "if_idx"} {
+		idxID := indexNameToID[idxName]
+		idxStats := tblStats2.GetIdx(idxID)
+		require.Nil(t, idxStats, "index %s (id=%d) should NOT be loaded (was pruned)", idxName, idxID)
+	}
+}
+
+func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
+	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
+	config.GetGlobalConfig().Performance.LiteInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = oriVal
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
+
+	// Create a partitioned table with many indexes (more than 10 indexes starting with 'a'
+	// to trigger pruning since defaultMaxIndexes = 10)
+	tk.MustExec(`CREATE TABLE tp(
+		a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int, l int, m int,
+		KEY ia (a), KEY iab (a, b), KEY iac (a, c), KEY iad (a, d),
+		KEY iae (a, e), KEY iaf (a, f), KEY iag (a, g), KEY iah (a, h),
+		KEY iai (a, i), KEY iaj (a, j), KEY iak (a, k), KEY ial (a, l), KEY iam (a, m),
+		KEY ib (b), KEY ibc (b, c), KEY ibd (b, d), KEY ibe (b, e),
+		KEY ic (c), KEY icd (c, d), KEY ice (c, e), KEY icf (c, f),
+		KEY id (d), KEY ide (d, e), KEY idf (d, f),
+		KEY ie (e), KEY ief (e, f),
+		KEY if_idx (f)
+	) PARTITION BY HASH(a) PARTITIONS 4`)
+	tk.MustExec("insert into tp values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
+
+	h := dom.StatsHandle()
+	h.SetLease(time.Millisecond)
+	defer func() {
+		h.SetLease(0)
+	}()
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+
+	// Build maps for index name to ID
+	indexNameToID := make(map[string]int64)
+	for _, idx := range tblInfo.Indices {
+		indexNameToID[idx.Name.L] = idx.ID
+	}
+
+	tk.MustExec("analyze table tp with 2 topn, 2 buckets")
+
+	// Check all stats are evicted initially
+	globalStats0 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	checkAllEvicted(t, globalStats0)
+
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(context.Background()))
+
+	// After InitStatsLite, check global stats are evicted
+	globalStats1 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+	checkAllEvicted(t, globalStats1)
+	require.Equal(t, int(statistics.Version2), globalStats1.StatsVer)
+
+	// Enable async stats load and aggressive index pruning
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustExec("set @@tidb_opt_index_prune_threshold = 1")
+
+	// Run a query that only uses column 'a'
+	tk.MustExec("explain select * from tp where a > 1")
+	require.NoError(t, h.LoadNeededHistograms(is))
+
+	// Check which indexes have stats loaded (using global stats in dynamic mode)
+	globalStats2 := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+
+	// Count how many indexes starting with 'a' are loaded vs pruned
+	// We have 13 indexes starting with 'a': ia, iab, iac, iad, iae, iaf, iag, iah, iai, iaj, iak, ial, iam
+	// With threshold=1 and defaultMaxIndexes=10, at most 10 can be kept
+	allAIndexes := []string{"ia", "iab", "iac", "iad", "iae", "iaf", "iag", "iah", "iai", "iaj", "iak", "ial", "iam"}
+	loadedCount := 0
+	prunedCount := 0
+	for _, idxName := range allAIndexes {
+		idxID := indexNameToID[idxName]
+		idxStats := globalStats2.GetIdx(idxID)
+		if idxStats != nil && idxStats.IsFullLoad() {
+			loadedCount++
+			t.Logf("index %s (id=%d) is loaded", idxName, idxID)
+		} else {
+			prunedCount++
+			t.Logf("index %s (id=%d) is pruned (not loaded)", idxName, idxID)
+		}
+	}
+
+	// With 13 indexes and maxToKeep=10, some must be pruned
+	require.Greater(t, loadedCount, 0, "at least some indexes starting with 'a' should be loaded")
+	require.Greater(t, prunedCount, 0, "at least some indexes starting with 'a' should be pruned (we have 13 but maxToKeep=10)")
+	require.LessOrEqual(t, loadedCount, 10, "at most 10 indexes can be kept due to defaultMaxIndexes")
+
+	// Indexes NOT starting with 'a' should NOT be loaded (they were pruned due to no coverage)
+	for _, idxName := range []string{"ib", "ibc", "ibd", "ibe", "ic", "icd", "ice", "icf", "id", "ide", "idf", "ie", "ief", "if_idx"} {
+		idxID := indexNameToID[idxName]
+		idxStats := globalStats2.GetIdx(idxID)
+		require.Nil(t, idxStats, "index %s (id=%d) should NOT be loaded (was pruned)", idxName, idxID)
+	}
+}
+
+func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
+	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
+	config.GetGlobalConfig().Performance.LiteInitStats = true
+	defer func() {
+		config.GetGlobalConfig().Performance.LiteInitStats = oriVal
+	}()
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_partition_prune_mode = 'static'")
+	// Create a partitioned table with many indexes (more than 10 indexes starting with 'a'
+	// to trigger pruning since defaultMaxIndexes = 10)
+	tk.MustExec(`CREATE TABLE tp(
+			a int, b int, c int, d int, e int, f int, g int, h int, i int, j int, k int, l int, m int,
+			KEY ia (a), KEY iab (a, b), KEY iac (a, c), KEY iad (a, d),
+			KEY iae (a, e), KEY iaf (a, f), KEY iag (a, g), KEY iah (a, h),
+			KEY iai (a, i), KEY iaj (a, j), KEY iak (a, k), KEY ial (a, l), KEY iam (a, m),
+			KEY ib (b), KEY ibc (b, c), KEY ibd (b, d), KEY ibe (b, e),
+			KEY ic (c), KEY icd (c, d), KEY ice (c, e), KEY icf (c, f),
+			KEY id (d), KEY ide (d, e), KEY idf (d, f),
+			KEY ie (e), KEY ief (e, f),
+			KEY if_idx (f)
+	) PARTITION BY HASH(a) PARTITIONS 4`)
+	tk.MustExec("insert into tp values (1,1,1,1,1,1,1,1,1,1,1,1,1),(2,2,2,2,2,2,2,2,2,2,2,2,2),(3,3,3,3,3,3,3,3,3,3,3,3,3),(4,4,4,4,4,4,4,4,4,4,4,4,4)")
+	h := dom.StatsHandle()
+	h.SetLease(time.Millisecond)
+	defer func() {
+		h.SetLease(0)
+	}()
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	// Build maps for index name to ID
+	indexNameToID := make(map[string]int64)
+	for _, idx := range tblInfo.Indices {
+		indexNameToID[idx.Name.L] = idx.ID
+	}
+	// Get partition IDs
+	pi := tblInfo.GetPartitionInfo()
+	require.NotNil(t, pi)
+	partitionIDs := make([]int64, 0, len(pi.Definitions))
+	for _, def := range pi.Definitions {
+		partitionIDs = append(partitionIDs, def.ID)
+	}
+	tk.MustExec("analyze table tp with 2 topn, 2 buckets")
+	// Check all partition stats are evicted initially
+	for _, pid := range partitionIDs {
+		partStats := h.GetPhysicalTableStats(pid, tblInfo)
+		checkAllEvicted(t, partStats)
+	}
+	h.Clear()
+	require.NoError(t, h.InitStatsLite(context.Background()))
+	// After InitStatsLite, check partition stats are evicted
+	for _, pid := range partitionIDs {
+		partStats := h.GetPhysicalTableStats(pid, tblInfo)
+		checkAllEvicted(t, partStats)
+		require.Equal(t, int(statistics.Version2), partStats.StatsVer)
+	}
+	// Enable async stats load and aggressive index pruning
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+	tk.MustExec("set @@tidb_opt_index_prune_threshold = 1")
+	// Run a query that only uses column 'a'
+	tk.MustExec("explain select * from tp where a > 1")
+	require.NoError(t, h.LoadNeededHistograms(is))
+	// In static mode, check partition stats
+	// Note: In static mode, each partition is processed separately, so the pruning behavior
+	// may differ from dynamic mode. The key verification is that indexes not containing 'a'
+	// should not be loaded regardless of mode.
+	allAIndexes := []string{"ia", "iab", "iac", "iad", "iae", "iaf", "iag", "iah", "iai", "iaj", "iak", "ial", "iam"}
+	for _, pid := range partitionIDs {
+		partStats := h.GetPhysicalTableStats(pid, tblInfo)
+		loadedCount := 0
+		for _, idxName := range allAIndexes {
+			idxID := indexNameToID[idxName]
+			idxStats := partStats.GetIdx(idxID)
+			if idxStats != nil && idxStats.IsFullLoad() {
+				loadedCount++
+				t.Logf("partition %d: index %s (id=%d) is loaded", pid, idxName, idxID)
+			} else {
+				t.Logf("partition %d: index %s (id=%d) is pruned (not loaded)", pid, idxName, idxID)
+			}
+		}
+		// At least some indexes starting with 'a' should be loaded
+		require.Greater(t, loadedCount, 0, "partition %d: at least some indexes starting with 'a' should be loaded", pid)
+		// Indexes NOT starting with 'a' should NOT be loaded (they were pruned due to no coverage)
+		for _, idxName := range []string{"ib", "ibc", "ibd", "ibe", "ic", "icd", "ice", "icf", "id", "ide", "idf", "ie", "ief", "if_idx"} {
+			idxID := indexNameToID[idxName]
+			idxStats := partStats.GetIdx(idxID)
+			require.Nil(t, idxStats, "partition %d: index %s (id=%d) should NOT be loaded (was pruned)", pid, idxName, idxID)
+		}
+	}
 }

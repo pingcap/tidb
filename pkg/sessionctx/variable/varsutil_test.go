@@ -238,8 +238,18 @@ func TestVarsutil(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, v.OptimizerSelectivityLevel)
 
+<<<<<<< HEAD
 	require.Equal(t, DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
 	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "OFF")
+=======
+	require.Equal(t, vardef.DefTiDBOptIndexPruneThreshold, v.OptIndexPruneThreshold)
+	err = v.SetSystemVar(vardef.TiDBOptIndexPruneThreshold, "1")
+	require.NoError(t, err)
+	require.Equal(t, 1, v.OptIndexPruneThreshold)
+
+	require.Equal(t, vardef.DefTiDBEnableOuterJoinReorder, v.EnableOuterJoinReorder)
+	err = v.SetSystemVar(vardef.TiDBOptimizerEnableOuterJoinReorder, "OFF")
+>>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999))
 	require.NoError(t, err)
 	require.Equal(t, false, v.EnableOuterJoinReorder)
 	err = v.SetSystemVar(TiDBOptimizerEnableOuterJoinReorder, "ON")
