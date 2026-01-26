@@ -1197,7 +1197,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 			r = 0
 		}
 	}
-	histInvalid, entirelyOutOfRange := false, false
+	histInvalid, timeEntirelyOutOfRange := false, false
 	// make sure l < r
 	// TODO: If predWidth == 0, it may be because the common prefix is too large.
 	// In future - out of range for equal predicates should also use this logic
@@ -1275,16 +1275,18 @@ func (hg *Histogram) OutOfRangeRowCount(
 			of the shaded area on the left side will decrease.
 			The following formula is used to recalculate the percentage of the
 			shaded area if the predicate range was close to the histogram range.
+			That is - we move the lDatum/rDatum directly to the edge of histR.
+			Another way to say it is that we move the predicate range to the left.
 		*/
-		// Time decay is limited to datetime datatype, since it's the most
-		// likely to be affected by time decay.
+		// Time decay is limited to datetime datatype, since datetime predicates
+		// are most likely to be affected by time decay.
 		// It also only considers the right side of the histogram envelope.
 		// Since time decay is most likely to occur on the right side.
 		if lDatum.Kind() == types.KindMysqlTime {
 			// Calculate percentage assuming time decay is not present.
 			if l > histR {
 				// Predicate entirely on the right side of the histogram envelope.
-				entirelyOutOfRange = true
+				timeEntirelyOutOfRange = true
 				timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
 			}
 		}
@@ -1292,7 +1294,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Step 8: Calculate the total percentage of the out-of-range rows.
 	// totalPercent is used for the average estimate (estRows)
-	// maxTotalPercent is used for the maximum estimate (maxAddedRows) - updated for entirelyOutOfRange
+	// maxTotalPercent is used for the maximum estimate (maxAddedRows) - updated for timeEntirelyOutOfRange
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
 
@@ -1307,7 +1309,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Update maxTotalPercent for entirelyOutOfRange cases
-	if entirelyOutOfRange {
+	if timeEntirelyOutOfRange {
 		// timeAdjPercent accounts for time decay between stats collection and current time.
 		// For max estimate, use the sum (not average) to account for worst case
 		maxTotalPercent = min(max(maxTotalPercent, timeAdjRight), 1.0)
