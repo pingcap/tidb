@@ -232,7 +232,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
