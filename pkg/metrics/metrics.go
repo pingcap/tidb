@@ -348,11 +348,10 @@ func RegisterMetrics() {
 	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
 	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
 
-<<<<<<< HEAD
 	prometheus.MustRegister(ActiveActiveHardDeleteStmtCounter)
 	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsRowCounter)
 	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsStmtCounter)
-=======
+
 	// TLS
 	prometheus.MustRegister(TLSVersion)
 	prometheus.MustRegister(TLSCipher)
@@ -362,7 +361,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(IndexLookRowsCounter)
 	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
 	prometheus.MustRegister(IndexLookUpCopTaskCount)
->>>>>>> master
 }
 
 // Register registers custom collectors.

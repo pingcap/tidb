@@ -1964,7 +1964,6 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
 					ttlOptionsHandled = true
-<<<<<<< HEAD
 				case ast.TableOptionSoftDelete:
 					softDeleteArg.Enable = opt.BoolValue
 					softDeleteArg.HasEnable = true
@@ -1980,10 +1979,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					softDeleteArg.JobEnable = opt.BoolValue
 					softDeleteArg.HasJobEnable = true
 					softDeleteArg.Handled = true
-=======
 				case ast.TableOptionAffinity:
 					err = e.AlterTableAffinity(sctx, ident, opt.StrValue)
->>>>>>> master
 				default:
 					err = dbterror.ErrUnsupportedAlterTableOption
 				}
@@ -3931,16 +3928,12 @@ func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) 
 	return nil
 }
 
-<<<<<<< HEAD
 // AlterTableSoftDeleteInfo submits DDL job to change table soft delete info
 func (e *executor) AlterTableSoftDeleteInfo(
 	ctx sessionctx.Context,
 	ident ast.Ident,
 	softDeleteArg *model.SoftDeleteInfoArg,
 ) error {
-=======
-func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, affinityLevel string) error {
->>>>>>> master
 	is := e.infoCache.GetLatest()
 	schema, ok := is.SchemaByName(ident.Schema)
 	if !ok {
@@ -3952,7 +3945,6 @@ func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, a
 		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
 	}
 
-<<<<<<< HEAD
 	tblInfo := tb.Meta().Clone()
 	tableID := tblInfo.ID
 	tableName := tblInfo.Name.L
@@ -3965,7 +3957,40 @@ func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, a
 	// Validate the soft delete configuration
 	err = checkSoftDeleteAndActiveActive(tblInfo, is, schema.Name)
 	if err != nil {
-=======
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tableID,
+		SchemaName:     schema.Name.L,
+		TableName:      tableName,
+		Type:           model.ActionAlterTableSoftDeleteInfo,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+
+	args := &model.AlterSoftDeleteInfoArgs{
+		SoftDelete: tblInfo.SoftdeleteInfo,
+	}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
+}
+
+func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, affinityLevel string) error {
+	is := e.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
 	affinity, err := model.NewTableAffinityInfoWithLevel(affinityLevel)
 	if err != nil {
 		return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", affinityLevel)))
@@ -3973,36 +3998,21 @@ func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, a
 
 	tblInfo := tb.Meta()
 	if err = validateTableAffinity(tblInfo, affinity); err != nil {
->>>>>>> master
 		return err
 	}
 
 	job := &model.Job{
 		Version:        model.GetJobVerInUse(),
 		SchemaID:       schema.ID,
-<<<<<<< HEAD
-		TableID:        tableID,
-		SchemaName:     schema.Name.L,
-		TableName:      tableName,
-		Type:           model.ActionAlterTableSoftDeleteInfo,
-=======
 		TableID:        tblInfo.ID,
 		SchemaName:     schema.Name.L,
 		TableName:      tblInfo.Name.L,
 		Type:           model.ActionAlterTableAffinity,
->>>>>>> master
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        ctx.GetSessionVars().SQLMode,
 	}
-<<<<<<< HEAD
-	args := &model.AlterSoftDeleteInfoArgs{
-		SoftDelete: tblInfo.SoftdeleteInfo,
-	}
-	err = e.doDDLJob2(ctx, job, args)
-=======
 	err = e.doDDLJob2(ctx, job, &model.AlterTableAffinityArgs{Affinity: affinity})
->>>>>>> master
 	return errors.Trace(err)
 }
 

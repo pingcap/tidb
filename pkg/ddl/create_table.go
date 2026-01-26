@@ -769,11 +769,7 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-<<<<<<< HEAD
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbInfo)
-=======
-		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbCharset, dbCollate, placementPolicyRef)
->>>>>>> master
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbInfo)
 	}
 
 	if err != nil {
@@ -1008,7 +1004,6 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
-<<<<<<< HEAD
 		case ast.TableOptionSoftDelete:
 			softDeleteArg.Enable = op.BoolValue
 			softDeleteArg.HasEnable = true
@@ -1027,14 +1022,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 		case ast.TableOptionActiveActive:
 			v := op.BoolValue
 			activeActive = &v
-=======
 		case ast.TableOptionAffinity:
 			affinity, err := model.NewTableAffinityInfoWithLevel(op.StrValue)
 			if err != nil {
 				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
 			}
 			tbInfo.Affinity = affinity
->>>>>>> master
 		case ast.TableOptionEngineAttribute:
 			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
