@@ -401,7 +401,6 @@ function prepare_tici_config() {
         export S3_BUCKET="$MINIO_BUCKET"
         export S3_PREFIX="tici_default_prefix"
         export TIDB_PORT="${TIDB_PORT:-4000}"
-        export TIFLASH_STORAGE_DIR="${TIFLASH_STORAGE_DIR:-./data/tiflashdata}"
         # TiCI may fall back to AWS default credential chain when keys are empty,
         # so keep AWS envs aligned with MinIO to avoid 403 errors.
         export AWS_ACCESS_KEY_ID="$MINIO_ACCESS_KEY"
@@ -414,6 +413,7 @@ function prepare_tici_config() {
             echo "PD_ADDR is empty; cannot start tici meta/worker" >&2
             exit 1
         fi
+        make_tiflash_config_for_tici
         if command -v envsubst >/dev/null 2>&1; then
             if [ -f "$TICI_CONFIG_DIR/meta.toml.in" ]; then
                 envsubst < "$TICI_CONFIG_DIR/meta.toml.in" > "$TICI_CONFIG_DIR/meta.toml"
@@ -423,15 +423,62 @@ function prepare_tici_config() {
                 envsubst < "$TICI_CONFIG_DIR/worker.toml.in" > "$TICI_CONFIG_DIR/worker.toml"
                 TICI_WORKER_CONFIG="${TICI_WORKER_CONFIG:-$TICI_CONFIG_DIR/worker.toml}"
             fi
-            if [ -f "$TICI_CONFIG_DIR/tiflash.toml.in" ]; then
-                envsubst < "$TICI_CONFIG_DIR/tiflash.toml.in" > "$TICI_CONFIG_DIR/tiflash.toml"
-                TIFLASH_CONFIG="${TIFLASH_CONFIG:-$TICI_CONFIG_DIR/tiflash.toml}"
-            fi
         else
             echo "envsubst not found; cannot render TiCI configs" >&2
             exit 1
         fi
     fi
+}
+
+function make_tiflash_config_for_tici() {
+    mkdir -p "$TICI_CONFIG_DIR"
+
+    cat > "$TICI_CONFIG_DIR/tiflash.toml" <<EOF
+listen_host = "${TIFLASH_LISTEN_HOST}"
+path = "${TIFLASH_DATA_DIR}"
+tmp_path = "${TIFLASH_TMP_DIR}"
+capacity = "${TIFLASH_CAPACITY}"
+
+[application]
+runAsDaemon = true
+
+[flash]
+service_addr = "${TIFLASH_SERVICE_ADDR}"
+tidb_status_addr = "${TIDB_STATUS_ADDR}"
+
+[flash.proxy]
+config = "${TIFLASH_PROXY_CONFIG}"
+log-file = "${TIFLASH_PROXY_LOG_FILE}"
+
+[logger]
+count = 20
+level = "info"
+log = "${TIFLASH_LOG_PATH}"
+errorlog = "${TIFLASH_ERROR_LOG_PATH}"
+size = "1000M"
+
+[raft]
+pd_addr = "${PD_ADDR}"
+
+[profiles]
+[profiles.default]
+max_memory_usage = 10000000000
+
+[tici.reader_node]
+heartbeat_interval = "3s"
+max_heartbeat_retries = 3
+
+[tici.s3]
+access-key = "${S3_ACCESS_KEY}"
+bucket = "${S3_BUCKET}"
+endpoint = "${S3_ENDPOINT}"
+prefix = "${S3_PREFIX}"
+secret-key = "${S3_SECRET_KEY}"
+use-path-style = ${S3_USE_PATH_STYLE}
+EOF
+
+    TIFLASH_CONFIG="${TIFLASH_CONFIG:-$TICI_CONFIG_DIR/tiflash.toml}"
+    TIFLASH_PROXY_CONFIG="${TIFLASH_PROXY_CONFIG:-$TICI_CONFIG_DIR/tiflash-learner.toml}"
 }
 
 function start_tici_server() {
