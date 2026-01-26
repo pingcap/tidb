@@ -127,3 +127,8 @@ type execStartTimeCtxKeyType struct{}
 
 // ExecStartTimeCtxKey indicates stmt start execution time.
 var ExecStartTimeCtxKey = execStartTimeCtxKeyType{}
+
+type prepareStmtIDCtxKeyType struct{}
+
+// PrepareStmtIDCtxKey indicates the prepared statement ID.
+var PrepareStmtIDCtxKey = prepareStmtIDCtxKeyType{}
