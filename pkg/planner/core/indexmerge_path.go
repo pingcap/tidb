@@ -384,6 +384,10 @@ func accessPathsForConds(
 				break
 			}
 		} else {
+			// Reject partial index first.
+			if path.Index != nil && path.Index.HasCondition() {
+				continue
+			}
 			newPath.Index = path.Index
 			if !isInIndexMergeHints(ds, newPath.Index.Name.L) {
 				continue
