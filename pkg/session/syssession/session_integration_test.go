@@ -254,3 +254,36 @@ func TestAdvancedSessionPoolResetTimeZone(t *testing.T) {
 		})
 	}))
 }
+
+func TestAdvancedSessionPoolResetTimeZoneWithDefaultGlobal(t *testing.T) {
+	_, do := testkit.CreateMockStoreAndDomain(t)
+	p := do.AdvancedSysSessionPool()
+	require.NotNil(t, p)
+
+	var globalTZ string
+	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
+		return session.WithSessionContext(func(sctx sessionctx.Context) error {
+			var err error
+			globalTZ, err = sctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TimeZone)
+			require.NoError(t, err)
+			return nil
+		})
+	}))
+
+	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
+		return session.WithSessionContext(func(sctx sessionctx.Context) error {
+			return sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "Asia/Shanghai")
+		})
+	}))
+
+	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
+		return session.WithSessionContext(func(sctx sessionctx.Context) error {
+			val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TimeZone)
+			require.True(t, ok)
+			require.Equal(t, globalTZ, val)
+			require.NotNil(t, sctx.GetSessionVars().Location())
+			require.Equal(t, sctx.GetSessionVars().Location().String(), sctx.GetSessionVars().StmtCtx.TimeZone().String())
+			return nil
+		})
+	}))
+}
