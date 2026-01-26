@@ -270,7 +270,7 @@
 ## pkg/planner/core/casetest/indexmerge
 
 ### Tests
-- `pkg/planner/core/casetest/indexmerge/indexmerge_intersection_test.go` - planner/core/casetest/indexmerge: Tests intersection index merge with plan cache, order property, and hints.
+- `pkg/planner/core/casetest/indexmerge/indexmerge_intersection_test.go` - planner/core/casetest/indexmerge: Tests intersection index merge, plan cache, order property, and regression for missing `_tidb_rowid` in index merge paths.
 - `pkg/planner/core/casetest/indexmerge/indexmerge_path_test.go` - planner/core/casetest/indexmerge: Tests MV index filter collection and random member-of queries.
 - `pkg/planner/core/casetest/indexmerge/indexmerge_test.go` - planner/core/casetest/indexmerge: Tests index merge path generation from testdata.
 - `pkg/planner/core/casetest/indexmerge/main_test.go` - Configures default goleak settings and registers testdata.
