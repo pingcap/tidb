@@ -17,12 +17,14 @@ package analyzetest
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	goerrors "errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -47,7 +49,6 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/analyzehelper"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/stretchr/testify/require"
 )
 
 func TestAnalyzePartition(t *testing.T) {
@@ -142,38 +143,33 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
-}
+	t.Run("cancel_on_ctx", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+		tk.MustExec("set @@tidb_analyze_version = 2")
 
-func TestAnalyzeCancelOnCtx(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
 
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("insert into t values (1), (2)")
-	tk.MustExec("set @@tidb_analyze_version = 2")
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan error, 1)
+		go func() {
+			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+			done <- err
+		}()
+		cancel()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
-	}()
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() {
-		_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
-		done <- err
-	}()
-	cancel()
-
-	select {
-	case err := <-done:
-		require.Error(t, err)
-		require.True(t, goerrors.Is(err, context.Canceled))
-	case <-time.After(5 * time.Second):
-		t.Fatal("analyze does not stop after context canceled")
-	}
+		select {
+		case err := <-done:
+			require.Error(t, err)
+			require.True(t, goerrors.Is(err, context.Canceled))
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after context canceled")
+		}
+	})
 }
 
 func TestAnalyzeParameters(t *testing.T) {
