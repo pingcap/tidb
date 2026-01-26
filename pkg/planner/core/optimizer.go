@@ -20,13 +20,11 @@ import (
 	"math"
 	"slices"
 	"strconv"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
-	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
@@ -653,41 +651,16 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 	}
 
 	if len(uncachedServersInfo) > 0 {
-		ch := make(chan [][]types.Datum, len(uncachedServersInfo))
-		waitWg := &sync.WaitGroup{}
-		waitWg.Add(len(uncachedServersInfo))
-		for i := range uncachedServersInfo {
-			go func(info []infoschema.ServerInfo) {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Warn(util.GetRecoverError(r).Error())
-					}
-					waitWg.Done()
-				}()
-
-				rows := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), uncachedServersInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-				for _, row := range rows {
-					if row[4].GetString() == "cpu-logical-cores" {
-						logicalCpus, err := strconv.Atoi(row[5].GetString())
-						if err == nil && logicalCpus > 0 {
-							copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
-								Address:         info[0].Address,
-								LogicalCPUCount: uint64(logicalCpus),
-							})
-						}
-					}
-				}
-				ch <- rows
-			}(uncachedServersInfo[i : i+1])
-		}
-		waitWg.Wait()
-		close(ch)
-
-		for rows := range ch {
-			for _, row := range rows {
+		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), uncachedServersInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
+		for _, info := range infos {
+			for _, row := range info.Rows {
 				if row[4].GetString() == "cpu-logical-cores" {
 					logicalCpus, err := strconv.Atoi(row[5].GetString())
 					if err == nil && logicalCpus > 0 {
+						copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
+							Address:         uncachedServersInfo[info.Idx].Address,
+							LogicalCPUCount: uint64(logicalCpus),
+						})
 						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
 					}
 				}
