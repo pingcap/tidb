@@ -333,7 +333,14 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 				return nil, err
 			}
 			if !checkResult.Connected() {
-				continue
+				if checkResult, err = detector.CheckConnection(iterNode, curJoinTree); err != nil {
+					return nil, err
+				}
+				if !checkResult.Connected() {
+					continue
+				}
+				// gjt todo no need?
+				// curJoinTree, iterNode = iterNode, curJoinTree
 			}
 			newNode, err := detector.MakeJoin(checkResult, j.group.vertexHints)
 			if err != nil {

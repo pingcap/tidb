@@ -77,6 +77,15 @@ type Node struct {
 	usedEdges map[uint64]struct{}
 }
 
+// gjt todo refine, maybe using node is better?
+func calcCumCost(p base.LogicalPlan) float64 {
+	cost := p.StatsInfo().RowCount
+	for _, child := range p.Children() {
+		cost += calcCumCost(child)
+	}
+	return cost
+}
+
 func (n *Node) checkUsedEdges(edgeIdx uint64) bool {
 	_, used := n.usedEdges[edgeIdx]
 	return used
@@ -97,9 +106,13 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 
 	vertexMap := make(map[int]*Node, len(group.vertexes))
 	for i, v := range group.vertexes {
+		if _, _, err := v.RecursiveDeriveStats(nil); err != nil {
+			return nil, err
+		}
 		vertexMap[v.ID()] = &Node{
-			bitSet: newBitSet(int64(i)),
-			p:      v,
+			bitSet:  newBitSet(int64(i)),
+			p:       v,
+			cumCost: calcCumCost(v),
 		}
 	}
 
@@ -393,7 +406,10 @@ func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
 	}
 	// gjt todo commutative?
 	// gjt todo refine this check
-	return e.leftVertexes.IsSubsetOf(node1.bitSet) && e.rightVertexes.IsSubsetOf(node2.bitSet)
+	return e.leftVertexes.Intersect(e.tes).IsSubsetOf(node1.bitSet) &&
+		e.rightVertexes.Intersect(e.tes).IsSubsetOf(node2.bitSet) &&
+		e.tes.HasIntersect(node1.bitSet) &&
+		e.tes.HasIntersect(node2.bitSet)
 }
 
 func (e *edge) checkRules(node1, node2 *Node) bool {
@@ -434,6 +450,7 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	if _, _, err := p.RecursiveDeriveStats(nil); err != nil {
 		return nil, err
 	}
+
 	node1 := checkResult.node1
 	node2 := checkResult.node2
 	usedEdges := make(map[uint64]struct{}, numInnerEdges+numNonInnerEdges+len(node1.usedEdges)+len(node2.usedEdges))
@@ -448,7 +465,7 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	return &Node{
 		bitSet:    node1.bitSet.Union(node2.bitSet),
 		p:         p,
-		cumCost:   node1.cumCost + node2.cumCost + p.StatsInfo().RowCount,
+		cumCost:   calcCumCost(p),
 		usedEdges: usedEdges,
 	}, nil
 }
