@@ -666,6 +666,7 @@ func TestPartitionPrunerRegression(t *testing.T) {
 			},
 		}
 		for _, tc := range testCaseChar {
+			tk.MustExec("drop table if exists t")
 			tk.MustExec(`CREATE TABLE t (a varchar(9), unique index (a))` + tc.partitionBy)
 			tk.MustExec(`insert into t values ('Y'),('D'),(NULL)`)
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 'D'`).Check(testkit.Rows("D"))
@@ -716,6 +717,7 @@ func TestPartitionPrunerRegression(t *testing.T) {
 			},
 		}
 		for _, tc := range testCaseInt {
+			tk.MustExec("drop table if exists t")
 			tk.MustExec(`CREATE TABLE t (a int, unique index (a))` + tc.partitionBy)
 			tk.MustExec(`insert into t values (1),(5),(NULL)`)
 			tk.MustQuery(`select /* issue:61176 */ a from t where a <=> 1`).Check(testkit.Rows("1"))
