@@ -120,7 +120,11 @@ func (killer *SQLKiller) triggerKillEvent() {
 		close(killer.killEvent.ch)
 	}
 	if killer.killEvent.ctx != nil && killer.killEvent.cancelFn != nil {
-		killer.killEvent.cancelFn(errKilled)
+		err := killer.getKillError(atomic.LoadUint32(&killer.Signal))
+		if err == nil {
+			err = errKilled
+		}
+		killer.killEvent.cancelFn(err)
 	}
 	killer.killEvent.triggered = true
 }

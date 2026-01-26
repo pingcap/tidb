@@ -251,7 +251,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(ctx, mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(taskCtx, mergeResultCh, mergeTaskCh, l, id)
 		})
 	}
 	// Merge the result from collectors.
@@ -488,7 +488,10 @@ LOOP:
 			statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
 			totalResult.results[results.Ars[0].Hist[0].ID] = results
 		case <-ctx.Done():
-			err = ctx.Err()
+			err = context.Cause(ctx)
+			if err == nil {
+				err = ctx.Err()
+			}
 			break LOOP
 		}
 	}
@@ -638,11 +641,13 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
-	select {
-	case data, ok := <-taskCh:
-		if !ok {
-			break
-		}
+	for {
+		select {
+		case data, ok := <-taskCh:
+			if !ok {
+				resultCh <- &samplingMergeResult{collector: retCollector}
+				return
+			}
 		// Unmarshal the data.
 		dataSize := int64(cap(data))
 		colResp := &tipb.AnalyzeColumnsResp{}
@@ -675,22 +680,24 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 		e.memTracker.Consume(newRetCollectorSize - oldRetCollectorSize - subCollectorSize)
 		e.memTracker.Release(dataSize + colRespSize)
 		subCollector.DestroyAndPutToPool()
-	case <-ctx.Done():
-		err := context.Cause(ctx)
-		if err != nil {
-			resultCh <- &samplingMergeResult{err: err}
+		case <-ctx.Done():
+			err := context.Cause(ctx)
+			if err != nil {
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
+			err = ctx.Err()
+			if err != nil {
+				resultCh <- &samplingMergeResult{err: err}
+				return
+			}
+			if intest.InTest {
+				panic("this ctx should be canceled with the error")
+			}
+			resultCh <- &samplingMergeResult{err: errors.New("context canceled without error")}
 			return
-		}
-		err = ctx.Err()
-		if err != nil {
-			resultCh <- &samplingMergeResult{err: err}
-			return
-		}
-		if intest.InTest {
-			panic("this ctx should be canceled with the error")
 		}
 	}
-	resultCh <- &samplingMergeResult{collector: retCollector}
 }
 
 func (e *AnalyzeColumnsExecV2) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
