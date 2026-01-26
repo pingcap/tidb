@@ -135,11 +135,21 @@ func generateIndexMergePath(ds *logicalop.DataSource) error {
 
 func generateNormalIndexPartialPaths4DNF(
 	ds *logicalop.DataSource,
+<<<<<<< HEAD
 	dnfItems []expression.Expression,
 	candidatePaths []*util.AccessPath,
 ) (paths []*util.AccessPath, needSelection bool, usedMap []bool) {
 	paths = make([]*util.AccessPath, 0, len(dnfItems))
 	usedMap = make([]bool, len(dnfItems))
+=======
+	item expression.Expression,
+	candidatePath *util.AccessPath,
+) (paths *util.AccessPath, needSelection bool) {
+	// Reject partial index first.
+	if candidatePath.Index != nil && candidatePath.Index.HasCondition() {
+		return nil, false
+	}
+>>>>>>> 959bf330874 (planner: support basic usage of partial index (#65051))
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	for offset, item := range dnfItems {
 		cnfItems := expression.SplitCNFItems(item)

@@ -120,6 +120,18 @@ type AccessPath struct {
 	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
 	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
+
+	// PartIdxCondNotAlwaysValid indicates that this index path is not guaranteed to be valid
+	// for all parameter values when a partial index condition is involved.
+	// It's designed for partial indexes with a WHERE condition (for example, idx(b) WHERE a IS NOT NULL)
+	// and tracks whether that condition is always satisfied by the current filter.
+	// e.g. for partial index idx(b) WHERE a IS NOT NULL:
+	//   - if the filter is "b = ? AND a > 0", the partial index condition is always satisfied,
+	//     so PartIdxCondNotAlwaysValid is false (the index path is always valid);
+	//   - if the filter is "b = ?" or "b = ? AND a IS NULL", the partial index condition may not hold,
+	//     so PartIdxCondNotAlwaysValid is true (the index path is not always valid).
+	// We add this field to make the plan cache usable for partial indexes in these limited cases.
+	PartIdxCondNotAlwaysValid bool
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -157,6 +169,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -410,3 +423,46 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 	}
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
 }
+<<<<<<< HEAD
+=======
+
+// IsFullScanRange checks that a table scan does not have any filtering such that it can limit the range of
+// the table scan.
+func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
+	var unsignedIntHandle bool
+	if path.IsIntHandlePath && tableInfo.PKIsHandle {
+		if pkColInfo := tableInfo.GetPkColInfo(); pkColInfo != nil {
+			unsignedIntHandle = mysql.HasUnsignedFlag(pkColInfo.GetFlag())
+		}
+	}
+	if ranger.HasFullRange(path.Ranges, unsignedIntHandle) {
+		return true
+	}
+	return false
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.ConditionExprString != "" {
+		return true
+	}
+	return false
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// If path is mv index path:
+// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+// on mvi, it will return many index rows which breaks handle-unique attribute here.
+// So we cannot use mv index path for index join.
+// If path is partial index path:
+// We need to first determine whether we already meet the partial index condition.
+// Currently we don't support that, so we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
+}
+>>>>>>> 959bf330874 (planner: support basic usage of partial index (#65051))
