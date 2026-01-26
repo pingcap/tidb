@@ -92,9 +92,10 @@ go test -run  <TestName>  -record --tags=intest
 popd
 ```
 
-- If the execution is successful, please check whether the result set file has been modified. If it has been modified, 
-  Please verify that the modifications are correct and notify the developer.
+- If the execution is successful, please check whether the result set file has been modified. If it has been modified,
+  please verify that the modifications are correct and notify the developer.
 - If the execution fails, please check the error message and notify the developer.
+- Prefer targeted test runs (use `-run <TestName>`); avoid running all tests in a directory/package unless necessary (e.g. broad refactors, reproducing CI failures, or updating shared testdata/golden files) because it is time-consuming.
 
 #### When to enable failpoint
 

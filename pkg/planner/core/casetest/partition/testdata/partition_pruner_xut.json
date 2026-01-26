@@ -277,19 +277,19 @@
           "11"
         ],
         "Plan": [
-          "Projection 1.00 root  Column#5->Column#6",
+          "Projection 1.00 root  Column#6->Column#7",
           "└─Sort 1.00 root  test_partition.t1.id, test_partition.t1.a",
-          "  └─HashAgg 1.00 root  funcs:count(Column#7)->Column#5, funcs:firstrow(Column#8)->test_partition.t1.id, funcs:firstrow(Column#9)->test_partition.t1.a",
+          "  └─HashAgg 1.00 root  funcs:count(Column#8)->Column#6, funcs:firstrow(Column#9)->test_partition.t1.id, funcs:firstrow(Column#10)->test_partition.t1.a",
           "    └─TableReader 1.00 root partition:all data:HashAgg",
-          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7, funcs:firstrow(test_partition.t1.id)->Column#8, funcs:firstrow(test_partition.t1.a)->Column#9",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#8, funcs:firstrow(test_partition.t1.id)->Column#9, funcs:firstrow(test_partition.t1.a)->Column#10",
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "Projection 1.00 root  Column#5->Column#6",
+          "Projection 1.00 root  Column#6->Column#7",
           "└─Sort 1.00 root  test_partition_1.t1.id, test_partition_1.t1.a",
-          "  └─HashAgg 1.00 root  funcs:count(Column#8)->Column#5, funcs:firstrow(Column#9)->test_partition_1.t1.id, funcs:firstrow(Column#10)->test_partition_1.t1.a",
+          "  └─HashAgg 1.00 root  funcs:count(Column#9)->Column#6, funcs:firstrow(Column#10)->test_partition_1.t1.id, funcs:firstrow(Column#11)->test_partition_1.t1.a",
           "    └─IndexReader 1.00 root partition:all index:HashAgg",
-          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#8, funcs:firstrow(test_partition_1.t1.id)->Column#9, funcs:firstrow(test_partition_1.t1.a)->Column#10",
+          "      └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#9, funcs:firstrow(test_partition_1.t1.id)->Column#10, funcs:firstrow(test_partition_1.t1.a)->Column#11",
           "        └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
         ]
       },
@@ -316,16 +316,16 @@
           "2"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─TableReader 1.00 root partition:p0 data:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─Selection 19.99 cop[tikv]  or(eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(Column#10)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#11)->Column#6",
           "└─IndexReader 1.00 root partition:p0 index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#10",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#11",
           "    └─Selection 19.99 cop[tikv]  or(eq(test_partition_1.t1.a, 1), eq(test_partition_1.t1.b, 2))",
           "      └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
         ]
@@ -349,16 +349,16 @@
           "0"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─TableReader 1.00 root partition:dual data:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─Selection 1.00 cop[tikv]  eq(test_partition.t1.a, 1), eq(test_partition.t1.b, 2)",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(Column#9)->Column#5",
+          "StreamAgg 1.00 root  funcs:count(Column#10)->Column#6",
           "└─IndexReader 1.00 root partition:dual index:StreamAgg",
-          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#9",
+          "  └─StreamAgg 1.00 cop[tikv]  funcs:count(1)->Column#10",
           "    └─IndexRangeScan 1.25 cop[tikv] table:t1, index:a(a, b, id) range:[1 2,1 2], keep order:false, stats:pseudo"
         ]
       },
@@ -1145,7 +1145,7 @@
           "1"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test_partition.t1.b, test_partition.t2.b)]",
           "  ├─TableReader(Build) 1.00 root partition:all data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  in(test_partition.t2.a, 1, 6), in(test_partition.t2.b, 1, 6), not(isnull(test_partition.t2.b))",
@@ -1155,7 +1155,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test_partition_1.t1.b, test_partition_1.t2.b)]",
           "  ├─IndexReader(Build) 1.25 root partition:all index:Selection",
           "  │ └─Selection 1.25 cop[tikv]  not(isnull(test_partition_1.t2.b))",
@@ -1171,7 +1171,7 @@
           "1"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.b)]",
           "  ├─TableReader(Build) 1.00 root partition:all data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  in(test_partition.t1.a, 1, 6), in(test_partition.t1.b, 1, 6), not(isnull(test_partition.t1.b))",
@@ -1181,7 +1181,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─IndexJoin 1.00 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.b, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.b)",
           "  ├─IndexReader(Build) 1.25 root partition:p0 index:Selection",
           "  │ └─Selection 1.25 cop[tikv]  not(isnull(test_partition_1.t2.b))",
@@ -1197,7 +1197,7 @@
           "1"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.b)]",
           "  ├─TableReader(Build) 1.00 root partition:all data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  in(test_partition.t1.a, 1, 6), in(test_partition.t1.b, 6, 1), not(isnull(test_partition.t1.b))",
@@ -1207,7 +1207,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─IndexHashJoin 1.00 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.b, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.b)",
           "  ├─IndexReader(Build) 1.25 root partition:p0 index:Selection",
           "  │ └─Selection 1.25 cop[tikv]  not(isnull(test_partition_1.t2.b))",
@@ -1223,7 +1223,7 @@
           "0"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.b)]",
           "  ├─TableReader(Build) 1.00 root partition:p1 data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  in(test_partition.t1.a, 1, 6), in(test_partition.t1.b, 100, 9, 6), not(isnull(test_partition.t1.b))",
@@ -1233,7 +1233,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─IndexHashJoin 1.00 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.b, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.b)",
           "  ├─IndexReader(Build) 1.25 root partition:dual index:Selection",
           "  │ └─Selection 1.25 cop[tikv]  not(isnull(test_partition_1.t2.b))",
@@ -1249,7 +1249,7 @@
           "1"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 1.00 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.b)]",
           "  ├─TableReader(Build) 1.00 root partition:all data:Selection",
           "  │ └─Selection 1.00 cop[tikv]  in(test_partition.t1.a, 1, 6), in(test_partition.t1.b, 100, 9, 6, 1), not(isnull(test_partition.t1.b))",
@@ -1259,7 +1259,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─IndexHashJoin 1.00 root  inner join, inner:IndexReader, outer key:test_partition_1.t2.b, inner key:test_partition_1.t1.b, equal cond:eq(test_partition_1.t2.b, test_partition_1.t1.b)",
           "  ├─IndexReader(Build) 1.25 root partition:p0 index:Selection",
           "  │ └─Selection 1.25 cop[tikv]  not(isnull(test_partition_1.t2.b))",
@@ -1280,8 +1280,8 @@
           "8 8 8"
         ],
         "Plan": [
-          "Sort 48.00 root  Column#10",
-          "└─HashAgg 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "Sort 48.00 root  Column#12",
+          "└─HashAgg 48.00 root  group by:Column#11, Column#12, Column#13, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12, funcs:firstrow(Column#13)->Column#13",
           "  └─Union 60.00 root  ",
           "    ├─TableReader 30.00 root partition:p0 data:Selection",
           "    │ └─Selection 30.00 cop[tikv]  in(test_partition.t1.a, 1, 2, 3)",
@@ -1291,8 +1291,8 @@
           "        └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "Sort 48.00 root  Column#10",
-          "└─HashAgg 48.00 root  group by:Column#10, Column#11, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(Column#11)->Column#11",
+          "Sort 48.00 root  Column#12",
+          "└─HashAgg 48.00 root  group by:Column#11, Column#12, Column#13, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12, funcs:firstrow(Column#13)->Column#13",
           "  └─Union 60.00 root  ",
           "    ├─IndexReader 30.00 root partition:p0 index:IndexRangeScan",
           "    │ └─IndexRangeScan 30.00 cop[tikv] table:t1, index:a(a, b, id) range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo",
@@ -1323,16 +1323,16 @@
           "1"
         ],
         "Plan": [
-          "HashAgg 1.00 root  funcs:count(Column#6)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#7)->Column#6",
           "└─TableReader 1.00 root partition:p0 data:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#6",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
           "    └─Selection 5542.21 cop[tikv]  or(lt(test_partition.t1.a, 1), lt(test_partition.t1.b, 2))",
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "HashAgg 1.00 root  funcs:count(Column#7)->Column#5",
+          "HashAgg 1.00 root  funcs:count(Column#8)->Column#6",
           "└─IndexReader 1.00 root partition:p0 index:HashAgg",
-          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#7",
+          "  └─HashAgg 1.00 cop[tikv]  funcs:count(1)->Column#8",
           "    └─Selection 5542.21 cop[tikv]  or(lt(test_partition_1.t1.a, 1), lt(test_partition_1.t1.b, 2))",
           "      └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a, b, id) keep order:false, stats:pseudo"
         ]
@@ -2170,7 +2170,7 @@
           "2"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 7.81 root  inner join, equal:[eq(test_partition.t1.b, test_partition.t2.b)]",
           "  ├─TableReader(Build) 6.25 root partition:all data:Selection",
           "  │ └─Selection 6.25 cop[tikv]  ge(test_partition.t2.a, 1), ge(test_partition.t2.b, 1), le(test_partition.t2.a, 6), le(test_partition.t2.b, 6), not(isnull(test_partition.t2.b))",
@@ -2180,7 +2180,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 7.81 root  inner join, equal:[eq(test_partition_1.t1.b, test_partition_1.t2.b)]",
           "  ├─IndexReader(Build) 6.25 root partition:all index:Selection",
           "  │ └─Selection 6.25 cop[tikv]  ge(test_partition_1.t2.b, 1), le(test_partition_1.t2.b, 6), not(isnull(test_partition_1.t2.b))",
@@ -2196,7 +2196,7 @@
           "2"
         ],
         "Plan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 7.81 root  inner join, equal:[eq(test_partition.t2.b, test_partition.t1.b)]",
           "  ├─TableReader(Build) 6.25 root partition:all data:Selection",
           "  │ └─Selection 6.25 cop[tikv]  ge(test_partition.t1.a, 1), ge(test_partition.t1.b, 1), le(test_partition.t1.a, 6), le(test_partition.t1.b, 6), not(isnull(test_partition.t1.b))",
@@ -2206,7 +2206,7 @@
           "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
         ],
         "IndexPlan": [
-          "StreamAgg 1.00 root  funcs:count(1)->Column#9",
+          "StreamAgg 1.00 root  funcs:count(1)->Column#11",
           "└─HashJoin 7.81 root  inner join, equal:[eq(test_partition_1.t2.b, test_partition_1.t1.b)]",
           "  ├─IndexReader(Build) 6.25 root partition:all index:Selection",
           "  │ └─Selection 6.25 cop[tikv]  ge(test_partition_1.t1.b, 1), le(test_partition_1.t1.b, 6), not(isnull(test_partition_1.t1.b))",
