@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -393,62 +393,52 @@ func insertFailedJobWithStartTime(
 }
 
 func TestLastFailedAnalysisDurationResetsTimeZoneOnReuse(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.time_zone='UTC'")
-	tk.MustExec(metadef.CreateAnalyzeJobsTable)
-	tk.MustExec(`
-		INSERT INTO mysql.analyze_jobs (
-			table_schema,
-			table_name,
-			partition_name,
-			job_info,
-			start_time,
-			end_time,
-			state,
-			fail_reason,
-			instance
-		) VALUES (
-			'db_reset',
-			'tbl_reset',
-			'',
-			'job',
-			NOW(),
-			NOW(),
-			'failed',
-			'err',
-			'instance'
-		);
-	`)
+	tk.MustExec("set @@global.time_zone='Asia/Shanghai'") // UTC+8
 
-	pool := syssession.NewAdvancedSessionPool(1, func() (syssession.SessionContext, error) {
-		se, err := session.CreateSession4Test(store)
-		if err != nil {
-			return nil, err
-		}
-		sctx, ok := se.(syssession.SessionContext)
-		if !ok {
-			return nil, errors.New("unexpected session type")
-		}
-		return sctx, nil
-	})
-	t.Cleanup(pool.Close)
+	h := dom.StatsHandle()
+	pool := h.SPool()
 
-	// Simulate a bad session state: time_zone forced to a non-global value.
+	// Step 1: Insert a pending job using the StatsHandle API.
+	job := &statistics.AnalyzeJob{
+		DBName:    "db_reset",
+		TableName: "tbl_reset",
+		JobInfo:   "test job",
+	}
+	require.NoError(t, h.InsertAnalyzeJob(job, "test-instance", 1))
+	require.NotNil(t, job.ID)
+
+	// Step 2: Start the job.
+	h.StartAnalyzeJob(job)
+
+	time.Sleep(2 * time.Second) // Ensure some time passes.
+
+	// Step 3: Mark the job as failed.
+	h.FinishAnalyzeJob(job, errors.New("test error"), statistics.TableAnalysisJob)
+
+	// Step 4: Set the session timezone to UTC to simulate contamination.
+	// The global timezone is Asia/Shanghai (UTC+8), so this creates a mismatch.
 	require.NoError(t, pool.WithSession(func(se *syssession.Session) error {
 		return se.WithSessionContext(func(sctx sessionctx.Context) error {
-			return sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "Asia/Shanghai")
+			return sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "UTC")
 		})
 	}))
 
+	// Step 5: Query with the same pool using GetLastFailedAnalysisDuration.
+	// If the session timezone is not reset to match the global timezone (Asia/Shanghai),
+	// the duration calculation will be wrong.
 	var dur time.Duration
 	err := statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		var err error
 		dur, err = priorityqueue.GetLastFailedAnalysisDuration(sctx, "db_reset", "tbl_reset")
-		require.Equal(t, "UTC", sctx.GetSessionVars().Location().String())
-		require.Equal(t, sctx.GetSessionVars().Location().String(), sctx.GetSessionVars().StmtCtx.TimeZone().String())
 		return err
 	})
 	require.NoError(t, err)
-	require.GreaterOrEqual(t, dur, time.Duration(0))
+	// If timezone was properly reset to Asia/Shanghai, the duration should be positive
+	// and reasonable (less than an hour since we just inserted).
+	// If timezone was NOT reset from the contaminated UTC state, the duration would
+	// be incorrect due to timezone mismatch.
+	require.Greater(t, dur, time.Duration(0), "duration should be positive; negative means timezone was not reset")
+	require.Less(t, dur, time.Hour, "duration should be less than an hour because job just failed")
 }

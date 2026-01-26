@@ -68,7 +68,6 @@ go_test(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/parser/ast",
-        "//pkg/session",
         "//pkg/session/syssession",
         "//pkg/sessionctx",
         "//pkg/sessionctx/sysproctrack",
