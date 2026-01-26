@@ -182,7 +182,7 @@ func TestPreparePossibleProperties(t *testing.T) {
 	propMap := make(map[*memo.Group]*base.PossiblePropertiesInfo)
 	aggProp := preparePossibleProperties(group, propMap)
 	// We only have one prop for Group0 : f
-	require.Len(t, aggProp, 1)
+	require.Len(t, aggProp.Order, 1)
 	require.True(t, aggProp.Order[0][0].EqualColumn(columnF))
 
 	gatherGroup := group.Equivalents.Front().Value.(*memo.GroupExpr).Children[0]
