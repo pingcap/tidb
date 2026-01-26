@@ -2155,7 +2155,7 @@ func (a *ExecStmt) updatePrevStmt() {
 func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.Context {
 	if !topsqlstate.TopProfilingEnabled() && IsFastPlan(a.Plan) {
 		// To reduce the performance impact on fast plan.
-		// Drop them does not cause notable accuracy issue in TopSQL.
+		// Drop them does not cause notable accuracy issue in Top Profiling.
 		return ctx
 	}
 
