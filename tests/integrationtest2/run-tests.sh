@@ -336,9 +336,9 @@ start_tiflash_server() {
     echo "Starting TiFlash server..."
     mkdir -p $TIFLASH_DATA_DIR
     if [ -n "$TIFLASH_CONFIG" ]; then
-        $tiflash_bin server --data-dir="$TIFLASH_DATA_DIR" --log-file=tiflash.log --config-file="$TIFLASH_CONFIG" &
+        $tiflash_bin server --log-file=tiflash.log --config-file="$TIFLASH_CONFIG" > "$TIFLASH_LOG_FILE" 2>&1 &
     else
-        $tiflash_bin server --data-dir="$TIFLASH_DATA_DIR" --log-file=tiflash.log &
+        $tiflash_bin server --log-file=tiflash.log > "$TIFLASH_LOG_FILE" 2>&1 &
     fi
 
     sleep 5  # Wait for TiFlash to connect
