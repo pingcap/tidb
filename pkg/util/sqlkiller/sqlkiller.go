@@ -49,8 +49,8 @@ var errKilled = errors.New("it has been killed by the sql killer")
 type SQLKiller struct {
 	Finish    func()
 	killEvent struct {
-		ch       chan struct{}
-		desc     string
+		ch   chan struct{}
+		desc string
 		sync.Mutex
 		triggered bool
 	}
