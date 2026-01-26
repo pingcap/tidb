@@ -410,6 +410,7 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 		// if there isn't a handle column.
 		if !setHandle {
 			if !p.Table.IsCommonHandle {
+				// Prefer PK handle when available to avoid introducing ExtraHandleID (_tidb_rowid).
 				var handleCol *expression.Column
 				if p.Table.PKIsHandle {
 					handleCol = p.PkIsHandleCol
