@@ -1,0 +1,40 @@
+package executor_test
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/infoschema"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMVDemoCreateDropMaterializedView(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("create table t_mv (a int, b int)")
+	tk.MustExec("create materialized view log on t_mv(a,b)")
+
+	tk.MustExec("create materialized view mv1 as select a, count(*), sum(b), min(b), max(b) from t_mv where a > 0 group by a refresh fast every 60")
+
+	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	mvTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv1"))
+	require.NoError(t, err)
+	mvID := mvTbl.Meta().ID
+
+	logTbl := getMVLogTableName(t, tk, "test", "t_mv")
+	logInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(logTbl))
+	require.NoError(t, err)
+
+	tk.MustQuery(fmt.Sprintf("select base_table_id, log_table_id, last_refresh_tso, last_refresh_result from mysql.mv_refresh_info where mv_id = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprintf("%d %d 0 FAILED", mvTbl.Meta().MaterializedViewInfo.BaseTableID, logInfo.Meta().ID)))
+
+	tk.MustGetErrMsg("drop table mv1", "drop materialized view mv1 is not supported now")
+	tk.MustExec("drop materialized view mv1")
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.mv_refresh_info where mv_id = %d", mvID)).Check(testkit.Rows("0"))
+}
