@@ -95,9 +95,10 @@ MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
 MINIO_BUCKET="${MINIO_BUCKET:-ticidefaultbucket}"
 MINIO_PREFIX="${MINIO_PREFIX:-tici_default_prefix/cdc}"
 MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_PORT}}"
-TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true"
+TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-t idb-extension=true&output-row-key=true"
 TICDC_S3_SINK_URI="${TICDC_S3_SINK_URI:-$TICDC_S3_SINK_URI_DEFAULT}"
 TICI_CONFIG_DIR="${TICI_CONFIG_DIR:-$SCRIPT_DIR/tici/config}"
+PORT_START="${PORT_START:-20000}"
 
 if [ -d "$TIFLASH_BIN" ] && [ -x "$TIFLASH_BIN/tiflash" ]; then
     TIFLASH_BIN="$TIFLASH_BIN/tiflash"
@@ -159,31 +160,15 @@ function find_available_port() {
     done
 }
 
-# Function to find multiple available ports starting from a given port
-function find_multiple_available_ports() {
-    local start_port=$1
-    local count=$2
-    local ports=()
-
-    while [ ${#ports[@]} -lt $count ]; do
-        local available_port=$(find_available_port $start_port)
-        if [ $? -eq 0 ]; then
-            ports+=($available_port)
-            ((start_port = available_port + 1))
-        else
-            echo "Error: Could not find an available port." >&2
-            exit 1
-        fi
-    done
-
-    echo "${ports[@]}"
-}
-
 function port_in_use() {
     local port=$1
 
     if command -v ss >/dev/null 2>&1; then
         if ss -ltnH "sport = :$port" 2>/dev/null | grep -q .; then
+            return 0
+        fi
+        # Some ss versions ignore the filter; fall back to parsing all listeners.
+        if ss -ltnH 2>/dev/null | awk '{print $4}' | sed -E 's/.*:([0-9]+)$/\\1/' | grep -qx "$port"; then
             return 0
         fi
     fi
@@ -195,6 +180,28 @@ function port_in_use() {
     fi
 
     return 1
+}
+
+NEXT_PORT="${PORT_START}"
+function alloc_port() {
+    local start=${1:-$NEXT_PORT}
+    local port
+
+    port=$(find_available_port "$start") || exit 1
+    NEXT_PORT=$((port + 1))
+    echo "$port"
+}
+
+function refresh_minio_vars() {
+    MINIO_ENDPOINT="http://127.0.0.1:${MINIO_PORT}"
+    if [ -z "$TICDC_S3_SINK_URI" ]; then
+        TICDC_S3_SINK_URI="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true"
+    fi
+}
+
+function ensure_minio_port() {
+    MINIO_PORT=$(find_available_port "$MINIO_PORT") || exit 1
+    refresh_minio_vars
 }
 
 function resolve_bin() {
@@ -450,7 +457,7 @@ function prepare_tici_config() {
 
 function make_tiflash_config_for_tici() {
     : "${TIFLASH_LISTEN_HOST:=0.0.0.0}"
-    : "${TIFLASH_DATA_DIR:=./data/tiflash}"
+    : "${TIFLASH_DATA_DIR:=./data/tiflash_data}"
     : "${TIFLASH_TMP_DIR:=$TIFLASH_DATA_DIR/tmp}"
     : "${TIFLASH_CAPACITY:=10737418240}"
     : "${TIFLASH_SERVICE_ADDR:=127.0.0.1:3930}"
@@ -591,11 +598,6 @@ function start_minio() {
     }
     mc_bin=$(resolve_bin "$MINIO_MC_BIN" || true)
 
-    if wait_for_port_ready "127.0.0.1" "$MINIO_PORT" "MinIO" "" 1; then
-        echo "MinIO port $MINIO_PORT already in use; assuming MinIO is running"
-        return 0
-    fi
-
     echo "Starting MinIO server..."
     mkdir -p "$MINIO_DATA_DIR/$MINIO_BUCKET"
     export MINIO_ROOT_USER="$MINIO_ACCESS_KEY"
@@ -654,59 +656,43 @@ function create_ticdc_changefeed() {
 
 function start_tidb_cluster()
 {
-    local ports=($(find_multiple_available_ports 3379 2))
-    if [ $? -ne 0 ]; then
-        echo "Error: Could not find multiple available ports." >&2
-        exit 1
-    fi
-    pd_client_port=${ports[0]}
-	pd_peer_port=${ports[1]}
+    pd_client_port=$(alloc_port)
+    pd_peer_port=$(alloc_port)
     upstream_pd_client_port=$pd_client_port
 	start_pd_server $pd_client_port $pd_peer_port $PD_DATA_DIR $PD_LOG_FILE
 
-    local ports=($(find_multiple_available_ports 30160 2))
-    if [ $? -ne 0 ]; then
-        echo "Error: Could not find multiple available ports." >&2
-        exit 1
-    fi
-	tikv_port=${ports[0]}
-	tikv_status_port=${ports[1]}
+	tikv_port=$(alloc_port)
+	tikv_status_port=$(alloc_port)
 	start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR $TIKV_LOG_FILE
 
     if [ -n "${TIDB_PORT:-}" ]; then
-        if wait_for_port_ready "127.0.0.1" "$TIDB_PORT" "TiDB" "" 1; then
-            echo "Error: TIDB_PORT ${TIDB_PORT} is in use." >&2
-            exit 1
+        if port_in_use "$TIDB_PORT"; then
+            tidb_port=$(alloc_port)
+        else
+            tidb_port="${TIDB_PORT}"
+            if [ "$tidb_port" -ge "$NEXT_PORT" ]; then
+                NEXT_PORT=$((tidb_port + 1))
+            fi
         fi
-        tidb_port="${TIDB_PORT}"
     else
-        tidb_port=$(find_available_port 4000)
+        tidb_port=$(alloc_port)
     fi
+    export TIDB_PORT="$tidb_port"
     UPSTREAM_PORT=$tidb_port
-	tidb_status_port=$(find_available_port 10080)
+	tidb_status_port=$(alloc_port)
 	start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE
 
-    local ports=($(find_multiple_available_ports 2379 2))
-    if [ $? -ne 0 ]; then
-        echo "Error: Could not find multiple available ports." >&2
-        exit 1
-    fi
-    pd_client_port=${ports[0]}
-	pd_peer_port=${ports[1]}
+    pd_client_port=$(alloc_port)
+	pd_peer_port=$(alloc_port)
     start_pd_server $pd_client_port $pd_peer_port $PD_DATA_DIR2 $PD_LOG_FILE2
 
-    local ports=($(find_multiple_available_ports 20160 2))
-    if [ $? -ne 0 ]; then
-        echo "Error: Could not find multiple available ports." >&2
-        exit 1
-    fi
-	tikv_port=${ports[0]}
-	tikv_status_port=${ports[1]}
+	tikv_port=$(alloc_port)
+	tikv_status_port=$(alloc_port)
     start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR2 $TIKV_LOG_FILE2
 
-    tidb_port=$(find_available_port 4000)
+    tidb_port=$(alloc_port)
     DOWNSTREAM_PORT=$tidb_port
-	tidb_status_port=$(find_available_port 10080)
+	tidb_status_port=$(alloc_port)
     start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE2
 
     echo "TiDB cluster started successfully!"
@@ -782,6 +768,7 @@ if [ ${#non_ticdc_cases[@]} -ne 0 ]; then
 fi
 
 if [ ${#tici_cases[@]} -ne 0 ]; then
+    ensure_minio_port
     prepare_tici_config
     start_minio
     start_tici_server
@@ -789,7 +776,7 @@ if [ ${#tici_cases[@]} -ne 0 ]; then
 fi
 
 if [ ${#ticdc_cases[@]} -ne 0 ] || [ ${#tici_cases[@]} -ne 0 ]; then
-    ticdc_port=$(find_available_port 8300)
+    ticdc_port=$(alloc_port)
     start_ticdc_server "http://127.0.0.1:$upstream_pd_client_port" $ticdc_port
 
     echo "TiCDC started successfully!"
