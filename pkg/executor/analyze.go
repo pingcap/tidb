@@ -24,7 +24,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -103,8 +102,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	statsHandle := domain.GetDomain(e.Ctx()).StatsHandle()
 	infoSchema := sessiontxn.GetTxnManager(e.Ctx()).GetTxnInfoSchema()
 	sessionVars := e.Ctx().GetSessionVars()
-	ctx, cancel := e.buildAnalyzeKillCtx(ctx)
-	defer cancel(nil)
+	ctx, stop := e.buildAnalyzeKillCtx(ctx)
+	defer stop()
 
 	// Filter the locked tables.
 	tasks, needAnalyzeTableCnt, skippedTables, err := filterAndCollectTasks(e.tasks, statsHandle, infoSchema)
@@ -507,32 +506,32 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 	return err
 }
 
-func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Context, context.CancelCauseFunc) {
+func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Context, func()) {
 	ctx, cancel := context.WithCancelCause(parent)
 	killer := &e.Ctx().GetSessionVars().SQLKiller
 	killCh := killer.GetKillEventChan()
-	ticker := time.NewTicker(100 * time.Millisecond)
+	stopCh := make(chan struct{})
 	go func() {
-		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
+			case <-stopCh:
+				return
 			case <-killCh:
-				if err := killer.HandleSignal(); err != nil {
-					cancel(err)
+				status := killer.GetKillSignal()
+				if status == 0 {
 					return
 				}
-				killCh = nil
-			case <-ticker.C:
-				if err := killer.HandleSignal(); err != nil {
-					cancel(err)
-					return
-				}
+				err := exeerrors.ErrQueryInterrupted
+				cancel(err)
+				return
 			}
 		}
 	}()
-	return ctx, cancel
+	return ctx, func() {
+		close(stopCh)
+	}
 }
 
 func analyzeWorkerExitErr(ctx context.Context, errExitCh <-chan struct{}) error {
