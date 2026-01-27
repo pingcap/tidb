@@ -701,7 +701,11 @@ var defaultSysVars = []*SysVar{
 		on := TiDBOptOn(val)
 		// For user initiated SET GLOBAL, also change the value of TiDBSuperReadOnly
 		if on && s.StmtCtx.StmtType == "Set" {
-			err := s.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), TiDBSuperReadOnly, "ON")
+			err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), TiDBSuperReadOnly, "ON", false)
+			if err != nil {
+				return err
+			}
+			err = GetSysVar(TiDBSuperReadOnly).SetGlobal(context.Background(), s, "ON")
 			if err != nil {
 				return err
 			}
@@ -2069,6 +2073,8 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeGlobal | ScopeSession, Name: SQLRequirePrimaryKey, Value: Off, Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.PrimaryKeyRequired = TiDBOptOn(val)
 		return nil
+	}, RequireDynamicPrivileges: func(isGlobal bool, sem bool) []string {
+		return []string{"SYSTEM_VARIABLES_ADMIN"}
 	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableAnalyzeSnapshot, Value: BoolToOnOff(DefTiDBEnableAnalyzeSnapshot), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableAnalyzeSnapshot = TiDBOptOn(val)

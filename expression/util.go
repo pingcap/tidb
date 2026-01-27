@@ -35,10 +35,12 @@ import (
 	"github.com/pingcap/tidb/types"
 	driver "github.com/pingcap/tidb/types/parser_driver"
 	"github.com/pingcap/tidb/util/chunk"
+	"github.com/pingcap/tidb/util/cmp"
 	"github.com/pingcap/tidb/util/collate"
 	"github.com/pingcap/tidb/util/logutil"
 	"github.com/pingcap/tidb/util/sqlexec"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 )
 
 // cowExprRef is a copy-on-write slice ref util using in `ColumnSubstitute`
@@ -120,6 +122,36 @@ func ExtractColumns(expr Expression) []*Column {
 	// Pre-allocate a slice to reduce allocation, 8 doesn't have special meaning.
 	result := make([]*Column, 0, 8)
 	return extractColumns(result, expr, nil)
+}
+
+// ExtractAllColumnsFromExpressionsInUsedSlices is the same as ExtractColumns. but it can reuse the memory.
+func ExtractAllColumnsFromExpressionsInUsedSlices(reuse []*Column, exprs ...Expression) []*Column {
+	if len(exprs) == 0 {
+		return nil
+	}
+	reuse = reuse[:0]
+	for _, expr := range exprs {
+		reuse = extractColumnsSlices(reuse, expr)
+	}
+	slices.SortFunc(reuse, func(a, b *Column) int {
+		return cmp.Compare(a.UniqueID, b.UniqueID)
+	})
+	reuse = slices.CompactFunc(reuse, func(a, b *Column) bool {
+		return a.UniqueID == b.UniqueID
+	})
+	return reuse
+}
+
+func extractColumnsSlices(result []*Column, expr Expression) []*Column {
+	switch v := expr.(type) {
+	case *Column:
+		result = append(result, v)
+	case *ScalarFunction:
+		for _, arg := range v.GetArgs() {
+			result = extractColumnsSlices(result, arg)
+		}
+	}
+	return result
 }
 
 // ExtractCorColumns extracts correlated column from given expression.
