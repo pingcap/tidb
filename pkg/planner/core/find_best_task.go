@@ -2230,7 +2230,7 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	// For partial order property
 	// We **don't need to check** the partial order property is matched in here.
 	// Because if the index scan cannot satisfy partial order, it will be pruned at the SkylinePruning phase
-	// (which is previous phase then this function).
+	// (which is the previous phase before this function).
 	// So, if an index can enter this function and also contains the requirement of a partial order property,
 	// then it must meet the requirements.
 
