@@ -472,6 +472,15 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 			break
 		}
 		if results.Err != nil {
+			if intest.InTest && stderrors.Is(results.Err, context.Canceled) {
+				statslogutil.StatsLogger().Info("analyze result canceled",
+					zap.Uint32("killSignal", e.Ctx().GetSessionVars().SQLKiller.GetKillSignal()),
+					zap.Uint64("connID", e.Ctx().GetSessionVars().ConnectionID),
+					zap.String("jobInfo", results.Job.String()),
+					zap.Error(results.Err),
+					zap.Stack("stack"),
+				)
+			}
 			err = results.Err
 			if isAnalyzeWorkerPanic(err) {
 				panicCnt++
