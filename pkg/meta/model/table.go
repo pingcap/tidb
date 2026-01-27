@@ -221,6 +221,9 @@ type TableInfo struct {
 
 	DBID int64 `json:"-"`
 
+	MaterializedViewInfo    *MaterializedViewInfo    `json:"materialized_view_info,omitempty"`
+	MaterializedViewLogInfo *MaterializedViewLogInfo `json:"materialized_view_log_info,omitempty"`
+
 	Mode TableMode `json:"mode,omitempty"`
 }
 
@@ -294,6 +297,13 @@ func (t *TableInfo) Clone() *TableInfo {
 
 	if t.Affinity != nil {
 		nt.Affinity = t.Affinity.Clone()
+	}
+
+	if t.MaterializedViewInfo != nil {
+		nt.MaterializedViewInfo = t.MaterializedViewInfo.Clone()
+	}
+	if t.MaterializedViewLogInfo != nil {
+		nt.MaterializedViewLogInfo = t.MaterializedViewLogInfo.Clone()
 	}
 
 	return &nt
@@ -546,6 +556,16 @@ func (t *TableInfo) HasClusteredIndex() bool {
 // IsView checks if TableInfo is a view.
 func (t *TableInfo) IsView() bool {
 	return t.View != nil
+}
+
+// IsMaterializedView checks if TableInfo is a materialized view table (TiDB demo).
+func (t *TableInfo) IsMaterializedView() bool {
+	return t.MaterializedViewInfo != nil
+}
+
+// IsMaterializedViewLog checks if TableInfo is a materialized view log table (TiDB demo).
+func (t *TableInfo) IsMaterializedViewLog() bool {
+	return t.MaterializedViewLogInfo != nil
 }
 
 // IsSequence checks if TableInfo is a sequence.

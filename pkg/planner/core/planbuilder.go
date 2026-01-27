@@ -4184,6 +4184,17 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		}
 		return nil, err
 	}
+	if (tableInfo.IsMaterializedView() || tableInfo.IsMaterializedViewLog()) && !b.ctx.GetSessionVars().InRestrictedSQL {
+		obj := "materialized view"
+		if tableInfo.IsMaterializedViewLog() {
+			obj = "materialized view log"
+		}
+		action := "insert into"
+		if insert.IsReplace {
+			action = "replace into"
+		}
+		return nil, errors.Errorf("%s %s %s is not supported now", action, obj, tableInfo.Name.O)
+	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)
 	if err != nil {

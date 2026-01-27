@@ -346,6 +346,12 @@ func updateRecord(
 			return false, false, err
 		}
 	}
+
+	if changed {
+		if err := appendMVLogUpdate(ctx, sctx, t, oldData, newData); err != nil {
+			return false, false, err
+		}
+	}
 	if onDup {
 		sc.AddAffectedRows(2)
 	} else {
