@@ -2229,6 +2229,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableCorrelationAdjustment = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptFulltextSearchFallback, Value: vardef.DefOptFulltextSearchFallback, Type: vardef.TypeEnum, PossibleValues: []string{"like", "error"}, SetSession: func(s *SessionVars, val string) error {
+		s.FulltextSearchFallback = val
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptCorrelationExpFactor, Value: strconv.Itoa(vardef.DefOptCorrelationExpFactor), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
 		s.CorrelationExpFactor = int(TidbOptInt64(val, vardef.DefOptCorrelationExpFactor))
 		return nil
