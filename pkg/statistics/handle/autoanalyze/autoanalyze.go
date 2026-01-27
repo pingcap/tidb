@@ -799,10 +799,6 @@ func startAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob) {
 	}
 	job.StartTime = time.Now()
 	job.Progress.SetLastDumpTime(job.StartTime)
-	tzVar := "<unset>"
-	if v, ok := sctx.GetSessionVars().GetSystemVar(vardef.TimeZone); ok {
-		tzVar = v
-	}
 	const sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %? WHERE id = %?"
 	_, _, err := statsutil.ExecRows(sctx, sql, job.StartTime.UTC().Format(types.TimeFormat), statistics.AnalyzeRunning, *job.ID)
 	if err != nil {
