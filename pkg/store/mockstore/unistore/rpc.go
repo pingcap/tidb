@@ -282,7 +282,7 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.usSvr.Coprocessor(ctx, req.Cop())
 	case tikvrpc.CmdCopStream:
 		resp.Resp, err = c.handleCopStream(ctx, req.Cop())
-	case tikvrpc.CmdBatchCop, tikvrpc.CmdVersionedBatchCop:
+	case tikvrpc.CmdBatchCop:
 		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
 			if value.(bool) {
 				failpoint.Return(nil, context.Canceled)
