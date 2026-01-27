@@ -95,8 +95,8 @@ MINIO_SECRET_KEY="${MINIO_SECRET_KEY:-minioadmin}"
 MINIO_BUCKET="${MINIO_BUCKET:-ticidefaultbucket}"
 MINIO_PREFIX="${MINIO_PREFIX:-tici_default_prefix/cdc}"
 MINIO_ENDPOINT="${MINIO_ENDPOINT:-http://127.0.0.1:${MINIO_PORT}}"
-TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-t idb-extension=true&output-row-key=true"
-TICDC_S3_SINK_URI="${TICDC_S3_SINK_URI:-$TICDC_S3_SINK_URI_DEFAULT}"
+TICDC_S3_SINK_URI_DEFAULT="${TICDC_S3_SINK_URI_DEFAULT:-}"
+TICDC_S3_SINK_URI="${TICDC_S3_SINK_URI:-}"
 TICI_CONFIG_DIR="${TICI_CONFIG_DIR:-$SCRIPT_DIR/tici/config}"
 PORT_START="${PORT_START:-20000}"
 
@@ -108,6 +108,11 @@ if [ ! -x "$TICDC_BIN" ] && [ -x "./third_bin/ticdc" ]; then
 fi
 if [ -z "$TIKV_CONFIG" ] && [ -f "$SCRIPT_DIR/tikv.toml" ]; then
     TIKV_CONFIG="$SCRIPT_DIR/tikv.toml"
+fi
+
+if ! command -v ss >/dev/null 2>&1; then
+    echo "Error: ss is required for port checks but not found in PATH." >&2
+    exit 1
 fi
 
 function help_message()
@@ -138,7 +143,9 @@ function help_message()
     tiflash settings (env vars):
       TIFLASH_BIN, TIFLASH_CONFIG
     tidb settings (env vars):
-      TIDB_PORT (fixed upstream port; must be free)
+      TIDB_PORT (preferred upstream port; auto-selects another if in use)
+    port settings (env vars):
+      PORT_START (base port to search from; default 20000)
 
 "
 }
@@ -177,25 +184,28 @@ function port_in_use() {
 }
 
 NEXT_PORT="${PORT_START}"
+ALLOCATED_PORT=""
 function alloc_port() {
     local start=${1:-$NEXT_PORT}
     local port
 
     port=$(find_available_port "$start") || exit 1
     NEXT_PORT=$((port + 1))
-    echo "$port"
+    ALLOCATED_PORT=$port
 }
 
 function refresh_minio_vars() {
     MINIO_ENDPOINT="http://127.0.0.1:${MINIO_PORT}"
+    TICDC_S3_SINK_URI_DEFAULT="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true"
     if [ -z "$TICDC_S3_SINK_URI" ]; then
-        TICDC_S3_SINK_URI="s3://${MINIO_BUCKET}/${MINIO_PREFIX}?endpoint=${MINIO_ENDPOINT}&access-key=${MINIO_ACCESS_KEY}&secret-access-key=${MINIO_SECRET_KEY}&provider=minio&protocol=canal-json&enable-tidb-extension=true&output-row-key=true"
+        TICDC_S3_SINK_URI="$TICDC_S3_SINK_URI_DEFAULT"
     fi
 }
 
 function ensure_minio_port() {
     MINIO_PORT=$(find_available_port "$MINIO_PORT") || exit 1
     refresh_minio_vars
+    echo "MinIO will use port $MINIO_PORT"
 }
 
 function resolve_bin() {
@@ -650,18 +660,24 @@ function create_ticdc_changefeed() {
 
 function start_tidb_cluster()
 {
-    pd_client_port=$(alloc_port)
-    pd_peer_port=$(alloc_port)
-    upstream_pd_client_port=$pd_client_port
-	start_pd_server $pd_client_port $pd_peer_port $PD_DATA_DIR $PD_LOG_FILE
+    alloc_port
+    UP_PD_CLIENT_PORT=$ALLOCATED_PORT
+    alloc_port
+    UP_PD_PEER_PORT=$ALLOCATED_PORT
+    upstream_pd_client_port=$UP_PD_CLIENT_PORT
+	start_pd_server $UP_PD_CLIENT_PORT $UP_PD_PEER_PORT $PD_DATA_DIR $PD_LOG_FILE
 
-	tikv_port=$(alloc_port)
-	tikv_status_port=$(alloc_port)
-	start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR $TIKV_LOG_FILE
+	alloc_port
+	UP_TIKV_PORT=$ALLOCATED_PORT
+	alloc_port
+	UP_TIKV_STATUS_PORT=$ALLOCATED_PORT
+	start_tikv_server $UP_PD_CLIENT_PORT $UP_TIKV_PORT $UP_TIKV_STATUS_PORT $TIKV_DATA_DIR $TIKV_LOG_FILE
 
     if [ -n "${TIDB_PORT:-}" ]; then
         if port_in_use "$TIDB_PORT"; then
-            tidb_port=$(alloc_port)
+            echo "TIDB_PORT ${TIDB_PORT} is in use; selecting another port"
+            alloc_port
+            tidb_port=$ALLOCATED_PORT
         else
             tidb_port="${TIDB_PORT}"
             if [ "$tidb_port" -ge "$NEXT_PORT" ]; then
@@ -669,26 +685,35 @@ function start_tidb_cluster()
             fi
         fi
     else
-        tidb_port=$(alloc_port)
+        alloc_port
+        tidb_port=$ALLOCATED_PORT
     fi
     export TIDB_PORT="$tidb_port"
     UPSTREAM_PORT=$tidb_port
-	tidb_status_port=$(alloc_port)
-	start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE
+	alloc_port
+	UP_TIDB_STATUS_PORT=$ALLOCATED_PORT
+	start_tidb_server "127.0.0.1:$UP_PD_CLIENT_PORT" $UPSTREAM_PORT $UP_TIDB_STATUS_PORT $TIDB_LOG_FILE
 
-    pd_client_port=$(alloc_port)
-	pd_peer_port=$(alloc_port)
-    start_pd_server $pd_client_port $pd_peer_port $PD_DATA_DIR2 $PD_LOG_FILE2
+    alloc_port
+    DOWN_PD_CLIENT_PORT=$ALLOCATED_PORT
+    alloc_port
+	DOWN_PD_PEER_PORT=$ALLOCATED_PORT
+    start_pd_server $DOWN_PD_CLIENT_PORT $DOWN_PD_PEER_PORT $PD_DATA_DIR2 $PD_LOG_FILE2
 
-	tikv_port=$(alloc_port)
-	tikv_status_port=$(alloc_port)
-    start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR2 $TIKV_LOG_FILE2
+	alloc_port
+	DOWN_TIKV_PORT=$ALLOCATED_PORT
+	alloc_port
+	DOWN_TIKV_STATUS_PORT=$ALLOCATED_PORT
+    start_tikv_server $DOWN_PD_CLIENT_PORT $DOWN_TIKV_PORT $DOWN_TIKV_STATUS_PORT $TIKV_DATA_DIR2 $TIKV_LOG_FILE2
 
-    tidb_port=$(alloc_port)
-    DOWNSTREAM_PORT=$tidb_port
-	tidb_status_port=$(alloc_port)
-    start_tidb_server "127.0.0.1:$pd_client_port" $tidb_port $tidb_status_port $TIDB_LOG_FILE2
+    alloc_port
+    DOWNSTREAM_PORT=$ALLOCATED_PORT
+	alloc_port
+	DOWN_TIDB_STATUS_PORT=$ALLOCATED_PORT
+    start_tidb_server "127.0.0.1:$DOWN_PD_CLIENT_PORT" $DOWNSTREAM_PORT $DOWN_TIDB_STATUS_PORT $TIDB_LOG_FILE2
 
+    echo "Ports (upstream): PD=$UP_PD_CLIENT_PORT/$UP_PD_PEER_PORT TiKV=$UP_TIKV_PORT/$UP_TIKV_STATUS_PORT TiDB=$UPSTREAM_PORT/$UP_TIDB_STATUS_PORT"
+    echo "Ports (downstream): PD=$DOWN_PD_CLIENT_PORT/$DOWN_PD_PEER_PORT TiKV=$DOWN_TIKV_PORT/$DOWN_TIKV_STATUS_PORT TiDB=$DOWNSTREAM_PORT/$DOWN_TIDB_STATUS_PORT"
     echo "TiDB cluster started successfully!"
 }
 
@@ -770,7 +795,8 @@ if [ ${#tici_cases[@]} -ne 0 ]; then
 fi
 
 if [ ${#ticdc_cases[@]} -ne 0 ] || [ ${#tici_cases[@]} -ne 0 ]; then
-    ticdc_port=$(alloc_port)
+    alloc_port
+    ticdc_port=$ALLOCATED_PORT
     start_ticdc_server "http://127.0.0.1:$upstream_pd_client_port" $ticdc_port
 
     echo "TiCDC started successfully!"
