@@ -1454,6 +1454,9 @@ type SessionVars struct {
 	// EnablePaging indicates whether enable paging in coprocessor requests.
 	EnablePaging bool
 
+	// EnableMaterializedViewDemo indicates whether MV demo features are enabled.
+	EnableMaterializedViewDemo bool
+
 	// EnableLegacyInstanceScope says if SET SESSION can be used to set an instance
 	// scope variable. The default is TRUE.
 	EnableLegacyInstanceScope bool

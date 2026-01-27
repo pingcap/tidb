@@ -590,7 +590,7 @@ func (d *SchemaTracker) renameColumn(_ sessionctx.Context, ident ast.Ident, spec
 	if oldColName.L == newColName.L {
 		return nil
 	}
-	if newColName.L == model.ExtraHandleName.L {
+	if newColName.L == model.ExtraHandleName.L || newColName.L == model.ExtraCommitTsName.L {
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 

@@ -374,3 +374,19 @@ func NewExtraPhysTblIDColInfo() *ColumnInfo {
 	colInfo.SetCollate(charset.CollationBin)
 	return colInfo
 }
+
+// NewExtraCommitTsColInfo mocks a column info for MVCC commit_ts column.
+func NewExtraCommitTsColInfo() *ColumnInfo {
+	colInfo := &ColumnInfo{
+		ID:   ExtraCommitTsID,
+		Name: ExtraCommitTsName,
+	}
+	colInfo.SetType(mysql.TypeLonglong)
+	colInfo.SetFlag(mysql.NotNullFlag | mysql.UnsignedFlag)
+	flen, decimal := mysql.GetDefaultFieldLengthAndDecimal(mysql.TypeLonglong)
+	colInfo.SetFlen(flen)
+	colInfo.SetDecimal(decimal)
+	colInfo.SetCharset(charset.CharsetBin)
+	colInfo.SetCollate(charset.CollationBin)
+	return colInfo
+}

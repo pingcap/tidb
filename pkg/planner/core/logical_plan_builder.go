@@ -3579,7 +3579,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID {
+			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTsID {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -4101,16 +4101,51 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIDName),
 	}
 
-	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
 	schema := ds.Schema()
-	schema.Append(pidCol)
-	ds.SetOutputNames(append(ds.OutputNames(), &types.FieldName{
+	insertPos := len(schema.Columns)
+	for i := len(schema.Columns) - 1; i >= 0; i-- {
+		if schema.Columns[i].ID == model.ExtraCommitTsID {
+			insertPos = i
+			break
+		}
+	}
+
+	ds.Columns = append(ds.Columns, nil)
+	copy(ds.Columns[insertPos+1:], ds.Columns[insertPos:])
+	ds.Columns[insertPos] = model.NewExtraPhysTblIDColInfo()
+
+	schema.Columns = append(schema.Columns, nil)
+	copy(schema.Columns[insertPos+1:], schema.Columns[insertPos:])
+	schema.Columns[insertPos] = pidCol
+
+	outputNames := ds.OutputNames()
+	outputNames = append(outputNames, nil)
+	copy(outputNames[insertPos+1:], outputNames[insertPos:])
+	outputNames[insertPos] = &types.FieldName{
 		DBName:      ds.DBName,
 		TblName:     ds.TableInfo.Name,
 		ColName:     model.ExtraPhysTblIDName,
 		OrigColName: model.ExtraPhysTblIDName,
-	}))
-	ds.AppendTableCol(pidCol)
+	}
+	ds.SetOutputNames(outputNames)
+
+	if ds.TblColsByID == nil {
+		ds.TblColsByID = make(map[int64]*expression.Column)
+	}
+	ds.TblColsByID[pidCol.ID] = pidCol
+
+	tblCols := ds.TblCols
+	tblInsertPos := len(tblCols)
+	for i := len(tblCols) - 1; i >= 0; i-- {
+		if tblCols[i].ID == model.ExtraCommitTsID {
+			tblInsertPos = i
+			break
+		}
+	}
+	tblCols = append(tblCols, nil)
+	copy(tblCols[tblInsertPos+1:], tblCols[tblInsertPos:])
+	tblCols[tblInsertPos] = pidCol
+	ds.TblCols = tblCols
 	return pidCol
 }
 
@@ -4638,6 +4673,19 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			})
 			ds.AppendTableCol(extraCol)
 		}
+	}
+
+	if b.ctx.GetSessionVars().EnableMaterializedViewDemo {
+		extraCol := ds.NewExtraCommitTsSchemaCol()
+		ds.Columns = append(ds.Columns, model.NewExtraCommitTsColInfo())
+		schema.Append(extraCol)
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraCommitTsName,
+			OrigColName: model.ExtraCommitTsName,
+		})
+		ds.AppendTableCol(extraCol)
 	}
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols

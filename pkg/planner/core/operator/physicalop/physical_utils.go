@@ -289,7 +289,7 @@ func ExpandVirtualColumn(columns []*model.ColumnInfo, schema *expression.Schema,
 		// Move extra columns to the end.
 		// ExtraRowChecksumID is ignored here since it's treated as an ordinary column.
 		// https://github.com/pingcap/tidb/blob/3c407312a986327bc4876920e70fdd6841b8365f/pkg/util/rowcodec/decoder.go#L206-L222
-		if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID {
+		if cid != model.ExtraHandleID && cid != model.ExtraPhysTblID && cid != model.ExtraCommitTsID {
 			ordinaryColumnExists = true
 			break
 		}

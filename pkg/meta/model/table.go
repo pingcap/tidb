@@ -48,6 +48,10 @@ const ExtraPhysTblID = -3
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
 
+// ExtraCommitTsID is the column ID of the pseudo column `_tidb_commit_ts`.
+// It represents the MVCC commit_ts of the visible version for each returned row.
+const ExtraCommitTsID = -5
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -90,6 +94,9 @@ var ExtraHandleName = ast.NewCIStr("_tidb_rowid")
 
 // ExtraPhysTblIDName is the name of ExtraPhysTblID Column.
 var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
+
+// ExtraCommitTsName is the name of ExtraCommitTs column.
+var ExtraCommitTsName = ast.NewCIStr("_tidb_commit_ts")
 
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,

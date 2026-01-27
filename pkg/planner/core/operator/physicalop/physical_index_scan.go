@@ -402,6 +402,13 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 			break
 		}
 	}
+	var extraCommitTsCol *expression.Column
+	for _, col := range p.DataSourceSchema.Columns {
+		if col.ID == model.ExtraCommitTsID {
+			extraCommitTsCol = col.Clone().(*expression.Column)
+			break
+		}
+	}
 
 	if isDoubleRead || p.Index.Global {
 		// If it's double read case, the first index must return handle. So we should add extra handle column
@@ -429,6 +436,9 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 
 	if extraPhysTblCol != nil {
 		indexCols = append(indexCols, extraPhysTblCol)
+	}
+	if extraCommitTsCol != nil {
+		indexCols = append(indexCols, extraCommitTsCol)
 	}
 
 	p.SetSchema(expression.NewSchema(indexCols...))
@@ -547,6 +557,8 @@ func (p *PhysicalIndexScan) ToPB(_ *base.BuildPBContext, _ kv.StoreType) (*tipb.
 			columns = append(columns, model.NewExtraHandleColInfo())
 		} else if col.ID == model.ExtraPhysTblID {
 			columns = append(columns, model.NewExtraPhysTblIDColInfo())
+		} else if col.ID == model.ExtraCommitTsID {
+			columns = append(columns, model.NewExtraCommitTsColInfo())
 		} else {
 			columns = append(columns, model.FindColumnInfoByID(tableColumns, col.ID))
 		}

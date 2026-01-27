@@ -74,12 +74,35 @@ func AddExtraPhysTblIDColumn(sctx base.PlanContext, columns []*model.ColumnInfo,
 	if model.FindColumnInfoByID(columns, model.ExtraPhysTblID) != nil {
 		return columns, schema, false
 	}
-	columns = append(columns, model.NewExtraPhysTblIDColInfo())
-	schema.Append(&expression.Column{
+	colInfo := model.NewExtraPhysTblIDColInfo()
+	colExpr := &expression.Column{
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraPhysTblID,
-	})
+	}
+
+	// Keep `_tidb_commit_ts` as the last extra column, so insert `_tidb_tid`
+	// before it when `_tidb_commit_ts` is already requested.
+	commitTsOffset := -1
+	for i := len(columns) - 1; i >= 0; i-- {
+		if columns[i].ID == model.ExtraCommitTsID {
+			commitTsOffset = i
+			break
+		}
+	}
+	if commitTsOffset == -1 || commitTsOffset >= len(schema.Columns) {
+		columns = append(columns, colInfo)
+		schema.Append(colExpr)
+		return columns, schema, true
+	}
+
+	columns = append(columns, nil)
+	copy(columns[commitTsOffset+1:], columns[commitTsOffset:])
+	columns[commitTsOffset] = colInfo
+
+	schema.Columns = append(schema.Columns, nil)
+	copy(schema.Columns[commitTsOffset+1:], schema.Columns[commitTsOffset:])
+	schema.Columns[commitTsOffset] = colExpr
 	return columns, schema, true
 }
 

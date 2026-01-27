@@ -308,7 +308,7 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
-	if colName := colDef.Name.Name.L; colName == model.ExtraHandleName.L {
+	if colName := colDef.Name.Name.L; colName == model.ExtraHandleName.L || colName == model.ExtraCommitTsName.L {
 		return nil, nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(colName)
 	}
 

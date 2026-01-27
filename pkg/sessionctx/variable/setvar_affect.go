@@ -34,6 +34,7 @@ var isHintUpdatableVerified = map[string]struct{}{
 	// This var is used during the planner's preprocess phase. Need to fix its behavior.
 	// "tidb_read_staleness":                              {},
 	"tidb_enable_paging":                              {},
+	"tidb_enable_materialized_view_demo":              {},
 	"tidb_read_consistency":                           {},
 	"tidb_distsql_scan_concurrency":                   {},
 	"tidb_opt_insubq_to_join_and_agg":                 {},
