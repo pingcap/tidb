@@ -498,17 +498,17 @@ func TestResourceGroupRunawayFlood(t *testing.T) {
 	// wait for the runaway watch to be cleaned up
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, repeats from mysql.tidb_runaway_queries", nil,
 		nil, maxWaitDuration, tryInterval)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush", `return(1)`))
 	// check thrice to make sure the runaway query be regarded as a repeated query.
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.2) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.3) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
-	// using FastRunawayGC to trigger flush
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	err = tk.QueryToErr("select /*+ resource_group(rg1) */ sleep(0.4) from t")
 	require.ErrorContains(t, err, "Query execution was interrupted, identified as runaway query")
+	// resume the flush to ensure an aggregated record can be queried later.
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/skipFlush"))
 	// only have one runaway query
 	tk.EventuallyMustQueryAndCheck("select SQL_NO_CACHE resource_group_name, sample_sql, repeats, match_type from mysql.tidb_runaway_queries", nil,
 		testkit.Rows("rg1 select /*+ resource_group(rg1) */ sleep(0.2) from t 3 identify"), maxWaitDuration, tryInterval)

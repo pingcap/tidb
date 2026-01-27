@@ -85,6 +85,9 @@ func (f *batchFlusher[K, V]) add(key K, value V) {
 }
 
 func (f *batchFlusher[K, V]) flush() {
+	failpoint.Inject("skipFlush", func() {
+		failpoint.Return()
+	})
 	if len(f.buffer) == 0 {
 		return
 	}
