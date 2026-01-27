@@ -235,6 +235,16 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 				parentCols = append(parentCols, expression.ExtractColumns(byItem.Expr)...)
 			}
 		}
+		// Include columns required by subqueries (appear as correlated columns in child subtree)
+		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
+		// to enable outer join elimination when correlated subqueries exist in the aggregation
+		if len(x.Children()) > 0 {
+			x.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptEnableNoDecorrelateInSelect)
+			if x.SCtx().GetSessionVars().EnableNoDecorrelateInSelect {
+				corCols := coreusage.ExtractCorrelatedCols4LogicalPlan(x.Children()[0])
+				parentCols = appendUniqueCorrelatedCols(parentCols, corCols)
+			}
+		}
 	default:
 		parentCols = append(parentCols[:0], p.Schema().Columns...)
 	}
