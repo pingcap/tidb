@@ -103,7 +103,7 @@ function cleanup() {
     done
 }
 
-trap cleanup EXIT
+trap cleanup EXIT INT TERM
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -223,7 +223,7 @@ function alloc_port() {
     local start=${1:-$NEXT_PORT}
     local port
 
-    port=$(find_available_port "$start") || exit 1
+    port=$(reserve_port "auto" "$start") || exit 1
     NEXT_PORT=$((port + 1))
     ALLOCATED_PORT=$port
 }
