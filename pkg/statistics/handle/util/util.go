@@ -185,6 +185,7 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 	sctx.GetSessionVars().LockWaitTimeout = lockWaitSec * 1000
 
 	// timezone setting
+	// timezone used to datetime/timestamp conversion when collecting stats.
 	globalTZ, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(vardef.TimeZone)
 	if err != nil {
 		return err
