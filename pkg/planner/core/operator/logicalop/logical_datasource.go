@@ -203,8 +203,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 				continue
 			}
 			// TODO: investigate why we cannot use slices.Delete for these two:
-			ds.Schema().Columns = append(ds.Schema().Columns[:i], ds.Schema().Columns[i+1:]...)
-			ds.Columns = append(ds.Columns[:i], ds.Columns[i+1:]...)
+			ds.Schema().Columns = slices.Delete(ds.Schema().Columns, i, i+1)
+			ds.Columns = slices.Delete(ds.Columns, i, i+1)
 		}
 	}
 	addOneHandle := false
