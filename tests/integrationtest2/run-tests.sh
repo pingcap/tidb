@@ -604,7 +604,7 @@ function start_minio() {
     }
     mc_bin=$(resolve_bin "$MINIO_MC_BIN" || true)
 
-    if lsof -i ":$MINIO_PORT" &> /dev/null; then
+    if wait_for_port_ready "127.0.0.1" "$MINIO_PORT" "MinIO" "" 1; then
         echo "MinIO port $MINIO_PORT already in use; assuming MinIO is running"
         return 0
     fi
@@ -687,7 +687,7 @@ function start_tidb_cluster()
 	start_tikv_server $pd_client_port $tikv_port $tikv_status_port $TIKV_DATA_DIR $TIKV_LOG_FILE
 
     if [ -n "${TIDB_PORT:-}" ]; then
-        if lsof -i :"${TIDB_PORT}" &> /dev/null; then
+        if wait_for_port_ready "127.0.0.1" "$TIDB_PORT" "TiDB" "" 1; then
             echo "Error: TIDB_PORT ${TIDB_PORT} is in use." >&2
             exit 1
         fi
@@ -797,8 +797,8 @@ fi
 if [ ${#tici_cases[@]} -ne 0 ]; then
     prepare_tici_config
     start_minio
-    start_tiflash_server
     start_tici_server
+    start_tiflash_server
 fi
 
 if [ ${#ticdc_cases[@]} -ne 0 ] || [ ${#tici_cases[@]} -ne 0 ]; then
