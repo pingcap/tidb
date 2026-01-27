@@ -1223,24 +1223,6 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// minimum of oneValue, and return the max as worst case.
 		histInvalid = true
 	}
-	// For datetime columns, cap the right side to now() to ensure reasonable estimates
-	// for future-dated ranges (e.g., '2023-01-01' to '9999-12-31')
-	if lDatum.Kind() == types.KindMysqlTime {
-		nowTime, err := sctx.GetExprCtx().GetEvalCtx().CurrentTime()
-		if err == nil {
-			// Convert now() to scalar value using the same conversion as the predicate
-			nowDatum := types.NewTimeDatum(types.NewTime(types.FromGoTime(nowTime), mysql.TypeDatetime, types.DefaultFsp))
-			nowScalar := convertDatumToScalar(&nowDatum, commonPrefix)
-			// Cap r to now() to prevent unreasonably high estimates for future dates
-			if l < nowScalar {
-				r = math.Min(r, nowScalar)
-				predWidth = r - l
-			}
-		} else {
-			// Log warning but continue without the "cap to now()" optimization
-			statslogutil.StatsLogger().Warn("failed to get current time for datetime range estimation, continuing without capping to now()", zap.Error(err))
-		}
-	}
 
 	// Step 6: Convert the lower and upper bound of the histogram to scalar value(float64)
 	histL := convertDatumToScalar(hg.GetLower(0), commonPrefix)
@@ -1258,7 +1240,55 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	var leftPercent, rightPercent, timeAdjRight, estRows float64
 
-	// Step 7: Calculate the percentage on the left/right that we are searching.
+	// Step 7: Perform special processing for datetime type. Datetime datatypes have
+	// some unique characteristics that require special handling.
+	if !histInvalid && lDatum.Kind() == types.KindMysqlTime {
+		/* Time decay scenario:
+					│  \
+					│    \
+					|   |xx\
+					│   |xx| \
+					│   |xx|  \
+					┴──────────┴─────
+					▲   ▲  ▲   ▲
+					│   │  │   │
+				histR   │  │ boundR
+					    │  │
+					lDatum  rDatum
+		Over time, if statistics are NOT recollected - that is, histR stays
+		the same, but the predicate range moves to the right - the percentage
+		of the shaded area on the left side will decrease.
+		The following will recalculate the percentage assuming a uniform distribution
+		which does not assume a "decaying triangle" distribution.
+		Time decay is limited to datetime datatype on the right side of the histogram,
+		since datetime predicates are most likely to be affected by time decay.
+		*/
+		if l > histR {
+			// Predicate entirely on the right side of the histogram envelope.
+			timeEntirelyOutOfRange = true
+			timeAdjRight = calculateTimeAdjustmentRight(predWidth, histWidth)
+		}
+		// Cap the right side to now() to ensure reasonable estimates
+		// for future-dated ranges (e.g., '2023-01-01' to '9999-12-31')
+		// TODO: This only works for predicates where the lower portion is less than now().
+		//       Consider how to solve this when lower is also greater than now().
+		nowTime, err := sctx.GetExprCtx().GetEvalCtx().CurrentTime()
+		if err == nil {
+			// Convert now() to scalar value using the same conversion as the predicate
+			nowDatum := types.NewTimeDatum(types.NewTime(types.FromGoTime(nowTime), mysql.TypeDatetime, types.DefaultFsp))
+			nowScalar := convertDatumToScalar(&nowDatum, commonPrefix)
+			// Cap r to now() to prevent unreasonably high estimates for future dates
+			if l < nowScalar {
+				r = math.Min(r, nowScalar)
+				predWidth = r - l
+			}
+		} else {
+			// Log warning but continue without the "cap to now()" optimization
+			statslogutil.StatsLogger().Warn("failed to get current time for datetime range estimation, continuing without capping to now()", zap.Error(err))
+		}
+	}
+
+	// Step 8: Calculate the percentage on the left/right that we are searching.
 	// Only attempt to calculate the ranges if the histogram is valid
 	// TODO: If isNegative is true and this is types.KindMysqlTime, we should consider
 	// that the deleted rows are likely to be on the left side of the histogram.
@@ -1268,40 +1298,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 		// Calculate right overlap percentage if the range overlaps with (histR, boundR)
 		rightPercent = calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
-
-		/*
-						Time decay scenario:
-						│  \
-						│    \
-						|   |xx\
-						│   |xx| \
-						│   |xx|  \
-						┴──────────┴─────
-						▲   ▲  ▲   ▲
-						│   │  │   │
-					histR   │  │ boundR
-						    │  │
-						lDatum  rDatum
-			Over time, if statistics are NOT recollected - that is, histR stays
-			the same, but the predicate range moves to the right - the percentage
-			of the shaded area on the left side will decrease.
-			The following will recalculate the percentage assuming a uniform distribution
-			which does not assume a "decaying triangle" distribution.
-			Time decay is limited to datetime datatype on the right side of the histogram,
-			since datetime predicates are most likely to be affected by time decay.
-		*/
-		if lDatum.Kind() == types.KindMysqlTime {
-			// Calculate percentage assuming time decay is not present.
-			if l > histR {
-				// Predicate entirely on the right side of the histogram envelope.
-				timeEntirelyOutOfRange = true
-				//timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
-				timeAdjRight = calculateTimeAdjustmentRight(predWidth, histWidth)
-			}
-		}
 	}
 
-	// Step 8: Calculate the total percentage of the out-of-range rows.
+	// Step 9: Calculate the total percentage of the out-of-range rows.
 	// totalPercent is used for the average estimate (estRows)
 	// maxTotalPercent is used for the maximum estimate (maxAddedRows) - updated for timeEntirelyOutOfRange
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
@@ -1329,7 +1328,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		maxAddedRows *= maxTotalPercent
 	}
 
-	// Step 9: Evaluate the skew ratio to determine its impact on the returned estimate.
+	// Step 10: Evaluate the skew ratio to determine its impact on the returned estimate.
 	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 	// If the skew ratio > 0, we want to allow the ratio to scale from min to max.
