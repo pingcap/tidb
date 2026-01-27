@@ -439,7 +439,6 @@ function make_tiflash_config_for_tici() {
     : "${TIDB_STATUS_ADDR:=127.0.0.1:10080}"
     : "${TIFLASH_LOG_PATH:=./logs/tiflash-stdout.log}"
     : "${TIFLASH_ERROR_LOG_PATH:=./logs/tiflash-stderr.log}"
-    : "${TIFLASH_PROXY_CONFIG:=$TICI_CONFIG_DIR/tiflash-learner.toml}"
     : "${TIFLASH_PROXY_LOG_FILE:=./logs/tiflash-proxy.log}"
     : "${TIFLASH_PROXY_DATA_DIR:=$TIFLASH_DATA_DIR/proxy}"
     : "${TIFLASH_PROXY_SERVER_ADDR:=0.0.0.0:20170}"
@@ -448,7 +447,23 @@ function make_tiflash_config_for_tici() {
     : "${TIFLASH_PROXY_ENGINE_ADDR:=127.0.0.1:3930}"
     : "${TIFLASH_PROXY_RESERVE_SPACE:=1KB}"
     : "${TIFLASH_STORAGE_DIR:=$TIFLASH_DATA_DIR}"
+    : "${TIFLASH_PROXY_CONFIG:=$TICI_CONFIG_DIR/tiflash-learner.toml}"
     mkdir -p "$TICI_CONFIG_DIR"
+
+    cat > "$TIFLASH_PROXY_CONFIG" <<EOF
+[rocksdb]
+wal-dir = ""
+
+[server]
+addr = "${TIFLASH_PROXY_SERVER_ADDR}"
+advertise-addr = "${TIFLASH_PROXY_ADVERTISE_ADDR}"
+status-addr = "${TIFLASH_PROXY_STATUS_ADDR}"
+engine-addr = "${TIFLASH_PROXY_ENGINE_ADDR}"
+
+[storage]
+data-dir = "${TIFLASH_PROXY_DATA_DIR}"
+reserve-space = "${TIFLASH_PROXY_RESERVE_SPACE}"
+EOF
 
     cat > "$TICI_CONFIG_DIR/tiflash.toml" <<EOF
 listen_host = "${TIFLASH_LISTEN_HOST}"
