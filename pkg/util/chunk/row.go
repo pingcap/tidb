@@ -269,14 +269,8 @@ func (r Row) ToString(ft []*types.FieldType) string {
 
 // SerializeToBytesForOneColumn serializes value to bytes for one specified column
 func (r Row) SerializeToBytesForOneColumn(typeCtx types.Context, ft *types.FieldType, colIdx int, collator collate.Collator) ([]byte, error) {
-	// Commonly, we need another mechanism to distingush between null value and normal value.
-	// For convenience of implementation, we see null value as string "#$^NULL@*^", this string
-	// is hard to be same with other user's input string. Moreover, it's ok when user's input string
-	// is equal to this nullValue string as correctness can still be guaranteed. Because in this
-	// circumstance topn will fetch more rows, and more input rows will not affect the final result.
-	nullValue := "#$^NULL@*^"
 	if r.IsNull(colIdx) {
-		return hack.Slice(nullValue), nil
+		panic("Can not handle null")
 	}
 
 	switch ft.GetType() {
@@ -342,8 +336,6 @@ func (r Row) SerializeToBytesForOneColumn(typeCtx types.Context, ft *types.Field
 		jsonHashBuffer := make([]byte, 0)
 		jsonHashBuffer = r.c.columns[colIdx].GetJSON(r.idx).HashValue(jsonHashBuffer)
 		return jsonHashBuffer, nil
-	case mysql.TypeNull:
-		return hack.Slice(nullValue), nil
 	default:
 		return nil, errors.Errorf("unsupport column type for encode %d", ft.GetType())
 	}

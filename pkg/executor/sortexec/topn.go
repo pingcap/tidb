@@ -39,6 +39,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
+type truncateKey struct {
+	val    string
+	isNull bool
+}
+
 // TopNExec implements a Top-N algorithm and it is built from a SELECT statement with ORDER BY and LIMIT.
 // Instead of sorting all the rows fetched from the table, it keeps the Top-N elements only in a heap to reduce memory usage.
 type TopNExec struct {
@@ -82,7 +87,7 @@ type TopNExec struct {
 	truncateFieldCollators      []collate.Collator
 	truncateKeyColIdxs          []int
 	truncateKeyPrefixCharCounts []int
-	prevTruncateKeys            []string
+	prevTruncateKeys            []truncateKey
 	truncateKeyCount            int
 }
 
@@ -425,22 +430,26 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 	return nil
 }
 
-func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]string, error) {
-	prefixKeys := make([]string, 0, e.truncateKeyCount)
+func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
+	prefixKeys := make([]truncateKey, 0, e.truncateKeyCount)
 	for i := range e.truncateFieldCollators {
 		if e.truncateKeyPrefixCharCounts[i] == -1 {
-			bytes, err := row.SerializeToBytesForOneColumn(
-				e.typeCtx,
-				e.truncateFieldTypes[i],
-				e.truncateKeyColIdxs[i],
-				e.truncateFieldCollators[i])
-			if err != nil {
-				return nil, err
+			if row.IsNull(e.truncateKeyColIdxs[i]) {
+				prefixKeys = append(prefixKeys, truncateKey{isNull: true})
+			} else {
+				bytes, err := row.SerializeToBytesForOneColumn(
+					e.typeCtx,
+					e.truncateFieldTypes[i],
+					e.truncateKeyColIdxs[i],
+					e.truncateFieldCollators[i])
+				if err != nil {
+					return nil, err
+				}
+				prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(bytes))})
 			}
-			prefixKeys = append(prefixKeys, string(hack.String(bytes)))
 		} else {
 			key := row.GetString(e.truncateKeyColIdxs[i])
-			prefixKeys = append(prefixKeys, string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.truncateKeyPrefixCharCounts[i]))))
+			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.truncateKeyPrefixCharCounts[i])))})
 		}
 	}
 	return prefixKeys, nil
