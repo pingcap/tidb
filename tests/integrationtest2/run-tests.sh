@@ -863,7 +863,7 @@ function start_tici_server() {
     echo "Starting tici meta..."
     (
         cd "$SCRIPT_DIR/logs"
-        "$tici_bin" meta --config "$meta_config" \
+        exec "$tici_bin" meta --config "$meta_config" \
             --host "$meta_host" \
             --port "$meta_port" \
             --status-port "$meta_status_port" \
@@ -878,7 +878,7 @@ function start_tici_server() {
     echo "Starting tici worker..."
     (
         cd "$SCRIPT_DIR/logs"
-        "$tici_bin" worker --config "$worker_config" \
+        exec "$tici_bin" worker --config "$worker_config" \
             --host "$worker_host" \
             --port "$worker_port" \
             --status-port "$worker_status_port" \
