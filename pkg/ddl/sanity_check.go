@@ -238,9 +238,10 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 			}
 		case model.ActionCreateTable:
 			_, isCreateTable := st.(*ast.CreateTableStmt)
-			// MV demo DDL currently reuses ActionCreateTable to create MV log physical tables.
+			// MV demo DDL currently reuses ActionCreateTable to create MV/MV log physical tables.
 			_, isCreateMVLog := st.(*ast.CreateMaterializedViewLogStmt)
-			if !isCreateTable && !isCreateMVLog {
+			_, isCreateMV := st.(*ast.CreateMaterializedViewStmt)
+			if !isCreateTable && !isCreateMVLog && !isCreateMV {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateSchema:

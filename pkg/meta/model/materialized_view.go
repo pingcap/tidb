@@ -17,6 +17,8 @@ type MaterializedViewInfo struct {
 	RefreshMode   MaterializedViewRefreshMode `json:"refresh_mode,omitempty"`
 
 	RefreshIntervalSeconds int64 `json:"refresh_interval_seconds"`
+
+	GroupByColumnIDs []int64 `json:"group_by_column_ids,omitempty"`
 }
 
 func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
@@ -24,6 +26,10 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 		return nil
 	}
 	ni := *i
+	if i.GroupByColumnIDs != nil {
+		ni.GroupByColumnIDs = make([]int64, len(i.GroupByColumnIDs))
+		copy(ni.GroupByColumnIDs, i.GroupByColumnIDs)
+	}
 	return &ni
 }
 
