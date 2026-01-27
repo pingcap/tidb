@@ -29,7 +29,7 @@ create table t(a bit(32) default b'1100010001001110011000100100111');
 insert into t values ();
 select hex(a) from t;
 
-# TestPartialIndexOnDuplicateKeyUpdateOrReplace
+# TestPartialIndexOnDuplicateKeyUpdate
 drop table if exists t;
 create table t (a int, b int, c int, unique key testidx(c) where b > 2);
 insert into t values (1, 3, 1);

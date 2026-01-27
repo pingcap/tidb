@@ -235,7 +235,26 @@ drop table if exists t;
 create table t (col0 int, col1 int, key idx(col1) where col0 > 0);
 insert into t values (NULL, NULL);
 insert into t values (-1, -1);
-insert into t values (1, 1);
+insert into t values (1, 100);
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+col0	col1
+1	100
 admin recover index t idx;
 ADDED_COUNT	SCAN_COUNT
-0	1
+0	3
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+col0	col1
+1	100
+admin check index t idx;
+truncate table t;
+insert into t values (NULL, NULL);
+insert into t values (-1, -1);
+insert into t values (-2, -2);
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+col0	col1
+admin recover index t idx;
+ADDED_COUNT	SCAN_COUNT
+0	3
+select /*+ use_index(t, idx) */ * from t where col0 > 0;
+col0	col1
+admin check index t idx;
