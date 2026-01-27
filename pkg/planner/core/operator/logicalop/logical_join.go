@@ -265,34 +265,56 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
 func simplifyOuterJoin(p *LogicalJoin, predicates []expression.Expression) {
-	if p.JoinType != base.LeftOuterJoin && p.JoinType != base.RightOuterJoin && p.JoinType != base.InnerJoin {
-		return
-	}
+	innerTable := p.Children()[0]
+	outerTable := p.Children()[1]
+	switchChild := false
 
-	innerTable := p.children[0]
-	outerTable := p.children[1]
 	if p.JoinType == base.LeftOuterJoin {
 		innerTable, outerTable = outerTable, innerTable
+		switchChild = true
 	}
 
-	if p.JoinType == base.InnerJoin {
-		return
-	}
-	// then simplify embedding outer join.
-	canBeSimplified := false
-	for _, expr := range predicates {
-		// avoid the case where the expr only refers to the schema of outerTable
-		if expression.ExprFromSchema(expr, outerTable.Schema()) {
-			continue
+	// ---- step 1. Convert OUTER→INNER only if there's an explicit NOT IS NULL
+	// on the nullable side (inner side of the outer join). ----
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+		innerSch := innerTable.Schema() // schema of the nullable side
+		innerWhere := filterPredsInvolvingSchema(predicates, innerSch)
+		canBeSimplified := false
+		for _, expr := range innerWhere {
+			isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
+			if isOk {
+				canBeSimplified = true
+				break
+			}
 		}
-		isOk := util.IsNullRejected(p.SCtx(), innerTable.Schema(), expr, true)
-		if isOk {
-			canBeSimplified = true
-			break
+		if canBeSimplified {
+			p.JoinType = base.InnerJoin
 		}
 	}
-	if canBeSimplified {
-		p.JoinType = base.InnerJoin
+
+	// ---- step 2. Combine ON clause and predicates, then simplify join children. ----
+	combinedCond := mergeOnClausePredicates(p, predicates)
+
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
+		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
+	} else if p.JoinType == base.InnerJoin || p.JoinType == base.SemiJoin {
+		innerTable = innerTable.ConvertOuterToInnerJoin(combinedCond)
+		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
+	} else if p.JoinType == base.AntiSemiJoin {
+		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
+		outerTable = outerTable.ConvertOuterToInnerJoin(combinedCond)
+	} else {
+		innerTable = innerTable.ConvertOuterToInnerJoin(predicates)
+		outerTable = outerTable.ConvertOuterToInnerJoin(predicates)
+	}
+
+	if switchChild {
+		p.SetChild(0, outerTable)
+		p.SetChild(1, innerTable)
+	} else {
+		p.SetChild(0, innerTable)
+		p.SetChild(1, outerTable)
 	}
 }
 
