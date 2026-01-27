@@ -395,7 +395,6 @@ func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
 	// Force the system time zone to America/New_York (UTC-4) to simulate contamination.
 	// This must happen before bootstrap because SetSystemTZ is guarded by sync.Once.
 	timeutil.SetSystemTZ("America/New_York")
-	time.Local, _ = time.LoadLocation("America/New_York")
 
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
