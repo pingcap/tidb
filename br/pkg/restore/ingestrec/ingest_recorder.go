@@ -247,3 +247,66 @@ func (i *IngestRecorder) IterateForeignKeys(f func(*ForeignKeyRecord) error) err
 	}
 	return nil
 }
+
+// CountItems counts the total ingested indexes across all tables.
+func CountItems(items map[int64]map[int64]bool) int {
+	total := 0
+	for _, indexMap := range items {
+		total += len(indexMap)
+	}
+	return total
+}
+
+// ExportItems returns a snapshot of ingest items keyed by table ID and index ID.
+func (i *IngestRecorder) ExportItems() map[int64]map[int64]bool {
+	items := make(map[int64]map[int64]bool, len(i.items))
+	for tableID, indexes := range i.items {
+		if len(indexes) == 0 {
+			continue
+		}
+		tableItems := make(map[int64]bool, len(indexes))
+		for indexID, info := range indexes {
+			if info == nil {
+				continue
+			}
+			tableItems[indexID] = info.IsPrimary
+		}
+		if len(tableItems) > 0 {
+			items[tableID] = tableItems
+		}
+	}
+	return items
+}
+
+// MergeItems merges the provided ingest items into the recorder.
+func (i *IngestRecorder) MergeItems(items map[int64]map[int64]bool) {
+	if len(items) == 0 {
+		return
+	}
+	if i.items == nil {
+		i.items = make(map[int64]map[int64]*IngestIndexInfo)
+	}
+	for tableID, indexMap := range items {
+		if len(indexMap) == 0 {
+			continue
+		}
+		tableIndexes, exists := i.items[tableID]
+		if !exists {
+			tableIndexes = make(map[int64]*IngestIndexInfo, len(indexMap))
+			i.items[tableID] = tableIndexes
+		}
+		for indexID, isPrimary := range indexMap {
+			info, exists := tableIndexes[indexID]
+			if !exists {
+				tableIndexes[indexID] = &IngestIndexInfo{
+					IsPrimary: isPrimary,
+					Updated:   false,
+				}
+				continue
+			}
+			if isPrimary && !info.IsPrimary {
+				info.IsPrimary = true
+			}
+		}
+	}
+}
