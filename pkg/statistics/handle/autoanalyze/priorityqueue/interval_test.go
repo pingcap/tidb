@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics/handle/autoanalyze/priorityqueue"
 	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -390,10 +391,15 @@ func insertFailedJobWithStartTime(
 	}
 }
 
-func TestLastFailedAnalysisDurationResetsTimeZoneOnReuse(t *testing.T) {
+func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
+	// Force the system time zone to America/New_York (UTC-4) to simulate contamination.
+	// This must happen before bootstrap because SetSystemTZ is guarded by sync.Once.
+	timeutil.SetSystemTZ("America/New_York")
+
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.time_zone='Asia/Shanghai'") // UTC+8
+	// Set the global time zone so sessions should follow it.
+	tk.MustExec("set @@global.time_zone='Europe/Berlin';")
 
 	h := dom.StatsHandle()
 	pool := h.SPool()
@@ -415,17 +421,9 @@ func TestLastFailedAnalysisDurationResetsTimeZoneOnReuse(t *testing.T) {
 	// Step 3: Mark the job as failed.
 	h.FinishAnalyzeJob(job, errors.New("test error"), statistics.TableAnalysisJob)
 
-	// Step 4: Set the session timezone to UTC to simulate contamination.
-	// The global timezone is Asia/Shanghai (UTC+8), so this creates a mismatch.
-	// require.NoError(t, pool.WithSession(func(se *syssession.Session) error {
-	// 	return se.WithSessionContext(func(sctx sessionctx.Context) error {
-	// 		return sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "UTC")
-	// 	})
-	// }))
-
-	// Step 5: Query with the same pool using GetLastFailedAnalysisDuration.
-	// If the session timezone is not reset to match the global timezone (Asia/Shanghai),
-	// the duration calculation will be wrong.
+	// Step 4: Query via the stats session pool.
+	// The session should reset its time zone to the global value (Europe/Berlin).
+	// If it keeps the contaminated system time zone, the duration can be skewed.
 	var dur time.Duration
 	err := statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		var err error
@@ -433,10 +431,8 @@ func TestLastFailedAnalysisDurationResetsTimeZoneOnReuse(t *testing.T) {
 		return err
 	})
 	require.NoError(t, err)
-	// If timezone was properly reset to Asia/Shanghai, the duration should be positive
-	// and reasonable (less than an hour since we just inserted).
-	// If timezone was NOT reset from the contaminated UTC state, the duration would
-	// be incorrect due to timezone mismatch.
+	// When the time zone is correctly reset, the duration should be positive and small
+	// (we just inserted the job).
 	require.Greater(t, dur, time.Duration(0), "duration should be positive; negative means timezone was not reset")
-	require.Less(t, dur, time.Hour, "duration should be less than an hour")
+	require.Less(t, dur, time.Minute, "duration should be less than an hour")
 }
