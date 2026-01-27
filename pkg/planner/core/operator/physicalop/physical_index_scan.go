@@ -636,7 +636,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 }
 
 // GetOriginalPhysicalIndexScan creates a new PhysicalIndexScan from the given DataSource and AccessPath.
-// needKeepOrder handles both normal sort (SortItems) and partial order (PartialOrderInfo)
+// needKeepOrder indicates whether the index scan should maintain order (true for both normal sorting via SortItems and partial order via PartialOrderInfo)
 func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool, needKeepOrder bool) *PhysicalIndexScan {
 	idx := path.Index
 	is := PhysicalIndexScan{
