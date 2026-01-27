@@ -268,6 +268,34 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	if exist {
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	schemaName := s.Table.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	ident.Schema = ast.NewCIStr(schemaName)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(schemaName), s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	meta := tbl.Meta()
+	if (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		obj := "materialized view"
+		if meta.IsMaterializedViewLog() {
+			obj = "materialized view log"
+		}
+		return errors.Errorf("truncate %s %s is not supported now", obj, meta.Name.O)
+	}
+	if !meta.IsMaterializedView() && !meta.IsMaterializedViewLog() {
+		if err := e.checkMVDemoBaseTableDDLGate(is, meta.ID, fmt.Sprintf("truncate table %s", meta.Name.O)); err != nil {
+			return err
+		}
+	}
+
 	err = e.ddlExecutor.TruncateTable(e.Ctx(), ident)
 	return err
 }
@@ -347,6 +375,24 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 
 	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
+}
+
+func (e *DDLExec) checkMVDemoBaseTableDDLGate(is infoschema.InfoSchema, baseTableID int64, action string) error {
+	logInfo, err := materializedview.FindLogTableInfo(is, baseTableID)
+	if err != nil {
+		return err
+	}
+	if logInfo != nil {
+		return errors.Errorf("cannot %s: materialized view log exists", action)
+	}
+	hasMV, err := materializedview.HasDependentMaterializedView(is, baseTableID)
+	if err != nil {
+		return err
+	}
+	if hasMV {
+		return errors.Errorf("cannot %s: dependent materialized view exists", action)
+	}
+	return nil
 }
 
 func (e *DDLExec) executeCreateMaterializedViewLog(s *ast.CreateMaterializedViewLogStmt) error {
@@ -480,14 +526,12 @@ func (e *DDLExec) executeDropMaterializedViewLog(s *ast.DropMaterializedViewLogS
 	}
 
 	// Refuse to drop if any MV depends on this base table.
-	tblInfos, err := is.SchemaTableInfos(context.Background(), schema)
+	hasMV, err := materializedview.HasDependentMaterializedView(is, baseInfo.ID)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	for _, tbl := range tblInfos {
-		if tbl != nil && tbl.IsMaterializedView() && tbl.MaterializedViewInfo.BaseTableID == baseInfo.ID {
-			return errors.New("cannot drop materialized view log: dependent materialized view exists")
-		}
+	if hasMV {
+		return errors.New("cannot drop materialized view log: dependent materialized view exists")
 	}
 
 	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
@@ -551,6 +595,43 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	currentDB := strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+
+	for _, tn := range s.Tables {
+		schemaName := tn.Schema.L
+		if schemaName == "" {
+			schemaName = currentDB
+		}
+		if schemaName == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schema := ast.NewCIStr(schemaName)
+
+		tbl, err := is.TableByName(context.Background(), schema, tn.Name)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) && s.IfExists {
+				continue
+			}
+			return errors.Trace(err)
+		}
+		meta := tbl.Meta()
+
+		if (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+			obj := "materialized view"
+			if meta.IsMaterializedViewLog() {
+				obj = "materialized view log"
+			}
+			return errors.Errorf("drop %s %s is not supported now", obj, meta.Name.O)
+		}
+		if meta.IsView() || meta.IsSequence() || meta.IsMaterializedView() || meta.IsMaterializedViewLog() {
+			continue
+		}
+		if err := e.checkMVDemoBaseTableDDLGate(is, meta.ID, fmt.Sprintf("drop table %s", meta.Name.O)); err != nil {
+			return err
+		}
+	}
+
 	return e.ddlExecutor.DropTable(e.Ctx(), s)
 }
 
@@ -596,6 +677,35 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 	}
 	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
+	}
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	schemaName := s.Table.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(schemaName), s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	meta := tbl.Meta()
+	if meta.IsView() || meta.IsSequence() {
+		return errors.Errorf("alter %s %s is not supported now", "table", meta.Name.O)
+	}
+	if (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		obj := "materialized view"
+		if meta.IsMaterializedViewLog() {
+			obj = "materialized view log"
+		}
+		return errors.Errorf("alter %s %s is not supported now", obj, meta.Name.O)
+	}
+	if !meta.IsMaterializedView() && !meta.IsMaterializedViewLog() {
+		if err := e.checkMVDemoBaseTableDDLGate(is, meta.ID, fmt.Sprintf("alter table %s", meta.Name.O)); err != nil {
+			return err
+		}
 	}
 
 	return e.ddlExecutor.AlterTable(ctx, e.Ctx(), s)

@@ -833,6 +833,22 @@ const (
 		value json NOT NULL,
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
+
+	// CreateMaterializedViewRefreshInfoTable is a system table for the MV demo to
+	// track refresh progress and scheduling.
+	CreateMaterializedViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.mv_refresh_info (
+		mv_id BIGINT NOT NULL PRIMARY KEY,
+		base_table_id BIGINT NOT NULL,
+		log_table_id BIGINT NOT NULL,
+		refresh_interval_seconds BIGINT NOT NULL,
+		next_run_time TIMESTAMP NULL DEFAULT NULL,
+		last_refresh_tso BIGINT UNSIGNED NOT NULL DEFAULT 0,
+		last_refresh_type ENUM('COMPLETE','FAST') NOT NULL DEFAULT 'COMPLETE',
+		last_refresh_result ENUM('SUCCESS','FAILED') NOT NULL DEFAULT 'SUCCESS',
+		last_refresh_time TIMESTAMP NULL DEFAULT NULL,
+		last_error TEXT DEFAULT NULL,
+		INDEX idx_base_table_id (base_table_id),
+		INDEX idx_next_run_time (next_run_time));`
 )
 
 // bootstrap initiates system DB for a store.
@@ -1243,6 +1259,9 @@ func doDDLWorks(s sessionapi.Session) {
 			mustExecute(s, tbl.SQL)
 		}
 	}
+	// MV demo system tables are created by DDL for both classic and nextgen to avoid
+	// depending on nextgen reserved IDs/versioned bootstrap tables.
+	mustExecute(s, CreateMaterializedViewRefreshInfoTable)
 	// Create bind_info table.
 	insertBuiltinBindInfoRow(s)
 	// Create `mysql.tidb_mdl_view` view.
