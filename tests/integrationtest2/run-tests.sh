@@ -216,8 +216,19 @@ function resolve_bin() {
     local bin="$1"
 
     if [[ -x "$bin" ]]; then
-        echo "$bin"
+        if [[ "$bin" = /* ]]; then
+            echo "$bin"
+        else
+            echo "$(cd "$(dirname "$bin")" && pwd)/$(basename "$bin")"
+        fi
         return 0
+    fi
+    if [[ "$bin" != /* ]]; then
+        local script_path="$SCRIPT_DIR/$bin"
+        if [[ -x "$script_path" ]]; then
+            echo "$script_path"
+            return 0
+        fi
     fi
     if command -v "$bin" >/dev/null 2>&1; then
         command -v "$bin"
@@ -225,6 +236,20 @@ function resolve_bin() {
     fi
 
     return 1
+}
+
+function resolve_path() {
+    local path="$1"
+
+    if [[ -z "$path" ]]; then
+        return 1
+    fi
+    if [[ "$path" = /* ]]; then
+        echo "$path"
+        return 0
+    fi
+    echo "$SCRIPT_DIR/$path"
+    return 0
 }
 
 function require_tici_binaries() {
@@ -623,6 +648,8 @@ function start_tici_server() {
     meta_log_file=${1:-$TICI_META_LOG_FILE}
     worker_log_file=${2:-$TICI_WORKER_LOG_FILE}
     local tici_bin
+    local meta_config
+    local worker_config
 
     tici_bin=$(resolve_bin "$TICI_BIN") || {
         echo "tici binary not found: $TICI_BIN" >&2
@@ -631,6 +658,21 @@ function start_tici_server() {
 
     if [ -z "$TICI_META_CONFIG" ] || [ -z "$TICI_WORKER_CONFIG" ]; then
         echo "tici meta/worker config is required: TICI_META_CONFIG, TICI_WORKER_CONFIG" >&2
+        exit 1
+    fi
+
+    meta_log_file=$(resolve_path "$meta_log_file")
+    worker_log_file=$(resolve_path "$worker_log_file")
+    meta_config=$(resolve_path "$TICI_META_CONFIG")
+    worker_config=$(resolve_path "$TICI_WORKER_CONFIG")
+    mkdir -p "$SCRIPT_DIR/logs" "$(dirname "$meta_log_file")" "$(dirname "$worker_log_file")"
+
+    if [ ! -f "$meta_config" ]; then
+        echo "tici meta config not found: $meta_config" >&2
+        exit 1
+    fi
+    if [ ! -f "$worker_config" ]; then
+        echo "tici worker config not found: $worker_config" >&2
         exit 1
     fi
 
@@ -649,7 +691,7 @@ function start_tici_server() {
     echo "Starting tici meta..."
     (
         cd "$SCRIPT_DIR/logs"
-        $tici_bin meta --config "$TICI_META_CONFIG" \
+        "$tici_bin" meta --config "$meta_config" \
             --host "$meta_host" \
             --port "$meta_port" \
             --status-port "$meta_status_port" \
@@ -663,7 +705,7 @@ function start_tici_server() {
     echo "Starting tici worker..."
     (
         cd "$SCRIPT_DIR/logs"
-        $tici_bin worker --config "$TICI_WORKER_CONFIG" \
+        "$tici_bin" worker --config "$worker_config" \
             --host "$worker_host" \
             --port "$worker_port" \
             --status-port "$worker_status_port" \
