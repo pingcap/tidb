@@ -94,8 +94,12 @@ func (ts *LogicalTableScan) DeriveStats(_ []*property.StatsInfo, _ *expression.S
 // ExtractColGroups inherits BaseLogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
-	ts.hasTiflash = ts.Source.GetHasTiFlash()
+func (ts *LogicalTableScan) PreparePossibleProperties(_ *expression.Schema, childs ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
+	hasTiflash := true
+	for _, child := range childs {
+		hasTiflash = hasTiflash && child.HasTiflash
+	}
+	ts.hasTiflash = hasTiflash
 	if ts.HandleCols != nil {
 		cols := make([]*expression.Column, ts.HandleCols.NumCols())
 		for i, c := range ts.HandleCols.IterColumns2() {
