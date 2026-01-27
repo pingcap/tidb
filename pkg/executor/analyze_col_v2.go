@@ -290,13 +290,14 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	})
 	err = taskEg.Wait()
 	if err != nil {
-		if intest.InTest && stderrors.Is(err, context.Canceled) {
+		if intest.InTest {
 			cause := context.Cause(taskCtx)
 			ctxErr := taskCtx.Err()
-			logutil.BgLogger().Info("analyze columns read task canceled",
+			logutil.BgLogger().Info("analyze columns read task failed",
 				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
 				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
 				zap.Error(err),
+				zap.Bool("isCtxCanceled", stderrors.Is(err, context.Canceled)),
 				zap.Error(cause),
 				zap.Error(ctxErr),
 				zap.Stack("stack"),
@@ -943,13 +944,14 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 
 		data, err := handler.nextRaw(ctx)
 		if err != nil {
-			if intest.InTest && stderrors.Is(err, context.Canceled) {
+			if intest.InTest {
 				cause := context.Cause(ctx)
 				ctxErr := ctx.Err()
-				logutil.BgLogger().Info("analyze columns nextRaw canceled",
+				logutil.BgLogger().Info("analyze columns nextRaw failed",
 					zap.Uint32("killSignal", sctx.GetSessionVars().SQLKiller.GetKillSignal()),
 					zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
 					zap.Error(err),
+					zap.Bool("isCtxCanceled", stderrors.Is(err, context.Canceled)),
 					zap.Error(cause),
 					zap.Error(ctxErr),
 					zap.Stack("stack"),
