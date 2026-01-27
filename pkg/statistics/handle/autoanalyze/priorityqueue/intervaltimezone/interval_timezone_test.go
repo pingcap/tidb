@@ -30,7 +30,7 @@ import (
 
 // TestLastFailedAnalysisDurationUseCorrectTimezone verifies that
 // GetLastFailedAnalysisDuration uses the correct time zone when calculating durations.
-// WARNING:Do not add other test cases to this file; it exists solely to cover time zone contamination.
+// WARNING: Do not add other test cases to this file; it exists solely to cover time zone contamination.
 // Additional tests here could be affected by the global system time zone.
 func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
 	// Force the system time zone to America/New_York (UTC-4) to simulate contamination.
