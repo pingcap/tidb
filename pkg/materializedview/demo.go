@@ -32,3 +32,31 @@ func FindLogTableInfoInSchema(is infoschema.InfoSchema, schema ast.CIStr, baseTa
 	}
 	return nil, nil
 }
+
+func FindLogTableInfo(is infoschema.InfoSchema, baseTableID int64) (*model.TableInfo, error) {
+	for _, db := range is.AllSchemas() {
+		tbl, err := FindLogTableInfoInSchema(is, db.Name, baseTableID)
+		if err != nil {
+			return nil, err
+		}
+		if tbl != nil {
+			return tbl, nil
+		}
+	}
+	return nil, nil
+}
+
+func HasDependentMaterializedView(is infoschema.InfoSchema, baseTableID int64) (bool, error) {
+	for _, db := range is.AllSchemas() {
+		tbls, err := is.SchemaTableInfos(context.Background(), db.Name)
+		if err != nil {
+			return false, err
+		}
+		for _, tbl := range tbls {
+			if tbl != nil && tbl.IsMaterializedView() && tbl.MaterializedViewInfo != nil && tbl.MaterializedViewInfo.BaseTableID == baseTableID {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
+}

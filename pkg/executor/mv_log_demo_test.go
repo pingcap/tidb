@@ -79,3 +79,28 @@ func TestMVDemoMVLogWritePathInsertOnDuplicateKeyUpdate(t *testing.T) {
 			"11 22 U N",
 		))
 }
+
+func TestMVDemoBaseTableDDLBlockedWhenMVLogExists(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("create table t3 (id int primary key, a int)")
+	tk.MustQuery("select count(*) from mysql.mv_refresh_info").Check(testkit.Rows("0"))
+
+	tk.MustExec("create materialized view log on t3(a)")
+	logTbl := getMVLogTableName(t, tk, "test", "t3")
+
+	tk.MustGetErrMsg("alter table t3 add column b int", "cannot alter table t3: materialized view log exists")
+	tk.MustGetErrMsg("truncate table t3", "cannot truncate table t3: materialized view log exists")
+	tk.MustGetErrMsg("drop table t3", "cannot drop table t3: materialized view log exists")
+
+	tk.MustGetErrMsg("truncate table "+logTbl, "truncate materialized view log "+logTbl+" is not supported now")
+	tk.MustGetErrMsg("drop table "+logTbl, "drop materialized view log "+logTbl+" is not supported now")
+
+	tk.MustExec("drop materialized view log on t3")
+	tk.MustExec("alter table t3 add column b int")
+	tk.MustExec("truncate table t3")
+	tk.MustExec("drop table t3")
+}
