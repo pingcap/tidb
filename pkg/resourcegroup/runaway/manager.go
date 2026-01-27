@@ -48,6 +48,8 @@ const (
 
 	runawayRecordGCBatchSize       = 100
 	runawayRecordGCSelectBatchSize = runawayRecordGCBatchSize * 5
+
+	watchRecordFlushInterval = time.Second
 )
 
 var sampleLogger = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "runaway"))
@@ -103,14 +105,13 @@ func NewRunawayManager(
 		ttlcache.WithDisableTouchOnHit[string, *QuarantineRecord](),
 	)
 	go watchList.Start()
-	staleQuarantineChan := make(chan *QuarantineRecord, maxWatchRecordChannelSize)
 	m := &Manager{
 		ResourceGroupCtl:      resourceGroupCtl,
 		watchList:             watchList,
 		serverID:              serverAddr,
 		runawayQueriesChan:    make(chan *Record, maxWatchRecordChannelSize),
 		quarantineChan:        make(chan *QuarantineRecord, maxWatchRecordChannelSize),
-		staleQuarantineRecord: staleQuarantineChan,
+		staleQuarantineRecord: make(chan *QuarantineRecord, maxWatchRecordChannelSize),
 		ActiveGroup:           make(map[string]int64),
 		MetricsMap:            generic.NewSyncMap[string, prometheus.Counter](8),
 		sysSessionPool:        pool,
@@ -130,7 +131,7 @@ func NewRunawayManager(
 		if i.Value().ID == 0 {
 			return
 		}
-		staleQuarantineChan <- i.Value()
+		m.staleQuarantineRecord <- i.Value()
 	})
 	m.runawaySyncer = newSyncer(pool, infoCache)
 
@@ -141,86 +142,94 @@ func NewRunawayManager(
 func (rm *Manager) RunawayRecordFlushLoop() {
 	defer util.Recover(metrics.LabelDomain, "runawayRecordFlushLoop", nil, false)
 
-	// this times used to batch flushing records, with 1s duration,
-	// we can guarantee a watch record can be seen by the user within 1s.
-	flushInteval, gcInteval := runawayRecordFlushInterval, runawayRecordGCInterval
+	runawayFlushInterval := runawayRecordFlushInterval
+	watchFlushInterval := watchRecordFlushInterval
+	gcInterval := runawayRecordGCInterval
+	batchSize := flushThreshold()
 	failpoint.Inject("FastRunawayGC", func() {
-		flushInteval = time.Millisecond * 50
-		gcInteval = time.Millisecond * 200
+		runawayFlushInterval = time.Millisecond * 50
+		watchFlushInterval = time.Millisecond * 50
+		gcInterval = time.Millisecond * 200
 	})
-	runawayRecordFlushTimer := time.NewTimer(flushInteval)
-	runawayRecordGCTicker := time.NewTicker(gcInteval)
 
-	fired := false
+	runawayRecordFlusher := newBatchFlusher(
+		"runaway-record",
+		runawayFlushInterval,
+		batchSize,
+		func(m map[recordKey]*Record, k recordKey, v *Record) {
+			if existing, ok := m[k]; ok {
+				existing.Repeats++
+			} else {
+				m[k] = v
+			}
+		},
+		genRunawayQueriesStmt,
+		rm.sysSessionPool,
+	)
+
+	quarantineRecordFlusher := newBatchFlusher(
+		"quarantine-record",
+		watchFlushInterval,
+		batchSize,
+		func(m map[string]*QuarantineRecord, k string, v *QuarantineRecord) {
+			if _, ok := m[k]; !ok {
+				m[k] = v
+			}
+		},
+		genBatchInsertWatchStmt,
+		rm.sysSessionPool,
+	)
+
+	staleQuarantineFlusher := newBatchFlusher(
+		"stale-quarantine-record",
+		watchFlushInterval,
+		batchSize,
+		func(m map[int64]*QuarantineRecord, k int64, v *QuarantineRecord) {
+			m[k] = v
+		},
+		genBatchDeleteWatchByIDStmt,
+		rm.sysSessionPool,
+	)
+
+	runawayRecordGCTicker := time.NewTicker(gcInterval)
 	recordCh := rm.runawayRecordChan()
 	quarantineRecordCh := rm.quarantineRecordChan()
 	staleQuarantineRecordCh := rm.staleQuarantineRecordChan()
-	flushThreshold := flushThreshold()
-	// recordMap is used to deduplicate records which will be inserted into `mysql.tidb_runaway_queries`.
-	recordMap := make(map[recordKey]*Record, flushThreshold)
-
-	flushRunawayRecords := func() {
-		if len(recordMap) == 0 {
-			return
-		}
-		sql, params := genRunawayQueriesStmt(recordMap)
-		if _, err := ExecRCRestrictedSQL(rm.sysSessionPool, sql, params); err != nil {
-			logutil.BgLogger().Error("flush runaway records failed", zap.Error(err), zap.Int("count", len(recordMap)))
-		}
-		// reset the map.
-		recordMap = make(map[recordKey]*Record, flushThreshold)
-	}
 
 	for {
 		select {
-		case <-rm.exit:
+		case <-rm.exit: // flush all remaining records before the loop exits
+			logutil.BgLogger().Info("flushing remaining runaway records before the loop exits")
+			runawayRecordFlusher.flush()
+			logutil.BgLogger().Info("flushing remaining quarantine records before the loop exits")
+			quarantineRecordFlusher.flush()
+			logutil.BgLogger().Info("flushing remaining stale quarantine records before the loop exits")
+			staleQuarantineFlusher.flush()
 			logutil.BgLogger().Info("runaway record flush loop exit")
 			return
-		case <-runawayRecordFlushTimer.C:
-			flushRunawayRecords()
-			fired = true
-		case r := <-recordCh:
+		case <-runawayRecordFlusher.timerChan(): // flush runaway records periodically
+			runawayRecordFlusher.onTimer()
+		case r := <-recordCh: // add runaway records to the flusher
 			key := recordKey{
 				ResourceGroupName: r.ResourceGroupName,
 				SQLDigest:         r.SQLDigest,
 				PlanDigest:        r.PlanDigest,
 				Match:             r.Match,
 			}
-			if _, exists := recordMap[key]; exists {
-				recordMap[key].Repeats++
-			} else {
-				recordMap[key] = r
-			}
-			failpoint.Inject("FastRunawayGC", func() {
-				flushRunawayRecords()
-			})
-			if len(recordMap) >= flushThreshold {
-				flushRunawayRecords()
-			} else if fired {
-				fired = false
-				// meet a new record, reset the timer.
-				runawayRecordFlushTimer.Reset(runawayRecordFlushInterval)
-			}
-		case <-runawayRecordGCTicker.C:
+			runawayRecordFlusher.add(key, r)
+		case <-runawayRecordGCTicker.C: // delete expired runaway records periodically
 			go rm.deleteExpiredRows(runawayRecordExpiredDuration)
-		case r := <-quarantineRecordCh:
-			go func() {
-				_, err := rm.AddRunawayWatch(r)
-				if err != nil {
-					logutil.BgLogger().Error("add runaway watch", zap.Error(err))
-				}
-			}()
-		case r := <-staleQuarantineRecordCh:
-			go func() {
-				for range 3 {
-					err := handleRemoveStaleRunawayWatch(rm.sysSessionPool, r)
-					if err == nil {
-						break
-					}
-					logutil.BgLogger().Error("remove stale runaway watch", zap.Error(err))
-					time.Sleep(time.Second)
-				}
-			}()
+		case <-quarantineRecordFlusher.timerChan(): // flush quarantine records periodically
+			quarantineRecordFlusher.onTimer()
+		case r := <-quarantineRecordCh: // add quarantine records to the flusher
+			quarantineRecordFlusher.add(r.getRecordKey(), r)
+		case <-staleQuarantineFlusher.timerChan(): // flush stale quarantine records periodically
+			staleQuarantineFlusher.onTimer()
+		case r := <-staleQuarantineRecordCh: // add stale quarantine records to the flusher
+			if r.ID == 0 {
+				continue
+			}
+			staleQuarantineFlusher.add(r.ID, r)
 		}
 	}
 }
