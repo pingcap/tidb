@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"math/rand/v2"
 )
 
 type Context struct {
@@ -37,6 +38,7 @@ func (c Context) SetSummary(summary any) {
 
 type TickContext struct {
 	Context
+	RNG *rand.Rand
 
 	UpdateStateFn func(json.RawMessage)
 }

@@ -49,7 +49,7 @@ type addIndexState struct {
 	Indexes []addIndexSpec `json:"indexes"`
 
 	Checksum TableChecksum `json:"checksum"`
-	LogDone  bool                `json:"log_done"`
+	LogDone  bool          `json:"log_done"`
 }
 
 type addIndexSummary struct {
@@ -72,7 +72,7 @@ func (s addIndexSummary) SummaryTable() string {
 			b.WriteString("\n  - ")
 			b.WriteString(idx.Name)
 			if len(idx.Columns) > 0 {
-				b.WriteString("(" + joinWithComma(idx.Columns) + ")")
+				b.WriteString("(" + strings.Join(idx.Columns, ",") + ")")
 			}
 		}
 	}
@@ -82,7 +82,7 @@ func (s addIndexSummary) SummaryTable() string {
 			b.WriteString("\n  - ")
 			b.WriteString(idx.Name)
 			if len(idx.Columns) > 0 {
-				b.WriteString("(" + joinWithComma(idx.Columns) + ")")
+				b.WriteString("(" + strings.Join(idx.Columns, ",") + ")")
 			}
 		}
 	}
@@ -147,82 +147,18 @@ func (c *AddIndexCase) Tick(ctx TickContext, raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return err
 	}
-	if st.N <= 0 {
-		st.N = 100
-	}
-	if st.NR <= 0 {
-		st.NR = 150
-	}
-	if st.NextIndexID < len(st.Indexes) {
-		st.NextIndexID = len(st.Indexes)
-	}
-
-	// Insert data each tick.
-	v := int64(st.Inserted)
-	if _, err := ctx.DB.ExecContext(ctx, "INSERT INTO "+QTable(st.DB, st.Table)+" (a,b,c,d,e) VALUES (?,?,?,?,?)",
-		v, v*7+1, v*11+2, v*13+3, v*17+4,
-	); err != nil {
-		return err
-	}
-	st.Inserted++
+	normalizeAddIndexState(&st)
 
 	tickNo := st.Ticked + 1
 
-	// Every N ticks, add a new index on 1~3 columns.
-	if st.N > 0 && tickNo%st.N == 0 {
-		allCols := []string{"a", "b", "c", "d", "e"}
-		idxID := st.NextIndexID
-		idxName := fmt.Sprintf("idx_%d", idxID)
-
-		colN := 1 + (idxID % 3)
-		start := idxID % len(allCols)
-		cols := make([]string, 0, colN)
-		for i := 0; i < colN; i++ {
-			cols = append(cols, allCols[(start+i)%len(allCols)])
-		}
-
-		exists, err := IndexExists(ctx, ctx.DB, st.DB, st.Table, idxName)
-		if err != nil {
-			return err
-		}
-		if !exists {
-			colSQL := make([]string, 0, len(cols))
-			for _, c := range cols {
-				colSQL = append(colSQL, QIdent(c))
-			}
-			stmt := "CREATE INDEX " + QIdent(idxName) + " ON " + QTable(st.DB, st.Table) + " (" + joinWithComma(colSQL) + ")"
-			if _, err := ctx.DB.ExecContext(ctx, stmt); err != nil {
-				return err
-			}
-		}
-
-		spec := addIndexSpec{Name: idxName, Columns: cols}
-		if !hasAddIndexSpec(st.Indexes, idxName) {
-			st.Indexes = append(st.Indexes, spec)
-		}
-		if !hasAddIndexSpec(c.indexesAdded, idxName) {
-			c.indexesAdded = append(c.indexesAdded, spec)
-		}
-		st.NextIndexID++
+	if err := addIndexInsertRow(ctx, &st); err != nil {
+		return err
 	}
-
-	// Every NR ticks, randomly drop an index.
-	if st.NR > 0 && tickNo%st.NR == 0 && len(st.Indexes) > 0 {
-		idx := pickIndex(st.Ticked, len(st.Indexes))
-		dropSpec := st.Indexes[idx]
-
-		exists, err := IndexExists(ctx, ctx.DB, st.DB, st.Table, dropSpec.Name)
-		if err != nil {
-			return err
-		}
-		if exists {
-			stmt := "DROP INDEX " + QIdent(dropSpec.Name) + " ON " + QTable(st.DB, st.Table)
-			if _, err := ctx.DB.ExecContext(ctx, stmt); err != nil {
-				return err
-			}
-		}
-		c.indexesDropped = append(c.indexesDropped, dropSpec)
-		st.Indexes = append(st.Indexes[:idx], st.Indexes[idx+1:]...)
+	if err := c.maybeAddIndex(ctx, &st, tickNo); err != nil {
+		return err
+	}
+	if err := c.maybeDropIndex(ctx, &st, tickNo); err != nil {
+		return err
 	}
 
 	st.Ticked++
@@ -311,16 +247,88 @@ func hasAddIndexSpec(indexes []addIndexSpec, name string) bool {
 	return false
 }
 
-func joinWithComma(parts []string) string {
-	switch len(parts) {
-	case 0:
-		return ""
-	case 1:
-		return parts[0]
+func normalizeAddIndexState(st *addIndexState) {
+	if st.N <= 0 {
+		st.N = 100
 	}
-	out := parts[0]
-	for _, p := range parts[1:] {
-		out += "," + p
+	if st.NR <= 0 {
+		st.NR = 150
 	}
-	return out
+	if st.NextIndexID < len(st.Indexes) {
+		st.NextIndexID = len(st.Indexes)
+	}
+}
+
+func addIndexInsertRow(ctx TickContext, st *addIndexState) error {
+	v := int64(st.Inserted)
+	if _, err := ctx.DB.ExecContext(ctx, "INSERT INTO "+QTable(st.DB, st.Table)+" (a,b,c,d,e) VALUES (?,?,?,?,?)",
+		v, v*7+1, v*11+2, v*13+3, v*17+4,
+	); err != nil {
+		return err
+	}
+	st.Inserted++
+	return nil
+}
+
+func (c *AddIndexCase) maybeAddIndex(ctx TickContext, st *addIndexState, tickNo int) error {
+	if !EveryNTick(tickNo, st.N) {
+		return nil
+	}
+	allCols := []string{"a", "b", "c", "d", "e"}
+	idxID := st.NextIndexID
+	idxName := fmt.Sprintf("idx_%d", idxID)
+
+	colN := 1 + (idxID % 3)
+	start := idxID % len(allCols)
+	cols := make([]string, 0, colN)
+	for i := 0; i < colN; i++ {
+		cols = append(cols, allCols[(start+i)%len(allCols)])
+	}
+
+	exists, err := IndexExists(ctx, ctx.DB, st.DB, st.Table, idxName)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		colSQL := make([]string, 0, len(cols))
+		for _, col := range cols {
+			colSQL = append(colSQL, QIdent(col))
+		}
+		stmt := "CREATE INDEX " + QIdent(idxName) + " ON " + QTable(st.DB, st.Table) + " (" + strings.Join(colSQL, ",") + ")"
+		if _, err := ctx.DB.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+
+	spec := addIndexSpec{Name: idxName, Columns: cols}
+	if !hasAddIndexSpec(st.Indexes, idxName) {
+		st.Indexes = append(st.Indexes, spec)
+	}
+	if !hasAddIndexSpec(c.indexesAdded, idxName) {
+		c.indexesAdded = append(c.indexesAdded, spec)
+	}
+	st.NextIndexID++
+	return nil
+}
+
+func (c *AddIndexCase) maybeDropIndex(ctx TickContext, st *addIndexState, tickNo int) error {
+	if !EveryNTick(tickNo, st.NR) || len(st.Indexes) == 0 {
+		return nil
+	}
+	idx := ctx.RNG.IntN(len(st.Indexes))
+	dropSpec := st.Indexes[idx]
+
+	exists, err := IndexExists(ctx, ctx.DB, st.DB, st.Table, dropSpec.Name)
+	if err != nil {
+		return err
+	}
+	if exists {
+		stmt := "DROP INDEX " + QIdent(dropSpec.Name) + " ON " + QTable(st.DB, st.Table)
+		if _, err := ctx.DB.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	c.indexesDropped = append(c.indexesDropped, dropSpec)
+	st.Indexes = append(st.Indexes[:idx], st.Indexes[idx+1:]...)
+	return nil
 }

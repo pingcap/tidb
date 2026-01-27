@@ -80,7 +80,7 @@ func (c *NexusDDLDestructiveCase) Tick(ctx TickContext, raw json.RawMessage) err
 	tickNo := st.Ticked + 1
 	half := nexusHalf(st.N)
 
-	if st.N > 0 && tickNo%st.N == 0 {
+	if EveryNTick(tickNo, st.N) {
 		name := nexusTableName(st.NextTableID)
 		st.NextTableID++
 		if err := nexusCreateTable(ctx, ctx.DB, &c.ddls, tickNo, st.DB, name); err != nil {
@@ -89,8 +89,8 @@ func (c *NexusDDLDestructiveCase) Tick(ctx TickContext, raw json.RawMessage) err
 		st.Tables = append(st.Tables, nexusTableState{Name: name})
 	}
 
-	if tickNo%half == 0 && len(st.Tables) > 0 {
-		idx := pickIndex(st.Ticked, len(st.Tables))
+	if EveryNTick(tickNo, half) && len(st.Tables) > 0 {
+		idx := ctx.RNG.IntN(len(st.Tables))
 		oldName := st.Tables[idx].Name
 		newName := nexusTableName(st.NextTableID)
 		st.NextTableID++
@@ -101,8 +101,8 @@ func (c *NexusDDLDestructiveCase) Tick(ctx TickContext, raw json.RawMessage) err
 		st.Tables[idx].Name = newName
 	}
 
-	if st.N > 0 && tickNo%(2*st.N) == 0 && len(st.Tables) > 0 {
-		idx := pickIndex(st.Ticked*2+1, len(st.Tables))
+	if EveryNTick(tickNo, 2*st.N) && len(st.Tables) > 0 {
+		idx := ctx.RNG.IntN(len(st.Tables))
 		stmt := "TRUNCATE TABLE " + QTable(st.DB, st.Tables[idx].Name)
 		if err := nexusExecDDL(ctx, ctx.DB, &c.ddls, tickNo, stmt); err != nil {
 			return err

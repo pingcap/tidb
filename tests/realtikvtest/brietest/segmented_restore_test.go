@@ -48,7 +48,9 @@ func TestSegmentedRestoreWorkload(t *testing.T) {
 		&workload.AddIndexCase{},
 	}
 	if tiflashCount := tiflashStoreCount(t, kit.tk); tiflashCount > 0 {
-		cases = append(cases, &workload.ModifyTiFlashCase{})
+		cases = append(cases, &workload.ModifyTiFlashCase{NAP: tiflashCount})
+	} else {
+		t.Log("TiFlash not found in environment, won't run tiflash related cases.")
 	}
 	runner, err := workload.NewRunner(db, store, cases...)
 	require.NoError(t, err)
@@ -73,7 +75,6 @@ func TestSegmentedRestoreWorkload(t *testing.T) {
 	runCfg := workload.RunConfig{
 		TickCount:    100,
 		TickInterval: 0,
-		PersistEvery: ^uint64(0),
 		Seed:         1,
 		Parallel:     true,
 	}

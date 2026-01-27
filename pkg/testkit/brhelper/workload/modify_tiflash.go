@@ -41,7 +41,7 @@ type modifyTiFlashState struct {
 	Replica int `json:"replica"`
 
 	Checksum TableChecksum `json:"checksum"`
-	LogDone  bool                `json:"log_done"`
+	LogDone  bool          `json:"log_done"`
 }
 
 type replicaHistoryEntry struct {
@@ -147,7 +147,7 @@ func (c *ModifyTiFlashCase) Tick(ctx TickContext, raw json.RawMessage) error {
 	}
 	st.Inserted++
 
-	if st.N > 0 && tickNo%st.N == 0 {
+	if EveryNTick(tickNo, st.N) {
 		max := st.NAP
 		if max > 0 {
 			next := tickNo % (max + 1)

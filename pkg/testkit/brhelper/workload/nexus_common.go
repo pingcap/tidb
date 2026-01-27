@@ -42,7 +42,7 @@ type nexusState struct {
 	Tables      []nexusTableState `json:"tables"`
 
 	Checksums map[string]TableChecksum `json:"checksums,omitempty"`
-	LogDone   bool                           `json:"log_done"`
+	LogDone   bool                     `json:"log_done"`
 }
 
 type nexusSummary struct {
@@ -107,14 +107,6 @@ func nexusInsertRow(ctx context.Context, db *sql.DB, schema, table string, tick 
 	return err
 }
 
-func pickIndex(seed int, n int) int {
-	if n <= 0 {
-		return 0
-	}
-	x := uint64(seed)*1103515245 + 12345
-	return int(x % uint64(n))
-}
-
 func nexusRecordChecksums(ctx context.Context, db *sql.DB, schema string, tables []nexusTableState) (map[string]TableChecksum, error) {
 	out := make(map[string]TableChecksum, len(tables))
 	for _, t := range tables {
@@ -125,13 +117,4 @@ func nexusRecordChecksums(ctx context.Context, db *sql.DB, schema string, tables
 		out[t.Name] = sum
 	}
 	return out, nil
-}
-
-func containsString(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
 }

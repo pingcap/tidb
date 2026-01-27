@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"slices"
 )
 
 type NexusDDLCase struct {
@@ -87,7 +88,7 @@ func (c *NexusDDLCase) Tick(ctx TickContext, raw json.RawMessage) error {
 	tickNo := st.Ticked + 1
 	half := nexusHalf(st.N)
 
-	if st.N > 0 && tickNo%(2*st.N) == 0 && len(st.Tables) > 0 {
+	if EveryNTick(tickNo, 2*st.N) && len(st.Tables) > 0 {
 		oldest := st.Tables[0].Name
 		stmt := "DROP TABLE IF EXISTS " + QTable(st.DB, oldest)
 		if err := nexusExecDDL(ctx, ctx.DB, &c.ddls, tickNo, stmt); err != nil {
@@ -96,7 +97,7 @@ func (c *NexusDDLCase) Tick(ctx TickContext, raw json.RawMessage) error {
 		st.Tables = st.Tables[1:]
 	}
 
-	if st.N > 0 && tickNo%st.N == 0 {
+	if EveryNTick(tickNo, st.N) {
 		name := nexusTableName(st.NextTableID)
 		st.NextTableID++
 		if err := nexusCreateTable(ctx, ctx.DB, &c.ddls, tickNo, st.DB, name); err != nil {
@@ -105,14 +106,14 @@ func (c *NexusDDLCase) Tick(ctx TickContext, raw json.RawMessage) error {
 		st.Tables = append(st.Tables, nexusTableState{Name: name})
 	}
 
-	if tickNo%half == 0 && len(st.Tables) > 0 {
+	if EveryNTick(tickNo, half) && len(st.Tables) > 0 {
 		youngest := &st.Tables[len(st.Tables)-1]
 		if err := nexusAddOneColumn(ctx, ctx.DB, &st, &c.ddls, tickNo, youngest); err != nil {
 			return err
 		}
 	}
 
-	if st.N > 0 && tickNo%st.N == 0 && len(st.Tables) > 0 {
+	if EveryNTick(tickNo, st.N) && len(st.Tables) > 0 {
 		oldest := &st.Tables[0]
 		if err := nexusDropOneColumn(ctx, ctx.DB, &st, &c.ddls, tickNo, oldest); err != nil {
 			return err
@@ -229,7 +230,7 @@ func nexusAddOneColumn(ctx context.Context, db *sql.DB, st *nexusState, ddls *[]
 		return err
 	}
 	if exists {
-		if !containsString(t.Cols, col) {
+		if !slices.Contains(t.Cols, col) {
 			t.Cols = append(t.Cols, col)
 		}
 		t.NextColID++

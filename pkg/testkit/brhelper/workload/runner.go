@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"math/rand/v2"
 	"strings"
 	"sync"
@@ -33,7 +34,6 @@ type CaseSpec struct {
 type RunConfig struct {
 	TickCount    int
 	TickInterval time.Duration
-	PersistEvery uint64
 	Seed         int64
 	Parallel     bool
 }
@@ -98,9 +98,6 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (*Summary, error) {
 	if cfg.TickInterval < 0 {
 		return nil, fmt.Errorf("workload: TickInterval must be >= 0")
 	}
-	if cfg.PersistEvery == 0 {
-		cfg.PersistEvery = ^uint64(0)
-	}
 
 	states, err := r.store.GetAll(ctx)
 	if err != nil {
@@ -127,12 +124,13 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (*Summary, error) {
 	}
 
 	summary := NewSummary()
+	rngs := newCaseRNGs(cfg.Seed, selected)
 	if cfg.Parallel {
-		if err := r.runParallelTicks(ctx, cfg, selected, states, summary); err != nil {
+		if err := r.runParallelTicks(ctx, cfg, selected, states, summary, rngs); err != nil {
 			return nil, err
 		}
 	} else {
-		if err := r.runSequentialTicks(ctx, cfg, selected, states, summary); err != nil {
+		if err := r.runSequentialTicks(ctx, cfg, selected, states, summary, rngs); err != nil {
 			return nil, err
 		}
 	}
@@ -199,37 +197,26 @@ func (r *Runner) runSequentialTicks(
 	selected []CaseSpec,
 	states map[string]json.RawMessage,
 	summary *Summary,
+	rngs map[string]*rand.Rand,
 ) error {
-	rng := rand.New(rand.NewPCG(uint64(cfg.Seed), uint64(cfg.Seed>>1)))
+	shuffleRNG := rand.New(rand.NewPCG(uint64(cfg.Seed), uint64(cfg.Seed>>1)))
 	for tick := 0; tick < cfg.TickCount; tick++ {
-		rng.Shuffle(len(selected), func(i, j int) { selected[i], selected[j] = selected[j], selected[i] })
+		shuffleRNG.Shuffle(len(selected), func(i, j int) { selected[i], selected[j] = selected[j], selected[i] })
 
 		for _, spec := range selected {
 			state, ok := states[spec.Name]
 			if !ok {
 				return fmt.Errorf("workload: case %q not found in state store; run Prepare first", spec.Name)
 			}
+			rng := rngs[spec.Name]
 			tickCtx := TickContext{
 				Context: Context{Context: ctx, DB: r.db, CaseName: spec.Name, Summary: summary},
+				RNG:     rng,
 				UpdateStateFn: func(updated json.RawMessage) {
 					states[spec.Name] = updated
 				},
 			}
 			if err := spec.Case.Tick(tickCtx, state); err != nil {
-				return err
-			}
-		}
-
-		if shouldPersistTick(tick, cfg.PersistEvery) {
-			flush := make(map[string]json.RawMessage, len(selected))
-			for _, spec := range selected {
-				state, ok := states[spec.Name]
-				if !ok {
-					return fmt.Errorf("workload: case %q not found in state store; run Prepare first", spec.Name)
-				}
-				flush[spec.Name] = state
-			}
-			if err := r.store.PutMany(ctx, flush); err != nil {
 				return err
 			}
 		}
@@ -249,28 +236,12 @@ func (r *Runner) runParallelTicks(
 	selected []CaseSpec,
 	states map[string]json.RawMessage,
 	summary *Summary,
+	rngs map[string]*rand.Rand,
 ) error {
 	var mu sync.Mutex
 	for tick := 0; tick < cfg.TickCount; tick++ {
-		if err := r.runParallelTick(ctx, selected, states, summary, &mu); err != nil {
+		if err := r.runParallelTick(ctx, selected, states, summary, rngs, &mu); err != nil {
 			return err
-		}
-
-		if shouldPersistTick(tick, cfg.PersistEvery) {
-			flush := make(map[string]json.RawMessage, len(selected))
-			mu.Lock()
-			for _, spec := range selected {
-				state, ok := states[spec.Name]
-				if !ok {
-					mu.Unlock()
-					return fmt.Errorf("workload: case %q not found in state store; run Prepare first", spec.Name)
-				}
-				flush[spec.Name] = state
-			}
-			mu.Unlock()
-			if err := r.store.PutMany(ctx, flush); err != nil {
-				return err
-			}
 		}
 
 		if tick != cfg.TickCount-1 {
@@ -287,6 +258,7 @@ func (r *Runner) runParallelTick(
 	selected []CaseSpec,
 	states map[string]json.RawMessage,
 	summary *Summary,
+	rngs map[string]*rand.Rand,
 	mu *sync.Mutex,
 ) error {
 	if len(selected) == 0 {
@@ -316,9 +288,11 @@ func (r *Runner) runParallelTick(
 				})
 				return
 			}
+			rng := rngs[spec.Name]
 
 			tickCtx := TickContext{
 				Context: Context{Context: runCtx, DB: r.db, CaseName: spec.Name, Summary: summary},
+				RNG:     rng,
 				UpdateStateFn: func(updated json.RawMessage) {
 					mu.Lock()
 					states[spec.Name] = updated
@@ -336,6 +310,21 @@ func (r *Runner) runParallelTick(
 	}
 	wg.Wait()
 	return firstErr
+}
+
+func newCaseRNGs(seed int64, selected []CaseSpec) map[string]*rand.Rand {
+	out := make(map[string]*rand.Rand, len(selected))
+	for _, spec := range selected {
+		out[spec.Name] = newCaseRNG(seed, spec.Name)
+	}
+	return out
+}
+
+func newCaseRNG(seed int64, name string) *rand.Rand {
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(name))
+	seq := h.Sum64() | 1
+	return rand.New(rand.NewPCG(uint64(seed), seq))
 }
 
 func normalizeCaseSpecs(specs []CaseSpec) ([]CaseSpec, error) {
@@ -384,11 +373,4 @@ func sleep(ctx context.Context, d time.Duration) error {
 	case <-t.C:
 		return nil
 	}
-}
-
-func shouldPersistTick(tick int, persistEvery uint64) bool {
-	if persistEvery == 0 || persistEvery == ^uint64(0) {
-		return false
-	}
-	return uint64(tick+1)%persistEvery == 0
 }

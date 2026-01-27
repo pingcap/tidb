@@ -176,3 +176,7 @@ func Require(cond bool, format string, args ...any) error {
 	}
 	return fmt.Errorf(format, args...)
 }
+
+func EveryNTick(tick int, n int) bool {
+	return n > 0 && tick%n == 0
+}
