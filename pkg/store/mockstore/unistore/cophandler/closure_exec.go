@@ -256,7 +256,9 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 		idxScan := scanExec.IdxScan
 		e.unique = idxScan.GetUnique()
 		e.scanCtx.desc = idxScan.Desc
-		e.initIdxScanCtx(idxScan)
+		if err := e.initIdxScanCtx(idxScan); err != nil {
+			return nil, err
+		}
 		if collectRangeCounts {
 			e.idxScanCtx.collectNDV = true
 			e.idxScanCtx.prevVals = make([][]byte, e.idxScanCtx.columnLen)
@@ -292,11 +294,42 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 	return e, nil
 }
 
-func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
+func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 	e.idxScanCtx = new(idxScanCtx)
 	e.idxScanCtx.columnLen = len(e.columnInfos)
 	e.idxScanCtx.pkStatus = pkColNotExists
 	e.idxScanCtx.execDetail = new(execDetail)
+
+	var (
+		commitTsIdx  = -1
+		physTblIDIdx = -1
+	)
+	for i, col := range e.columnInfos {
+		switch col.ColumnId {
+		case model.ExtraCommitTsID:
+			if commitTsIdx != -1 {
+				return errors.Errorf("duplicated special column %d", model.ExtraCommitTsID)
+			}
+			commitTsIdx = i
+		case model.ExtraPhysTblID:
+			if physTblIDIdx != -1 {
+				return errors.Errorf("duplicated special column %d", model.ExtraPhysTblID)
+			}
+			physTblIDIdx = i
+		}
+	}
+	if commitTsIdx != -1 && commitTsIdx != len(e.columnInfos)-1 {
+		return errors.Errorf("special column %d must be last (got idx=%d, len=%d)", model.ExtraCommitTsID, commitTsIdx, len(e.columnInfos))
+	}
+	if physTblIDIdx != -1 {
+		expected := len(e.columnInfos) - 1
+		if commitTsIdx != -1 {
+			expected = len(e.columnInfos) - 2
+		}
+		if physTblIDIdx != expected {
+			return errors.Errorf("special column %d must be trailing (got idx=%d, expected=%d, len=%d)", model.ExtraPhysTblID, physTblIDIdx, expected, len(e.columnInfos))
+		}
+	}
 
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
@@ -345,6 +378,7 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	for i, col := range colInfos[:e.idxScanCtx.columnLen] {
 		colIDs[col.ID] = i
 	}
+	return nil
 }
 
 func isCountAgg(pbAgg *tipb.Aggregation) bool {
