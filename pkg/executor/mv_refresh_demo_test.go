@@ -15,9 +15,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func mvDemoPrepareSnapshotRead(tk *testkit.TestKit) {
@@ -119,6 +119,30 @@ func TestMVDemoAdminRefreshMaterializedViewComplete(t *testing.T) {
 	baseRows := tk.MustQuery(baseQuery).Rows()
 	tk.MustExec("set @@tidb_snapshot = ''")
 	require.Equal(t, baseRows, tk.MustQuery(mvQuery).Rows())
+}
+
+func TestMVDemoAdminRefreshCompleteFailsWhenRefreshInfoMissing(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("create table t (id int primary key, a int, b int)")
+	tk.MustExec("create materialized view log on t(a,b)")
+
+	tk.MustExec("insert into t values (1,1,10)")
+	tk.MustExec("create materialized view mv as select a, count(*), sum(b), min(b), max(b) from t group by a refresh fast every 60")
+
+	is := tk.Session().GetInfoSchema().(infoschema.InfoSchema)
+	mvTbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("mv"))
+	require.NoError(t, err)
+	mvID := mvTbl.Meta().ID
+
+	tk.MustExec(fmt.Sprintf("delete from mysql.mv_refresh_info where mv_id = %d", mvID))
+	tk.MustGetErrMsg(
+		"admin refresh materialized view mv complete",
+		fmt.Sprintf("mv_refresh_info row not found for mv_id=%d", mvID),
+	)
 }
 
 func TestMVDemoCommitTsColumnReturnsNonZero(t *testing.T) {

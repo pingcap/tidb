@@ -86,8 +86,12 @@ func mvDemoCompleteRefresh(
 	readTS := txn.StartTS()
 
 	// Refresh mutex: lock the mv_refresh_info row.
-	if err := mvDemoExecInternal(internalCtx, sctx, "SELECT mv_id FROM mysql.mv_refresh_info WHERE mv_id = %? FOR UPDATE", mvID); err != nil {
+	rows, err := mvDemoQueryInternal(internalCtx, sctx, "SELECT mv_id FROM mysql.mv_refresh_info WHERE mv_id = %? FOR UPDATE", mvID)
+	if err != nil {
 		return err
+	}
+	if len(rows) != 1 {
+		return errors.Errorf("mv_refresh_info row not found for mv_id=%d", mvID)
 	}
 
 	mvFullName := mvDemoQuoteFullName(mvSchema, mvName)
