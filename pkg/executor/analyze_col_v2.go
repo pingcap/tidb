@@ -290,6 +290,18 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	})
 	err = taskEg.Wait()
 	if err != nil {
+		if intest.InTest && stderrors.Is(err, context.Canceled) {
+			cause := context.Cause(taskCtx)
+			ctxErr := taskCtx.Err()
+			logutil.BgLogger().Info("analyze columns read task canceled",
+				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+				zap.Error(err),
+				zap.Error(cause),
+				zap.Error(ctxErr),
+				zap.Stack("stack"),
+			)
+		}
 		mergeCtx.Done()
 		if err1 := mergeEg.Wait(); err1 != nil {
 			err = stderrors.Join(err, err1)
@@ -299,6 +311,18 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	err = mergeEg.Wait()
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
+		if intest.InTest && stderrors.Is(err, context.Canceled) {
+			cause := context.Cause(mergeCtx)
+			ctxErr := mergeCtx.Err()
+			logutil.BgLogger().Info("analyze columns merge canceled",
+				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+				zap.Error(err),
+				zap.Error(cause),
+				zap.Error(ctxErr),
+				zap.Stack("stack"),
+			)
+		}
 		return 0, nil, nil, nil, nil, err
 	}
 
@@ -683,11 +707,29 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 		case <-ctx.Done():
 			err := context.Cause(ctx)
 			if err != nil {
+				if intest.InTest && stderrors.Is(err, context.Canceled) {
+					ctxErr := ctx.Err()
+					logutil.BgLogger().Info("analyze columns subMergeWorker canceled",
+						zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+						zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+						zap.Error(err),
+						zap.Error(ctxErr),
+						zap.Stack("stack"),
+					)
+				}
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
 			err = ctx.Err()
 			if err != nil {
+				if intest.InTest && stderrors.Is(err, context.Canceled) {
+					logutil.BgLogger().Info("analyze columns subMergeWorker canceled",
+						zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+						zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+						zap.Error(err),
+						zap.Stack("stack"),
+					)
+				}
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
