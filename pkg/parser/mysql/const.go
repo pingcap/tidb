@@ -171,11 +171,16 @@ const (
 	ClientDeprecateEOF                                  // CLIENT_DEPRECATE_EOF
 	ClientOptionalResultsetMetadata                     // CLIENT_OPTIONAL_RESULTSET_METADATA, Not supported: https://dev.mysql.com/doc/c-api/8.0/en/c-api-optional-metadata.html
 	ClientZstdCompressionAlgorithm                      // CLIENT_ZSTD_COMPRESSION_ALGORITHM
-	// 1 << 27 == CLIENT_QUERY_ATTRIBUTES
-	// 1 << 28 == MULTI_FACTOR_AUTHENTICATION
-	// 1 << 29 == CLIENT_CAPABILITY_EXTENSION
+	ClientQueryAttributes
+	MultiFactorAuthentication
+	ClientCapabilityExtension // use CLIENT_CAPABILITY_EXTENSION support TLCP
 	// 1 << 30 == CLIENT_SSL_VERIFY_SERVER_CERT
 	// 1 << 31 == CLIENT_REMEMBER_OPTIONS
+)
+
+// TLCP Capability information.
+const (
+	ClientTLCP uint8 = 1 << iota
 )
 
 // Cache type information.
@@ -225,6 +230,10 @@ const (
 	DefaultRoleTable = "default_roles"
 	// PasswordHistoryTable is the table in system db contains password history.
 	PasswordHistoryTable = "password_history"
+	// Routines is the table in system db contains procedure.
+	Routines = "routines"
+	// ProcsPriv is the table in system db contains routine privilege.
+	ProcsPriv = "procs_priv"
 )
 
 // MySQL type maximum length.
@@ -576,24 +585,6 @@ var CombinationSQLMode = map[string][]string{
 	"ORACLE":      {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS", "NO_AUTO_CREATE_USER"},
 	"POSTGRESQL":  {"PIPES_AS_CONCAT", "ANSI_QUOTES", "IGNORE_SPACE", "NO_KEY_OPTIONS", "NO_TABLE_OPTIONS", "NO_FIELD_OPTIONS"},
 	"TRADITIONAL": {"STRICT_TRANS_TABLES", "STRICT_ALL_TABLES", "NO_ZERO_IN_DATE", "NO_ZERO_DATE", "ERROR_FOR_DIVISION_BY_ZERO", "NO_AUTO_CREATE_USER", "NO_ENGINE_SUBSTITUTION"},
-}
-
-// FormatFunc is the locale format function signature.
-type FormatFunc func(string, string) (string, error)
-
-// GetLocaleFormatFunction get the format function for sepcific locale.
-func GetLocaleFormatFunction(loc string) FormatFunc {
-	locale, exist := locale2FormatFunction[loc]
-	if !exist {
-		return formatNotSupport
-	}
-	return locale
-}
-
-// locale2FormatFunction is the string represent of locale format function.
-var locale2FormatFunction = map[string]FormatFunc{
-	"en_US": formatENUS,
-	"zh_CN": formatZHCN,
 }
 
 // PriorityEnum is defined for Priority const values.

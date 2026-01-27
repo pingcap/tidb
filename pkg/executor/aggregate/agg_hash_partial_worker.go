@@ -38,14 +38,13 @@ type HashAggPartialWorker struct {
 	ctx       sessionctx.Context
 
 	inputCh        chan *chunk.Chunk
-	outputChs      []chan *aggfuncs.AggPartialResultMapper
+	outputChs      []chan aggfuncs.AggPartialResultMapper
 	globalOutputCh chan *AfFinalResult
 
 	// Partial worker transmit the HashAggInput by this channel,
 	// so that the data fetcher could get the partial worker's HashAggInput
 	giveBackCh chan<- *HashAggInput
 
-	BInMaps               []int
 	partialResultsBuffer  [][]aggfuncs.PartialResult
 	partialResultNumInRow int
 
@@ -225,7 +224,7 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 
 	for i := 0; i < numRows; i++ {
 		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
-		tmp, ok := mapper[finalWorkerIdx][string(hack.String(groupKey[i]))]
+		tmp, ok := mapper[finalWorkerIdx].M[string(hack.String(groupKey[i]))]
 
 		// This group by key has appeared before, reuse the partial result.
 		if ok {
@@ -242,17 +241,12 @@ func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, fin
 			allMemDelta += memDelta // the memory usage of PartialResult
 		}
 		allMemDelta += int64(w.partialResultNumInRow * 8)
-
-		// Map will expand when count > bucketNum * loadFactor. The memory usage will double.
-		if len(mapper[finalWorkerIdx])+1 > (1<<w.BInMaps[finalWorkerIdx])*hack.LoadFactorNum/hack.LoadFactorDen {
-			expandMem := hack.DefBucketMemoryUsageForMapStrToSlice * (1 << w.BInMaps[finalWorkerIdx])
-			w.partialResultsMapMem.Add(int64(expandMem))
-			w.memTracker.Consume(int64(expandMem))
-			w.BInMaps[finalWorkerIdx]++
-		}
-
-		mapper[finalWorkerIdx][string(groupKey[i])] = w.partialResultsBuffer[lastIdx]
+		delta := mapper[finalWorkerIdx].Set(string(groupKey[i]), w.partialResultsBuffer[lastIdx])
 		allMemDelta += int64(len(groupKey[i]))
+		if delta > 0 {
+			w.partialResultsMapMem.Add(delta)
+			w.memTracker.Consume(delta)
+		}
 	}
 	w.partialResultsMapMem.Add(allMemDelta)
 	w.memTracker.Consume(allMemDelta)
@@ -291,8 +285,8 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 }
 
 func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
-	for i := 0; i < finalConcurrency; i++ {
-		w.outputChs[i] <- &w.partialResultsMap[i]
+	for i := range finalConcurrency {
+		w.outputChs[i] <- w.partialResultsMap[i]
 	}
 }
 
@@ -332,19 +326,16 @@ func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
 		// Clear the partialResultsMap
 		w.partialResultsMap = make([]aggfuncs.AggPartialResultMapper, len(w.partialResultsMap))
 		for i := range w.partialResultsMap {
-			w.partialResultsMap[i] = make(aggfuncs.AggPartialResultMapper)
+			w.partialResultsMap[i] = aggfuncs.NewAggPartialResultMapper()
 		}
 
 		w.memTracker.Consume(-w.partialResultsMapMem.Load())
 		w.partialResultsMapMem.Store(0)
-		for i := range w.BInMaps {
-			w.BInMaps[i] = 0
-		}
 	}()
 
 	w.prepareForSpill()
 	for _, partialResultsMap := range w.partialResultsMap {
-		for key, partialResults := range partialResultsMap {
+		for key, partialResults := range partialResultsMap.M {
 			partitionNum := int(murmur3.Sum32(hack.Slice(key))) % spilledPartitionNum
 
 			// Spill data when tmp chunk is full

@@ -1025,7 +1025,7 @@ func (is *InfoSyncer) getPrometheusAddr() (string, error) {
 		if err != nil {
 			return "", errors.Trace(err)
 		}
-		res = fmt.Sprintf("http://%s", net.JoinHostPort(prometheus.IP, strconv.Itoa(prometheus.Port)))
+		res = fmt.Sprintf("%s://%s", util2.InternalHTTPSchema(), net.JoinHostPort(prometheus.IP, strconv.Itoa(prometheus.Port)))
 	}
 	is.prometheusAddr = res
 	is.modifyTime = time.Now()

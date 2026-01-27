@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
@@ -1278,6 +1279,126 @@ func (e *InspectionRuleTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return r.String()
 }
 
+// AuditLogExtractor is used to extract some predicates of `audit_log`
+type AuditLogExtractor struct {
+	extractHelper
+
+	SkipRequest bool
+	TimeRanges  []*TimeRange
+	// Enable is true means the executor should use the time range to locate the audit-log file that need to be parsed.
+	// Enable is false, means the executor should keep the behavior compatible with before, which is only parse the
+	// current audit-log file.
+	Enable bool
+	Desc   bool
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *AuditLogExtractor) Extract(
+	ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) []expression.Expression {
+	remained, startTime, endTime := e.extractTimeRange(ctx, schema, names, predicates, "time", ctx.GetSessionVars().StmtCtx.TimeZone())
+	e.setTimeRange(startTime, endTime)
+	e.SkipRequest = e.Enable && e.TimeRanges[0].StartTime.After(e.TimeRanges[0].EndTime)
+	if e.SkipRequest {
+		return nil
+	}
+	return remained
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *AuditLogExtractor) ExplainInfo(pp base.PhysicalPlan) string {
+	p := pp.(*PhysicalMemTable)
+	if e.SkipRequest {
+		return "skip_request: true"
+	}
+	if !e.Enable {
+		return fmt.Sprintf("only search in the current '%v' file", p.SCtx().GetSessionVars().SlowQueryFile)
+	}
+	startTime := e.TimeRanges[0].StartTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
+	endTime := e.TimeRanges[0].EndTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone())
+	return fmt.Sprintf("start_time:%v, end_time:%v",
+		types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String(),
+		types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String())
+}
+
+func (e *AuditLogExtractor) setTimeRange(start, end int64) {
+	const defaultAuditLogDuration = 24 * time.Hour
+	var startTime, endTime time.Time
+	if start == 0 && end == 0 {
+		return
+	}
+	if start != 0 {
+		startTime = e.convertToTime(start)
+	}
+	if end != 0 {
+		endTime = e.convertToTime(end)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultAuditLogDuration)
+	}
+	if end == 0 {
+		endTime = time.Now()
+	}
+	timeRange := &TimeRange{
+		StartTime: startTime,
+		EndTime:   endTime,
+	}
+	e.TimeRanges = append(e.TimeRanges, timeRange)
+	e.Enable = true
+}
+
+func (e *AuditLogExtractor) buildTimeRangeFromKeyRange(keyRanges []*coprocessor.KeyRange) error {
+	for _, kr := range keyRanges {
+		startTime, err := e.decodeBytesToTime(kr.Start)
+		if err != nil {
+			return err
+		}
+		endTime, err := e.decodeBytesToTime(kr.End)
+		if err != nil {
+			return err
+		}
+		e.setTimeRange(startTime, endTime)
+	}
+	return nil
+}
+
+func (e *AuditLogExtractor) decodeBytesToTime(bs []byte) (int64, error) {
+	if len(bs) >= tablecodec.RecordRowKeyLen {
+		t, err := tablecodec.DecodeRowKey(bs)
+		if err != nil {
+			return 0, nil
+		}
+		return e.decodeToTime(t)
+	}
+	return 0, nil
+}
+
+func (*AuditLogExtractor) decodeToTime(handle kv.Handle) (int64, error) {
+	tp := types.NewFieldType(mysql.TypeDatetime)
+	col := rowcodec.ColInfo{Ft: tp}
+	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
+	coder := codec.NewDecoder(chk, nil)
+	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)
+	if err != nil {
+		return 0, err
+	}
+	datum := chk.GetRow(0).GetDatum(0, tp)
+	mysqlTime := (&datum).GetMysqlTime()
+	timestampInNano := time.Date(mysqlTime.Year(),
+		time.Month(mysqlTime.Month()),
+		mysqlTime.Day(),
+		mysqlTime.Hour(),
+		mysqlTime.Minute(),
+		mysqlTime.Second(),
+		mysqlTime.Microsecond()*1000,
+		time.UTC,
+	).UnixNano()
+	return timestampInNano, err
+}
+
 // SlowQueryExtractor is used to extract some predicates of `slow_query`
 type SlowQueryExtractor struct {
 	extractHelper
@@ -1724,4 +1845,58 @@ func (e *TiKVRegionStatusExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 // GetTablesID returns TablesID
 func (e *TiKVRegionStatusExtractor) GetTablesID() []int64 {
 	return e.tablesID
+}
+
+// TableRegionsExtractor is used to extract single schema and table from predictions
+type TableRegionsExtractor struct {
+	extractHelper
+	schemaName, tableName pmodel.CIStr
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *TableRegionsExtractor) Extract(ctx base.PlanContext,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	// TODO: support more push down strategies, for example, only table_name or only db_name, or multiple table_name/db_name.
+	remained, _, dbNameSet := e.extractCol(ctx, schema, names, predicates, "db_name", true)
+	if dbNameSet.Count() != 1 {
+		return predicates
+	}
+	remained, _, tableNameSet := e.extractCol(ctx, schema, names, remained, "table_name", true)
+	if tableNameSet.Count() != 1 {
+		return predicates
+	}
+	for dbName := range dbNameSet {
+		for tableName := range tableNameSet {
+			e.schemaName = pmodel.NewCIStr(dbName)
+			e.tableName = pmodel.NewCIStr(tableName)
+		}
+	}
+	return remained
+}
+
+// ExplainInfo implements base.MemTablePredicateExtractor interface.
+func (e *TableRegionsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+	r := new(bytes.Buffer)
+	if e.schemaName.String() != "" {
+		r.WriteString("schema name: ")
+		r.WriteString(e.schemaName.String())
+	}
+	if e.tableName.String() != "" {
+		r.WriteString(", table name: ")
+		r.WriteString(e.tableName.String())
+	}
+	return r.String()
+}
+
+// GetSchemaName return the extracted schema name
+func (e *TableRegionsExtractor) GetSchemaName() pmodel.CIStr {
+	return e.schemaName
+}
+
+// GetTableName return the extracted table name
+func (e *TableRegionsExtractor) GetTableName() pmodel.CIStr {
+	return e.tableName
 }

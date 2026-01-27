@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	"github.com/DATA-DOG/go-sqlmock"
-	"github.com/coreos/go-semver/semver"
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"

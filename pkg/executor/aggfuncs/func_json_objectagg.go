@@ -36,31 +36,28 @@ type jsonObjectAgg struct {
 }
 
 type partialResult4JsonObjectAgg struct {
-	entries map[string]any
-	bInMap  int // indicate there are 2^bInMap buckets in entries.
+	entries hack.MemAwareMap[string, any]
 }
 
 func (*jsonObjectAgg) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := partialResult4JsonObjectAgg{}
-	p.entries = make(map[string]any)
-	p.bInMap = 0
-	return PartialResult(&p), DefPartialResult4JsonObjectAgg + (1<<p.bInMap)*hack.DefBucketMemoryUsageForMapStringToAny
+	p.entries.Init(make(map[string]any))
+	return PartialResult(&p), DefPartialResult4JsonObjectAgg + int64(p.entries.Bytes)
 }
 
 func (*jsonObjectAgg) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4JsonObjectAgg)(pr)
-	p.entries = make(map[string]any)
-	p.bInMap = 0
+	p.entries.Init(make(map[string]any))
 }
 
 func (e *jsonObjectAgg) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4JsonObjectAgg)(pr)
-	if len(p.entries) == 0 {
+	if len(p.entries.M) == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
 
-	bj, err := types.CreateBinaryJSONWithCheck(p.entries)
+	bj, err := types.CreateBinaryJSONWithCheck(p.entries.M)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -97,15 +94,9 @@ func (e *jsonObjectAgg) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGro
 
 		switch x := realVal.(type) {
 		case nil, bool, int64, uint64, float64, string, types.BinaryJSON, types.Opaque, types.Time, types.Duration:
-			if _, ok := p.entries[key]; !ok {
-				memDelta += int64(len(key)) + getValMemDelta(realVal)
-				if len(p.entries)+1 > (1<<p.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-					memDelta += (1 << p.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
-					p.bInMap++
-				}
+			if delta, insert := p.entries.SetExt(key, realVal); insert {
+				memDelta += int64(len(key)) + getValMemDelta(realVal) + delta
 			}
-			p.entries[key] = realVal
-
 		default:
 			return 0, types.ErrUnsupportedSecondArgumentType.GenWithStackByArgs(x)
 		}
@@ -214,13 +205,8 @@ func (*jsonObjectAgg) MergePartialResult(_ AggFuncUpdateContext, src, dst Partia
 	p1, p2 := (*partialResult4JsonObjectAgg)(src), (*partialResult4JsonObjectAgg)(dst)
 	// When the result of this function is normalized, values having duplicate keys are discarded,
 	// and only the last value encountered is used with that key in the returned object
-	for k, v := range p1.entries {
-		p2.entries[k] = v
-		memDelta += int64(len(k)) + getValMemDelta(v)
-		if len(p2.entries)+1 > (1<<p2.bInMap)*hack.LoadFactorNum/hack.LoadFactorDen {
-			memDelta += (1 << p2.bInMap) * hack.DefBucketMemoryUsageForMapStringToAny
-			p2.bInMap++
-		}
+	for k, v := range p1.entries.M {
+		memDelta += int64(len(k)) + getValMemDelta(v) + p2.entries.Set(k, v)
 	}
 	return memDelta, nil
 }
