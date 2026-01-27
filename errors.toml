@@ -2686,6 +2686,11 @@ error = '''
 Variable '%s' might not be affected by SET_VAR hint.
 '''
 
+["planner:3942"]
+error = '''
+Each row of a VALUES clause must have at least one column, unless when used as source in an INSERT statement.
+'''
+
 ["planner:8006"]
 error = '''
 `%s` is unsupported on temporary tables.

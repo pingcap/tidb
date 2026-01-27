@@ -35,6 +35,7 @@ var (
 	ErrViewRecursive                         = dbterror.ClassOptimizer.NewStd(mysql.ErrViewRecursive)
 	ErrWrongArguments                        = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongArguments)
 	ErrWrongNumberOfColumnsInSelect          = dbterror.ClassOptimizer.NewStd(mysql.ErrWrongNumberOfColumnsInSelect)
+	ErrValuesClauseNoColumns                 = dbterror.ClassOptimizer.NewStd(mysql.ErrValuesClauseNoColumns)
 	ErrBadGeneratedColumn                    = dbterror.ClassOptimizer.NewStd(mysql.ErrBadGeneratedColumn)
 	ErrFieldNotInGroupBy                     = dbterror.ClassOptimizer.NewStd(mysql.ErrFieldNotInGroupBy)
 	ErrAggregateOrderNonAggQuery             = dbterror.ClassOptimizer.NewStd(mysql.ErrAggregateOrderNonAggQuery)
