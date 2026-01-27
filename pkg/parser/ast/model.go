@@ -132,6 +132,25 @@ func (v *ViewCheckOption) String() string {
 	}
 }
 
+// MaterializedViewRefreshMode is the refresh mode for a materialized view (TiDB demo).
+type MaterializedViewRefreshMode int
+
+const (
+	MaterializedViewRefreshModeFast MaterializedViewRefreshMode = iota + 1
+	MaterializedViewRefreshModeComplete
+)
+
+func (m MaterializedViewRefreshMode) String() string {
+	switch m {
+	case MaterializedViewRefreshModeFast:
+		return "FAST"
+	case MaterializedViewRefreshModeComplete:
+		return "COMPLETE"
+	default:
+		return "FAST"
+	}
+}
+
 // PartitionType is the type for PartitionInfo
 type PartitionType int
 
