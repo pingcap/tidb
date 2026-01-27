@@ -116,6 +116,9 @@ func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, infos ...
 	if len(propCols) == 0 {
 		return nil
 	}
+	if len(infos) == 0 {
+		return &base.PossiblePropertiesInfo{}
+	}
 	ls.hasTiflash = infos[0].HasTiflash
 	return &base.PossiblePropertiesInfo{
 		Order:      [][]*expression.Column{propCols},
