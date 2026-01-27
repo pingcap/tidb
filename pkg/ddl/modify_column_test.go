@@ -26,6 +26,7 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl"
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -545,8 +546,6 @@ func TestModifyColumnTypeWhenInterception(t *testing.T) {
 }
 
 func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/disableLossyDDLOptimization", "return(true)")
-
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -596,7 +595,7 @@ func TestModifyColumnWithIndexesWriteConflict(t *testing.T) {
 			<-conflictCh
 		})
 	})
-	tk.MustExec("alter table t modify column val0 varchar(8) not null;")
+	tk.MustExec("alter table t modify column val0 varchar(8) collate binary not null;")
 	tk.MustExec("admin check table t;")
 	tk.MustQuery("select * from t order by id;").Check(testkit.Rows(
 		"2 2 2 b",
@@ -716,24 +715,24 @@ func TestGetModifyColumnType(t *testing.T) {
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "bigint",
 			afterType:  "bigint unsigned",
 			index:      true,
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeNoReorgWithCheck,
 		},
 		{
 			beforeType: "int unsigned",
 			afterType:  "bigint",
 			index:      true,
-			tp:         model.ModifyTypeReorg,
+			tp:         model.ModifyTypeIndexReorg,
 		},
 		// string
 		{
@@ -1170,7 +1169,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 2. signed -> unsigned
 		// bigint -> bigint unsigned, int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; int -> int unsigned, mediumint unsigned, smallint unsigned, tinyint unsigned; ...
 		for newColIdx := range unsignedTp {
-			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeReorg, oldColIdx, newColIdx)
+			signed2Unsigned(signedTp[oldColIdx], unsignedTp[newColIdx], model.ModifyTypeNoReorgWithCheck, oldColIdx, newColIdx)
 		}
 	}
 	for oldColIdx := range unsignedTp {
@@ -1182,7 +1181,7 @@ func TestModifyIntegerColumn(t *testing.T) {
 		// 4. unsigned -> signed
 		// bigint unsigned -> bigint, int, mediumint, smallint, tinyint; int unsigned -> int, mediumint, smallint, tinyint; ...
 		for newColIdx := oldColIdx; newColIdx < len(signedTp); newColIdx++ {
-			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeReorg)
+			unsigned2Signed(unsignedTp[oldColIdx], signedTp[newColIdx], model.ModifyTypeNoReorgWithCheck)
 		}
 	}
 }
@@ -1364,6 +1363,30 @@ func TestModifyColumnWithDifferentCollation(t *testing.T) {
 	}
 }
 
+// ensureStatsLoaded makes sure all stats of table t are loaded.
+func ensureStatsLoaded(t *testing.T, tk *testkit.TestKit, dom *domain.Domain) {
+	h := dom.StatsHandle()
+
+	tk.MustExec("explain select * from t where b > 100")
+	tk.MustExec("explain select * from t where a < 100")
+	require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+
+	tblInfo := external.GetTableByName(t, tk, "test", "t").Meta()
+	statsTbl := h.GetPhysicalTableStats(tblInfo.ID, tblInfo)
+
+	// Some new columns or indexes may not be analyzed.
+	for _, col := range tblInfo.Columns {
+		if coll := statsTbl.GetCol(col.ID); coll != nil {
+			require.True(t, coll.IsFullLoad())
+		}
+	}
+	for _, idx := range tblInfo.Indices {
+		if idxStat := statsTbl.GetIdx(idx.ID); idxStat != nil {
+			require.True(t, idxStat.IsFullLoad())
+		}
+	}
+}
+
 func TestStatsAfterModifyColumn(t *testing.T) {
 	type query struct {
 		pred string
@@ -1375,118 +1398,179 @@ func TestStatsAfterModifyColumn(t *testing.T) {
 		createTableSQL  string
 		modifySQL       string
 		embeddedAnalyze bool
-		checkResult     bool
-		queries         []query
+		checkItems      []string
+	}
+
+	checkItemsMap := map[string][]query{
+		"a_column": {
+			{"a < 10", ""},
+			{"a >= 10", ""},
+			{"a = 100", ""},
+			{"a = -1", ""},
+			{"a != 200", ""},
+		},
+		"a_index": {
+			{"a < 50", "i1"},
+			{"a >= 150", "i1"},
+			{"a = 200", "i1"},
+			{"a = -1", "i1"},
+			{"a != 100", "i1"},
+		},
+		"b_column": {
+			{"b < '10'", ""},
+			{"b >= '100'", ""},
+			{"b = '100'", ""},
+			{"b != 'non-exist'", ""},
+			{"b != '200'", ""},
+		},
+		"b_index": {
+			{"b > '50'", "i2"},
+			{"b <= '150'", "i2"},
+			{"b = '200'", "i2"},
+			{"b != 'non-exist'", "i2"},
+			{"b != '100'", "i2"},
+		},
 	}
 
 	tcs := []testCase{
 		{
-			// Check stats correctness after modifying column without any reorg
-			// We don't add index on b, because these indexes need reorg due to NeedRestoreData changes.
+			// Reorg: i1
+			// Recollected stats: none
+			// Old stats still valid: a, b
 			caseName:        "no reorg without analyze",
-			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a))",
+			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a)) partition by hash(a) partitions 4",
 			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
 			embeddedAnalyze: false,
-			checkResult:     true,
-			queries: []query{
-				{"a < 10", "i1"},
-				{"a <= 10", ""},
-				{"a > 10", "i1"},
-				{"a >= 10", ""},
-				{"a = 10", "i1"},
-				{"a = -1", ""},
-				{"b < '10'", ""},
-				{"b <= '10'", ""},
-				{"b > '10'", ""},
-				{"b >= '10'", ""},
-				{"b = '10'", ""},
-				{"b = 'non-exist'", ""},
-			},
+			checkItems:      []string{"a_column", "b_column"},
 		},
 		{
-			// Only indexes are rewritten.
-			// The row data remains the same, so the stats are still valid.
-			caseName:        "row and index reorg with analyze",
+			// Reorg: i2
+			// Recollected stats: b, i2
+			// Old stats still valid: a
+			caseName:        "signed to unsigned with analyze",
+			createTableSQL:  "create table t (a bigint, b bigint, index i2(b))",
+			modifySQL:       "alter table t modify column a int unsigned, modify column b int unsigned",
+			embeddedAnalyze: true,
+			checkItems:      []string{"a_column", "b_column", "b_index"},
+		},
+		{
+			// Reorg: i1, i2
+			// Recollected stats: a, b, i1, i2
+			caseName:        "all indexes reorg with analyze",
 			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
 			modifySQL:       "alter table t modify column a int, modify column b varchar(16) collate utf8mb4_bin",
 			embeddedAnalyze: true,
-			checkResult:     true,
-			queries: []query{
-				{"a < 10", "i1"},
-				{"a <= 10", ""},
-				{"a > 10", "i1"},
-				{"a >= 10", ""},
-				{"a = 10", "i1"},
-				{"a = -1", ""},
-				{"b < '10'", ""},
-				{"b <= '10'", "i2"},
-				{"b > '10'", ""},
-				{"b >= '10'", "i2"},
-				{"b = '10'", ""},
-				{"b = 'non-exist'", "i2"},
-			},
+			checkItems:      []string{"a_column", "a_index", "b_column", "b_index"},
 		},
 		{
-			// Both row and index reorg happen, but with no embedded analyze.
-			// All the stats become invalid, so don't check the results.
-			caseName:        "row and index reorg without analyze",
+			// Reorg: b, i1, i2
+			// Recollected stats: none
+			// Old stats still valid: a
+			caseName:        "partial reorg without analyze",
 			createTableSQL:  "create table t (a bigint, b char(16) collate utf8mb4_bin, index i1(a), index i2(b))",
 			modifySQL:       "alter table t modify column a int unsigned, modify column b varchar(16) collate utf8mb4_general_ci",
 			embeddedAnalyze: false,
-			checkResult:     false,
-			queries: []query{
-				{"a < 10", "i1"},
-				{"a <= 10", ""},
-				{"a > 10", "i1"},
-				{"a >= 10", ""},
-				{"a = 10", "i1"},
-				{"a = -1", ""},
-				{"b < '10'", ""},
-				{"b <= '10'", "i2"},
-				{"b > '10'", ""},
-				{"b >= '10'", "i2"},
-				{"b = '10'", ""},
-				{"b = 'non-exist'", "i2"},
-			},
+			checkItems:      []string{"a_column"},
 		},
 	}
 
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_stats_update_during_ddl = true;")
+	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+
+	h := dom.StatsHandle()
+	h.SetLease(time.Millisecond)
+	t.Cleanup(func() {
+		h.SetLease(0)
+	})
 
 	for _, tc := range tcs {
 		t.Run(tc.caseName, func(t *testing.T) {
+			h.Clear()
 			tk.MustExec("drop table if exists t")
 			tk.MustExec(tc.createTableSQL)
 			tk.MustExec(fmt.Sprintf("set @@tidb_stats_update_during_ddl = %t", tc.embeddedAnalyze))
 
+			values := make([]string, 0, 160)
 			for i := range 128 {
-				tk.MustExec(fmt.Sprintf("insert into t values (%d, '%d')", i, i))
+				values = append(values, fmt.Sprintf("(%d, '%d')", i, i))
 			}
+			for range 32 {
+				values = append(values, "(100, '100'), (200, '200')")
+			}
+			tk.MustExec(fmt.Sprintf("insert into t values %s", strings.Join(values, ",")))
 
-			tk.MustExec("analyze table t columns a, b")
+			tk.MustExec("analyze table t columns a, b with 4 topn")
 
-			oldRs := make([]string, 0, len(tc.queries))
-			for _, q := range tc.queries {
-				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
-				oldRs = append(oldRs, rs[0][1].(string))
+			ensureStatsLoaded(t, tk, dom)
+			oldRs := make([]string, 0, len(tc.checkItems))
+			for _, item := range tc.checkItems {
+				for _, q := range checkItemsMap[item] {
+					rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+					oldRs = append(oldRs, rs[0][1].(string))
+				}
 			}
 
 			tk.MustExec(tc.modifySQL)
 
-			for i, q := range tc.queries {
-				rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
-				if tc.checkResult {
-					require.Equal(t, oldRs[i], rs[0][1].(string), "predicate: %s", tc.queries[i].pred)
-				} else {
-					// For index selectivity, the stats is missing here.
-					if q.idx != "" {
-						require.Contains(t, rs[len(rs)-1][len(rs[0])-1], "missing")
-					}
+			ensureStatsLoaded(t, tk, dom)
+			count := 0
+			for _, item := range tc.checkItems {
+				for _, q := range checkItemsMap[item] {
+					rs := tk.MustQuery(fmt.Sprintf("explain select * from t use index(%s) where %s", q.idx, q.pred)).Rows()
+					require.Equal(t, oldRs[count], rs[0][1].(string), "predicate: %s", q.pred)
+					count++
 				}
 			}
 		})
+	}
+}
+
+func TestStatsForPartitionedTable(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set global tidb_analyze_column_options = 'PREDICATE'")
+	tk.MustExec("set session tidb_partition_prune_mode = 'dynamic'")
+	tk.MustExec("set @@tidb_stats_load_sync_wait = 0")
+
+	h := dom.StatsHandle()
+	h.SetLease(time.Millisecond)
+	t.Cleanup(func() {
+		h.SetLease(0)
+	})
+
+	tk.MustExec(`
+		create table t (a bigint, b bigint)
+		PARTITION BY RANGE (a) (
+			PARTITION p0 VALUES LESS THAN (16),
+			PARTITION p1 VALUES LESS THAN (32),
+			PARTITION p2 VALUES LESS THAN (48),
+			PARTITION p3 VALUES LESS THAN (64)
+		)
+	`)
+
+	values := make([]string, 0, 96)
+	for i := range 64 {
+		values = append(values, fmt.Sprintf("(%d, '%d')", i, i))
+	}
+	for range 32 {
+		values = append(values, "(8, 8), (24, 24), (40, 40), (60, 60)")
+	}
+	tk.MustExec(fmt.Sprintf("insert into t values %s", strings.Join(values, ",")))
+	tk.MustExec("analyze table t columns a, b with 4 topn")
+	ensureStatsLoaded(t, tk, dom)
+
+	// Analyze only one partition to trigger merge stats after MODIFY COLUMN.
+	tk.MustExec("alter table t modify column b int unsigned")
+	tk.MustExec("analyze table t partition p0")
+	ensureStatsLoaded(t, tk, dom)
+
+	// Check stats correctness after MODIFY COLUMN on partitioned table.
+	for _, v := range []int{8, 24, 40, 60} {
+		rs := tk.MustQuery(fmt.Sprintf("explain select b from t use index() where b = %d", v)).Rows()
+		require.Equal(t, "33.00", rs[0][1].(string))
 	}
 }
