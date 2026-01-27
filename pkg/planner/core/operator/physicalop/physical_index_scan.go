@@ -637,7 +637,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 
 // GetOriginalPhysicalIndexScan creates a new PhysicalIndexScan from the given DataSource and AccessPath.
 // needKeepOrder indicates whether the index scan should maintain order (true for both normal sorting via SortItems and partial order via PartialOrderInfo)
-func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool, needKeepOrder bool) *PhysicalIndexScan {
+func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.PhysicalProperty, path *util.AccessPath, isMatchProp bool, isSingleScan bool) *PhysicalIndexScan {
 	idx := path.Index
 	is := PhysicalIndexScan{
 		Table:            ds.TableInfo,
@@ -686,7 +686,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
-	if needKeepOrder {
+	if prop.NeedKeepOrder() {
 		is.Desc = prop.GetSortDesc()
 		is.KeepOrder = true
 	}
@@ -697,7 +697,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
 	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
 		"partial paths of index merge path should not match property using merge sort")
-	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false, prop.NeedKeepOrder())
+	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
 	if matchProp.Matched() {

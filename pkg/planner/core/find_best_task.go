@@ -1445,7 +1445,10 @@ func getTableCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *property.PhysicalProperty) *candidatePath {
 	candidate := &candidatePath{path: path}
 	candidate.matchPropResult = matchProperty(ds, path, prop)
-	// Check and store partial order match result
+	// Because the skyline pruning already prune the indexes that cannot provide partial order
+	// when prop has PartialOrderInfo physical property,
+	// So here we just need to record the partial order match result(prefixCol, prefixLen).
+	// The partialOrderMatchResult.Matched() will be always true after skyline pruning.
 	if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN && prop.PartialOrderInfo != nil {
 		candidate.partialOrderMatchResult = matchPartialOrderProperty(path, prop.PartialOrderInfo)
 	}
@@ -1518,9 +1521,16 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 			currentCandidate = getTableCandidate(ds, path, prop)
 		} else {
 			// Check if this path can be used for partial order optimization
-			matchPartialOrderIndex := ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN &&
-				prop.PartialOrderInfo != nil &&
-				matchPartialOrderProperty(path, prop.PartialOrderInfo).Matched
+			var matchPartialOrderIndex bool
+			if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN &&
+				prop.PartialOrderInfo != nil {
+				if matchPartialOrderProperty(path, prop.PartialOrderInfo).Matched {
+					matchPartialOrderIndex = true
+				} else {
+					// skyline pruning all indexes that cannot provide partial order when we are looking for
+					continue
+				}
+			}
 
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
 			// 1. This path's access cond is not nil.
@@ -2239,11 +2249,8 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	// So, if an index can enter this function and also contains the requirement of a partial order property,
 	// then it must meet the requirements.
 
-	// needKeepOrder handles both normal sort (SortItems) and partial order (PartialOrderInfo)
-	needKeepOrder := prop.NeedKeepOrder()
-
 	path := candidate.path
-	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan, needKeepOrder)
+	is := physicalop.GetOriginalPhysicalIndexScan(ds, prop, path, candidate.matchPropResult.Matched(), candidate.path.IsSingleScan)
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,
@@ -2298,7 +2305,8 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			}
 		}
 	}
-	if needKeepOrder {
+	// handles both normal sort (SortItems) and partial order (PartialOrderInfo)
+	if prop.NeedKeepOrder() {
 		cop.KeepOrder = true
 		if cop.TablePlan != nil && !ds.TableInfo.IsCommonHandle {
 			col, isNew := cop.TablePlan.(*physicalop.PhysicalTableScan).AppendExtraHandleCol(ds)
