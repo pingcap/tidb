@@ -518,6 +518,7 @@ func mvDemoFastRefresh(
 		       last_refresh_type = 'FAST',
 		       last_refresh_result = 'SUCCESS',
 		       last_refresh_time = NOW(),
+		       next_run_time = DATE_ADD(NOW(), INTERVAL refresh_interval_seconds SECOND),
 		       last_error = NULL
 		 WHERE mv_id = %?`,
 		readTS, mvID,
