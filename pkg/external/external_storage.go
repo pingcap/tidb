@@ -22,19 +22,12 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
-
-func init() {
-	if tempDir := config.GetGlobalConfig().TempDir; tempDir != "" {
-		_ = CreateExternalStorage(tempDir, "", nil)
-	}
-}
 
 var (
 	globalMu              sync.RWMutex
