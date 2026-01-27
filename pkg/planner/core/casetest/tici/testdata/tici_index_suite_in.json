@@ -3,6 +3,7 @@
     "name": "TestTiCISearchExplain",
     "cases": [
       "explain format='brief' select * from t1 where fts_match_word('hello', title)",
+      "explain format='brief' select * from t1 where fts_match_phrase('hello', title)",
       "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
       "explain format='brief' select * from t1 where fts_match_prefix('hello', title) and id = 10",
       "explain format='brief' select id from t1 where fts_match_word('hello', title)",
