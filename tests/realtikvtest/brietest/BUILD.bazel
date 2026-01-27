@@ -15,10 +15,6 @@ go_test(
     ],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-=======
-    shard_count = 28,
->>>>>>> dace5507771 (br: PITR table filter reuses database id if it exists (#65631))
     deps = [
         "//br/pkg/glue",
         "//br/pkg/gluetidb",
