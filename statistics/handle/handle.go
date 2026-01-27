@@ -759,6 +759,16 @@ func (h *Handle) mergePartitionStats2GlobalStats(sc sessionctx.Context,
 	}
 
 	skipMissingPartitionStats := sc.GetSessionVars().SkipMissingPartitionStats
+	if sc.GetSessionVars().InRestrictedSQL {
+		// For AutoAnalyze and HandleDDLEvent(ActionDropTablePartition), we need to use @@global.tidb_skip_missing_partition_stats
+		val, err1 := sc.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TiDBSkipMissingPartitionStats)
+		if err1 != nil {
+			logutil.BgLogger().Error("loading tidb_skip_missing_partition_stats failed", zap.Error(err1))
+			err = err1
+			return
+		}
+		skipMissingPartitionStats = variable.TiDBOptOn(val)
+	}
 	for _, def := range globalTableInfo.Partition.Definitions {
 		partitionID := def.ID
 		h.mu.Lock()
@@ -1289,7 +1299,7 @@ func (h *Handle) indexStatsFromStorage(reader *statsReader, row chunk.Row, table
 		if histID != idxInfo.ID {
 			continue
 		}
-		if idx == nil || idx.LastUpdateVersion < histVer {
+		if idx == nil || idx.LastUpdateVersion < histVer || loadAll {
 			hg, err := h.histogramFromStorage(reader, table.PhysicalID, histID, types.NewFieldType(mysql.TypeBlob), distinct, 1, histVer, nullCount, 0, 0)
 			if err != nil {
 				return errors.Trace(err)

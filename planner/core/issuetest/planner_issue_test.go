@@ -17,7 +17,9 @@ package issuetest
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/planner/core"
 	"github.com/pingcap/tidb/testkit"
+	"github.com/pingcap/tidb/util/size"
 )
 
 func TestIssue44051(t *testing.T) {
@@ -284,4 +286,19 @@ func Test53726(t *testing.T) {
 			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12, cast(test.t7.c, decimal(10,0) BINARY)->Column#13, cast(test.t7.c, bigint(22) BINARY)->Column#14",
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
+}
+
+func TestDisableReuseChunk(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int primary key, c2 mediumtext);")
+	tk.MustExec(`insert into t1 values (1, "abc"), (2, "def");`)
+	core.MaxMemoryLimitForOverlongType = 0
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("1"))
+	core.MaxMemoryLimitForOverlongType = 500 * size.GB
+	tk.MustQuery(` select * from t1 where c1 = 1 and c2 = "abc";`).Check(testkit.Rows("1 abc"))
+	tk.MustQuery(`select @@last_sql_use_alloc`).Check(testkit.Rows("0"))
 }
