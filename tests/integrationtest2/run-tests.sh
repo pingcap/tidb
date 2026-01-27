@@ -431,6 +431,23 @@ function prepare_tici_config() {
 }
 
 function make_tiflash_config_for_tici() {
+    : "${TIFLASH_LISTEN_HOST:=0.0.0.0}"
+    : "${TIFLASH_DATA_DIR:=./data/tiflash}"
+    : "${TIFLASH_TMP_DIR:=$TIFLASH_DATA_DIR/tmp}"
+    : "${TIFLASH_CAPACITY:=10737418240}"
+    : "${TIFLASH_SERVICE_ADDR:=127.0.0.1:3930}"
+    : "${TIDB_STATUS_ADDR:=127.0.0.1:10080}"
+    : "${TIFLASH_LOG_PATH:=./logs/tiflash-stdout.log}"
+    : "${TIFLASH_ERROR_LOG_PATH:=./logs/tiflash-stderr.log}"
+    : "${TIFLASH_PROXY_CONFIG:=$TICI_CONFIG_DIR/tiflash-learner.toml}"
+    : "${TIFLASH_PROXY_LOG_FILE:=./logs/tiflash-proxy.log}"
+    : "${TIFLASH_PROXY_DATA_DIR:=$TIFLASH_DATA_DIR/proxy}"
+    : "${TIFLASH_PROXY_SERVER_ADDR:=0.0.0.0:20170}"
+    : "${TIFLASH_PROXY_ADVERTISE_ADDR:=127.0.0.1:20170}"
+    : "${TIFLASH_PROXY_STATUS_ADDR:=127.0.0.1:20292}"
+    : "${TIFLASH_PROXY_ENGINE_ADDR:=127.0.0.1:3930}"
+    : "${TIFLASH_PROXY_RESERVE_SPACE:=1KB}"
+    : "${TIFLASH_STORAGE_DIR:=$TIFLASH_DATA_DIR}"
     mkdir -p "$TICI_CONFIG_DIR"
 
     cat > "$TICI_CONFIG_DIR/tiflash.toml" <<EOF
