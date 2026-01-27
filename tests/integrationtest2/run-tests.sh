@@ -74,7 +74,36 @@ record_case=""
 stats="s"
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
+
+PIDS_TO_KILL=()
+function register_pid() {
+    local pid=$1
+    if [ -n "$pid" ]; then
+        PIDS_TO_KILL+=("$pid")
+    fi
+}
+
+function cleanup() {
+    set +e
+    local pid
+    for pid in "${PIDS_TO_KILL[@]}"; do
+        kill -15 "$pid" 2>/dev/null || true
+    done
+    local job_pids
+    job_pids=$(jobs -p 2>/dev/null || true)
+    for pid in $job_pids; do
+        kill -15 "$pid" 2>/dev/null || true
+    done
+    sleep 1
+    for pid in "${PIDS_TO_KILL[@]}"; do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+    for pid in $job_pids; do
+        kill -9 "$pid" 2>/dev/null || true
+    done
+}
+
+trap cleanup EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -546,6 +575,7 @@ start_pd_server() {
           --peer-urls="http://127.0.0.1:$peer_port" \
           --advertise-client-urls="http://127.0.0.1:$client_port" \
           --advertise-peer-urls="http://127.0.0.1:$peer_port" &
+    register_pid $!
 #          --config="config/pd.toml"
 	sleep 5  # Wait for PD to sart
 }
@@ -567,6 +597,7 @@ start_tikv_server() {
        --status-addr="127.0.0.1:$tikv_status_port" \
        --data-dir="$data_dir" \
        --log-file="$log_dir" &
+    register_pid $!
     sleep 5  # Wait for TiKV to connect to PD
 }
 
@@ -586,6 +617,7 @@ start_tiflash_server() {
     else
         $tiflash_bin server --log-file=./logs/tiflash-server.log > "$TIFLASH_LOG_FILE" 2>&1 &
     fi
+    register_pid $!
 
     sleep 5  # Wait for TiFlash to connect
 }
@@ -605,6 +637,7 @@ function start_tidb_server()
         -store tikv \
         -path "${pd_client_addr}" > $log_file 2>&1 &
     SERVER_PID=$!
+    register_pid $SERVER_PID
     echo "tidb-server(PID: $SERVER_PID) started, port: $tidb_port"
 }
 
@@ -839,6 +872,7 @@ function start_tici_server() {
             $TICI_META_ARGS
     ) > "$meta_log_file" 2>&1 &
     TICI_META_PID=$!
+    register_pid $TICI_META_PID
     echo "tici-meta(PID: $TICI_META_PID) started"
 
     echo "Starting tici worker..."
@@ -853,6 +887,7 @@ function start_tici_server() {
             $TICI_WORKER_ARGS
     ) > "$worker_log_file" 2>&1 &
     TICI_WORKER_PID=$!
+    register_pid $TICI_WORKER_PID
     echo "tici-worker(PID: $TICI_WORKER_PID) started"
 }
 
@@ -872,6 +907,7 @@ function start_minio() {
     export MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY"
     "$minio_bin" server "$MINIO_DATA_DIR" --address ":$MINIO_PORT" > "$MINIO_LOG_FILE" 2>&1 &
     MINIO_PID=$!
+    register_pid $MINIO_PID
 
     for i in {1..10}; do
         if (exec 3<>"/dev/tcp/127.0.0.1/$MINIO_PORT") 2>/dev/null; then
@@ -905,6 +941,8 @@ function start_ticdc_server() {
     echo "Starting TiCDC server..."
     mkdir -p "$data_dir"
     $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$data_dir --newarch=true --log-file=$log_file &
+    TICDC_PID=$!
+    register_pid $TICDC_PID
     sleep 5  # Wait for TiCDC to connect
 }
 
