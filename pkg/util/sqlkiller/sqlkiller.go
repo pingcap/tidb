@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -42,8 +41,6 @@ const (
 	// When you add a new signal, you should also modify store/driver/error/ToTiDBErr,
 	// so that errors in client can be correctly converted to tidb errors.
 )
-
-var errKilled = errors.New("it has been killed by the sql killer")
 
 // SQLKiller is used to kill a query.
 type SQLKiller struct {
