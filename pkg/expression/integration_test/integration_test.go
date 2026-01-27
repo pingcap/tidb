@@ -205,7 +205,7 @@ func TestFTSSyntax(t *testing.T) {
 	// tk.MustContainErrMsg("select * from t where (fts_match_word('hello', title)) > 0", "Currently 'FTS_MATCH_WORD()' must be used alone")
 	// tk.MustContainErrMsg("select (fts_match_word('hello', title)) AS score from t where fts_match_word('hello', title)", "Currently 'FTS_MATCH_WORD()' cannot be used in SELECT fields")
 	tk.MustContainErrMsg("select * from t where match() against ('hello')", `You have an error in your SQL syntax`)
-	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `UnknownType: *ast.MatchAgainst`)
+	tk.MustContainErrMsg("select * from t where match(title) against ('hello' in boolean mode)", `cannot use 'MATCH ... AGAINST' outside of fulltext index`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(title, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word(45.67, body)", `match against a non-constant string`)
 	tk.MustContainErrMsg("select * from t where fts_match_word('hello', title, body)", `Incorrect parameter count in the call to native function`)
