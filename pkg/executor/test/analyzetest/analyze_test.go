@@ -154,6 +154,7 @@ func TestAnalyzeRestrict(t *testing.T) {
 		}()
 
 		ctx, cancel := context.WithCancel(context.Background())
+		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 		done := make(chan error, 1)
 		go func() {
 			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
