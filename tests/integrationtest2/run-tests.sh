@@ -570,24 +570,30 @@ function start_tici_server() {
     fi
 
     echo "Starting tici meta..."
-    $tici_bin meta --config "$TICI_META_CONFIG" \
-        --host "$meta_host" \
-        --port "$meta_port" \
-        --status-port "$meta_status_port" \
-        --advertise-host "$meta_host" \
-        --pd-addr "$pd_addr" \
-        $TICI_META_ARGS > "$meta_log_file" 2>&1 &
+    (
+        cd "$SCRIPT_DIR/logs"
+        $tici_bin meta --config "$TICI_META_CONFIG" \
+            --host "$meta_host" \
+            --port "$meta_port" \
+            --status-port "$meta_status_port" \
+            --advertise-host "$meta_host" \
+            --pd-addr "$pd_addr" \
+            $TICI_META_ARGS
+    ) > "$meta_log_file" 2>&1 &
     TICI_META_PID=$!
     echo "tici-meta(PID: $TICI_META_PID) started"
 
     echo "Starting tici worker..."
-    $tici_bin worker --config "$TICI_WORKER_CONFIG" \
-        --host "$worker_host" \
-        --port "$worker_port" \
-        --status-port "$worker_status_port" \
-        --advertise-host "$worker_host" \
-        --pd-addr "$pd_addr" \
-        $TICI_WORKER_ARGS > "$worker_log_file" 2>&1 &
+    (
+        cd "$SCRIPT_DIR/logs"
+        $tici_bin worker --config "$TICI_WORKER_CONFIG" \
+            --host "$worker_host" \
+            --port "$worker_port" \
+            --status-port "$worker_status_port" \
+            --advertise-host "$worker_host" \
+            --pd-addr "$pd_addr" \
+            $TICI_WORKER_ARGS
+    ) > "$worker_log_file" 2>&1 &
     TICI_WORKER_PID=$!
     echo "tici-worker(PID: $TICI_WORKER_PID) started"
 }
@@ -660,6 +666,8 @@ function create_ticdc_changefeed() {
 
 function start_tidb_cluster()
 {
+    local start_downstream=${1:-1}
+
     alloc_port
     UP_PD_CLIENT_PORT=$ALLOCATED_PORT
     alloc_port
@@ -694,36 +702,47 @@ function start_tidb_cluster()
 	UP_TIDB_STATUS_PORT=$ALLOCATED_PORT
 	start_tidb_server "127.0.0.1:$UP_PD_CLIENT_PORT" $UPSTREAM_PORT $UP_TIDB_STATUS_PORT $TIDB_LOG_FILE
 
-    alloc_port
-    DOWN_PD_CLIENT_PORT=$ALLOCATED_PORT
-    alloc_port
-	DOWN_PD_PEER_PORT=$ALLOCATED_PORT
-    start_pd_server $DOWN_PD_CLIENT_PORT $DOWN_PD_PEER_PORT $PD_DATA_DIR2 $PD_LOG_FILE2
-
-	alloc_port
-	DOWN_TIKV_PORT=$ALLOCATED_PORT
-	alloc_port
-	DOWN_TIKV_STATUS_PORT=$ALLOCATED_PORT
-    start_tikv_server $DOWN_PD_CLIENT_PORT $DOWN_TIKV_PORT $DOWN_TIKV_STATUS_PORT $TIKV_DATA_DIR2 $TIKV_LOG_FILE2
-
-    alloc_port
-    DOWNSTREAM_PORT=$ALLOCATED_PORT
-	alloc_port
-	DOWN_TIDB_STATUS_PORT=$ALLOCATED_PORT
-    start_tidb_server "127.0.0.1:$DOWN_PD_CLIENT_PORT" $DOWNSTREAM_PORT $DOWN_TIDB_STATUS_PORT $TIDB_LOG_FILE2
-
     echo "Ports (upstream): PD=$UP_PD_CLIENT_PORT/$UP_PD_PEER_PORT TiKV=$UP_TIKV_PORT/$UP_TIKV_STATUS_PORT TiDB=$UPSTREAM_PORT/$UP_TIDB_STATUS_PORT"
-    echo "Ports (downstream): PD=$DOWN_PD_CLIENT_PORT/$DOWN_PD_PEER_PORT TiKV=$DOWN_TIKV_PORT/$DOWN_TIKV_STATUS_PORT TiDB=$DOWNSTREAM_PORT/$DOWN_TIDB_STATUS_PORT"
+
+    if [ "$start_downstream" -ne 0 ]; then
+        alloc_port
+        DOWN_PD_CLIENT_PORT=$ALLOCATED_PORT
+        alloc_port
+        DOWN_PD_PEER_PORT=$ALLOCATED_PORT
+        start_pd_server $DOWN_PD_CLIENT_PORT $DOWN_PD_PEER_PORT $PD_DATA_DIR2 $PD_LOG_FILE2
+
+        alloc_port
+        DOWN_TIKV_PORT=$ALLOCATED_PORT
+        alloc_port
+        DOWN_TIKV_STATUS_PORT=$ALLOCATED_PORT
+        start_tikv_server $DOWN_PD_CLIENT_PORT $DOWN_TIKV_PORT $DOWN_TIKV_STATUS_PORT $TIKV_DATA_DIR2 $TIKV_LOG_FILE2
+
+        alloc_port
+        DOWNSTREAM_PORT=$ALLOCATED_PORT
+        alloc_port
+        DOWN_TIDB_STATUS_PORT=$ALLOCATED_PORT
+        start_tidb_server "127.0.0.1:$DOWN_PD_CLIENT_PORT" $DOWNSTREAM_PORT $DOWN_TIDB_STATUS_PORT $TIDB_LOG_FILE2
+
+        echo "Ports (downstream): PD=$DOWN_PD_CLIENT_PORT/$DOWN_PD_PEER_PORT TiKV=$DOWN_TIKV_PORT/$DOWN_TIKV_STATUS_PORT TiDB=$DOWNSTREAM_PORT/$DOWN_TIDB_STATUS_PORT"
+    else
+        DOWNSTREAM_PORT=""
+    fi
     echo "TiDB cluster started successfully!"
 }
 
 function run_mysql_tester()
 {
+    local downstream_args=()
+
+    if [ -n "${DOWNSTREAM_PORT:-}" ]; then
+        downstream_args=(-downstream "root:@tcp(127.0.0.1:$DOWNSTREAM_PORT)/test")
+    fi
+
     if [ $record -eq 1 ]; then
         echo "run & record integration test cases: $tests"
         $mysql_tester \
           -port "$UPSTREAM_PORT" \
-          -downstream "root:@tcp(127.0.0.1:$DOWNSTREAM_PORT)/test" \
+          "${downstream_args[@]}" \
           --check-error=true \
           --path-dumpling="./third_bin/dumpling" \
           --record $@
@@ -731,16 +750,12 @@ function run_mysql_tester()
         echo "run integration test cases: $tests"
         $mysql_tester \
           -port "$UPSTREAM_PORT" \
-          -downstream "root:@tcp(127.0.0.1:$DOWNSTREAM_PORT)/test" \
+          "${downstream_args[@]}" \
           --check-error=true \
           --path-dumpling="./third_bin/dumpling" \
           $@
     fi
 }
-
-start_tidb_cluster
-wait_for_port_ready "127.0.0.1" "$UPSTREAM_PORT" "TiDB upstream" "$TIDB_LOG_FILE" 120 || exit 1
-wait_for_port_ready "127.0.0.1" "$DOWNSTREAM_PORT" "TiDB downstream" "$TIDB_LOG_FILE2" 120 || exit 1
 
 if [ $record -eq 1 ]; then
     if [ "$record_case" = 'all' ]; then
@@ -780,6 +795,17 @@ else
                 ;;
         esac
     done
+fi
+
+need_downstream=0
+if [ ${#ticdc_cases[@]} -ne 0 ]; then
+    need_downstream=1
+fi
+
+start_tidb_cluster "$need_downstream"
+wait_for_port_ready "127.0.0.1" "$UPSTREAM_PORT" "TiDB upstream" "$TIDB_LOG_FILE" 120 || exit 1
+if [ "$need_downstream" -ne 0 ]; then
+    wait_for_port_ready "127.0.0.1" "$DOWNSTREAM_PORT" "TiDB downstream" "$TIDB_LOG_FILE2" 120 || exit 1
 fi
 
 if [ ${#non_ticdc_cases[@]} -ne 0 ]; then
