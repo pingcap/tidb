@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -428,10 +427,6 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 	)
 	for i := range columnInfos {
 		info := columnInfos[i]
-		if info.ColumnId == model.ExtraPhysTblID {
-			// Skip since it needs to be filled in from the key
-			continue
-		}
 		ft := fieldTps[i]
 		col := rowcodec.ColInfo{
 			ID:         info.ColumnId,
