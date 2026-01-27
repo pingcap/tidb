@@ -88,14 +88,15 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			basicJoinGroupInfo: &basicJoinGroupInfo{},
 		}
 	}
-	// If the session var is set to off, we will still reject the outer joins.
-	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
-		return &joinGroupResult{
-			group:              []base.LogicalPlan{p},
-			joinOrderHintInfo:  joinOrderHintInfo,
-			basicJoinGroupInfo: &basicJoinGroupInfo{},
-		}
-	}
+	// gjt todo for debug
+	// // If the session var is set to off, we will still reject the outer joins.
+	// if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
+	// 	return &joinGroupResult{
+	// 		group:              []base.LogicalPlan{p},
+	// 		joinOrderHintInfo:  joinOrderHintInfo,
+	// 		basicJoinGroupInfo: &basicJoinGroupInfo{},
+	// 	}
+	// }
 	// `leftHasHint` and `rightHasHint` are used to record whether the left child and right child are set by the join method hint.
 	leftHasHint, rightHasHint := false, false
 	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.PreferJoinType > uint(0) {

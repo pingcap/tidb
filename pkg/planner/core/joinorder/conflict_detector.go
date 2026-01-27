@@ -166,6 +166,16 @@ func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVert
 	}
 
 	conds := expression.ScalarFuncs2Exprs(joinop.EqualConditions)
+	nonEQConds := make([]expression.Expression, 0, len(joinop.LeftConditions)+len(joinop.RightConditions)+len(joinop.OtherConditions))
+	nonEQConds = append(nonEQConds, joinop.OtherConditions...)
+	nonEQConds = append(nonEQConds, joinop.LeftConditions...)
+	nonEQConds = append(nonEQConds, joinop.RightConditions...)
+
+	if len(conds) == 0 && len(nonEQConds) == 0 {
+		tmp := d.makeEdge(base.InnerJoin, []expression.Expression{}, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		res = append(res, tmp)
+	}
+
 	condArg := make([]expression.Expression, 1)
 	for _, cond := range conds {
 		condArg[0] = cond
@@ -173,10 +183,7 @@ func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVert
 		tmp.eqConds = append(tmp.eqConds, cond.(*expression.ScalarFunction))
 		res = append(res, tmp)
 	}
-	nonEQConds := make([]expression.Expression, 0, len(joinop.LeftConditions)+len(joinop.RightConditions)+len(joinop.OtherConditions))
-	nonEQConds = append(nonEQConds, joinop.OtherConditions...)
-	nonEQConds = append(nonEQConds, joinop.LeftConditions...)
-	nonEQConds = append(nonEQConds, joinop.RightConditions...)
+
 	for _, cond := range nonEQConds {
 		condArg[0] = cond
 		tmp := d.makeEdge(base.InnerJoin, condArg, leftVertexes, rightVertexes, leftEdges, rightEdges)
@@ -193,12 +200,17 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 	nonEQConds = append(nonEQConds, joinop.OtherConditions...)
 
 	conds := expression.ScalarFuncs2Exprs(joinop.EqualConditions)
+	if len(conds) == 0 && len(nonEQConds) == 0 {
+		return d.makeEdge(joinop.JoinType, []expression.Expression{}, leftVertexes, rightVertexes, leftEdges, rightEdges)
+	}
+
 	conds = append(conds, nonEQConds...)
 
 	e := d.makeEdge(joinop.JoinType, conds, leftVertexes, rightVertexes, leftEdges, rightEdges)
 	e.eqConds = make([]*expression.ScalarFunction, len(joinop.EqualConditions))
 	copy(e.eqConds, joinop.EqualConditions)
 	e.nonEQConds = nonEQConds
+
 	return e
 }
 
