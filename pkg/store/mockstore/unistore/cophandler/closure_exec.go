@@ -22,6 +22,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/badger"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -511,6 +512,8 @@ type closureExecutor struct {
 	resultFieldType []*types.FieldType
 	kvRanges        []kv.KeyRange
 	startTS         uint64
+	curCommitTS     uint64
+	curCommitTSSet  bool
 	ignoreLock      bool
 	lockChecked     bool
 	scanType        scanType
@@ -609,6 +612,18 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			}
 			if len(val) == 0 {
 				continue
+			}
+			e.curCommitTSSet = false
+			if s, ok := e.processor.(interface{ SetCurrentCommitTS(uint64) }); ok {
+				item, err := dbReader.GetTxn().Get(ran.StartKey)
+				if err != nil && errors.Cause(err) != badger.ErrKeyNotFound {
+					return nil, errors.Trace(err)
+				}
+				if err == nil {
+					s.SetCurrentCommitTS(item.Version())
+				} else {
+					s.SetCurrentCommitTS(0)
+				}
 			}
 			if e.counts != nil {
 				e.counts[i]++
@@ -868,6 +883,28 @@ func (e *closureExecutor) copyError(err error) error {
 	return ret
 }
 
+func (e *closureExecutor) SetCurrentCommitTS(commitTS uint64) {
+	e.curCommitTS = commitTS
+	e.curCommitTSSet = true
+}
+
+func (e *closureExecutor) getCommitTSByKey(key []byte) (uint64, error) {
+	if e.curCommitTSSet {
+		return e.curCommitTS, nil
+	}
+	if e.dbReader == nil {
+		return 0, errors.New("dbReader is nil")
+	}
+	item, err := e.dbReader.GetTxn().Get(key)
+	if err != nil {
+		if errors.Cause(err) == badger.ErrKeyNotFound {
+			return 0, nil
+		}
+		return 0, errors.Trace(err)
+	}
+	return item.Version(), nil
+}
+
 func (e *closureExecutor) mockReadScanProcessCore(key, value []byte) error {
 	e.scanCtx.chk.AppendRow(e.mockReader.chk.GetRow(e.mockReader.currentIndex))
 	e.mockReader.currentIndex++
@@ -887,12 +924,30 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte, commitTS uint6
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	rowIdx := e.scanCtx.chk.NumRows() - 1
+	commitTsIdx := -1
+	for i := range e.columnInfos {
+		if e.columnInfos[i].ColumnId == model.ExtraCommitTsID {
+			commitTsIdx = i
+			break
+		}
+	}
+	if commitTsIdx >= 0 {
+		commitTS, err := e.getCommitTSByKey(key)
+		if err != nil {
+			return err
+		}
+		col := e.scanCtx.chk.Column(commitTsIdx)
+		col.SetNull(rowIdx, false)
+		col.Uint64s()[rowIdx] = commitTS
+	}
+
 	for i := range e.columnInfos {
 		if e.columnInfos[i].ColumnId != model.ExtraPhysTblID {
 			continue
 		}
 		tblID := tablecodec.DecodeTableID(key)
-		rowIdx := e.scanCtx.chk.NumRows() - 1
 		col := e.scanCtx.chk.Column(i)
 		col.SetNull(rowIdx, false)
 		col.Int64s()[rowIdx] = tblID
@@ -1002,7 +1057,11 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 		chk.AppendInt64(idxPhysTblID, tblID)
 	}
 	if idxCommitTs >= 0 && idxCommitTs >= filledLen {
-		chk.AppendNull(idxCommitTs)
+		commitTS, err := e.getCommitTSByKey(key)
+		if err != nil {
+			return err
+		}
+		chk.AppendUint64(idxCommitTs, commitTS)
 	}
 	gotRow = true
 	return nil

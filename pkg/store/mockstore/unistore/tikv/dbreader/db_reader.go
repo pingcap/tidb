@@ -241,6 +241,10 @@ type ScanProcessor interface {
 	SkipValue() bool
 }
 
+type commitTSSetter interface {
+	SetCurrentCommitTS(commitTS uint64)
+}
+
 func exceedEndKey(current, endKey []byte) bool {
 	if len(endKey) == 0 {
 		return false
@@ -270,6 +274,9 @@ func (r *DBReader) Scan(startKey, endKey []byte, limit int, startTS uint64, proc
 		}
 		if item.IsEmpty() {
 			continue
+		}
+		if s, ok := proc.(commitTSSetter); ok {
+			s.SetCurrentCommitTS(item.Version())
 		}
 		var val []byte
 		if !skipValue {
@@ -336,6 +343,9 @@ func (r *DBReader) ReverseScan(startKey, endKey []byte, limit int, startTS uint6
 		}
 		if item.IsEmpty() {
 			continue
+		}
+		if s, ok := proc.(commitTSSetter); ok {
+			s.SetCurrentCommitTS(item.Version())
 		}
 		var val []byte
 		if !skipValue {

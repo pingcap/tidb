@@ -103,6 +103,10 @@ func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader 
 			ts.physTblIDColIdx = new(int)
 			*ts.physTblIDColIdx = i
 		}
+		if col.ColumnId == model.ExtraCommitTsID {
+			ts.commitTsColIdx = new(int)
+			*ts.commitTsColIdx = i
+		}
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
@@ -126,6 +130,10 @@ func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan)
 			ts.physTblIDColIdx = new(int)
 			*ts.physTblIDColIdx = i
 		}
+		if col.ColumnId == model.ExtraCommitTsID {
+			ts.commitTsColIdx = new(int)
+			*ts.commitTsColIdx = i
+		}
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
@@ -145,6 +153,14 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 	primaryColIds := pb.GetPrimaryColumnIds()
 
 	lastCol := pb.Columns[numCols-1]
+	var commitTsColIdx *int
+	if lastCol.GetColumnId() == model.ExtraCommitTsID {
+		numIdxCols--
+		commitTsColIdx = new(int)
+		*commitTsColIdx = numIdxCols
+		lastCol = pb.Columns[numIdxCols-1]
+	}
+
 	var physTblIDColIdx *int
 	if lastCol.GetColumnId() == model.ExtraPhysTblID {
 		numIdxCols--
@@ -205,6 +221,7 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		hdlStatus:          hdlStatus,
 		desc:               pb.Desc,
 		physTblIDColIdx:    physTblIDColIdx,
+		commitTsColIdx:     commitTsColIdx,
 		commonHandleKeyIdx: commonHandleKeyIdx,
 		paging:             b.paging,
 	}

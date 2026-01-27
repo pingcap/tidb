@@ -424,7 +424,48 @@ func TestIndexScanWithExtraPhysTblIDAndCommitTs(t *testing.T) {
 	require.Equal(t, int64(indexVal), returnedRow[0].GetInt64())
 	require.Equal(t, int64(handle), returnedRow[1].GetInt64())
 	require.Equal(t, indexTableID, returnedRow[2].GetInt64())
-	require.True(t, returnedRow[3].IsNull())
+	require.False(t, returnedRow[3].IsNull())
+	require.Equal(t, uint64(startTs+1), returnedRow[3].GetUint64())
+}
+
+func TestTableScanWithCommitTs(t *testing.T) {
+	data, err := prepareTestTableData(1, tableID)
+	require.NoError(t, err)
+	store, clean, err := newTestStore("cop_handler_test_db", "cop_handler_test_log")
+	require.NoError(t, err)
+	defer func() {
+		err := clean()
+		require.NoError(t, err)
+	}()
+
+	errs := initTestData(store, data.encodedTestKVDatas)
+	require.Nil(t, errs)
+
+	colInfos := append(slices.Clone(data.colInfos), &tipb.ColumnInfo{
+		ColumnId:  model.ExtraCommitTsID,
+		Tp:        int32(mysql.TypeLonglong),
+		Collation: -mysql.DefaultCollationID,
+		Flag:      int32(mysql.NotNullFlag | mysql.UnsignedFlag),
+	})
+
+	dagRequest := newDagBuilder().
+		setStartTs(dagRequestStartTs).
+		addTableScan(colInfos, tableID).
+		setOutputOffsets([]uint32{0, 1, 2, 3}).
+		build()
+	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 0)},
+		dagRequest, dagRequestStartTs)
+
+	chunks, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
+	require.NoError(t, err)
+	require.Equal(t, 1, rowCount)
+	require.Len(t, chunks, 1)
+
+	returnedRow, err := codec.Decode(chunks[0].RowsData, 4)
+	require.NoError(t, err)
+	require.Len(t, returnedRow, 4)
+	require.False(t, returnedRow[3].IsNull())
+	require.Equal(t, uint64(startTs+1), returnedRow[3].GetUint64())
 }
 
 func TestIndexScanSpecialColumnsMustBeTrailing(t *testing.T) {
