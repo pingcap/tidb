@@ -579,6 +579,9 @@ function make_tiflash_config_for_tici() {
     : "${TIFLASH_PROXY_RESERVE_SPACE:=1KB}"
     : "${TIFLASH_STORAGE_DIR:=$TIFLASH_DATA_DIR}"
     : "${TIFLASH_PROXY_CONFIG:=$TICI_CONFIG_DIR/tiflash-learner.toml}"
+    : "${TICI_READER_HOST:=127.0.0.1}"
+    : "${TICI_READER_PORT:=3931}"
+    : "${TICI_READER_ADDR:=${TICI_READER_HOST}:${TICI_READER_PORT}}"
     mkdir -p "$TICI_CONFIG_DIR"
 
     cat > "$TIFLASH_PROXY_CONFIG" <<EOF
@@ -628,6 +631,7 @@ pd_addr = "${PD_ADDR}"
 max_memory_usage = 10000000000
 
 [tici.reader_node]
+addr = "${TICI_READER_ADDR}"
 heartbeat_interval = "3s"
 max_heartbeat_retries = 3
 
