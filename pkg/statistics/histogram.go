@@ -633,11 +633,11 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 				skewEstimate -= hg.Buckets[bktIndexA].Repeat
 			}
 			if skewRatio > 0 {
-				// Cap the max estimate to 2X the estimate.
+				// Cap the max estimate to 2X the estimate, but not beyond the bucket's maximum possible row count.
 				// TODO: RiskRangeSkewRatio is predominantly used for outOfRangeRowCount, and
-				//       its usage is diluted here. Consider how to address this if
+				//       it's usage is diluated here. Consider how to address this if
 				//       issues are reported here regarding under-estimation for in-bucket ranges.
-				rangeEst = CalculateSkewRatioCounts(rangeEst.Est, rangeEst.Est*2, skewRatio)
+				rangeEst = CalculateSkewRatioCounts(rangeEst.Est, min(rangeEst.Est*2, float64(skewEstimate)), skewRatio)
 			}
 			// Report the full max estimate for risk estimation usage in compareCandidates (skylinePruning).
 			rangeEst.MaxEst = max(rangeEst.MaxEst, float64(skewEstimate))
