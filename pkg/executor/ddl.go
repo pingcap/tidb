@@ -703,16 +703,35 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	if err != nil {
 		return err
 	}
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	sqlExec, ok := e.Ctx().(interface{ GetSQLExecutor() sqlexec.SQLExecutor })
 	if !ok {
 		return errors.New("session does not support internal SQL execution")
 	}
-	_, err = sqlexec.ExecSQL(ctx, sqlExec.GetSQLExecutor(),
+	mvID := mvTbl.Meta().ID
+	_, err = sqlexec.ExecSQL(internalCtx, sqlExec.GetSQLExecutor(),
 		`INSERT INTO mysql.mv_refresh_info (mv_id, base_table_id, log_table_id, refresh_interval_seconds, next_run_time, last_refresh_tso, last_refresh_type, last_refresh_result, last_error)
 		 VALUES (%?, %?, %?, %?, NULL, 0, 'COMPLETE', 'FAILED', 'not built yet')`,
-		mvTbl.Meta().ID, baseInfo.ID, logInfo.ID, s.RefreshIntervalSeconds,
+		mvID, baseInfo.ID, logInfo.ID, s.RefreshIntervalSeconds,
 	)
-	return err
+	if err == nil {
+		return nil
+	}
+
+	// Best-effort cleanup to avoid leaving an orphan MV table without refresh info.
+	_, _ = sqlexec.ExecSQL(internalCtx, sqlExec.GetSQLExecutor(), "DELETE FROM mysql.mv_refresh_info WHERE mv_id = %?", mvID)
+
+	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	cleanupErr := e.ddlExecutor.DropTable(e.Ctx(), &ast.DropTableStmt{
+		IfExists: true,
+		Tables: []*ast.TableName{
+			{Schema: viewSchema, Name: s.ViewName.Name},
+		},
+	})
+	if cleanupErr != nil {
+		return errors.Annotatef(err, "failed to insert into mysql.mv_refresh_info; cleanup drop materialized view %s failed: %v", s.ViewName.Name.O, cleanupErr)
+	}
+	return errors.Annotatef(err, "failed to insert into mysql.mv_refresh_info; materialized view %s has been rolled back", s.ViewName.Name.O)
 }
 
 func (e *DDLExec) executeDropMaterializedView(s *ast.DropMaterializedViewStmt) error {
@@ -756,7 +775,12 @@ func (e *DDLExec) executeDropMaterializedView(s *ast.DropMaterializedViewStmt) e
 		return errors.New("session does not support internal SQL execution")
 	}
 	_, err = sqlexec.ExecSQL(ctx, sqlExec.GetSQLExecutor(), "DELETE FROM mysql.mv_refresh_info WHERE mv_id = %?", mvID)
-	return err
+	if err != nil {
+		// Don't fail the DROP MATERIALIZED VIEW since the MV table is already dropped.
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.Annotatef(err, "failed to cleanup mysql.mv_refresh_info for materialized view %d", mvID))
+		return nil
+	}
+	return nil
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
