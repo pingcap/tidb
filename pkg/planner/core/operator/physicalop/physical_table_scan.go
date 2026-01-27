@@ -397,7 +397,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID(isChildOfIndexLookUp ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP(isChildOfIndexLookUp...)
 		}
@@ -636,7 +636,16 @@ func (p *PhysicalTableScan) GetPlanCostVer2(taskType property.TaskType,
 // GetScanRowSize is to get the row size when to scan.
 func (p *PhysicalTableScan) GetScanRowSize() float64 {
 	if p.StoreType == kv.TiKV {
-		return cardinality.GetTableAvgRowSize(p.SCtx(), p.TblColHists, p.TblCols, p.StoreType, true)
+		cols := p.TblCols
+		// _tidb_commit_ts is not a real extra column stored in the disk, and it should not bring extra cost, so we
+		// exclude it from the cost here.
+		for i, col := range cols {
+			if col.ID == model.ExtraCommitTSID {
+				cols = slices.Delete(slices.Clone(cols), i, i+1)
+				break
+			}
+		}
+		return cardinality.GetTableAvgRowSize(p.SCtx(), p.TblColHists, cols, p.StoreType, true)
 	}
 	// If `p.handleCol` is nil, then the schema of tableScan doesn't have handle column.
 	// This logic can be ensured in column pruning.

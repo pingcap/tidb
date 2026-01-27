@@ -173,8 +173,7 @@ func (it *columnIterator[T, R]) Next(d *types.Datum) error {
 
 	value := it.values[it.valueOffset]
 	it.valueOffset++
-	it.setter(value, d)
-	return nil
+	return it.setter(value, d)
 }
 
 func createColumnIterator(tp parquet.Type, converted *convertedType, loc *time.Location, batchSize int) iterator {

@@ -39,7 +39,7 @@ go_test(
     ],
     embed = [":store"],
     flaky = True,
-    shard_count = 24,
+    shard_count = 23,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -55,7 +55,6 @@ go_test(
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_stretchr_testify//require",
-        "@com_github_tikv_client_go_v2//kv",
         "@com_github_tikv_client_go_v2//testutils",
         "@org_uber_go_goleak//:goleak",
     ],
