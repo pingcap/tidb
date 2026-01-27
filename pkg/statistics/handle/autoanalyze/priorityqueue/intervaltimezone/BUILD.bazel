@@ -4,7 +4,7 @@ go_test(
     name = "intervaltimezone_test",
     timeout = "short",
     srcs = [
-        "interval_timezone_test.go",
+        "intervaltimezone_test.go",
         "main_test.go",
     ],
     flaky = True,
