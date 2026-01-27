@@ -3,39 +3,28 @@
 CREATE DATABASE IF NOT EXISTS tici_integration;
 USE tici_integration;
 
-DROP TABLE IF EXISTS t9;
-DROP TABLE IF EXISTS t8;
-DROP TABLE IF EXISTS t7;
+DROP TABLE IF EXISTS t1;
+DROP TABLE IF EXISTS t2;
 
-CREATE TABLE IF NOT EXISTS t9(id BIGINT AUTO_INCREMENT,body TEXT,PRIMARY KEY (id));
-ALTER TABLE t9 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
-INSERT INTO t9 (body) VALUES
-('This is the first test pdata, used to demonstrate the insert operation'),
-('The second record contains some sample text for testing'),
-('Third entry: verifying the TEXT field''s ability to store longer content'),
-('Fourth data row, which can be used for subsequent query or analysis tests'),
-('Fifth sample entry to complete the basic insertion example');
+CREATE TABLE IF NOT EXISTS t1(id BIGINT,body TEXT,PRIMARY KEY (id));
+ALTER TABLE t1 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
+INSERT INTO t1 VALUES
+(1, 'This is the first test pdata, used to demonstrate the insert operation'),
+(2, 'The second record contains some sample text for testing'),
+(3, 'Third entry: verifying the TEXT field''s ability to store longer content'),
+(4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
+(5, 'Fifth sample entry to complete the basic insertion example');
 
-CREATE TABLE IF NOT EXISTS t8(id BIGINT AUTO_INCREMENT,body TEXT,PRIMARY KEY (id));
-ALTER TABLE t8 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
-INSERT INTO t8 (body) VALUES
-('This is the first test data, used to demonstrate the insert operation'),
-('The second record contains some sample text for testing'),
-('Third entry: verifying the TEXT field''s ability to store longer content'),
-('Fourth data row, which can be used for subsequent query or analysis tests'),
-('Fifth sample entry to complete the basic insertion example');
-
-CREATE TABLE IF NOT EXISTS t7(id BIGINT AUTO_INCREMENT,content TEXT,PRIMARY KEY (id));
-ALTER TABLE t7 ADD FULLTEXT INDEX ft_index (content) WITH PARSER standard;
-INSERT INTO t7 (content) VALUES
-('This is the first test data, used to demonstrate the insert operation'),
-('The second record contains some sample text for testing'),
-('Third entry: verifying the TEXT field''s ability to store longer content'),
-('Fourth data row, which can be used for subsequent query or analysis tests'),
-('Fifth sample entry to complete the basic insertion example');
+CREATE TABLE IF NOT EXISTS t2(id BIGINT,content TEXT,PRIMARY KEY (id));
+ALTER TABLE t2 ADD FULLTEXT INDEX ft_index (content) WITH PARSER standard;
+INSERT INTO t2 VALUES
+(1, 'This is the first test data, used to demonstrate the insert operation'),
+(2, 'The second record contains some sample text for testing'),
+(3, 'Third entry: verifying the TEXT field''s ability to store longer content'),
+(4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
+(5, 'Fifth sample entry to complete the basic insertion example');
 
 DO SLEEP(20);
 
-SELECT * FROM t9 WHERE fts_match_word('first', body);
-SELECT * FROM t8 WHERE fts_match_word('first', body);
-SELECT * FROM t7 WHERE fts_match_word('first', content);
+SELECT * FROM t1 WHERE fts_match_word('first', body);
+SELECT * FROM t2 WHERE fts_match_word('first', content);
