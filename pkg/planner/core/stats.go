@@ -456,7 +456,7 @@ func detachCondAndBuildRangeForPath(
 	path.Ranges = res.Ranges
 	if ticiType != distsql.NotTiCIIndex {
 		if ticiType == distsql.TiCIShardIntHandle {
-			fixTiCIIndexRangesForIntHandle(path.Ranges, path.IdxCols[0].RetType.GetFlag()&mysql.UnsignedFlag > 0)
+			path.Ranges = fixTiCIIndexRangesForIntHandle(path.Ranges, path.IdxCols[0].RetType.GetFlag()&mysql.UnsignedFlag > 0)
 		}
 		return nil
 	}
@@ -482,14 +482,14 @@ func detachCondAndBuildRangeForPath(
 }
 
 // fixTiCIIndexRangesForIntHandle fixes the TiCI index ranges for int handle.
-// For normal index range, it's min value is NULL or the MinNotNull, and max value is MaxValue.
+// For normal index range, its min value is NULL or the MinNotNull, and max value is MaxValue.
 // But for TiCI index range which directly uses table's int pk range, we should set the min value to the min int value and max value to max int value.
 // So after calling the function of extract normal index ranges, we need to fix the ranges for TiCI index with int handle.
 func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*ranger.Range {
 	var minDatum, maxDatum types.Datum
 	// isUnsigned indicates whether the handle is unsigned.
 	// Now we just cast the unsigned int to int and then store the int value inside the Datum.
-	// We wrap the uint64/int64 with Datum here to keep us untouched with Datum's ineternal representation.
+	// We wrap the uint64/int64 with Datum here to keep us untouched with Datum's internal representation.
 	if isUnsigned {
 		minDatum = types.NewUintDatum(0)
 		maxDatum = types.NewUintDatum(math.MaxUint64)
