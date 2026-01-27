@@ -332,7 +332,7 @@ type PartialOrderInfo struct {
 	// SortItems are the ORDER BY columns from TopN
 	SortItems []*SortItem
 
-	// Those following two fields are set by matchPartialOrderProperty in skylinePruning
+	// The following two fields are set by matchPartialOrderProperty in skylinePruning
 	// **Only index can match** the PartialOrderInfo physical property, **following fields are set**.
 
 	// PrefixColID is the last and only one prefix column ID of index,
