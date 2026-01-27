@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"math"
 	"strings"
@@ -32,14 +33,17 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core"
 	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tiancaiamao/gp"
+	"go.uber.org/zap"
 )
 
 // AnalyzeColumnsExec represents Analyze columns push down executor.
@@ -66,9 +70,35 @@ type AnalyzeColumnsExec struct {
 
 func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
-		return e.toV2().analyzeColumnsPushDownV2(ctx, gp)
+		res := e.toV2().analyzeColumnsPushDownV2(ctx, gp)
+		if intest.InTest && res.Err != nil && stderrors.Is(res.Err, context.Canceled) {
+			cause := context.Cause(ctx)
+			ctxErr := ctx.Err()
+			statslogutil.StatsLogger().Info("analyze columns canceled",
+				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+				zap.Error(res.Err),
+				zap.Error(cause),
+				zap.Error(ctxErr),
+				zap.Stack("stack"),
+			)
+		}
+		return res
 	}
-	return e.toV1().analyzeColumnsPushDownV1(ctx)
+	res := e.toV1().analyzeColumnsPushDownV1(ctx)
+	if intest.InTest && res.Err != nil && stderrors.Is(res.Err, context.Canceled) {
+		cause := context.Cause(ctx)
+		ctxErr := ctx.Err()
+		statslogutil.StatsLogger().Info("analyze columns canceled",
+			zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+			zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+			zap.Error(res.Err),
+			zap.Error(cause),
+			zap.Error(ctxErr),
+			zap.Stack("stack"),
+		)
+	}
+	return res
 }
 
 func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
