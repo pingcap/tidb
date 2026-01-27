@@ -42,7 +42,7 @@ func TestSlice(t *testing.T) {
 	}
 }
 
-func checkBinarySeachByIndx(t *testing.T, arr []int, low, high int) {
+func checkBinarySearchByIndx(t *testing.T, arr []int, low, high int) {
 	i1, i2 := BinarySearchRangeFunc(arr, low, high, func(a int, b int) int {
 		return cmp.Compare(a, b)
 	})
