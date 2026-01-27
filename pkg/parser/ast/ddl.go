@@ -1717,7 +1717,7 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// CreateMaterializedViewLogStmt is a statement to create a materialized view log (TiDB demo).
+// CreateMaterializedViewLogStmt is a statement to create a materialized view log.
 //
 // Example:
 //
@@ -1770,7 +1770,7 @@ func (n *CreateMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// DropMaterializedViewLogStmt is a statement to drop a materialized view log (TiDB demo).
+// DropMaterializedViewLogStmt is a statement to drop a materialized view log.
 //
 // Example:
 //
@@ -1805,7 +1805,7 @@ func (n *DropMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// CreateMaterializedViewStmt is a statement to create a materialized view (TiDB demo).
+// CreateMaterializedViewStmt is a statement to create a materialized view.
 //
 // Example:
 //
@@ -1856,7 +1856,7 @@ func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// DropMaterializedViewStmt is a statement to drop a materialized view (TiDB demo).
+// DropMaterializedViewStmt is a statement to drop a materialized view.
 //
 // Example:
 //

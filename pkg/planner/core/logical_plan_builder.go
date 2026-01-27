@@ -69,6 +69,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -4675,7 +4676,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 
-	if b.ctx.GetSessionVars().EnableMaterializedViewDemo {
+	if b.ctx.GetSessionVars().EnableMaterializedView {
 		extraCol := ds.NewExtraCommitTsSchemaCol()
 		ds.Columns = append(ds.Columns, model.NewExtraCommitTsColInfo())
 		schema.Append(extraCol)
@@ -5530,7 +5531,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 				if tblInfo.IsMaterializedViewLog() {
 					obj = "materialized view log"
 				}
-				return nil, errors.Errorf("update %s %s is not supported now", obj, tblInfo.Name.O)
+				return nil, exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("update", obj, tblInfo.Name.O)
 			}
 		}
 	}
@@ -5953,7 +5954,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				if tableInfo.IsMaterializedViewLog() {
 					obj = "materialized view log"
 				}
-				return nil, errors.Errorf("delete %s %s is not supported now", obj, tableInfo.Name.O)
+				return nil, exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("delete", obj, tableInfo.Name.O)
 			}
 			if sessionVars.User != nil {
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
@@ -5980,7 +5981,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				if tblW.TableInfo.IsMaterializedViewLog() {
 					obj = "materialized view log"
 				}
-				return nil, errors.Errorf("delete %s %s is not supported now", obj, tblW.TableInfo.Name.O)
+				return nil, exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("delete", obj, tblW.TableInfo.Name.O)
 			}
 			dbName := v.Schema.L
 			if dbName == "" {

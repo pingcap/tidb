@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMVDemoCommitTsColumnGate(t *testing.T) {
+func TestMVCommitTsColumnGate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
@@ -18,17 +18,17 @@ func TestMVDemoCommitTsColumnGate(t *testing.T) {
 
 	tk.MustGetErrCode("explain select _tidb_commit_ts from t", mysql.ErrBadField)
 
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustQuery("explain select _tidb_commit_ts from t")
 }
 
-func TestMVDemoCommitTsNoPointGetPlan(t *testing.T) {
+func TestMVCommitTsNoPointGetPlan(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key, v int)")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 
 	rows := tk.MustQuery("explain select _tidb_commit_ts from t where id = 1").Rows()
 	for _, row := range rows {
@@ -37,19 +37,19 @@ func TestMVDemoCommitTsNoPointGetPlan(t *testing.T) {
 	}
 }
 
-func TestMVDemoCommitTsPlanCacheKeyIncludesSysvar(t *testing.T) {
+func TestMVCommitTsPlanCacheKeyIncludesSysvar(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
 	tk.MustExec("create table t (id int primary key)")
 	tk.MustExec("set @@session.tidb_enable_prepared_plan_cache = 1")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 
 	tk.MustExec("prepare stmt from 'select _tidb_commit_ts from t where id = ?'")
 	tk.MustExec("set @a = 1")
 	tk.MustQuery("execute stmt using @a")
 
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 0")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 0")
 	tk.MustGetErrCode("execute stmt using @a", mysql.ErrBadField)
 }

@@ -4306,7 +4306,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return s
 	}
 	dom.StartTTLJobManager()
-	dom.StartMaterializedViewDemoScheduler()
+	dom.StartMaterializedViewScheduler()
 
 	dom.LoadSigningCertLoop(cfg.Security.SessionTokenSigningCert, cfg.Security.SessionTokenSigningKey)
 

@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -576,7 +577,7 @@ func (e *UpdateExec) Open(ctx context.Context) error {
 				if meta.IsMaterializedViewLog() {
 					obj = "materialized view log"
 				}
-				return errors.Errorf("update %s %s is not supported now", obj, meta.Name.O)
+				return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("update", obj, meta.Name.O)
 			}
 		}
 	}

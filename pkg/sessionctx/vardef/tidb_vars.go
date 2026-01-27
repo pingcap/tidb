@@ -269,7 +269,10 @@ const (
 	// TiDBEnablePaging indicates whether paging is enabled in coprocessor requests.
 	TiDBEnablePaging = "tidb_enable_paging"
 
-	// TiDBEnableMaterializedViewDemo indicates whether MV demo features are enabled.
+	// TiDBEnableMaterializedView indicates whether materialized view features are enabled.
+	TiDBEnableMaterializedView = "tidb_enable_materialized_view"
+
+	// TiDBEnableMaterializedViewDemo is a deprecated alias of TiDBEnableMaterializedView.
 	TiDBEnableMaterializedViewDemo = "tidb_enable_materialized_view_demo"
 
 	// TiDBReadConsistency indicates whether the autocommit read statement goes through TiKV RC.
@@ -1621,7 +1624,8 @@ const (
 	DefTiDBEnableFastCreateTable                      = true
 	DefTiDBSimplifiedMetrics                          = false
 	DefTiDBEnablePaging                               = true
-	DefTiDBEnableMaterializedViewDemo                 = false
+	DefTiDBEnableMaterializedView                     = false
+	DefTiDBEnableMaterializedViewDemo                 = DefTiDBEnableMaterializedView
 	DefTiFlashFineGrainedShuffleStreamCount           = 0
 	DefStreamCountWhenMaxThreadsNotSet                = 8
 	DefTiFlashFineGrainedShuffleBatchSize             = 8192

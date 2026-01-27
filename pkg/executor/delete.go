@@ -356,7 +356,7 @@ func (e *DeleteExec) Open(ctx context.Context) error {
 				if meta.IsMaterializedViewLog() {
 					obj = "materialized view log"
 				}
-				return errors.Errorf("delete %s %s is not supported now", obj, meta.Name.O)
+				return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("delete", obj, meta.Name.O)
 			}
 		}
 	}

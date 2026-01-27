@@ -474,7 +474,7 @@ const (
 	version253 = 253
 
 	// version254
-	// Add mysql.mv_refresh_info for MV demo.
+	// Add mysql.mv_refresh_info for materialized view refresh.
 	version254 = 254
 )
 

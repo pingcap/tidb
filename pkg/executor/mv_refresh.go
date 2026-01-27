@@ -13,7 +13,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
-func mvDemoQuoteFullName(schema, table ast.CIStr) string {
+func mvQuoteFullName(schema, table ast.CIStr) string {
 	escape := func(s string) string {
 		return strings.ReplaceAll(s, "`", "``")
 	}
@@ -23,12 +23,12 @@ func mvDemoQuoteFullName(schema, table ast.CIStr) string {
 	return fmt.Sprintf("`%s`.`%s`", escape(schema.O), escape(table.O))
 }
 
-func mvDemoQuoteIdent(name ast.CIStr) string {
+func mvQuoteIdent(name ast.CIStr) string {
 	escape := strings.ReplaceAll(name.O, "`", "``")
 	return fmt.Sprintf("`%s`", escape)
 }
 
-func mvDemoExecInternal(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) error {
+func mvExecInternal(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) error {
 	execProvider, ok := sctx.(interface{ GetSQLExecutor() sqlexec.SQLExecutor })
 	if !ok {
 		return errors.New("session does not support internal SQL execution")
@@ -37,7 +37,7 @@ func mvDemoExecInternal(ctx context.Context, sctx sessionctx.Context, sql string
 	return err
 }
 
-func mvDemoQueryInternal(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
+func mvQueryInternal(ctx context.Context, sctx sessionctx.Context, sql string, args ...any) ([]chunk.Row, error) {
 	execProvider, ok := sctx.(interface{ GetSQLExecutor() sqlexec.SQLExecutor })
 	if !ok {
 		return nil, errors.New("session does not support internal SQL execution")
@@ -45,23 +45,23 @@ func mvDemoQueryInternal(ctx context.Context, sctx sessionctx.Context, sql strin
 	return sqlexec.ExecSQL(ctx, execProvider.GetSQLExecutor(), sql, args...)
 }
 
-func mvDemoBeginPessimistic(ctx context.Context, sctx sessionctx.Context) error {
-	return mvDemoExecInternal(ctx, sctx, "BEGIN PESSIMISTIC")
+func mvBeginPessimistic(ctx context.Context, sctx sessionctx.Context) error {
+	return mvExecInternal(ctx, sctx, "BEGIN PESSIMISTIC")
 }
 
-func mvDemoCommit(ctx context.Context, sctx sessionctx.Context) error {
-	return mvDemoExecInternal(ctx, sctx, "COMMIT")
+func mvCommit(ctx context.Context, sctx sessionctx.Context) error {
+	return mvExecInternal(ctx, sctx, "COMMIT")
 }
 
-func mvDemoRollback(ctx context.Context, sctx sessionctx.Context) error {
-	return mvDemoExecInternal(ctx, sctx, "ROLLBACK")
+func mvRollback(ctx context.Context, sctx sessionctx.Context) error {
+	return mvExecInternal(ctx, sctx, "ROLLBACK")
 }
 
-// mvDemoCompleteRefresh performs a COMPLETE refresh for MV demo:
+// mvCompleteRefresh performs a COMPLETE refresh for a materialized view:
 // - delete all MV rows
 // - insert from MV definition SELECT
 // - update mv_refresh_info (last_refresh_tso = txn.start_ts) atomically in the same txn
-func mvDemoCompleteRefresh(
+func mvCompleteRefresh(
 	ctx context.Context,
 	sctx sessionctx.Context,
 	internalSourceType string,
@@ -70,12 +70,12 @@ func mvDemoCompleteRefresh(
 	definitionSQL string,
 ) (retErr error) {
 	internalCtx := kv.WithInternalSourceType(ctx, internalSourceType)
-	if err := mvDemoBeginPessimistic(internalCtx, sctx); err != nil {
+	if err := mvBeginPessimistic(internalCtx, sctx); err != nil {
 		return err
 	}
 	defer func() {
 		if retErr != nil {
-			_ = mvDemoRollback(internalCtx, sctx)
+			_ = mvRollback(internalCtx, sctx)
 		}
 	}()
 
@@ -86,7 +86,7 @@ func mvDemoCompleteRefresh(
 	readTS := txn.StartTS()
 
 	// Refresh mutex: lock the mv_refresh_info row.
-	rows, err := mvDemoQueryInternal(internalCtx, sctx, "SELECT mv_id FROM mysql.mv_refresh_info WHERE mv_id = %? FOR UPDATE", mvID)
+	rows, err := mvQueryInternal(internalCtx, sctx, "SELECT mv_id FROM mysql.mv_refresh_info WHERE mv_id = %? FOR UPDATE", mvID)
 	if err != nil {
 		return err
 	}
@@ -94,15 +94,15 @@ func mvDemoCompleteRefresh(
 		return errors.Errorf("mv_refresh_info row not found for mv_id=%d", mvID)
 	}
 
-	mvFullName := mvDemoQuoteFullName(mvSchema, mvName)
+	mvFullName := mvQuoteFullName(mvSchema, mvName)
 
-	if err := mvDemoExecInternal(internalCtx, sctx, "DELETE FROM "+mvFullName); err != nil {
+	if err := mvExecInternal(internalCtx, sctx, "DELETE FROM "+mvFullName); err != nil {
 		return err
 	}
-	if err := mvDemoExecInternal(internalCtx, sctx, "INSERT INTO "+mvFullName+" "+definitionSQL); err != nil {
+	if err := mvExecInternal(internalCtx, sctx, "INSERT INTO "+mvFullName+" "+definitionSQL); err != nil {
 		return err
 	}
-	if err := mvDemoExecInternal(internalCtx, sctx,
+	if err := mvExecInternal(internalCtx, sctx,
 		`UPDATE mysql.mv_refresh_info
 		   SET last_refresh_tso = %?,
 		       last_refresh_type = 'COMPLETE',
@@ -115,5 +115,5 @@ func mvDemoCompleteRefresh(
 	); err != nil {
 		return err
 	}
-	return mvDemoCommit(internalCtx, sctx)
+	return mvCommit(internalCtx, sctx)
 }

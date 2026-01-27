@@ -20,7 +20,6 @@ import (
 	"runtime/trace"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -30,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -58,12 +58,12 @@ func (e *ReplaceExec) Open(ctx context.Context) error {
 		if meta.IsMaterializedViewLog() {
 			obj = "materialized view log"
 		}
-		return errors.Errorf("replace into %s %s is not supported now", obj, meta.Name.O)
+		return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("replace into", obj, meta.Name.O)
 	}
 	if logTbl, _, err := findMVLogTable(ctx, e.Ctx(), e.Table); err != nil {
 		return err
 	} else if logTbl != nil {
-		return errors.New("replace into a table with materialized view log is not supported for MV demo")
+		return exeerrors.ErrMaterializedViewReplaceNotSupported.GenWithStackByArgs()
 	}
 
 	e.memTracker = memory.NewTracker(e.ID(), -1)

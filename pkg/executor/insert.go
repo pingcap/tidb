@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -398,7 +399,7 @@ func (e *InsertExec) Open(ctx context.Context) error {
 		if meta.IsMaterializedViewLog() {
 			obj = "materialized view log"
 		}
-		return errors.Errorf("insert into %s %s is not supported now", obj, meta.Name.O)
+		return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("insert into", obj, meta.Name.O)
 	}
 
 	e.memTracker = memory.NewTracker(e.ID(), -1)

@@ -834,7 +834,7 @@ const (
 		index idx_version_category_type (version, category, type),
 		index idx_table_id (table_id));`
 
-	// CreateMaterializedViewRefreshInfoTable is a system table for the MV demo to
+	// CreateMaterializedViewRefreshInfoTable is a system table for materialized views to
 	// track refresh progress and scheduling.
 	CreateMaterializedViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.mv_refresh_info (
 		mv_id BIGINT NOT NULL PRIMARY KEY,
@@ -1259,7 +1259,7 @@ func doDDLWorks(s sessionapi.Session) {
 			mustExecute(s, tbl.SQL)
 		}
 	}
-	// MV demo system tables are created by DDL for both classic and nextgen to avoid
+	// Materialized view system tables are created by DDL for both classic and nextgen to avoid
 	// depending on nextgen reserved IDs/versioned bootstrap tables.
 	mustExecute(s, CreateMaterializedViewRefreshInfoTable)
 	// Create bind_info table.

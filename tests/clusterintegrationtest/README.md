@@ -42,6 +42,12 @@ After changing `t` or changing optimizer plans, `r` need to be updated.
    ./cluster.sh
    ```
 
+   You can override playground component binaries via env vars:
+   - `TIDB_BINPATH` (default: `../../bin/tidb-server`)
+   - `TIKV_BINPATH` (optional)
+   - `TIFLASH_BINPATH` (optional)
+   - `TIUP_PLAYGROUND_VERSION` (default: `nightly`)
+
    Note: You may need to wait about 30s for TiFlash to be ready.
 
 2. Run following commands
