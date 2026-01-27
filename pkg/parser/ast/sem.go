@@ -50,6 +50,10 @@ const (
 	CreateUserCommand = "CREATE USER"
 	// CreateViewCommand represents CREATE VIEW statement
 	CreateViewCommand = "CREATE VIEW"
+	// CreateMaterializedViewLogCommand represents CREATE MATERIALIZED VIEW LOG statement (TiDB demo)
+	CreateMaterializedViewLogCommand = "CREATE MATERIALIZED VIEW LOG"
+	// CreateMaterializedViewCommand represents CREATE MATERIALIZED VIEW statement (TiDB demo)
+	CreateMaterializedViewCommand = "CREATE MATERIALIZED VIEW"
 	// DropDatabaseCommand represents DROP DATABASE statement
 	DropDatabaseCommand = "DROP DATABASE"
 	// DropIndexCommand represents DROP INDEX statement
@@ -64,6 +68,10 @@ const (
 	DropTableCommand = "DROP TABLE"
 	// DropViewCommand represents DROP VIEW statement
 	DropViewCommand = "DROP VIEW"
+	// DropMaterializedViewLogCommand represents DROP MATERIALIZED VIEW LOG statement (TiDB demo)
+	DropMaterializedViewLogCommand = "DROP MATERIALIZED VIEW LOG"
+	// DropMaterializedViewCommand represents DROP MATERIALIZED VIEW statement (TiDB demo)
+	DropMaterializedViewCommand = "DROP MATERIALIZED VIEW"
 	// DropUserCommand represents DROP USER statement
 	DropUserCommand = "DROP USER"
 	// FlashBackDatabaseCommand represents FLASHBACK DATABASE statement
@@ -554,6 +562,16 @@ func (n *CreateViewStmt) SEMCommand() string {
 }
 
 // SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewLogStmt) SEMCommand() string {
+	return CreateMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *CreateMaterializedViewStmt) SEMCommand() string {
+	return CreateMaterializedViewCommand
+}
+
+// SEMCommand returns the command string for the statement.
 func (n *DropDatabaseStmt) SEMCommand() string {
 	return DropDatabaseCommand
 }
@@ -584,6 +602,16 @@ func (n *DropTableStmt) SEMCommand() string {
 		return DropViewCommand
 	}
 	return DropTableCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewLogStmt) SEMCommand() string {
+	return DropMaterializedViewLogCommand
+}
+
+// SEMCommand returns the command string for the statement.
+func (n *DropMaterializedViewStmt) SEMCommand() string {
+	return DropMaterializedViewCommand
 }
 
 // SEMCommand returns the command string for the statement.

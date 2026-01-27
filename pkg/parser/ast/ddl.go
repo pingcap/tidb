@@ -34,6 +34,8 @@ var (
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
+	_ DDLNode = &CreateMaterializedViewLogStmt{}
+	_ DDLNode = &CreateMaterializedViewStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &CreateResourceGroupStmt{}
@@ -42,6 +44,8 @@ var (
 	_ DDLNode = &DropIndexStmt{}
 	_ DDLNode = &DropTableStmt{}
 	_ DDLNode = &DropSequenceStmt{}
+	_ DDLNode = &DropMaterializedViewLogStmt{}
+	_ DDLNode = &DropMaterializedViewStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
 	_ DDLNode = &DropResourceGroupStmt{}
 	_ DDLNode = &OptimizeTableStmt{}
@@ -1725,6 +1729,180 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Select = selnode.(StmtNode)
+	return v.Leave(n)
+}
+
+// CreateMaterializedViewLogStmt is a statement to create a materialized view log (TiDB demo).
+//
+// Example:
+//
+//	CREATE MATERIALIZED VIEW LOG ON t(a,b,c)
+type CreateMaterializedViewLogStmt struct {
+	ddlNode
+
+	Table   *TableName
+	Columns []*ColumnName
+}
+
+// Restore implements Node interface.
+func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Table")
+	}
+	ctx.WritePlain("(")
+	for i, col := range n.Columns {
+		if i > 0 {
+			ctx.WritePlain(",")
+		}
+		if err := col.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewLogStmt.Columns[%d]", i)
+		}
+	}
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateMaterializedViewLogStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
+	for i, col := range n.Columns {
+		node, ok := col.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Columns[i] = node.(*ColumnName)
+	}
+	return v.Leave(n)
+}
+
+// DropMaterializedViewLogStmt is a statement to drop a materialized view log (TiDB demo).
+//
+// Example:
+//
+//	DROP MATERIALIZED VIEW LOG ON t
+type DropMaterializedViewLogStmt struct {
+	ddlNode
+
+	Table *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP MATERIALIZED VIEW LOG ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore DropMaterializedViewLogStmt.Table")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropMaterializedViewLogStmt)
+	node, ok := n.Table.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Table = node.(*TableName)
+	return v.Leave(n)
+}
+
+// CreateMaterializedViewStmt is a statement to create a materialized view (TiDB demo).
+//
+// Example:
+//
+//	CREATE MATERIALIZED VIEW mv AS SELECT ... REFRESH FAST EVERY 60
+type CreateMaterializedViewStmt struct {
+	ddlNode
+
+	ViewName               *TableName
+	Select                 StmtNode
+	RefreshMode            MaterializedViewRefreshMode
+	RefreshIntervalSeconds int64
+}
+
+// Restore implements Node interface.
+func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.ViewName")
+	}
+	ctx.WriteKeyWord(" AS ")
+	if err := n.Select.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Select")
+	}
+	ctx.WriteKeyWord(" REFRESH ")
+	ctx.WriteKeyWord(n.RefreshMode.String())
+	ctx.WriteKeyWord(" EVERY ")
+	ctx.WritePlainf("%d", n.RefreshIntervalSeconds)
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateMaterializedViewStmt)
+	node, ok := n.ViewName.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.ViewName = node.(*TableName)
+	node, ok = n.Select.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.Select = node.(StmtNode)
+	return v.Leave(n)
+}
+
+// DropMaterializedViewStmt is a statement to drop a materialized view (TiDB demo).
+//
+// Example:
+//
+//	DROP MATERIALIZED VIEW mv
+type DropMaterializedViewStmt struct {
+	ddlNode
+
+	ViewName *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore DropMaterializedViewStmt.ViewName")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *DropMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropMaterializedViewStmt)
+	node, ok := n.ViewName.Accept(v)
+	if !ok {
+		return n, false
+	}
+	n.ViewName = node.(*TableName)
 	return v.Leave(n)
 }
 
