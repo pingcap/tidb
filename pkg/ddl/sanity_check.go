@@ -238,7 +238,7 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 			}
 		case model.ActionCreateTable:
 			_, isCreateTable := st.(*ast.CreateTableStmt)
-			// MV demo DDL currently reuses ActionCreateTable to create MV/MV log physical tables.
+			// Materialized view DDL currently reuses ActionCreateTable to create MV/MV log physical tables.
 			_, isCreateMVLog := st.(*ast.CreateMaterializedViewLogStmt)
 			_, isCreateMV := st.(*ast.CreateMaterializedViewStmt)
 			if !isCreateTable && !isCreateMVLog && !isCreateMV {

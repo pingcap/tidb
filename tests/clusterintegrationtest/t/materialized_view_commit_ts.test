@@ -1,0 +1,43 @@
+--echo // materialized view log: _tidb_commit_ts on TiFlash
+drop database if exists mv_commit_ts;
+create database mv_commit_ts;
+use mv_commit_ts;
+
+set @@tidb_enable_materialized_view = 1;
+
+create table t (id int primary key, a int, b int);
+create materialized view log on t(a,b);
+
+set @log_tbl_name := (select table_name from information_schema.tables where table_schema='mv_commit_ts' and table_name like '__tidb_mvlog_%' limit 1);
+set @log_tbl := concat('`mv_commit_ts`.`', @log_tbl_name, '`');
+
+set @sql := concat('alter table ', @log_tbl, ' set tiflash replica 1');
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+insert into t values (1,10,20);
+update t set b = 21 where id = 1;
+delete from t where id = 1;
+
+select sleep(20);
+
+set @@tidb_isolation_read_engines="tiflash";
+set @@tidb_allow_mpp=1;
+set @@tidb_enforce_mpp=1;
+
+set @sql := concat('select count(*) from ', @log_tbl, ' where _tidb_commit_ts > 0');
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+set @sql := concat('select count(*) from ', @log_tbl, ' where _tidb_commit_ts = (select max(_tidb_commit_ts) from ', @log_tbl, ')');
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+
+drop database if exists mv_commit_ts;
+
+set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
+set @@tidb_allow_mpp=0;
+set @@tidb_enforce_mpp=0;

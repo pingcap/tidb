@@ -20,7 +20,7 @@ import (
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
-func mvDemoPrepareSnapshotRead(tk *testkit.TestKit) {
+func mvPrepareSnapshotRead(tk *testkit.TestKit) {
 	// The `tikv_gc_safe_point` global variable must be there, otherwise `set @@tidb_snapshot` fails in unit tests.
 	timeSafe := time.Now().Add(-48 * time.Hour).Format("20060102-15:04:05 -0700 MST")
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
@@ -29,12 +29,12 @@ func mvDemoPrepareSnapshotRead(tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeSafe))
 }
 
-func TestMVDemoAdminRefreshMaterializedViewFast(t *testing.T) {
+func TestMVAdminRefreshMaterializedViewFast(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t (id int primary key, a int, b int)")
 	tk.MustExec("create materialized view log on t(a,b)")
 
@@ -73,7 +73,7 @@ func TestMVDemoAdminRefreshMaterializedViewFast(t *testing.T) {
 	tk.MustExec("admin refresh materialized view mv fast")
 
 	lastTSO := tk.MustQuery(fmt.Sprintf("select last_refresh_tso from mysql.mv_refresh_info where mv_id = %d", mvID)).Rows()[0][0].(string)
-	mvDemoPrepareSnapshotRead(tk)
+	mvPrepareSnapshotRead(tk)
 	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%s'", lastTSO))
 	baseQuery := `select a, count(*), sum(b), min(b), max(b)
 		   from t
@@ -86,12 +86,12 @@ func TestMVDemoAdminRefreshMaterializedViewFast(t *testing.T) {
 	require.Equal(t, baseRows, tk.MustQuery(mvQuery).Rows())
 }
 
-func TestMVDemoAdminRefreshMaterializedViewComplete(t *testing.T) {
+func TestMVAdminRefreshMaterializedViewComplete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t (id int primary key, a int, b int)")
 	tk.MustExec("create materialized view log on t(a,b)")
 
@@ -109,7 +109,7 @@ func TestMVDemoAdminRefreshMaterializedViewComplete(t *testing.T) {
 	tk.MustExec("admin refresh materialized view mv complete")
 
 	lastTSO := tk.MustQuery(fmt.Sprintf("select last_refresh_tso from mysql.mv_refresh_info where mv_id = %d", mvID)).Rows()[0][0].(string)
-	mvDemoPrepareSnapshotRead(tk)
+	mvPrepareSnapshotRead(tk)
 	tk.MustExec(fmt.Sprintf("set @@tidb_snapshot = '%s'", lastTSO))
 	baseQuery := `select a, count(*), sum(b), min(b), max(b)
 		   from t
@@ -121,12 +121,12 @@ func TestMVDemoAdminRefreshMaterializedViewComplete(t *testing.T) {
 	require.Equal(t, baseRows, tk.MustQuery(mvQuery).Rows())
 }
 
-func TestMVDemoAdminRefreshCompleteFailsWhenRefreshInfoMissing(t *testing.T) {
+func TestMVAdminRefreshCompleteFailsWhenRefreshInfoMissing(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t (id int primary key, a int, b int)")
 	tk.MustExec("create materialized view log on t(a,b)")
 
@@ -145,12 +145,12 @@ func TestMVDemoAdminRefreshCompleteFailsWhenRefreshInfoMissing(t *testing.T) {
 	)
 }
 
-func TestMVDemoCommitTsColumnReturnsNonZero(t *testing.T) {
+func TestMVCommitTsColumnReturnsNonZero(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t (id int primary key, v int)")
 	tk.MustExec("insert into t values (1,10),(2,20),(3,30)")
 

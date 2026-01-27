@@ -132,7 +132,7 @@ func (v *ViewCheckOption) String() string {
 	}
 }
 
-// MaterializedViewRefreshMode is the refresh mode for a materialized view (TiDB demo).
+// MaterializedViewRefreshMode is the refresh mode for a materialized view.
 type MaterializedViewRefreshMode int
 
 const (

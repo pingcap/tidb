@@ -4208,7 +4208,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		if insert.IsReplace {
 			action = "replace into"
 		}
-		return nil, errors.Errorf("%s %s %s is not supported now", action, obj, tableInfo.Name.O)
+		return nil, exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs(action, obj, tableInfo.Name.O)
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)

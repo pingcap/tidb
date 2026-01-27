@@ -204,12 +204,12 @@ type Domain struct {
 		expiredTimeStamp types.Time
 	}
 
-	brOwnerMgr             owner.Manager
-	logBackupAdvancer      *daemon.OwnerDaemon
-	historicalStatsWorker  *HistoricalStatsWorker
-	ttlJobManager          atomic.Pointer[ttlworker.JobManager]
-	mvDemoSchedulerStarted atomicutil.Bool
-	runawayManager         *runaway.Manager
+	brOwnerMgr            owner.Manager
+	logBackupAdvancer     *daemon.OwnerDaemon
+	historicalStatsWorker *HistoricalStatsWorker
+	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	mvSchedulerStarted    atomicutil.Bool
+	runawayManager        *runaway.Manager
 	// resourceGroupsController can be changed via `SetResourceGroupsController`
 	// in unit test.
 	resourceGroupsController atomic.Pointer[rmclient.ResourceGroupsController]

@@ -50,9 +50,9 @@ const (
 	CreateUserCommand = "CREATE USER"
 	// CreateViewCommand represents CREATE VIEW statement
 	CreateViewCommand = "CREATE VIEW"
-	// CreateMaterializedViewLogCommand represents CREATE MATERIALIZED VIEW LOG statement (TiDB demo)
+	// CreateMaterializedViewLogCommand represents CREATE MATERIALIZED VIEW LOG statement
 	CreateMaterializedViewLogCommand = "CREATE MATERIALIZED VIEW LOG"
-	// CreateMaterializedViewCommand represents CREATE MATERIALIZED VIEW statement (TiDB demo)
+	// CreateMaterializedViewCommand represents CREATE MATERIALIZED VIEW statement
 	CreateMaterializedViewCommand = "CREATE MATERIALIZED VIEW"
 	// DropDatabaseCommand represents DROP DATABASE statement
 	DropDatabaseCommand = "DROP DATABASE"
@@ -68,9 +68,9 @@ const (
 	DropTableCommand = "DROP TABLE"
 	// DropViewCommand represents DROP VIEW statement
 	DropViewCommand = "DROP VIEW"
-	// DropMaterializedViewLogCommand represents DROP MATERIALIZED VIEW LOG statement (TiDB demo)
+	// DropMaterializedViewLogCommand represents DROP MATERIALIZED VIEW LOG statement
 	DropMaterializedViewLogCommand = "DROP MATERIALIZED VIEW LOG"
-	// DropMaterializedViewCommand represents DROP MATERIALIZED VIEW statement (TiDB demo)
+	// DropMaterializedViewCommand represents DROP MATERIALIZED VIEW statement
 	DropMaterializedViewCommand = "DROP MATERIALIZED VIEW"
 	// DropUserCommand represents DROP USER statement
 	DropUserCommand = "DROP USER"

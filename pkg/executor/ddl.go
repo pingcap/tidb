@@ -291,10 +291,10 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 		if meta.IsMaterializedViewLog() {
 			obj = "materialized view log"
 		}
-		return errors.Errorf("truncate %s %s is not supported now", obj, meta.Name.O)
+		return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("truncate", obj, meta.Name.O)
 	}
 	if !meta.IsMaterializedView() && !meta.IsMaterializedViewLog() {
-		if err := e.checkMVDemoBaseTableDDLGate(is, meta.ID, fmt.Sprintf("truncate table %s", meta.Name.O)); err != nil {
+		if err := e.checkMVBaseTableDDLGate(is, meta.ID, fmt.Sprintf("truncate table %s", meta.Name.O)); err != nil {
 			return err
 		}
 	}
@@ -380,27 +380,27 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
-func (e *DDLExec) checkMVDemoBaseTableDDLGate(is infoschema.InfoSchema, baseTableID int64, action string) error {
+func (e *DDLExec) checkMVBaseTableDDLGate(is infoschema.InfoSchema, baseTableID int64, action string) error {
 	logInfo, err := materializedview.FindLogTableInfo(is, baseTableID)
 	if err != nil {
 		return err
 	}
 	if logInfo != nil {
-		return errors.Errorf("cannot %s: materialized view log exists", action)
+		return exeerrors.ErrMaterializedViewLogExists.GenWithStackByArgs(action)
 	}
 	hasMV, err := materializedview.HasDependentMaterializedView(is, baseTableID)
 	if err != nil {
 		return err
 	}
 	if hasMV {
-		return errors.Errorf("cannot %s: dependent materialized view exists", action)
+		return exeerrors.ErrMaterializedViewDependentExists.GenWithStackByArgs(action)
 	}
 	return nil
 }
 
 func (e *DDLExec) executeCreateMaterializedViewLog(s *ast.CreateMaterializedViewLogStmt) error {
-	if !e.Ctx().GetSessionVars().EnableMaterializedViewDemo {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("materialized view demo is disabled")
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
 	}
 
 	schemaName := s.Table.Schema.L
@@ -500,8 +500,8 @@ func (e *DDLExec) executeCreateMaterializedViewLog(s *ast.CreateMaterializedView
 }
 
 func (e *DDLExec) executeDropMaterializedViewLog(s *ast.DropMaterializedViewLogStmt) error {
-	if !e.Ctx().GetSessionVars().EnableMaterializedViewDemo {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("materialized view demo is disabled")
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
 	}
 
 	schemaName := s.Table.Schema.L
@@ -534,7 +534,7 @@ func (e *DDLExec) executeDropMaterializedViewLog(s *ast.DropMaterializedViewLogS
 		return errors.Trace(err)
 	}
 	if hasMV {
-		return errors.New("cannot drop materialized view log: dependent materialized view exists")
+		return exeerrors.ErrMaterializedViewDependentExists.GenWithStackByArgs("drop materialized view log")
 	}
 
 	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
@@ -547,8 +547,8 @@ func (e *DDLExec) executeDropMaterializedViewLog(s *ast.DropMaterializedViewLogS
 }
 
 func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.CreateMaterializedViewStmt) error {
-	if !e.Ctx().GetSessionVars().EnableMaterializedViewDemo {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("materialized view demo is disabled")
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
 	}
 
 	viewSchemaName := s.ViewName.Schema.L
@@ -593,7 +593,7 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 		return err
 	}
 	if logInfo == nil {
-		return errors.New("materialized view base table does not have a materialized view log")
+		return materializedview.ErrMVBaseTableHasNoLog.GenWithStackByArgs()
 	}
 
 	allowedColIDs := make(map[int64]struct{}, len(logInfo.MaterializedViewLogInfo.ColumnIDs))
@@ -602,7 +602,11 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	}
 	for id := range mvQuery.UsedBaseColumnIDs {
 		if _, ok := allowedColIDs[id]; !ok {
-			return errors.Errorf("materialized view query uses column %d which is not included in materialized view log", id)
+			col := fmt.Sprintf("%d", id)
+			if colInfo := model.FindColumnInfoByID(baseInfo.Columns, id); colInfo != nil {
+				col = colInfo.Name.O
+			}
+			return materializedview.ErrMVQueryColumnNotInLog.GenWithStackByArgs(col)
 		}
 	}
 
@@ -721,7 +725,7 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	)
 	if err == nil {
 		// Initial build: a COMPLETE refresh with a read-ts (= txn start_ts), and atomically record the refresh info.
-		if err := mvDemoCompleteRefresh(ctx, e.Ctx(), kv.InternalTxnDDL, viewSchema, s.ViewName.Name, mvID, mvInfo.DefinitionSQL); err == nil {
+		if err := mvCompleteRefresh(ctx, e.Ctx(), kv.InternalTxnDDL, viewSchema, s.ViewName.Name, mvID, mvInfo.DefinitionSQL); err == nil {
 			return nil
 		} else {
 			// Best-effort cleanup to avoid leaving an orphan MV table / refresh info.
@@ -754,8 +758,8 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 }
 
 func (e *DDLExec) executeDropMaterializedView(s *ast.DropMaterializedViewStmt) error {
-	if !e.Ctx().GetSessionVars().EnableMaterializedViewDemo {
-		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("materialized view demo is disabled")
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
 	}
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
@@ -867,12 +871,12 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			if meta.IsMaterializedViewLog() {
 				obj = "materialized view log"
 			}
-			return errors.Errorf("drop %s %s is not supported now", obj, meta.Name.O)
+			return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("drop", obj, meta.Name.O)
 		}
 		if meta.IsView() || meta.IsSequence() || meta.IsMaterializedView() || meta.IsMaterializedViewLog() {
 			continue
 		}
-		if err := e.checkMVDemoBaseTableDDLGate(is, meta.ID, fmt.Sprintf("drop table %s", meta.Name.O)); err != nil {
+		if err := e.checkMVBaseTableDDLGate(is, meta.ID, fmt.Sprintf("drop table %s", meta.Name.O)); err != nil {
 			return err
 		}
 	}
@@ -945,10 +949,10 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 		if meta.IsMaterializedViewLog() {
 			obj = "materialized view log"
 		}
-		return errors.Errorf("alter %s %s is not supported now", obj, meta.Name.O)
+		return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("alter", obj, meta.Name.O)
 	}
 	if !meta.IsMaterializedView() && !meta.IsMaterializedViewLog() {
-		if err := e.checkMVDemoBaseTableDDLGate(is, meta.ID, fmt.Sprintf("alter table %s", meta.Name.O)); err != nil {
+		if err := e.checkMVBaseTableDDLGate(is, meta.ID, fmt.Sprintf("alter table %s", meta.Name.O)); err != nil {
 			return err
 		}
 	}

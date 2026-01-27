@@ -1,6 +1,6 @@
 package model
 
-// MaterializedViewRefreshMode is the refresh mode for a materialized view (TiDB demo).
+// MaterializedViewRefreshMode is the refresh mode for a materialized view.
 type MaterializedViewRefreshMode string
 
 const (
@@ -8,7 +8,7 @@ const (
 	MaterializedViewRefreshModeComplete MaterializedViewRefreshMode = "COMPLETE"
 )
 
-// MaterializedViewInfo is the persisted metadata for a materialized view table (TiDB demo).
+// MaterializedViewInfo is the persisted metadata for a materialized view table.
 type MaterializedViewInfo struct {
 	BaseTableID int64 `json:"base_table_id"`
 	LogTableID  int64 `json:"log_table_id"`
@@ -33,7 +33,7 @@ func (i *MaterializedViewInfo) Clone() *MaterializedViewInfo {
 	return &ni
 }
 
-// MaterializedViewLogInfo is the persisted metadata for a materialized view log table (TiDB demo).
+// MaterializedViewLogInfo is the persisted metadata for a materialized view log table.
 type MaterializedViewLogInfo struct {
 	BaseTableID int64   `json:"base_table_id"`
 	ColumnIDs   []int64 `json:"column_ids"`

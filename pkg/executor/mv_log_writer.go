@@ -15,7 +15,7 @@ import (
 )
 
 func findMVLogTable(ctx context.Context, sctx sessionctx.Context, baseTbl table.Table) (table.Table, *model.MaterializedViewLogInfo, error) {
-	if !sctx.GetSessionVars().EnableMaterializedViewDemo {
+	if !sctx.GetSessionVars().EnableMaterializedView {
 		return nil, nil, nil
 	}
 

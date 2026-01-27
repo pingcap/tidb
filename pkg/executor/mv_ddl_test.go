@@ -11,12 +11,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMVDemoCreateDropMaterializedView(t *testing.T) {
+func TestMVCreateDropMaterializedView(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t_mv (a int, b int)")
 	tk.MustExec("create materialized view log on t_mv(a,b)")
 
@@ -34,17 +34,17 @@ func TestMVDemoCreateDropMaterializedView(t *testing.T) {
 	tk.MustQuery(fmt.Sprintf("select base_table_id, log_table_id, last_refresh_result, last_refresh_tso > 0, next_run_time is not null from mysql.mv_refresh_info where mv_id = %d", mvID)).
 		Check(testkit.Rows(fmt.Sprintf("%d %d SUCCESS 1 1", mvTbl.Meta().MaterializedViewInfo.BaseTableID, logInfo.Meta().ID)))
 
-	tk.MustGetErrMsg("drop table mv1", "drop materialized view mv1 is not supported now")
+	tk.MustGetErrMsg("drop table mv1", "[executor:1235]drop materialized view mv1 is not supported")
 	tk.MustExec("drop materialized view mv1")
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.mv_refresh_info where mv_id = %d", mvID)).Check(testkit.Rows("0"))
 }
 
-func TestMVDemoCreateMaterializedViewRejectsWhereSubquery(t *testing.T) {
+func TestMVCreateMaterializedViewRejectsWhereSubquery(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t_subq (a int, b int)")
 	tk.MustExec("create table t_subq2 (a int)")
 	tk.MustExec("create materialized view log on t_subq(a,b)")

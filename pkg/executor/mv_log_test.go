@@ -30,12 +30,12 @@ func getMVLogTableName(t *testing.T, tk *testkit.TestKit, schemaName, baseTableN
 	return ""
 }
 
-func TestMVDemoMVLogWritePathInsertUpdateDelete(t *testing.T) {
+func TestMVLogWritePathInsertUpdateDelete(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t (id int primary key, a int, b int)")
 	tk.MustExec("create materialized view log on t(a,b)")
 
@@ -53,17 +53,17 @@ func TestMVDemoMVLogWritePathInsertUpdateDelete(t *testing.T) {
 			"10 21 D O",
 		))
 
-	tk.MustGetErrMsg(fmt.Sprintf("insert into %s(a,b,__mv_dml_type,__mv_old_new) values (1,2,'I','N')", logTbl), "insert into materialized view log "+logTbl+" is not supported now")
-	tk.MustGetErrMsg(fmt.Sprintf("update %s set a = 1", logTbl), "update materialized view log "+logTbl+" is not supported now")
-	tk.MustGetErrMsg(fmt.Sprintf("delete from %s", logTbl), "delete materialized view log "+logTbl+" is not supported now")
+	tk.MustGetErrMsg(fmt.Sprintf("insert into %s(a,b,__mv_dml_type,__mv_old_new) values (1,2,'I','N')", logTbl), "[executor:1235]insert into materialized view log "+logTbl+" is not supported")
+	tk.MustGetErrMsg(fmt.Sprintf("update %s set a = 1", logTbl), "[executor:1235]update materialized view log "+logTbl+" is not supported")
+	tk.MustGetErrMsg(fmt.Sprintf("delete from %s", logTbl), "[executor:1235]delete materialized view log "+logTbl+" is not supported")
 }
 
-func TestMVDemoMVLogWritePathInsertOnDuplicateKeyUpdate(t *testing.T) {
+func TestMVLogWritePathInsertOnDuplicateKeyUpdate(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t2 (id int primary key, a int, b int)")
 	tk.MustExec("create materialized view log on t2(a,b)")
 
@@ -80,24 +80,24 @@ func TestMVDemoMVLogWritePathInsertOnDuplicateKeyUpdate(t *testing.T) {
 		))
 }
 
-func TestMVDemoBaseTableDDLBlockedWhenMVLogExists(t *testing.T) {
+func TestMVBaseTableDDLBlockedWhenMVLogExists(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("set @@session.tidb_enable_materialized_view = 1")
 	tk.MustExec("create table t3 (id int primary key, a int)")
 	tk.MustQuery("select count(*) from mysql.mv_refresh_info").Check(testkit.Rows("0"))
 
 	tk.MustExec("create materialized view log on t3(a)")
 	logTbl := getMVLogTableName(t, tk, "test", "t3")
 
-	tk.MustGetErrMsg("alter table t3 add column b int", "cannot alter table t3: materialized view log exists")
-	tk.MustGetErrMsg("truncate table t3", "cannot truncate table t3: materialized view log exists")
-	tk.MustGetErrMsg("drop table t3", "cannot drop table t3: materialized view log exists")
+	tk.MustGetErrMsg("alter table t3 add column b int", "[executor:1235]cannot alter table t3: materialized view log exists")
+	tk.MustGetErrMsg("truncate table t3", "[executor:1235]cannot truncate table t3: materialized view log exists")
+	tk.MustGetErrMsg("drop table t3", "[executor:1235]cannot drop table t3: materialized view log exists")
 
-	tk.MustGetErrMsg("truncate table "+logTbl, "truncate materialized view log "+logTbl+" is not supported now")
-	tk.MustGetErrMsg("drop table "+logTbl, "drop materialized view log "+logTbl+" is not supported now")
+	tk.MustGetErrMsg("truncate table "+logTbl, "[executor:1235]truncate materialized view log "+logTbl+" is not supported")
+	tk.MustGetErrMsg("drop table "+logTbl, "[executor:1235]drop materialized view log "+logTbl+" is not supported")
 
 	tk.MustExec("drop materialized view log on t3")
 	tk.MustExec("alter table t3 add column b int")

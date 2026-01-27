@@ -3139,8 +3139,8 @@ func (e *SimpleExec) executeAdminRefreshMaterializedView(s *ast.AdminStmt) error
 	if s.Tp != ast.AdminRefreshMaterializedView {
 		return errors.New("This AdminStmt is not ADMIN REFRESH MATERIALIZED VIEW")
 	}
-	if !e.Ctx().GetSessionVars().EnableMaterializedViewDemo {
-		return errors.New("materialized view demo is disabled")
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
 	}
 	if len(s.Tables) != 1 || s.Tables[0] == nil {
 		return errors.New("ADMIN REFRESH MATERIALIZED VIEW requires a single target view name")
@@ -3176,9 +3176,9 @@ func (e *SimpleExec) executeAdminRefreshMaterializedView(s *ast.AdminStmt) error
 
 	switch mode {
 	case ast.MaterializedViewRefreshModeComplete:
-		return mvDemoCompleteRefresh(context.Background(), e.Ctx(), kv.InternalTxnAdmin, viewSchema, s.Tables[0].Name, tbl.Meta().ID, mvInfo.DefinitionSQL)
+		return mvCompleteRefresh(context.Background(), e.Ctx(), kv.InternalTxnAdmin, viewSchema, s.Tables[0].Name, tbl.Meta().ID, mvInfo.DefinitionSQL)
 	case ast.MaterializedViewRefreshModeFast:
-		return mvDemoFastRefresh(context.Background(), e.Ctx(), viewSchema, s.Tables[0].Name, tbl.Meta().ID, mvInfo)
+		return mvFastRefresh(context.Background(), e.Ctx(), viewSchema, s.Tables[0].Name, tbl.Meta().ID, mvInfo)
 	default:
 		return errors.Errorf("invalid refresh mode: %s", mode.String())
 	}

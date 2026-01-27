@@ -174,27 +174,27 @@ func ParseMVQuery(is infoschema.InfoSchema, currentDB string, stmt ast.StmtNode)
 			switch fnName {
 			case "count":
 				if len(expr.Args) != 1 {
-					return nil, errors.New("materialized view query only supports count(*)/count(1)")
+					return nil, ErrMVQueryOnlySupportsCountStar.GenWithStackByArgs()
 				}
 				ve, ok := expr.Args[0].(ast.ValueExpr)
 				if !ok || ve.GetValue() == nil {
-					return nil, errors.New("materialized view query only supports count(*)/count(1)")
+					return nil, ErrMVQueryOnlySupportsCountStar.GenWithStackByArgs()
 				}
 				switch v := ve.GetValue().(type) {
 				case int:
 					if v != 1 {
-						return nil, errors.New("materialized view query only supports count(*)/count(1)")
+						return nil, ErrMVQueryOnlySupportsCountStar.GenWithStackByArgs()
 					}
 				case int64:
 					if v != 1 {
-						return nil, errors.New("materialized view query only supports count(*)/count(1)")
+						return nil, ErrMVQueryOnlySupportsCountStar.GenWithStackByArgs()
 					}
 				case uint64:
 					if v != 1 {
-						return nil, errors.New("materialized view query only supports count(*)/count(1)")
+						return nil, ErrMVQueryOnlySupportsCountStar.GenWithStackByArgs()
 					}
 				default:
-					return nil, errors.New("materialized view query only supports count(*)/count(1)")
+					return nil, ErrMVQueryOnlySupportsCountStar.GenWithStackByArgs()
 				}
 				hasCountStar = true
 				selectItems = append(selectItems, MVSelectItem{AggKind: MVAggKindCountStar})
@@ -226,7 +226,7 @@ func ParseMVQuery(is infoschema.InfoSchema, currentDB string, stmt ast.StmtNode)
 		}
 	}
 	if !hasCountStar {
-		return nil, errors.New("materialized view query must explicitly include count(*)/count(1)")
+		return nil, ErrMVQueryMustIncludeCountStar.GenWithStackByArgs()
 	}
 	if len(selectedGroupByIDs) != len(groupBySet) {
 		return nil, errors.New("materialized view query requires all GROUP BY columns to be selected")
