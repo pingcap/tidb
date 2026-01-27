@@ -723,7 +723,7 @@ function start_ticdc_server() {
 
     echo "Starting TiCDC server..."
     mkdir -p "$data_dir"
-    $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$data_dir --log-file=$log_file &
+    $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$data_dir --newarch=true --log-file=$log_file &
     sleep 5  # Wait for TiCDC to connect
 }
 
