@@ -17,7 +17,6 @@ package analyzetest
 import (
 	"context"
 	"encoding/json"
-	goerrors "errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -142,6 +141,7 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
+	tk.MustExec("truncate table mysql.analyze_jobs")
 	t.Run("cancel_on_ctx", func(t *testing.T) {
 		tk.MustExec("drop table if exists t")
 		tk.MustExec("create table t(a int)")
@@ -160,12 +160,20 @@ func TestAnalyzeRestrict(t *testing.T) {
 			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 			done <- err
 		}()
-		cancel()
 
 		select {
 		case err := <-done:
-			require.Error(t, err)
-			require.True(t, goerrors.Is(err, context.Canceled))
+			t.Fatalf("analyze finished before cancel, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		cancel()
+
+		select {
+		case <-done:
+			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), "context canceled")
 		case <-time.After(5 * time.Second):
 			t.Fatal("analyze does not stop after context canceled")
 		}
