@@ -484,6 +484,7 @@ func detachCondAndBuildRangeForPath(
 // fixTiCIIndexRangesForIntHandle fixes the TiCI index ranges for int handle.
 // For normal index range, its min value is NULL or the MinNotNull, and max value is MaxValue.
 // But for TiCI index range which directly uses table's int pk range, we should set the min value to the min int value and max value to max int value.
+// And unlike the normal index, the code converting the int pk's range to the final kv.KeyRange doesn't handle the NULL.
 // So after calling the function of extract normal index ranges, we need to fix the ranges for TiCI index with int handle.
 func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*ranger.Range {
 	var minDatum, maxDatum types.Datum
@@ -499,10 +500,12 @@ func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*
 	}
 	for i := len(ranges) - 1; i >= 0; i-- {
 		ran := ranges[i]
+		// Remove the [NULL, NULL] which is invalid when generating int handle's kv.KeyRange.
 		if ran.HighVal[0].IsNull() {
 			ranges = slices.Delete(ranges, i, i+1)
 			continue
 		}
+		// Convert the min and max value to the int min/max value.
 		if ran.LowVal[0].IsNull() || ran.LowVal[0].Kind() == types.KindMinNotNull {
 			ran.LowVal[0].SetInt64(minDatum.GetInt64())
 			ran.LowExclude = false
