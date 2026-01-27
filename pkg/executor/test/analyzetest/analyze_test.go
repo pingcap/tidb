@@ -153,8 +153,8 @@ func TestAnalyzeRestrict(t *testing.T) {
 			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
 		}()
 
-		ctx, cancel := context.WithCancel(context.Background())
-		ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		ctx, cancel := context.WithCancel(baseCtx)
 		done := make(chan error, 1)
 		go func() {
 			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
