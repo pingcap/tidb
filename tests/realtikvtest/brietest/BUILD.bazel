@@ -32,7 +32,7 @@ go_test(
         "//pkg/executor",
         "//pkg/kv",
         "//pkg/meta/model",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/session",
         "//pkg/testkit",

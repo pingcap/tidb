@@ -192,7 +192,7 @@ func TestCreateDuplicateDatabaseForOneSession(t *testing.T) {
 	require.Equal(t, "session already created", err.Error())
 
 	ctx := context.Background()
-	db := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db")}}
+	db := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db")}}
 	require.False(t, db.IsReusedByPITR())
 	err = client.CreateDatabases(ctx, []*metautil.Database{db})
 	require.NoError(t, err)
@@ -213,9 +213,9 @@ func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	db1 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_1")}}
-	db2 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_2")}}
-	db3 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_3")}}
+	db1 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_1")}}
+	db2 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_2")}}
+	db3 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_3")}}
 	require.False(t, db1.IsReusedByPITR())
 	require.False(t, db2.IsReusedByPITR())
 	require.False(t, db3.IsReusedByPITR())
@@ -225,7 +225,7 @@ func TestCreateDuplicateDatabaseForSessionPool(t *testing.T) {
 	require.False(t, db2.IsReusedByPITR())
 	require.False(t, db3.IsReusedByPITR())
 	// continue to create the same databases
-	db4 := &metautil.Database{Info: &model.DBInfo{Name: ast.NewCIStr("user_db_4")}}
+	db4 := &metautil.Database{Info: &model.DBInfo{Name: pmodel.NewCIStr("user_db_4")}}
 	require.False(t, db4.IsReusedByPITR())
 	err = client.CreateDatabases(ctx, []*metautil.Database{db1, db2, db3, db4})
 	require.NoError(t, err)
