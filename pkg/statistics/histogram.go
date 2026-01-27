@@ -1032,13 +1032,16 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 // on the left side of the histogram. The predicate range [l, r] overlaps with
 // the region (boundL, histL), and we calculate the percentage of the shaded area.
 func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64 {
-	// Defensive checks - caller should ensure the arguments are valid.
-	if l >= histL || r <= boundL || histWidth <= 0 {
+	if histWidth <= 0 {
 		return 0
 	}
 	// bound the left/right ranges of the predicates to the "left triangle" of the histogram.
 	l = max(l, boundL)
 	r = min(r, histL)
+	// If there's no overlap after bounding, return 0.
+	if l >= r {
+		return 0
+	}
 	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
 	// Width of the histogram - squared to normalize to a percentage
 	histWidthSq := math.Pow(histWidth, 2)
@@ -1053,13 +1056,16 @@ func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64
 // on the right side of the histogram. The predicate range [l, r] overlaps with
 // the region (histR, boundR), and we calculate the percentage of the shaded area.
 func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float64 {
-	// Defensive checks - caller should ensure the arguments are valid.
-	if l >= boundR || r <= histR || histWidth <= 0 {
+	if histWidth <= 0 {
 		return 0
 	}
 	// bound the left/right ranges of the predicates to the "right triangle" of the histogram.
 	l = max(l, histR)
 	r = min(r, boundR)
+	// If there's no overlap after bounding, return 0.
+	if l >= r {
+		return 0
+	}
 	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
 	// Width of the histogram - squared to normalize to a percentage
 	histWidthSq := math.Pow(histWidth, 2)
@@ -1151,26 +1157,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	// If we find that the histogram width is too small or too large - we still may need to consider
-	// the impact of modifications to the table
-	histInvalid := false
-	if histWidth <= 0 {
-		histInvalid = true
+	// the impact of modifications to the table. Reset the histogram width to 0.
+	if histWidth < 0 {
+		histWidth = 0
 	}
 	if math.IsInf(histWidth, 1) {
-		histInvalid = true
+		histWidth = 0
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, avgRowCount float64
-	// Only attempt to calculate the ranges if the histogram is valid
-	if !histInvalid {
-		// Calculate left overlap percentage if the range overlaps with (boundL, histL)
-		leftPercent = calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
+	// Calculate left overlap percentage if the range overlaps with (boundL, histL)
+	leftPercent := calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
 
-		// Calculate right overlap percentage if the range overlaps with (histR, boundR)
-		rightPercent = calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
-	}
+	// Calculate right overlap percentage if the range overlaps with (histR, boundR)
+	rightPercent := calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
 
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
@@ -1183,7 +1184,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
+	avgRowCount := (addedRows * addedOutOfRangePct) * totalPercent
 
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
