@@ -344,14 +344,14 @@ func (e *clusterServerInfoRetriever) retrieve(ctx context.Context, sctx sessionc
 	infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, e.serverInfoType, true)
 	rowCount := 0
 	for _, info := range infos {
-		if info.Err != nil {
+		if info.Err == nil {
 			rowCount += len(info.Rows)
 		}
 	}
 
 	results := make([][]types.Datum, 0, rowCount)
 	for _, info := range infos {
-		if info.Err != nil {
+		if info.Err == nil {
 			results = append(results, info.Rows...)
 		}
 	}
