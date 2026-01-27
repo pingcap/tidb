@@ -33,9 +33,24 @@ type token struct {
 	trunc bool
 
 	// modifiers (apply to this token/group)
-	yesno        int8 // +1 / 0 / -1
-	weightAdjust int8 // '>'++ / '<'--
-	negateToggle bool // '~' toggle (0/1)
+	//
+	// NOTE: These three fields are the inputs to InnoDB's unary op selection
+	// priority (see pickUnaryOp):
+	//   yesno (+ / -) > weightAdjust (> / <) > negateToggle (~).
+	//
+	// yesno corresponds to '+' / '-' prefix operators:
+	//   +1: '+' (must include)
+	//   -1: '-' (must not include)
+	//    0: default
+	// In MySQL DEFAULT_FTB_SYNTAX, inside quotes the default behaves like '+'
+	// (required), so defaultYesno() returns 1 when inQuote is true.
+	yesno int8
+	// weightAdjust counts how many '>' and '<' were seen; only its sign matters
+	// (positive => OpIncrRating, negative => OpDecrRating).
+	weightAdjust int8
+	// negateToggle is toggled by '~'. If it's true (odd number of '~') and no
+	// higher-priority modifier exists, it becomes OpNegate.
+	negateToggle bool
 
 	fromQuote bool
 
@@ -49,9 +64,14 @@ type scanState struct {
 	runes []rune
 	i     int
 
+	// prevChar aligns with MYSQL_FTPARSER_BOOLEAN_INFO::prev. Prefix operators
+	// are only recognized when prevChar == ' ' (space) and not in a quote.
 	prevChar rune
-	inQuote  bool
-	afterAt  bool
+	// inQuote indicates we are inside a quoted phrase (started by '"').
+	inQuote bool
+	// afterAt marks the delimiter '@' to tag the first following word as a
+	// potential distance term (e.g. @"phrase"@2).
+	afterAt bool
 }
 
 func newScanState(input string) *scanState {

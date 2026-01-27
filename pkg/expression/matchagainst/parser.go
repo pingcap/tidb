@@ -27,6 +27,15 @@ var (
 )
 
 func pickUnaryOp(yesno int8, weightAdjust int8, negateToggle bool) UnaryOp {
+	// InnoDB only keeps one unary operator for each element. If multiple modifier
+	// symbols are present, the effective operator is chosen by this priority:
+	//
+	//   yesno (+ / -) > weightAdjust (> / <) > negateToggle (~)
+	//
+	// where:
+	//   yesno: +1 / 0 / -1 (required / default / prohibited)
+	//   weightAdjust: sign-only, >0 => OpIncrRating, <0 => OpDecrRating
+	//   negateToggle: true if '~' appears odd times
 	if yesno > 0 {
 		return OpExist
 	}

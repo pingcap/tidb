@@ -21,10 +21,15 @@ type UnaryOp uint8
 // Possible UnaryOp values.
 const (
 	OpNone UnaryOp = iota
+	// OpExist corresponds to '+' (must include).
 	OpExist
+	// OpIgnore corresponds to '-' (must not include).
 	OpIgnore
+	// OpNegate corresponds to '~' (negate rating only, not a MUST NOT).
 	OpNegate
+	// OpIncrRating corresponds to '>' (increase rating only).
 	OpIncrRating
+	// OpDecrRating corresponds to '<' (decrease rating only).
 	OpDecrRating
 )
 
