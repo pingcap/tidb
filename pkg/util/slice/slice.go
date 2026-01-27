@@ -17,6 +17,8 @@ package slice
 import (
 	"slices"
 	"strconv"
+
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // AllOf returns true if all elements in the slice match the predict func.
@@ -52,6 +54,7 @@ func DeepClone[T interface{ Clone() T }](s []T) []T {
 
 // BinarySearchRangeFunc finds the index range [i, j) in slice x that corresponds to the value range [t1, t2).
 // It returns 'i' as the smallest index where cmp(x[i], t1) >= 0, and 'j' as the smallest index where cmp(x[j], t2) >= 0.
+// Precondition: t1 must be less than or equal to t2 with respect to cmp; behavior is undefined if t1 > t2.
 func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) (i, j int) {
 	// Define cmp(x[-1], target) < 0 and cmp(x[n], target) >= 0 .
 	// Invariant: cmp(x[i - 1], target) < 0, cmp(x[j], target) >= 0.
@@ -77,16 +80,18 @@ func BinarySearchRangeFunc[S ~[]E, E, T any](x S, t1, t2 T, cmp func(E, T) int) 
 		if cmpt1 == 0 {
 			iEnd = h + 1
 		}
-		return BinarySearchByIndexFunc(x, t1, i, iEnd, cmp), BinarySearchByIndexFunc(x, t2, h+1, j, cmp)
+		return binarySearchByIndexFunc(x, t1, i, iEnd, cmp), binarySearchByIndexFunc(x, t2, h+1, j, cmp)
 	}
-	// Not found, return [i, i)
+	// No elements in range, return [i, j) where i == j (empty range).
 	return i, j
 }
 
-// BinarySearchByIndexFunc searches the sorted sub-slice x[start:end).
+// binarySearchByIndexFunc searches the sorted sub-slice x[start:end).
 // It returns the smallest index i in [start, end] such that cmp(x[i], target) >= 0.
 // If no such index exists (i.e., all elements in x[start:end) are less than target), it returns end.
 func binarySearchByIndexFunc[S ~[]E, E, T any](x S, target T, start, end int, cmp func(E, T) int) int {
+	intest.Assert(start >= 0 && start <= end && end <= len(x),
+		"invalid range: start=%d end=%d len=%d", start, end, len(x))
 	idx, _ := slices.BinarySearchFunc(x[start:end], target, cmp)
 	return start + idx
 }
