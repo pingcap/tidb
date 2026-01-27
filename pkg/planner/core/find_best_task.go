@@ -2658,6 +2658,11 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 	if metadef.IsMemDB(ds.DBName.L) {
 		return base.InvalidTask
 	}
+	for _, col := range ds.Columns {
+		if col.ID == model.ExtraCommitTsID {
+			return base.InvalidTask
+		}
+	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(1))
 	pointGetPlan := &physicalop.PointGetPlan{
@@ -2731,6 +2736,11 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 	if prop.TaskTp == property.CopMultiReadTaskType && candidate.path.IsSingleScan ||
 		prop.TaskTp == property.CopSingleReadTaskType && !candidate.path.IsSingleScan {
 		return base.InvalidTask
+	}
+	for _, col := range ds.Columns {
+		if col.ID == model.ExtraCommitTsID {
+			return base.InvalidTask
+		}
 	}
 
 	accessCnt := math.Min(candidate.path.CountAfterAccess, float64(len(candidate.path.Ranges)))
