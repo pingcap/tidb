@@ -578,9 +578,9 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	// Metafile size should be less than 64MB.
+	// Metafile size uses configurable limit from cfg (MiB -> bytes).
 	metawriter := metautil.NewMetaWriter(client.GetStorage(),
-		metautil.MetaFileSize, cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
+		int(cfg.MetaFileSize)*int(units.MiB), cfg.UseBackupMetaV2, "", &cfg.CipherInfo)
 	// Hack way to update backupmeta.
 	metawriter.Update(func(m *backuppb.BackupMeta) {
 		m.StartVersion = req.StartVersion
