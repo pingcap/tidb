@@ -31,8 +31,8 @@ func TestMVDemoCreateDropMaterializedView(t *testing.T) {
 	logInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(logTbl))
 	require.NoError(t, err)
 
-	tk.MustQuery(fmt.Sprintf("select base_table_id, log_table_id, last_refresh_result, last_refresh_tso > 0 from mysql.mv_refresh_info where mv_id = %d", mvID)).
-		Check(testkit.Rows(fmt.Sprintf("%d %d SUCCESS 1", mvTbl.Meta().MaterializedViewInfo.BaseTableID, logInfo.Meta().ID)))
+	tk.MustQuery(fmt.Sprintf("select base_table_id, log_table_id, last_refresh_result, last_refresh_tso > 0, next_run_time is not null from mysql.mv_refresh_info where mv_id = %d", mvID)).
+		Check(testkit.Rows(fmt.Sprintf("%d %d SUCCESS 1 1", mvTbl.Meta().MaterializedViewInfo.BaseTableID, logInfo.Meta().ID)))
 
 	tk.MustGetErrMsg("drop table mv1", "drop materialized view mv1 is not supported now")
 	tk.MustExec("drop materialized view mv1")
