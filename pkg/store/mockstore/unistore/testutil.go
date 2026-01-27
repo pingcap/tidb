@@ -85,7 +85,7 @@ func getReqStartKey(req *tikvrpc.Request) ([]byte, error) {
 	case tikvrpc.CmdCheckSecondaryLocks:
 		request := req.CheckSecondaryLocks()
 		return request.Keys[0], nil
-	case tikvrpc.CmdCop, tikvrpc.CmdCopStream:
+	case tikvrpc.CmdCop, tikvrpc.CmdCopStream, tikvrpc.CmdVersionedCop:
 		request := req.Cop()
 		return request.Ranges[0].Start, nil
 	case tikvrpc.CmdGC, tikvrpc.CmdDeleteRange, tikvrpc.CmdTxnHeartBeat, tikvrpc.CmdRawGet,
@@ -96,7 +96,7 @@ func getReqStartKey(req *tikvrpc.Request) ([]byte, error) {
 		tikvrpc.CmdDebugGetRegionProperties, tikvrpc.CmdEmpty:
 		// Ignore those requests since now, since it is no business with TopSQL.
 		return nil, nil
-	case tikvrpc.CmdBatchCop, tikvrpc.CmdMPPTask, tikvrpc.CmdMPPConn, tikvrpc.CmdMPPCancel, tikvrpc.CmdMPPAlive:
+	case tikvrpc.CmdBatchCop, tikvrpc.CmdVersionedBatchCop, tikvrpc.CmdMPPTask, tikvrpc.CmdMPPConn, tikvrpc.CmdMPPCancel, tikvrpc.CmdMPPAlive:
 		// Ignore mpp requests.
 		return nil, nil
 	case tikvrpc.CmdResolveLock, tikvrpc.CmdCheckTxnStatus, tikvrpc.CmdPessimisticRollback:

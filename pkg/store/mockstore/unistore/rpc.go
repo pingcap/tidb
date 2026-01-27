@@ -278,11 +278,11 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 		resp.Resp, err = c.rawHandler.RawDeleteRange(ctx, req.RawDeleteRange())
 	case tikvrpc.CmdRawScan:
 		resp.Resp, err = c.rawHandler.RawScan(ctx, req.RawScan())
-	case tikvrpc.CmdCop:
+	case tikvrpc.CmdCop, tikvrpc.CmdVersionedCop:
 		resp.Resp, err = c.usSvr.Coprocessor(ctx, req.Cop())
 	case tikvrpc.CmdCopStream:
 		resp.Resp, err = c.handleCopStream(ctx, req.Cop())
-	case tikvrpc.CmdBatchCop:
+	case tikvrpc.CmdBatchCop, tikvrpc.CmdVersionedBatchCop:
 		failpoint.Inject("BatchCopCancelled", func(value failpoint.Value) {
 			if value.(bool) {
 				failpoint.Return(nil, context.Canceled)
