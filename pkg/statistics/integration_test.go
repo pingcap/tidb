@@ -719,3 +719,19 @@ func TestSaveMetaToStorage(t *testing.T) {
 		require.Equal(t, version, lastStatsHistogramsVersion)
 	}
 }
+
+func TestAnalyzeWithOneBucket(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set tidb_analyze_version = 1;")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (a int, b int, c int, index aidx(a));")
+	tk.MustExec("insert into t values(1,1,1),(1,1,1),(1,1,1),(1,1,1),(1,1,1),(2,2,2),(2,2,2),(2,2,2),(2,2,2),(2,2,2);")
+	tk.MustExec("analyze table t with 1 buckets;")
+	tk.MustQuery("select * from t where a > 1;").Sort().Check(testkit.Rows(
+		"2 2 2", "2 2 2", "2 2 2", "2 2 2", "2 2 2"))
+	tk.MustQuery("show stats_buckets where table_name = 't' and column_name = 'aidx';").Check(testkit.Rows(
+		"test t  aidx 1 0 10 5 1 2 0"))
+}
