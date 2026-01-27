@@ -749,10 +749,12 @@ func tryToGetDualTask(ds *logicalop.DataSource) (base.Task, error) {
 
 // candidatePath is used to maintain required info for skyline pruning.
 type candidatePath struct {
-	path                    *util.AccessPath
-	accessCondsColMap       util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
-	indexCondsColMap        util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
-	matchPropResult         property.PhysicalPropMatchResult
+	path              *util.AccessPath
+	accessCondsColMap util.Col2Len // accessCondsColMap maps Column.UniqueID to column length for the columns in AccessConds.
+	indexCondsColMap  util.Col2Len // indexCondsColMap maps Column.UniqueID to column length for the columns in AccessConds and indexFilters.
+	matchPropResult   property.PhysicalPropMatchResult
+	// partialOrderMatch records the partial order match result for TopN optimization.
+	// When the matched is true, it means this path can provide partial order using prefix index.
 	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
 
 	indexJoinCols int // how many index columns are used in access conditions in this IndexJoin.
@@ -1156,8 +1158,8 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 //	index: a(10)
 //	index: a, b(10)
 //
-// On success, this function updates `partialOrderInfo.PrefixColID` and `partialOrderInfo.PrefixLen`
-// and returns true. Otherwise it returns false and leaves `partialOrderInfo` unchanged.
+// On success, this function will return `PartialOrderMatchResult.Matched`= true, `PartialOrderMatchResult.PrefixCol` and `PartialOrderMatchResult.PrefixLen`.
+// Otherwise it returns false and not initialize `PrefixCol and PrefixLen`.
 // TODO
 // Case 2: Composite index INDEX idx(a, b) matches ORDER BY a, b, c (index provides order for a, b)
 // In fact, there is a Case3 that can also be supported, but it will not be explained in detail here.
@@ -1544,7 +1546,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 				continue
 			}
 
-			// After passing the check, generate the candidate (which will store partial order match result inside)
+			// After passing the check, generate the candidate
 			currentCandidate = getIndexCandidate(ds, path, prop)
 		}
 		pruned := false

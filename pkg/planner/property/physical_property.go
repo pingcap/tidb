@@ -351,11 +351,15 @@ func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
 type PartialOrderMatchResult struct {
 	// Matched indicates whether this path can provide partial order
 	Matched bool
-
-	// PrefixCol is the prefix index column (for Explain output)
+	// PrefixCol is the last and only one prefix column ID of index, only used for executor part
+	// For example:
+	// Query ORDER BY a,b,c
+	// Index: a, b, c(10)
+	// PrefixCol: c, the col c
+	// PrefixLen: 10, the col length of c in index
 	PrefixCol *expression.Column
 
-	// PrefixLen is the length (in bytes) of the prefix index
+	// PrefixLen is the prefix length in bytes for prefix index, only used for executor part
 	PrefixLen int
 }
 
