@@ -1344,18 +1344,19 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 // It fills the partial-order-related fields on the TopN itself and, when possible,
 // pushes down a special Limit with prefix information to the index side.
 // There are two different cases:
-// Case1: Two phase TopN
-// TopN(with partial info)
 //
-//	└─IndexLookUp
-//	    └─Limit(with partial info)
-//	└─...
+// Case1: Two phase TopN, where TiDB keeps TopN and TiKV applies a partial-order Limit:
 //
-// Case2: One phase TopN
-// TopN(with partial info)
+//   TopN(with partial info)
+//     └─IndexLookUp
+//        └─Limit(with partial info)
+//   ... (other operators)
 //
-//	└─IndexPlan
-//	└─TablePlan
+// Case2: One phase TopN, where the whole TopN can be executed in the coprocessor:
+//
+//   TopN(with partial info)
+//     ├─IndexPlan
+//     └─TablePlan
 func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask,
 	partialOrderInfo *property.PartialOrderInfo) base.Task {
 	// Update TopN itself with partial order info.
