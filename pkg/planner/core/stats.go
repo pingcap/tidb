@@ -484,7 +484,8 @@ func detachCondAndBuildRangeForPath(
 // fixTiCIIndexRangesForIntHandle fixes the TiCI index ranges for int handle.
 // For normal index range, it's min value is NULL or the MinNotNull, and max value is MaxValue.
 // But for TiCI index range which directly uses table's int pk range, we should set the min value to the min int value and max value to max int value.
-func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) {
+// So after calling the function of extract normal index ranges, we need to fix the ranges for TiCI index with int handle.
+func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) []*ranger.Range {
 	var minDatum, maxDatum types.Datum
 	// isUnsigned indicates whether the handle is unsigned.
 	// Now we just cast the unsigned int to int and then store the int value inside the Datum.
@@ -499,7 +500,7 @@ func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) {
 	for i := len(ranges) - 1; i >= 0; i-- {
 		ran := ranges[i]
 		if ran.HighVal[0].IsNull() {
-			ranges = append(ranges[:i], ranges[i+1:]...)
+			ranges = slices.Delete(ranges, i, i+1)
 			continue
 		}
 		if ran.LowVal[0].IsNull() || ran.LowVal[0].Kind() == types.KindMinNotNull {
@@ -510,6 +511,7 @@ func fixTiCIIndexRangesForIntHandle(ranges []*ranger.Range, isUnsigned bool) {
 			ran.HighVal[0].SetInt64(maxDatum.GetInt64())
 		}
 	}
+	return ranges
 }
 
 func getGeneralAttributesFromPaths(paths []*util.AccessPath, totalRowCount float64) (float64, bool) {
