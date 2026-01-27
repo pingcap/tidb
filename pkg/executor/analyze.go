@@ -176,6 +176,11 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		if stderrors.Is(err, context.Canceled) {
+			if cause := context.Cause(ctx); cause != nil {
+				err = cause
+			}
+		}
 		return err
 	}
 
@@ -473,10 +478,23 @@ func (e *AnalyzeExec) handleResultsErrorWithConcurrency(
 		}
 		if results.Err != nil {
 			if intest.InTest && stderrors.Is(results.Err, context.Canceled) {
+				jobInfo := ""
+				dbName := ""
+				tableName := ""
+				partitionName := ""
+				if results.Job != nil {
+					jobInfo = results.Job.JobInfo
+					dbName = results.Job.DBName
+					tableName = results.Job.TableName
+					partitionName = results.Job.PartitionName
+				}
 				statslogutil.StatsLogger().Info("analyze result canceled",
 					zap.Uint32("killSignal", e.Ctx().GetSessionVars().SQLKiller.GetKillSignal()),
 					zap.Uint64("connID", e.Ctx().GetSessionVars().ConnectionID),
-					zap.String("jobInfo", results.Job.String()),
+					zap.String("jobInfo", jobInfo),
+					zap.String("dbName", dbName),
+					zap.String("tableName", tableName),
+					zap.String("partitionName", partitionName),
 					zap.Error(results.Err),
 					zap.Stack("stack"),
 				)
@@ -532,7 +550,10 @@ func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Conte
 				if status == 0 {
 					return
 				}
-				err := exeerrors.ErrQueryInterrupted
+				err := killer.HandleSignal()
+				if err == nil {
+					err = exeerrors.ErrQueryInterrupted
+				}
 				cancel(err)
 				return
 			}

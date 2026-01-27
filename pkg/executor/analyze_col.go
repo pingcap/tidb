@@ -71,34 +71,28 @@ type AnalyzeColumnsExec struct {
 func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
 		res := e.toV2().analyzeColumnsPushDownV2(ctx, gp)
-		if intest.InTest && res.Err != nil && stderrors.Is(res.Err, context.Canceled) {
-			cause := context.Cause(ctx)
-			ctxErr := ctx.Err()
-			statslogutil.StatsLogger().Info("analyze columns canceled",
-				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-				zap.Error(res.Err),
-				zap.Error(cause),
-				zap.Error(ctxErr),
-				zap.Stack("stack"),
-			)
-		}
+		e.logAnalyzeCanceledInTest(ctx, res.Err, "analyze columns canceled")
 		return res
 	}
 	res := e.toV1().analyzeColumnsPushDownV1(ctx)
-	if intest.InTest && res.Err != nil && stderrors.Is(res.Err, context.Canceled) {
-		cause := context.Cause(ctx)
-		ctxErr := ctx.Err()
-		statslogutil.StatsLogger().Info("analyze columns canceled",
-			zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-			zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-			zap.Error(res.Err),
-			zap.Error(cause),
-			zap.Error(ctxErr),
-			zap.Stack("stack"),
-		)
-	}
+	e.logAnalyzeCanceledInTest(ctx, res.Err, "analyze columns canceled")
 	return res
+}
+
+func (e *AnalyzeColumnsExec) logAnalyzeCanceledInTest(ctx context.Context, err error, msg string) {
+	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
+		return
+	}
+	cause := context.Cause(ctx)
+	ctxErr := ctx.Err()
+	statslogutil.StatsLogger().Info(msg,
+		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Error(err),
+		zap.Error(cause),
+		zap.Error(ctxErr),
+		zap.Stack("stack"),
+	)
 }
 
 func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
@@ -162,6 +156,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
+		e.logAnalyzeCanceledInTest(ctx, err, "analyze columns distsql canceled")
 		return nil, err
 	}
 	return result, nil
@@ -215,11 +210,19 @@ func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Ra
 			return nil, nil, nil, nil, nil, err
 		}
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
-			time.Sleep(1000 * time.Second)
+			select {
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				if err == nil {
+					err = ctx.Err()
+				}
+				failpoint.Return(nil, nil, nil, nil, nil, err)
+			case <-time.After(1000 * time.Second):
+			}
 		})
 		data, err1 := e.resultHandler.nextRaw(ctx)
 		if err1 != nil {
-			return nil, nil, nil, nil, nil, err1
+			return nil, nil, nil, nil, nil, normalizeCtxErrWithCause(ctx, err1)
 		}
 		if data == nil {
 			break

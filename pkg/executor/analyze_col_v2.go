@@ -236,7 +236,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	// Start workers to merge the result from collectors.
 	mergeResultCh := make(chan *samplingMergeResult, 1)
 	mergeTaskCh := make(chan []byte, 1)
-	taskEg, taskCtx := errgroup.WithContext(ctx)
+	taskCtx, taskCancel := context.WithCancelCause(ctx)
+	defer taskCancel(nil)
+	var taskEg errgroup.Group
 	// Start read data from resultHandler and send them to mergeTaskCh.
 	taskEg.Go(func() (err error) {
 		defer func() {
@@ -244,19 +246,23 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 				err = getAnalyzePanicErr(r)
 			}
 		}()
-		return readDataAndSendTask(taskCtx, e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
+		err = readDataAndSendTask(taskCtx, e.ctx, e.resultHandler, mergeTaskCh, e.memTracker)
+		if err != nil {
+			taskCancel(err)
+		}
+		return err
 	})
 	e.samplingMergeWg = &util.WaitGroupWrapper{}
 	e.samplingMergeWg.Add(samplingStatsConcurrency)
+	mergeWorkerPanicCnt := 0
+	mergeEg, mergeCtx := errgroup.WithContext(taskCtx)
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(taskCtx, mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(mergeCtx, taskCtx, mergeResultCh, mergeTaskCh, l, id)
 		})
 	}
 	// Merge the result from collectors.
-	mergeWorkerPanicCnt := 0
-	mergeEg, mergeCtx := errgroup.WithContext(taskCtx)
 	mergeEg.Go(func() (err error) {
 		defer func() {
 			if r := recover(); r != nil {
@@ -290,15 +296,36 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	})
 	err = taskEg.Wait()
 	if err != nil {
-		mergeCtx.Done()
+		err = normalizeCtxErrWithCause(taskCtx, err)
+		if intest.InTest {
+			cause := context.Cause(taskCtx)
+			ctxErr := taskCtx.Err()
+			logutil.BgLogger().Info("analyze columns read task failed",
+				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+				zap.Error(err),
+				zap.Bool("isCtxCanceled", stderrors.Is(err, context.Canceled)),
+				zap.Error(cause),
+				zap.Error(ctxErr),
+				zap.Stack("stack"),
+			)
+		}
 		if err1 := mergeEg.Wait(); err1 != nil {
-			err = stderrors.Join(err, err1)
+			err1 = normalizeCtxErrWithCause(taskCtx, err1)
+			if !stderrors.Is(err1, err) && err1.Error() != err.Error() {
+				err = stderrors.Join(err, err1)
+			}
 		}
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
 	}
 	err = mergeEg.Wait()
+	if err != nil {
+		err = normalizeCtxErrWithCause(taskCtx, err)
+	}
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
+		taskCancel(err)
+		e.logAnalyzeCanceledInTest(mergeCtx, err, "analyze columns merge canceled")
 		return 0, nil, nil, nil, nil, err
 	}
 
@@ -448,8 +475,12 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(ctx context.Context, i
 	}()
 	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
 	taskCh := make(chan *analyzeTask, len(tasks))
+	pendingJobs := make(map[uint64]*statistics.AnalyzeJob, len(tasks))
 	for _, task := range tasks {
 		AddNewAnalyzeJob(e.ctx, task.job)
+		if task.job != nil && task.job.ID != nil {
+			pendingJobs[*task.job.ID] = task.job
+		}
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
 	if len(tasks) < samplingStatsConcurrency {
@@ -472,27 +503,35 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(ctx context.Context, i
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 LOOP:
 	for panicCnt < samplingStatsConcurrency {
-		select {
-		case results, ok := <-resultsCh:
-			if !ok {
-				break LOOP
+		results, ok := <-resultsCh
+		if !ok {
+			break LOOP
+		}
+		if results.Job != nil && results.Job.ID != nil {
+			delete(pendingJobs, *results.Job.ID)
+		}
+		if results.Err != nil {
+			err = results.Err
+			statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
+			if isAnalyzeWorkerPanic(err) {
+				panicCnt++
 			}
-			if results.Err != nil {
-				err = results.Err
-				statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
-				if isAnalyzeWorkerPanic(err) {
-					panicCnt++
-				}
-				continue LOOP
-			}
-			statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
-			totalResult.results[results.Ars[0].Hist[0].ID] = results
-		case <-ctx.Done():
+			continue LOOP
+		}
+		statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
+		totalResult.results[results.Ars[0].Hist[0].ID] = results
+	}
+	if err == nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = context.Cause(ctx)
 			if err == nil {
-				err = ctx.Err()
+				err = ctxErr
 			}
-			break LOOP
+		}
+	}
+	if err != nil && len(pendingJobs) > 0 {
+		for _, job := range pendingJobs {
+			statsHandle.FinishAnalyzeJob(job, err, statistics.TableAnalysisJob)
 		}
 	}
 	if err != nil {
@@ -604,7 +643,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	return tasks
 }
 
-func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
+func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx context.Context, resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
 	defer func() {
@@ -640,6 +679,10 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 	for range l {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
+	cleanupCollector := func() {
+		// Ensure collector resources are released on early exit paths.
+		retCollector.DestroyAndPutToPool()
+	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		select {
@@ -653,6 +696,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 			colResp := &tipb.AnalyzeColumnsResp{}
 			err := colResp.Unmarshal(data)
 			if err != nil {
+				cleanupCollector()
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
@@ -682,22 +726,49 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 			subCollector.DestroyAndPutToPool()
 		case <-ctx.Done():
 			err := context.Cause(ctx)
+			if (err == nil || stderrors.Is(err, context.Canceled)) && parentCtx != nil {
+				parentErr := context.Cause(parentCtx)
+				if parentErr != nil {
+					err = parentErr
+				}
+			}
 			if err != nil {
+				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
+				cleanupCollector()
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
 			err = ctx.Err()
 			if err != nil {
+				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
+				cleanupCollector()
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
 			if intest.InTest {
 				panic("this ctx should be canceled with the error")
 			}
+			cleanupCollector()
 			resultCh <- &samplingMergeResult{err: errors.New("context canceled without error")}
 			return
 		}
 	}
+}
+
+func (e *AnalyzeColumnsExecV2) logAnalyzeCanceledInTest(ctx context.Context, err error, msg string) {
+	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
+		return
+	}
+	cause := context.Cause(ctx)
+	ctxErr := ctx.Err()
+	logutil.BgLogger().Info(msg,
+		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Error(err),
+		zap.Error(cause),
+		zap.Error(ctxErr),
+		zap.Stack("stack"),
+	)
 }
 
 func (e *AnalyzeColumnsExecV2) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
@@ -910,11 +981,33 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 			return err
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
-			time.Sleep(1000 * time.Second)
+			select {
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				if err == nil {
+					err = ctx.Err()
+				}
+				failpoint.Return(err)
+			case <-time.After(1000 * time.Second):
+			}
 		})
 
 		data, err := handler.nextRaw(ctx)
 		if err != nil {
+			err = normalizeCtxErrWithCause(ctx, err)
+			if intest.InTest {
+				cause := context.Cause(ctx)
+				ctxErr := ctx.Err()
+				logutil.BgLogger().Info("analyze columns nextRaw failed",
+					zap.Uint32("killSignal", sctx.GetSessionVars().SQLKiller.GetKillSignal()),
+					zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
+					zap.Error(err),
+					zap.Bool("isCtxCanceled", stderrors.Is(err, context.Canceled)),
+					zap.Error(cause),
+					zap.Error(ctxErr),
+					zap.Stack("stack"),
+				)
+			}
 			return errors.Trace(err)
 		}
 		if data == nil {
