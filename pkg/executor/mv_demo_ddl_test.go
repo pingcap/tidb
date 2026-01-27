@@ -38,3 +38,19 @@ func TestMVDemoCreateDropMaterializedView(t *testing.T) {
 	tk.MustExec("drop materialized view mv1")
 	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.mv_refresh_info where mv_id = %d", mvID)).Check(testkit.Rows("0"))
 }
+
+func TestMVDemoCreateMaterializedViewRejectsWhereSubquery(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@session.tidb_enable_materialized_view_demo = 1")
+	tk.MustExec("create table t_subq (a int, b int)")
+	tk.MustExec("create table t_subq2 (a int)")
+	tk.MustExec("create materialized view log on t_subq(a,b)")
+
+	tk.MustGetErrMsg(
+		"create materialized view mv_subq as select a, count(*), sum(b), min(b), max(b) from t_subq where a in (select a from t_subq2) group by a refresh fast every 60",
+		"materialized view query does not support subquery in WHERE clause",
+	)
+}

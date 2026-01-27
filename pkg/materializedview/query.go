@@ -232,6 +232,14 @@ func ParseMVQuery(is infoschema.InfoSchema, currentDB string, stmt ast.StmtNode)
 		return nil, errors.New("materialized view query requires all GROUP BY columns to be selected")
 	}
 
+	if sel.Where != nil {
+		subqChecker := &mvWhereSubqueryChecker{}
+		sel.Where.Accept(subqChecker)
+		if subqChecker.err != nil {
+			return nil, subqChecker.err
+		}
+	}
+
 	colCollector := &mvColumnCollector{
 		baseSchema: baseSchema,
 		baseTable:  baseTN.Name,
@@ -264,6 +272,31 @@ type mvColumnCollector struct {
 
 	usedIDs map[int64]struct{}
 	err     error
+}
+
+type mvWhereSubqueryChecker struct {
+	err error
+}
+
+func (v *mvWhereSubqueryChecker) Enter(n ast.Node) (ast.Node, bool) {
+	if v.err != nil {
+		return n, true
+	}
+	switch x := n.(type) {
+	case *ast.SubqueryExpr, *ast.CompareSubqueryExpr, *ast.ExistsSubqueryExpr:
+		v.err = errors.New("materialized view query does not support subquery in WHERE clause")
+		return n, true
+	case *ast.PatternInExpr:
+		if x.Sel != nil {
+			v.err = errors.New("materialized view query does not support subquery in WHERE clause")
+			return n, true
+		}
+	}
+	return n, false
+}
+
+func (v *mvWhereSubqueryChecker) Leave(n ast.Node) (ast.Node, bool) {
+	return n, true
 }
 
 func (v *mvColumnCollector) Enter(n ast.Node) (ast.Node, bool) {
