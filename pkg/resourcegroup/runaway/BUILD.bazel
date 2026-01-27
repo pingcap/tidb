@@ -4,6 +4,7 @@ go_library(
     name = "runaway",
     srcs = [
         "checker.go",
+        "flusher.go",
         "manager.go",
         "record.go",
         "syncer.go",
@@ -46,11 +47,12 @@ go_test(
     timeout = "short",
     srcs = [
         "checker_test.go",
+        "flusher_test.go",
         "record_test.go",
     ],
     embed = [":runaway"],
     flaky = True,
-    shard_count = 2,
+    shard_count = 7,
     deps = [
         "@com_github_stretchr_testify//assert",
         "@com_github_tikv_client_go_v2//util",
