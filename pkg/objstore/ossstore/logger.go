@@ -16,7 +16,6 @@ package ossstore
 
 import (
 	"github.com/aliyun/alibabacloud-oss-go-sdk-v2/oss"
-	"github.com/pingcap/log"
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -25,9 +24,14 @@ type logPrinter struct {
 	logger *zap.Logger
 }
 
-func newLogPrinter(extraFields ...zap.Field) *logPrinter {
+func newLogPrinter(logger *zap.Logger) *logPrinter {
 	return &logPrinter{
-		logger: log.L().WithOptions(zap.AddCallerSkip(1)).With(extraFields...),
+		// skip 3 levels to reach the original caller
+		// top: this logger
+		// top-1: standardLogger.printf of OSS
+		// top-2: standardLogger.Info/Error/Debug/Warn of OSS
+		// top-3: the actual caller in OSS SDK
+		logger: logger.WithOptions(zap.AddCallerSkip(3)),
 	}
 }
 

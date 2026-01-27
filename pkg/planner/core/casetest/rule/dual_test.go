@@ -28,7 +28,7 @@ func TestDual(t *testing.T) {
 			"TableDual_9 0.00 root  rows:0"))
 		testKit.MustQuery("select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
 		testKit.MustQuery("explain select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
-			"Projection_9 0.00 root  3->Column#3",
+			"Projection_9 0.00 root  3->Column#4",
 			"└─TableDual_11 0.00 root  rows:0"))
 		testKit.MustQuery("select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
 		testKit.MustQuery("explain select * from t where d != null;").Check(testkit.Rows(

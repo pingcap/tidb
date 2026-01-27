@@ -1,56 +1,73 @@
+# OS / filesystem
 __MACOSX
+.DS_Store
+
+# Editor / IDE
+.idea/
+*.iml
+.ijwb/
+.vscode
+*.swp
+tags
+
+# Local tooling metadata
+.specstory
+.cursor
+.codex
+.trae
+
+# Go workspace / tooling
+go.work
+go.work.sum
+.golangci.bck.yml
+
+# Binaries / generated tools
 bin
 /tidb-server/tidb-server
 /tidb-server/debug
-coverage.out
-.idea/
-*.iml
-*.swp
-*.log
-*.test.bin
-tags
-profile.coverprofile
+tools/bin/
 mysql_tester
+genkeyword
+/_tools/
+
+# Dependencies
+vendor
+
+# Bazel
+/_bazel
+bazel-*
+MODULE.bazel.lock
+
+# Testing / coverage / reports
+# Files generated when testing
+out
+test_coverage
+coverage.out
+coverage.txt
+coverage.dat
+profile.coverprofile
+*-coverage.xml
+*-junit-report.xml
+*.test.bin
+*.fail.go
+*.log
+*.log.json
+*__failpoint_stash__
+/oom_record/
+
+# Integration tests
 tests/integrationtest/integration-test.out
 tests/integrationtest/integrationtest_tidb-server
 tests/integrationtest/s/
 tests/integrationtest/replayer/
-*.fail.go
-tools/bin/
-vendor
-/_tools/
-.DS_Store
-.vscode
+
+# Local dev artifacts
 bench_daily.json
-coverage.txt
-var
+compose-dev.yaml
 fix.sql
 export-20*/
-*-coverage.xml
-*-junit-report.xml
-compose-dev.yaml
-# Files generated when testing
-out
-/_bazel
-bazel-bin
-bazel-out
-bazel-testlogs
-bazel-tidb
-MODULE.bazel.lock
-.ijwb/
-/oom_record/
-*.log.json
-genkeyword
-test_coverage
-coverage.dat
-.specstory
-.golangci.bck.yml
-go.work
-go.work.sum
-.cursor
-.codex
-*__failpoint_stash__
+var
+
 # Personal config files
 /*config.toml
 .cache
-.trae

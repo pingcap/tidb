@@ -495,7 +495,7 @@ explain format = 'plan_tree' select row_number() over( partition by i ) - x as r
 id	task	access object	operator info
 Projection	root		minus(Column, select.t.x)->Column
 └─Shuffle	root		execution info: concurrency:5, data sources:[TableReader]
-  └─Window	root		row_number()->Column#5 over(partition by select.t.i rows between current row and current row)
+  └─Window	root		row_number()->Column#6 over(partition by select.t.i rows between current row and current row)
     └─Sort	root		select.t.i
       └─ShuffleReceiver	root		
         └─TableReader	root		data:TableFullScan
