@@ -1568,6 +1568,10 @@ import (
 	ProcedureFetchList                     "Procedure fetch into variables"
 	ProcedureHandlerType                   "Procedure handler operation type"
 	ProcedureHcondList                     "Procedure handler condition value list"
+	SplitOptionBetween                     "Split index option, between format"
+	SplitIndexOption                       "Split index option in CREATE/ALTER table"
+	SplitIndexList                         "Split index option list in CREATE table"
+	SplitIndexListOpt                      "Optional split index option list"
 
 %type	<ident>
 	AsOpt             "AS or EmptyString"
@@ -1787,6 +1791,50 @@ AlterTableStmt:
 			Table:          $4.(*ast.TableName),
 			PartitionNames: $7.([]ast.CIStr),
 			ReplicaKind:    ast.CompactReplicaKindTiFlash,
+		}
+	}
+
+SplitIndexListOpt:
+	/* empty */ %prec lowerThanCreateTableSelect
+	{
+		$$ = nil
+	}
+|   SplitIndexList %prec lowerThanComma
+	{
+		$$ = $1.([]*ast.SplitIndexOption)
+	}
+
+SplitIndexList:
+    SplitIndexOption
+	{
+		$$ = []*ast.SplitIndexOption{$1.(*ast.SplitIndexOption)}
+	}
+|   SplitIndexList SplitIndexOption
+	{
+		$$ = append($1.([]*ast.SplitIndexOption), $2.(*ast.SplitIndexOption))
+	}
+
+SplitIndexOption:
+	"SPLIT" "PRIMARY" "KEY" SplitOptionBetween
+	{
+		$$ = &ast.SplitIndexOption{
+			PrimaryKey: true,
+			IndexName: ast.NewCIStr(mysql.PrimaryKeyName),
+			SplitOpt: $4.(*ast.SplitOption),
+		}
+	}
+|	"SPLIT" "INDEX" Identifier SplitOptionBetween
+	{
+		$$ = &ast.SplitIndexOption{
+			IndexName: ast.NewCIStr($3),
+			SplitOpt: $4.(*ast.SplitOption),
+		}
+	}
+|	"SPLIT" SplitOptionBetween
+	{
+		$$ = &ast.SplitIndexOption{
+			TableLevel: true,
+			SplitOpt: $2.(*ast.SplitOption),
 		}
 	}
 
@@ -2169,6 +2217,13 @@ AlterTableSpecSingleOpt:
 		ret := $4.(*ast.AlterTableSpec)
 		ret.NoWriteToBinlog = $3.(bool)
 		$$ = ret
+	}
+|	SplitIndexOption
+	{
+		$$ = &ast.AlterTableSpec{
+			Tp:             ast.AlterTableSplitIndex,
+			SplitIndex:		$1.(*ast.SplitIndexOption),
+		}
 	}
 |	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
 	{
@@ -3266,7 +3321,7 @@ SplitRegionStmt:
 		}
 	}
 
-SplitOption:
+SplitOptionBetween:
 	"BETWEEN" RowValue "AND" RowValue "REGIONS" Int64Num
 	{
 		$$ = &ast.SplitOption{
@@ -3274,6 +3329,12 @@ SplitOption:
 			Upper: $4.([]ast.ExprNode),
 			Num:   $6.(int64),
 		}
+	}
+
+SplitOption:
+	SplitOptionBetween
+	{
+		$$ = $1
 	}
 |	"BY" ValuesList
 	{
@@ -4582,7 +4643,7 @@ DatabaseOptionList:
  *      )
  *******************************************************************/
 CreateTableStmt:
-	"CREATE" OptTemporary "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt DuplicateOpt AsOpt CreateTableSelectOpt OnCommitOpt
+	"CREATE" OptTemporary "TABLE" IfNotExists TableName TableElementListOpt CreateTableOptionListOpt PartitionOpt SplitIndexListOpt DuplicateOpt AsOpt CreateTableSelectOpt OnCommitOpt
 	{
 		stmt := $6.(*ast.CreateTableStmt)
 		stmt.Table = $5.(*ast.TableName)
@@ -4592,13 +4653,16 @@ CreateTableStmt:
 		if $8 != nil {
 			stmt.Partition = $8.(*ast.PartitionOptions)
 		}
-		stmt.OnDuplicate = $9.(ast.OnDuplicateKeyHandlingType)
-		stmt.Select = $11.(*ast.CreateTableStmt).Select
-		if ($12 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $12 == nil) {
+		if $9 != nil {
+			stmt.SplitIndex = $9.([]*ast.SplitIndexOption)
+		}
+		stmt.OnDuplicate = $10.(ast.OnDuplicateKeyHandlingType)
+		stmt.Select = $12.(*ast.CreateTableStmt).Select
+		if ($13 != nil && stmt.TemporaryKeyword != ast.TemporaryGlobal) || (stmt.TemporaryKeyword == ast.TemporaryGlobal && $13 == nil) {
 			yylex.AppendError(yylex.Errorf("GLOBAL TEMPORARY and ON COMMIT DELETE ROWS must appear together"))
 		} else {
 			if stmt.TemporaryKeyword == ast.TemporaryGlobal {
-				stmt.OnCommitDelete = $12.(bool)
+				stmt.OnCommitDelete = $13.(bool)
 			}
 		}
 		$$ = stmt

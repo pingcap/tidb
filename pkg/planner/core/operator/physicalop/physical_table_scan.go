@@ -397,7 +397,7 @@ func (p *PhysicalTableScan) ResolveCorrelatedColumns() ([]*ranger.Range, error) 
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalTableScan) ExplainID(isChildOfIndexLookUp ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP(isChildOfIndexLookUp...)
 		}
