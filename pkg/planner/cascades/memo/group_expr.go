@@ -254,7 +254,10 @@ func (e *GroupExpression) DeriveLogicalProp() (err error) {
 		// todo: extractFD should be refactored as take in childFDs, and return the new FDSet rather than depend on tree.
 		tmpFD = e.LogicalPlan.ExtractFD()
 		// prepare the possible sort columns for the group, which require fillIndexPath to fill index cols.
-		tmpPossibleProps = e.LogicalPlan.PreparePossibleProperties(tmpSchema, childProperties...).Order
+		tmp := e.LogicalPlan.PreparePossibleProperties(tmpSchema, childProperties...)
+		if tmp != nil {
+			tmpPossibleProps = tmp.Order
+		}
 	}
 	e.GetGroup().GetLogicalProperty().Schema = tmpSchema
 	e.GetGroup().GetLogicalProperty().Stats = tmpStats
