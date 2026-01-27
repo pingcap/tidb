@@ -110,8 +110,8 @@ if [ -z "$TIKV_CONFIG" ] && [ -f "$SCRIPT_DIR/tikv.toml" ]; then
     TIKV_CONFIG="$SCRIPT_DIR/tikv.toml"
 fi
 
-if ! command -v ss >/dev/null 2>&1; then
-    echo "Error: ss is required for port checks but not found in PATH." >&2
+if ! command -v ss >/dev/null 2>&1 && ! command -v nc >/dev/null 2>&1; then
+    echo "Error: ss or nc is required for port checks but not found in PATH." >&2
     exit 1
 fi
 
@@ -178,6 +178,10 @@ function port_in_use() {
         if ss -ltnH 2>/dev/null | awk '{print $4}' | sed -E 's/.*:([0-9]+)$/\\1/' | grep -qx "$port"; then
             return 0
         fi
+    elif command -v nc >/dev/null 2>&1; then
+        if nc -z -w 1 127.0.0.1 "$port" >/dev/null 2>&1; then
+            return 0
+        fi
     fi
 
     return 1
@@ -219,6 +223,68 @@ function resolve_bin() {
         command -v "$bin"
         return 0
     fi
+
+    return 1
+}
+
+function require_tici_binaries() {
+    local missing=()
+
+    if ! resolve_bin "$PD_BIN" >/dev/null; then
+        missing+=("pd-server")
+    fi
+    if ! resolve_bin "$TIKV_BIN" >/dev/null; then
+        missing+=("tikv-server")
+    fi
+    if ! resolve_bin "$TICDC_BIN" >/dev/null && ! resolve_bin "./third_bin/ticdc" >/dev/null; then
+        missing+=("cdc/ticdc")
+    fi
+    if ! resolve_bin "$TICI_BIN" >/dev/null; then
+        missing+=("tici-server")
+    fi
+    if ! resolve_bin "$MINIO_BIN" >/dev/null; then
+        missing+=("minio")
+    fi
+    if [ -d "$TIFLASH_BIN" ]; then
+        if [ ! -x "$TIFLASH_BIN/tiflash" ]; then
+            missing+=("tiflash")
+        fi
+    else
+        if ! resolve_bin "$TIFLASH_BIN" >/dev/null; then
+            missing+=("tiflash")
+        fi
+    fi
+
+    if [ ${#missing[@]} -ne 0 ]; then
+        echo "Error: required binaries missing for TiCI tests: ${missing[*]}" >&2
+        echo "Run: $SCRIPT_DIR/tici/prepare-binaries.sh (or set DOWNLOAD_SH) to download them." >&2
+        exit 1
+    fi
+}
+
+function should_run_tici() {
+    if [ $record -eq 1 ]; then
+        if [ "$record_case" = "all" ] || [[ "$record_case" == tici/* ]]; then
+            return 0
+        fi
+        return 1
+    fi
+
+    if [ -z "$tests" ]; then
+        if [ -d "t/tici" ] && find t/tici -name "*.test" -print -quit | grep -q .; then
+            return 0
+        fi
+        return 1
+    fi
+
+    read -ra test_list <<< "$tests"
+    for test_name in "${test_list[@]}"; do
+        case "$test_name" in
+            tici|tici/*)
+                return 0
+                ;;
+        esac
+    done
 
     return 1
 }
@@ -287,6 +353,10 @@ while getopts "t:s:r:b:d:c:i:h" opt; do
             ;;
     esac
 done
+
+if should_run_tici; then
+    require_tici_binaries
+fi
 
 if [ $build -eq 1 ]; then
     if [ -z "$tidb_server" ]; then
@@ -400,10 +470,17 @@ function wait_for_port_ready() {
     local deadline=$((SECONDS + timeout))
 
     while [ $SECONDS -lt $deadline ]; do
-        if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
-            exec 3>&-
-            echo "$label is reachable at $host:$port"
-            return 0
+        if command -v nc >/dev/null 2>&1; then
+            if nc -z -w 1 "$host" "$port" >/dev/null 2>&1; then
+                echo "$label is reachable at $host:$port"
+                return 0
+            fi
+        else
+            if (exec 3<>"/dev/tcp/$host/$port") 2>/dev/null; then
+                exec 3>&-
+                echo "$label is reachable at $host:$port"
+                return 0
+            fi
         fi
         sleep 1
     done
@@ -803,9 +880,9 @@ if [ ${#ticdc_cases[@]} -ne 0 ]; then
 fi
 
 start_tidb_cluster "$need_downstream"
-wait_for_port_ready "127.0.0.1" "$UPSTREAM_PORT" "TiDB upstream" "$TIDB_LOG_FILE" 120 || exit 1
+wait_for_port_ready "127.0.0.1" "$UP_TIDB_STATUS_PORT" "TiDB upstream status" "$TIDB_LOG_FILE" 120 || exit 1
 if [ "$need_downstream" -ne 0 ]; then
-    wait_for_port_ready "127.0.0.1" "$DOWNSTREAM_PORT" "TiDB downstream" "$TIDB_LOG_FILE2" 120 || exit 1
+    wait_for_port_ready "127.0.0.1" "$DOWN_TIDB_STATUS_PORT" "TiDB downstream status" "$TIDB_LOG_FILE2" 120 || exit 1
 fi
 
 if [ ${#non_ticdc_cases[@]} -ne 0 ]; then
