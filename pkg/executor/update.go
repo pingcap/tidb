@@ -565,6 +565,22 @@ func (e *UpdateExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
+	if !e.Ctx().GetSessionVars().InRestrictedSQL {
+		for _, tbl := range e.tblID2table {
+			if tbl == nil {
+				continue
+			}
+			meta := tbl.Meta()
+			if meta != nil && (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) {
+				obj := "materialized view"
+				if meta.IsMaterializedViewLog() {
+					obj = "materialized view log"
+				}
+				return errors.Errorf("update %s %s is not supported now", obj, meta.Name.O)
+			}
+		}
+	}
+
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

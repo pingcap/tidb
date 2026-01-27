@@ -20,6 +20,7 @@ import (
 	"runtime/trace"
 	"time"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
@@ -52,6 +53,19 @@ func (e *ReplaceExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
+	if meta := e.Table.Meta(); meta != nil && (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		obj := "materialized view"
+		if meta.IsMaterializedViewLog() {
+			obj = "materialized view log"
+		}
+		return errors.Errorf("replace into %s %s is not supported now", obj, meta.Name.O)
+	}
+	if logTbl, _, err := findMVLogTable(ctx, e.Ctx(), e.Table); err != nil {
+		return err
+	} else if logTbl != nil {
+		return errors.New("replace into a table with materialized view log is not supported for MV demo")
+	}
+
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

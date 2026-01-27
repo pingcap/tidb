@@ -20,12 +20,14 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/materializedview"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
@@ -269,6 +271,29 @@ func (e *DeleteExec) removeRowsInTblRowMap(ctx context.Context, tblRowMap tableR
 }
 
 func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handle, data []types.Datum, posInfo *physicalop.TblColPosInfo) error {
+	var (
+		mvLogTbl  table.Table
+		oldLogRow []types.Datum
+	)
+	if logTbl, logInfo, err := findMVLogTable(context.Background(), ctx, t); err != nil {
+		return err
+	} else if logTbl != nil {
+		mvLogTbl = logTbl
+		cols := make([]*table.Column, 0, len(logInfo.ColumnIDs))
+		for _, id := range logInfo.ColumnIDs {
+			col := findColumnByID(t.Cols(), id)
+			if col == nil {
+				return errors.Errorf("column %d not found in base table", id)
+			}
+			cols = append(cols, col)
+		}
+		oldVals, err := tables.RowWithCols(t, ctx, h, cols)
+		if err != nil {
+			return err
+		}
+		oldLogRow = append(oldVals, types.NewStringDatum(materializedview.MVLogDMLTypeDelete), types.NewStringDatum(materializedview.MVLogOldNewOld))
+	}
+
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -277,6 +302,12 @@ func (e *DeleteExec) removeRow(ctx sessionctx.Context, t table.Table, h kv.Handl
 	err = t.RemoveRecord(ctx.GetTableCtx(), txn, h, data, posInfo.IndexesRowLayout)
 	if err != nil {
 		return err
+	}
+
+	if mvLogTbl != nil {
+		if err := appendMVLogRow(context.Background(), ctx, mvLogTbl, oldLogRow); err != nil {
+			return err
+		}
 	}
 	tid := t.Meta().ID
 	err = onRemoveRowForFK(ctx, data, e.fkChecks[tid], e.fkCascades[tid], e.ignoreErr)
@@ -314,6 +345,22 @@ func (e *DeleteExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *DeleteExec) Open(ctx context.Context) error {
+	if !e.Ctx().GetSessionVars().InRestrictedSQL {
+		for _, tbl := range e.tblID2Table {
+			if tbl == nil {
+				continue
+			}
+			meta := tbl.Meta()
+			if meta != nil && (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) {
+				obj := "materialized view"
+				if meta.IsMaterializedViewLog() {
+					obj = "materialized view log"
+				}
+				return errors.Errorf("delete %s %s is not supported now", obj, meta.Name.O)
+			}
+		}
+	}
+
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

@@ -1434,6 +1434,10 @@ func (e *InsertValues) addRecordWithAutoIDHint(
 	if err != nil {
 		return err
 	}
+
+	if err := appendMVLogInsert(ctx, e.Ctx(), e.Table, row); err != nil {
+		return err
+	}
 	vars.StmtCtx.AddAffectedRows(1)
 	if e.lastInsertID != 0 {
 		vars.SetLastInsertID(e.lastInsertID)

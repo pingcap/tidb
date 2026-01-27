@@ -5514,6 +5514,22 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		resolveCtx: b.resolveCtx,
 	}
 	update.Accept(utlr)
+	if !b.ctx.GetSessionVars().InRestrictedSQL {
+		for _, tn := range utlr.updatableTableList {
+			tnW := b.resolveCtx.GetTableName(tn)
+			if isCTE(tnW) {
+				continue
+			}
+			tblInfo := tnW.TableInfo
+			if tblInfo.IsMaterializedView() || tblInfo.IsMaterializedViewLog() {
+				obj := "materialized view"
+				if tblInfo.IsMaterializedViewLog() {
+					obj = "materialized view log"
+				}
+				return nil, errors.Errorf("update %s %s is not supported now", obj, tblInfo.Name.O)
+			}
+		}
+	}
 	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, utlr.updatableTableList, update.List, p)
 	if err != nil {
 		return nil, err
@@ -5928,6 +5944,13 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			if tableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now", tn.Name.O)
 			}
+			if (tableInfo.IsMaterializedView() || tableInfo.IsMaterializedViewLog()) && !sessionVars.InRestrictedSQL {
+				obj := "materialized view"
+				if tableInfo.IsMaterializedViewLog() {
+					obj = "materialized view log"
+				}
+				return nil, errors.Errorf("delete %s %s is not supported now", obj, tableInfo.Name.O)
+			}
 			if sessionVars.User != nil {
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
 			}
@@ -5947,6 +5970,13 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 			}
 			if tblW.TableInfo.IsSequence() {
 				return nil, errors.Errorf("delete sequence %s is not supported now", v.Name.O)
+			}
+			if (tblW.TableInfo.IsMaterializedView() || tblW.TableInfo.IsMaterializedViewLog()) && !sessionVars.InRestrictedSQL {
+				obj := "materialized view"
+				if tblW.TableInfo.IsMaterializedViewLog() {
+					obj = "materialized view log"
+				}
+				return nil, errors.Errorf("delete %s %s is not supported now", obj, tblW.TableInfo.Name.O)
 			}
 			dbName := v.Schema.L
 			if dbName == "" {
