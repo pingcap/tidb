@@ -5,6 +5,9 @@ go_library(
     srcs = ["slice.go"],
     importpath = "github.com/pingcap/tidb/pkg/util/slice",
     visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/util/intest",
+    ],
 )
 
 go_test(
