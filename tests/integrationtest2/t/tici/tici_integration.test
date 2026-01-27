@@ -24,22 +24,6 @@ INSERT INTO t2 VALUES
 (4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
 (5, 'Fifth sample entry to complete the basic insertion example');
 
-WITH RECURSIVE wait(n) AS (
-  SELECT 1
-  UNION ALL
-  SELECT n + 1 FROM wait
-  WHERE n < 20
-    AND (SELECT COUNT(*) FROM t1 WHERE fts_match_word('first', body)) = 0
-    AND SLEEP(1) = 0
-)
+DO SLEEP(10);
 SELECT * FROM t1 WHERE fts_match_word('first', body);
-
-WITH RECURSIVE wait(n) AS (
-  SELECT 1
-  UNION ALL
-  SELECT n + 1 FROM wait
-  WHERE n < 20
-    AND (SELECT COUNT(*) FROM t2 WHERE fts_match_word('first', content)) = 0
-    AND SLEEP(1) = 0
-)
 SELECT * FROM t2 WHERE fts_match_word('first', content);
