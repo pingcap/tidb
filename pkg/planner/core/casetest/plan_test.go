@@ -420,16 +420,15 @@ func TestOuterJoinElimination(t *testing.T) {
 		testKit.MustExec(`create table t2_pk (a int, b int, c int, primary key(a))`)
 
 		// only when t2.a has unique attribute, we can eliminate the outer join.
-		// nullable unique index is not allowed to trigger the outer join elinimation.
 		testKit.MustHavePlan("select count(*) from t1 left join t2 on t1.a = t2.a", "Join")
 		testKit.MustHavePlan("select count(*) from t1 left join t2_k on t1.a = t2_k.a", "Join")
-		testKit.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a", "Join")
+		testKit.MustNotHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a", "Join")
 		testKit.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a = t2_nnuk.a", "Join")
 		testKit.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a = t2_pk.a", "Join")
 
 		testKit.MustHavePlan("select count(*) from t1 left join t2 on t1.a = t2.a group by t1.a", "Join")
 		testKit.MustHavePlan("select count(*) from t1 left join t2_k on t1.a = t2_k.a group by t1.a", "Join")
-		testKit.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a group by t1.a", "Join")
+		testKit.MustNotHavePlan("select count(*) from t1 left join t2_uk on t1.a = t2_uk.a group by t1.a", "Join")
 		testKit.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a = t2_nnuk.a group by t1.a", "Join")
 		testKit.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a = t2_pk.a group by t1.a", "Join")
 
@@ -448,9 +447,12 @@ func TestOuterJoinElimination(t *testing.T) {
 		// test constant columns with distinct
 		testKit.MustHavePlan("select 1 from t1 left join t2 on t1.a = t2.a", "Join")
 		testKit.MustHavePlan("select 1 from t1 left join t2_k t2 on t1.a = t2.a", "Join")
-		testKit.MustHavePlan("select 1 from t1 left join t2_uk t2 on t1.a = t2.a", "Join")
+		testKit.MustNotHavePlan("select 1 from t1 left join t2_uk t2 on t1.a = t2.a", "Join")
 		testKit.MustNotHavePlan("select 1 from t1 left join t2_nnuk t2 on t1.a = t2.a", "Join")
 		testKit.MustNotHavePlan("select 1 from t1 left join t2_pk t2 on t1.a = t2.a", "Join")
+		testKit.MustHavePlan("select count(*) from t1 left join t2_uk on t1.a <=> t2_uk.a", "Join")
+		testKit.MustNotHavePlan("select count(*) from t1 left join t2_nnuk on t1.a <=> t2_nnuk.a", "Join")
+		testKit.MustNotHavePlan("select count(*) from t1 left join t2_pk on t1.a <=> t2_pk.a", "Join")
 		// test subqueries
 		testKit.MustHavePlan("select 1 from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
 		testKit.MustNotHavePlan("select distinct 1 from (select distinct a from t1) t1 left join t2 on t1.a = t2.a", "Join")
