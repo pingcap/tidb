@@ -1266,12 +1266,11 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 	p := pp.(*physicalop.PhysicalTopN)
 	t := tasks[0].Copy()
 
-	// Handle partial order TopN first: when child property carries PartialOrderInfo,
-	// skylinePruning has already ensured that the chosen access path can provide
-	// partial order via prefix index and filled PrefixColID/PrefixLen.
+	// Handle partial order TopN first: when CopTask carries PartialOrderMatchResult,
+	// it means skylinePruning has found a prefix index that can provide partial order.
 	if copTask, ok := t.(*physicalop.CopTask); ok {
-		if childProp := p.GetChildReqProps(0); childProp != nil && childProp.PartialOrderInfo != nil {
-			return handlePartialOrderTopN(p, copTask, childProp.PartialOrderInfo)
+		if copTask.PartialOrderMatchResult != nil && copTask.PartialOrderMatchResult.Matched {
+			return handlePartialOrderTopN(p, copTask)
 		}
 	}
 
@@ -1347,23 +1346,25 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 //
 // Case1: Two phase TopN, where TiDB keeps TopN and TiKV applies a partial-order Limit:
 //
-//   TopN(with partial info)
-//     └─IndexLookUp
-//        └─Limit(with partial info)
-//   ... (other operators)
+//	TopN(with partial info)
+//	  └─IndexLookUp
+//	     └─Limit(with partial info)
+//	... (other operators)
 //
 // Case2: One phase TopN, where the whole TopN can be executed in the coprocessor:
 //
-//   TopN(with partial info)
-//     ├─IndexPlan
-//     └─TablePlan
-func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask,
-	partialOrderInfo *property.PartialOrderInfo) base.Task {
-	// Update TopN itself with partial order info.
+//	TopN(with partial info)
+//	  ├─IndexPlan
+//	  └─TablePlan
+func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
+	matchResult := copTask.PartialOrderMatchResult
+
+	// PartialOrderedLimit = Count + Offset. Executor will handle "read X more rows"
+	// internally based on this value and PrefixCol/PrefixLen.
 	partialOrderedLimit := p.Count + p.Offset
 	p.PartialOrderedLimit = partialOrderedLimit
-	p.PrefixColID = partialOrderInfo.PrefixColID
-	p.PrefixLen = partialOrderInfo.PrefixLen
+	p.PrefixCol = matchResult.PrefixCol
+	p.PrefixLen = matchResult.PrefixLen
 
 	// Decide whether we can push a special Limit down to the index plan.
 	// Conditions:
@@ -1388,14 +1389,14 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 		maxX := estimateMaxXForPartialOrder(p.SCtx(), copTask)
 		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
 		childProfile := copTask.IndexPlan.StatsInfo()
-		stats := property.DeriveLimitStats(childProfile, estimatedRows)
+		limitStats := property.DeriveLimitStats(childProfile, estimatedRows)
 
 		pushedDownLimit := physicalop.PhysicalLimit{
 			Count:               partialOrderedLimit,
 			PartialOrderedLimit: partialOrderedLimit,
-			PrefixColID:         partialOrderInfo.PrefixColID,
-			PrefixLen:           partialOrderInfo.PrefixLen,
-		}.Init(p.SCtx(), stats, p.QueryBlockOffset())
+			PrefixCol:           matchResult.PrefixCol,
+			PrefixLen:           matchResult.PrefixLen,
+		}.Init(p.SCtx(), limitStats, p.QueryBlockOffset())
 		pushedDownLimit.SetChildren(copTask.IndexPlan)
 		pushedDownLimit.SetSchema(copTask.IndexPlan.Schema())
 		copTask.IndexPlan = pushedDownLimit

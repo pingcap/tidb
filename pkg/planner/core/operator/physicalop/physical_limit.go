@@ -43,8 +43,9 @@ type PhysicalLimit struct {
 	// When > 0, this Limit uses partial order short-circuiting with prefix index.
 	PartialOrderedLimit uint64
 
-	// PrefixColID is the UniqueID of the prefix index column for TiKV-side short-circuiting.
-	PrefixColID int64
+	// PrefixCol is the prefix index column for partial order optimization.
+	// Used for both execution (via UniqueID) and explain (via column name).
+	PrefixCol *expression.Column
 
 	// PrefixLen is the prefix index length (in bytes) for TiKV-side short-circuiting.
 	PrefixLen int
@@ -130,20 +131,22 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	}
 	if redact == perrors.RedactLogDisable {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
-		if p.PartialOrderedLimit > 0 {
-			fmt.Fprintf(buffer, ", partial_order_limit:%v, prefix_col_id:%v, prefix_len:%v",
-				p.PartialOrderedLimit, p.PrefixColID, p.PrefixLen)
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				prefixColName, p.PrefixLen)
 		}
 	} else if redact == perrors.RedactLogMarker {
 		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
-		if p.PartialOrderedLimit > 0 {
-			fmt.Fprintf(buffer, ", partial_order_limit:‹%v›, prefix_col_id:‹%v›, prefix_len:‹%v›",
-				p.PartialOrderedLimit, p.PrefixColID, p.PrefixLen)
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				prefixColName, p.PrefixLen)
 		}
 	} else if redact == perrors.RedactLogEnable {
 		fmt.Fprintf(buffer, "offset:?, count:?")
-		if p.PartialOrderedLimit > 0 {
-			fmt.Fprintf(buffer, ", partial_order_limit:?, prefix_col_id:?, prefix_len:?")
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
 		}
 	}
 	return buffer.String()
