@@ -379,6 +379,21 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 		}
 	}
 	p.NeedCommonHandle = p.Table.IsCommonHandle
+	if intest.InTest && p.DataSourceSchema != nil && !p.Table.IsCommonHandle {
+		hasHandleCol := false
+		pkInfo := p.Table.GetPkColInfo()
+		for _, col := range p.DataSourceSchema.Columns {
+			if col.ID == model.ExtraHandleID {
+				hasHandleCol = true
+				break
+			}
+			if p.Table.PKIsHandle && pkInfo != nil && col.ID == pkInfo.ID {
+				hasHandleCol = true
+				break
+			}
+		}
+		intest.Assert(hasHandleCol, "DataSourceSchema should include handle column")
+	}
 
 	if p.NeedCommonHandle {
 		for i := len(p.Index.Columns); i < len(idxExprCols); i++ {
@@ -648,7 +663,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 		IdxColLens:       s.IdxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
-		DataSourceSchema: ds.Schema(),
+		DataSourceSchema: ds.Schema().Clone(),
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,
@@ -672,7 +687,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		IdxColLens:       path.IdxColLens,
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
-		DataSourceSchema: ds.Schema(),
+		DataSourceSchema: ds.Schema().Clone(),
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,
