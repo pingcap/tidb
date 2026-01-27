@@ -605,15 +605,15 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) RowEstimate {
 	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
 	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
-	rangeEst := lessCountB - lessCountA
+	rangeEst := DefaultRowEst(lessCountB - lessCountA)
 	lowEqual, _ := hg.EqualRowCount(sctx, a, false)
 	ndvAvg := hg.NotNullCount() / float64(hg.NDV)
 	// If values fall in the same bucket, we may underestimate the fractional result. So estimate the low value (a) as an equals, and
 	// estimate the high value as the default (because the input high value may be "larger" than the true high value). The range should
 	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
-	if rangeEst < max(lowEqual, ndvAvg) && hg.NDV > 0 {
+	if rangeEst.Est < max(lowEqual, ndvAvg) && hg.NDV > 0 {
 		result := min(lessCountB, hg.NotNullCount()-lessCountA)
-		rangeEst = min(result, lowEqual+ndvAvg)
+		rangeEst = DefaultRowEst(min(result, lowEqual+ndvAvg))
 	}
 	// LessCounts are equal only if no valid buckets or both values are out of range
 	isInValidBucket := lessCountA != lessCountB
@@ -623,21 +623,27 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 		if sctx != nil {
 			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
-			if skewRatio > 0 {
-				// Worst case skew is if the range includes all the rows in the bucket
-				skewEstimate := hg.Buckets[bktIndexA].Count
-				if bktIndexA > 0 {
-					skewEstimate -= hg.Buckets[bktIndexA-1].Count
-				}
-				// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
-				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
-					skewEstimate -= hg.Buckets[bktIndexA].Repeat
-				}
-				return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
+			// Worst case skew is if the range includes all the rows in the bucket
+			skewEstimate := hg.Buckets[bktIndexA].Count
+			if bktIndexA > 0 {
+				skewEstimate -= hg.Buckets[bktIndexA-1].Count
 			}
+			// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
+			if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
+				skewEstimate -= hg.Buckets[bktIndexA].Repeat
+			}
+			if skewRatio > 0 {
+				// Cap the max estimate to 2X the estimate.
+				// TODO: RiskRangeSkewRatio is predominantly used for outOfRangeRowCount, and
+				//       it's usage is diluated here. Consider how to address this if
+				//       issues are reported here regarding under-estimation for in-bucket ranges.
+				rangeEst = CalculateSkewRatioCounts(rangeEst.Est, rangeEst.Est*2, skewRatio)
+			}
+			// Report the full max estimate for risk estimation usage in compareCandidates (skylinePruning).
+			rangeEst.MaxEst = max(rangeEst.MaxEst, float64(skewEstimate))
 		}
 	}
-	return DefaultRowEst(rangeEst)
+	return rangeEst
 }
 
 // CalculateSkewRatioCounts calculates the default, min, and max skew estimates given a skew ratio.
