@@ -38,8 +38,8 @@ const (
 	defaultEnableInternalQuery = false
 	defaultMaxStmtCount        = 3000
 	defaultMaxSQLLength        = 32768
-	defaultRefreshInterval     = 30 * 60 // 30 min
-	defaultRotateCheckInterval = 1       // s
+	defaultRefreshInterval     = 60 // 1 min
+	defaultRotateCheckInterval = 1  // s
 )
 
 var (

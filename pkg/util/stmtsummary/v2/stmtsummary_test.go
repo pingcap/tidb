@@ -96,3 +96,15 @@ func TestStmtSummaryFlush(t *testing.T) {
 	require.Equal(t, 3, len(storage.windows))
 	storage.Unlock()
 }
+
+func TestDefaultConfig(t *testing.T) {
+	cfg := &Config{
+		Filename: "test.log",
+	}
+	ss, err := NewStmtSummary(cfg)
+	require.NoError(t, err)
+	defer ss.Close()
+
+	// Verify RefreshInterval (should be 60)
+	require.Equal(t, uint32(60), ss.RefreshInterval())
+}

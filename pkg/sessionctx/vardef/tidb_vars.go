@@ -1577,8 +1577,8 @@ const (
 	DefTimestampFloat                                 = 0.0
 	DefTiDBEnableStmtSummary                          = true
 	DefTiDBStmtSummaryInternalQuery                   = false
-	DefTiDBStmtSummaryRefreshInterval                 = 1800
-	DefTiDBStmtSummaryHistorySize                     = 24
+	DefTiDBStmtSummaryRefreshInterval                 = 60
+	DefTiDBStmtSummaryHistorySize                     = 7200
 	DefTiDBStmtSummaryMaxStmtCount                    = 3000
 	DefTiDBStmtSummaryMaxSQLLength                    = 32768
 	DefTiDBCapturePlanBaseline                        = Off
