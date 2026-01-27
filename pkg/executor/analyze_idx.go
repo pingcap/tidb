@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"math"
 	"time"
 
@@ -29,8 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/statistics"
+	statslogutil "github.com/pingcap/tidb/pkg/statistics/handle/logutil"
 	handleutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
 	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/ranger"
 	"github.com/pingcap/tipb/go-tipb"
@@ -59,6 +62,18 @@ func analyzeIndexPushdown(ctx context.Context, idxExec *AnalyzeIndexExec) *stati
 	}
 	hist, cms, fms, topN, err := idxExec.buildStats(ctx, ranges, true)
 	if err != nil {
+		if intest.InTest && stderrors.Is(err, context.Canceled) {
+			cause := context.Cause(ctx)
+			ctxErr := ctx.Err()
+			statslogutil.StatsLogger().Info("analyze index canceled",
+				zap.Uint32("killSignal", idxExec.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+				zap.Uint64("connID", idxExec.ctx.GetSessionVars().ConnectionID),
+				zap.Error(err),
+				zap.Error(cause),
+				zap.Error(ctxErr),
+				zap.Stack("stack"),
+			)
+		}
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
 	var statsVer = statistics.Version1
