@@ -1056,10 +1056,17 @@ func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64
 	if l >= histL || r <= boundL || histWidth <= 0 {
 		return 0
 	}
-	actualL := math.Max(l, boundL)
-	actualR := math.Min(r, histL)
+	// bound the left/right ranges of the predicates to the "left triangle" of the histogram.
+	l = max(l, boundL)
+	r = min(r, histL)
+	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
+	// Width of the histogram - squared to normalize to a percentage
 	histWidthSq := math.Pow(histWidth, 2)
-	return (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / histWidthSq
+	// Right side of the predicate as distance from the left edge of the histogram
+	rightRange := math.Pow(r-boundL, 2)
+	// Left side of the predicate as distance from the left edge of the histogram
+	leftRange := math.Pow(l-boundL, 2)
+	return (rightRange - leftRange) / histWidthSq
 }
 
 // calculateRightOverlapPercent calculates the percentage for an out-of-range overlap
@@ -1070,25 +1077,30 @@ func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float6
 	if l >= boundR || r <= histR || histWidth <= 0 {
 		return 0
 	}
-	actualL := math.Max(l, histR)
-	actualR := math.Min(r, boundR)
+	// bound the left/right ranges of the predicates to the "right triangle" of the histogram.
+	l = max(l, histR)
+	r = min(r, boundR)
+	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
+	// Width of the histogram - squared to normalize to a percentage
 	histWidthSq := math.Pow(histWidth, 2)
-	return (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / histWidthSq
+	// Left side of the predicate as distance from the right edge of the histogram.
+	leftRange := math.Pow(boundR-l, 2)
+	// Right side of the predicate as distance from the right edge of the histogram.
+	rightRange := math.Pow(boundR-r, 2)
+	return (leftRange - rightRange) / histWidthSq
 }
 
 // calculateTimeAdjustmentRight calculates the time decay adjustment percentage
 // when the predicate is entirely on the right side of the histogram envelope.
 // Since "time decay" typically occurs on the right side of the histogram,
 // we only need to calculate the adjustment for the right side.
-func calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth float64) float64 {
-	// Defensive checks - caller should ensure the argument is valid.
-	if histWidth <= 0 {
+// func calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth float64) float64 {
+func calculateTimeAdjustmentRight(predWidth, histWidth float64) float64 {
+	// Defensive checks - caller should ensure the arguments are valid.
+	if predWidth <= 0 || histWidth <= 0 {
 		return 0
 	}
-	adjRight := histR + predWidth
-	adjRight = math.Min(adjRight, boundR)
-	histWidthSq := math.Pow(histWidth, 2)
-	return (math.Pow(boundR-histR, 2) - math.Pow(boundR-adjRight, 2)) / histWidthSq
+	return predWidth / histWidth
 }
 
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
@@ -1258,36 +1270,33 @@ func (hg *Histogram) OutOfRangeRowCount(
 		rightPercent = calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
 
 		/*
-					Time decay scenario:
-					│  \
-					│    \
-					|   |xx\
-					│   |xx| \
-					│   |xx|  \
-					┴──────────┴─────
-					▲   ▲  ▲   ▲
-					│   │  │   │
-				histR   │  │ boundR
-					    │  │
-					lDatum  rDatum
+						Time decay scenario:
+						│  \
+						│    \
+						|   |xx\
+						│   |xx| \
+						│   |xx|  \
+						┴──────────┴─────
+						▲   ▲  ▲   ▲
+						│   │  │   │
+					histR   │  │ boundR
+						    │  │
+						lDatum  rDatum
 			Over time, if statistics are NOT recollected - that is, histR stays
 			the same, but the predicate range moves to the right - the percentage
 			of the shaded area on the left side will decrease.
-			The following formula is used to recalculate the percentage of the
-			shaded area if the predicate range was close to the histogram range.
-			That is - we move the lDatum/rDatum directly to the edge of histR.
-			Another way to say it is that we move the predicate range to the left.
+			The following will recalculate the percentage assuming a uniform distribution
+			which does not assume a "decaying triangle" distribution.
+			Time decay is limited to datetime datatype on the right side of the histogram,
+			since datetime predicates are most likely to be affected by time decay.
 		*/
-		// Time decay is limited to datetime datatype, since datetime predicates
-		// are most likely to be affected by time decay.
-		// It also only considers the right side of the histogram envelope.
-		// Since time decay is most likely to occur on the right side.
 		if lDatum.Kind() == types.KindMysqlTime {
 			// Calculate percentage assuming time decay is not present.
 			if l > histR {
 				// Predicate entirely on the right side of the histogram envelope.
 				timeEntirelyOutOfRange = true
-				timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
+				//timeAdjRight = calculateTimeAdjustmentRight(histR, boundR, predWidth, histWidth)
+				timeAdjRight = calculateTimeAdjustmentRight(predWidth, histWidth)
 			}
 		}
 	}
