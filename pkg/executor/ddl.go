@@ -626,6 +626,11 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 
 	groupByOffsets := make([]int, 0, len(mvQuery.GroupByBaseColumnIDs))
 	sel := s.Select.(*ast.SelectStmt)
+	if baseTN, _, err := materializedview.GetSingleBaseTableFromSelect(sel); err == nil && baseTN != nil {
+		// Make the MV definition stable and refresh-friendly: always qualify the base table with schema.
+		// This also avoids depending on session current_db during refresh.
+		baseTN.Schema = mvQuery.BaseSchema
+	}
 
 	for i, item := range mvQuery.SelectItems {
 		derivedName, err := materializedview.DeriveMVColumnName(baseInfo, sel.Fields.Fields[i], item)
@@ -711,11 +716,25 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	mvID := mvTbl.Meta().ID
 	_, err = sqlexec.ExecSQL(internalCtx, sqlExec.GetSQLExecutor(),
 		`INSERT INTO mysql.mv_refresh_info (mv_id, base_table_id, log_table_id, refresh_interval_seconds, next_run_time, last_refresh_tso, last_refresh_type, last_refresh_result, last_error)
-		 VALUES (%?, %?, %?, %?, NULL, 0, 'COMPLETE', 'FAILED', 'not built yet')`,
+		 VALUES (%?, %?, %?, %?, NULL, 0, 'COMPLETE', 'FAILED', 'building')`,
 		mvID, baseInfo.ID, logInfo.ID, s.RefreshIntervalSeconds,
 	)
 	if err == nil {
-		return nil
+		// Initial build: a COMPLETE refresh with a read-ts (= txn start_ts), and atomically record the refresh info.
+		if err := mvDemoCompleteRefresh(ctx, e.Ctx(), kv.InternalTxnDDL, viewSchema, s.ViewName.Name, mvID, mvInfo.DefinitionSQL); err == nil {
+			return nil
+		} else {
+			// Best-effort cleanup to avoid leaving an orphan MV table / refresh info.
+			_, _ = sqlexec.ExecSQL(internalCtx, sqlExec.GetSQLExecutor(), "DELETE FROM mysql.mv_refresh_info WHERE mv_id = %?", mvID)
+			e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+			_ = e.ddlExecutor.DropTable(e.Ctx(), &ast.DropTableStmt{
+				IfExists: true,
+				Tables: []*ast.TableName{
+					{Schema: viewSchema, Name: s.ViewName.Name},
+				},
+			})
+			return errors.Annotatef(err, "materialized view %s build failed", s.ViewName.Name.O)
+		}
 	}
 
 	// Best-effort cleanup to avoid leaving an orphan MV table without refresh info.

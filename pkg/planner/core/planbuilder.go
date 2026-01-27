@@ -1672,6 +1672,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
+	case ast.AdminRefreshMaterializedView:
+		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		ret = &Simple{Statement: as, ResolveCtx: b.resolveCtx}
 	case ast.AdminShowBDRRole:

@@ -61,6 +61,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/globalconn"
@@ -3070,6 +3071,8 @@ func (e *SimpleExec) executeAdmin(s *ast.AdminStmt) error {
 		return e.executeAdminSetBDRRole(s)
 	case ast.AdminUnsetBDRRole:
 		return e.executeAdminUnsetBDRRole()
+	case ast.AdminRefreshMaterializedView:
+		return e.executeAdminRefreshMaterializedView(s)
 	}
 	return nil
 }
@@ -3124,6 +3127,55 @@ func (e *SimpleExec) executeAdminUnsetBDRRole() error {
 		return errors.Trace(err)
 	}
 	return errors.Trace(meta.NewMutator(txn).ClearBDRRole())
+}
+
+func (e *SimpleExec) executeAdminRefreshMaterializedView(s *ast.AdminStmt) error {
+	if s.Tp != ast.AdminRefreshMaterializedView {
+		return errors.New("This AdminStmt is not ADMIN REFRESH MATERIALIZED VIEW")
+	}
+	if !e.Ctx().GetSessionVars().EnableMaterializedViewDemo {
+		return errors.New("materialized view demo is disabled")
+	}
+	if len(s.Tables) != 1 || s.Tables[0] == nil {
+		return errors.New("ADMIN REFRESH MATERIALIZED VIEW requires a single target view name")
+	}
+
+	viewSchemaName := s.Tables[0].Schema.L
+	if viewSchemaName == "" {
+		viewSchemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if viewSchemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	viewSchema := ast.NewCIStr(viewSchemaName)
+
+	tbl, err := e.is.TableByName(context.Background(), viewSchema, s.Tables[0].Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !tbl.Meta().IsMaterializedView() {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(viewSchema.L, s.Tables[0].Name.O, "MATERIALIZED VIEW")
+	}
+	mvInfo := tbl.Meta().MaterializedViewInfo
+	if mvInfo == nil {
+		return errors.New("materialized view info not found")
+	}
+
+	mode := ast.MaterializedViewRefreshModeFast
+	if s.MVRefreshMode != nil {
+		mode = *s.MVRefreshMode
+	} else if strings.ToUpper(string(mvInfo.RefreshMode)) == "COMPLETE" {
+		mode = ast.MaterializedViewRefreshModeComplete
+	}
+
+	switch mode {
+	case ast.MaterializedViewRefreshModeComplete:
+		return mvDemoCompleteRefresh(context.Background(), e.Ctx(), kv.InternalTxnAdmin, viewSchema, s.Tables[0].Name, tbl.Meta().ID, mvInfo.DefinitionSQL)
+	case ast.MaterializedViewRefreshModeFast:
+		return mvDemoFastRefresh(context.Background(), e.Ctx(), viewSchema, s.Tables[0].Name, tbl.Meta().ID, mvInfo)
+	default:
+		return errors.Errorf("invalid refresh mode: %s", mode.String())
+	}
 }
 
 func (e *SimpleExec) executeSetResourceGroupName(s *ast.SetResourceGroupStmt) error {
