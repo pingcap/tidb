@@ -173,12 +173,6 @@ function port_in_use() {
         fi
     fi
 
-    if command -v lsof >/dev/null 2>&1; then
-        if lsof -i :"$port" &> /dev/null; then
-            return 0
-        fi
-    fi
-
     return 1
 }
 
