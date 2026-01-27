@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/session/syssession"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -228,62 +227,4 @@ func TestDomainAdvancedSessionPoolPutBackDirtySession(t *testing.T) {
 		require.False(t, se.IsOwner())
 		require.Equal(t, 1, p.(*syssession.AdvancedSessionPool).Size())
 	})
-}
-
-func TestAdvancedSessionPoolResetTimeZone(t *testing.T) {
-	store, do := testkit.CreateMockStoreAndDomain(t)
-	p := do.AdvancedSysSessionPool()
-	require.NotNil(t, p)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.time_zone='UTC'")
-
-	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
-		return session.WithSessionContext(func(sctx sessionctx.Context) error {
-			return sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "Asia/Shanghai")
-		})
-	}))
-
-	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
-		return session.WithSessionContext(func(sctx sessionctx.Context) error {
-			val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TimeZone)
-			require.True(t, ok)
-			require.Equal(t, "UTC", val)
-			require.Equal(t, "UTC", sctx.GetSessionVars().Location().String())
-			require.Equal(t, sctx.GetSessionVars().Location().String(), sctx.GetSessionVars().StmtCtx.TimeZone().String())
-			return nil
-		})
-	}))
-}
-
-func TestAdvancedSessionPoolResetTimeZoneWithDefaultGlobal(t *testing.T) {
-	_, do := testkit.CreateMockStoreAndDomain(t)
-	p := do.AdvancedSysSessionPool()
-	require.NotNil(t, p)
-
-	var globalTZ string
-	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
-		return session.WithSessionContext(func(sctx sessionctx.Context) error {
-			var err error
-			globalTZ, err = sctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TimeZone)
-			require.NoError(t, err)
-			return nil
-		})
-	}))
-
-	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
-		return session.WithSessionContext(func(sctx sessionctx.Context) error {
-			return sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, "Asia/Shanghai")
-		})
-	}))
-
-	require.NoError(t, p.WithSession(func(session *syssession.Session) error {
-		return session.WithSessionContext(func(sctx sessionctx.Context) error {
-			val, ok := sctx.GetSessionVars().GetSystemVar(vardef.TimeZone)
-			require.True(t, ok)
-			require.Equal(t, globalTZ, val)
-			require.NotNil(t, sctx.GetSessionVars().Location())
-			require.Equal(t, sctx.GetSessionVars().Location().String(), sctx.GetSessionVars().StmtCtx.TimeZone().String())
-			return nil
-		})
-	}))
 }

@@ -263,15 +263,6 @@ func (s *session) CheckNoPendingTxn() error {
 func (s *session) OwnerResetState(ctx context.Context, caller sessionOwner) error {
 	return s.OwnerWithSctx(caller, func(sctx SessionContext) error {
 		sctx.RollbackTxn(ctx)
-		// // Reset time-related session vars to avoid cross-task contamination when sessions are reused.
-		// globalTZ, err := sctx.GetSessionVars().GetGlobalSystemVar(ctx, vardef.TimeZone)
-		// if err != nil {
-		// 	return err
-		// }
-		// if err := sctx.GetSessionVars().SetSystemVar(vardef.TimeZone, globalTZ); err != nil {
-		// 	return err
-		// }
-		// sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
 		return nil
 	})
 }
