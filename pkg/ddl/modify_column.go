@@ -324,8 +324,14 @@ func (w *worker) onModifyColumn(jobCtx *jobContext, job *model.Job) (ver int64, 
 
 	switch args.ModifyColumnType {
 	case model.ModifyTypePrecheck:
+		if job.ReorgMeta != nil {
+			job.ReorgMeta.IsValidating = true
+		}
 		return w.precheckForVarcharToChar(jobCtx, job, args, dbInfo, tblInfo, oldCol)
 	case model.ModifyTypeNoReorgWithCheck:
+		if job.ReorgMeta != nil {
+			job.ReorgMeta.IsValidating = true
+		}
 		return w.doModifyColumnWithCheck(jobCtx, job, dbInfo, tblInfo, args.Column, oldCol, args.Position)
 	case model.ModifyTypeNoReorg:
 		return w.doModifyColumnNoCheck(jobCtx, job, tblInfo, args.Column, oldCol, args.Position)
@@ -620,6 +626,9 @@ func (w *worker) precheckForVarcharToChar(
 	// Fallback to normal reorg type.
 	oldCol.DelFlag(mysql.PreventNullInsertFlag)
 	oldCol.ChangingFieldType = nil
+	if job.ReorgMeta != nil {
+		job.ReorgMeta.IsValidating = false
+	}
 	ver, err = updateVersionAndTableInfoWithCheck(jobCtx, job, tblInfo, true)
 	if err != nil {
 		return ver, errors.Trace(err)
