@@ -335,7 +335,7 @@ function ensure_tici_ports() {
         read -r host port < <(split_host_port "$TICI_READER_ADDR")
     else
         : "${TICI_READER_HOST:=127.0.0.1}"
-        : "${TICI_READER_PORT:=3931}"
+        : "${TICI_READER_PORT:=8520}"
         host="$TICI_READER_HOST"
         port="$TICI_READER_PORT"
     fi

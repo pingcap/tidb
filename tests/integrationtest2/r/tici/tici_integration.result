@@ -2,7 +2,7 @@ CREATE DATABASE IF NOT EXISTS tici_integration;
 USE tici_integration;
 DROP TABLE IF EXISTS t1;
 DROP TABLE IF EXISTS t2;
-CREATE TABLE IF NOT EXISTS t1(id varchar(10) PRIMARY KEY,body TEXT);
+CREATE TABLE IF NOT EXISTS t1(id varchar(10),body TEXT,PRIMARY KEY (id) CLUSTERED);
 ALTER TABLE t1 ADD FULLTEXT INDEX ft_index (body) WITH PARSER standard;
 INSERT INTO t1 VALUES
 (1, 'This is the first test pdata, used to demonstrate the insert operation'),
@@ -10,7 +10,7 @@ INSERT INTO t1 VALUES
 (3, 'Third entry: verifying the TEXT field''s ability to store longer content'),
 (4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
 (5, 'Fifth sample entry to complete the basic insertion example');
-CREATE TABLE IF NOT EXISTS t2(id varchar(10) PRIMARY KEY,content TEXT);
+CREATE TABLE IF NOT EXISTS t2(id varchar(10),content TEXT,PRIMARY KEY (id) CLUSTERED);
 ALTER TABLE t2 ADD FULLTEXT INDEX ft_index (content) WITH PARSER standard;
 INSERT INTO t2 VALUES
 (1, 'This is the first test data, used to demonstrate the insert operation'),
@@ -18,10 +18,25 @@ INSERT INTO t2 VALUES
 (3, 'Third entry: verifying the TEXT field''s ability to store longer content'),
 (4, 'Fourth data row, which can be used for subsequent query or analysis tests'),
 (5, 'Fifth sample entry to complete the basic insertion example');
-DO SLEEP(20);
+WITH RECURSIVE wait(n) AS (
+  SELECT 1
+  UNION ALL
+  SELECT n + 1 FROM wait
+  WHERE n < 20
+    AND (SELECT COUNT(*) FROM t1 WHERE fts_match_word('first', body)) = 0
+    AND SLEEP(1) = 0
+)
 SELECT * FROM t1 WHERE fts_match_word('first', body);
 id	body
 1	This is the first test pdata, used to demonstrate the insert operation
+WITH RECURSIVE wait(n) AS (
+  SELECT 1
+  UNION ALL
+  SELECT n + 1 FROM wait
+  WHERE n < 20
+    AND (SELECT COUNT(*) FROM t2 WHERE fts_match_word('first', content)) = 0
+    AND SLEEP(1) = 0
+)
 SELECT * FROM t2 WHERE fts_match_word('first', content);
 id	content
 1	This is the first test data, used to demonstrate the insert operation
