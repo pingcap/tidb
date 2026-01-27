@@ -189,6 +189,7 @@ function port_in_use() {
 
 NEXT_PORT="${PORT_START}"
 ALLOCATED_PORT=""
+declare -A RESERVED_PORTS=()
 function alloc_port() {
     local start=${1:-$NEXT_PORT}
     local port
@@ -196,6 +197,41 @@ function alloc_port() {
     port=$(find_available_port "$start") || exit 1
     NEXT_PORT=$((port + 1))
     ALLOCATED_PORT=$port
+}
+
+function reserve_port() {
+    local label=$1
+    local port=$2
+    local candidate=$port
+
+    while :; do
+        candidate=$(find_available_port "$candidate") || exit 1
+        if [[ -n "${RESERVED_PORTS[$candidate]:-}" ]]; then
+            candidate=$((candidate + 1))
+            continue
+        fi
+        RESERVED_PORTS[$candidate]="$label"
+        if [[ "$candidate" != "$port" ]]; then
+            echo "$label port $port is in use; using $candidate"
+        fi
+        echo "$candidate"
+        return 0
+    done
+}
+
+function split_host_port() {
+    local addr="$1"
+    local host
+    local port
+
+    if [[ "$addr" == *:* ]]; then
+        host="${addr%:*}"
+        port="${addr##*:}"
+    else
+        host="127.0.0.1"
+        port="$addr"
+    fi
+    echo "$host $port"
 }
 
 function refresh_minio_vars() {
@@ -207,7 +243,7 @@ function refresh_minio_vars() {
 }
 
 function ensure_minio_port() {
-    MINIO_PORT=$(find_available_port "$MINIO_PORT") || exit 1
+    MINIO_PORT=$(reserve_port "minio" "$MINIO_PORT")
     refresh_minio_vars
     echo "MinIO will use port $MINIO_PORT"
 }
@@ -250,6 +286,92 @@ function resolve_path() {
     fi
     echo "$SCRIPT_DIR/$path"
     return 0
+}
+
+function ensure_tici_ports() {
+    local host
+    local port
+
+    : "${TICI_META_PORT:=8500}"
+    : "${TICI_META_STATUS_PORT:=8501}"
+    : "${TICI_WORKER_PORT:=8510}"
+    : "${TICI_WORKER_STATUS_PORT:=8511}"
+
+    TICI_META_PORT=$(reserve_port "tici-meta" "$TICI_META_PORT")
+    TICI_META_STATUS_PORT=$(reserve_port "tici-meta-status" "$TICI_META_STATUS_PORT")
+    TICI_WORKER_PORT=$(reserve_port "tici-worker" "$TICI_WORKER_PORT")
+    TICI_WORKER_STATUS_PORT=$(reserve_port "tici-worker-status" "$TICI_WORKER_STATUS_PORT")
+
+    if [ -n "${TICI_READER_ADDR:-}" ]; then
+        read -r host port < <(split_host_port "$TICI_READER_ADDR")
+    else
+        : "${TICI_READER_HOST:=127.0.0.1}"
+        : "${TICI_READER_PORT:=3931}"
+        host="$TICI_READER_HOST"
+        port="$TICI_READER_PORT"
+    fi
+    port=$(reserve_port "tici-reader" "$port")
+    TICI_READER_HOST="$host"
+    TICI_READER_PORT="$port"
+    TICI_READER_ADDR="${host}:${port}"
+}
+
+function ensure_tiflash_ports() {
+    local host
+    local port
+    local service_port
+    local proxy_port
+
+    if [ -n "${TIFLASH_SERVICE_ADDR:-}" ]; then
+        read -r host port < <(split_host_port "$TIFLASH_SERVICE_ADDR")
+    else
+        : "${TIFLASH_SERVICE_HOST:=127.0.0.1}"
+        : "${TIFLASH_SERVICE_PORT:=3930}"
+        host="$TIFLASH_SERVICE_HOST"
+        port="$TIFLASH_SERVICE_PORT"
+    fi
+    port=$(reserve_port "tiflash-service" "$port")
+    TIFLASH_SERVICE_ADDR="${host}:${port}"
+    service_port="$port"
+
+    if [ -n "${TIFLASH_PROXY_SERVER_ADDR:-}" ]; then
+        read -r host port < <(split_host_port "$TIFLASH_PROXY_SERVER_ADDR")
+    else
+        : "${TIFLASH_PROXY_HOST:=0.0.0.0}"
+        : "${TIFLASH_PROXY_PORT:=20170}"
+        host="$TIFLASH_PROXY_HOST"
+        port="$TIFLASH_PROXY_PORT"
+    fi
+    port=$(reserve_port "tiflash-proxy" "$port")
+    proxy_port="$port"
+    TIFLASH_PROXY_SERVER_ADDR="${host}:${proxy_port}"
+
+    if [ -n "${TIFLASH_PROXY_ADVERTISE_ADDR:-}" ]; then
+        host="${TIFLASH_PROXY_ADVERTISE_ADDR%:*}"
+    else
+        : "${TIFLASH_PROXY_ADVERTISE_HOST:=127.0.0.1}"
+        host="$TIFLASH_PROXY_ADVERTISE_HOST"
+    fi
+    TIFLASH_PROXY_ADVERTISE_ADDR="${host}:${proxy_port}"
+
+    if [ -n "${TIFLASH_PROXY_STATUS_ADDR:-}" ]; then
+        read -r host port < <(split_host_port "$TIFLASH_PROXY_STATUS_ADDR")
+    else
+        : "${TIFLASH_PROXY_STATUS_HOST:=0.0.0.0}"
+        : "${TIFLASH_PROXY_STATUS_PORT:=20292}"
+        host="$TIFLASH_PROXY_STATUS_HOST"
+        port="$TIFLASH_PROXY_STATUS_PORT"
+    fi
+    port=$(reserve_port "tiflash-proxy-status" "$port")
+    TIFLASH_PROXY_STATUS_ADDR="${host}:${port}"
+
+    if [ -n "${TIFLASH_PROXY_ENGINE_ADDR:-}" ]; then
+        host="${TIFLASH_PROXY_ENGINE_ADDR%:*}"
+    else
+        : "${TIFLASH_PROXY_ENGINE_HOST:=127.0.0.1}"
+        host="$TIFLASH_PROXY_ENGINE_HOST"
+    fi
+    TIFLASH_PROXY_ENGINE_ADDR="${host}:${service_port}"
 }
 
 function require_tici_binaries() {
@@ -524,6 +646,8 @@ function prepare_tici_config() {
         if [ -f "$TICI_CONFIG_DIR/env.sh" ]; then
             source "$TICI_CONFIG_DIR/env.sh"
         fi
+        ensure_tici_ports
+        ensure_tiflash_ports
         export S3_USE_PATH_STYLE=true
         export S3_ENDPOINT="$MINIO_ENDPOINT"
         export S3_REGION="${S3_REGION:-us-east-1}"
@@ -631,6 +755,11 @@ pd_addr = "${PD_ADDR}"
 max_memory_usage = 10000000000
 
 [tici.reader_node]
+addr = "${TICI_READER_ADDR}"
+heartbeat_interval = "3s"
+max_heartbeat_retries = 3
+
+[tici.reader-node]
 addr = "${TICI_READER_ADDR}"
 heartbeat_interval = "3s"
 max_heartbeat_retries = 3
