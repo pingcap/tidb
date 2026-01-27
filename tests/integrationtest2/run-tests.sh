@@ -146,6 +146,20 @@ function help_message()
 function find_available_port() {
     local port=$1
 
+    if command -v ss >/dev/null 2>&1; then
+        local used
+        used=$(ss -ltnH 2>/dev/null | awk '{print $4}' | sed -E 's/.*:([0-9]+)$/\\1/' | sort -n | uniq)
+        local p
+        for ((p=port; p<65536; p++)); do
+            if ! printf '%s\n' "$used" | grep -qx "$p"; then
+                echo "$p"
+                return 0
+            fi
+        done
+        echo "Error: No available ports found below 65536." >&2
+        exit 1
+    fi
+
     while :; do
         if [ "$port" -ge 65536 ]; then
             echo "Error: No available ports found below 65536." >&2
@@ -164,6 +178,23 @@ function find_multiple_available_ports() {
     local start_port=$1
     local count=$2
     local ports=()
+
+    if command -v ss >/dev/null 2>&1; then
+        local used
+        used=$(ss -ltnH 2>/dev/null | awk '{print $4}' | sed -E 's/.*:([0-9]+)$/\\1/' | sort -n | uniq)
+        local p
+        for ((p=start_port; p<65536 && ${#ports[@]}<count; p++)); do
+            if ! printf '%s\n' "$used" | grep -qx "$p"; then
+                ports+=("$p")
+            fi
+        done
+        if [ ${#ports[@]} -lt $count ]; then
+            echo "Error: Could not find an available port." >&2
+            exit 1
+        fi
+        echo "${ports[@]}"
+        return 0
+    fi
 
     while [ ${#ports[@]} -lt $count ]; do
         local available_port=$(find_available_port $start_port)
