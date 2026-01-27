@@ -226,7 +226,7 @@ func ParseMVQuery(is infoschema.InfoSchema, currentDB string, stmt ast.StmtNode)
 		}
 	}
 	if !hasCountStar {
-		return nil, errors.New("materialized view query must explicitly include count(*)")
+		return nil, errors.New("materialized view query must explicitly include count(*)/count(1)")
 	}
 	if len(selectedGroupByIDs) != len(groupBySet) {
 		return nil, errors.New("materialized view query requires all GROUP BY columns to be selected")
