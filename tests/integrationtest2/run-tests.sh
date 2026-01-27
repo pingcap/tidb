@@ -754,16 +754,22 @@ pd_addr = "${PD_ADDR}"
 [profiles.default]
 max_memory_usage = 10000000000
 
-[tici.reader_node]
-addr = "${TICI_READER_ADDR}"
-heartbeat_interval = "3s"
-max_heartbeat_retries = 3
-
 [tici.reader-node]
 addr = "${TICI_READER_ADDR}"
 heartbeat_interval = "3s"
 max_heartbeat_retries = 3
+heartbeat-worker-count = 8
 
+[tici.frag-reader]
+doc-store-cache-size = "64MB"
+remove-zero-ref-frag-delay = "300s"
+
+[tici.logger]
+filename = "./logs/tici_searchlib.log"
+level = "info"
+
+[tici.storage]
+data-dir = "./data//tici/searchlib"
 [tici.s3]
 access-key = "${S3_ACCESS_KEY}"
 bucket = "${S3_BUCKET}"
