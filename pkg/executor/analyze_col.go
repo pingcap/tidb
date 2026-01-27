@@ -162,6 +162,18 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
+		if intest.InTest && stderrors.Is(err, context.Canceled) {
+			cause := context.Cause(ctx)
+			ctxErr := ctx.Err()
+			statslogutil.StatsLogger().Info("analyze columns distsql canceled",
+				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+				zap.Error(err),
+				zap.Error(cause),
+				zap.Error(ctxErr),
+				zap.Stack("stack"),
+			)
+		}
 		return nil, err
 	}
 	return result, nil

@@ -901,6 +901,18 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 
 		data, err := handler.nextRaw(ctx)
 		if err != nil {
+			if intest.InTest && stderrors.Is(err, context.Canceled) {
+				cause := context.Cause(ctx)
+				ctxErr := ctx.Err()
+				logutil.BgLogger().Info("analyze columns nextRaw canceled",
+					zap.Uint32("killSignal", sctx.GetSessionVars().SQLKiller.GetKillSignal()),
+					zap.Uint64("connID", sctx.GetSessionVars().ConnectionID),
+					zap.Error(err),
+					zap.Error(cause),
+					zap.Error(ctxErr),
+					zap.Stack("stack"),
+				)
+			}
 			return errors.Trace(err)
 		}
 		if data == nil {
