@@ -134,6 +134,10 @@ func generateNormalIndexPartialPath(
 	item expression.Expression,
 	candidatePath *util.AccessPath,
 ) (paths *util.AccessPath, needSelection bool) {
+	// Reject partial index first.
+	if candidatePath.Index != nil && candidatePath.Index.HasCondition() {
+		return nil, false
+	}
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	cnfItems := expression.SplitCNFItems(item)
 	pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
