@@ -133,7 +133,9 @@ func (is *LogicalIndexScan) DeriveStats(_ []*property.StatsInfo, selfSchema *exp
 func (is *LogicalIndexScan) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	is.hasTiflash = is.Source.GetHasTiFlash()
 	if len(is.IdxCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{
+			HasTiflash: is.hasTiflash,
+		}
 	}
 	result := make([][]*expression.Column, 0, is.EqCondCount+1)
 	for i := 0; i <= is.EqCondCount; i++ {

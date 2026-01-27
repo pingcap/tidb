@@ -272,7 +272,9 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
 		la.PossibleProperties = [][]*expression.Column{nil}
-		return nil
+		return &base.PossiblePropertiesInfo{
+			HasTiflash: la.hasTiflash,
+		}
 	}
 	if childProps == nil {
 		return &base.PossiblePropertiesInfo{
