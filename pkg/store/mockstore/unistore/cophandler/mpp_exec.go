@@ -138,6 +138,7 @@ type tableScanExec struct {
 	counts        []int64
 	ndvs          []int64
 	rowCnt        int64
+	curCommitTS   uint64
 
 	chk    *chunk.Chunk
 	result chan scanResult
@@ -149,11 +150,17 @@ type tableScanExec struct {
 
 	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
 	physTblIDColIdx *int
+	// if ExtraCommitTs is requested, fill in the MVCC commit_ts of the visible version.
+	commitTsColIdx *int
 	// This is used to update the paging range result, updated in next().
 	paging *coprocessor.KeyRange
 }
 
 func (e *tableScanExec) SkipValue() bool { return false }
+
+func (e *tableScanExec) SetCurrentCommitTS(commitTS uint64) {
+	e.curCommitTS = commitTS
+}
 
 func (e *tableScanExec) Process(key, value []byte) error {
 	handle, err := tablecodec.DecodeRowKey(key)
@@ -165,9 +172,18 @@ func (e *tableScanExec) Process(key, value []byte) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
+
+	rowIdx := e.chk.NumRows() - 1
 	if e.physTblIDColIdx != nil {
 		tblID := tablecodec.DecodeTableID(key)
-		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
+		col := e.chk.Column(*e.physTblIDColIdx)
+		col.SetNull(rowIdx, false)
+		col.Int64s()[rowIdx] = tblID
+	}
+	if e.commitTsColIdx != nil {
+		col := e.chk.Column(*e.commitTsColIdx)
+		col.SetNull(rowIdx, false)
+		col.Uint64s()[rowIdx] = e.curCommitTS
 	}
 	e.rowCnt++
 
@@ -286,6 +302,7 @@ type indexScanExec struct {
 	prevVals      [][]byte
 	rowCnt        int64
 	ndvCnt        int64
+	curCommitTS   uint64
 	chk           *chunk.Chunk
 	chkIdx        int
 	chunks        []*chunk.Chunk
@@ -296,6 +313,8 @@ type indexScanExec struct {
 
 	// if ExtraPhysTblIDCol is requested, fill in the physical table id in this column position
 	physTblIDColIdx *int
+	// if ExtraCommitTs is requested, fill in the MVCC commit_ts of the visible version.
+	commitTsColIdx *int
 	// if common handle key is requested, fill the common handle in this column
 	commonHandleKeyIdx *int
 	// This is used to update the paging range result, updated in next().
@@ -304,6 +323,10 @@ type indexScanExec struct {
 }
 
 func (e *indexScanExec) SkipValue() bool { return false }
+
+func (e *indexScanExec) SetCurrentCommitTS(commitTS uint64) {
+	e.curCommitTS = commitTS
+}
 
 func (e *indexScanExec) isNewVals(values [][]byte) bool {
 	for i := range e.numIdxCols {
@@ -353,6 +376,10 @@ func (e *indexScanExec) Process(key, value []byte) error {
 	if e.physTblIDColIdx != nil && *e.physTblIDColIdx >= len(values) {
 		tblID := tablecodec.DecodeTableID(decodedKey)
 		e.chk.AppendInt64(*e.physTblIDColIdx, tblID)
+	}
+
+	if e.commitTsColIdx != nil && *e.commitTsColIdx >= len(values) {
+		e.chk.AppendUint64(*e.commitTsColIdx, e.curCommitTS)
 	}
 
 	// If we need common handle key, we should fill it here.
