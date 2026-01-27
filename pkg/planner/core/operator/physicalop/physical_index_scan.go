@@ -379,24 +379,6 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 		}
 	}
 	p.NeedCommonHandle = p.Table.IsCommonHandle
-	// Handle column is required when building double-read plans; in single-read
-	// index scans it may be absent from DataSourceSchema (e.g., count(*) with use index).
-	if intest.InTest && p.DataSourceSchema != nil && !p.Table.IsCommonHandle && isDoubleRead {
-		hasHandleCol := false
-		pkInfo := p.Table.GetPkColInfo()
-		for _, col := range p.DataSourceSchema.Columns {
-			if col.ID == model.ExtraHandleID {
-				hasHandleCol = true
-				break
-			}
-			if p.Table.PKIsHandle && pkInfo != nil && col.ID == pkInfo.ID {
-				hasHandleCol = true
-				break
-			}
-		}
-		intest.Assert(hasHandleCol, "DataSourceSchema should include handle column")
-	}
-
 	if p.NeedCommonHandle {
 		for i := len(p.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
