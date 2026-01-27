@@ -737,7 +737,7 @@ function make_tiflash_config_for_tici() {
     : "${TIFLASH_STORAGE_DIR:=$TIFLASH_DATA_DIR}"
     : "${TIFLASH_PROXY_CONFIG:=$TICI_CONFIG_DIR/tiflash-learner.toml}"
     : "${TICI_READER_HOST:=127.0.0.1}"
-    : "${TICI_READER_PORT:=3931}"
+    : "${TICI_READER_PORT:=8520}"
     : "${TICI_READER_ADDR:=${TICI_READER_HOST}:${TICI_READER_PORT}}"
     mkdir -p "$TICI_CONFIG_DIR"
 
