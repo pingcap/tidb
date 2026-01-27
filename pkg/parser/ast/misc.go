@@ -3925,7 +3925,7 @@ func (n *TableOptimizerHint) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.HintData.(int64))
 	case "tidb_hj", "tidb_smj", "tidb_inlj", "hash_join", "hash_join_build", "hash_join_probe", "merge_join", "inl_join",
 		"broadcast_join", "shuffle_join", "inl_hash_join", "inl_merge_join", "leading", "no_hash_join", "no_merge_join",
-		"no_index_join", "no_index_hash_join", "no_index_merge_join":
+		"no_index_join", "no_index_hash_join", "no_index_merge_join", "full":
 		for i, table := range n.Tables {
 			if i != 0 {
 				ctx.WritePlain(", ")

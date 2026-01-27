@@ -87,6 +87,8 @@ const (
 	HintUseIndex = "use_index"
 	// HintIndex is hint enforce using some indexes. if no index provided, all indexes will be considered.
 	HintIndex = "index"
+	// HintFull is an alias of USE_INDEX with an empty index list, forcing table scan.
+	HintFull = "full"
 	// HintIgnoreIndex is hint enforce ignoring some indexes.
 	HintIgnoreIndex = "ignore_index"
 	// HintNoIndex is hint enforce not using some indexes. if no index provided, all indexes won't be considered.
@@ -766,7 +768,7 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 		// Set warning for the hint that requires the table name.
 		switch hint.HintName.L {
 		case TiDBMergeJoin, HintSMJ, TiDBIndexNestedLoopJoin, HintINLJ, HintINLHJ, HintINLMJ,
-			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIndex, HintIgnoreIndex, HintNoIndex,
+			HintNoHashJoin, HintNoMergeJoin, TiDBHashJoin, HintHJ, HintUseIndex, HintIndex, HintFull, HintIgnoreIndex, HintNoIndex,
 			HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown, HintIndexMerge, HintLeading:
 			if len(hint.Tables) == 0 {
 				var sb strings.Builder
@@ -822,6 +824,22 @@ func ParsePlanHints(hints []*ast.TableOptimizerHint,
 			preferAggType |= PreferStreamAgg
 		case HintAggToCop:
 			preferAggToCop = true
+		case HintFull:
+			for _, table := range hint.Tables {
+				dbName := table.DBName
+				if dbName.L == "" {
+					dbName = pmodel.NewCIStr(currentDB)
+				}
+				indexHintList = append(indexHintList, HintedIndex{
+					DBName:     dbName,
+					TblName:    table.TableName,
+					Partitions: table.PartitionList,
+					IndexHint: &ast.IndexHint{
+						HintType:  ast.HintUse,
+						HintScope: ast.HintForScan,
+					},
+				})
+			}
 		case HintUseIndex, HintIndex, HintIgnoreIndex, HintNoIndex, HintForceIndex, HintOrderIndex, HintNoOrderIndex, HintIndexLookUpPushDown:
 			dbName := hint.Tables[0].DBName
 			if dbName.L == "" {
