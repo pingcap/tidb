@@ -145,7 +145,9 @@ func (lt *LogicalTopN) PreparePossibleProperties(_ *expression.Schema, infos ...
 	lt.hasTiflash = infos[0].HasTiflash
 	propCols := getPossiblePropertyFromByItems(lt.ByItems)
 	if len(propCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{
+			HasTiflash: lt.hasTiflash,
+		}
 	}
 	return &base.PossiblePropertiesInfo{
 		Order:      [][]*expression.Column{propCols},

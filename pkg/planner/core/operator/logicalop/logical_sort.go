@@ -114,9 +114,9 @@ func (ls *LogicalSort) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logic
 func (ls *LogicalSort) PreparePossibleProperties(_ *expression.Schema, infos ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	propCols := getPossiblePropertyFromByItems(ls.ByItems)
 	if len(propCols) == 0 {
-		return nil
+		return &base.PossiblePropertiesInfo{}
 	}
-	if len(infos) == 0 || infos[0] == nil {
+	if len(infos) == 0 {
 		return &base.PossiblePropertiesInfo{}
 	}
 	ls.hasTiflash = infos[0].HasTiflash
