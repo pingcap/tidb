@@ -1450,6 +1450,7 @@ import (
 	ViewFieldList                          "create view statement field list"
 	ViewSQLSecurity                        "view sql security"
 	MaterializedViewRefreshMode            "materialized view refresh mode"
+	MaterializedViewRefreshModeOpt         "materialized view refresh mode optional"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
 	WhenClause                             "When clause"
@@ -5313,6 +5314,16 @@ MaterializedViewRefreshMode:
 |	"COMPLETE"
 	{
 		$$ = ast.MaterializedViewRefreshModeComplete
+	}
+
+MaterializedViewRefreshModeOpt:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|	MaterializedViewRefreshMode
+	{
+		$$ = $1
 	}
 
 OrReplace:
@@ -11820,6 +11831,18 @@ AdminStmt:
 			JobNumber:       $5.(int64),
 			AlterJobOptions: $6.([]*ast.AlterJobOption),
 		}
+	}
+|	"ADMIN" "REFRESH" "MATERIALIZED" "VIEW" TableName MaterializedViewRefreshModeOpt
+	{
+		stmt := &ast.AdminStmt{
+			Tp:     ast.AdminRefreshMaterializedView,
+			Tables: []*ast.TableName{$5.(*ast.TableName)},
+		}
+		if $6 != nil {
+			mode := $6.(ast.MaterializedViewRefreshMode)
+			stmt.MVRefreshMode = &mode
+		}
+		$$ = stmt
 	}
 
 AlterJobOptionList:

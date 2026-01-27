@@ -41,7 +41,7 @@ type MVQuery struct {
 	UsedBaseColumnIDs    map[int64]struct{}
 }
 
-func getSingleBaseTableFromSelect(sel *ast.SelectStmt) (*ast.TableName, ast.CIStr, error) {
+func GetSingleBaseTableFromSelect(sel *ast.SelectStmt) (*ast.TableName, ast.CIStr, error) {
 	if sel.From == nil || sel.From.TableRefs == nil {
 		return nil, ast.CIStr{}, errors.New("materialized view query must have FROM clause")
 	}
@@ -105,7 +105,7 @@ func ParseMVQuery(is infoschema.InfoSchema, currentDB string, stmt ast.StmtNode)
 		return nil, errors.New("materialized view query does not support LIMIT")
 	}
 
-	baseTN, baseAlias, err := getSingleBaseTableFromSelect(sel)
+	baseTN, baseAlias, err := GetSingleBaseTableFromSelect(sel)
 	if err != nil {
 		return nil, err
 	}
