@@ -368,14 +368,12 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			}
 		} else {
 			curJoinTree = bestNode
+			bushyJoinTreeNodes = append(bushyJoinTreeNodes, bestNode)
 			nodes = append(nodes[:bestIdx], nodes[bestIdx+1:]...)
 		}
 	}
 	// gjt todo better policy
 	usedEdges := make(map[uint64]struct{})
-	if curJoinTree != nil && curJoinTree.usedEdges != nil {
-		maps.Copy(usedEdges, curJoinTree.usedEdges)
-	}
 	for _, node := range bushyJoinTreeNodes {
 		if node != nil && node.usedEdges != nil {
 			maps.Copy(usedEdges, node.usedEdges)
@@ -384,10 +382,10 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	if !detector.CheckAllEdgesUsed(usedEdges) {
 		return group.root, nil
 	}
-	if len(bushyJoinTreeNodes) > 0 {
-		return makeBushyTree(j.ctx, bushyJoinTreeNodes)
+	if len(bushyJoinTreeNodes) <= 0 {
+		return nil, errors.New("internal error: bushy join tree nodes is empty")
 	}
-	return curJoinTree.p, nil
+	return makeBushyTree(j.ctx, bushyJoinTreeNodes)
 }
 
 func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPlan, error) {
@@ -395,21 +393,21 @@ func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPl
 		return nil, nil
 	}
 
-	var resNodes []*Node
-	for len(cartesianNodes) > 0 {
+	var iterNodes []*Node
+	for len(cartesianNodes) > 1 {
 		for i := 0; i < len(cartesianNodes); i += 2 {
 			if i+1 >= len(cartesianNodes) {
-				resNodes = append(resNodes, cartesianNodes[i])
+				iterNodes = append(iterNodes, cartesianNodes[i])
 				break
 			}
 			newJoin, err := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, nil)
 			if err != nil {
 				return nil, err
 			}
-			resNodes = append(resNodes, &Node{p: newJoin})
+			iterNodes = append(iterNodes, &Node{p: newJoin})
 		}
-		cartesianNodes = resNodes
-		resNodes = resNodes[:0]
+		cartesianNodes = iterNodes
+		iterNodes = iterNodes[:0]
 	}
 	return cartesianNodes[0].p, nil
 }
