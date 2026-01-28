@@ -55,8 +55,15 @@ const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 func CopySampleItems(items []*SampleItem) []*SampleItem {
 	n := make([]*SampleItem, len(items))
 	for i, item := range items {
-		ni := *item
-		n[i] = &ni
+		ni := &SampleItem{
+			Handle:  item.Handle,
+			Ordinal: item.Ordinal,
+		}
+		if item.Value != nil {
+			ni.Value = &types.Datum{}
+			item.Value.Copy(ni.Value)
+		}
+		n[i] = ni
 	}
 	return n
 }

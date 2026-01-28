@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/generic"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -434,6 +435,7 @@ func BuildHistAndTopN(
 		return cmp.Compare(a.Count, b.Count) // min-heap: smaller counts at root
 	})
 
+	intest.Assert(samples[0].Value != nil, "sample item value should not be nil")
 	if samples[0].Value == nil {
 		return nil, nil, errors.Errorf("sample item value is nil")
 	}
@@ -457,6 +459,7 @@ func BuildHistAndTopN(
 		if numTopN == 0 {
 			continue
 		}
+		intest.Assert(samples[i].Value != nil, "sample item value should not be nil")
 		if samples[i].Value == nil {
 			return nil, nil, errors.Errorf("sample item value is nil")
 		}
