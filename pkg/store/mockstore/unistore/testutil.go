@@ -85,7 +85,7 @@ func getReqStartKey(req *tikvrpc.Request) ([]byte, error) {
 	case tikvrpc.CmdCheckSecondaryLocks:
 		request := req.CheckSecondaryLocks()
 		return request.Keys[0], nil
-	case tikvrpc.CmdCop, tikvrpc.CmdCopStream:
+	case tikvrpc.CmdCop, tikvrpc.CmdCopStream, tikvrpc.CmdVersionedCop:
 		request := req.Cop()
 		return request.Ranges[0].Start, nil
 	case tikvrpc.CmdGC, tikvrpc.CmdDeleteRange, tikvrpc.CmdTxnHeartBeat, tikvrpc.CmdRawGet,
