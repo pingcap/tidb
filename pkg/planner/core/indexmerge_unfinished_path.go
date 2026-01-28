@@ -20,7 +20,6 @@ import (
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
@@ -65,7 +64,7 @@ func generateORIndexMerge(ds *logicalop.DataSource, filters []expression.Express
 // 2. When orBranches is not nil, it's a container of partial paths, and each element in the slice corresponds to one
 // OR branch in the input expression.
 type unfinishedAccessPath struct {
-	index *model.IndexInfo
+	path *util.AccessPath
 
 	usableFilters []expression.Expression
 
@@ -165,7 +164,7 @@ func initUnfinishedPathsFromExpr(
 		ret = append(ret, &retValues[i])
 	}
 	for i, path := range candidateAccessPaths {
-		ret[i].index = path.Index
+		ret[i].path = path
 		// case 1: try to use the previous logic to handle non-mv index
 		if !isMVIndexPath(path) {
 			partialPath, needSelection := generateNormalIndexPartialPath(
@@ -270,7 +269,6 @@ func handleTopLevelANDList(
 	}
 	return buildIntoAccessPath(
 		ds,
-		candidateAccessPaths,
 		unfinishedIndexMergePath,
 		allConds,
 		orListIdxInAllConds,
@@ -332,7 +330,6 @@ func mergeANDItemIntoUnfinishedIndexMergePath(
 
 func buildIntoAccessPath(
 	ds *logicalop.DataSource,
-	originalPaths []*util.AccessPath,
 	indexMergePath *unfinishedAccessPath,
 	allConds []expression.Expression,
 	orListIdxInAllConds int,
@@ -348,17 +345,17 @@ func buildIntoAccessPath(
 		var alternativesForORBranch [][]*util.AccessPath
 
 		// for each alternative of this OR branch
-		for i, unfinishedPath := range orBranch {
+		for _, unfinishedPath := range orBranch {
 			if unfinishedPath == nil {
 				continue
 			}
 			var oneAlternative []*util.AccessPath
 			var needSelection bool
-			if unfinishedPath.index != nil && unfinishedPath.index.MVIndex {
+			if unfinishedPath.path.Index != nil && unfinishedPath.path.Index.MVIndex {
 				// case 1: mv index
 				idxCols, ok := PrepareIdxColsAndUnwrapArrayType(
 					ds.Table.Meta(),
-					unfinishedPath.index,
+					unfinishedPath.path.Index,
 					ds.TblColsByID,
 					true,
 				)
@@ -379,7 +376,7 @@ func buildIntoAccessPath(
 					ds.SCtx(),
 					accessFilters,
 					idxCols,
-					unfinishedPath.index,
+					unfinishedPath.path.Index,
 					ds.TableStats.HistColl,
 				)
 				if err != nil || !ok || (isIntersection && len(oneAlternative) > 1) {
@@ -396,7 +393,7 @@ func buildIntoAccessPath(
 						ds.SCtx().GetExprCtx(),
 						unfinishedPath.usableFilters...,
 					),
-					originalPaths[i],
+					unfinishedPath.path,
 				)
 				if path == nil {
 					continue
