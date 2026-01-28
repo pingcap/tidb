@@ -34,8 +34,15 @@ genkeyword
 vendor
 
 # Bazel
+# skywalking-eyes 0.4 cannot handle the git glob syntax correctly. As a temporary workaround,
+# we explicitly list the bazel-related files and directories to be ignored.
+# TODO: test and consider upgrading skywalking-eyes in the future.
 /_bazel
 bazel-*
+bazel-bin
+bazel-out
+bazel-testlogs
+bazel-tidb
 MODULE.bazel.lock
 
 # Testing / coverage / reports
