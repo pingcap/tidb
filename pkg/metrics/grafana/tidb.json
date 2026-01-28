@@ -8176,7 +8176,7 @@
           },
           "dataFormat": "tsbuckets",
           "datasource": "${DS_TEST-CLUSTER}",
-          "description": "The number of statement acquires shared locks.",
+          "description": "The number of statements that acquire shared locks.",
           "fieldConfig": {
             "defaults": {},
             "overrides": []
