@@ -2203,7 +2203,19 @@ func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.Ph
 		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
 			handleCols = ds.UnMutableHandleCols
 		} else {
-			handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
+			var handleCol *expression.Column
+			if ds.TableInfo.PKIsHandle {
+				if pkInfo := ds.TableInfo.GetPkColInfo(); pkInfo != nil {
+					handleCol = ds.TblColsByID[pkInfo.ID]
+				}
+			}
+			if handleCol == nil {
+				handleCol = ds.TblColsByID[model.ExtraHandleID]
+			}
+			if handleCol == nil {
+				handleCol = ds.NewExtraHandleSchemaCol()
+			}
+			handleCols = util.NewIntHandleCols(handleCol)
 		}
 	}
 	hdColNum := handleCols.NumCols()
