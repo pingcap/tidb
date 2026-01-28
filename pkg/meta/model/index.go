@@ -44,6 +44,26 @@ const (
 	// changingIndexPrefix the prefix is used to initialize new index name created in modify column.
 	// The new name will be like "_Idx$_<old_index_name>_n".
 	changingIndexPrefix = "_Idx$_"
+
+	// GlobalIndexVersion constants define the key format versions for global indexes.
+	// GlobalIndexVersionLegacy is the legacy format (version 0) where partition ID is not in the key.
+	// This format has a bug with duplicate handles after EXCHANGE PARTITION on non-clustered tables.
+	// See https://github.com/pingcap/tidb/issues/65289
+	GlobalIndexVersionLegacy uint8 = 0
+	// GlobalIndexVersionV1 is the current format (version 1) where partition ID is encoded in the key
+	// for non-unique global indexes on non-clustered tables to prevent key collisions
+	// after EXCHANGE PARTITION.
+	// For unique global indexes, the partition ID is not needed in the key since uniqueness is
+	// already enforced.
+	// For clustered tables, common handles already include partition-specific data.
+	// Notice that for V1 the partition id is still in the value part as well,
+	// for decreasing the risk of issues changing the read code path for various index reads.
+	GlobalIndexVersionV1 uint8 = 1
+	// GlobalIndexVersionV2 is the format (version 2) where partition ID is encoded in the key ONLY
+	// for non-unique global indexes on non-clustered tables. The partition ID is NOT stored in the
+	// value, reducing storage overhead since the partition ID can be extracted from the key when
+	// needed. This is the preferred format for new global indexes.
+	GlobalIndexVersionV2 uint8 = 2
 )
 
 // GenUniqueChangingIndexName generates a unique index name for the changing index.
@@ -236,6 +256,11 @@ type IndexInfo struct {
 	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
 	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
 	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
+	// Version of global index key format, only used for non-clustered, non-unique global indexes.
+	// 0=legacy/unique/clustered,
+	// 1=v1 non-unique non-clustered with partition ID in key and value.
+	// 2=v2 non-unique non-clustered with partition ID in key only (TODO).
+	GlobalIndexVersion uint8 `json:"global_index_version,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
