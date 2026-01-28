@@ -14,7 +14,7 @@ When downloading binaries (using `tici/download.sh`):
 
 ## Run directly (third_bin already prepared)
 
-If `../third_bin` already contains the binaries below, you can run directly:
+If `tests/integrationtest2/third_bin` already contains the binaries below, you can run directly:
 - `pd-server`
 - `tikv-server`
 - `tidb-server`
@@ -33,8 +33,8 @@ cd /tidb/tests/integrationtest2
 
 ## Download binaries (third_bin incomplete)
 
-If `../third_bin` is missing any of the binaries above, `run-tests.sh` will fail.
-Download them first with `https://github.com/PingCAP-QE/ci/blob/main/scripts/artifacts/download_pingcap_oci_artifact.sh``. This script depends on `oras` and `yq`.
+If `tests/integrationtest2/third_bin` is missing any of the binaries above, `run-tests.sh` will fail.
+Download them first with `https://github.com/PingCAP-QE/ci/blob/main/scripts/artifacts/download_pingcap_oci_artifact.sh`. This script depends on `oras` and `yq`.
 
 Example (download TiFlash from a specific branch):
 ```bash
