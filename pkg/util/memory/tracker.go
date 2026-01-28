@@ -160,7 +160,6 @@ func InitTracker(t *Tracker, label int, bytesLimit int64, action ActionOnExceed)
 	}
 	t.maxConsumed.Store(0)
 	t.isGlobal = false
-	t.MemArbitrator = nil
 }
 
 // NewTracker creates a memory tracker.
@@ -353,7 +352,6 @@ func (t *Tracker) Detach() {
 	if t == nil {
 		return
 	}
-	t.DetachMemArbitrator()
 	parent := t.getParent()
 	if parent == nil {
 		return
@@ -361,6 +359,10 @@ func (t *Tracker) Detach() {
 	if parent.isGlobal {
 		t.DetachFromGlobalTracker()
 		return
+	}
+	exception := false // record whether the session is killed before resetting the killer
+	if m := t.MemArbitrator; m != nil && m.killer != nil {
+		exception = m.killer.Signal != 0
 	}
 	if parent.IsRootTrackerOfSess && t.label != LabelForMemDB {
 		parent.actionMuForHardLimit.Lock()
@@ -374,6 +376,7 @@ func (t *Tracker) Detach() {
 	}
 	parent.remove(t)
 	t.setParent(nil) //atomic operator
+	t.DetachMemArbitrator(exception)
 }
 
 func (t *Tracker) remove(oldChild *Tracker) {
@@ -461,14 +464,14 @@ func (t *Tracker) Consume(bs int64) {
 					}
 				} else { // fast path for small budget
 					if m.addSmallBudget(bs) > m.budget.smallLimit {
-						m.intoBigBudget()
+						m.smallBudgetToBig()
 					} else {
 						b := m.smallBudget()
 						if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
 							b.setLastUsedTimeSec(t)
 						}
 						if b.Used.Load() > b.approxCapacity() && b.PullFromUpstream() != nil {
-							m.intoBigBudget()
+							m.smallBudgetToBig()
 						}
 					}
 				}
@@ -821,7 +824,6 @@ func (t *Tracker) Reset() {
 	t.Detach()
 	t.ReplaceBytesUsed(0)
 	t.mu.children = nil
-	t.resetMemArbitrator()
 }
 
 func (t *Tracker) getParent() *Tracker {
@@ -1020,8 +1022,10 @@ func (m *memArbitrator) addSmallBudget(d int64) int64 {
 
 func (m *memArbitrator) cleanSmallBudget() (res int64) {
 	res = m.budget.mu.smallUsed.Swap(0)
-	m.smallBudget().HeapInuse.Add(-res)
-	m.smallBudget().Used.Add(-res)
+	if res != 0 {
+		m.smallBudget().HeapInuse.Add(-res)
+		m.smallBudget().Used.Add(-res)
+	}
 	return res
 }
 
@@ -1086,17 +1090,36 @@ func (m *memArbitrator) growBigBudget() {
 	}
 }
 
-func (m *memArbitrator) intoBigBudget() {
+func (m *memArbitrator) smallBudgetToBig() {
+	if m.intoBigBudget() {
+		return
+	}
+	// transfer small budget used to big budget for concurrent
+	if d := m.cleanSmallBudget(); d != 0 {
+		if m.addBigBudgetUsed(d) > m.bigBudgetGrowThreshold() {
+			m.growBigBudget()
+		}
+	}
+}
+
+func (m *memArbitrator) intoBigBudget() bool {
 	m.budget.useBig.Lock()
 	defer m.budget.useBig.Unlock()
 
 	if m.useBigBudget() {
-		return
+		return false
 	}
 
 	if smallUsed := m.smallBudgetUsed(); smallUsed > 0 {
 		m.addBigBudgetUsed(smallUsed)
-		defer m.cleanSmallBudget()
+		defer func() {
+			// clean small budget again in case of concurrent consume/release
+			if m.useBigBudget() {
+				m.addBigBudgetUsed(m.cleanSmallBudget() - smallUsed)
+			} else {
+				m.addBigBudgetUsed(-smallUsed)
+			}
+		}()
 	}
 
 	root, err := m.EmplaceRootPool(m.uid)
@@ -1159,16 +1182,11 @@ func (m *memArbitrator) intoBigBudget() {
 
 	m.budget.useBig.Store(true)
 
-	if intest.InTest {
-		if mockDebugInject != nil {
-			mockDebugInject()
-		}
-	}
-
 	if m.state.CompareAndSwap(memArbitratorStateIntoBigBudget, memArbitratorStateBigBudget) {
 		globalArbitrator.metrics.pools.intoBig.Add(-1)
 		globalArbitrator.metrics.pools.big.Add(1)
 	}
+	return true
 }
 
 func (m *memArbitrator) reserveBigBudget(newCap int64) {
@@ -1199,12 +1217,8 @@ func (m *memArbitrator) reserveBigBudget(newCap int64) {
 	}
 }
 
-func (t *Tracker) resetMemArbitrator() {
-	t.MemArbitrator = nil
-}
-
 // DetachMemArbitrator detaches the mem arbitrator from the tracker and cleans up related resources.
-func (t *Tracker) DetachMemArbitrator() bool {
+func (t *Tracker) DetachMemArbitrator(exception bool) bool {
 	if t == nil {
 		return false
 	}
@@ -1212,7 +1226,10 @@ func (t *Tracker) DetachMemArbitrator() bool {
 	if m == nil {
 		return false
 	}
+	return m.reset(exception, t.MaxConsumed())
+}
 
+func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 	if m.smallBudgetUsed() != 0 {
 		m.cleanSmallBudget()
 	}
@@ -1221,22 +1238,10 @@ func (t *Tracker) DetachMemArbitrator() bool {
 		return false
 	}
 
-	maxConsumed := t.MaxConsumed()
-	killed := false
-	if m.killer != nil {
-		killed = m.killer.Signal != 0
-	}
-
 	switch oriState := m.state.Swap(memArbitratorStateDown); oriState {
 	case memArbitratorStateSmallBudget:
 		globalArbitrator.metrics.pools.small.Add(-1)
 	case memArbitratorStateIntoBigBudget, memArbitratorStateBigBudget:
-		if m.killer != nil {
-			if !intest.InTest { // if in test, let the test case control the killer
-				m.killer.Reset() // trigger kill event and stop any arbitration wait
-			}
-		}
-
 		if oriState == memArbitratorStateIntoBigBudget { // wait for intoBigBudget to finish
 			m.budget.useBig.Lock()
 
@@ -1254,13 +1259,13 @@ func (t *Tracker) DetachMemArbitrator() bool {
 		globalArbitrator.metrics.pools.internal.Add(-1)
 	}
 
-	if !killed {
+	if !exception {
 		m.UpdateDigestProfileCache(m.digestID, maxConsumed, m.approxUnixTimeSec())
 	}
 
 	if m.useBigBudget() {
 		m.bigBudget().Stop()
-		m.ResetRootPoolByID(m.uid, maxConsumed, !killed)
+		m.ResetRootPoolByID(m.uid, maxConsumed, !exception)
 	}
 	return true
 }
@@ -1289,8 +1294,12 @@ func (t *Tracker) InitMemArbitrator(
 	explicitReserveSize int64,
 	isInternal bool,
 ) bool {
-	if g == nil || t == nil || t.MemArbitrator != nil {
+	if g == nil || t == nil {
 		return false
+	}
+	if m := t.MemArbitrator; m != nil {
+		m.reset(true, 0)
+		t.MemArbitrator = nil
 	}
 
 	uid := t.SessionID.Load()

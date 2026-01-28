@@ -192,20 +192,17 @@ func (m *MemArbitrator) removeTask(entry *rootPoolEntry) (res bool) {
 }
 
 func (m *MemArbitrator) addTask(entry *rootPoolEntry) {
-	m.tasks.waitingAlloc.Add(entry.request.quota) // before tasks lock
-	{
-		m.tasks.Lock()
+	m.tasks.Lock()
 
-		priority := entry.ctx.memPriority
-		entry.taskMu.fifoByPriority.priority = priority
-		entry.taskMu.fifoByPriority.wrapListElement = m.tasks.fifoByPriority[priority].pushBack(entry)
-		if entry.ctx.waitAverse {
-			entry.taskMu.fifoWaitAverse = m.tasks.fifoWaitAverse.pushBack(entry)
-		}
-		entry.taskMu.fifo = m.tasks.fifoTasks.pushBack(entry)
-
-		m.tasks.Unlock()
+	priority := entry.ctx.memPriority
+	entry.taskMu.fifoByPriority.priority = priority
+	entry.taskMu.fifoByPriority.wrapListElement = m.tasks.fifoByPriority[priority].pushBack(entry)
+	if entry.ctx.waitAverse {
+		entry.taskMu.fifoWaitAverse = m.tasks.fifoWaitAverse.pushBack(entry)
 	}
+	entry.taskMu.fifo = m.tasks.fifoTasks.pushBack(entry)
+
+	m.tasks.Unlock()
 }
 
 func (m *MemArbitrator) frontTaskEntry() (entry *rootPoolEntry) {
@@ -259,6 +256,7 @@ type rootPoolEntry struct {
 	ctx struct {
 		atomic.Pointer[ArbitrationContext]
 		cancelCh <-chan struct{}
+		canceled atomic.Bool
 
 		// properties hint of the entry; data race is acceptable;
 		memPriority     ArbitrationPriority
@@ -266,8 +264,14 @@ type rootPoolEntry struct {
 		preferPrivilege bool
 	}
 	request struct {
-		resultCh chan ArbitrateResult // arbitrator will send result in `windup
-		quota    int64                // mutable for ResourcePool
+		// arbitrator will send result in `windup`
+		resultCh chan ArbitrateResult
+		// quota is readable to arbitrator when taskMu is locked
+		// quota is mutable only when entry is not in task queue and taskMu is unlocked, almost like after receiving data from `<-resultCh`
+		quota int64
+		// task-mutex is locked when entry is under arbitration
+		// task-mutex can be locked when entry is in task queue
+		taskMu sync.Mutex
 	}
 	arbitratorMu struct { // mutable for arbitrator
 		shard       *entryMapShard
@@ -461,6 +465,10 @@ func (m *MemArbitrator) blockingAllocate(entry *rootPoolEntry, requestedBytes in
 	if entry.execState() == execStateIdle {
 		return ArbitrateFail
 	}
+	if entry.ctx.canceled.Load() {
+		atomic.AddInt64(&m.execMetrics.Task.Fail, 1)
+		return ArbitrateFail
+	}
 
 	m.prepareAlloc(entry, requestedBytes)
 	return m.waitAlloc(entry)
@@ -469,6 +477,7 @@ func (m *MemArbitrator) blockingAllocate(entry *rootPoolEntry, requestedBytes in
 // non thread safe: the mutex of root pool must have been locked
 func (m *MemArbitrator) prepareAlloc(entry *rootPoolEntry, requestedBytes int64) {
 	entry.request.quota = requestedBytes
+	m.tasks.waitingAlloc.Add(requestedBytes)
 	m.addTask(entry)
 	m.notifer.WeakWake()
 }
@@ -488,14 +497,19 @@ func (m *MemArbitrator) waitAlloc(entry *rootPoolEntry) ArbitrateResult {
 		// 2. stop by the arbitrate-helper (cancel / kill by arbitrator)
 		res = ArbitrateFail
 		atomic.AddInt64(&m.execMetrics.Task.Fail, 1)
+		entry.ctx.canceled.Store(true)
+		{ // wait for arbitration process finish
+			entry.request.taskMu.Lock()
 
-		if !m.removeTask(entry) {
-			<-entry.request.resultCh
+			if !m.removeTask(entry) {
+				<-entry.request.resultCh
+			}
+
+			entry.request.taskMu.Unlock()
 		}
 	}
 
 	m.tasks.waitingAlloc.Add(-entry.request.quota)
-	entry.request.quota = 0
 
 	return res
 }
@@ -1853,6 +1867,8 @@ func (m *MemArbitrator) doExecuteFirstTask() (exec bool) {
 	}
 
 	{
+		entry.request.taskMu.Lock()
+
 		ok, reclaimedBytes := m.arbitrate(entry)
 
 		if ok {
@@ -1874,6 +1890,8 @@ func (m *MemArbitrator) doExecuteFirstTask() (exec bool) {
 			m.updateBlockedAt()
 			m.doReclaimByWorkMode(entry, reclaimedBytes)
 		}
+
+		entry.request.taskMu.Unlock()
 	}
 
 	return
@@ -1966,10 +1984,17 @@ func (m *MemArbitrator) implicitRun() { // satisfy any subscription task
 			continue
 		}
 
-		if m.removeTask(entry) {
-			m.alloc(entry.request.quota)
-			m.entryMap.addQuota(entry, entry.request.quota)
-			entry.windUp(entry.request.quota, ArbitrateOk)
+		{
+			entry.request.taskMu.Lock()
+
+			quota := entry.request.quota
+			if m.removeTask(entry) {
+				m.alloc(quota)
+				m.entryMap.addQuota(entry, quota)
+				entry.windUp(quota, ArbitrateOk)
+			}
+
+			entry.request.taskMu.Unlock()
 		}
 	}
 }
@@ -2076,7 +2101,7 @@ func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationCo
 		entry.ctx.memPriority = ArbitrationPriorityMedium
 		entry.ctx.preferPrivilege = false
 	}
-
+	entry.ctx.canceled.Store(false)
 	entry.ctx.Store(ctx)
 
 	if _, loaded := m.entryMap.contextCache.LoadOrStore(entry.pool.uid, entry); !loaded {

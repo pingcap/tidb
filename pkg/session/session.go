@@ -2626,7 +2626,7 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 
 		defer func() { // detach mem-arbitrator and rethrow panic if any
 			if r := recover(); r != nil {
-				tracker.DetachMemArbitrator()
+				tracker.DetachMemArbitrator(true)
 				panic(r)
 			}
 		}()
