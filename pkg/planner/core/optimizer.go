@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/store/copr"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -638,19 +639,36 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 		// if there are any network jitters, this could take a long time.
 		sctx.GetSessionVars().DurationOptimizer.TiFlashInfoFetch = time.Since(begin)
 	}(time.Now())
-	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
-	if err != nil {
-		return false, 0
+
+	var uncachedServersInfo []infoschema.ServerInfo
+	var minLogicalCores = initialMaxCores
+	for _, info := range serversInfo {
+		mppInfo := copr.GlobalMPPInfoManager.Get(info.Address)
+		if mppInfo == nil {
+			uncachedServersInfo = append(uncachedServersInfo, info)
+			continue
+		}
+		minLogicalCores = min(minLogicalCores, mppInfo.LogicalCPUCount)
 	}
-	var minLogicalCores = initialMaxCores // set to a large enough value here
-	for _, row := range rows {
-		if row[4].GetString() == "cpu-logical-cores" {
-			logicalCpus, err := strconv.Atoi(row[5].GetString())
-			if err == nil && logicalCpus > 0 {
-				minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+
+	if len(uncachedServersInfo) > 0 {
+		infos := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), uncachedServersInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
+		for _, info := range infos {
+			for _, row := range info.Rows {
+				if row[4].GetString() == "cpu-logical-cores" {
+					logicalCpus, err := strconv.Atoi(row[5].GetString())
+					if err == nil && logicalCpus > 0 {
+						copr.GlobalMPPInfoManager.Add(&copr.MPPInfo{
+							Address:         uncachedServersInfo[info.Idx].Address,
+							LogicalCPUCount: uint64(logicalCpus),
+						})
+						minLogicalCores = min(minLogicalCores, uint64(logicalCpus))
+					}
+				}
 			}
 		}
 	}
+
 	// No need to check len(serersInfo) == serverCount here, since missing some servers' info won't affect the correctness
 	return true, minLogicalCores
 }
