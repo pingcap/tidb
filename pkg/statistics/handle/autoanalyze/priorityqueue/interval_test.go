@@ -130,6 +130,21 @@ func TestGetLastFailedAnalysisDuration(t *testing.T) {
 	require.GreaterOrEqual(t, lastFailedDuration, time.Duration(24)*time.Hour)
 }
 
+func TestGetLastFailedAnalysisDurationNegativeRecord(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(metadef.CreateAnalyzeJobsTable)
+
+	// Insert a failed record whose start_time is in the future to force a negative duration.
+	insertFailedJobWithStartTime(tk, "neg_schema", "neg_table", "", "2037-01-01 00:00:00")
+
+	sctx := tk.Session().(sessionctx.Context)
+	lastFailedDuration, err := priorityqueue.GetLastFailedAnalysisDuration(sctx, "neg_schema", "neg_table")
+	require.NoError(t, err)
+	require.Equal(t, 30*time.Minute, lastFailedDuration)
+}
+
 func initJobs(tk *testkit.TestKit) {
 	tk.MustExec(`
 	INSERT INTO mysql.analyze_jobs (
