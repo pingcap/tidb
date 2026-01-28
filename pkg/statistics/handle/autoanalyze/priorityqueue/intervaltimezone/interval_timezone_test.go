@@ -57,6 +57,8 @@ func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
 	require.NotNil(t, job.ID)
 
 	// Step 2: Start the job.
+	// The session should reset its time zone to the global value (Europe/Berlin).
+	// If it keeps the contaminated system time zone, the duration can be skewed.
 	h.StartAnalyzeJob(job)
 
 	time.Sleep(2 * time.Second) // Ensure some time passes.
@@ -65,8 +67,6 @@ func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
 	h.FinishAnalyzeJob(job, errors.New("test error"), statistics.TableAnalysisJob)
 
 	// Step 4: Query via the stats session pool.
-	// The session should reset its time zone to the global value (Europe/Berlin).
-	// If it keeps the contaminated system time zone, the duration can be skewed.
 	var dur time.Duration
 	err := statsutil.CallWithSCtx(pool, func(sctx sessionctx.Context) error {
 		var err error
