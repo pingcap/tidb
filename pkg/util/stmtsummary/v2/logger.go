@@ -58,12 +58,32 @@ func (s *stmtLogStorage) persist(w *stmtWindow, end time.Time) {
 		r.Unlock()
 	}
 	w.evicted.Lock()
+	evictedCount := w.evicted.evictedCount
+	maxEvictedExecCount := w.evicted.maxEvictedExecCount
 	if w.evicted.other.ExecCount > 0 {
 		w.evicted.other.Begin = begin
 		w.evicted.other.End = end.Unix()
 		s.log(w.evicted.other)
 	}
 	w.evicted.Unlock()
+
+	type stmtSummaryMetadata struct {
+		Begin               int64 `json:"begin"`
+		End                 int64 `json:"end"`
+		EvictedCount        int64 `json:"evicted_count"`
+		MaxEvictedExecCount int64 `json:"max_evicted_exec_count"`
+		MemUsage            int64 `json:"mem_usage"`
+	}
+	meta := &stmtSummaryMetadata{
+		Begin:               begin,
+		End:                 end.Unix(),
+		EvictedCount:        evictedCount,
+		MaxEvictedExecCount: maxEvictedExecCount,
+		MemUsage:            w.MemUsage(),
+	}
+	if b, err := json.Marshal(meta); err == nil {
+		s.logger.Info(string(b))
+	}
 }
 
 func (s *stmtLogStorage) sync() error {
