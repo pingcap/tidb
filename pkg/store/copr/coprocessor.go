@@ -311,14 +311,14 @@ func (r *copTask) String() string {
 		r.region.GetID(), r.region.GetConfVer(), r.region.GetVer(), r.ranges.Len(), r.storeAddr)
 }
 
-func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
+func (r *copTask) ToPBBatchTasks() ([]*coprocessor.StoreBatchTask, error) {
 	if len(r.batchTaskList) == 0 {
-		return nil
+		return nil, nil
 	}
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
 		if task.task.rangeVersions != nil && len(task.task.rangeVersions) != len(task.region.GetRanges()) {
-			panic(fmt.Sprintf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", len(task.region.GetRanges()), len(task.task.rangeVersions)))
+			return nil, errors.Errorf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", len(task.region.GetRanges()), len(task.task.rangeVersions))
 		}
 		storeBatchTask := &coprocessor.StoreBatchTask{
 			RegionId:      task.region.GetRegionId(),
@@ -330,7 +330,7 @@ func (r *copTask) ToPBBatchTasks() []*coprocessor.StoreBatchTask {
 		}
 		pbTasks = append(pbTasks, storeBatchTask)
 	}
-	return pbTasks
+	return pbTasks, nil
 }
 
 // rangesPerTask limits the length of the ranges slice sent in one copTask.
@@ -594,11 +594,17 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				rangeVersions = make([]uint64, 0, ranges.Len())
 				// If the rangeVersionMap is not nil, we need to get the version of each range.
 				ranges.Do(func(ran *kv.KeyRange) {
+					if !ran.IsPoint() {
+						if err == nil {
+							err = errors.Errorf("rangeVersionMap is not nil, but range is not point: %v", ran)
+						}
+						return
+					}
 					if ver, ok := opt.rangeVersionMap[ran.StartKey.AsString()]; ok {
 						rangeVersions = append(rangeVersions, ver)
 					} else {
 						if err == nil {
-							err = errors.Errorf("rangeVersionMap is not nil, but no version found for range %s", ran)
+							err = errors.Errorf("rangeVersionMap is not nil, but no version found for range %v", ran)
 						}
 					}
 				})
@@ -1551,6 +1557,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		task.pagingTaskIdx = atomic.AddUint32(worker.pagingTaskIdx, 1)
 	}
 
+	batchTasks, err := task.ToPBBatchTasks()
+	if err != nil {
+		return nil, err
+	}
 	copReq := coprocessor.Request{
 		Tp:              worker.req.Tp,
 		StartTs:         worker.req.StartTs,
@@ -1558,7 +1568,7 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		Ranges:          task.ranges.ToPBRanges(),
 		SchemaVer:       worker.req.SchemaVar,
 		PagingSize:      task.pagingSize,
-		Tasks:           task.ToPBBatchTasks(),
+		Tasks:           batchTasks,
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
 	}
