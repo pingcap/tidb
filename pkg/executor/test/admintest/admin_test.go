@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -2514,4 +2516,62 @@ func TestFastCheckTableConcurrent(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	const (
+		expectedMemQuotaQuery             = int64(2 * 1024 * 1024 * 1024)
+		expectedDistSQLScanConcurrency    = 7
+		expectedExecutorConcurrency       = 9
+		expectedMinPagingSize             = 123
+		expectedMaxPagingSize             = 456
+		expectedStoreBatchSize            = 789
+		expectedMaxExecutionTimeMS        = uint64(10 * 60 * 1000)
+		expectedTiKVClientReadTimeoutMS   = uint64(10 * 60 * 1000)
+		expectedLoadBasedReplicaReadThres = 1500 * time.Millisecond
+		expectedReplicaClosestReadThres   = int64(4097)
+	)
+
+	var called atomic.Bool
+
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/fastCheckTableAfterInitSessCtx", func(sysVars *variable.SessionVars, _ *error) {
+		called.Store(true)
+		assert.True(t, sysVars.EnablePaging)
+		assert.True(t, sysVars.EnabledRateLimitAction)
+		assert.Equal(t, expectedMemQuotaQuery, sysVars.MemQuotaQuery)
+		assert.Equal(t, expectedDistSQLScanConcurrency, sysVars.DistSQLScanConcurrency())
+		assert.Equal(t, expectedExecutorConcurrency, sysVars.ExecutorConcurrency)
+		assert.Equal(t, expectedMinPagingSize, sysVars.MinPagingSize)
+		assert.Equal(t, expectedMaxPagingSize, sysVars.MaxPagingSize)
+		assert.Equal(t, expectedStoreBatchSize, sysVars.StoreBatchSize)
+		assert.Equal(t, expectedMaxExecutionTimeMS, sysVars.MaxExecutionTime)
+		assert.Equal(t, expectedTiKVClientReadTimeoutMS, sysVars.TiKVClientReadTimeout)
+		assert.Equal(t, expectedLoadBasedReplicaReadThres, sysVars.LoadBasedReplicaReadThreshold)
+		assert.Equal(t, expectedReplicaClosestReadThres, sysVars.ReplicaClosestReadThreshold)
+	})
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_enable_fast_table_check = 1")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, k int, key(k))")
+	tk.MustExec("insert into t values (1, 1)")
+
+	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query = %d", expectedMemQuotaQuery))
+	tk.MustExec(fmt.Sprintf("set @@tidb_distsql_scan_concurrency = %d", expectedDistSQLScanConcurrency))
+	tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency = %d", expectedExecutorConcurrency))
+	tk.MustExec("set @@tidb_enable_paging = 1")
+	tk.MustExec(fmt.Sprintf("set @@tidb_min_paging_size = %d", expectedMinPagingSize))
+	tk.MustExec(fmt.Sprintf("set @@tidb_max_paging_size = %d", expectedMaxPagingSize))
+	tk.MustExec(fmt.Sprintf("set @@tidb_store_batch_size = %d", expectedStoreBatchSize))
+	tk.MustExec("set @@tidb_enable_rate_limit_action = 1")
+	tk.MustExec(fmt.Sprintf("set @@max_execution_time = %d", expectedMaxExecutionTimeMS))
+	tk.MustExec(fmt.Sprintf("set @@tikv_client_read_timeout = %d", expectedTiKVClientReadTimeoutMS))
+	tk.MustExec(fmt.Sprintf("set @@tidb_load_based_replica_read_threshold = '%s'", expectedLoadBasedReplicaReadThres))
+	tk.MustExec(fmt.Sprintf("set @@tidb_adaptive_closest_read_threshold = %d", expectedReplicaClosestReadThres))
+
+	tk.MustExec("admin check table t")
+	require.True(t, called.Load(), "failpoint callback not triggered")
 }

@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -32,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
 	poolutil "github.com/pingcap/tidb/pkg/resourcemanager/util"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -336,13 +338,76 @@ type checkIndexWorker struct {
 	e          *FastCheckTableExec
 }
 
+type fastCheckSysSessionVarsBackup struct {
+	optimizerUseInvisibleIndexes     bool
+	memQuotaQuery                    int64
+	distSQLScanConcurrency           int
+	executorConcurrency              int
+	enablePaging                     bool
+	minPagingSize                    int
+	maxPagingSize                    int
+	storeBatchSize                   int
+	enabledRateLimitAction           bool
+	maxExecutionTime                 uint64
+	tikvClientReadTimeout            uint64
+	loadBasedReplicaReadThreshold    time.Duration
+	replicaClosestReadThresholdMilli int64
+}
+
+func backupFastCheckSysSessionVars(sv *variable.SessionVars) fastCheckSysSessionVarsBackup {
+	return fastCheckSysSessionVarsBackup{
+		optimizerUseInvisibleIndexes:     sv.OptimizerUseInvisibleIndexes,
+		memQuotaQuery:                    sv.MemQuotaQuery,
+		distSQLScanConcurrency:           sv.DistSQLScanConcurrency(),
+		executorConcurrency:              sv.ExecutorConcurrency,
+		enablePaging:                     sv.EnablePaging,
+		minPagingSize:                    sv.MinPagingSize,
+		maxPagingSize:                    sv.MaxPagingSize,
+		storeBatchSize:                   sv.StoreBatchSize,
+		enabledRateLimitAction:           sv.EnabledRateLimitAction,
+		maxExecutionTime:                 sv.MaxExecutionTime,
+		tikvClientReadTimeout:            sv.TiKVClientReadTimeout,
+		loadBasedReplicaReadThreshold:    sv.LoadBasedReplicaReadThreshold,
+		replicaClosestReadThresholdMilli: sv.ReplicaClosestReadThreshold,
+	}
+}
+
+func (b fastCheckSysSessionVarsBackup) restoreTo(sv *variable.SessionVars) {
+	sv.OptimizerUseInvisibleIndexes = b.optimizerUseInvisibleIndexes
+	sv.MemQuotaQuery = b.memQuotaQuery
+	sv.SetDistSQLScanConcurrency(b.distSQLScanConcurrency)
+	sv.ExecutorConcurrency = b.executorConcurrency
+	sv.EnablePaging = b.enablePaging
+	sv.MinPagingSize = b.minPagingSize
+	sv.MaxPagingSize = b.maxPagingSize
+	sv.StoreBatchSize = b.storeBatchSize
+	sv.EnabledRateLimitAction = b.enabledRateLimitAction
+	sv.MaxExecutionTime = b.maxExecutionTime
+	sv.TiKVClientReadTimeout = b.tikvClientReadTimeout
+	sv.LoadBasedReplicaReadThreshold = b.loadBasedReplicaReadThreshold
+	sv.ReplicaClosestReadThreshold = b.replicaClosestReadThresholdMilli
+}
+
+func applyFastCheckSysSessionVars(sysVars, userVars *variable.SessionVars) {
+	sysVars.OptimizerUseInvisibleIndexes = true
+	sysVars.MemQuotaQuery = userVars.MemQuotaQuery
+	sysVars.SetDistSQLScanConcurrency(userVars.DistSQLScanConcurrency())
+	sysVars.ExecutorConcurrency = userVars.ExecutorConcurrency
+	sysVars.EnablePaging = userVars.EnablePaging
+	sysVars.MinPagingSize = userVars.MinPagingSize
+	sysVars.MaxPagingSize = userVars.MaxPagingSize
+	sysVars.StoreBatchSize = userVars.StoreBatchSize
+	sysVars.EnabledRateLimitAction = userVars.EnabledRateLimitAction
+	sysVars.MaxExecutionTime = userVars.MaxExecutionTime
+	sysVars.TiKVClientReadTimeout = userVars.TiKVClientReadTimeout
+	sysVars.LoadBasedReplicaReadThreshold = userVars.LoadBasedReplicaReadThreshold
+	sysVars.ReplicaClosestReadThreshold = userVars.ReplicaClosestReadThreshold
+}
+
 func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	sessVars := se.GetSessionVars()
-	originOptUseInvisibleIdx := sessVars.OptimizerUseInvisibleIndexes
-	originMemQuotaQuery := sessVars.MemQuotaQuery
-
-	sessVars.OptimizerUseInvisibleIndexes = true
-	sessVars.MemQuotaQuery = w.sctx.GetSessionVars().MemQuotaQuery
+	backup := backupFastCheckSysSessionVars(sessVars)
+	applyFastCheckSysSessionVars(sessVars, w.sctx.GetSessionVars())
 	snapshot := w.e.Ctx().GetSessionVars().SnapshotTS
 	if snapshot != 0 {
 		_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, fmt.Sprintf("set session tidb_snapshot = %d", snapshot))
@@ -352,8 +417,7 @@ func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {
 	}
 
 	return func() {
-		sessVars.OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
-		sessVars.MemQuotaQuery = originMemQuotaQuery
+		backup.restoreTo(sessVars)
 		if snapshot != 0 {
 			_, err := se.GetSQLExecutor().ExecuteInternal(w.e.contextCtx, "set session tidb_snapshot = 0")
 			if err != nil {
@@ -449,6 +513,11 @@ func (w *checkIndexWorker) HandleTask(task checkIndexTask, _ func(workerpool.Non
 		restoreCtx()
 		w.e.BaseExecutor.ReleaseSysSession(ctx, se)
 	}()
+	var fpErr error
+	failpoint.InjectCall("fastCheckTableAfterInitSessCtx", se.GetSessionVars(), &fpErr)
+	if fpErr != nil {
+		return fpErr
+	}
 
 	tblMeta := w.table.Meta()
 	tblName := TableName(w.e.dbName, tblMeta.Name.String())
