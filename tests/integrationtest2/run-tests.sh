@@ -372,16 +372,13 @@ function require_tici_binaries() {
 
 function should_run_tici() {
     if [ $record -eq 1 ]; then
-        if [ "$record_case" = "all" ] || [[ "$record_case" == tici/* ]]; then
+        if [[ "$record_case" == tici ]] || [[ "$record_case" == tici/* ]]; then
             return 0
         fi
         return 1
     fi
 
     if [ -z "$tests" ]; then
-        if [ -d "t/tici" ] && find t/tici -name "*.test" -print -quit | grep -q .; then
-            return 0
-        fi
         return 1
     fi
 
@@ -956,8 +953,6 @@ if [ -z "$tests" ]; then
         file_name=$(basename "$file" .test)
         if [[ "$file" == t/ticdc/* ]]; then
             ticdc_cases+=("ticdc/$file_name")
-        elif [[ "$file" == t/tici/* ]]; then
-            tici_cases+=("tici/$file_name")
         else
             non_ticdc_cases+=("$file_name")
         fi
