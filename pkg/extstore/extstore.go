@@ -12,13 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package external
+package extstore
 
 import (
 	"context"
 	"io"
+	"path/filepath"
 	"sync"
 
+	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -27,7 +29,7 @@ import (
 	"go.uber.org/zap"
 )
 
-type externalStorage struct {
+type extStorage struct {
 	opts     *storeapi.Options
 	backend  *backuppb.StorageBackend
 	basePath string
@@ -36,7 +38,7 @@ type externalStorage struct {
 	storage storeapi.Storage
 }
 
-func (w *externalStorage) getStorage(ctx context.Context) (storeapi.Storage, error) {
+func (w *extStorage) getStorage(ctx context.Context) (storeapi.Storage, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -53,7 +55,7 @@ func (w *externalStorage) getStorage(ctx context.Context) (storeapi.Storage, err
 	return w.storage, nil
 }
 
-func (w *externalStorage) WriteFile(ctx context.Context, name string, data []byte) error {
+func (w *extStorage) WriteFile(ctx context.Context, name string, data []byte) error {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return err
@@ -61,7 +63,7 @@ func (w *externalStorage) WriteFile(ctx context.Context, name string, data []byt
 	return s.WriteFile(ctx, name, data)
 }
 
-func (w *externalStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
+func (w *extStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return nil, err
@@ -69,7 +71,7 @@ func (w *externalStorage) ReadFile(ctx context.Context, name string) ([]byte, er
 	return s.ReadFile(ctx, name)
 }
 
-func (w *externalStorage) FileExists(ctx context.Context, name string) (bool, error) {
+func (w *extStorage) FileExists(ctx context.Context, name string) (bool, error) {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return false, err
@@ -77,7 +79,7 @@ func (w *externalStorage) FileExists(ctx context.Context, name string) (bool, er
 	return s.FileExists(ctx, name)
 }
 
-func (w *externalStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
+func (w *extStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return nil, err
@@ -85,7 +87,7 @@ func (w *externalStorage) Open(ctx context.Context, path string, option *storeap
 	return s.Open(ctx, path, option)
 }
 
-func (w *externalStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
+func (w *extStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return err
@@ -93,7 +95,7 @@ func (w *externalStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption,
 	return s.WalkDir(ctx, opt, fn)
 }
 
-func (w *externalStorage) Create(ctx context.Context, path string, option *storeapi.WriterOption) (objectio.Writer, error) {
+func (w *extStorage) Create(ctx context.Context, path string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return nil, err
@@ -101,7 +103,7 @@ func (w *externalStorage) Create(ctx context.Context, path string, option *store
 	return s.Create(ctx, path, option)
 }
 
-func (w *externalStorage) DeleteFile(ctx context.Context, name string) error {
+func (w *extStorage) DeleteFile(ctx context.Context, name string) error {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return err
@@ -109,7 +111,7 @@ func (w *externalStorage) DeleteFile(ctx context.Context, name string) error {
 	return s.DeleteFile(ctx, name)
 }
 
-func (w *externalStorage) DeleteFiles(ctx context.Context, names []string) error {
+func (w *extStorage) DeleteFiles(ctx context.Context, names []string) error {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return err
@@ -117,7 +119,7 @@ func (w *externalStorage) DeleteFiles(ctx context.Context, names []string) error
 	return s.DeleteFiles(ctx, names)
 }
 
-func (w *externalStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
+func (w *extStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return err
@@ -125,7 +127,7 @@ func (w *externalStorage) Rename(ctx context.Context, oldFileName, newFileName s
 	return s.Rename(ctx, oldFileName, newFileName)
 }
 
-func (w *externalStorage) URI() string {
+func (w *extStorage) URI() string {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -135,7 +137,7 @@ func (w *externalStorage) URI() string {
 	return ""
 }
 
-func (w *externalStorage) Close() {
+func (w *extStorage) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -161,4 +163,27 @@ func (w *fileWriter) Write(p []byte) (int, error) {
 
 func (w *fileWriter) Close() error {
 	return w.writer.Close(w.ctx)
+}
+
+// NewExtStorage creates a new external storage instance.
+func NewExtStorage(rawURL, namespace string, opts *storeapi.Options) (storeapi.Storage, error) {
+	u, err := objstore.ParseRawURL(rawURL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	if namespace != "" {
+		u.Path = filepath.Join(u.Path, namespace)
+	}
+
+	backend, err := objstore.ParseBackendFromURL(u, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &extStorage{
+		backend:  backend,
+		opts:     opts,
+		basePath: u.Path,
+	}, nil
 }

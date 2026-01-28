@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package external
+package extstore
 
 import (
 	"context"
@@ -34,18 +34,17 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func TestExternalStorage(t *testing.T) {
+func TestExtStorage(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	err := CreateExternalStorage(tempDir, "test_namespace", nil)
+	s, err := NewExtStorage(tempDir, "test_namespace", nil)
 	require.NoError(t, err)
-
-	s := GetExternalStorage()
 	require.NotNil(t, s)
 
-	basePath := GetStorageBasePath()
-	require.Equal(t, filepath.Join(tempDir, "test_namespace"), basePath)
+	es, ok := s.(*extStorage)
+	require.True(t, ok)
+	require.Equal(t, filepath.Join(tempDir, "test_namespace"), es.basePath)
 
 	// Test WriteFile and ReadFile
 	fileName := "test_file.txt"
@@ -139,8 +138,31 @@ func TestExternalStorage(t *testing.T) {
 	require.Contains(t, uri, "test_namespace")
 
 	// Test Close
-	es, ok := s.(*externalStorage)
-	require.True(t, ok)
 	es.Close()
 	require.Nil(t, es.storage)
+}
+
+func TestNewFileWriter(t *testing.T) {
+	ctx := context.Background()
+	tempDir := t.TempDir()
+
+	s, err := NewExtStorage(tempDir, "", nil)
+	require.NoError(t, err)
+
+	writer, err := s.Create(ctx, "test_writer.txt", nil)
+	require.NoError(t, err)
+
+	fileWriter := NewFileWriter(ctx, writer)
+	require.NotNil(t, fileWriter)
+
+	_, err = fileWriter.Write([]byte("test content"))
+	require.NoError(t, err)
+
+	err = fileWriter.Close()
+	require.NoError(t, err)
+
+	// Verify the file was written
+	content, err := s.ReadFile(ctx, "test_writer.txt")
+	require.NoError(t, err)
+	require.Equal(t, []byte("test content"), content)
 }
