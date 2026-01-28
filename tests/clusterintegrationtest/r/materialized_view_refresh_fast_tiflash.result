@@ -7,10 +7,6 @@ create table t (id int primary key, a int, b int);
 create materialized view log on t(a,b);
 set @log_tbl_name := (select table_name from information_schema.tables where table_schema='mv_refresh_fast_tiflash' and table_name like '__tidb_mvlog_%' limit 1);
 set @log_tbl := concat('`mv_refresh_fast_tiflash`.`', @log_tbl_name, '`');
-set @sql := concat('alter table ', @log_tbl, ' set tiflash replica 1');
-prepare stmt from @sql;
-execute stmt;
-deallocate prepare stmt;
 insert into t values (1,1,10),(2,1,20),(3,null,5),(4,2,0);
 create materialized view mv as
 select a, count(*) as cnt, sum(b) as sb
@@ -23,8 +19,12 @@ update t set b = 0 where id = 2;
 delete from t where id = 1;
 insert into t values (6,null,7);
 update t set a = 2, b = 9 where id = 4;
-select sleep(30);
-sleep(30)
+set @sql := concat('alter table ', @log_tbl, ' set tiflash replica 1');
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+select if((select available=1 and progress=1 from information_schema.tiflash_replica where table_schema='mv_refresh_fast_tiflash' and table_name=@log_tbl_name)=1, 0, sleep(60));
+if((select available=1 and progress=1 from information_schema.tiflash_replica where table_schema='mv_refresh_fast_tiflash' and table_name=@log_tbl_name)=1, 0, sleep(60))
 0
 set @@tidb_isolation_read_engines="tikv,tiflash";
 set @@tidb_allow_mpp=1;

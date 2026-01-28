@@ -6,8 +6,8 @@ set @@tidb_enable_materialized_view = 1;
 create table t (id int, a int);
 insert into t values (1,2),(2,3);
 alter table t set tiflash replica 1;
-select sleep(30);
-sleep(30)
+select if((select available=1 and progress=1 from information_schema.tiflash_replica where table_schema='mv_commit_ts_snapshot_tiflash' and table_name='t')=1, 0, sleep(60));
+if((select available=1 and progress=1 from information_schema.tiflash_replica where table_schema='mv_commit_ts_snapshot_tiflash' and table_name='t')=1, 0, sleep(60))
 0
 set @@tidb_isolation_read_engines="tiflash";
 set @@tidb_allow_mpp=1;
