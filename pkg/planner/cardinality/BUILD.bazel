@@ -22,6 +22,7 @@ go_library(
         "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/mysql",
+        "//pkg/planner/core/cost",
         "//pkg/planner/core/stats",
         "//pkg/planner/planctx",
         "//pkg/planner/property",
