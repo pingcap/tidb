@@ -15,7 +15,6 @@ go_library(
         "//pkg/executor/mppcoordmanager",
         "//pkg/extension",
         "//pkg/extension/_import",
-        "//pkg/external",
         "//pkg/keyspace",
         "//pkg/kv",
         "//pkg/metrics",

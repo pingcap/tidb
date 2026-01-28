@@ -6,12 +6,10 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/external",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
         "//pkg/util/logutil",
-        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@org_uber_go_zap//:zap",
     ],
