@@ -119,11 +119,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		ds.SetStats(ds.TableStats.Scale(lp.SCtx().GetSessionVars(), selectivity))
 		return ds.StatsInfo(), false, nil
 	}
-<<<<<<< HEAD
-	if ds.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(ds.SCtx())
-		defer debugtrace.LeaveContextCommon(ds.SCtx())
-	}
 
 	// Add soft delete filter for softdelete tables if @@tidb_translate_softdelete_sql is on
 	// and ds.DisableSoftDeleteFilter is false (for supporting the RECOVER VALUES statement).
@@ -155,8 +150,6 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 		}
 	}
 
-=======
->>>>>>> master
 	// two preprocess here.
 	// 1: PushDownNot here can convert query 'not (a != 1)' to 'a = 1'.
 	// 2: EliminateNoPrecisionCast here can convert query 'cast(c<int> as bigint) = 1' to 'c = 1' to leverage access range.

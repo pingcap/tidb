@@ -19,9 +19,7 @@ import (
 	"fmt"
 	"maps"
 	"math"
-	"math/bits"
 	"slices"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -784,17 +782,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		commonNames := make([]string, 0, len(lNames))
 		lNameMap := make(map[string]int, len(lNames))
 		rNameMap := make(map[string]int, len(rNames))
-<<<<<<< HEAD
 		for i, name := range lNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
 			if lColumns[i].IsInvisible {
-=======
-		for _, name := range lNames {
-			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L ||
-				name.ColName.L == model.ExtraPhysTblIDName.L {
->>>>>>> master
 				continue
 			}
 			// record left map
@@ -804,17 +794,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 				lNameMap[name.ColName.L] = 1
 			}
 		}
-<<<<<<< HEAD
 		for i, name := range rNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
 			if rColumns[i].IsInvisible {
-=======
-		for _, name := range rNames {
-			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L ||
-				name.ColName.L == model.ExtraPhysTblIDName.L {
->>>>>>> master
 				continue
 			}
 			// record right map
@@ -843,13 +825,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	commonLen := 0
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-<<<<<<< HEAD
 		if lColumns[i].IsInvisible {
-=======
-		if lName.ColName.L == model.ExtraHandleName.L ||
-			lName.ColName.L == model.ExtraCommitTSName.L ||
-			lName.ColName.L == model.ExtraPhysTblIDName.L {
->>>>>>> master
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
@@ -3602,11 +3578,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-<<<<<<< HEAD
 			!col.IsInvisible {
-=======
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTSID {
->>>>>>> master
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -5293,10 +5265,7 @@ func pruneAndBuildColPositionInfoForDelete(
 	slices.SortFunc(cols2PosInfos, func(a, b physicalop.TblColPosInfo) int {
 		return a.Cmp(b)
 	})
-<<<<<<< HEAD
 
-=======
->>>>>>> master
 	nonPruned := bitset.New(uint(len(names)))
 	nonPruned.SetAll()
 	// Always prune the `_tidb_commit_ts` column.
@@ -5328,9 +5297,6 @@ func pruneAndBuildColPositionInfoForDelete(
 		// Use a very relax check for foreign key cascades and checks.
 		// If there's one table containing foreign keys, all of the tables would not do pruning.
 		// It should be strict in the future or just support pruning column when there is foreign key.
-<<<<<<< HEAD
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
-=======
 		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil
 		for _, idx := range tblInfo.Indices {
 			if len(idx.ConditionExprString) > 0 {
@@ -5340,7 +5306,6 @@ func pruneAndBuildColPositionInfoForDelete(
 			}
 		}
 		if skipPruning {
->>>>>>> master
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err
@@ -5475,14 +5440,11 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	colPosInfo.End = colPosInfo.Start + tblLen - pruned
 	colPosInfo.IndexesRowLayout = indexColMap
 
-<<<<<<< HEAD
 	// Fix the ExtraOriginTS column offset for active-active tables
 	if extraOriginTSColOffset >= 0 {
 		colPosInfo.ExtraOriginTSOffset = table.ExtraOriginTSOffset(fixedPos[extraOriginTSColOffset])
 	}
 
-=======
->>>>>>> master
 	return nil
 }
 
@@ -5700,14 +5662,9 @@ func (b *PlanBuilder) buildUpdatePlan(
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
-<<<<<<< HEAD
 	// Remove _tidb_commit_ts columns from projection
 	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
-		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
-=======
-	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
 		if proj.OutputNames()[i].ColName.L == model.ExtraCommitTSName.L {
->>>>>>> master
 			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
 			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
 			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
