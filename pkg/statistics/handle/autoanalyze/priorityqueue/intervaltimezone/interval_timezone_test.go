@@ -77,5 +77,5 @@ func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
 	// When the time zone is correctly reset, the duration should be positive and small
 	// (we just inserted the job).
 	require.Greater(t, dur, time.Duration(0), "duration should be positive; negative means timezone was not reset")
-	require.Less(t, dur, time.Minute, "duration should be less than an hour")
+	require.Less(t, dur, time.Minute, "duration should be less than a minute")
 }
