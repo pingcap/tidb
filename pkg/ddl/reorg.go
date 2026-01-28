@@ -523,12 +523,12 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 	progress := float64(0)
 	if addedRowCount != 0 {
-		totalCount := getTableTotalCount(w, tblInfo)
-		if totalCount > 0 {
+		totalCount := getTableEstimatedCount(w, tblInfo)
+		if totalCount > 0 && totalCount != statistics.PseudoRowCount {
+			// Only update progress when totalCount is relatively precise
 			progress = float64(addedRowCount) / float64(totalCount)
-		} else {
-			progress = 0
 		}
+		// float compare is in-accurate
 		if progress > 1 {
 			progress = 1
 		}
@@ -537,10 +537,10 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		if rc != nil {
 			progress = rc.setMaxProgress(progress)
 		}
-		logutil.DDLLogger().Debug("update progress",
+		logutil.DDLLogger().Info("update backfill progress",
 			zap.Float64("progress", progress),
 			zap.Int64("addedRowCount", addedRowCount),
-			zap.Int64("totalCount", totalCount))
+			zap.Int64("estimated totalCount", totalCount))
 	}
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
@@ -558,6 +558,8 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 			idxNames = getIdxNamesFromArgs(args)
 		}
 		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
+		logutil.DDLLogger().Warn("update backfill progress for AddIndex|AddPrimaryKey",
+			zap.Float64("progress", progress))
 	case model.ActionModifyColumn:
 		colName := ""
 		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
@@ -567,13 +569,17 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 			colName = args.OldColumnName.O
 		}
 		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
+		logutil.DDLLogger().Warn("update backfill progress for modify column",
+			zap.Float64("progress", progress))
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
 		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
+		logutil.DDLLogger().Warn("update backfill progress for partition",
+			zap.Float64("progress", progress))
 	}
 }
 
-func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
+func getTableEstimatedCount(w *worker, tblInfo *model.TableInfo) int64 {
 	var ctx sessionctx.Context
 	ctx, err := w.sessPool.Get()
 	if err != nil {
@@ -601,7 +607,11 @@ func getTableTotalCount(w *worker, tblInfo *model.TableInfo) int64 {
 	if len(rows) != 1 {
 		return statistics.PseudoRowCount
 	}
-	return rows[0].GetInt64(0)
+	count := rows[0].GetInt64(0)
+	if count == 0 {
+		return statistics.PseudoRowCount
+	}
+	return count
 }
 
 func (dc *ddlCtx) isReorgRunnable(ctx context.Context, isDistReorg bool) error {
@@ -1167,6 +1177,10 @@ func cleanupDDLReorgHandles(job *model.Job, s *sess.Session) {
 		// ignore error, cleanup is not that critical
 		logutil.DDLLogger().Warn("Failed removing the DDL reorg entry in tidb_ddl_reorg", zap.Stringer("job", job), zap.Error(err))
 	}
+
+	// Clean up the backfill progress metrics to avoid unbounded growth.
+	// This is safe to do even if the metrics were never created (DeleteLabelValues is a no-op for non-existent labels).
+	metrics.CleanupBackfillProgressMetrics(int(job.Type), job.SchemaName, job.TableName)
 }
 
 // GetDDLReorgHandle gets the latest processed DDL reorganize position.

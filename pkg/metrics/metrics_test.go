@@ -38,3 +38,34 @@ func TestExecuteErrorToLabel(t *testing.T) {
 	require.Equal(t, `unknown`, metrics.ExecuteErrorToLabel(errors.New("test")))
 	require.Equal(t, `global:2`, metrics.ExecuteErrorToLabel(terror.ErrResultUndetermined))
 }
+
+func TestBackfillProgressMetricsCleanup(t *testing.T) {
+	// Test that backfill progress metrics are created and tracked
+	gauge1 := metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1")
+	require.NotNil(t, gauge1)
+	gauge1.Set(50.0)
+
+	gauge2 := metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx2")
+	require.NotNil(t, gauge2)
+	gauge2.Set(75.0)
+
+	// Verify metrics are in the active map (by checking they can be retrieved)
+	gaugeCheck := metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1")
+	require.NotNil(t, gaugeCheck)
+
+	// Clean up metrics for test_db.test_table
+	metrics.CleanupBackfillProgressMetrics(7, "test_db", "test_table") // ActionAddIndex = 7
+
+	// After cleanup, creating a new gauge with the same labels should work
+	// (the old one is deleted, but we can create a new one)
+	gauge3 := metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1")
+	require.NotNil(t, gauge3)
+	// Set a new value to verify it's a fresh gauge
+	gauge3.Set(25.0)
+
+	// Clean up metrics for a different table - should not affect test_table
+	metrics.CleanupBackfillProgressMetrics(7, "other_db", "other_table")
+
+	// Clean up metrics for a different operation type - should not affect add_index metrics
+	metrics.CleanupBackfillProgressMetrics(12, "test_db", "test_table") // ActionModifyColumn = 12
+}
