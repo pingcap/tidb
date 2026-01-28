@@ -59,20 +59,10 @@ cd tests/integrationtest
 ./run-tests.sh -r [casename]
 ```
 
-## Tici/MinIO integration tests
+## TiCI integration tests
 
 Tests under `t/tici/` start TiCI meta/worker processes plus MinIO and create a TiCDC changefeed to an S3/MinIO sink.
-Set these environment variables before running the tests if the defaults do not match your setup:
-
-- `TICI_BIN`: path to the `tici` binary (default: `./third_bin/tici-server`)
-- `TICI_META_CONFIG`, `TICI_WORKER_CONFIG`: config paths (required)
-- `TICI_META_ARGS`, `TICI_WORKER_ARGS`: additional args for meta/worker
-- `MINIO_BIN`: path to `minio` (default: `minio` in `PATH`)
-- `MINIO_MC_BIN`: path to `mc` (default: `mc` in `PATH`)
-- `MINIO_PORT`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY`
-- `MINIO_BUCKET` (default: `ticidefaultbucket`), `MINIO_PREFIX` (default: `tici_default_prefix/cdc`), `MINIO_ENDPOINT`
-- `TICDC_S3_SINK_URI`: full sink URI override
-- `TIFLASH_CONFIG`: optional TiFlash config (passed as `--config-file`)
+Set these environment variables before running the tests if the defaults do not match your setup: Please refer to tici/README.md
 
 ## How to debug integration test
 
