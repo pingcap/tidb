@@ -20,7 +20,6 @@ import (
 	goerrors "errors"
 	"io"
 	"path"
-	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -348,6 +347,7 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 		u.Concurrency = concurrency
 		u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(concurrency * s3like.HardcodedChunkSize)
 		if c.s3Compatible {
+			u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 			u.ClientOptions = append(u.ClientOptions, withContentMD5)
 		}
 	})
@@ -360,56 +360,14 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 
 // withContentMD5 removes flexible checksum procedures from an operation,
 // instead computing an MD5 checksum for the request payload.
-// AWS SDK v2 defaults to CRC32 for uploads and may add checksum headers,
-// which some S3-compatible providers (e.g. minio/ks3) reject when the CRC32
-// value is not provided alongside Content-MD5. We remove the checksum
-// middlewares and strip the checksum headers to keep compatibility.
-//
-// Header origins in AWS SDK v2:
-// - X-Amz-Sdk-Checksum-Algorithm is serialized when ChecksumAlgorithm is set.
-// - X-Amz-Checksum-* is produced by checksum middleware.
-// - X-Amz-Trailer is added by aws-chunked encoding for trailing checksums.
-//
-// Reference:
-//   - Checksum middleware setup:
-//     https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.92.1/service/internal/checksum/middleware_setup_context.go
-//   - X-Amz-Checksum-* header:
-//     https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.92.1/service/internal/checksum/middleware_compute_input_checksum.go#L140
-//   - X-Amz-Trailer header:
-//     https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.92.1/service/internal/checksum/aws_chunked_encoding.go#L17
-//   - X-Amz-Sdk-Checksum-Algorithm serialization:
-//     https://github.com/aws/aws-sdk-go-v2/blob/service/s3/v1.92.1/serializers.go#L8176
 func withContentMD5(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
 		_, _ = stack.Initialize.Remove("AWSChecksum:SetupInputContext")
 		_, _ = stack.Build.Remove("AWSChecksum:RequestMetricsTracking")
 		_, _ = stack.Finalize.Remove("AWSChecksum:ComputeInputPayloadChecksum")
 		_, _ = stack.Finalize.Remove("addInputChecksumTrailer")
-		if err := smithyhttp.AddContentChecksumMiddleware(stack); err != nil {
-			return err
-		}
-		return stack.Build.Add(middleware.BuildMiddlewareFunc(
-			"StripChecksumHeaders",
-			func(ctx context.Context, in middleware.BuildInput, next middleware.BuildHandler) (middleware.BuildOutput, middleware.Metadata, error) {
-				if req, ok := in.Request.(*smithyhttp.Request); ok {
-					stripChecksumHeaders(req)
-				}
-				return next.HandleBuild(ctx, in)
-			},
-		), middleware.After)
+		return smithyhttp.AddContentChecksumMiddleware(stack)
 	})
-}
-
-// stripChecksumHeaders removes flexible-checksum headers so S3-compatible
-// providers don't require CRC32 when Content-MD5 is used instead.
-// This runs in the build step, after the SDK has populated headers.
-func stripChecksumHeaders(req *smithyhttp.Request) {
-	for key := range req.Header {
-		lower := strings.ToLower(key)
-		if strings.HasPrefix(lower, "x-amz-checksum-") || lower == "x-amz-trailer" || lower == "x-amz-sdk-checksum-algorithm" {
-			req.Header.Del(key)
-		}
-	}
 }
 
 // multipartWriter does multi-part upload to s3.
