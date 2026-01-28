@@ -1533,7 +1533,7 @@ func (t *TopNMeta) buildBucket4Merging(d *types.Datum, analyzeVer int) *bucket4M
 	if analyzeVer <= Version2 {
 		res.NDV = 0
 	}
-	failpoint.Inject("github.com/pingcap/pkg/statistics/enableTopNNDV", func(_ failpoint.Value) {
+	failpoint.Inject("enableTopNNDV", func(_ failpoint.Value) {
 		res.NDV = 1
 	})
 	intest.Assert(analyzeVer <= Version2)

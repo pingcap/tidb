@@ -1084,7 +1084,7 @@ func TestTiFlashFallback(t *testing.T) {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ReduceCopNextMaxBackoff"))
 	}()
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr", "return(\"tiflash0\")"))
 	// test COM_STMT_EXECUTE
 	ctx := context.Background()
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv='tiflash'")
@@ -1097,7 +1097,7 @@ func TestTiFlashFallback(t *testing.T) {
 	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x1, 0x1, 0x0, 0x0, 0x0}))
 	tk.MustExec("set @@tidb_allow_fallback_to_tikv=''")
 	require.Error(t, cc.handleStmtExecute(ctx, []byte{0x1, 0x0, 0x0, 0x0, 0x0, 0x1, 0x0, 0x0, 0x0}))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/fetchNextErr", "return(\"firstNext\")"))
 	// test COM_STMT_EXECUTE (cursor mode)
@@ -1120,9 +1120,9 @@ func TestTiFlashFallback(t *testing.T) {
 	// TiFlash query based on batch cop (batch + streaming)
 	tk.MustExec("set @@tidb_allow_batch_cop=1; set @@tidb_allow_mpp=0;")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr", "return(\"tiflash0\")"))
 	testFallbackWork(t, tk, cc, "select count(*) from t")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0"))
+	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErr"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/batchCopRecvTimeout", "return(true)"))
 	testFallbackWork(t, tk, cc, "select count(*) from t")
