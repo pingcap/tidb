@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/fastrand"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
@@ -70,6 +71,13 @@ func CopySampleItems(items []*SampleItem) []*SampleItem {
 
 func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
 	var err error
+	if intest.InTest {
+		for _, item := range items {
+			if item.Value == nil {
+				return errors.Errorf("sample item value is nil")
+			}
+		}
+	}
 	slices.SortStableFunc(items, func(i, j *SampleItem) int {
 		var cmp int
 		cmp, err = i.Value.Compare(sc.TypeCtx(), j.Value, collate.GetBinaryCollator())

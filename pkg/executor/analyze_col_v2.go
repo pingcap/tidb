@@ -682,12 +682,6 @@ func (e *AnalyzeColumnsExecV2) subBuildWorker(resultCh chan error, taskCh chan *
 	})
 
 	colLen := len(e.colsInfo)
-	bufferedMemSize := int64(0)
-	bufferedReleaseSize := int64(0)
-	defer func() {
-		e.memTracker.Consume(bufferedMemSize)
-		e.memTracker.Release(bufferedReleaseSize)
-	}()
 
 workLoop:
 	for {
@@ -695,6 +689,24 @@ workLoop:
 		case task, ok := <-taskCh:
 			if !ok {
 				break workLoop
+			}
+			bufferedMemSize := int64(0)
+			totalBuffered := int64(0)
+
+			consumeBuffered := func(bytes int64) {
+				totalBuffered += bytes
+				e.memTracker.BufferedConsume(&bufferedMemSize, bytes)
+			}
+			flushBuffered := func() {
+				if bufferedMemSize != 0 {
+					e.memTracker.Consume(bufferedMemSize)
+					bufferedMemSize = 0
+				}
+			}
+			flushBufferedAndUpdateCollectorMemSize := func(cum *int64) {
+				flushBuffered()
+				*cum += totalBuffered
+				totalBuffered = 0
 			}
 			var collector *statistics.SampleCollector
 			if task.isColumn {
@@ -731,15 +743,14 @@ workLoop:
 					if collator != nil {
 						val.SetBytes(collator.Key(val.GetString()))
 						deltaSize := int64(cap(val.GetBytes()))
-						collectorMemSize += deltaSize
-						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
-						collectorMemSize += deltaSize
+						consumeBuffered(deltaSize)
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   &val,
 						Ordinal: j,
 					})
 				}
+				flushBufferedAndUpdateCollectorMemSize(&collectorMemSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -777,6 +788,8 @@ workLoop:
 							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
 							err = errCtx.HandleError(err)
 							if err != nil {
+								flushBuffered()
+								totalBuffered = 0
 								resultCh <- err
 								continue workLoop
 							}
@@ -785,6 +798,8 @@ workLoop:
 						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
 						err = errCtx.HandleError(err)
 						if err != nil {
+							flushBuffered()
+							totalBuffered = 0
 							resultCh <- err
 							continue workLoop
 						}
@@ -792,13 +807,14 @@ workLoop:
 					if len(b) > 8 {
 						// We already accounted 8 bytes before the loop started,
 						// here we need to account the remaining bytes.
-						collectorMemSize += int64(len(b) - 8)
+						consumeBuffered(int64(len(b) - 8))
 					}
 					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value: &tmp,
 					})
 				}
+				flushBufferedAndUpdateCollectorMemSize(&collectorMemSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
