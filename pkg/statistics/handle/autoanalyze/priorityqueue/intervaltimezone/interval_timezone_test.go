@@ -29,7 +29,7 @@ import (
 )
 
 // TestLastFailedAnalysisDurationUseCorrectTimezone verifies that
-// GetLastFailedAnalysisDuration uses the correct time zone when calculating durations.
+// job.StartAnalyzeJob uses the correct time zone when recording start time.
 // WARNING: Do not add other test cases to this file; it exists solely to cover time zone contamination.
 // Additional tests here could be affected by the global system time zone.
 func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
