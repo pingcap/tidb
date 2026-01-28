@@ -1,26 +1,28 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
-    name = "external",
-    srcs = ["external_storage.go"],
-    importpath = "github.com/pingcap/tidb/pkg/external",
+    name = "extstore",
+    srcs = ["extstore.go"],
+    importpath = "github.com/pingcap/tidb/pkg/extstore",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
         "//pkg/util/logutil",
+        "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@org_uber_go_zap//:zap",
     ],
 )
 
 go_test(
-    name = "external_test",
+    name = "extstore_test",
     timeout = "short",
-    srcs = ["external_storage_test.go"],
-    embed = [":external"],
+    srcs = ["extstore_test.go"],
+    embed = [":extstore"],
     flaky = True,
+    shard_count = 2,
     deps = [
         "//pkg/objstore/storeapi",
         "//pkg/testkit/testsetup",
