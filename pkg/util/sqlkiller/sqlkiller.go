@@ -18,9 +18,11 @@ import (
 	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -51,6 +53,9 @@ type SQLKiller struct {
 	// InWriteResultSet is used to indicate whether the query is currently calling clientConn.writeResultSet().
 	// If the query is in writeResultSet and Finish() can acquire rs.finishLock, we can assume the query is waiting for the client to receive data from the server over network I/O.
 	InWriteResultSet atomic.Bool
+
+	lastCheckTime     atomic.Pointer[time.Time]
+	IsConnectionAlive atomic.Pointer[func() bool]
 }
 
 // SendKillSignal sends a kill signal to the query.
@@ -122,6 +127,27 @@ func (killer *SQLKiller) HandleSignal() error {
 			}
 		}
 	})
+
+	// Checks if the connection is alive.
+	// For performance reasons, the check interval should be at least `checkConnectionAliveDur`(1 second).
+	fn := killer.IsConnectionAlive.Load()
+	lastCheckTime := killer.lastCheckTime.Load()
+	if fn != nil {
+		var checkConnectionAliveDur time.Duration = time.Second
+		now := time.Now()
+		if intest.InTest {
+			checkConnectionAliveDur = time.Millisecond
+		}
+		if lastCheckTime == nil {
+			killer.lastCheckTime.Store(&now)
+		} else if now.Sub(*lastCheckTime) > checkConnectionAliveDur {
+			killer.lastCheckTime.Store(&now)
+			if !(*fn)() {
+				atomic.CompareAndSwapUint32(&killer.Signal, 0, QueryInterrupted)
+			}
+		}
+	}
+
 	status := atomic.LoadUint32(&killer.Signal)
 	err := killer.getKillError(status)
 	if status == ServerMemoryExceeded {
@@ -137,4 +163,5 @@ func (killer *SQLKiller) Reset() {
 		logutil.BgLogger().Warn("kill finished", zap.Uint64("conn", killer.ConnID.Load()))
 	}
 	atomic.StoreUint32(&killer.Signal, 0)
+	killer.lastCheckTime.Store(nil)
 }
