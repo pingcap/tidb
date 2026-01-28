@@ -770,6 +770,13 @@ func (e *RuntimeStatsWithCommit) Merge(rs RuntimeStats) {
 		}
 		e.LockKeys.Merge(tmp.LockKeys)
 	}
+
+	if tmp.SharedLockKeys != nil {
+		if e.SharedLockKeys == nil {
+			e.SharedLockKeys = &util.LockKeysDetails{}
+		}
+		e.SharedLockKeys.Merge(tmp.SharedLockKeys)
+	}
 }
 
 // Clone implements the RuntimeStats interface.
@@ -782,6 +789,9 @@ func (e *RuntimeStatsWithCommit) Clone() RuntimeStats {
 	}
 	if e.LockKeys != nil {
 		newRs.LockKeys = e.LockKeys.Clone()
+	}
+	if e.SharedLockKeys != nil {
+		newRs.SharedLockKeys = e.SharedLockKeys.Clone()
 	}
 	return &newRs
 }
