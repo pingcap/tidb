@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -248,6 +249,11 @@ type joinTypeWithExtMsg struct {
 
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
+	if p.SCtx().GetSessionVars().EnableOuterJoinReorder {
+		p, err := joinorder.Optimize(p)
+		// gjt todo why return false
+		return p, false, err
+	}
 	p, err := s.optimizeRecursive(p.SCtx(), p)
 	return p, false, err
 }
@@ -668,6 +674,8 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 			usedEdges = append(usedEdges, edge)
 		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
 			joinType = s.joinTypes[idx]
+			// gjt todo: 1. why special handling for inner join here?
+			// 2. Is it really ok to swap left and right for outer join?
 			if joinType.JoinType != base.InnerJoin {
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
