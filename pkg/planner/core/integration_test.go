@@ -2165,7 +2165,7 @@ func TestIssue48257(t *testing.T) {
 		tk.MustExec("create table t(a int)")
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t value(1)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t all columns")
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
@@ -2173,7 +2173,7 @@ func TestIssue48257(t *testing.T) {
 			"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
 		))
 		tk.MustExec("insert into t value(1)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",
@@ -2191,7 +2191,7 @@ func TestIssue48257(t *testing.T) {
 		tk.MustExec("create table t1(a int)")
 		testutil.HandleNextDDLEventWithTxn(h)
 		tk.MustExec("insert into t1 value(1)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustExec("analyze table t1 all columns")
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
@@ -2199,7 +2199,7 @@ func TestIssue48257(t *testing.T) {
 			"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
 		))
 		tk.MustExec("insert into t1 value(1)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
 			"TableReader 2.00 root  data:TableFullScan",

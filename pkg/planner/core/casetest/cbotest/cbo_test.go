@@ -72,7 +72,7 @@ func TestCBOWithoutAnalyze(t *testing.T) {
 		require.NoError(t, err)
 		testKit.MustExec("insert into t1 values (1), (2), (3), (4), (5), (6)")
 		testKit.MustExec("insert into t2 values (1), (2), (3), (4), (5), (6)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -122,7 +122,7 @@ func TestTableDual(t *testing.T) {
 		testKit.MustExec("insert into t values (1), (2), (3), (4), (5), (6), (7), (8), (9), (10)")
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -154,12 +154,12 @@ func TestEstimation(t *testing.T) {
 		h := dom.StatsHandle()
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		testKit.MustExec("analyze table t all columns")
 		for i := 1; i <= 8; i++ {
 			testKit.MustExec("delete from t where a = ?", i)
 		}
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []string
 		var output []struct {
@@ -445,12 +445,12 @@ func TestOutdatedAnalyze(t *testing.T) {
 		h := dom.StatsHandle()
 		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		testKit.MustExec("analyze table t all columns")
 		testKit.MustExec("insert into t select * from t")
 		testKit.MustExec("insert into t select * from t")
 		testKit.MustExec("insert into t select * from t")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		testKit.MustExec("flush stats_delta")
 		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 		var input []struct {
 			SQL                          string

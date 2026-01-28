@@ -526,7 +526,7 @@ func TestAdjustSampleRateNote(t *testing.T) {
 		"Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\"",
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
-	require.NoError(t, statsHandle.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, statsHandle.Update(context.Background(), is))
 	result = tk.MustQuery("show stats_meta where table_name = 't'")
 	require.Equal(t, "3", result.Rows()[0][5])
@@ -741,7 +741,7 @@ func TestSavedAnalyzeOptions(t *testing.T) {
 
 	// auto-analyze uses the table-level options
 	tk.MustExec("insert into t values (10,10,10)")
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.Nil(t, h.Update(context.Background(), is))
 	h.HandleAutoAnalyze()
 	tbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -1096,7 +1096,7 @@ func TestSavedAnalyzeColumnOptions(t *testing.T) {
 	require.Equal(t, lastVersion, tblStats.GetCol(tblInfo.Columns[2].ID).LastUpdateVersion)
 
 	tk.MustExec("insert into t values (5,5,5),(6,6,6)")
-	require.Nil(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.Nil(t, h.Update(context.Background(), is))
 	// auto analyze uses the saved option(predicate columns).
 	h.HandleAutoAnalyze()
@@ -1146,7 +1146,7 @@ func TestAnalyzeColumnsWithPrimaryKey(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int primary key)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,1), (1,1,2), (2,2,3), (2,2,4), (3,3,5), (4,3,6), (5,4,7), (6,4,8), (null,null,9)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1214,7 +1214,7 @@ func TestAnalyzeColumnsWithIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, d int, index idx_b_d(b, d))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,1,9,1), (1,1,8,1), (2,2,7,2), (1,3,7,3), (2,4,6,4), (1,4,6,5), (2,4,6,5), (1,5,6,5)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1291,7 +1291,7 @@ func TestAnalyzeColumnsWithClusteredIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, d int, primary key(b, d) clustered)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,1,null,1), (2,2,9,2), (1,3,8,3), (2,4,7,4), (1,5,7,5), (2,6,6,6), (1,7,6,7), (2,8,6,8), (1,9,6,9)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1369,7 +1369,7 @@ func TestAnalyzeColumnsWithDynamicPartitionTable(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1495,7 +1495,7 @@ func TestAnalyzeColumnsWithStaticPartitionTable(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int, index idx(c)) partition by range (a) (partition p0 values less than (10), partition p1 values less than maxvalue)")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t values (1,2,1), (2,4,1), (3,6,1), (4,8,2), (4,8,2), (5,10,3), (5,10,4), (5,10,5), (null,null,6), (11,22,7), (12,24,8), (13,26,9), (14,28,10), (15,30,11), (16,32,12), (16,32,13), (16,32,13), (16,32,14), (17,34,14), (17,34,14)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1607,7 +1607,7 @@ func TestAnalyzeColumnsWithExtendedStats(t *testing.T) {
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("alter table t add stats_extended s1 correlation(b,c)")
 			tk.MustExec("insert into t values (5,1,1), (4,2,2), (3,3,3), (2,4,4), (1,5,5)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1677,7 +1677,7 @@ func TestAnalyzeColumnsWithVirtualColumnIndex(t *testing.T) {
 			tk.MustExec("create table t (a int, b int, c int as (b+1), index idx(c))")
 			statstestutil.HandleNextDDLEventWithTxn(h)
 			tk.MustExec("insert into t (a,b) values (1,1), (2,2), (3,3), (4,4), (5,4), (6,5), (7,5), (8,5), (null,null)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1743,7 +1743,7 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 			tk.MustExec("set @@tidb_analyze_version = 2")
 			tk.MustExec("create table t (a int, b int)")
 			tk.MustExec("insert into t (a,b) values (1,1), (1,1), (2,2), (2,2), (3,3), (4,4)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			is := dom.InfoSchema()
 			tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1766,9 +1766,8 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 				// db, tbl, part, col, is_index, bucket_id, count, repeats, lower, upper, ndv
 				testkit.Rows("test t  a 0 0 2 1 3 4 0",
 					"test t  b 0 0 2 1 3 4 0"))
-
 			tk.MustExec("insert into t (a,b) values (1,1), (6,6)")
-			require.NoError(t, h.DumpStatsDeltaToKV(true))
+			tk.MustExec("flush stats_delta")
 
 			switch choice {
 			case ast.ColumnList:
@@ -1805,21 +1804,20 @@ func TestAnalyzeColumnsAfterAnalyzeAll(t *testing.T) {
 }
 
 func TestAnalyzeSampleRateReason(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int)")
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows(
 		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "use min(1, 110000/10000) as the sample-rate=1"`))
-
 	tk.MustExec(`insert into t values (1, 1), (2, 2), (3, 3)`)
-	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec(`analyze table t`)
 	tk.MustQuery(`show warnings`).Sort().Check(testkit.Rows(
 		`Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is "TiDB assumes that the table is empty, use sample-rate=1"`))
@@ -1917,10 +1915,10 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values (5,6), (7,8), (9, 10)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -2004,7 +2002,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b")
 	is := dom.InfoSchema()
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t")
 	tk.MustExec("alter table t add index idx(b)")
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -2749,7 +2747,7 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 	tk.MustExec("insert into t values(1),(2),(3)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	err = h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 	tk.MustExec("analyze table t")
@@ -2771,9 +2769,8 @@ func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	require.NoError(t, err)
 	startTS := txn.StartTS()
 	tk.MustExec("commit")
-
 	tk.MustExec("insert into t values(4),(5),(6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	err = h.Update(context.Background(), dom.InfoSchema())
 	require.NoError(t, err)
 
@@ -2804,7 +2801,7 @@ func TestAnalyzeColumnsSkipMVIndexJsonCol(t *testing.T) {
 	tk.MustExec("set @@tidb_analyze_version = 2")
 	tk.MustExec("create table t (a int, b int, c json, index idx_b(b), index idx_c((cast(json_extract(c, _utf8mb4'$') as char(32) array))))")
 	tk.MustExec(`insert into t values (1, 1, '["a1", "a2"]'), (2, 2, '["b1", "b2"]'), (3, 3, '["c1", "c2"]'), (2, 2, '["c1", "c2"]')`)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 
 	tk.MustExec("analyze table t columns a")
 	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(""+
@@ -2946,7 +2943,7 @@ func TestAnalyzeMVIndex(t *testing.T) {
 		require.NoError(t, err)
 		tk.MustExec(fmt.Sprintf("insert into t values (%d, '%s')", 1, jsonValueStr))
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 
 	// 2. analyze and check analyze jobs
 	tk.MustExec("analyze table t with 1 samplerate, 3 topn")
