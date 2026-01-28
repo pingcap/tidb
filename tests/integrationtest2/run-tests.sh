@@ -953,6 +953,8 @@ if [ -z "$tests" ]; then
         file_name=$(basename "$file" .test)
         if [[ "$file" == t/ticdc/* ]]; then
             ticdc_cases+=("ticdc/$file_name")
+        elif [[ "$file" == t/tici/* ]]; then
+            continue
         else
             non_ticdc_cases+=("$file_name")
         fi
@@ -964,8 +966,20 @@ else
             ticdc/*)
                 ticdc_cases+=("$test_name")
                 ;;
+            ticdc)
+                while IFS= read -r file; do
+                    file_name=$(basename "$file" .test)
+                    ticdc_cases+=("ticdc/$file_name")
+                done < <(find t/ticdc -name "*.test")
+                ;;
             tici/*)
                 tici_cases+=("$test_name")
+                ;;
+            tici)
+                while IFS= read -r file; do
+                    file_name=$(basename "$file" .test)
+                    tici_cases+=("tici/$file_name")
+                done < <(find t/tici -name "*.test")
                 ;;
             *)
                 non_ticdc_cases+=("$test_name")
