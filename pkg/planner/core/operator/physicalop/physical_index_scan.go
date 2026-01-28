@@ -108,8 +108,6 @@ type PhysicalIndexScan struct {
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
-
-	NotAlwaysValid bool
 }
 
 // FullRange represent used all partitions.
@@ -657,7 +655,6 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 		ConstColsByCond:  path.ConstCols,
 		Prop:             prop,
-		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 
 	is.SetNoncacheableReason(path.NoncacheableReason)
