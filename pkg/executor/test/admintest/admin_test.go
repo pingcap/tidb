@@ -2525,9 +2525,6 @@ func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
 		expectedMemQuotaQuery           = int64(2 * 1024 * 1024 * 1024)
 		expectedDistSQLScanConcurrency  = 7
 		expectedExecutorConcurrency     = 9
-		expectedMinPagingSize           = 123
-		expectedMaxPagingSize           = 456
-		expectedStoreBatchSize          = 789
 		expectedMaxExecutionTimeMS      = uint64(10 * 60 * 1000)
 		expectedTiKVClientReadTimeoutMS = uint64(10 * 60 * 1000)
 	)
@@ -2536,14 +2533,11 @@ func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
 
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/fastCheckTableAfterInitSessCtx", func(sysVars *variable.SessionVars, _ *error) {
 		called.Store(true)
-		assert.True(t, sysVars.EnablePaging)
-		assert.True(t, sysVars.EnabledRateLimitAction)
 		assert.Equal(t, expectedMemQuotaQuery, sysVars.MemQuotaQuery)
+		assert.NotNil(t, sysVars.MemTracker)
+		assert.Equal(t, expectedMemQuotaQuery, sysVars.MemTracker.GetBytesLimit())
 		assert.Equal(t, expectedDistSQLScanConcurrency, sysVars.DistSQLScanConcurrency())
 		assert.Equal(t, expectedExecutorConcurrency, sysVars.ExecutorConcurrency)
-		assert.Equal(t, expectedMinPagingSize, sysVars.MinPagingSize)
-		assert.Equal(t, expectedMaxPagingSize, sysVars.MaxPagingSize)
-		assert.Equal(t, expectedStoreBatchSize, sysVars.StoreBatchSize)
 		assert.Equal(t, expectedMaxExecutionTimeMS, sysVars.MaxExecutionTime)
 		assert.Equal(t, expectedTiKVClientReadTimeoutMS, sysVars.TiKVClientReadTimeout)
 	})
@@ -2558,11 +2552,6 @@ func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query = %d", expectedMemQuotaQuery))
 	tk.MustExec(fmt.Sprintf("set @@tidb_distsql_scan_concurrency = %d", expectedDistSQLScanConcurrency))
 	tk.MustExec(fmt.Sprintf("set @@tidb_executor_concurrency = %d", expectedExecutorConcurrency))
-	tk.MustExec("set @@tidb_enable_paging = 1")
-	tk.MustExec(fmt.Sprintf("set @@tidb_min_paging_size = %d", expectedMinPagingSize))
-	tk.MustExec(fmt.Sprintf("set @@tidb_max_paging_size = %d", expectedMaxPagingSize))
-	tk.MustExec(fmt.Sprintf("set @@tidb_store_batch_size = %d", expectedStoreBatchSize))
-	tk.MustExec("set @@tidb_enable_rate_limit_action = 1")
 	tk.MustExec(fmt.Sprintf("set @@max_execution_time = %d", expectedMaxExecutionTimeMS))
 	tk.MustExec(fmt.Sprintf("set @@tikv_client_read_timeout = %d", expectedTiKVClientReadTimeoutMS))
 

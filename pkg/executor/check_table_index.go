@@ -342,11 +342,6 @@ type fastCheckSysSessionVarsBackup struct {
 	memQuotaQuery                int64
 	distSQLScanConcurrency       int
 	executorConcurrency          int
-	enablePaging                 bool
-	minPagingSize                int
-	maxPagingSize                int
-	storeBatchSize               int
-	enabledRateLimitAction       bool
 	maxExecutionTime             uint64
 	tikvClientReadTimeout        uint64
 }
@@ -357,11 +352,6 @@ func backupFastCheckSysSessionVars(sv *variable.SessionVars) fastCheckSysSession
 		memQuotaQuery:                sv.MemQuotaQuery,
 		distSQLScanConcurrency:       sv.DistSQLScanConcurrency(),
 		executorConcurrency:          sv.ExecutorConcurrency,
-		enablePaging:                 sv.EnablePaging,
-		minPagingSize:                sv.MinPagingSize,
-		maxPagingSize:                sv.MaxPagingSize,
-		storeBatchSize:               sv.StoreBatchSize,
-		enabledRateLimitAction:       sv.EnabledRateLimitAction,
 		maxExecutionTime:             sv.MaxExecutionTime,
 		tikvClientReadTimeout:        sv.TiKVClientReadTimeout,
 	}
@@ -370,13 +360,11 @@ func backupFastCheckSysSessionVars(sv *variable.SessionVars) fastCheckSysSession
 func (b fastCheckSysSessionVarsBackup) restoreTo(sv *variable.SessionVars) {
 	sv.OptimizerUseInvisibleIndexes = b.optimizerUseInvisibleIndexes
 	sv.MemQuotaQuery = b.memQuotaQuery
+	if sv.MemTracker != nil {
+		sv.MemTracker.SetBytesLimit(sv.MemQuotaQuery)
+	}
 	sv.SetDistSQLScanConcurrency(b.distSQLScanConcurrency)
 	sv.ExecutorConcurrency = b.executorConcurrency
-	sv.EnablePaging = b.enablePaging
-	sv.MinPagingSize = b.minPagingSize
-	sv.MaxPagingSize = b.maxPagingSize
-	sv.StoreBatchSize = b.storeBatchSize
-	sv.EnabledRateLimitAction = b.enabledRateLimitAction
 	sv.MaxExecutionTime = b.maxExecutionTime
 	sv.TiKVClientReadTimeout = b.tikvClientReadTimeout
 }
@@ -384,13 +372,11 @@ func (b fastCheckSysSessionVarsBackup) restoreTo(sv *variable.SessionVars) {
 func applyFastCheckSysSessionVars(sysVars, userVars *variable.SessionVars) {
 	sysVars.OptimizerUseInvisibleIndexes = true
 	sysVars.MemQuotaQuery = userVars.MemQuotaQuery
+	if sysVars.MemTracker != nil {
+		sysVars.MemTracker.SetBytesLimit(sysVars.MemQuotaQuery)
+	}
 	sysVars.SetDistSQLScanConcurrency(userVars.DistSQLScanConcurrency())
 	sysVars.ExecutorConcurrency = userVars.ExecutorConcurrency
-	sysVars.EnablePaging = userVars.EnablePaging
-	sysVars.MinPagingSize = userVars.MinPagingSize
-	sysVars.MaxPagingSize = userVars.MaxPagingSize
-	sysVars.StoreBatchSize = userVars.StoreBatchSize
-	sysVars.EnabledRateLimitAction = userVars.EnabledRateLimitAction
 	sysVars.MaxExecutionTime = userVars.MaxExecutionTime
 	sysVars.TiKVClientReadTimeout = userVars.TiKVClientReadTimeout
 }
