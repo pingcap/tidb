@@ -1273,3 +1273,70 @@ func (n *doneTaskKeeper) updateNextKey(doneTaskID int, next kv.Key) {
 	}
 	n.doneTaskNextKey[doneTaskID] = next
 }
+
+func backfillProgressLabel(jobType model.ActionType, mergingTmpIdx bool) string {
+	switch jobType {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		if mergingTmpIdx {
+			return metrics.LblAddIndexMerge
+		}
+		return metrics.LblAddIndex
+	case model.ActionModifyColumn:
+		return metrics.LblModifyColumn
+	case model.ActionReorganizePartition, model.ActionAlterTablePartitioning, model.ActionRemovePartitioning:
+		return metrics.LblReorgPartition
+	default:
+		return ""
+	}
+}
+
+func backfillProgressLabelTypes(jobType model.ActionType) []string {
+	switch jobType {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		return []string{metrics.LblAddIndex, metrics.LblAddIndexMerge}
+	case model.ActionModifyColumn:
+		return []string{metrics.LblModifyColumn}
+	case model.ActionReorganizePartition, model.ActionAlterTablePartitioning, model.ActionRemovePartitioning:
+		return []string{metrics.LblReorgPartition}
+	default:
+		return nil
+	}
+}
+
+func backfillTotalLabelTypes(jobType model.ActionType) []string {
+	switch jobType {
+	case model.ActionAddIndex, model.ActionAddPrimaryKey:
+		return []string{
+			metrics.LblAddIdxRate,
+			metrics.LblMergeTmpIdxRate,
+			metrics.LblAddIdxRate + "-conflict",
+			metrics.LblMergeTmpIdxRate + "-conflict",
+		}
+	case model.ActionModifyColumn:
+		return []string{
+			metrics.LblUpdateColRate,
+			metrics.LblUpdateColRate + "-conflict",
+		}
+	case model.ActionReorganizePartition, model.ActionAlterTablePartitioning, model.ActionRemovePartitioning:
+		return []string{
+			metrics.LblReorgPartitionRate,
+			metrics.LblReorgPartitionRate + "-conflict",
+		}
+	case model.ActionDropTablePartition:
+		return []string{
+			metrics.LblCleanupIdxRate,
+			metrics.LblCleanupIdxRate + "-conflict",
+		}
+	default:
+		return nil
+	}
+}
+
+func cleanupBackfillMetrics(jobType model.ActionType, schemaName, tableName string) {
+	metrics.CleanupBackfillByLabelTypes(
+		backfillProgressLabelTypes(jobType),
+		backfillTotalLabelTypes(jobType),
+		schemaName,
+		tableName,
+	)
+}

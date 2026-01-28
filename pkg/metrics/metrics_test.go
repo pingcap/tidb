@@ -40,7 +40,7 @@ func TestExecuteErrorToLabel(t *testing.T) {
 }
 
 func TestBackfillProgressMetricsCleanup(t *testing.T) {
-	// Test that backfill progress metrics are created and tracked
+	// Test that backfill progress metrics are created and tracked.
 	gauge1 := metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1")
 	require.NotNil(t, gauge1)
 	gauge1.Set(50.0)
@@ -49,23 +49,81 @@ func TestBackfillProgressMetricsCleanup(t *testing.T) {
 	require.NotNil(t, gauge2)
 	gauge2.Set(75.0)
 
-	// Verify metrics are in the active map (by checking they can be retrieved)
+	// Verify metrics are in the active map (by checking they can be retrieved).
 	gaugeCheck := metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1")
 	require.NotNil(t, gaugeCheck)
 
-	// Clean up metrics for test_db.test_table
-	metrics.CleanupBackfillProgressMetrics(7, "test_db", "test_table") // ActionAddIndex = 7
+	// Test backfill total counter metrics.
+	counter1 := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, "test_db", "test_table", "idx1")
+	require.NotNil(t, counter1)
+	counter1.Add(100.0)
 
-	// After cleanup, creating a new gauge with the same labels should work
-	// (the old one is deleted, but we can create a new one)
+	counter2 := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, "test_db", "test_table", "idx2")
+	require.NotNil(t, counter2)
+	counter2.Add(200.0)
+
+	// Clean up metrics for test_db.test_table.
+	progressLabels := []string{metrics.LblAddIndex, metrics.LblAddIndexMerge}
+	totalLabels := []string{
+		metrics.LblAddIdxRate,
+		metrics.LblMergeTmpIdxRate,
+		metrics.LblAddIdxRate + "-conflict",
+		metrics.LblMergeTmpIdxRate + "-conflict",
+	}
+	metrics.CleanupBackfillByLabelTypes(progressLabels, totalLabels, "test_db", "test_table")
+
+	// After cleanup, creating new metrics with the same labels should work.
 	gauge3 := metrics.GetBackfillProgressByLabel(metrics.LblAddIndex, "test_db", "test_table", "idx1")
 	require.NotNil(t, gauge3)
-	// Set a new value to verify it's a fresh gauge
 	gauge3.Set(25.0)
 
-	// Clean up metrics for a different table - should not affect test_table
-	metrics.CleanupBackfillProgressMetrics(7, "other_db", "other_table")
+	counter3 := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, "test_db", "test_table", "idx1")
+	require.NotNil(t, counter3)
+	counter3.Add(50.0)
 
-	// Clean up metrics for a different operation type - should not affect add_index metrics
-	metrics.CleanupBackfillProgressMetrics(12, "test_db", "test_table") // ActionModifyColumn = 12
+	// Clean up metrics for a different table - should not affect test_table.
+	metrics.CleanupBackfillByLabelTypes(progressLabels, totalLabels, "other_db", "other_table")
+
+	// Clean up metrics for a different operation type - should not affect add_index metrics.
+	metrics.CleanupBackfillByLabelTypes(
+		[]string{metrics.LblModifyColumn},
+		[]string{metrics.LblUpdateColRate, metrics.LblUpdateColRate + "-conflict"},
+		"test_db",
+		"test_table",
+	)
+}
+
+func TestBackfillTotalMetricsCleanup(t *testing.T) {
+	// Test that backfill total counter metrics are created and tracked.
+	counter1 := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, "test_db", "test_table", "idx1")
+	require.NotNil(t, counter1)
+	counter1.Add(100.0)
+
+	counter2 := metrics.GetBackfillTotalByLabel(metrics.LblMergeTmpIdxRate, "test_db", "test_table", "idx2")
+	require.NotNil(t, counter2)
+	counter2.Add(200.0)
+
+	// Test conflict counter (with -conflict suffix).
+	conflictCounter := metrics.GetBackfillTotalByLabel(metrics.LblMergeTmpIdxRate+"-conflict", "test_db", "test_table", "idx2")
+	require.NotNil(t, conflictCounter)
+	conflictCounter.Add(50.0)
+
+	// Clean up only total metrics for test_db.test_table.
+	totalLabels := []string{
+		metrics.LblAddIdxRate,
+		metrics.LblMergeTmpIdxRate,
+		metrics.LblAddIdxRate + "-conflict",
+		metrics.LblMergeTmpIdxRate + "-conflict",
+	}
+	metrics.CleanupBackfillTotalByLabelTypes(totalLabels, "test_db", "test_table")
+
+	// After cleanup, creating a new counter with the same labels should work.
+	counter3 := metrics.GetBackfillTotalByLabel(metrics.LblAddIdxRate, "test_db", "test_table", "idx1")
+	require.NotNil(t, counter3)
+	counter3.Add(50.0)
+
+	// The merge tmp idx rate metrics should be cleaned together with add index metrics.
+	counter4 := metrics.GetBackfillTotalByLabel(metrics.LblMergeTmpIdxRate, "test_db", "test_table", "idx2")
+	require.NotNil(t, counter4)
+	counter4.Add(75.0)
 }
