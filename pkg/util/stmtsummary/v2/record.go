@@ -22,6 +22,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
@@ -607,6 +608,32 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
+}
+
+// MemUsage returns the memory usage of StmtRecord.
+func (r *StmtRecord) MemUsage() int64 {
+	size := int64(unsafe.Sizeof(*r))
+
+	size += int64(len(r.SchemaName) + len(r.Digest) + len(r.PlanDigest) +
+		len(r.StmtType) + len(r.NormalizedSQL) + len(r.TableNames) +
+		len(r.BindingSQL) + len(r.BindingDigest) + len(r.SampleSQL) +
+		len(r.Charset) + len(r.Collation) + len(r.PrevSQL) +
+		len(r.SamplePlan) + len(r.SampleBinaryPlan) + len(r.PlanHint) +
+		len(r.MaxCopProcessAddress) + len(r.MaxCopWaitAddress) +
+		len(r.KeyspaceName) + len(r.ResourceGroupName) +
+		len(r.PlanCacheUnqualifiedLastReason))
+
+	for _, s := range r.IndexNames {
+		size += int64(len(s))
+	}
+	for k := range r.BackoffTypes {
+		size += int64(len(k))
+	}
+	for k := range r.AuthUsers {
+		size += int64(len(k))
+	}
+
+	return size
 }
 
 // Truncate SQL to maxSQLLength.

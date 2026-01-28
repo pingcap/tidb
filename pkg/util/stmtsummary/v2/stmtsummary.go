@@ -394,6 +394,15 @@ func (w *stmtWindow) clear() {
 	w.evicted = newStmtEvicted()
 }
 
+func (w *stmtWindow) MemUsage() int64 {
+	var size int64
+	for _, v := range w.lru.Values() {
+		size += v.(*lockedStmtRecord).MemUsage()
+	}
+	size += w.evicted.MemUsage()
+	return size
+}
+
 type stmtStorage interface {
 	persist(w *stmtWindow, end time.Time)
 	sync() error
@@ -401,8 +410,10 @@ type stmtStorage interface {
 
 type stmtEvicted struct {
 	sync.Mutex
-	keys  map[string]struct{}
-	other *StmtRecord
+	keys                map[string]struct{}
+	other               *StmtRecord
+	evictedCount        int64
+	maxEvictedExecCount int64
 }
 
 func newStmtEvicted() *stmtEvicted {
@@ -426,6 +437,10 @@ func (e *stmtEvicted) add(key *stmtsummary.StmtDigestKey, record *StmtRecord) {
 	defer e.Unlock()
 	e.keys[string(key.Hash())] = struct{}{}
 	e.other.Merge(record)
+	e.evictedCount++
+	if record.ExecCount > e.maxEvictedExecCount {
+		e.maxEvictedExecCount = record.ExecCount
+	}
 }
 
 func (e *stmtEvicted) count() int {
@@ -434,9 +449,25 @@ func (e *stmtEvicted) count() int {
 	return len(e.keys)
 }
 
+func (e *stmtEvicted) MemUsage() int64 {
+	e.Lock()
+	defer e.Unlock()
+	size := e.other.MemUsage()
+	for k := range e.keys {
+		size += int64(len(k))
+	}
+	return size
+}
+
 type lockedStmtRecord struct {
 	sync.Mutex
 	*StmtRecord
+}
+
+func (r *lockedStmtRecord) MemUsage() int64 {
+	r.Lock()
+	defer r.Unlock()
+	return r.StmtRecord.MemUsage()
 }
 
 type mockStmtStorage struct {
