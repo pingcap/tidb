@@ -57,7 +57,7 @@ func pauseAndCancelStmt(t *testing.T, stmtKit *testkit.TestKit, adminCommandKit 
 			zap.String("Expected Schema State", stmtCase.schemaState.String()))
 
 		// stmtCase is read-only among the whole test suite which is not necessary to be atomic
-		if testddlutil.TestMatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
+		if testddlutil.MatchCancelState(t, job, stmtCase.schemaState, stmtCase.stmt) &&
 			stmtCase.isJobPausable && //
 			!isPaused.Load() {
 			jobID.Store(job.ID)
