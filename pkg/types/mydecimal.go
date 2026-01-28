@@ -1404,20 +1404,29 @@ func (d *MyDecimal) WriteBin(precision, frac int, buf []byte) ([]byte, error) {
 // Two Decimals dec0 and dec1 with different fraction will generate the same hash keys if dec0.Compare(dec1) == 0.
 func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	_, digitsInt := d.removeLeadingZeros()
-	_, digitsFrac := d.removeTrailingZeros()
-	prec := digitsInt + digitsFrac
+
+	// Use resultFrac if it differs from digitsFrac, otherwise use digitsFrac
+	var fracToUse int
+	if d.resultFrac != d.digitsFrac {
+		fracToUse = int(d.resultFrac)
+	} else {
+		_, digitsFrac := d.removeTrailingZeros()
+		fracToUse = digitsFrac
+	}
+
+	prec := digitsInt + fracToUse
 	if prec == 0 { // zeroDecimal
 		prec = 1
 	}
-	buf, err := d.ToBin(prec, digitsFrac)
+	buf, err := d.ToBin(prec, fracToUse)
 	if err == ErrTruncated {
-		// This err is caused by shorter digitsFrac;
+		// This err is caused by shorter frac;
 		// After removing the trailing zeros from a Decimal,
-		// so digitsFrac may be less than the real digitsFrac of the Decimal,
+		// so the frac may be less than the real digitsFrac of the Decimal,
 		// thus ErrTruncated may be raised, we can ignore it here.
 		err = nil
 	}
-	buf = append(buf, byte(digitsFrac))
+	buf = append(buf, byte(fracToUse))
 	return buf, err
 }
 
