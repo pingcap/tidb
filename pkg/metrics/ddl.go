@@ -17,7 +17,6 @@ package metrics
 import (
 	"maps"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -29,14 +28,6 @@ import (
 var (
 	mu                   sync.Mutex
 	registeredJobMetrics = make(map[int64]*metric.Common, 64)
-
-	backfillLabelsMu sync.Mutex
-	// activeBackfillProgressLabels tracks all active backfill progress metrics labels
-	// for cleanup when DDL jobs are done.
-	activeBackfillProgressLabels = make(map[string]struct{}, 256)
-	// activeBackfillTotalLabels tracks all active backfill total counter metrics labels
-	// for cleanup when DDL jobs are done.
-	activeBackfillTotalLabels = make(map[string]struct{}, 256)
 )
 
 // Metrics for the DDL package.
@@ -267,93 +258,6 @@ const (
 	LblUpdateColRate      = "update_col_rate"
 	LblReorgPartitionRate = "reorg_partition_rate"
 )
-
-// generateReorgLabel returns the label with schema name, table name and optional column/index names.
-// Multiple columns/indexes can be concatenated with "+".
-func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) string {
-	var stringBuilder strings.Builder
-	if len(colOrIdxNames) == 0 {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
-	} else {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
-	}
-	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("-")
-	stringBuilder.WriteString(tableName)
-	if len(colOrIdxNames) > 0 {
-		stringBuilder.WriteString("-")
-		stringBuilder.WriteString(colOrIdxNames)
-	}
-	return stringBuilder.String()
-}
-
-// GetBackfillTotalByLabel returns the Counter showing the speed of backfilling for the given type label.
-// It also tracks the label for later cleanup.
-func GetBackfillTotalByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
-	labelValue := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
-	backfillLabelsMu.Lock()
-	activeBackfillTotalLabels[labelValue] = struct{}{}
-	backfillLabelsMu.Unlock()
-	return BackfillTotalCounter.WithLabelValues(labelValue)
-}
-
-// GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
-// It also tracks the label for later cleanup.
-func GetBackfillProgressByLabel(label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
-	labelValue := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
-	backfillLabelsMu.Lock()
-	activeBackfillProgressLabels[labelValue] = struct{}{}
-	backfillLabelsMu.Unlock()
-	return BackfillProgressGauge.WithLabelValues(labelValue)
-}
-
-// CleanupBackfillByLabelTypes removes both backfill progress and total counter metrics.
-// It should be called when the DDL job is finished (done, cancelled, or synced).
-func CleanupBackfillByLabelTypes(progressLabelTypes, totalLabelTypes []string, schemaName, tableName string) {
-	CleanupBackfillProgressByLabelTypes(progressLabelTypes, schemaName, tableName)
-	CleanupBackfillTotalByLabelTypes(totalLabelTypes, schemaName, tableName)
-}
-
-// CleanupBackfillProgressByLabelTypes removes the backfill progress metrics for the given label types.
-func CleanupBackfillProgressByLabelTypes(labelTypes []string, schemaName, tableName string) {
-	if len(labelTypes) == 0 {
-		return
-	}
-	cleanupBackfillLabels(activeBackfillProgressLabels, BackfillProgressGauge, labelTypes, schemaName, tableName)
-}
-
-// CleanupBackfillTotalByLabelTypes removes the backfill total counter metrics for the given label types.
-func CleanupBackfillTotalByLabelTypes(labelTypes []string, schemaName, tableName string) {
-	if len(labelTypes) == 0 {
-		return
-	}
-	cleanupBackfillLabels(activeBackfillTotalLabels, BackfillTotalCounter, labelTypes, schemaName, tableName)
-}
-
-type labelDeleter interface {
-	DeleteLabelValues(lvs ...string) bool
-}
-
-func cleanupBackfillLabels(active map[string]struct{}, metric labelDeleter, labelTypes []string, schemaName, tableName string) {
-	prefixes := make([]string, 0, len(labelTypes))
-	for _, label := range labelTypes {
-		prefixes = append(prefixes, generateReorgLabel(label, schemaName, tableName, ""))
-	}
-
-	backfillLabelsMu.Lock()
-	defer backfillLabelsMu.Unlock()
-	for labelValue := range active {
-		for _, prefix := range prefixes {
-			if strings.HasPrefix(labelValue, prefix) {
-				metric.DeleteLabelValues(labelValue)
-				delete(active, labelValue)
-				break
-			}
-		}
-	}
-}
 
 // RegisterLightningCommonMetricsForDDL returns the registered common metrics.
 func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {

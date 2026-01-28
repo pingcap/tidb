@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -569,7 +568,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		logMsg = "update backfill progress for partition"
 	}
-	metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
+	getBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
 	logutil.DDLLogger().Warn(logMsg, zap.Float64("progress", progress))
 }
 
