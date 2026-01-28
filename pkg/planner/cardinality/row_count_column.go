@@ -107,7 +107,7 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
 	// also check if this last bucket end value is underrepresented
 	if matched && !IsLastBucketEndValueUnderrepresented(sctx,
-		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
+		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount, c.TopN.TotalCount()) {
 		return statistics.DefaultRowEst(histCnt), nil
 	}
 	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
@@ -208,22 +208,26 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			}
 			cnt.Add(highCnt)
 		}
-		// Clamp all 3 fields of RowEstimate to [0, realtimeRowCount]
-		cnt.Clamp(0, float64(realtimeRowCount))
 
 		// If the current table row count has changed, we should scale the row count accordingly.
 		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
 		cnt.MultiplyAll(increaseFactor)
 
 		// handling the out-of-range part
-		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
-			histNDV := c.NDV
-			// Exclude the TopN
-			if c.StatsVer == statistics.Version2 {
-				histNDV -= int64(c.TopN.Num())
-			}
+		// Unless the row count already covers the realtime row count
+		// 0.99 is used as a tolerance factor to account for minor estimation differences.
+		if cnt.Est < float64(realtimeRowCount)*0.99 && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
 			var count statistics.RowEstimate
-			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV))
+			histNDV := c.NDV
+			topNCount := uint64(0)
+			if c.TopN != nil {
+				topNCount = c.TopN.TotalCount()
+				if c.StatsVer == statistics.Version2 {
+					// Exclude the TopN
+					histNDV -= int64(c.TopN.Num())
+				}
+			}
+			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV, topNCount))
 			cnt.Add(count)
 		}
 

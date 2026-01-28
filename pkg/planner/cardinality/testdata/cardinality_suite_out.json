@@ -24,107 +24,408 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 763
+        "Count": 763,
+        "MinEst": 759,
+        "MaxEst": 763
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 13
+        "Count": 67,
+        "MinEst": 9,
+        "MaxEst": 247
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 13
+        "Count": 62,
+        "MinEst": 9,
+        "MaxEst": 226
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 13
+        "Count": 57,
+        "MinEst": 9,
+        "MaxEst": 205
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 13
+        "Count": 52,
+        "MinEst": 9,
+        "MaxEst": 184
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 13
+        "Count": 41,
+        "MinEst": 9,
+        "MaxEst": 143
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 13
+        "Count": 59,
+        "MinEst": 9,
+        "MaxEst": 215
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 13
+        "Count": 38,
+        "MinEst": 9,
+        "MaxEst": 131
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 13
+        "Count": 18,
+        "MinEst": 9,
+        "MaxEst": 48
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 300,
         "End": 899,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 763
+        "Count": 873,
+        "MinEst": 759,
+        "MaxEst": 1221
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 13
+        "Count": 381,
+        "MinEst": 9,
+        "MaxEst": 1502
       },
       {
         "Start": 300,
         "End": 1500,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 200,
         "End": 300,
-        "Count": 13
+        "Count": 122,
+        "MinEst": 9,
+        "MaxEst": 467
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 13
+        "Count": 101,
+        "MinEst": 9,
+        "MaxEst": 383
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 763
+        "Count": 872,
+        "MinEst": 759,
+        "MaxEst": 1217
       },
       {
         "Start": 200,
         "End": 1000,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 0,
         "End": 100,
-        "Count": 13
+        "Count": 80,
+        "MinEst": 9,
+        "MaxEst": 299
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 13
+        "Count": 132,
+        "MinEst": 9,
+        "MaxEst": 507
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 13
+        "Count": 60,
+        "MinEst": 9,
+        "MaxEst": 216
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimationForTimeDecay",
+    "Cases": [
+      {
+        "Start": "2020-01-01 00:00:00",
+        "End": "2025-01-01 00:00:00",
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
+      },
+      {
+        "Start": "2023-01-01 00:00:00",
+        "End": "2023-02-01 00:00:00",
+        "Count": 33,
+        "MinEst": 9,
+        "MaxEst": 108
+      },
+      {
+        "Start": "2023-02-01 00:00:00",
+        "End": "2023-03-01 00:00:00",
+        "Count": 28,
+        "MinEst": 9,
+        "MaxEst": 91
+      },
+      {
+        "Start": "2023-03-01 00:00:00",
+        "End": "2023-04-01 00:00:00",
+        "Count": 29,
+        "MinEst": 9,
+        "MaxEst": 92
+      },
+      {
+        "Start": "2023-04-01 00:00:00",
+        "End": "2023-05-01 00:00:00",
+        "Count": 26,
+        "MinEst": 9,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-05-01 00:00:00",
+        "End": "2023-06-01 00:00:00",
+        "Count": 25,
+        "MinEst": 9,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-06-01 00:00:00",
+        "End": "2023-07-01 00:00:00",
+        "Count": 22,
+        "MinEst": 9,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-07-01 00:00:00",
+        "End": "2023-08-01 00:00:00",
+        "Count": 21,
+        "MinEst": 9,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-08-01 00:00:00",
+        "End": "2023-09-01 00:00:00",
+        "Count": 19,
+        "MinEst": 9,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-09-01 00:00:00",
+        "End": "2023-10-01 00:00:00",
+        "Count": 17,
+        "MinEst": 9,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-10-01 00:00:00",
+        "End": "2023-11-01 00:00:00",
+        "Count": 15,
+        "MinEst": 9,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-11-01 00:00:00",
+        "End": "2023-12-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-12-01 00:00:00",
+        "End": "2024-01-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2024-01-01 00:00:00",
+        "End": "2024-02-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2024-02-01 00:00:00",
+        "End": "2024-03-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 80
+      },
+      {
+        "Start": "2024-03-01 00:00:00",
+        "End": "2024-04-01 00:00:00",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-01-01 00:00:00",
+        "End": "9999-12-31 00:00:00",
+        "Count": 8,
+        "MinEst": 8,
+        "MaxEst": 8
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimationForRiskRangeSkewRatio",
+    "Cases": [
+      {
+        "Start": "2020-01-01 00:00:00",
+        "End": "2025-01-01 00:00:00",
+        "CountRatioZero": 4500,
+        "CountRatio10Pct": 4500,
+        "CountRatio50Pct": 4500,
+        "CountRatio100Pct": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
+      },
+      {
+        "Start": "2023-01-01 00:00:00",
+        "End": "2023-02-01 00:00:00",
+        "CountRatioZero": 33,
+        "CountRatio10Pct": 22,
+        "CountRatio50Pct": 60,
+        "CountRatio100Pct": 108,
+        "MinEst": 13,
+        "MaxEst": 108
+      },
+      {
+        "Start": "2023-02-01 00:00:00",
+        "End": "2023-03-01 00:00:00",
+        "CountRatioZero": 28,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 52,
+        "CountRatio100Pct": 91,
+        "MinEst": 13,
+        "MaxEst": 91
+      },
+      {
+        "Start": "2023-03-01 00:00:00",
+        "End": "2023-04-01 00:00:00",
+        "CountRatioZero": 29,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 52,
+        "CountRatio100Pct": 92,
+        "MinEst": 13,
+        "MaxEst": 92
+      },
+      {
+        "Start": "2023-04-01 00:00:00",
+        "End": "2023-05-01 00:00:00",
+        "CountRatioZero": 26,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 48,
+        "CountRatio100Pct": 83,
+        "MinEst": 13,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-05-01 00:00:00",
+        "End": "2023-06-01 00:00:00",
+        "CountRatioZero": 25,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 49,
+        "CountRatio100Pct": 85,
+        "MinEst": 13,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-06-01 00:00:00",
+        "End": "2023-07-01 00:00:00",
+        "CountRatioZero": 22,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 48,
+        "CountRatio100Pct": 83,
+        "MinEst": 13,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-07-01 00:00:00",
+        "End": "2023-08-01 00:00:00",
+        "CountRatioZero": 21,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 49,
+        "CountRatio100Pct": 85,
+        "MinEst": 13,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-08-01 00:00:00",
+        "End": "2023-09-01 00:00:00",
+        "CountRatioZero": 19,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 49,
+        "CountRatio100Pct": 85,
+        "MinEst": 13,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-09-01 00:00:00",
+        "End": "2023-10-01 00:00:00",
+        "CountRatioZero": 17,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 48,
+        "CountRatio100Pct": 83,
+        "MinEst": 13,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-10-01 00:00:00",
+        "End": "2023-11-01 00:00:00",
+        "CountRatioZero": 15,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 49,
+        "CountRatio100Pct": 85,
+        "MinEst": 13,
+        "MaxEst": 85
+      },
+      {
+        "Start": "2023-11-01 00:00:00",
+        "End": "2023-12-01 00:00:00",
+        "CountRatioZero": 13,
+        "CountRatio10Pct": 20,
+        "CountRatio50Pct": 48,
+        "CountRatio100Pct": 83,
+        "MinEst": 13,
+        "MaxEst": 83
+      },
+      {
+        "Start": "2023-01-01 00:00:00",
+        "End": "9999-12-31 00:00:00",
+        "CountRatioZero": 8,
+        "CountRatio10Pct": 8,
+        "CountRatio50Pct": 8,
+        "CountRatio100Pct": 8,
+        "MinEst": 8,
+        "MaxEst": 8
       }
     ]
   },
@@ -225,6 +526,32 @@
         "Start": 1000,
         "End": 1200,
         "Count": 10
+      }
+    ]
+  },
+  {
+    "Name": "TestOutOfRangeEstimationForLongCommonPrefix",
+    "Cases": [
+      {
+        "Start": "very_long_common_prefix_that_will_cause_predWidth_zero_9999",
+        "End": "very_long_common_prefix_that_will_cause_predWidth_zero_9999",
+        "Count": 8,
+        "MinEst": 8,
+        "MaxEst": 8
+      },
+      {
+        "Start": "very_long_common_prefix_that_will_cause_predWidth_zero_8000",
+        "End": "very_long_common_prefix_that_will_cause_predWidth_zero_9000",
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
+      },
+      {
+        "Start": "very_long_common_prefix_that_will_cause_predWidth_zero_",
+        "End": "very_long_common_prefix_that_will_cause_predWidth_zero_",
+        "Count": 8,
+        "MinEst": 8,
+        "MaxEst": 8
       }
     ]
   },
@@ -836,8 +1163,8 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300 and a <= 900",
         "Result": [
-          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
+          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300), le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -860,16 +1187,16 @@
       {
         "SQL": "explain format = 'brief' select * from t where a >= 300",
         "Result": [
-          "TableReader 1338.33 root partition:all data:Selection",
-          "└─Selection 1338.33 cop[tikv]  ge(test.t.a, 300)",
+          "TableReader 2000.00 root partition:all data:Selection",
+          "└─Selection 2000.00 cop[tikv]  ge(test.t.a, 300)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'brief' select * from t where a <= 900",
         "Result": [
-          "TableReader 1338.33 root partition:p0,p1,p2,p3 data:Selection",
-          "└─Selection 1338.33 cop[tikv]  le(test.t.a, 900)",
+          "TableReader 2000.00 root partition:p0,p1,p2,p3 data:Selection",
+          "└─Selection 2000.00 cop[tikv]  le(test.t.a, 900)",
           "  └─TableFullScan 2000.00 cop[tikv] table:t keep order:false"
         ]
       },
@@ -1041,9 +1368,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 1.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
-          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.01 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1186,9 +1513,9 @@
         "Result": [
           "Limit 1.00 root  offset:0, count:1",
           "└─IndexLookUp 1.00 root  ",
-          "  ├─IndexFullScan(Build) 1.00 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
+          "  ├─IndexFullScan(Build) 1.01 cop[tikv] table:t, index:ic(c) keep order:true, stats:pseudo",
           "  └─Selection(Probe) 1.00 cop[tikv]  lt(test.t.d, 9950)",
-          "    └─TableRowIDScan 1.00 cop[tikv] table:t keep order:false, stats:pseudo"
+          "    └─TableRowIDScan 1.01 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       },
       {
@@ -1211,7 +1538,7 @@
           "TopN 1.00 root  test.t.c, offset:0, count:1",
           "└─TableReader 1.00 root  data:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.c, offset:0, count:1",
-          "    └─Selection 99510.00 cop[tikv]  lt(test.t.d, 9950)",
+          "    └─Selection 99500.00 cop[tikv]  lt(test.t.d, 9950)",
           "      └─TableFullScan 100000.00 cop[tikv] table:t keep order:false, stats:pseudo"
         ]
       }
@@ -3756,7 +4083,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 0,
+                            "avgRowCount": 154.37797031265498,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -3765,13 +4092,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 1
+                            "Result": 154.37797031265498
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1,
+                          "RowCount": 154.37797031265498,
                           "Type": "Range"
                         }
                       }
@@ -3780,7 +4107,7 @@
                   {
                     "Name": "a",
                     "Result": {
-                      "Est": 1,
+                      "Est": 154.37797031265498,
                       "MaxEst": 1100,
                       "MinEst": 1
                     }
@@ -4099,7 +4426,7 @@
                             "unsigned": false
                           },
                           {
-                            "avgRowCount": 0,
+                            "avgRowCount": 154.37797031265498,
                             "boundL": -2997,
                             "boundR": 2997,
                             "histL": -999,
@@ -4108,13 +4435,13 @@
                             "rPercent": 0
                           },
                           {
-                            "Result": 1
+                            "Result": 154.37797031265498
                           }
                         ]
                       },
                       {
                         "End estimate range": {
-                          "RowCount": 1,
+                          "RowCount": 154.37797031265498,
                           "Type": "Range"
                         }
                       }
@@ -4122,7 +4449,7 @@
                   },
                   {
                     "Name": "iab",
-                    "Result": 1
+                    "Result": 154.37797031265498
                   }
                 ]
               },
@@ -4275,7 +4602,7 @@
                 "Expressions": [
                   "lt(test.t.a, -1500)"
                 ],
-                "Selectivity": 0.0003246753246753247,
+                "Selectivity": 0.05012271763397889,
                 "partial cover": false
               },
               {

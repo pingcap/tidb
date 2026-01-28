@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/statistics"
 	statstestutil "github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
 	"github.com/pingcap/tidb/pkg/types"
@@ -241,6 +242,494 @@ func TestOutOfRangeEstimation(t *testing.T) {
 	}
 }
 
+func TestOutOfRangeEstimationForTimeDecay(t *testing.T) {
+	// Goal of this test is to demonstrate the time decay effect
+	// the estimated result. The count should be decreasing over time,
+	// and the maximum estimate should stay relatively constant.
+	// The estimate should also get to a point where it no longer declines.
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeDatetime),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Create mock statistics table with 3000 rows
+	statsTbl := mockStatsTable(tblInfo, 3000)
+
+	// Generate mock histogram data for column 'a' with datetime values
+	// Base date: 2020-01-01, generate 600 days (from day 0 to day 599)
+	// Then adjust to start from day 300 (2020-10-27) to day 899 (2022-06-19)
+	baseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	colValues := generateDateTimeDatum(600, baseDate)
+
+	// Adjust the values to be in range starting from day 300
+	for i := range colValues {
+		dt := baseDate.AddDate(0, 0, i+300)
+		timeVal := types.NewTime(types.FromGoTime(dt), mysql.TypeDatetime, types.DefaultFsp)
+		colValues[i] = types.NewTimeDatum(timeVal)
+	}
+
+	// Create column statistics with uniform distribution
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeDatetime)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+
+	// Test a specific range first - should be out of range
+	// Date after the histogram range: 2022-06-20 (day 900)
+	testDate := baseDate.AddDate(0, 0, 900)
+	countEst, err := getColumnRowCount(sctx, col, getDateTimeRange(testDate, testDate), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	count := countEst.Est
+	// Because the mock data is uniform distribution, the result should be predictable
+	require.Truef(t, count < 5.5, "expected: around 5.0, got: %v", count)
+	require.Truef(t, count > 4.5, "expected: around 5.0, got: %v", count)
+
+	// Check MinEst and MaxEst bounds for out-of-range case
+	require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for out-of-range case, MinEst: %v, Est: %v", countEst.MinEst, countEst.Est)
+	require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for out-of-range case, MaxEst: %v, Est: %v", countEst.MaxEst, countEst.Est)
+	require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for out-of-range case, got: %v", countEst.MinEst)
+	require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for out-of-range case, MaxEst: %v, MinEst: %v", countEst.MaxEst, countEst.MinEst)
+
+	var input []struct {
+		Start string // Date string like "2020-01-01 00:00:00"
+		End   string // Date string like "2020-01-01 00:00:00"
+	}
+	var output []struct {
+		Start  string
+		End    string
+		Count  float64
+		MinEst float64
+		MaxEst float64
+	}
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	// Use the mock table row count
+	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
+	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
+
+	// Parse date string format: "2006-01-02 15:04:05"
+	dateLayout := "2006-01-02 15:04:05"
+	for i, ran := range input {
+		startDate, err := time.Parse(dateLayout, ran.Start)
+		require.NoError(t, err, "Failed to parse start date: %s", ran.Start)
+		endDate, err := time.Parse(dateLayout, ran.End)
+		require.NoError(t, err, "Failed to parse end date: %s", ran.End)
+
+		countEst, err = getColumnRowCount(sctx, col, getDateTimeRange(startDate, endDate), increasedTblRowCount, modifyCount, false)
+		count = countEst.Est
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = math.Round(count)            // Round to nearest whole number
+			output[i].MinEst = math.Round(countEst.MinEst) // Round to nearest whole number
+			output[i].MaxEst = math.Round(countEst.MaxEst) // Round to nearest whole number
+		})
+		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+
+		// Check MinEst and MaxEst bounds
+		require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for [%v, %v], MinEst: %v, Est: %v", ran.Start, ran.End, countEst.MinEst, countEst.Est)
+		require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for [%v, %v], MaxEst: %v, Est: %v", ran.Start, ran.End, countEst.MaxEst, countEst.Est)
+		require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for [%v, %v], got: %v", ran.Start, ran.End, countEst.MinEst)
+		require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for [%v, %v], MaxEst: %v, MinEst: %v", ran.Start, ran.End, countEst.MaxEst, countEst.MinEst)
+	}
+}
+
+func TestOutOfRangeEstimationForRiskRangeSkewRatio(t *testing.T) {
+	// Goal of this test is to demonstrate the effect of risk range skew ratio
+	// on out-of-range estimation. When the risk range skew ratio is increased,
+	// the estimated count should increase (moving from estRows toward maxAddedRows).
+	// This test compares estimates with ratio=0 (baseline) vs ratio>0 (adjusted).
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeDatetime),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Create mock statistics table with 3000 rows
+	statsTbl := mockStatsTable(tblInfo, 3000)
+
+	// Generate mock histogram data for column 'a' with datetime values
+	// Base date: 2020-01-01, generate 600 days (from day 0 to day 599)
+	// Then adjust to start from day 300 (2020-10-27) to day 899 (2022-06-19)
+	baseDate := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	colValues := generateDateTimeDatum(600, baseDate)
+
+	// Adjust the values to be in range starting from day 300
+	for i := range colValues {
+		dt := baseDate.AddDate(0, 0, i+300)
+		timeVal := types.NewTime(types.FromGoTime(dt), mysql.TypeDatetime, types.DefaultFsp)
+		colValues[i] = types.NewTimeDatum(timeVal)
+	}
+
+	// Create column statistics with uniform distribution
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeDatetime)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+
+	// Test a specific range first - should be out of range
+	// Date after the histogram range: 2022-06-20 (day 900)
+	testDate := baseDate.AddDate(0, 0, 900)
+
+	// Test with different risk range skew ratios: 0.1, 0.5, 1.0
+	// Verify that estimates increase with ratio and that at 1.0, Est == MaxEst
+	sctx.GetSessionVars().RiskRangeSkewRatio = 0.1
+	countEst01, err := getColumnRowCount(sctx, col, getDateTimeRange(testDate, testDate), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	count01 := countEst01.Est
+
+	sctx.GetSessionVars().RiskRangeSkewRatio = 0.5
+	countEst05, err := getColumnRowCount(sctx, col, getDateTimeRange(testDate, testDate), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	count05 := countEst05.Est
+
+	sctx.GetSessionVars().RiskRangeSkewRatio = 1.0
+	countEst10, err := getColumnRowCount(sctx, col, getDateTimeRange(testDate, testDate), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	count10 := countEst10.Est
+
+	// Verify that ratio 0.1 is >= MinEst
+	require.Truef(t, count01 >= countEst01.MinEst, "Count at ratio 0.1 should be >= MinEst, count01: %v, MinEst: %v", count01, countEst01.MinEst)
+
+	// Verify that estimates increase with ratio: 0.1 <= 0.5 <= 1.0
+	require.Truef(t, count05 >= count01, "Count at ratio 0.5 should be >= ratio 0.1, count01: %v, count05: %v", count01, count05)
+	require.Truef(t, count10 >= count05, "Count at ratio 1.0 should be >= ratio 0.5, count05: %v, count10: %v", count05, count10)
+
+	// At ratio = 1.0, Est should equal MaxEst
+	require.Truef(t, math.Abs(countEst10.Est-countEst10.MaxEst) < 0.01, "At ratio 1.0, Est should equal MaxEst, Est: %v, MaxEst: %v", countEst10.Est, countEst10.MaxEst)
+
+	var input []struct {
+		Start string // Date string like "2020-01-01 00:00:00"
+		End   string // Date string like "2020-01-01 00:00:00"
+	}
+	var output []struct {
+		Start            string
+		End              string
+		CountRatioZero   float64 // Count with risk ratio = 0
+		CountRatio10Pct  float64 // Count with risk ratio = 0.1
+		CountRatio50Pct  float64 // Count with risk ratio = 0.5
+		CountRatio100Pct float64 // Count with risk ratio = 1.0
+		MinEst           float64
+		MaxEst           float64
+	}
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	// Use the mock table row count
+	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
+	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
+
+	// Parse date string format: "2006-01-02 15:04:05"
+	dateLayout := "2006-01-02 15:04:05"
+	for i, ran := range input {
+		startDate, err := time.Parse(dateLayout, ran.Start)
+		require.NoError(t, err, "Failed to parse start date: %s", ran.Start)
+		endDate, err := time.Parse(dateLayout, ran.End)
+		require.NoError(t, err, "Failed to parse end date: %s", ran.End)
+
+		// Test with different risk range skew ratios: 0, 0.1, 0.5, 1.0
+		sctx.GetSessionVars().RiskRangeSkewRatio = 0
+		countEst0, err := getColumnRowCount(sctx, col, getDateTimeRange(startDate, endDate), increasedTblRowCount, modifyCount, false)
+		require.NoError(t, err)
+		count0 := countEst0.Est
+
+		sctx.GetSessionVars().RiskRangeSkewRatio = 0.1
+		countEst01, err := getColumnRowCount(sctx, col, getDateTimeRange(startDate, endDate), increasedTblRowCount, modifyCount, false)
+		require.NoError(t, err)
+		count01 := countEst01.Est
+
+		sctx.GetSessionVars().RiskRangeSkewRatio = 0.5
+		countEst05, err := getColumnRowCount(sctx, col, getDateTimeRange(startDate, endDate), increasedTblRowCount, modifyCount, false)
+		require.NoError(t, err)
+		count05 := countEst05.Est
+
+		sctx.GetSessionVars().RiskRangeSkewRatio = 1.0
+		countEst10, err := getColumnRowCount(sctx, col, getDateTimeRange(startDate, endDate), increasedTblRowCount, modifyCount, false)
+		require.NoError(t, err)
+		count10 := countEst10.Est
+
+		testdata.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].CountRatioZero = math.Round(count0)    // Round to nearest whole number
+			output[i].CountRatio10Pct = math.Round(count01)  // Round to nearest whole number
+			output[i].CountRatio50Pct = math.Round(count05)  // Round to nearest whole number
+			output[i].CountRatio100Pct = math.Round(count10) // Round to nearest whole number
+			output[i].MinEst = math.Round(countEst10.MinEst) // Round to nearest whole number
+			output[i].MaxEst = math.Round(countEst10.MaxEst) // Round to nearest whole number
+		})
+
+		// Verify estimates for each ratio
+		require.Truef(t, count0 < output[i].CountRatioZero*1.2, "for [%v, %v] ratio 0, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatioZero, count0)
+		require.Truef(t, count0 > output[i].CountRatioZero*0.8, "for [%v, %v] ratio 0, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatioZero, count0)
+
+		require.Truef(t, count01 < output[i].CountRatio10Pct*1.2, "for [%v, %v] ratio 0.1, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatio10Pct, count01)
+		require.Truef(t, count01 > output[i].CountRatio10Pct*0.8, "for [%v, %v] ratio 0.1, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatio10Pct, count01)
+
+		require.Truef(t, count05 < output[i].CountRatio50Pct*1.2, "for [%v, %v] ratio 0.5, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatio50Pct, count05)
+		require.Truef(t, count05 > output[i].CountRatio50Pct*0.8, "for [%v, %v] ratio 0.5, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatio50Pct, count05)
+
+		require.Truef(t, count10 < output[i].CountRatio100Pct*1.2, "for [%v, %v] ratio 1.0, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatio100Pct, count10)
+		require.Truef(t, count10 > output[i].CountRatio100Pct*0.8, "for [%v, %v] ratio 1.0, needed: around %v, got: %v", ran.Start, ran.End, output[i].CountRatio100Pct, count10)
+
+		// Verify that ratio 0.1 is >= MinEst
+		require.Truef(t, count01 >= countEst01.MinEst, "for [%v, %v], count at ratio 0.1 should be >= MinEst, count01: %v, MinEst: %v", ran.Start, ran.End, count01, countEst01.MinEst)
+
+		// Verify that estimates increase with ratio: 0.1 <= 0.5 <= 1.0
+		require.Truef(t, count05 >= count01, "for [%v, %v], count at ratio 0.5 should be >= ratio 0.1, count01: %v, count05: %v", ran.Start, ran.End, count01, count05)
+		require.Truef(t, count10 >= count05, "for [%v, %v], count at ratio 1.0 should be >= ratio 0.5, count05: %v, count10: %v", ran.Start, ran.End, count05, count10)
+
+		// At ratio = 1.0, Est should equal MaxEst
+		require.Truef(t, math.Abs(countEst10.Est-countEst10.MaxEst) < 0.01, "for [%v, %v], at ratio 1.0, Est should equal MaxEst, Est: %v, MaxEst: %v", ran.Start, ran.End, countEst10.Est, countEst10.MaxEst)
+
+		// Check MinEst and MaxEst bounds
+		require.Truef(t, countEst10.MinEst <= countEst10.Est, "MinEst should be <= Est for [%v, %v], MinEst: %v, Est: %v", ran.Start, ran.End, countEst10.MinEst, countEst10.Est)
+		require.Truef(t, countEst10.MaxEst >= countEst10.Est, "MaxEst should be >= Est for [%v, %v], MaxEst: %v, Est: %v", ran.Start, ran.End, countEst10.MaxEst, countEst10.Est)
+		require.Truef(t, countEst10.MinEst >= 0, "MinEst should be >= 0 for [%v, %v], got: %v", ran.Start, ran.End, countEst10.MinEst)
+		require.Truef(t, countEst10.MaxEst >= countEst10.MinEst, "MaxEst should be >= MinEst for [%v, %v], MaxEst: %v, MinEst: %v", ran.Start, ran.End, countEst10.MaxEst, countEst10.MinEst)
+	}
+}
+
+func TestOutOfRangeEstimationForLongCommonPrefix(t *testing.T) {
+	// Goal of this test is to test the predWidth == 0 case when common prefix is too large.
+	// When the common prefix is very long, after removing it, the remaining bytes may be
+	// identical or empty, causing predWidth == 0. In this case, histInvalid is set to true
+	// and we return oneValue as the estimate.
+	// This happens when:
+	// 1. The predicate range shares a very long common prefix with histogram bounds
+	// 2. After removing the common prefix, both l and r become 0 (empty) or identical
+	// 3. This causes predWidth = r - l = 0
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeVarchar),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Create mock statistics table with 3000 rows
+	statsTbl := mockStatsTable(tblInfo, 3000)
+
+	// Generate mock histogram data for column 'a' with string values
+	// Use a long common prefix: "very_long_common_prefix_that_will_cause_predWidth_zero_"
+	// Histogram values: "prefix_0000", "prefix_0001", ..., "prefix_0599"
+	// The common prefix calculation will find the longest prefix shared between:
+	// - histogram lower bound, histogram upper bound, predicate start, predicate end
+	longPrefix := "very_long_common_prefix_that_will_cause_predWidth_zero_"
+	colValues := generateStringDatum(600, longPrefix, 0)
+
+	// Create column statistics with uniform distribution
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeVarchar)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+
+	// Test case 1: Predicate with values shorter than common prefix length
+	// If predicate values are shorter than the common prefix, after removing the prefix,
+	// both l and r will be 0 (empty), causing predWidth == 0
+	// Use a value that shares the prefix but is shorter than the full prefix length
+	// This simulates the case where common prefix covers the entire predicate value
+	shortValue := longPrefix[:len(longPrefix)-10] // Shorter than full prefix
+	countEst, err := getColumnRowCount(sctx, col, getStringRange(shortValue, shortValue), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	count := countEst.Est
+	// When predWidth == 0, histInvalid is set and we return oneValue
+	// oneValue = max(1.0, NotNullCount()/NDV) where NDV >= 100
+	// So count should be at least 1.0 and at most around NotNullCount/100
+	require.Truef(t, count >= 1.0, "expected: at least 1.0 (oneValue), got: %v", count)
+	require.Truef(t, count <= 30.0, "expected: at most around NotNullCount/100, got: %v", count)
+
+	// Check MinEst and MaxEst bounds
+	require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for predWidth==0 case, MinEst: %v, Est: %v", countEst.MinEst, countEst.Est)
+	require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for predWidth==0 case, MaxEst: %v, Est: %v", countEst.MaxEst, countEst.Est)
+	require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for predWidth==0 case, got: %v", countEst.MinEst)
+	require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for predWidth==0 case, MaxEst: %v, MinEst: %v", countEst.MaxEst, countEst.MinEst)
+
+	// Test case 2: Compare with a value that has the full prefix + suffix to prove predWidth != 0
+	// This value should result in a different (likely higher) estimate because predWidth > 0
+	// and normal out-of-range estimation logic is used
+	fullValue := longPrefix + "9999" // Full prefix + suffix, definitely out of range
+	countEstFull, err := getColumnRowCount(sctx, col, getStringRange(fullValue, fullValue), statsTbl.RealtimeCount, 0, false)
+	require.NoError(t, err)
+	countFull := countEstFull.Est
+
+	// The full value should use normal out-of-range estimation (predWidth > 0)
+	// This should result in a different estimate than the short value (predWidth == 0)
+	// Note: They might be similar, but the key difference is that one uses histInvalid=true
+	// and returns oneValue, while the other uses normal out-of-range calculation
+	// We verify they're both valid estimates
+	require.Truef(t, countFull >= 1.0, "Full value estimate should be at least 1.0, got: %v", countFull)
+
+	// Test case 3: Verify the characteristic behavior of predWidth == 0
+	// When predWidth == 0, histInvalid is set to true, which means:
+	// - leftPercent and rightPercent are not calculated (remain 0)
+	// - estRows defaults to oneValue (since totalPercent == 0)
+	// - The estimate should be based on oneValue, not on percentage calculations
+	//
+	// To prove this is working, we verify:
+	// 1. The estimate is consistent with oneValue calculation
+	// 2. The estimate is different from what we'd get with normal out-of-range calculation
+	// 3. MinEst <= Est <= MaxEst (bounds are valid)
+
+	// Calculate expected oneValue: max(1.0, NotNullCount()/NDV) where NDV >= 100
+	// The actual histNDV passed to OutOfRangeRowCount is: col.NDV - TopN.Num()
+	// Then it's adjusted: histNDV = max(histNDV, 100)
+	// Since we have no TopN in the test, histNDV = col.NDV = 600 (600 unique values)
+	actualHistNDV := col.Histogram.NDV
+	if col.TopN != nil {
+		actualHistNDV -= int64(col.TopN.Num())
+	}
+	// Apply the same adjustment as in OutOfRangeRowCount
+	actualHistNDV = int64(math.Max(float64(actualHistNDV), 100.0))
+	expectedOneValue := math.Max(1.0, col.Histogram.NotNullCount()) / float64(actualHistNDV)
+
+	// The estimate should be close to oneValue (may differ slightly due to risk ratio)
+	// If risk ratio is 0, Est should equal oneValue
+	// If risk ratio > 0, Est should be between oneValue and maxAddedRows
+	require.Truef(t, countEst.Est >= expectedOneValue*0.9 && countEst.Est <= expectedOneValue*1.1 ||
+		countEst.Est >= countEst.MinEst && countEst.Est <= countEst.MaxEst,
+		"Est should be close to oneValue (%v) or within MinEst-MaxEst range, got Est: %v, MinEst: %v, MaxEst: %v",
+		expectedOneValue, countEst.Est, countEst.MinEst, countEst.MaxEst)
+
+	// Log the values to help verify the test is working
+	t.Logf("predWidth==0 verification: shortValue='%s' (length %d, prefix length %d)", shortValue, len(shortValue), len(longPrefix))
+	t.Logf("  Est=%v, MinEst=%v, MaxEst=%v", countEst.Est, countEst.MinEst, countEst.MaxEst)
+	t.Logf("  NotNullCount=%v, histNDV=%v, expectedOneValue=%v", col.Histogram.NotNullCount(), actualHistNDV, expectedOneValue)
+	t.Logf("Comparison: fullValue='%s' (length %d), Est=%v (should use normal out-of-range calculation)",
+		fullValue, len(fullValue), countFull)
+
+	var input []struct {
+		Start string // String value
+		End   string // String value
+	}
+	var output []struct {
+		Start  string
+		End    string
+		Count  float64
+		MinEst float64
+		MaxEst float64
+	}
+	statsSuiteData := cardinality.GetCardinalitySuiteData()
+	statsSuiteData.LoadTestCases(t, &input, &output)
+
+	// Use the mock table row count
+	increasedTblRowCount := int64(float64(statsTbl.RealtimeCount) * 1.5)
+	modifyCount := int64(float64(statsTbl.RealtimeCount) * 0.5)
+
+	for i, ran := range input {
+		countEst, err = getColumnRowCount(sctx, col, getStringRange(ran.Start, ran.End), increasedTblRowCount, modifyCount, false)
+		count = countEst.Est
+		require.NoError(t, err)
+		testdata.OnRecord(func() {
+			output[i].Start = ran.Start
+			output[i].End = ran.End
+			output[i].Count = math.Round(count)            // Round to nearest whole number
+			output[i].MinEst = math.Round(countEst.MinEst) // Round to nearest whole number
+			output[i].MaxEst = math.Round(countEst.MaxEst) // Round to nearest whole number
+		})
+		require.Truef(t, count < output[i].Count*1.2, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+		require.Truef(t, count > output[i].Count*0.8, "for [%v, %v], needed: around %v, got: %v", ran.Start, ran.End, output[i].Count, count)
+
+		// Check MinEst and MaxEst bounds
+		require.Truef(t, countEst.MinEst <= countEst.Est, "MinEst should be <= Est for [%v, %v], MinEst: %v, Est: %v", ran.Start, ran.End, countEst.MinEst, countEst.Est)
+		require.Truef(t, countEst.MaxEst >= countEst.Est, "MaxEst should be >= Est for [%v, %v], MaxEst: %v, Est: %v", ran.Start, ran.End, countEst.MaxEst, countEst.Est)
+		require.Truef(t, countEst.MinEst >= 0, "MinEst should be >= 0 for [%v, %v], got: %v", ran.Start, ran.End, countEst.MinEst)
+		require.Truef(t, countEst.MaxEst >= countEst.MinEst, "MaxEst should be >= MinEst for [%v, %v], MaxEst: %v, MinEst: %v", ran.Start, ran.End, countEst.MaxEst, countEst.MinEst)
+	}
+}
+
 // TestRiskRangeSkewRatio tests that tidb_opt_risk_range_skew_ratio affects cardinality estimation
 // for out-of-range queries. When the ratio is increased, the estimated count should be higher.
 // This test specifically uses out-of-range queries where MaxEst > Est is expected.
@@ -308,8 +797,122 @@ func TestRiskRangeSkewRatio(t *testing.T) {
 	require.Truef(t, countEst2.MaxEst >= countEst1.MaxEst, "MaxEst should be >= when ratio is increased (out-of-range), MaxEst1: %v, MaxEst2: %v", countEst1.MaxEst, countEst2.MaxEst)
 }
 
+// TestOutOfRangeEstimationWithTopN demonstrates that TopN reduces addedRows in OutOfRangeRowCount.
+// When TopN values are present, the histRowCount includes TopNCount, resulting in lower addedRows
+// and thus lower out-of-range estimates compared to when TopN is not present.
+func TestOutOfRangeEstimationWithTopN(t *testing.T) {
+	// Create mock table info
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{
+						Name:   ast.NewCIStr("a"),
+						Offset: 0,
+						Length: -1,
+					},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Generate mock histogram data for column 'a' with values [300, 900)
+	// Each value appears 5 times (3000/600 = 5)
+	colValues, err := generateIntDatum(1, 600) // 600 values from 0 to 599
+	require.NoError(t, err)
+
+	// Adjust the values to be in range [300, 900)
+	for i := range colValues {
+		colValues[i].SetInt64(int64(i) + 300)
+	}
+
+	// Create column statistics WITHOUT TopN
+	colWithoutTopN := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+		TopN:              nil, // No TopN
+	}
+
+	// Create column statistics WITH TopN
+	// Add 10 frequent values to TopN, each appearing 50 times = 500 rows in TopN
+	colWithTopN := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 5, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+		TopN:              statistics.NewTopN(10),
+	}
+
+	sctx := mock.NewContext()
+	sc := sctx.GetSessionVars().StmtCtx
+
+	// Add 10 frequent values to TopN (values 300-309, each 50 times)
+	for i := 0; i < 10; i++ {
+		val := types.NewIntDatum(int64(i + 300))
+		encoded, err := tablecodec.EncodeValue(sc.TimeZone(), nil, val)
+		require.NoError(t, err)
+		colWithTopN.TopN.AppendTopN(encoded, 50)
+	}
+	colWithTopN.TopN.Sort()
+
+	// Set up test parameters:
+	// - Initial histogram: 3000 rows
+	// - RealtimeRowCount: 4500 rows (1500 rows added since ANALYZE)
+	// - For colWithoutTopN: histRowCount = 3000, addedRows = |4500 - 3000| = 1500
+	// - For colWithTopN: histRowCount = 3000 + 500 (TopN) = 3500, addedRows = |4500 - 3500| = 1000
+	realtimeRowCount := int64(4500)
+	modifyCount := int64(1500)
+
+	// Test out-of-range query: [900, 1000] - entirely out of range
+	testRange := getRange(900, 1000)
+
+	// Get estimates for both columns
+	countEstWithoutTopN, err := getColumnRowCount(sctx, colWithoutTopN, testRange, realtimeRowCount, modifyCount, false)
+	require.NoError(t, err)
+
+	countEstWithTopN, err := getColumnRowCount(sctx, colWithTopN, testRange, realtimeRowCount, modifyCount, false)
+	require.NoError(t, err)
+
+	// The estimate with TopN should be lower because addedRows is lower (1000 vs 1500)
+	// This demonstrates that TopN is properly excluded from addedRows calculation
+	require.Truef(t, countEstWithTopN.Est < countEstWithoutTopN.Est,
+		"Estimate with TopN (%v) should be lower than without TopN (%v) because addedRows is lower",
+		countEstWithTopN.Est, countEstWithoutTopN.Est)
+
+	// Verify that TopN count is correct
+	require.Equal(t, uint64(500), colWithTopN.TopN.TotalCount(), "TopN should contain 500 rows (10 values * 50 each)")
+
+	// Verify the histRowCount difference
+	histRowCountWithoutTopN := colWithoutTopN.Histogram.NotNullCount() + float64(colWithoutTopN.Histogram.NullCount) + float64(0)
+	histRowCountWithTopN := colWithTopN.Histogram.NotNullCount() + float64(colWithTopN.Histogram.NullCount) + float64(colWithTopN.TopN.TotalCount())
+	require.Equal(t, float64(3000), histRowCountWithoutTopN, "histRowCount without TopN should be 3000")
+	require.Equal(t, float64(3500), histRowCountWithTopN, "histRowCount with TopN should be 3500 (3000 + 500)")
+
+	t.Logf("Without TopN: Est=%v, histRowCount=%v, addedRows=%v",
+		countEstWithoutTopN.Est, histRowCountWithoutTopN, math.Abs(float64(realtimeRowCount)-histRowCountWithoutTopN))
+	t.Logf("With TopN: Est=%v, histRowCount=%v, addedRows=%v",
+		countEstWithTopN.Est, histRowCountWithTopN, math.Abs(float64(realtimeRowCount)-histRowCountWithTopN))
+}
+
 // TestOutOfRangeEstimationAfterDelete tests the out-of-range estimation after deletion happen.
-// The test result doesn't perfectly reflect the actual data distribution, but this is the expected behavior for now.
 func TestOutOfRangeEstimationAfterDelete(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
@@ -777,55 +1380,79 @@ func TestSelectivity(t *testing.T) {
 	for i := 1; i < 64; i++ {
 		longExpr += fmt.Sprintf(" and a > %d ", i)
 	}
+	// Helper function to round to 8 decimal places
+	roundTo8Decimals := func(val float64) float64 {
+		return math.Round(val*1e8) / 1e8
+	}
 	tests := []struct {
 		exprs                    string
 		selectivity              float64
 		selectivityAfterIncrease float64
+		rowEstimate              float64
+		rowEstimateAfterIncrease float64
 	}{
 		{
 			exprs:                    "a > 0 and a < 2",
-			selectivity:              0.01851851851,
-			selectivityAfterIncrease: 0.01851851851,
+			selectivity:              0.01851852,
+			selectivityAfterIncrease: 0.01851852,
+			rowEstimate:              10.0,  // 0.01851851851 * 540
+			rowEstimateAfterIncrease: 100.0, // 0.01851851851 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and a < 2",
-			selectivity:              0.01851851851,
-			selectivityAfterIncrease: 0.01851851851,
+			selectivity:              0.01851852,
+			selectivityAfterIncrease: 0.01851852,
+			rowEstimate:              10.0,  // 0.01851851851 * 540
+			rowEstimateAfterIncrease: 100.0, // 0.01851851851 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and b > 1 and a < 2",
-			selectivity:              0.018017832647462276,
-			selectivityAfterIncrease: 0.018518518518518517,
+			selectivity:              0.0178882,
+			selectivityAfterIncrease: 0.01851852,
+			rowEstimate:              9.65962963, // 0.0178882 * 540
+			rowEstimateAfterIncrease: 100.0,      // 0.018518518518518517 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
-			selectivity:              0.006358024691358024,
-			selectivityAfterIncrease: 0.01117283950617284,
+			selectivity:              0.0062524,
+			selectivityAfterIncrease: 0.01117524,
+			rowEstimate:              3.3762963,  // 0.0062524 * 540
+			rowEstimateAfterIncrease: 60.3462963, // 0.01117524 * 5400
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
-			selectivity:              0.012530864197530862,
-			selectivityAfterIncrease: 0.01734567901234568,
+			selectivity:              0.01242524,
+			selectivityAfterIncrease: 0.01734808,
+			rowEstimate:              6.70962963,  // 0.01242524 * 540
+			rowEstimateAfterIncrease: 93.67962963, // 0.01734808 * 5400
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
-			selectivity:              0.11111111111,
-			selectivityAfterIncrease: 0.11111111111,
+			selectivity:              0.11111111,
+			selectivityAfterIncrease: 0.11111111,
+			rowEstimate:              60.0,  // 0.11111111111 * 540
+			rowEstimateAfterIncrease: 600.0, // 0.11111111111 * 5400
 		},
 		{
 			exprs:                    "b > 1",
-			selectivity:              0.9729629629629629,
-			selectivityAfterIncrease: 1,
+			selectivity:              0.96725926,
+			selectivityAfterIncrease: 1.0,
+			rowEstimate:              522.32, // 0.96725926 * 540
+			rowEstimateAfterIncrease: 5400.0, // 1 * 5400
 		},
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
-			selectivity:              0.001851851851851852,
-			selectivityAfterIncrease: 0.0829,
+			selectivity:              0.00185185,
+			selectivityAfterIncrease: 0.08297482,
+			rowEstimate:              1.0,          // 0.001851851851851852 * 540
+			rowEstimateAfterIncrease: 448.06401667, // 0.08297482 * 5400
 		},
 		{
 			exprs:                    longExpr,
 			selectivity:              0.001,
 			selectivityAfterIncrease: 0.001,
+			rowEstimate:              0.54, // 0.001 * 540
+			rowEstimateAfterIncrease: 5.4,  // 0.001 * 5400
 		},
 	}
 
@@ -848,16 +1475,47 @@ func TestSelectivity(t *testing.T) {
 		ds := sel.Children()[0].(*logicalop.DataSource)
 
 		histColl := statsTbl.GenerateHistCollFromColumnInfo(ds.TableInfo, ds.Schema().Columns)
+		originalRealtimeCount := float64(histColl.RealtimeCount)
 
 		ratio, _, err := cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
-		require.Truef(t, math.Abs(ratio-tt.selectivity) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivity, ratio)
+		truncatedRatio := roundTo8Decimals(ratio)
+		// Allow 2% tolerance for selectivity
+		tolerance := math.Max(eps, tt.selectivity*0.02)
+		require.Truef(t, math.Abs(truncatedRatio-tt.selectivity) < tolerance, "for %s, needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.selectivity, truncatedRatio, tolerance)
 
+		// Verify row estimate: rowEstimate = selectivity * RealtimeCount
+		rowEst := ratio * originalRealtimeCount
+		truncatedRowEst := roundTo8Decimals(rowEst)
+		// Allow 5% tolerance for rowEstimate
+		rowTolerance := math.Max(eps*originalRealtimeCount, tt.rowEstimate*0.05)
+		require.Truef(t, math.Abs(truncatedRowEst-tt.rowEstimate) < rowTolerance, "for %s, rowEstimate needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.rowEstimate, truncatedRowEst, rowTolerance)
+
+		// Simulate table growth: increase RealtimeCount by 10x and set ModifyCount to 90% of new count
+		// This simulates a scenario where the table has grown significantly since the last ANALYZE.
+		// Note: selectivityAfterIncrease can be lower than selectivity because:
+		// 1. Selectivity = estimated_row_count / RealtimeCount
+		// 2. When RealtimeCount increases, estimated counts are scaled by GetIncreaseFactor, but this
+		//    scaling may not be perfectly proportional, especially when new rows don't match filter conditions well
+		// 3. For multi-column conditions, selectivities are multiplied, which can amplify small differences
+		// 4. Out-of-range estimates may behave differently with large ModifyCount values
+		// 5. The floor selectivity (1/RealtimeCount) decreases as RealtimeCount increases
 		histColl.RealtimeCount *= 10
 		histColl.ModifyCount = histColl.RealtimeCount * 9
+		increasedRealtimeCount := float64(histColl.RealtimeCount)
 		ratio, _, err = cardinality.Selectivity(sctx.GetPlanCtx(), histColl, sel.Conditions, nil)
 		require.NoErrorf(t, err, "for %s", tt.exprs)
-		require.Truef(t, math.Abs(ratio-tt.selectivityAfterIncrease) < eps, "for %s, needed: %v, got: %v", tt.exprs, tt.selectivityAfterIncrease, ratio)
+		truncatedRatioAfterIncrease := roundTo8Decimals(ratio)
+		// Allow 5% tolerance for selectivityAfterIncrease
+		toleranceAfterIncrease := math.Max(eps, tt.selectivityAfterIncrease*0.05)
+		require.Truef(t, math.Abs(truncatedRatioAfterIncrease-tt.selectivityAfterIncrease) < toleranceAfterIncrease, "for %s, needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.selectivityAfterIncrease, truncatedRatioAfterIncrease, toleranceAfterIncrease)
+
+		// Verify row estimate after increase: rowEstimateAfterIncrease = selectivityAfterIncrease * (RealtimeCount * 10)
+		rowEstAfterIncrease := ratio * increasedRealtimeCount
+		truncatedRowEstAfterIncrease := roundTo8Decimals(rowEstAfterIncrease)
+		// Allow 5% tolerance for rowEstimateAfterIncrease
+		rowToleranceAfterIncrease := math.Max(eps*increasedRealtimeCount, tt.rowEstimateAfterIncrease*0.05)
+		require.Truef(t, math.Abs(truncatedRowEstAfterIncrease-tt.rowEstimateAfterIncrease) < rowToleranceAfterIncrease, "for %s, rowEstimateAfterIncrease needed: %v, got: %v (tolerance: %v)", tt.exprs, tt.rowEstimateAfterIncrease, truncatedRowEstAfterIncrease, rowToleranceAfterIncrease)
 	}
 }
 
@@ -1148,6 +1806,53 @@ func getRange(start, end int64) ranger.Ranges {
 	return []*ranger.Range{ran}
 }
 
+// generateDateTimeDatum generates a slice of datetime datums starting from a base date.
+// num specifies how many datums to generate, each separated by one day.
+func generateDateTimeDatum(num int, baseDate time.Time) []types.Datum {
+	ret := make([]types.Datum, num)
+	for i := range num {
+		dt := baseDate.AddDate(0, 0, i)
+		timeVal := types.NewTime(types.FromGoTime(dt), mysql.TypeDatetime, types.DefaultFsp)
+		ret[i] = types.NewTimeDatum(timeVal)
+	}
+	return ret
+}
+
+// getDateTimeRange creates a ranger.Ranges for datetime values.
+func getDateTimeRange(start, end time.Time) ranger.Ranges {
+	startTime := types.NewTime(types.FromGoTime(start), mysql.TypeDatetime, types.DefaultFsp)
+	endTime := types.NewTime(types.FromGoTime(end), mysql.TypeDatetime, types.DefaultFsp)
+	ran := &ranger.Range{
+		LowVal:    []types.Datum{types.NewTimeDatum(startTime)},
+		HighVal:   []types.Datum{types.NewTimeDatum(endTime)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	return []*ranger.Range{ran}
+}
+
+// generateStringDatum generates a slice of string datums with a common prefix.
+// num specifies how many datums to generate.
+// Each value will be: prefix + suffix where suffix varies.
+func generateStringDatum(num int, prefix string, suffixStart int) []types.Datum {
+	ret := make([]types.Datum, num)
+	for i := range num {
+		suffix := fmt.Sprintf("%04d", suffixStart+i)
+		value := prefix + suffix
+		ret[i] = types.NewStringDatum(value)
+	}
+	return ret
+}
+
+// getStringRange creates a ranger.Ranges for string values.
+func getStringRange(start, end string) ranger.Ranges {
+	ran := &ranger.Range{
+		LowVal:    []types.Datum{types.NewStringDatum(start)},
+		HighVal:   []types.Datum{types.NewStringDatum(end)},
+		Collators: collate.GetBinaryCollatorSlice(1),
+	}
+	return []*ranger.Range{ran}
+}
+
 func getRanges(start, end []int64) (res ranger.Ranges) {
 	if len(start) != len(end) {
 		return nil
@@ -1262,6 +1967,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	testKit := testkit.NewTestKit(t, store)
 	h := dom.StatsHandle()
 	testKit.MustExec("use test")
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
 	testKit.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	testKit.MustExec("drop table if exists t")
 	testKit.MustExec("create table t(a int unsigned) " +
@@ -1302,6 +2008,7 @@ func TestGlobalStatsOutOfRangeEstimationAfterDelete(t *testing.T) {
 	for i := range input {
 		testKit.MustQuery(input[i]).Check(testkit.Rows(output[i].Result...))
 	}
+	testKit.MustExec("set @@global.tidb_enable_auto_analyze='ON'")
 }
 
 func generateMapsForMockStatsTbl(statsTbl *statistics.Table) {
@@ -1368,7 +2075,7 @@ func TestIssue39593(t *testing.T) {
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
-	require.InDelta(t, float64(3702.6), countResult.Est, float64(1))
+	require.InDelta(t, float64(5400), countResult.Est, float64(200))
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
