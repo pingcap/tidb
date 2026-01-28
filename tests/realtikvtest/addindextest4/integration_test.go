@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -418,7 +418,7 @@ func TestCancelAfterReorgTimeout(t *testing.T) {
 	})
 	afterTimeout := false
 	timeout := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterDXFTaskSubmitted", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterDXFTaskSubmitted", func() {
 		<-meetErr
 		<-timeout
 		tk1 := testkit.NewTestKit(t, store)

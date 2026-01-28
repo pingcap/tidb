@@ -28,21 +28,21 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/phayes/freeport"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	diststorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
-	"github.com/pingcap/tidb/pkg/disttask/operator"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	diststorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/operator"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/store/helper"
@@ -93,9 +93,9 @@ func genServerWithStorage(t *testing.T) (*fakestorage.Server, string) {
 }
 
 func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) {
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	storeBackend, err := objstore.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	for _, id := range []int64{jobID, taskID} {
 		prefix := strconv.Itoa(int(id))
@@ -108,9 +108,9 @@ func checkFileCleaned(t *testing.T, jobID, taskID int64, sortStorageURI string) 
 
 // check the file under dir or partitioned dir have files with keyword
 func checkFileExist(t *testing.T, sortStorageURI string, dir, keyword string) {
-	storeBackend, err := storage.ParseBackend(sortStorageURI, nil)
+	storeBackend, err := objstore.ParseBackend(sortStorageURI, nil)
 	require.NoError(t, err)
-	extStore, err := storage.NewWithDefaultOpt(context.Background(), storeBackend)
+	extStore, err := objstore.NewWithDefaultOpt(context.Background(), storeBackend)
 	require.NoError(t, err)
 	dataFiles, err := external.GetAllFileNames(context.Background(), extStore, dir)
 	require.NoError(t, err)
@@ -163,10 +163,10 @@ func TestGlobalSortBasic(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	ch := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/doCleanupTask", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/doCleanupTask", func() {
 		ch <- struct{}{}
 	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
 	tk.MustExec("drop database if exists addindexlit;")
@@ -376,7 +376,7 @@ func TestGlobalSortDuplicateErrMsg(t *testing.T) {
 	})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockRegionBatch", `return(1)`)
 	testErrStep := proto.StepInit
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterRunSubtask",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterRunSubtask",
 		func(e taskexecutor.TaskExecutor, errP *error, _ context.Context) {
 			if errP != nil {
 				testErrStep = e.GetTaskBase().Step
@@ -629,7 +629,7 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 		modifiedMerge     atomic.Bool
 	)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", "return(true)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/afterDetectAndHandleParamModify", func(step proto.Step) {
 		switch step {
 		case proto.BackfillStepReadIndex:
 			modifiedReadIndex.Store(true)
@@ -961,14 +961,14 @@ func TestNextGenMetering(t *testing.T) {
 	tk.MustExec("insert into t values ('a',1,1),('b',2,2),('c',3,3);")
 
 	baseTime := time.Now().Truncate(time.Minute).Unix()
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
 		*ts = baseTime
 		baseTime += 60
 	})
 	var gotMeterData uberatomic.String
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
 	})
 	var jobID int64
@@ -979,7 +979,7 @@ func TestNextGenMetering(t *testing.T) {
 	})
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/forceMergeSort", `return()`)
 	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
 		rowAndSizeMeterItems.Store(&items)
 	})
 	tk.MustExec("alter table t add index idx(c);")
@@ -992,7 +992,7 @@ func TestNextGenMetering(t *testing.T) {
 		return gotMeterData.Load() != ""
 	}, 30*time.Second, 300*time.Millisecond)
 	require.Contains(t, gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	require.Contains(t, gotMeterData.Load(), "requests{get: 7, put: 6}")
+	require.Contains(t, gotMeterData.Load(), "requests{get: 5, put: 6}")
 	// the read bytes is not stable, but it's more than 100B.
 	// the write bytes is also not stable, due to retry, but mostly 100B to a few KB.
 	require.Regexp(t, `cluster{r: 1\d\dB, w: (\d{3}|.*Ki)B}`, gotMeterData.Load())
@@ -1004,13 +1004,13 @@ func TestNextGenMetering(t *testing.T) {
 	readIndexSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepReadIndex)
 	mergeSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepMergeSort)
 	ingestSum := getStepSummary(t, taskManager, task.ID, proto.BackfillStepWriteAndIngest)
-	require.EqualValues(t, 1, readIndexSum.GetReqCnt.Load())
+	require.EqualValues(t, 0, readIndexSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, readIndexSum.PutReqCnt.Load())
 	require.Greater(t, readIndexSum.ReadBytes.Load(), int64(0))
 	require.EqualValues(t, 153, readIndexSum.Bytes.Load())
 	require.EqualValues(t, 3, readIndexSum.RowCnt.Load())
 
-	require.EqualValues(t, 3, mergeSum.GetReqCnt.Load())
+	require.EqualValues(t, 2, mergeSum.GetReqCnt.Load())
 	require.EqualValues(t, 3, mergeSum.PutReqCnt.Load())
 	require.EqualValues(t, 0, mergeSum.ReadBytes.Load())
 	require.EqualValues(t, 0, mergeSum.Bytes.Load())
@@ -1054,7 +1054,7 @@ func TestGlobalSortExtraParams(t *testing.T) {
 		t.Skip("only for nextgen kernel")
 	}
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeSubmitTask",
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
 		func(requiredSlots *int, params *proto.ExtraParams) {
 			*requiredSlots = 16
 			params.MaxRuntimeSlots = 12

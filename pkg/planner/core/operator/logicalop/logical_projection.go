@@ -519,18 +519,66 @@ func (p *LogicalProjection) buildSchemaByExprs(selfSchema *expression.Schema) *e
 // When a sort column will be replaced by a constant, we just remove it.
 func (p *LogicalProjection) TryToGetChildProp(prop *property.PhysicalProperty) (*property.PhysicalProperty, bool) {
 	newProp := prop.CloneEssentialFields()
-	newCols := make([]property.SortItem, 0, len(prop.SortItems))
-	for _, col := range prop.SortItems {
-		idx := p.Schema().ColumnIndex(col.Col)
+	// First, transform SortItems (common for both cases)
+	if prop.SortItems != nil {
+		newSortItems, ok := p.tryTransformSortItems(prop.SortItems)
+		if !ok {
+			return nil, false
+		}
+		newProp.SortItems = newSortItems
+	}
+
+	// If PartialOrderInfo is present, check if it can be passed through this projection.
+	// All columns in PartialOrderInfo must be simple column references (not scalar functions).
+	if prop.PartialOrderInfo != nil {
+		newPartialOrderItems, ok := p.tryTransformSortItemPtrs(prop.PartialOrderInfo.SortItems)
+		if !ok {
+			return nil, false
+		}
+		newProp.PartialOrderInfo = &property.PartialOrderInfo{
+			SortItems: newPartialOrderItems,
+		}
+	}
+
+	return newProp, true
+}
+
+// tryTransformSortItems tries to transform []SortItem through projection.
+// Returns the transformed items and true if successful, or nil and false if any
+// sort column is replaced by a scalar function (which cannot preserve order).
+func (p *LogicalProjection) tryTransformSortItems(items []property.SortItem) ([]property.SortItem, bool) {
+	newItems := make([]property.SortItem, 0, len(items))
+	for _, item := range items {
+		idx := p.Schema().ColumnIndex(item.Col)
 		switch expr := p.Exprs[idx].(type) {
 		case *expression.Column:
-			newCols = append(newCols, property.SortItem{Col: expr, Desc: col.Desc})
+			newItems = append(newItems, property.SortItem{Col: expr, Desc: item.Desc})
 		case *expression.ScalarFunction:
 			return nil, false
 		}
 	}
-	newProp.SortItems = newCols
-	return newProp, true
+	return newItems, true
+}
+
+// tryTransformSortItemPtrs tries to transform []*SortItem through projection.
+// Returns the transformed items and true if successful, or nil and false if any
+// sort column is replaced by a scalar function (which cannot preserve order).
+func (p *LogicalProjection) tryTransformSortItemPtrs(items []*property.SortItem) ([]*property.SortItem, bool) {
+	newItems := make([]*property.SortItem, 0, len(items))
+	for _, item := range items {
+		idx := p.Schema().ColumnIndex(item.Col)
+		if idx == -1 {
+			// Column not found in projection schema, skip it (constant case)
+			continue
+		}
+		switch expr := p.Exprs[idx].(type) {
+		case *expression.Column:
+			newItems = append(newItems, &property.SortItem{Col: expr, Desc: item.Desc})
+		case *expression.ScalarFunction:
+			return nil, false
+		}
+	}
+	return newItems, true
 }
 
 func (p *LogicalProjection) getGroupNDVs(childProfile *property.StatsInfo, selfSchema *expression.Schema) []property.GroupNDV {

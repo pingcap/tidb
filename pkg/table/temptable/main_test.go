@@ -95,11 +95,14 @@ func (is *mockedInfoSchema) TableByID(_ context.Context, tblID int64) (table.Tab
 	return tbl, true
 }
 
+const mockCommitTS = 1024
+
 type mockedSnapshot struct {
 	*mockedRetriever
 }
 
 func newMockedSnapshot(retriever *mockedRetriever) *mockedSnapshot {
+	retriever.commitTS = mockCommitTS
 	return &mockedSnapshot{mockedRetriever: retriever}
 }
 
@@ -114,10 +117,11 @@ type methodInvoke struct {
 }
 
 type mockedRetriever struct {
-	t       *testing.T
-	data    []*kv.Entry
-	dataMap map[string][]byte
-	invokes []*methodInvoke
+	t        *testing.T
+	data     []*kv.Entry
+	commitTS uint64
+	dataMap  map[string][]byte
+	invokes  []*methodInvoke
 
 	allowInvokes map[string]any
 	errorMap     map[string]error
@@ -166,27 +170,42 @@ func (r *mockedRetriever) GetInvokes() []*methodInvoke {
 	return r.invokes
 }
 
-func (r *mockedRetriever) Get(ctx context.Context, k kv.Key) (val []byte, err error) {
+func (r *mockedRetriever) Get(ctx context.Context, k kv.Key, options ...kv.GetOption) (entry kv.ValueEntry, err error) {
+	var opt kv.GetOptions
+	opt.Apply(options)
+	var commitTS uint64
+	if opt.ReturnCommitTS() {
+		commitTS = r.commitTS
+	}
 	r.checkMethodInvokeAllowed("Get")
 	if err = r.getMethodErr("Get"); err == nil {
 		var ok bool
-		val, ok = r.dataMap[string(k)]
+		val, ok := r.dataMap[string(k)]
 		if !ok {
+			commitTS = 0
 			err = kv.ErrNotExist
 		}
+		entry = kv.NewValueEntry(val, commitTS)
 	}
-	r.appendInvoke("Get", []any{ctx, k}, []any{val, err})
+	r.appendInvoke("Get", []any{ctx, k}, []any{entry, err})
 	return
 }
 
-func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key) (data map[string][]byte, err error) {
+func (r *mockedRetriever) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (data map[string]kv.ValueEntry, err error) {
+	var opt kv.BatchGetOptions
+	opt.Apply(options)
+	var commitTS uint64
+	if opt.ReturnCommitTS() {
+		commitTS = r.commitTS
+	}
+
 	r.checkMethodInvokeAllowed("BatchGet")
 	if err = r.getMethodErr("BatchGet"); err == nil {
-		data = make(map[string][]byte)
+		data = make(map[string]kv.ValueEntry)
 		for _, k := range keys {
 			val, ok := r.dataMap[string(k)]
 			if ok {
-				data[string(k)] = val
+				data[string(k)] = kv.NewValueEntry(val, commitTS)
 			}
 		}
 	}

@@ -32,7 +32,7 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/golang/snappy"
 	"github.com/klauspost/compress/zstd"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/importsdk"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
@@ -243,7 +243,7 @@ func (s *mockGCSSuite) TestAutoDetectFileType() {
 		{objectName: "csv_as_sql.sql", options: "", wantSubstr: "encode kv error"},
 	}
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/testSetLastTaskID", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/testSetLastTaskID", "return(true)")
 	taskMgr, err := storage.GetTaskManager()
 	s.NoError(err)
 	ctx := util.WithInternalSourceType(context.Background(), "taskManager")

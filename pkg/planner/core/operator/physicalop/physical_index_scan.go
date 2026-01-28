@@ -108,6 +108,8 @@ type PhysicalIndexScan struct {
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
+
+	NotAlwaysValid bool
 }
 
 // FullRange represent used all partitions.
@@ -230,7 +232,7 @@ func (p *PhysicalIndexScan) AccessObject() base.AccessObject {
 
 // ExplainID overrides the ExplainID in order to match different range.
 func (p *PhysicalIndexScan) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
@@ -655,6 +657,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 		ConstColsByCond:  path.ConstCols,
 		Prop:             prop,
+		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	rowCount := path.CountAfterAccess
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)

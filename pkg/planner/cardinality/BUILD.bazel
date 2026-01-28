@@ -26,7 +26,6 @@ go_library(
         "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util",
-        "//pkg/planner/util/fixcontrol",
         "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",

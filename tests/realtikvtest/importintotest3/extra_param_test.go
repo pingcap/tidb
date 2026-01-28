@@ -18,14 +18,14 @@ import (
 	"fmt"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
 
 func (s *mockGCSSuite) TestExtraParamMaxRuntimeSlots() {
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/storage/beforeSubmitTask",
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/storage/beforeSubmitTask",
 		func(requiredSlots *int, params *proto.ExtraParams) {
 			*requiredSlots = 16
 			params.MaxRuntimeSlots = 12

@@ -27,7 +27,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	planutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
@@ -387,14 +386,8 @@ OUTER:
 		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
 	}
 
-	if !fixcontrol.GetBoolWithDefault(
-		ctx.GetSessionVars().GetOptimizerFixControlMap(),
-		fixcontrol.Fix47400,
-		false,
-	) {
-		// Don't allow the result to be less than 1 row
-		ret = max(ret, 1.0/float64(coll.RealtimeCount))
-	}
+	// Don't allow the result to be less than 1 row
+	ret = max(ret, 1.0/float64(coll.RealtimeCount))
 	return ret, nodes, nil
 }
 

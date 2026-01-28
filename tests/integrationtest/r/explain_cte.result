@@ -6,7 +6,7 @@ insert into t1 values(1, 0), (2, 1);
 insert into t2 values(1, 0), (2, 1);
 explain format='plan_tree' with cte(a) as (select 1) select * from cte;
 id	task	access object	operator info
-Projection	root		1->Column#3
+Projection	root		1->Column
 └─TableDual	root		rows:1
 explain format='plan_tree' with cte(a) as (select c1 from t1) select * from cte;
 id	task	access object	operator info
@@ -23,10 +23,10 @@ explain format='plan_tree' with recursive cte(a) as (select 1 union select a+1 f
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte	data:CTE_0
 CTE_0	root		Recursive CTE
-├─Projection(Seed Part)	root		1->Column#2
+├─Projection(Seed Part)	root		1->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
-  └─Selection	root		lt(Column#3, 10)
+└─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column
+  └─Selection	root		lt(Column, 10)
     └─CTETable	root		Scan on CTE_0
 explain format='plan_tree' with recursive cte(a) as (select c2 from t1 union select a+1 from cte where a < 10) select * from cte;
 id	task	access object	operator info
@@ -41,10 +41,10 @@ explain format='plan_tree' with cte(a) as (with recursive cte1(a) as (select 1 u
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte1	data:CTE_2
 CTE_2	root		Recursive CTE
-├─Projection(Seed Part)	root		1->Column#9
+├─Projection(Seed Part)	root		1->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		cast(plus(Column#10, 1), bigint BINARY)->Column#12
-  └─Selection	root		lt(Column#10, 10)
+└─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column
+  └─Selection	root		lt(Column, 10)
     └─CTETable	root		Scan on CTE_2
 explain format='plan_tree' with recursive cte(a) as (select 1 union select a+1 from cte where a < 10) select * from cte t1, cte t2;
 id	task	access object	operator info
@@ -52,10 +52,10 @@ HashJoin	root		CARTESIAN inner join
 ├─CTEFullScan(Build)	root	CTE:cte AS t2	data:CTE_0
 └─CTEFullScan(Probe)	root	CTE:cte AS t1	data:CTE_0
 CTE_0	root		Recursive CTE
-├─Projection(Seed Part)	root		1->Column#2
+├─Projection(Seed Part)	root		1->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
-  └─Selection	root		lt(Column#3, 10)
+└─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column
+  └─Selection	root		lt(Column, 10)
     └─CTETable	root		Scan on CTE_0
 explain format='plan_tree' with cte(a) as (with recursive cte1(a) as (select 1 union select a + 1 from cte1 where a < 10) select * from cte1) select * from cte t1, cte t2;
 id	task	access object	operator info
@@ -65,10 +65,10 @@ HashJoin	root		CARTESIAN inner join
 CTE_0	root		Non-Recursive CTE
 └─CTEFullScan(Seed Part)	root	CTE:cte1	data:CTE_1
 CTE_1	root		Recursive CTE
-├─Projection(Seed Part)	root		1->Column#2
+├─Projection(Seed Part)	root		1->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
-  └─Selection	root		lt(Column#3, 10)
+└─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column
+  └─Selection	root		lt(Column, 10)
     └─CTETable	root		Scan on CTE_1
 explain format='plan_tree' with recursive cte1(a) as (select 1 union select a+1 from cte1 where a < 10), cte2(a) as (select c2 from t1 union select a+1 from cte2 where a < 10) select * from cte1, cte2;
 id	task	access object	operator info
@@ -76,10 +76,10 @@ HashJoin	root		CARTESIAN inner join
 ├─CTEFullScan(Build)	root	CTE:cte1	data:CTE_0
 └─CTEFullScan(Probe)	root	CTE:cte2	data:CTE_1
 CTE_0	root		Recursive CTE
-├─Projection(Seed Part)	root		1->Column#2
+├─Projection(Seed Part)	root		1->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		cast(plus(Column#3, 1), bigint BINARY)->Column#5
-  └─Selection	root		lt(Column#3, 10)
+└─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column
+  └─Selection	root		lt(Column, 10)
     └─CTETable	root		Scan on CTE_0
 CTE_1	root		Recursive CTE
 ├─TableReader(Seed Part)	root		data:TableFullScan
@@ -100,23 +100,23 @@ explain format='plan_tree' with recursive cte(a,b) as (select 1, concat('a', 1) 
 id	task	access object	operator info
 CTEFullScan	root	CTE:cte	data:CTE_0
 CTE_0	root		Recursive CTE
-├─Projection(Seed Part)	root		1->Column#3, a1->Column#4
+├─Projection(Seed Part)	root		1->Column, a1->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		cast(plus(Column#5, 1), bigint BINARY)->Column#9, cast(concat(Column#6, 1), var_string(21))->Column#10
-  └─Selection	root		lt(Column#5, 5)
+└─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column, cast(concat(Column, 1), var_string(21))->Column
+  └─Selection	root		lt(Column, 5)
     └─CTETable	root		Scan on CTE_0
 explain format='plan_tree' select * from t1 dt where exists(with recursive qn as (select c1*0+1 as b union all select b+1 from qn where b=0) select * from qn where b=1);
 id	task	access object	operator info
 Apply	root		CARTESIAN semi join, left side:TableReader
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:dt	keep order:false, stats:pseudo
-└─Selection(Probe)	root		eq(Column#8, 1)
+└─Selection(Probe)	root		eq(Column, 1)
   └─CTEFullScan	root	CTE:qn	data:CTE_0
 CTE_0	root		Recursive CTE
-├─Projection(Seed Part)	root		plus(mul(explain_cte.t1.c1, 0), 1)->Column#4
+├─Projection(Seed Part)	root		plus(mul(explain_cte.t1.c1, 0), 1)->Column
 │ └─TableDual	root		rows:1
-└─Projection(Recursive Part)	root		plus(Column#5, 1)->Column#7
-  └─Selection	root		eq(Column#5, 0)
+└─Projection(Recursive Part)	root		plus(Column, 1)->Column
+  └─Selection	root		eq(Column, 0)
     └─CTETable	root		Scan on CTE_0
 explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 + 1 c1 from cte1 limit 1) select * from cte1;
 id	task	access object	operator info
@@ -360,24 +360,24 @@ order by t_s_secyear.customer_id
 ,t_s_secyear.customer_email_address
 limit 100;
 id	task	access object	operator info
-TopN	root		Column#180, Column#181, Column#182, Column#186, offset:0, count:100
-└─HashJoin	root		inner join, equal:[eq(Column#170, Column#200)], other cond:gt(case(gt(Column#198, 0), div(Column#208, Column#198), 0.000000), case(gt(Column#178, 0), div(Column#188, Column#178), 0.000000))
-  ├─Selection(Build)	root		eq(Column#207, 2002), eq(Column#209, "w"), not(isnull(Column#200))
+TopN	root		Column, Column, Column, Column, offset:0, count:100
+└─HashJoin	root		inner join, equal:[eq(Column, Column)], other cond:gt(case(gt(Column, 0), div(Column, Column), 0.000000), case(gt(Column, 0), div(Column, Column), 0.000000))
+  ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2002), not(isnull(Column))
   │ └─CTEFullScan	root	CTE:year_total AS t_w_secyear	data:CTE_0
-  └─HashJoin(Probe)	root		inner join, equal:[eq(Column#170, Column#190)]
-    ├─Selection(Build)	root		eq(Column#197, 2001), eq(Column#199, "w"), gt(Column#198, 0), not(isnull(Column#190))
+  └─HashJoin(Probe)	root		inner join, equal:[eq(Column, Column)]
+    ├─Selection(Build)	root		eq(Column, "w"), eq(Column, 2001), gt(Column, 0), not(isnull(Column))
     │ └─CTEFullScan	root	CTE:year_total AS t_w_firstyear	data:CTE_0
-    └─HashJoin(Probe)	root		inner join, equal:[eq(Column#170, Column#180)]
-      ├─Selection(Build)	root		eq(Column#187, 2002), eq(Column#189, "s"), not(isnull(Column#180))
+    └─HashJoin(Probe)	root		inner join, equal:[eq(Column, Column)]
+      ├─Selection(Build)	root		eq(Column, "s"), eq(Column, 2002), not(isnull(Column))
       │ └─CTEFullScan	root	CTE:year_total AS t_s_secyear	data:CTE_0
-      └─Selection(Probe)	root		eq(Column#177, 2001), eq(Column#179, "s"), gt(Column#178, 0), not(isnull(Column#170))
+      └─Selection(Probe)	root		eq(Column, "s"), eq(Column, 2001), gt(Column, 0), not(isnull(Column))
         └─CTEFullScan	root	CTE:year_total AS t_s_firstyear	data:CTE_0
 CTE_0	root		Non-Recursive CTE
 └─Union(Seed Part)	root		
-  ├─Projection	root		explain_cte.customer.c_customer_id->Column#160, explain_cte.customer.c_first_name->Column#161, explain_cte.customer.c_last_name->Column#162, explain_cte.customer.c_preferred_cust_flag->Column#163, explain_cte.customer.c_birth_country->Column#164, explain_cte.customer.c_login->Column#165, explain_cte.customer.c_email_address->Column#166, explain_cte.date_dim.d_year->Column#167, Column#73->Column#168, s->Column#169
-  │ └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column#73, 0)), eq(explain_cte.date_dim.d_year, 2002))
-  │   └─HashAgg	root		group by:Column#217, Column#218, Column#219, Column#220, Column#221, Column#222, Column#223, Column#224, funcs:sum(Column#216)->Column#73, funcs:firstrow(Column#217)->explain_cte.customer.c_customer_id, funcs:firstrow(Column#218)->explain_cte.customer.c_first_name, funcs:firstrow(Column#219)->explain_cte.customer.c_last_name, funcs:firstrow(Column#220)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column#221)->explain_cte.customer.c_birth_country, funcs:firstrow(Column#222)->explain_cte.customer.c_login, funcs:firstrow(Column#223)->explain_cte.customer.c_email_address, funcs:firstrow(Column#224)->explain_cte.date_dim.d_year
-  │     └─Projection	root		minus(explain_cte.store_sales.ss_ext_list_price, explain_cte.store_sales.ss_ext_discount_amt)->Column#216, explain_cte.customer.c_customer_id->Column#217, explain_cte.customer.c_first_name->Column#218, explain_cte.customer.c_last_name->Column#219, explain_cte.customer.c_preferred_cust_flag->Column#220, explain_cte.customer.c_birth_country->Column#221, explain_cte.customer.c_login->Column#222, explain_cte.customer.c_email_address->Column#223, explain_cte.date_dim.d_year->Column#224
+  ├─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, s->Column
+  │ └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
+  │   └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column)->explain_cte.customer.c_birth_country, funcs:firstrow(Column)->explain_cte.customer.c_login, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
+  │     └─Projection	root		minus(explain_cte.store_sales.ss_ext_list_price, explain_cte.store_sales.ss_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column
   │       └─Projection	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.store_sales.ss_ext_discount_amt, explain_cte.store_sales.ss_ext_list_price, explain_cte.date_dim.d_year
   │         └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:explain_cte.store_sales.ss_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.store_sales.ss_customer_sk, explain_cte.customer.c_customer_sk)
   │           ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.store_sales.ss_sold_date_sk)]
@@ -390,10 +390,10 @@ CTE_0	root		Non-Recursive CTE
   │           └─IndexLookUp(Probe)	root		
   │             ├─IndexRangeScan(Build)	cop[tikv]	table:customer, index:PRIMARY(c_customer_sk)	range: decided by [eq(explain_cte.customer.c_customer_sk, explain_cte.store_sales.ss_customer_sk)], keep order:false, stats:pseudo
   │             └─TableRowIDScan(Probe)	cop[tikv]	table:customer	keep order:false, stats:pseudo
-  └─Projection	root		explain_cte.customer.c_customer_id->Column#160, explain_cte.customer.c_first_name->Column#161, explain_cte.customer.c_last_name->Column#162, explain_cte.customer.c_preferred_cust_flag->Column#163, explain_cte.customer.c_birth_country->Column#164, explain_cte.customer.c_login->Column#165, explain_cte.customer.c_email_address->Column#166, explain_cte.date_dim.d_year->Column#167, Column#158->Column#168, w->Column#169
-    └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column#158, 0)), eq(explain_cte.date_dim.d_year, 2002))
-      └─HashAgg	root		group by:Column#226, Column#227, Column#228, Column#229, Column#230, Column#231, Column#232, Column#233, funcs:sum(Column#225)->Column#158, funcs:firstrow(Column#226)->explain_cte.customer.c_customer_id, funcs:firstrow(Column#227)->explain_cte.customer.c_first_name, funcs:firstrow(Column#228)->explain_cte.customer.c_last_name, funcs:firstrow(Column#229)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column#230)->explain_cte.customer.c_birth_country, funcs:firstrow(Column#231)->explain_cte.customer.c_login, funcs:firstrow(Column#232)->explain_cte.customer.c_email_address, funcs:firstrow(Column#233)->explain_cte.date_dim.d_year
-        └─Projection	root		minus(explain_cte.web_sales.ws_ext_list_price, explain_cte.web_sales.ws_ext_discount_amt)->Column#225, explain_cte.customer.c_customer_id->Column#226, explain_cte.customer.c_first_name->Column#227, explain_cte.customer.c_last_name->Column#228, explain_cte.customer.c_preferred_cust_flag->Column#229, explain_cte.customer.c_birth_country->Column#230, explain_cte.customer.c_login->Column#231, explain_cte.customer.c_email_address->Column#232, explain_cte.date_dim.d_year->Column#233
+  └─Projection	root		explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column, Column, w->Column
+    └─Selection	root		or(and(eq(explain_cte.date_dim.d_year, 2001), gt(Column, 0)), eq(explain_cte.date_dim.d_year, 2002))
+      └─HashAgg	root		group by:Column, Column, Column, Column, Column, Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->explain_cte.customer.c_customer_id, funcs:firstrow(Column)->explain_cte.customer.c_first_name, funcs:firstrow(Column)->explain_cte.customer.c_last_name, funcs:firstrow(Column)->explain_cte.customer.c_preferred_cust_flag, funcs:firstrow(Column)->explain_cte.customer.c_birth_country, funcs:firstrow(Column)->explain_cte.customer.c_login, funcs:firstrow(Column)->explain_cte.customer.c_email_address, funcs:firstrow(Column)->explain_cte.date_dim.d_year
+        └─Projection	root		minus(explain_cte.web_sales.ws_ext_list_price, explain_cte.web_sales.ws_ext_discount_amt)->Column, explain_cte.customer.c_customer_id->Column, explain_cte.customer.c_first_name->Column, explain_cte.customer.c_last_name->Column, explain_cte.customer.c_preferred_cust_flag->Column, explain_cte.customer.c_birth_country->Column, explain_cte.customer.c_login->Column, explain_cte.customer.c_email_address->Column, explain_cte.date_dim.d_year->Column
           └─Projection	root		explain_cte.customer.c_customer_id, explain_cte.customer.c_first_name, explain_cte.customer.c_last_name, explain_cte.customer.c_preferred_cust_flag, explain_cte.customer.c_birth_country, explain_cte.customer.c_login, explain_cte.customer.c_email_address, explain_cte.web_sales.ws_ext_discount_amt, explain_cte.web_sales.ws_ext_list_price, explain_cte.date_dim.d_year
             └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:explain_cte.web_sales.ws_bill_customer_sk, inner key:explain_cte.customer.c_customer_sk, equal cond:eq(explain_cte.web_sales.ws_bill_customer_sk, explain_cte.customer.c_customer_sk)
               ├─HashJoin(Build)	root		inner join, equal:[eq(explain_cte.date_dim.d_date_sk, explain_cte.web_sales.ws_sold_date_sk)]

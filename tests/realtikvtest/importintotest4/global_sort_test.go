@@ -27,13 +27,13 @@ import (
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/handle"
-	"github.com/pingcap/tidb/pkg/disttask/framework/metering"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
+	"github.com/pingcap/tidb/pkg/dxf/framework/metering"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -159,12 +159,12 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 		key(a), key(c,d), key(d));`)
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/parser/ast/forceRedactURL", "return(true)")
 	ch := make(chan struct{}, 1)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", func() {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/scheduler/WaitCleanUpFinished", func() {
 		ch <- struct{}{}
 	})
 	var counter atomic.Int32
 	tk2 := testkit.NewTestKit(s.T(), s.store)
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/syncAfterSubtaskFinish",
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/syncAfterSubtaskFinish",
 		func() {
 			newVal := counter.Add(1)
 			if newVal == 1 {
@@ -237,7 +237,7 @@ func (s *mockGCSSuite) TestGlobalSortBasic() {
 	<-ch
 
 	// failed task, should clean up all sorted data too.
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/failWhenDispatchWriteIngestSubtask", "return(true)")
 	s.tk.MustExec("truncate table t")
 	result = s.tk.MustQuery(importSQL + ", detached").Rows()
 	s.Len(result, 1)
@@ -424,7 +424,7 @@ func (s *mockGCSSuite) TestGlobalSortWithGCSReadError() {
 	importSQL := fmt.Sprintf(`import into t FROM 'gs://gs-basic/t.*.csv?endpoint=%s'
 		with __max_engine_size = '1', cloud_storage_uri='%s', thread=1`, gcsEndpoint, sortStorageURI)
 
-	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/br/pkg/storage/GCSReadUnexpectedEOF", "return(0)")
+	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/objstore/GCSReadUnexpectedEOF", "return(0)")
 	s.tk.MustExec("truncate table t")
 	result := s.tk.MustQuery(importSQL).Rows()
 	s.Len(result, 1)
@@ -516,18 +516,18 @@ func TestNextGenMetering(t *testing.T) {
 	s.tk.MustExec("create table t (a bigint primary key , b varchar(100), index(b));")
 
 	baseTime := time.Now().Truncate(time.Minute).Unix()
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/forceTSAtMinuteBoundary", func(ts *int64) {
 		// the metering library requires the timestamp to be at minute boundary, but
 		// during test, we want to reduce the flush interval.
 		*ts = baseTime
 		baseTime += 60
 	})
 	var gotMeterData atomic.String
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/metering/meteringFinalFlush", func(s fmt.Stringer) {
 		gotMeterData.Store(s.String())
 	})
 	var rowAndSizeMeterItems atomic.Pointer[map[string]any]
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/handle/afterSendRowAndSizeMeterData", func(items map[string]any) {
 		rowAndSizeMeterItems.Store(&items)
 	})
 
@@ -549,7 +549,7 @@ func TestNextGenMetering(t *testing.T) {
 	}, 30*time.Second, 300*time.Millisecond)
 
 	s.Contains(gotMeterData.Load(), fmt.Sprintf("id: %d, ", task.ID))
-	s.Contains(gotMeterData.Load(), "requests{get: 16, put: 13}")
+	s.Contains(gotMeterData.Load(), "requests{get: 11, put: 13}")
 	// note: the read/write of subtask meta file is also counted in obj_store part,
 	// but meta file contains file name which contains task and subtask ID, so
 	// the length may vary, we just use regexp to match here.
@@ -560,18 +560,18 @@ func TestNextGenMetering(t *testing.T) {
 	sum := s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepEncodeAndSort)
 	s.EqualValues(3, sum.RowCnt.Load())
 	s.EqualValues(27, sum.Bytes.Load())
-	s.EqualValues(2, sum.GetReqCnt.Load())
+	s.EqualValues(1, sum.GetReqCnt.Load())
 	s.EqualValues(5, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepMergeSort)
 	s.EqualValues(288, sum.Bytes.Load())
-	s.EqualValues(6, sum.GetReqCnt.Load())
+	s.EqualValues(4, sum.GetReqCnt.Load())
 	s.EqualValues(6, sum.PutReqCnt.Load())
 
 	sum = s.getStepSummary(ctx, taskManager, task.ID, proto.ImportStepWriteAndIngest)
 	// if we retry write, the bytes may be larger than 288
 	s.GreaterOrEqual(sum.Bytes.Load(), int64(288))
-	s.EqualValues(8, sum.GetReqCnt.Load())
+	s.EqualValues(6, sum.GetReqCnt.Load())
 	s.EqualValues(2, sum.PutReqCnt.Load())
 
 	s.Eventually(func() bool {
@@ -613,7 +613,7 @@ func TestDropTableBeforeCleanup(t *testing.T) {
 	dropCh := make(chan struct{})
 	waitDropCh := make(chan struct{})
 	var mockError atomic.Bool
-	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/disttask/importinto/mockCleanupError", func(err *error) {
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/importinto/mockCleanupError", func(err *error) {
 		if mockError.CompareAndSwap(false, true) {
 			// Start drop table and wait finished
 			close(waitDropCh)

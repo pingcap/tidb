@@ -483,6 +483,15 @@ func (*PartitionProcessor) reconstructTableColNames(ds *logicalop.DataSource) ([
 			})
 			continue
 		}
+		if colExpr.ID == model.ExtraCommitTSID {
+			names = append(names, &types.FieldName{
+				DBName:      ds.DBName,
+				TblName:     ds.TableInfo.Name,
+				ColName:     model.ExtraCommitTSName,
+				OrigColName: model.ExtraCommitTSName,
+			})
+			continue
+		}
 		if colInfo, found := colsInfoMap[colExpr.ID]; found {
 			names = append(names, &types.FieldName{
 				DBName:      ds.DBName,

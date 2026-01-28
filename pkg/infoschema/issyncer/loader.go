@@ -85,6 +85,7 @@ type Loader struct {
 	// loading system tables
 	crossKS bool
 	logger  *zap.Logger
+	filter  Filter
 
 	// below fields are set when running background routines
 	// Note: for cross keyspace loader, we don't set below fields as system tables
@@ -98,13 +99,14 @@ type Loader struct {
 	sysExecutorFactory func() (pools.Resource, error)
 }
 
-func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn) *Loader {
+func newLoader(store kv.Storage, infoCache *infoschema.InfoCache, deferFn *deferFn, filter Filter) *Loader {
 	mode := LoadModeAuto
 	return &Loader{
 		mode:      mode,
 		store:     store,
 		infoCache: infoCache,
 		deferFn:   deferFn,
+		filter:    filter,
 		logger:    logutil.BgLogger().With(zap.Stringer("mode", mode)),
 	}
 }
@@ -289,6 +291,16 @@ func (l *Loader) LoadWithTS(startTS uint64, isSnapshot bool) (infoschema.InfoSch
 }
 
 func (l *Loader) skipLoadingDiff(diff *model.SchemaDiff) bool {
+	if l.filter != nil {
+		var latestIS infoschema.InfoSchema
+		if l.infoCache != nil {
+			latestIS = l.infoCache.GetLatest()
+		}
+		if l.filter.SkipLoadDiff(diff, latestIS) {
+			return true
+		}
+	}
+
 	if !l.crossKS {
 		return false
 	}
@@ -412,6 +424,17 @@ func (l *Loader) fetchAllSchemasWithTables(m meta.Reader, schemaCacheSize uint64
 			return nil, errors.New("system database not found")
 		}
 		allSchemas = []*model.DBInfo{dbInfo}
+	} else if l.filter != nil {
+		allSchemas = make([]*model.DBInfo, 0, 6)
+		err := m.IterDatabases(func(dbInfo *model.DBInfo) error {
+			if !l.filter.SkipLoadSchema(dbInfo) {
+				allSchemas = append(allSchemas, dbInfo)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
 	} else {
 		allSchemas, err = m.ListDatabases()
 		if err != nil {

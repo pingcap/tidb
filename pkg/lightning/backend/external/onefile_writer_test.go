@@ -25,12 +25,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/exp/rand"
@@ -41,7 +42,7 @@ func TestOnefileWriterBasic(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	// 1. write into one file.
 	// 2. read kv file and check result.
@@ -121,7 +122,7 @@ func TestOnefileWriterStat(t *testing.T) {
 func checkOneFileWriterStatWithDistance(t *testing.T, kvCnt int, keysDistance uint64, memSizeLimit uint64, prefix string) {
 	var kvAndStat [2]string
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
 		SetPropKeysDistance(keysDistance).
@@ -186,7 +187,7 @@ func TestMergeOverlappingFilesInternal(t *testing.T) {
 	// 4. check duplicate key.
 	var kvAndStats [][2]string
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(1000).
 		SetOnCloseFunc(func(summary *WriterSummary) { kvAndStats = summary.MultipleFilesStats[0].Filenames }).
@@ -277,7 +278,7 @@ func TestOnefileWriterManyRows(t *testing.T) {
 	// 4. check the writeSummary.
 	var kvAndStat [2]string
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	writer := NewWriterBuilder().
 		SetMemorySizeLimit(1000).
 		SetOnCloseFunc(func(summary *WriterSummary) { kvAndStat = summary.MultipleFilesStats[0].Filenames[0] }).
@@ -372,7 +373,7 @@ func TestOnefilePropOffset(t *testing.T) {
 	rand.Seed(uint64(seed))
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	memSizeLimit := (rand.Intn(10) + 1) * 200
 
 	// 1. write into one file.
@@ -429,7 +430,7 @@ func (w *testOneFileWriter) WriteRow(ctx context.Context, key, val []byte, _ dbk
 }
 
 func TestOnefileWriterOnDup(t *testing.T) {
-	getWriterFn := func(store storage.ExternalStorage, b *WriterBuilder) testWriter {
+	getWriterFn := func(store storeapi.Storage, b *WriterBuilder) testWriter {
 		writer := b.BuildOneFile(store, "/onefile", "0")
 		writer.InitPartSizeAndLogger(context.Background(), 1024)
 		return &testOneFileWriter{OneFileWriter: writer}
@@ -440,7 +441,7 @@ func TestOnefileWriterOnDup(t *testing.T) {
 
 func TestOnefileWriterDupError(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	writer := NewWriterBuilder().
 		SetPropSizeDistance(100).
@@ -469,9 +470,9 @@ func TestOnefileWriterDupError(t *testing.T) {
 func TestOneFileWriterOnDupRemove(t *testing.T) {
 	t.Helper()
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	var summary *WriterSummary
-	doGetWriter := func(store storage.ExternalStorage, builder *WriterBuilder) *OneFileWriter {
+	doGetWriter := func(store storeapi.Storage, builder *WriterBuilder) *OneFileWriter {
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
 		writer := builder.BuildOneFile(store, "/onefile", "0")
 		writer.InitPartSizeAndLogger(ctx, 1024)

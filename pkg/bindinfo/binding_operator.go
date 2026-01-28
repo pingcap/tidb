@@ -69,7 +69,7 @@ func (op *bindingOperator) CreateBinding(sctx sessionctx.Context, bindings []*Bi
 	}
 	defer func() {
 		if err == nil {
-			err = op.cache.LoadFromStorageToCache(false)
+			err = op.cache.LoadFromStorageToCache(false, false)
 		}
 	}()
 
@@ -163,7 +163,7 @@ func (op *bindingOperator) DropBinding(sqlDigests []string) (deletedRows uint64,
 	}
 	defer func() {
 		if err == nil {
-			err = op.cache.LoadFromStorageToCache(false)
+			err = op.cache.LoadFromStorageToCache(false, false)
 		}
 	}()
 
@@ -216,7 +216,7 @@ func (op *bindingOperator) SetBindingStatus(newStatus, sqlDigest string) (ok boo
 
 	defer func() {
 		if err == nil {
-			err = op.cache.LoadFromStorageToCache(false)
+			err = op.cache.LoadFromStorageToCache(false, false)
 		}
 	}()
 

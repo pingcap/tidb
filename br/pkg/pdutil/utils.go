@@ -13,10 +13,10 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/pkg/store/pdtypes"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	pd "github.com/tikv/pd/client/http"
 )
 

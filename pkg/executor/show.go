@@ -31,11 +31,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	fstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -350,6 +350,9 @@ func (e *ShowExec) fetchShowBind() error {
 		return cmpResult > 0
 	})
 	for _, hint := range bindings {
+		if hint == nil { // if the binding cache doesn't have enough memory, it might return nil
+			continue
+		}
 		stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
 		if err != nil {
 			return err

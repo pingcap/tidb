@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
@@ -70,13 +72,17 @@ func (c *CollectPredicateColumnsPoint) Optimize(_ context.Context, plan base.Log
 		histNeededColumns = append(histNeededColumns, model.StatsLoadItem{TableItemID: item, FullLoad: fullLoad})
 	}
 
+	// Prune indexes before collecting sync indices to avoid loading stats for indexes that will be pruned.
+	// This must happen after InterestingColumns is set (which happens in CollectColumnStatsUsage).
+	keptIndexIDs := c.pruneIndexesForAllDataSources(plan)
+
 	// collect needed virtual columns from already needed columns
 	// Note that we use the dependingVirtualCols only to collect needed index stats, but not to trigger stats loading on
 	// the virtual columns themselves. It's because virtual columns themselves don't have statistics, while expression
 	// indexes, which are indexes on virtual columns, have statistics. We don't waste the resource here now.
 	dependingVirtualCols := CollectDependingVirtualCols(tblID2TblInfo, histNeededColumns)
 
-	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo)
+	histNeededIndices := collectSyncIndices(plan.SCtx(), append(histNeededColumns, dependingVirtualCols...), tblID2TblInfo, keptIndexIDs)
 	histNeededItems := collectHistNeededItems(histNeededColumns, histNeededIndices)
 	// TODO: this part should be removed once we don't support the static pruning mode.
 	histNeededItems = c.expandStatsNeededColumnsForStaticPruning(histNeededItems, tid2pids)
@@ -187,6 +193,92 @@ func (*CollectPredicateColumnsPoint) markAtLeastOneFullStatsLoadForEachTable(
 			asyncload.AsyncLoadHistogramNeededItems.Insert(*colToTriggerLoad, true)
 		}
 	})
+}
+
+// pruneIndexesForAllDataSources prunes indexes for all DataSource nodes in the plan tree.
+// It returns a map of tableID -> set of kept index IDs (indexes that remain after pruning).
+func (c *CollectPredicateColumnsPoint) pruneIndexesForAllDataSources(plan base.LogicalPlan) map[int64]map[int64]struct{} {
+	keptIndexIDs := make(map[int64]map[int64]struct{})
+	c.collectAndPruneDataSources(plan, keptIndexIDs)
+	return keptIndexIDs
+}
+
+// collectAndPruneDataSources recursively finds all DataSource nodes and prunes their indexes.
+func (c *CollectPredicateColumnsPoint) collectAndPruneDataSources(plan base.LogicalPlan, keptIndexIDs map[int64]map[int64]struct{}) {
+	switch p := plan.(type) {
+	case *logicalop.DataSource:
+		pruneIndexesForDataSource(p, keptIndexIDs)
+	case *logicalop.LogicalIndexScan:
+		pruneIndexesForDataSource(p.Source, keptIndexIDs)
+	case *logicalop.LogicalTableScan:
+		pruneIndexesForDataSource(p.Source, keptIndexIDs)
+	}
+
+	for _, child := range plan.Children() {
+		c.collectAndPruneDataSources(child, keptIndexIDs)
+	}
+}
+
+// pruneIndexesForDataSource prunes indexes for a single DataSource if needed.
+func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]map[int64]struct{}) {
+	threshold := ds.SCtx().GetSessionVars().OptIndexPruneThreshold
+	// Early return if pruning is disabled (threshold < 0)
+	if threshold < 0 {
+		return
+	}
+	// If we have only one path, we don't need to prune indexes.
+	if len(ds.AllPossibleAccessPaths) <= 1 {
+		return
+	}
+	// If threshold = 0, we should only prune indexes with score == 0.
+	// Set threshold to the original number of paths as the logic
+	// will keep all indexes (up to the threshold) with score > 0.
+	if threshold == 0 {
+		threshold = len(ds.AllPossibleAccessPaths)
+	}
+
+	// Prune indexes
+	prunedPaths := PruneIndexesByWhereAndOrder(
+		ds,
+		ds.AllPossibleAccessPaths,
+		ds.InterestingColumns,
+		threshold,
+	)
+
+	// Extract kept index IDs directly from the pruned paths
+	tableKeptIndexes := make(map[int64]struct{})
+	for _, path := range prunedPaths {
+		if !path.IsTablePath() && path.Index != nil {
+			tableKeptIndexes[path.Index.ID] = struct{}{}
+		}
+		// Also keep common-handle primary index from table paths
+		// Table paths for common-handle tables store the primary index in path.Index
+		// TODO: Consider later pruning the common-handle primary index when
+		// fillIndexPath is called - when more information is available.
+		if path.IsTablePath() && path.IsCommonHandlePath && path.Index != nil {
+			tableKeptIndexes[path.Index.ID] = struct{}{}
+		}
+	}
+
+	// Only update if pruning actually occurred (paths changed)
+	if len(prunedPaths) < len(ds.AllPossibleAccessPaths) {
+		// Union kept indexes instead of overwriting, to handle cases where the same physical table
+		// appears multiple times (e.g., self-joins, repeated subqueries). Each alias may keep different
+		// indexes, and we need to load stats for all indexes kept by any alias.
+		if existingKeptIndexes, exists := keptIndexIDs[ds.PhysicalTableID]; exists {
+			// Merge new indexes into existing set
+			for idxID := range tableKeptIndexes {
+				existingKeptIndexes[idxID] = struct{}{}
+			}
+		} else {
+			// First time seeing this physical table, create new set
+			keptIndexIDs[ds.PhysicalTableID] = tableKeptIndexes
+		}
+		ds.AllPossibleAccessPaths = prunedPaths
+		// Make a copy for PossibleAccessPaths to avoid sharing the same slice
+		ds.PossibleAccessPaths = make([]*util.AccessPath, len(ds.AllPossibleAccessPaths))
+		copy(ds.PossibleAccessPaths, ds.AllPossibleAccessPaths)
+	}
 }
 
 func (CollectPredicateColumnsPoint) expandStatsNeededColumnsForStaticPruning(
@@ -375,9 +467,11 @@ func CollectDependingVirtualCols(tblID2Tbl map[int64]*model.TableInfo, neededIte
 // 1. the indices contained the any one of histNeededColumns, eg: histNeededColumns contained A,B columns, and idx_a is
 // composed up by A column, then we thought the idx_a should be collected
 // 2. The stats condition of idx_a can't meet IsFullLoad, which means its stats was evicted previously
+// 3. The index must be in keptIndexIDs if provided (to avoid loading stats for indexes that will be pruned)
 func collectSyncIndices(ctx base.PlanContext,
 	histNeededColumns []model.StatsLoadItem,
 	tblID2Tbl map[int64]*model.TableInfo,
+	keptIndexIDs map[int64]map[int64]struct{},
 ) map[model.TableItemID]struct{} {
 	histNeededIndices := make(map[model.TableItemID]struct{})
 	stats := domain.GetDomain(ctx).StatsHandle()
@@ -400,6 +494,14 @@ func collectSyncIndices(ctx base.PlanContext,
 			idxCol := idx.FindColumnByName(colName)
 			idxID := idx.ID
 			if idxCol != nil {
+				// If we have kept indexes for this table (meaning pruning occurred), only collect stats for kept indexes
+				if len(keptIndexIDs) > 0 {
+					if tableKeptIndexes, ok := keptIndexIDs[column.TableID]; ok {
+						if _, isKept := tableKeptIndexes[idxID]; !isKept {
+							continue
+						}
+					}
+				}
 				tblStats := stats.GetPhysicalTableStats(tbl.ID, tbl)
 				if tblStats == nil || tblStats.Pseudo {
 					continue

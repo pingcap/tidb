@@ -45,13 +45,13 @@ func TestBindingCache(t *testing.T) {
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx);")
 
-	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
-	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false, false))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false, false))
 	res := tk.MustQuery("show global bindings")
 	require.Equal(t, 2, len(res.Rows()))
 
 	tk.MustExec("drop global binding for select * from t;")
-	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false, false))
 	require.Equal(t, 1, len(dom.BindingHandle().GetAllBindings()))
 }
 
@@ -67,7 +67,7 @@ func TestBindingLastUpdateTime(t *testing.T) {
 	tk.MustExec("admin reload bindings;")
 
 	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
-	err := bindHandle.LoadFromStorageToCache(true)
+	err := bindHandle.LoadFromStorageToCache(true, false)
 	require.NoError(t, err)
 	stmt, err := parser.New().ParseOneStmt("select * from test . t0", "", "")
 	require.NoError(t, err)
@@ -128,7 +128,7 @@ func TestBindParse(t *testing.T) {
 		originSQL, bindSQL, defaultDb, status, charset, collation, source, mockDigest, mockDigest)
 	tk.MustExec(sql)
 	bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
-	err := bindHandle.LoadFromStorageToCache(true)
+	err := bindHandle.LoadFromStorageToCache(true, false)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(bindHandle.GetAllBindings()))
 
@@ -476,7 +476,7 @@ func TestGlobalBinding(t *testing.T) {
 		require.NotNilf(t, row.GetString(7), "testSQL %+v", testSQL)
 
 		bindHandle := bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
-		err = bindHandle.LoadFromStorageToCache(true)
+		err = bindHandle.LoadFromStorageToCache(true, false)
 		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 		require.Equalf(t, 1, len(bindHandle.GetAllBindings()), "testSQL %+v", testSQL)
 
@@ -499,7 +499,7 @@ func TestGlobalBinding(t *testing.T) {
 		_, matched = dom.BindingHandle().MatchingBinding(tk.Session(), noDBDigest, bindinfo.CollectTableNames(stmt))
 		require.Falsef(t, matched, "testSQL %+v", testSQL) // dropped
 		bindHandle = bindinfo.NewBindingHandle(&mockSessionPool{tk.Session()})
-		err = bindHandle.LoadFromStorageToCache(true)
+		err = bindHandle.LoadFromStorageToCache(true, false)
 		require.NoErrorf(t, err, "testSQL %+v", testSQL)
 		require.Equalf(t, 0, len(bindHandle.GetAllBindings()), "testSQL %+v", testSQL)
 
@@ -528,7 +528,7 @@ func TestOutdatedInfoSchema(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, index idx(a))")
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
-	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false))
+	require.Nil(t, dom.BindingHandle().LoadFromStorageToCache(false, false))
 	utilCleanBindingEnv(tk)
 	tk.MustExec("create global binding for select * from t using select * from t use index(idx)")
 }
@@ -878,7 +878,7 @@ func TestBindingQueryInList(t *testing.T) {
 	inList := []string{"(1)", "(1, 2)", "(1, 2, 3)"}
 	for _, bindingInList := range inList {
 		tk.MustExec(`create global binding using select * from t where a in ` + bindingInList)
-		require.NoErrorf(t, dom.BindingHandle().LoadFromStorageToCache(true), "bindingInList: %+v", bindingInList)
+		require.NoErrorf(t, dom.BindingHandle().LoadFromStorageToCache(true, false), "bindingInList: %+v", bindingInList)
 		require.Equalf(t, 1, len(tk.MustQuery(`show global bindings`).Rows()), "bindingInList: %+v", bindingInList)
 
 		for _, queryInList := range inList {
@@ -887,7 +887,7 @@ func TestBindingQueryInList(t *testing.T) {
 		}
 
 		tk.MustExec(`drop global binding for select * from t where a in ` + bindingInList)
-		require.NoErrorf(t, dom.BindingHandle().LoadFromStorageToCache(true), "bindingInList: %+v", bindingInList)
+		require.NoErrorf(t, dom.BindingHandle().LoadFromStorageToCache(true, false), "bindingInList: %+v", bindingInList)
 		require.Equalf(t, 0, len(tk.MustQuery(`show global bindings`).Rows()), "bindingInList: %+v", bindingInList)
 	}
 }

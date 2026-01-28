@@ -19,8 +19,6 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	_ "embed"
-	"fmt"
-	"math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -121,25 +119,26 @@ func TestConnectThrough636(t *testing.T) {
 func TestConnectWithTLS11(t *testing.T) {
 	var ln net.Listener
 
-	startListen := make(chan struct{})
-
-	// this test only tests whether the LDAP with LTS enabled will fallback from StartTLS
-	randomTLSServicePort := rand.Int()%10000 + 10000
+	startListen := make(chan error, 1)
 	serverWg := &sync.WaitGroup{}
 	serverWg.Add(1)
 	go func() {
-		defer close(startListen)
 		defer serverWg.Done()
 
 		cert, err := tls.X509KeyPair(tlsCrtStr, tlsKeyStr)
-		require.NoError(t, err)
+		if err != nil {
+			startListen <- err
+			return
+		}
 		tlsConfig := &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MaxVersion:   tls.VersionTLS11,
 		}
-		ln, err = tls.Listen("tcp", fmt.Sprintf("localhost:%d", randomTLSServicePort), tlsConfig)
-		require.NoError(t, err)
-		startListen <- struct{}{}
+		ln, err = tls.Listen("tcp", "localhost:0", tlsConfig)
+		startListen <- err
+		if err != nil {
+			return
+		}
 
 		for {
 			conn, err := ln.Accept()
@@ -164,7 +163,7 @@ func TestConnectWithTLS11(t *testing.T) {
 		}
 	}()
 
-	<-startListen
+	require.NoError(t, <-startListen)
 	defer func() {
 		require.NoError(t, ln.Close())
 		serverWg.Wait()
@@ -173,12 +172,16 @@ func TestConnectWithTLS11(t *testing.T) {
 	impl := &ldapAuthImpl{}
 	impl.SetEnableTLS(true)
 	impl.SetLDAPServerHost("localhost")
-	impl.SetLDAPServerPort(randomTLSServicePort)
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	require.NoError(t, err)
+	p, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	impl.SetLDAPServerPort(p)
 
 	impl.caPool = x509.NewCertPool()
 	require.True(t, impl.caPool.AppendCertsFromPEM(tlsCAStr))
 
-	_, err := impl.connectionFactory()
+	_, err = impl.connectionFactory()
 	require.ErrorContains(t, err, "protocol version not supported")
 }
 
@@ -197,16 +200,18 @@ func TestLDAPStartTLSTimeout(t *testing.T) {
 	defer close(afterTimeout)
 
 	// this test only tests whether the LDAP with LTS enabled will fallback from StartTLS
-	randomTLSServicePort := rand.Int()%10000 + 10000
+	startListenErr := make(chan error, 1)
 	serverWg := &sync.WaitGroup{}
 	serverWg.Add(1)
 	go func() {
 		var err error
-		defer close(startListen)
 		defer serverWg.Done()
 
-		ln, err = net.Listen("tcp", fmt.Sprintf("localhost:%d", randomTLSServicePort))
-		require.NoError(t, err)
+		ln, err = net.Listen("tcp", "localhost:0")
+		startListenErr <- err
+		if err != nil {
+			return
+		}
 		startListen <- struct{}{}
 
 		conn, err := ln.Accept()
@@ -219,6 +224,7 @@ func TestLDAPStartTLSTimeout(t *testing.T) {
 		require.NoError(t, ln.Close())
 	}()
 
+	require.NoError(t, <-startListenErr)
 	<-startListen
 	defer func() {
 		serverWg.Wait()
@@ -227,7 +233,11 @@ func TestLDAPStartTLSTimeout(t *testing.T) {
 	impl := &ldapAuthImpl{}
 	impl.SetEnableTLS(true)
 	impl.SetLDAPServerHost("localhost")
-	impl.SetLDAPServerPort(randomTLSServicePort)
+	_, port, err := net.SplitHostPort(ln.Addr().String())
+	require.NoError(t, err)
+	p, err := strconv.Atoi(port)
+	require.NoError(t, err)
+	impl.SetLDAPServerPort(p)
 
 	impl.caPool = x509.NewCertPool()
 	require.True(t, impl.caPool.AppendCertsFromPEM(tlsCAStr))
@@ -235,7 +245,7 @@ func TestLDAPStartTLSTimeout(t *testing.T) {
 	impl.SetMaxCapacity(1)
 
 	now := time.Now()
-	_, err := impl.connectionFactory()
+	_, err = impl.connectionFactory()
 	afterTimeout <- struct{}{}
 	dur := time.Since(now)
 	require.Greater(t, dur, 2*time.Second)

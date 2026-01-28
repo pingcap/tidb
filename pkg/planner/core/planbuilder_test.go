@@ -1112,16 +1112,27 @@ func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
 }
 
 func TestProcessNextGenS3Path(t *testing.T) {
-	u, err := url.Parse("S3://bucket?External-id=abc")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-	require.ErrorContains(t, err, "IMPORT INTO with S3 external ID")
+	for _, str := range []string{
+		"S3://bucket?External-id=abc",
+		"oss://bucket?External-id=abc",
+		"oSS://bucket?External-id=abc",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
+		require.ErrorContains(t, err, "IMPORT INTO with explicit external ID")
+	}
 
-	u, err = url.Parse("s3://bucket")
-	require.NoError(t, err)
-	err = checkNextGenS3PathWithSem(u)
-	require.NoError(t, err)
+	for _, str := range []string{
+		"s3://bucket",
+		"oss://bucket",
+	} {
+		u, err := url.Parse(str)
+		require.NoError(t, err)
+		err = checkNextGenS3PathWithSem(u)
+		require.NoError(t, err)
+	}
 }
 
 func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {

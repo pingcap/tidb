@@ -98,7 +98,7 @@ func (*Plan) ExplainInfo() string {
 
 // ExplainID is to get the explain ID.
 func (p *Plan) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.ctx != nil && p.ctx.GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.tp
 		}

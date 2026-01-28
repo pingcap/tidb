@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package bootstraptest_test
+package bootstraptest
 
 import (
 	"context"
@@ -37,7 +37,9 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testenv"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
@@ -1177,4 +1179,24 @@ func TestUpgradeWithAnalyzeColumnOptions(t *testing.T) {
 		row := req.GetRow(0)
 		require.Equal(t, "PREDICATE", row.GetString(0))
 	})
+}
+
+func TestBootstrapInNextGenInvalidSystemTable(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("this is only checked in next-gen kernel")
+	}
+	testenv.SetGOMAXPROCSForTest()
+	if kerneltype.IsNextGen() {
+		testenv.UpdateConfigForNextgen(t)
+	}
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/session/mockCreateSystemTableSQL", func(tbl *session.TableBasicInfo) {
+		tbl.SQL = "create table t(id int primary key) partition by hash(id) partitions 4"
+	})
+	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	_, err = session.BootstrapSession(store)
+	require.ErrorContains(t, err, "system table should not be partitioned table")
 }

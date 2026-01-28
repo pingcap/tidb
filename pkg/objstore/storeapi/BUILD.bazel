@@ -1,0 +1,24 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "storeapi",
+    srcs = ["storage.go"],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/storeapi",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore/objectio",
+        "//pkg/objstore/recording",
+        "@com_github_aws_aws_sdk_go_v2//aws/retry",
+        "@com_github_google_uuid//:uuid",
+    ],
+)
+
+go_test(
+    name = "storeapi_test",
+    timeout = "short",
+    srcs = ["storage_test.go"],
+    embed = [":storeapi"],
+    flaky = False,
+    shard_count = 2,
+    deps = ["@com_github_stretchr_testify//require"],
+)

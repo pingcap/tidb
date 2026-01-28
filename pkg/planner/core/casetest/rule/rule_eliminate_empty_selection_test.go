@@ -48,9 +48,9 @@ func TestEmptySelectionEliminator(t *testing.T) {
 			`              └─TableFullScan 10000.00 cop[tikv] table:table5 keep order:false, stats:pseudo`))
 		testKit.MustQuery(`explain format='brief' SELECT SUM( table1 . pk ) AS field1 FROM F AS table1 RIGHT JOIN L AS table2 ON table1 . col_decimal = table2 . col_decimal_not_null WHERE ( ( table2 . pk <> 4 OR table1 . pk IS NOT NULL ) AND table2 . pk IN (41) ) HAVING field1 <> 4 ;`).
 			Check(testkit.Rows(
-				`Selection 0.80 root  ne(Column#23, 4)`,
-				`└─StreamAgg 1.00 root  funcs:sum(Column#24)->Column#23`,
-				`  └─Projection 1.25 root  cast(test.f.pk, decimal(10,0) BINARY)->Column#24`,
+				`Selection 0.80 root  ne(Column#25, 4)`,
+				`└─StreamAgg 1.00 root  funcs:sum(Column#26)->Column#25`,
+				`  └─Projection 1.25 root  cast(test.f.pk, decimal(10,0) BINARY)->Column#26`,
 				`    └─HashJoin 1.25 root  right outer join, left side:TableReader, equal:[eq(test.f.col_decimal, test.l.col_decimal_not_null)]`,
 				`      ├─Point_Get(Build) 1.00 root table:L handle:41`,
 				`      └─TableReader(Probe) 9990.00 root  data:Selection`,

@@ -39,7 +39,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor/execute"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	"github.com/pingcap/tidb/pkg/ingestor/ingestcli"
@@ -834,6 +834,11 @@ func (local *Backend) FlushEngine(ctx context.Context, engineID uuid.UUID) error
 // FlushAllEngines flush all engines.
 func (local *Backend) FlushAllEngines(parentCtx context.Context) (err error) {
 	return local.engineMgr.flushAllEngines(parentCtx)
+}
+
+// CleanupAllLocalEngines closes and removes all local engines, used for best-effort cleanup on error.
+func (local *Backend) CleanupAllLocalEngines(ctx context.Context) error {
+	return local.engineMgr.cleanupAllLocalEngines(ctx)
 }
 
 // RetryImportDelay returns the delay time before retrying to import a file.

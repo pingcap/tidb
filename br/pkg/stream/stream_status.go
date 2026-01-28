@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/httputil"
 	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	. "github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/util/httputil"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -161,7 +161,7 @@ func (p *printByTable) AddTask(task TaskStatus) {
 	if task.Info.EndTs > 0 {
 		table.Add("end", fmt.Sprint(utils.FormatDate(oracle.GetTimeFromTS(task.Info.EndTs))))
 	}
-	s := storage.FormatBackendURL(task.Info.GetStorage())
+	s := objstore.FormatBackendURL(task.Info.GetStorage())
 	table.Add("storage", s.String())
 	table.Add("speed(est.)", fmt.Sprintf("%s ops/s", color.New(color.Bold).Sprintf("%.2f", task.QPS)))
 
@@ -247,7 +247,7 @@ func (p *printByJSON) PrintTasks() {
 		ExtraPauseInformation *PauseV2         `json:"extra_pause_information,omitempty"`
 	}
 	taskToJSON := func(t TaskStatus) jsonTask {
-		s := storage.FormatBackendURL(t.Info.GetStorage())
+		s := objstore.FormatBackendURL(t.Info.GetStorage())
 		sp := make([]storeProgress, 0, len(t.Checkpoints))
 		for _, checkpoint := range t.Checkpoints {
 			if checkpoint.Type() == CheckpointTypeStore {

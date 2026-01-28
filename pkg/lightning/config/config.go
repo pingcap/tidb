@@ -61,6 +61,8 @@ const (
 	BackendLocal = "local"
 	// BackendImportInto is a constant for choosing the "ImportInto" backend in the configuration.
 	BackendImportInto = "import-into"
+	// UnlimitedQuota is the default value of DiskQuota, which means no limit.
+	UnlimitedQuota = ByteSize(math.MaxInt64)
 
 	// CheckpointDriverMySQL is a constant for choosing the "MySQL" checkpoint driver in the configuration.
 	CheckpointDriverMySQL = "mysql"
@@ -370,7 +372,12 @@ func (l *Lightning) adjust(i *TikvImporter) {
 			l.RegionConcurrency = cpuCount
 		}
 	case BackendImportInto:
-		// TODO: set default values for import-into backend
+		if len(l.MetaSchemaName) == 0 {
+			l.MetaSchemaName = defaultMetaSchemaName
+		}
+		if l.TableConcurrency == 0 {
+			l.TableConcurrency = l.RegionConcurrency
+		}
 	}
 }
 
@@ -1508,7 +1515,7 @@ func NewConfig() *Config {
 			RegionSplitBatchSize:    DefaultRegionSplitBatchSize,
 			RegionSplitConcurrency:  runtime.GOMAXPROCS(0),
 			RegionCheckBackoffLimit: DefaultRegionCheckBackoffLimit,
-			DiskQuota:               ByteSize(math.MaxInt64),
+			DiskQuota:               UnlimitedQuota,
 			DuplicateResolution:     NoneOnDup,
 			PausePDSchedulerScope:   PausePDSchedulerScopeTable,
 			BlockSize:               DefaultBlockSize,

@@ -23,10 +23,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
@@ -34,7 +35,7 @@ import (
 
 func readAllData(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
 	smallBlockBufPool *membuf.Pool,
@@ -57,7 +58,7 @@ func readAllData(
 			output.memKVBuffers = nil
 		} else {
 			// try to fix a bug that the memory is retained in http2 package
-			if gcs, ok := store.(*storage.GCSStorage); ok {
+			if gcs, ok := store.(*objstore.GCSStorage); ok {
 				err = gcs.Reset(ctx)
 			}
 		}
@@ -128,7 +129,7 @@ func readAllData(
 
 func readOneFile(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
@@ -198,7 +199,7 @@ func readOneFile(
 // ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
 // to the returned channel, the channel will be closed when finish read.
 func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
-	store storage.ExternalStorage, files []string) chan *KVPair {
+	store storeapi.Storage, files []string) chan *KVPair {
 	pairCh := make(chan *KVPair)
 	eg.Go(func() error {
 		defer close(pairCh)
@@ -212,7 +213,7 @@ func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
 	return pairCh
 }
 
-func readOneKVFile2Ch(ctx context.Context, store storage.ExternalStorage, file string, outCh chan *KVPair) error {
+func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, outCh chan *KVPair) error {
 	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
 	if err != nil {
 		return err

@@ -29,7 +29,7 @@ import (
 )
 
 func TestQueryWatch(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()
@@ -185,7 +185,7 @@ func TestQueryWatch(t *testing.T) {
 }
 
 func TestQueryWatchIssue56897(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC", `return(1)`))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/resourcegroup/runaway/FastRunawayGC"))
 	}()

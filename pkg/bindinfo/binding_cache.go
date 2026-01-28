@@ -37,7 +37,7 @@ type BindingCacheUpdater interface {
 	BindingCache
 
 	// LoadFromStorageToCache loads global bindings from storage to the memory cache.
-	LoadFromStorageToCache(fullLoad bool) (err error)
+	LoadFromStorageToCache(fullLoad, fromRemote bool) (err error)
 
 	// UpdateBindingUsageInfoToStorage is to update the binding usage info into storage
 	UpdateBindingUsageInfoToStorage() error
@@ -57,7 +57,24 @@ type bindingCacheUpdater struct {
 }
 
 // LoadFromStorageToCache loads bindings from the storage into the cache.
-func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) {
+func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad, fromRemote bool) (err error) {
+	cacheSizeChange := false
+	latestCacheSize := vardef.MemQuotaBindingCache.Load()
+	if u.GetMemCapacity() != latestCacheSize {
+		cacheSizeChange = true
+		u.SetMemCapacity(latestCacheSize)
+	}
+
+	hasNewBinding := false
+	defer func(begin time.Time) {
+		if fullLoad || cacheSizeChange || hasNewBinding {
+			bindingLogger().Info("load bindings", zap.Bool("fullLoad", fullLoad), zap.Bool("fromRemote", fromRemote),
+				zap.Bool("cacheSizeChange", cacheSizeChange), zap.Bool("hasNewBinding", hasNewBinding),
+				zap.Int64("cacheCapacity", u.GetMemCapacity()), zap.Int64("cacheUsage", u.GetMemUsage()),
+				zap.Int64("cachedBindingNum", int64(u.Size())), zap.Duration("duration", time.Since(begin)), zap.Error(err))
+		}
+	}(time.Now())
+
 	lastUpdateTime := u.lastUpdateTime.Load().(types.Time)
 	var timeCondition string
 	if fullLoad || lastUpdateTime.IsZero() { // avoid "update_time>'0000-00-00 00:00:00'", which is invalid
@@ -91,6 +108,7 @@ func (u *bindingCacheUpdater) LoadFromStorageToCache(fullLoad bool) (err error) 
 		// Even if this one is an invalid bind.
 		if binding.UpdateTime.Compare(lastUpdateTime) > 0 {
 			lastUpdateTime = binding.UpdateTime
+			hasNewBinding = true
 		}
 
 		oldBinding := u.GetBinding(binding.SQLDigest)
@@ -285,6 +303,11 @@ func newBindCache() BindingCache {
 		},
 		Metrics:            true,
 		IgnoreInternalCost: true,
+		OnExit: func(val any) {
+			binding := val.(*Binding)
+			bindingLogger().Warn("binding cache memory limit reached, evict binding",
+				zap.String("sqlDigest", binding.SQLDigest), zap.String("bindSQL", binding.BindSQL))
+		},
 	})
 	c := bindingCache{
 		cache:       cache,

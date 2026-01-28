@@ -25,7 +25,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/disttask/framework/testutil"
+	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/table/tables"

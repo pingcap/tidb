@@ -24,12 +24,16 @@ import (
 
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/gluetidb"
+	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/registry"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
@@ -67,6 +71,7 @@ func TestRegistryBasicOperations(t *testing.T) {
 	tk, dom, g := initRegistryTest(t)
 	cleanupRegistryTable(tk)
 
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/br/pkg/registry/is-task-stale-ticker-duration", "return(1)")
 	// Create registry
 	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
 	require.NoError(t, err)
@@ -177,10 +182,11 @@ func TestRegistryBasicOperations(t *testing.T) {
 	require.Equal(t, restoreID, resumedID3, "Should reuse existing task when auto-detected restoredTS is same")
 	require.Equal(t, uint64(200), resolvedRestoreTS4, "Should use the same restoredTS")
 
-	// Test 5: Conflict detection - same task already running
-	_, _, err = r.ResumeOrCreateRegistration(ctx, info, true)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "already exists and is running")
+	// Test 5: Conflict detection - same task already running, waiting until it is stale
+	resumedID5, resolvedRestoreTS5, err := r.ResumeOrCreateRegistration(ctx, info, true)
+	require.NoError(t, err)
+	require.Equal(t, restoreID, resumedID5, "Should reuse existing task when auto-detected restoredTS is same")
+	require.Equal(t, uint64(200), resolvedRestoreTS5, "Should use the same restoredTS")
 
 	// Test 4: New task with different parameters should get its own RestoreTS
 	infoNewTask := registry.RegistrationInfo{
@@ -376,16 +382,16 @@ func TestRegistryTableConflicts(t *testing.T) {
 	tracker.TrackTableName("db1", "table1") // Also track by name
 
 	// Try to create a second registration but CheckTablesWithRegisteredTasks should detect conflict
-	err = r.CheckTablesWithRegisteredTasks(ctx, restoreID1+1, tracker, nil)
+	err = r.CheckTablesWithRegisteredTasks(ctx, restoreID1+1, tracker, nil, nil)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "cannot be restored by current task")
+	require.Contains(t, err.Error(), "cannot be restored concurrently by current task")
 
 	// But a different table should be allowed
 	tracker = utils.NewPiTRIdTracker()
 	tracker.AddDB(2)                        // Add db with ID 2
 	tracker.TrackTableId(2, 1)              // Add table with ID 1 in db 2
 	tracker.TrackTableName("db2", "table2") // Also track by name
-	err = r.CheckTablesWithRegisteredTasks(ctx, restoreID1+1, tracker, nil)
+	err = r.CheckTablesWithRegisteredTasks(ctx, restoreID1+1, tracker, nil, nil)
 	require.NoError(t, err)
 
 	// Register the second task with non-conflicting table
@@ -397,6 +403,137 @@ func TestRegistryTableConflicts(t *testing.T) {
 	require.NoError(t, err)
 	err = r.Unregister(ctx, restoreID2)
 	require.NoError(t, err)
+}
+
+func TestPreventConcurrentRestoreOfTheSameDatabase(t *testing.T) {
+	tk, dom, g := initRegistryTest(t)
+	cleanupRegistryTable(tk)
+
+	// Create registry
+	r, err := registry.NewRestoreRegistry(context.Background(), g, dom)
+	require.NoError(t, err)
+	defer r.Close()
+
+	ctx := context.Background()
+
+	passedFn := func(err error) { require.NoError(t, err) }
+	failedFn := func(err error) { require.Error(t, err) }
+
+	cases := []struct {
+		registeredFilterString []string
+		registeredFilterCmd    string
+		trackerDBNames         []string
+		snapshotDBNames        []string
+		expectedCheckError     func(err error)
+	}{
+		{
+			// previous running task: full restore db1.table1
+			// current task: full restore db1.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Full Restore",
+			snapshotDBNames:        []string{"db1"},
+			expectedCheckError:     passedFn,
+		},
+		{
+			// previous running task: full restore db1.table1
+			// current task: full restore db2.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Full Restore",
+			snapshotDBNames:        []string{"db2"},
+			expectedCheckError:     passedFn,
+		},
+		{
+			// previous running task: full restore db1.table1
+			// current task: point restore db1.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Full Restore",
+			trackerDBNames:         []string{"db1"},
+			expectedCheckError:     failedFn,
+		},
+		{
+			// previous running task: full restore db1.table1
+			// current task: point restore db1.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Full Restore",
+			trackerDBNames:         []string{"db2"},
+			expectedCheckError:     passedFn,
+		},
+		{
+			// previous running task: point restore db1.table1
+			// current task: point restore db2.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Point Restore",
+			trackerDBNames:         []string{"db2"},
+			expectedCheckError:     passedFn,
+		},
+		{
+			// previous running task: point restore db1.table1
+			// current task: point restore db1.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Point Restore",
+			trackerDBNames:         []string{"db1"},
+			expectedCheckError:     failedFn,
+		},
+		{
+			// previous running task: point restore db1.table1
+			// current task: full restore db1.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Point Restore",
+			snapshotDBNames:        []string{"db1"},
+			expectedCheckError:     failedFn,
+		},
+		{
+			// previous running task: point restore db1.table1
+			// current task: full restore db2.table2
+			registeredFilterString: []string{"db1.table1"},
+			registeredFilterCmd:    "Point Restore",
+			snapshotDBNames:        []string{"db2"},
+			expectedCheckError:     passedFn,
+		},
+	}
+
+	for _, cs := range cases {
+		info1 := registry.RegistrationInfo{
+			FilterStrings:     cs.registeredFilterString,
+			StartTS:           100,
+			RestoredTS:        200,
+			UpstreamClusterID: 1,
+			WithSysTable:      true,
+			Cmd:               cs.registeredFilterCmd,
+		}
+
+		// Register the first task
+		restoreID1, _, err := r.ResumeOrCreateRegistration(ctx, info1, false)
+		require.NoError(t, err)
+
+		var tracker *utils.PiTRIdTracker
+		if len(cs.trackerDBNames) > 0 {
+			tracker = utils.NewPiTRIdTracker()
+			for _, dbName := range cs.trackerDBNames {
+				tracker.TrackTableName(dbName, "table2")
+			}
+		}
+
+		var dbs []*metautil.Database
+		if len(cs.snapshotDBNames) > 0 {
+			for _, dbName := range cs.snapshotDBNames {
+				dbs = append(dbs, &metautil.Database{
+					Info: &model.DBInfo{
+						Name: ast.NewCIStr(dbName),
+					},
+				})
+			}
+		}
+
+		err = r.CheckTablesWithRegisteredTasks(ctx, restoreID1+1, tracker, dbs, nil)
+		if cs.expectedCheckError != nil {
+			cs.expectedCheckError(err)
+		}
+
+		// Clean up
+		err = r.Unregister(ctx, restoreID1)
+		require.NoError(t, err)
+	}
 }
 
 func TestGetRegistrationsByMaxID(t *testing.T) {

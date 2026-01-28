@@ -1,0 +1,31 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "objectio",
+    srcs = [
+        "interface.go",
+        "writer.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/objstore/objectio",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/objstore/compressedio",
+        "//pkg/objstore/recording",
+        "@com_github_pingcap_errors//:errors",
+    ],
+)
+
+go_test(
+    name = "objectio_test",
+    timeout = "short",
+    srcs = ["writer_test.go"],
+    flaky = True,
+    shard_count = 3,
+    deps = [
+        "//pkg/objstore",
+        "//pkg/objstore/compressedio",
+        "//pkg/objstore/storeapi",
+        "@com_github_klauspost_compress//zstd",
+        "@com_github_stretchr_testify//require",
+    ],
+)

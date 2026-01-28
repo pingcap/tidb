@@ -144,7 +144,7 @@ func TestClone(t *testing.T) {
 		&builtinToSecondsSig{}, &builtinUTCTimeWithArgSig{}, &builtinUTCTimeWithoutArgSig{}, &builtinTimestamp1ArgSig{}, &builtinTimestamp2ArgsSig{},
 		&builtinTimestampLiteralSig{}, &builtinLastDaySig{}, &builtinStrToDateDateSig{}, &builtinStrToDateDatetimeSig{}, &builtinStrToDateDurationSig{},
 		&builtinFromUnixTime1ArgSig{}, &builtinFromUnixTime2ArgSig{}, &builtinExtractDatetimeFromStringSig{}, &builtinExtractDatetimeSig{}, &builtinExtractDurationSig{}, &builtinAddSubDateAsStringSig{},
-		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{},
+		&builtinAddSubDateDatetimeAnySig{}, &builtinAddSubDateDurationAnySig{}, &builtinUUIDv4Sig{}, &builtinUUIDv7Sig{}, &builtinUUIDVersionSig{}, &builtinUUIDTimestampSig{},
 	}
 	for _, f := range builtinFuncs {
 		cf := f.Clone()
