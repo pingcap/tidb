@@ -409,34 +409,12 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 		// if there isn't a handle column.
 		if !setHandle {
 			if !p.Table.IsCommonHandle {
-				// Prefer PK handle when available to avoid introducing ExtraHandleID (_tidb_rowid).
-				var handleCol *expression.Column
-				if p.Table.PKIsHandle {
-					handleCol = p.PkIsHandleCol
-					if handleCol == nil {
-						if pkInfo := p.Table.GetPkColInfo(); pkInfo != nil {
-							handleCol = expression.ColInfo2Col(p.DataSourceSchema.Columns, pkInfo)
-							if handleCol == nil {
-								handleCol = &expression.Column{
-									RetType:  pkInfo.FieldType.Clone(),
-									ID:       pkInfo.ID,
-									UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-									OrigName: pkInfo.Name.O,
-								}
-							}
-						}
-					}
-				}
-				if handleCol != nil {
-					indexCols = append(indexCols, handleCol.Clone().(*expression.Column))
-				} else {
-					indexCols = append(indexCols, &expression.Column{
-						RetType:  types.NewFieldType(mysql.TypeLonglong),
-						ID:       model.ExtraHandleID,
-						UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-						OrigName: model.ExtraHandleName.O,
-					})
-				}
+				indexCols = append(indexCols, &expression.Column{
+					RetType:  types.NewFieldType(mysql.TypeLonglong),
+					ID:       model.ExtraHandleID,
+					UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+					OrigName: model.ExtraHandleName.O,
+				})
 			}
 		}
 		// If it's global index, handle and PhysTblID columns has to be added, so that needed pids can be filtered.
@@ -647,7 +625,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 		IdxColLens:       s.IdxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
-		DataSourceSchema: ds.Schema().Clone(),
+		DataSourceSchema: expression.NewSchema(ds.TblCols...),
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,
@@ -671,7 +649,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		IdxColLens:       path.IdxColLens,
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
-		DataSourceSchema: ds.Schema().Clone(),
+		DataSourceSchema: expression.NewSchema(ds.TblCols...),
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,
