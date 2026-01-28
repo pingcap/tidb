@@ -299,113 +299,40 @@ function resolve_path() {
 }
 
 function ensure_tici_ports() {
-    local host
-    local port
-
     : "${TICI_META_PORT:=8500}"
     : "${TICI_META_STATUS_PORT:=8501}"
     : "${TICI_WORKER_PORT:=8510}"
     : "${TICI_WORKER_STATUS_PORT:=8511}"
+    : "${TICI_READER_PORT:=8520}"
 
     TICI_META_PORT=$(reserve_port "tici-meta" "$TICI_META_PORT")
     TICI_META_STATUS_PORT=$(reserve_port "tici-meta-status" "$TICI_META_STATUS_PORT")
     TICI_WORKER_PORT=$(reserve_port "tici-worker" "$TICI_WORKER_PORT")
     TICI_WORKER_STATUS_PORT=$(reserve_port "tici-worker-status" "$TICI_WORKER_STATUS_PORT")
-
-    if [ -n "${TICI_READER_ADDR:-}" ]; then
-        if [[ "$TICI_READER_ADDR" == *:* ]]; then
-            host="${TICI_READER_ADDR%:*}"
-            port="${TICI_READER_ADDR##*:}"
-        else
-            host="127.0.0.1"
-            port="$TICI_READER_ADDR"
-        fi
-    else
-        : "${TICI_READER_HOST:=127.0.0.1}"
-        : "${TICI_READER_PORT:=8520}"
-        host="$TICI_READER_HOST"
-        port="$TICI_READER_PORT"
-    fi
-    port=$(reserve_port "tici-reader" "$port")
-    TICI_READER_HOST="$host"
-    TICI_READER_PORT="$port"
-    TICI_READER_ADDR="${host}:${port}"
+    TICI_READER_PORT=$(reserve_port "tici-reader" "$TICI_READER_PORT")
+    TICI_READER_ADDR="127.0.0.1:$TICI_READER_PORT"
 }
 
 function ensure_tiflash_ports() {
-    local host
-    local port
     local service_port
     local proxy_port
 
-    if [ -n "${TIFLASH_SERVICE_ADDR:-}" ]; then
-        if [[ "$TIFLASH_SERVICE_ADDR" == *:* ]]; then
-            host="${TIFLASH_SERVICE_ADDR%:*}"
-            port="${TIFLASH_SERVICE_ADDR##*:}"
-        else
-            host="127.0.0.1"
-            port="$TIFLASH_SERVICE_ADDR"
-        fi
-    else
-        : "${TIFLASH_SERVICE_HOST:=127.0.0.1}"
-        : "${TIFLASH_SERVICE_PORT:=3930}"
-        host="$TIFLASH_SERVICE_HOST"
-        port="$TIFLASH_SERVICE_PORT"
-    fi
-    port=$(reserve_port "tiflash-service" "$port")
-    TIFLASH_SERVICE_ADDR="${host}:${port}"
-    service_port="$port"
+    : "${TIFLASH_SERVICE_PORT:=3930}"
+    : "${TIFLASH_PROXY_PORT:=20170}"
+    : "${TIFLASH_PROXY_STATUS_PORT:=20292}"
 
-    if [ -n "${TIFLASH_PROXY_SERVER_ADDR:-}" ]; then
-        if [[ "$TIFLASH_PROXY_SERVER_ADDR" == *:* ]]; then
-            host="${TIFLASH_PROXY_SERVER_ADDR%:*}"
-            port="${TIFLASH_PROXY_SERVER_ADDR##*:}"
-        else
-            host="127.0.0.1"
-            port="$TIFLASH_PROXY_SERVER_ADDR"
-        fi
-    else
-        : "${TIFLASH_PROXY_HOST:=0.0.0.0}"
-        : "${TIFLASH_PROXY_PORT:=20170}"
-        host="$TIFLASH_PROXY_HOST"
-        port="$TIFLASH_PROXY_PORT"
-    fi
-    port=$(reserve_port "tiflash-proxy" "$port")
-    proxy_port="$port"
-    TIFLASH_PROXY_SERVER_ADDR="${host}:${proxy_port}"
+    service_port=$(reserve_port "tiflash-service" "$TIFLASH_SERVICE_PORT")
+    TIFLASH_SERVICE_PORT="$service_port"
+    TIFLASH_SERVICE_ADDR="127.0.0.1:$service_port"
 
-    if [ -n "${TIFLASH_PROXY_ADVERTISE_ADDR:-}" ]; then
-        host="${TIFLASH_PROXY_ADVERTISE_ADDR%:*}"
-    else
-        : "${TIFLASH_PROXY_ADVERTISE_HOST:=127.0.0.1}"
-        host="$TIFLASH_PROXY_ADVERTISE_HOST"
-    fi
-    TIFLASH_PROXY_ADVERTISE_ADDR="${host}:${proxy_port}"
+    proxy_port=$(reserve_port "tiflash-proxy" "$TIFLASH_PROXY_PORT")
+    TIFLASH_PROXY_PORT="$proxy_port"
+    TIFLASH_PROXY_SERVER_ADDR="127.0.0.1:$proxy_port"
+    TIFLASH_PROXY_ADVERTISE_ADDR="127.0.0.1:$proxy_port"
 
-    if [ -n "${TIFLASH_PROXY_STATUS_ADDR:-}" ]; then
-        if [[ "$TIFLASH_PROXY_STATUS_ADDR" == *:* ]]; then
-            host="${TIFLASH_PROXY_STATUS_ADDR%:*}"
-            port="${TIFLASH_PROXY_STATUS_ADDR##*:}"
-        else
-            host="127.0.0.1"
-            port="$TIFLASH_PROXY_STATUS_ADDR"
-        fi
-    else
-        : "${TIFLASH_PROXY_STATUS_HOST:=0.0.0.0}"
-        : "${TIFLASH_PROXY_STATUS_PORT:=20292}"
-        host="$TIFLASH_PROXY_STATUS_HOST"
-        port="$TIFLASH_PROXY_STATUS_PORT"
-    fi
-    port=$(reserve_port "tiflash-proxy-status" "$port")
-    TIFLASH_PROXY_STATUS_ADDR="${host}:${port}"
-
-    if [ -n "${TIFLASH_PROXY_ENGINE_ADDR:-}" ]; then
-        host="${TIFLASH_PROXY_ENGINE_ADDR%:*}"
-    else
-        : "${TIFLASH_PROXY_ENGINE_HOST:=127.0.0.1}"
-        host="$TIFLASH_PROXY_ENGINE_HOST"
-    fi
-    TIFLASH_PROXY_ENGINE_ADDR="${host}:${service_port}"
+    TIFLASH_PROXY_STATUS_PORT=$(reserve_port "tiflash-proxy-status" "$TIFLASH_PROXY_STATUS_PORT")
+    TIFLASH_PROXY_STATUS_ADDR="127.0.0.1:$TIFLASH_PROXY_STATUS_PORT"
+    TIFLASH_PROXY_ENGINE_ADDR="127.0.0.1:$service_port"
 }
 
 function require_tici_binaries() {
@@ -700,8 +627,9 @@ function prepare_tici_config() {
         export AWS_SECRET_ACCESS_KEY="$MINIO_SECRET_KEY"
         if [ -n "${upstream_pd_client_port:-}" ]; then
             export PD_ADDR="127.0.0.1:$upstream_pd_client_port"
+        else
+            export PD_ADDR="127.0.0.1:2379"
         fi
-        export PD_ADDR="${PD_ADDR:-127.0.0.1:2379}"
         if [ -z "$PD_ADDR" ]; then
             echo "PD_ADDR is empty; cannot start tici meta/worker" >&2
             exit 1
@@ -724,26 +652,28 @@ function prepare_tici_config() {
 }
 
 function make_tiflash_config_for_tici() {
-    : "${TIFLASH_LISTEN_HOST:=0.0.0.0}"
+    TIFLASH_LISTEN_HOST="127.0.0.1"
     : "${TIFLASH_DATA_DIR:=./data/tiflash_data}"
     : "${TIFLASH_TMP_DIR:=$TIFLASH_DATA_DIR/tmp}"
     : "${TIFLASH_CAPACITY:=10737418240}"
-    : "${TIFLASH_SERVICE_ADDR:=127.0.0.1:3930}"
     : "${TIDB_STATUS_ADDR:=127.0.0.1:10080}"
     : "${TIFLASH_LOG_PATH:=./logs/tiflash-stdout.log}"
     : "${TIFLASH_ERROR_LOG_PATH:=./logs/tiflash-stderr.log}"
     : "${TIFLASH_PROXY_LOG_FILE:=./logs/tiflash-proxy.log}"
     : "${TIFLASH_PROXY_DATA_DIR:=$TIFLASH_DATA_DIR/proxy}"
-    : "${TIFLASH_PROXY_SERVER_ADDR:=0.0.0.0:20170}"
-    : "${TIFLASH_PROXY_ADVERTISE_ADDR:=127.0.0.1:20170}"
-    : "${TIFLASH_PROXY_STATUS_ADDR:=127.0.0.1:20292}"
-    : "${TIFLASH_PROXY_ENGINE_ADDR:=127.0.0.1:3930}"
     : "${TIFLASH_PROXY_RESERVE_SPACE:=1KB}"
     : "${TIFLASH_STORAGE_DIR:=$TIFLASH_DATA_DIR}"
     : "${TIFLASH_PROXY_CONFIG:=$TICI_CONFIG_DIR/tiflash-learner.toml}"
-    : "${TICI_READER_HOST:=127.0.0.1}"
+    : "${TIFLASH_SERVICE_PORT:=3930}"
+    : "${TIFLASH_PROXY_PORT:=20170}"
+    : "${TIFLASH_PROXY_STATUS_PORT:=20292}"
     : "${TICI_READER_PORT:=8520}"
-    : "${TICI_READER_ADDR:=${TICI_READER_HOST}:${TICI_READER_PORT}}"
+    TIFLASH_SERVICE_ADDR="127.0.0.1:${TIFLASH_SERVICE_PORT}"
+    TIFLASH_PROXY_SERVER_ADDR="127.0.0.1:${TIFLASH_PROXY_PORT}"
+    TIFLASH_PROXY_ADVERTISE_ADDR="$TIFLASH_PROXY_SERVER_ADDR"
+    TIFLASH_PROXY_STATUS_ADDR="127.0.0.1:${TIFLASH_PROXY_STATUS_PORT}"
+    TIFLASH_PROXY_ENGINE_ADDR="127.0.0.1:${TIFLASH_SERVICE_PORT}"
+    TICI_READER_ADDR="127.0.0.1:${TICI_READER_PORT}"
     mkdir -p "$TICI_CONFIG_DIR"
 
     cat > "$TIFLASH_PROXY_CONFIG" <<EOF
@@ -854,10 +784,10 @@ function start_tici_server() {
     fi
 
     local pd_addr="${PD_ADDR:-127.0.0.1:2379}"
-    local meta_host="${TICI_META_HOST:-127.0.0.1}"
+    local meta_host="127.0.0.1"
     local meta_port="${TICI_META_PORT:-8500}"
     local meta_status_port="${TICI_META_STATUS_PORT:-8501}"
-    local worker_host="${TICI_WORKER_HOST:-127.0.0.1}"
+    local worker_host="127.0.0.1"
     local worker_port="${TICI_WORKER_PORT:-8510}"
     local worker_status_port="${TICI_WORKER_STATUS_PORT:-8511}"
     if [ -z "$pd_addr" ]; then
@@ -910,7 +840,7 @@ function start_minio() {
     mkdir -p "$MINIO_DATA_DIR/$MINIO_BUCKET"
     export MINIO_ROOT_USER="$MINIO_ACCESS_KEY"
     export MINIO_ROOT_PASSWORD="$MINIO_SECRET_KEY"
-    "$minio_bin" server "$MINIO_DATA_DIR" --address ":$MINIO_PORT" > "$MINIO_LOG_FILE" 2>&1 &
+    "$minio_bin" server "$MINIO_DATA_DIR" --address "127.0.0.1:$MINIO_PORT" > "$MINIO_LOG_FILE" 2>&1 &
     MINIO_PID=$!
     register_pid $MINIO_PID
 
