@@ -278,7 +278,7 @@ func TestMPPHints(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, testKit *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
-		testKit.MustExec("alter table t set tiflash replica 1")
+		testkit.SetTiFlashReplica(t, dom, "test", "t")
 		testKit.MustExec("set @@session.tidb_allow_mpp=ON")
 		testKit.MustExec("create definer='root'@'localhost' view v as select a, sum(b) from t group by a, c;")
 		testKit.MustExec("create definer='root'@'localhost' view v1 as select t1.a from t t1, t t2 where t1.a=t2.a;")
@@ -312,7 +312,7 @@ func TestMPPHints(t *testing.T) {
 			testKit.MustQuery("explain format = 'plan_tree' " + tt).Check(testkit.Rows(output[i].Plan...))
 			require.Equal(t, output[i].Warn, testdata.ConvertSQLWarnToStrings(testKit.Session().GetSessionVars().StmtCtx.GetWarnings()))
 		}
-	}, mockstore.WithMockTiFlash(2))
+	})
 }
 
 func TestMPPHintsScope(t *testing.T) {
@@ -320,14 +320,20 @@ func TestMPPHintsScope(t *testing.T) {
 		testKit.MustExec("use test")
 		testKit.MustExec("create table t (a int, b int, c int, index idx_a(a), index idx_b(b))")
 		testKit.MustExec("select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c")
-		testKit.MustQuery("show warnings").Check(testkit.Rows())
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			`Warning 1815 The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid`))
 		testKit.MustExec("select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c")
-		testKit.MustQuery("show warnings").Check(testkit.Rows())
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			`Warning 1815 The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid`))
 		testKit.MustExec("select /*+ shuffle_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
-		testKit.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
-		testKit.MustQuery("show warnings").Check(testkit.Rows("Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid",
+			"Warning 1815 The join can not push down to the MPP side, the shuffle_join() hint is invalid"))
 		testKit.MustExec("alter table t set hypo tiflash replica 1")
+		testKit.MustExec("select /*+ broadcast_join(t1, t2) */ * from t t1, t t2 where t1.a=t2.a")
+		testKit.MustQuery("show warnings").Check(testkit.Rows(
+			"Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid",
+			"Warning 1815 The join can not push down to the MPP side, the broadcast_join() hint is invalid"))
 
 		var input []string
 		var output []struct {

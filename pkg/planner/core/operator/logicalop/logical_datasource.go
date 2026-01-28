@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/domainmisc"
 	"github.com/pingcap/tidb/pkg/planner/util/tablesampler"
 	"github.com/pingcap/tidb/pkg/planner/util/utilfuncp"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -230,7 +231,8 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
 	// If the parent operator need no columns from the DataSource, we return the smallest column. Don't add the empty proj.
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.TableInfo.TiFlashReplica != nil {
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() &&
+		(ds.TableInfo.TiFlashReplica != nil || UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)) {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -308,7 +310,7 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
-func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
+func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
@@ -329,7 +331,13 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
-	return result
+	ds.hasTiflash = ds.TableInfo.TiFlashReplica != nil &&
+		ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 ||
+		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
+	return &base.PossiblePropertiesInfo{
+		Order:      result,
+		HasTiflash: ds.hasTiflash,
+	}
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.
@@ -792,4 +800,17 @@ func (ds *DataSource) CheckPartialIndexes() {
 			return checkIndex(path, false)
 		})
 	}
+}
+
+// UsedHypoTiFlashReplicas is to use wether this table will use HypoTiFlashReplicas
+func UsedHypoTiFlashReplicas(ctx *variable.SessionVars, dbName ast.CIStr, tblInfo *model.TableInfo) bool {
+	if ctx.StmtCtx.InExplainStmt && ctx.HypoTiFlashReplicas != nil {
+		hypoReplicas := ctx.HypoTiFlashReplicas
+		originalTableName := tblInfo.Name.L
+		if hypoReplicas[dbName.L] != nil {
+			_, ok := hypoReplicas[dbName.L][originalTableName]
+			return ok
+		}
+	}
+	return false
 }
