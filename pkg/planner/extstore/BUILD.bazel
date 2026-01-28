@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "extstore",
     srcs = ["extstore.go"],
-    importpath = "github.com/pingcap/tidb/pkg/extstore",
+    importpath = "github.com/pingcap/tidb/pkg/planner/extstore",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/objstore",

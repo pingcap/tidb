@@ -379,7 +379,6 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-	setupExternalStorage(keyspaceName)
 
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
