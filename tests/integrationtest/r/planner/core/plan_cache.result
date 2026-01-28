@@ -707,14 +707,14 @@ set tidb_enable_non_prepared_plan_cache=1;
 explain format='plan_cache' select address from PERFORMANCE_SCHEMA.tikv_profile_cpu;
 id	estRows	task	access object	operator info
 Projection_3	10000.00	root		Column#1
-└─MemTableScan_5	10000.00	root	table:tikv_profile_cpu	
+└─MemTableScan_6	10000.00	root	table:tikv_profile_cpu	
 Level	Code	Message
 Warning	1105	skip non-prepared plan-cache: access tables in system schema
 use PERFORMANCE_SCHEMA;
 explain format='plan_cache' select address from tikv_profile_cpu;
 id	estRows	task	access object	operator info
 Projection_3	10000.00	root		Column#1
-└─MemTableScan_5	10000.00	root	table:tikv_profile_cpu	
+└─MemTableScan_6	10000.00	root	table:tikv_profile_cpu	
 Level	Code	Message
 Warning	1105	skip non-prepared plan-cache: access tables in system schema
 set tidb_enable_non_prepared_plan_cache=DEFAULT;
