@@ -17,6 +17,7 @@ package sortexec_test
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/internal/testutil"
 	"github.com/pingcap/tidb/pkg/executor/internal/util"
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
@@ -78,6 +79,10 @@ func failpointDataInMemoryThenSpillTest(t *testing.T, ctx *mock.Context, exe *so
 }
 
 func TestParallelSortSpillDisk(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -112,6 +117,10 @@ func TestParallelSortSpillDisk(t *testing.T) {
 }
 
 func TestParallelSortSpillDiskFailpoint(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -148,6 +157,10 @@ func TestParallelSortSpillDiskFailpoint(t *testing.T) {
 }
 
 func TestIssue59655(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()
@@ -175,6 +188,10 @@ func TestIssue59655(t *testing.T) {
 }
 
 func TestIssue63216(t *testing.T) {
+	defer config.RestoreFunc()()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempStoragePath = t.TempDir()
+	})
 	testFuncName := util.GetFunctionName()
 
 	sortexec.SetSmallSpillChunkSizeForTest()

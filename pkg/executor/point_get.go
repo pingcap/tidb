@@ -711,9 +711,10 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 {
 		// if the query has max execution time set, we need to set the context deadline for the get request
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
 		defer cancel()
 		ctx = ctxWithTimeout
 	}

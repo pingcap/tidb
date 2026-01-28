@@ -28,17 +28,18 @@ import (
 	"time"
 
 	"github.com/felixge/fgprof"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
-func openTestingStorage(t *testing.T) storage.ExternalStorage {
+func openTestingStorage(t *testing.T) storeapi.Storage {
 	if *testingStorageURI == "" {
 		t.Skip("testingStorageURI is not set")
 	}
-	s, err := storage.NewFromURL(context.Background(), *testingStorageURI)
+	s, err := objstore.NewFromURL(context.Background(), *testingStorageURI)
 	require.NoError(t, err)
 	t.Cleanup(s.Close)
 	return s
@@ -261,7 +262,7 @@ func (s *randomKeySource) outputSize() int {
 }
 
 func createEvenlyDistributedFiles(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	fileSize, fileCount int,
 	subDir string,
 ) (int, kv.Key, kv.Key) {
@@ -306,7 +307,7 @@ func createEvenlyDistributedFiles(
 }
 
 func createAscendingFiles(
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	fileSize, fileCount int,
 	subDir string,
 ) (int, kv.Key, kv.Key) {

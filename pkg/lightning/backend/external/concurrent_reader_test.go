@@ -21,9 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 	"golang.org/x/exp/rand"
 )
 
@@ -31,9 +30,8 @@ func TestConcurrentRead(t *testing.T) {
 	seed := time.Now().Unix()
 	t.Logf("seed: %d", seed)
 	rand.Seed(uint64(seed))
-	reqCnt := atomic.NewInt64(0)
 
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	data := make([]byte, 256)
 	for i := range data {
 		data[i] = byte(i)
@@ -65,7 +63,6 @@ func TestConcurrentRead(t *testing.T) {
 		int64(fileSize),
 		concurrency,
 		readBufferSize,
-		reqCnt,
 	)
 	require.NoError(t, err)
 
@@ -85,5 +82,4 @@ func TestConcurrentRead(t *testing.T) {
 	}
 
 	require.Equal(t, data[offset:], got)
-	require.Equal(t, int64((fileSize-offset)/readBufferSize+1), reqCnt.Load())
 }

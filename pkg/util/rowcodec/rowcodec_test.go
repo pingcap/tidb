@@ -1279,3 +1279,39 @@ var (
 		}
 	}
 )
+
+func TestDecodeWithCommitTS(t *testing.T) {
+	cols := []rowcodec.ColInfo{
+		{
+			ID: 1,
+			Ft: types.NewFieldType(mysql.TypeString),
+		},
+		{
+			ID: model.ExtraCommitTSID,
+			Ft: types.NewFieldType(mysql.TypeLonglong),
+		},
+		{
+			ID: 2,
+			Ft: types.NewFieldType(mysql.TypeString),
+		},
+	}
+	cols[1].Ft.SetFlag(mysql.UnsignedFlag)
+
+	var encoder rowcodec.Encoder
+	newRow, err := encoder.Encode(time.UTC, []int64{1, 2}, []types.Datum{
+		types.NewStringDatum("test1"),
+		types.NewStringDatum("test2"),
+	}, nil, nil)
+	require.NoError(t, err)
+
+	decoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
+	chk := chunk.New([]*types.FieldType{cols[0].Ft, cols[1].Ft, cols[2].Ft}, 1, 1)
+	err = decoder.DecodeToChunk(newRow, 123456, nil, chk)
+	require.NoError(t, err)
+
+	require.Equal(t, 1, chk.NumRows())
+	row := chk.GetRow(0)
+	require.Equal(t, "test1", row.GetString(0))
+	require.Equal(t, uint64(123456), row.GetUint64(1))
+	require.Equal(t, "test2", row.GetString(2))
+}

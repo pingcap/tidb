@@ -70,7 +70,7 @@ Projection	root		explain_shard_index.test5.id, explain_shard_index.test5.a, expl
 └─Batch_Point_Get	root	table:test5, index:uk_expr(tidb_shard(`a`), a, b)	keep order:false, desc:false
 explain format='plan_tree' select a+b from test5 where (a, b) in ((100, 100), (200, 200));
 id	task	access object	operator info
-Projection	root		plus(explain_shard_index.test5.a, explain_shard_index.test5.b)->Column#6
+Projection	root		plus(explain_shard_index.test5.a, explain_shard_index.test5.b)->Column
 └─Batch_Point_Get	root	table:test5, index:uk_expr(tidb_shard(`a`), a, b)	keep order:false, desc:false
 explain format='plan_tree' SELECT * FROM test3 WHERE a IN (100);
 id	task	access object	operator info

@@ -171,16 +171,16 @@ func TestKeepingJoinKeys(t *testing.T) {
 
 		// join keys are kept
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t1.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#11`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  left outer join, left side:TableReader, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
-			`  │ └─Selection cop[tikv]  eq(1, test.t2.a)`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
 			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
 			`  └─TableReader(Probe) root  data:Selection`,
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1 left join t2 on t1.a=t2.a where t2.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#11`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
 			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
@@ -189,10 +189,10 @@ func TestKeepingJoinKeys(t *testing.T) {
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
 			`      └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo`))
 		tk.MustQuery(`explain format='plan_tree' select 1 from t1, t2 where t1.a=1 and t1.a=t2.a`).Check(testkit.Rows(
-			`Projection root  1->Column#11`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  inner join, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
-			`  │ └─Selection cop[tikv]  eq(1, test.t2.a)`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
 			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
 			`  └─TableReader(Probe) root  data:Selection`,
 			`    └─Selection cop[tikv]  eq(test.t1.a, 1)`,
@@ -231,10 +231,10 @@ func TestIssue60076And63314(t *testing.T) {
 
 		tk.MustQuery(`explain format='plan_tree' select /*+ leading(t1, t3) */ 1 from
 			t1 left join t2 on t1.a=t2.a join t3 on t1.b=t3.b where t1.a=1`).Check(testkit.Rows(
-			`Projection root  1->Column#16`,
+			`Projection root  1->Column`,
 			`└─HashJoin root  left outer join, left side:HashJoin, equal:[eq(test.t1.a, test.t2.a)]`,
 			`  ├─TableReader(Build) root  data:Selection`,
-			`  │ └─Selection cop[tikv]  eq(1, test.t2.a)`,
+			`  │ └─Selection cop[tikv]  eq(test.t2.a, 1)`,
 			`  │   └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`,
 			`  └─HashJoin(Probe) root  inner join, equal:[eq(test.t1.b, test.t3.b)]`,
 			`    ├─TableReader(Build) root  data:Selection`,

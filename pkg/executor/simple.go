@@ -2932,6 +2932,12 @@ func (e *SimpleExec) executeFlush(s *ast.FlushStmt) error {
 		}
 	case ast.FlushClientErrorsSummary:
 		errno.FlushStats()
+	case ast.FlushStatsDelta:
+		if s.IsCluster {
+			return errors.New("FLUSH STATS_DELTA CLUSTER is not supported yet")
+		}
+		h := domain.GetDomain(e.Ctx()).StatsHandle()
+		return h.DumpStatsDeltaToKV(true)
 	}
 	return nil
 }

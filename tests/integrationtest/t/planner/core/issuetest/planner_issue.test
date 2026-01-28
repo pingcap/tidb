@@ -863,3 +863,12 @@ create table t1(a int, b int);
 create table t2(aa int, bb int);
 explain format = 'brief' select * from (select _tidb_rowid from t1) n1 natural join (select _tidb_rowid from t2) n2;
 explain format = 'brief' select * from (select _tidb_rowid, a from t1) n1 natural join (select _tidb_rowid, aa from t2) n2;
+
+# Issue64697
+drop table if exists t1, t2;
+create table t1(a int, b int);
+create table t2(a int, b int) partition by hash(a) partitions 2;
+insert into t1 value(1,1);
+insert into t2 value(1,1);
+delete t1, t2 from t1, t2 where t1.a = t2.a;
+drop table t1, t2;

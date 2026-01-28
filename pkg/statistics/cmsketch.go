@@ -30,7 +30,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -258,23 +257,10 @@ func (c *CMSketch) QueryBytes(d []byte) uint64 {
 }
 
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (result uint64) {
+func (c *CMSketch) queryHashValue(_ planctx.PlanContext, h1, h2 uint64) (result uint64) {
 	vals := make([]uint32, c.depth)
 	originVals := make([]uint32, c.depth)
 	minValue := uint32(math.MaxUint32)
-	useDefaultValue := false
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx,
-				"Origin Values", originVals,
-				"Values", vals,
-				"Use default value", useDefaultValue,
-				"Result", result,
-			)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
 	// We want that when res is 0 before the noise is eliminated, the default value is not used.
 	// So we need a temp value to distinguish before and after eliminating noise.
 	temp := uint32(1)
@@ -300,7 +286,6 @@ func (c *CMSketch) queryHashValue(sctx planctx.PlanContext, h1, h2 uint64) (resu
 	}
 	res = res - temp
 	if c.considerDefVal(uint64(res)) {
-		useDefaultValue = true
 		return c.defaultValue
 	}
 	return uint64(res)
@@ -631,21 +616,11 @@ type TopNMeta struct {
 
 // QueryTopN returns the results for (h1, h2) in murmur3.Sum128(), if not exists, return (0, false).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) QueryTopN(sctx planctx.PlanContext, d []byte) (result uint64, found bool) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Found", found)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func (c *TopN) QueryTopN(_ planctx.PlanContext, d []byte) (result uint64, found bool) {
 	if c == nil {
 		return 0, false
 	}
 	idx := c.FindTopN(d)
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.RecordAnyValuesWithNames(sctx, "FindTopN idx", idx)
-	}
 	if idx < 0 {
 		return 0, false
 	}
@@ -695,14 +670,7 @@ func (c *TopN) LowerBound(d []byte) (idx int, match bool) {
 
 // BetweenCount estimates the row count for interval [l, r).
 // The input sctx is just for debug trace, you can pass nil safely if that's not needed.
-func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint64) {
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer func() {
-			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result)
-			debugtrace.LeaveContextCommon(sctx)
-		}()
-	}
+func (c *TopN) BetweenCount(_ planctx.PlanContext, l, r []byte) (result uint64) {
 	if c == nil {
 		return 0
 	}
@@ -711,9 +679,6 @@ func (c *TopN) BetweenCount(sctx planctx.PlanContext, l, r []byte) (result uint6
 	ret := uint64(0)
 	for i := lIdx; i < rIdx; i++ {
 		ret += c.TopN[i].Count
-	}
-	if sctx != nil && sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugTraceTopNRange(sctx, c, lIdx, rIdx)
 	}
 	return ret
 }

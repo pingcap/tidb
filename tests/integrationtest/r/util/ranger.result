@@ -556,11 +556,11 @@ insert into t values(1,1,1,1,2),(2,1,2,1,0);
 analyze table t;
 explain format = 'plan_tree' select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t;
 id	task	access object	operator info
-Projection	root		Column#32
-└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(util__ranger.t.e, Column#31)
+Projection	root		Column
+└─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(util__ranger.t.e, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	root		funcs:count(1)->Column#31
+  └─StreamAgg(Probe)	root		funcs:count(1)->Column
     └─HashJoin	root		inner join, equal:[eq(util__ranger.t.a, util__ranger.t.a)]
       ├─IndexReader(Build)	root		index:IndexFullScan
       │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(b, c, d)	keep order:false

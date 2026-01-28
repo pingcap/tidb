@@ -404,8 +404,10 @@ func assertCheckHashCode(sf *ScalarFunction) {
 	intest.Assert(intest.InTest)
 	copyhashcode := make([]byte, len(sf.hashcode))
 	copy(copyhashcode, sf.hashcode)
-	ReHashCode(sf)
-	intest.Assert(bytes.Equal(sf.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
+	// avoid data race in the plan cache
+	s := sf.Clone().(*ScalarFunction)
+	ReHashCode(s)
+	intest.Assert(bytes.Equal(s.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
 }
 
 // IsCorrelated implements Expression interface.

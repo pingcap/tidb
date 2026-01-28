@@ -164,6 +164,7 @@ func TestVectorizedCastRealAsTime(t *testing.T) {
 		panic(err)
 	}
 	cast := &builtinCastRealAsTimeSig{baseFunc}
+	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
 
 	inputChunk, expect := genCastRealAsTime()
 	inputs := []*chunk.Chunk{
@@ -256,6 +257,7 @@ func TestVectorizedCastStringAsDecimalWithUnsignedFlagInUnion(t *testing.T) {
 	// set the `UnsignedFlag` bit
 	baseCast.tp.AddFlag(mysql.UnsignedFlag)
 	cast := &builtinCastStringAsDecimalSig{baseCast}
+	require.True(t, cast.vectorized() && cast.isChildrenVectorized())
 
 	inputs := []*chunk.Chunk{
 		genCastStringAsDecimal(false),

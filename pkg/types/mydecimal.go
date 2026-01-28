@@ -401,7 +401,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if len(str) == 0 {
 		*d = zeroMyDecimal
-		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
+		return ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)
 	}
 	switch str[0] {
 	case '-':
@@ -429,7 +429,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if digitsInt+digitsFrac == 0 {
 		*d = zeroMyDecimal
-		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
+		return ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)
 	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
@@ -982,6 +982,77 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	return
 }
 
+// FromParquetArray sets the decimal value from Parquet byte array representation.
+// It assumes that the input buffer is disposable, which will be modified during
+// the conversion.
+// Note:
+//  1. The input buffer will be modified in-place. Callers must pass a disposable
+//     copy if they need to preserve the original data.
+//     For the data layout stored in parquet, please refer to
+//     https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#decimal
+//  2. This function doesn't handle overflow/truncate, use it with caution.
+func (d *MyDecimal) FromParquetArray(buf []byte, scale int) (err error) {
+	// MyDecimal's wordBuf stores absolute value, so we need to get absolute
+	// value from two's complement first.
+	d.negative = (buf[0] & 0x80) != 0
+	if d.negative {
+		for i := range buf {
+			buf[i] = ^buf[i]
+		}
+		for i := len(buf) - 1; i >= 0; i-- {
+			buf[i]++
+			if buf[i] != 0 {
+				break
+			}
+		}
+	}
+
+	var (
+		startIndex = 0
+		endIndex   = len(buf)
+	)
+
+	for startIndex < endIndex && buf[startIndex] == 0 {
+		startIndex++
+	}
+
+	// Apply long‑division algorithm to do radix conversion.
+	wordIdx := 0
+	for startIndex < endIndex {
+		var rem uint64
+		for i := startIndex; i < endIndex; i++ {
+			v := (rem << 8) | uint64(buf[i])
+			q := v / ten9
+			rem = v % ten9
+			buf[i] = byte(q)
+			if q == 0 && i == startIndex {
+				startIndex++
+			}
+		}
+
+		if wordIdx >= wordBufLen {
+			return ErrOverflow
+		}
+
+		d.wordBuf[wordIdx] = int32(rem)
+		wordIdx++
+	}
+
+	for idx := range wordIdx / 2 {
+		d.wordBuf[idx], d.wordBuf[wordIdx-idx-1] =
+			d.wordBuf[wordIdx-idx-1], d.wordBuf[idx]
+	}
+
+	d.digitsFrac = 0
+	d.resultFrac = 0
+	d.digitsInt = int8(wordIdx * digitsPerWord)
+	if err := d.Shift(-scale); err != nil {
+		return err
+	}
+
+	return d.Round(d, scale, ModeTruncate)
+}
+
 // FromInt sets the decimal value from int64.
 func (d *MyDecimal) FromInt(val int64) *MyDecimal {
 	var uVal uint64
@@ -1348,6 +1419,23 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	}
 	buf = append(buf, byte(digitsFrac))
 	return buf, err
+}
+
+// HashKeySize returns the size of hash key
+func (d *MyDecimal) HashKeySize() (int, error) {
+	_, digitsInt := d.removeLeadingZeros()
+	_, digitsFrac := d.removeTrailingZeros()
+	prec := digitsInt + digitsFrac
+	if prec == 0 { // zeroDecimal
+		prec = 1
+	}
+
+	size, err := DecimalBinSize(prec, digitsFrac)
+	if err != nil {
+		return 0, err
+	}
+
+	return size + 1, nil
 }
 
 // PrecisionAndFrac returns the internal precision and frac number.

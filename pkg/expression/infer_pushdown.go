@@ -248,7 +248,7 @@ func scalarExprSupportedByTiKV(ctx EvalContext, sf *ScalarFunction) bool {
 		// misc functions.
 		// TODO(#26942): enable functions below after them are fully tested in TiKV.
 		/*ast.InetNtoa, ast.InetAton, ast.Inet6Ntoa, ast.Inet6Aton, ast.IsIPv4, ast.IsIPv4Compat, ast.IsIPv4Mapped, ast.IsIPv6,*/
-		ast.UUID:
+		ast.UUID, ast.UUIDVersion, ast.UUIDTimestamp:
 
 		return true
 	case ast.UnixTimestamp:

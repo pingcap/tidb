@@ -158,13 +158,17 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 }
 
 func TestPlanReplayerDumpSingle(t *testing.T) {
+	dir := t.TempDir()
+	logFile := filepath.Join(dir, "tidb.log")
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = logFile
+	})
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t_dump_single")
 	tk.MustExec("create table t_dump_single(a int)")
 	res := tk.MustQuery("plan replayer dump explain select * from t_dump_single")
-	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	path := testdata.ConvertRowsToStrings(res.Rows())
 
 	reader, err := zip.OpenReader(filepath.Join(replayer.GetPlanReplayerDirName(), path[0]))

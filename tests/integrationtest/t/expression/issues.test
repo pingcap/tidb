@@ -2249,3 +2249,14 @@ insert into lrr_test values(-2,2295421130981788987);
 prepare stmt from 'select * from lrr_test t1 join lrr_test t2 on t1.col1 = t2.col1 where t1. col1 + 10 > ? + 10 or t2. col1 + 10 >= ? + 10;';
 set @a=NULL, @b=-2;
 execute stmt using @a,@b;
+
+# TestIssue65530
+# AES_ENCRYPT in views should work with DESC and SHOW COLUMNS
+drop table if exists t_aes;
+drop view if exists v_aes;
+create table t_aes (myid int(11), myname varchar(10));
+create view v_aes as select aes_encrypt(myid,'testkey') from t_aes;
+desc v_aes;
+show columns from v_aes;
+drop view v_aes;
+drop table t_aes;

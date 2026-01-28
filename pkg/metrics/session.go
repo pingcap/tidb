@@ -291,4 +291,7 @@ const (
 	LblFairLockingStmtUsed      = "stmt-used"
 	LblFairLockingStmtEffective = "stmt-effective"
 	LblScope                    = "scope"
+
+	// For TLS
+	LblCipher = "cipher"
 )

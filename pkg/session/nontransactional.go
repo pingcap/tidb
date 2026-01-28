@@ -455,6 +455,15 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 	// A NT-DML is not a SELECT. We ignore the SelectLimit for selectSQL so that it can read all values.
 	originalSelectLimit := se.GetSessionVars().SelectLimit
 	se.GetSessionVars().SelectLimit = math.MaxUint64
+	// save original max execution time, note it uses MaxExecutionTime instead of GetMaxExecutionTime on purpose
+	// because GetMaxExecutionTime may return 0 when current StmtCtx is not in select query, while we need to
+	// restore the exact value of MaxExecutionTime.
+	originalMaxExecutionTime := se.GetSessionVars().MaxExecutionTime
+	// A NT-DML is not read-only, so we disable max execution time for it.
+	se.GetSessionVars().MaxExecutionTime = 0
+	defer func() {
+		se.GetSessionVars().MaxExecutionTime = originalMaxExecutionTime
+	}()
 	// NT-DML is a write operation, and should not be affected by read_staleness that is supposed to affect only SELECT.
 	rss, err := se.Execute(ctx, selectSQL)
 	se.GetSessionVars().SelectLimit = originalSelectLimit
@@ -529,7 +538,15 @@ func buildShardJobs(ctx context.Context, stmt *ast.NonTransactionalDMLStmt, se s
 		currentStart = *currentStart.Clone()
 	}
 
-	return jobs, nil
+	failpoint.Inject("CheckMaxExecutionTime", func(val failpoint.Value) {
+		if val.(bool) {
+			if se.GetSessionVars().MaxExecutionTime > 0 {
+				err = errors.New("injected max execution time exceeded error")
+			}
+		}
+	})
+
+	return jobs, err
 }
 
 func appendNewJob(jobs []job, id int, start types.Datum, end types.Datum, size int, tracker *memory.Tracker) []job {

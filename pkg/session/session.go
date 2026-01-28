@@ -29,6 +29,7 @@ import (
 	"iter"
 	"math"
 	"math/rand"
+	"regexp"
 	"runtime/pprof"
 	"slices"
 	"strconv"
@@ -47,13 +48,13 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	"github.com/pingcap/tidb/pkg/disttask/framework/scheduler"
-	"github.com/pingcap/tidb/pkg/disttask/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/sqlsvrapi"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
+	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/executor"
 	"github.com/pingcap/tidb/pkg/executor/staticrecordset"
@@ -65,6 +66,7 @@ import (
 	"github.com/pingcap/tidb/pkg/extension/extensionimpl"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
 	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
@@ -234,8 +236,6 @@ type session struct {
 		syncutil.RWMutex
 		builtinFunctionUsage telemetry.BuiltinFunctionsUsage
 	}
-	// allowed when tikv disk full happened.
-	diskFullOpt kvrpcpb.DiskFullOpt
 
 	// StmtStats is used to count various indicators of each SQL in this session
 	// at each point in time. These data will be periodically taken away by the
@@ -258,6 +258,11 @@ type session struct {
 
 	// Used to wait for all async commit background jobs to finish.
 	commitWaitGroup sync.WaitGroup
+}
+
+// GetTraceCtx returns the trace context of the session.
+func (s *session) GetTraceCtx() context.Context {
+	return s.currentCtx
 }
 
 // AddTableLock adds table lock to the session lock map.
@@ -1844,6 +1849,27 @@ func (s *session) getOomAlarmVariablesInfo() sessmgr.OOMAlarmVariablesInfo {
 }
 
 func (s *session) ExecuteInternal(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
+	if sink := tracing.GetSink(ctx); sink == nil {
+		trace := traceevent.NewTrace()
+		ctx = tracing.WithFlightRecorder(ctx, trace)
+		defer trace.DiscardOrFlush(ctx)
+
+		// A developer debugging event so we can see what trace is missing!
+		if traceevent.IsEnabled(tracing.DevDebug) {
+			traceevent.TraceEvent(ctx, tracing.DevDebug, "ExecuteInternal missing trace ctx",
+				zap.String("sql", sql),
+				zap.Stack("stack"))
+			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
+				return config.Event.DevDebug.Type == traceevent.DevDebugTypeExecuteInternalTraceMissing
+			})
+		}
+	}
+
+	rs, err = s.executeInternalImpl(ctx, sql, args...)
+	return rs, err
+}
+
+func (s *session) executeInternalImpl(ctx context.Context, sql string, args ...any) (rs sqlexec.RecordSet, err error) {
 	origin := s.sessionVars.InRestrictedSQL
 	s.sessionVars.InRestrictedSQL = true
 	defer func() {
@@ -1896,10 +1922,22 @@ func (s *session) Execute(ctx context.Context, sql string) (recordSets []sqlexec
 	return []sqlexec.RecordSet{rs}, err
 }
 
+type sqlRegexp struct {
+	regexp string
+}
+
+func (s sqlRegexp) sqlRegexpDumpTriggerCheck(cfg *traceevent.DumpTriggerConfig) bool {
+	// TODO: pre-compile the regexp to improve performance
+	match, err := regexp.MatchString(cfg.UserCommand.SQLRegexp, s.regexp)
+	return err == nil && match
+}
+
 // Parse parses a query string to raw ast.StmtNode.
 func (s *session) Parse(ctx context.Context, sql string) ([]ast.StmtNode, error) {
 	logutil.Logger(ctx).Debug("parse", zap.String("sql", sql))
 	parseStartTime := time.Now()
+
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_regexp", sqlRegexp{sql}.sqlRegexpDumpTriggerCheck)
 
 	// Load the session variables to the context.
 	// This is necessary for the parser to get the current sql_mode.
@@ -2338,7 +2376,41 @@ func (s *session) ExecuteInternalStmt(ctx context.Context, stmtNode ast.StmtNode
 	return s.ExecuteStmt(ctx, stmtNode)
 }
 
+func queryFailDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "query_fail"
+}
+
+type isInternalAlias struct {
+	bool
+}
+
+// isInternalAlias is not intuitive, but it is defined to avoid allocation.
+// If the code is written as
+//
+//		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", func(conf *traceevent.DumpTriggerConfig) {
+//	     	conf.Event.IsInternal = conf.Event.IsInternal
+//		})
+//
+// It's uncertain whether the Go compiler escape analysis is powerful enough to avoid allocation for the closure object.
+// isInternalAlias is defined to help the compiler, this coding style will not cause closure object allocation.
+//
+//	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", isInternalAlias{s.isInternal()}.isInternalDumpTriggerCheck)
+func (i isInternalAlias) isInternalDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.IsInternal == i.bool
+}
+
 func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
+	if fr := traceevent.GetFlightRecorder(); fr != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", fr.CheckSampling)
+	}
+	rs, err := s.executeStmtImpl(ctx, stmtNode)
+	if err != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", queryFailDumpTriggerCheck)
+	}
+	return rs, err
+}
+
+func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (sqlexec.RecordSet, error) {
 	r, ctx := tracing.StartRegionEx(ctx, "session.ExecuteStmt")
 	defer r.End()
 
@@ -2351,6 +2423,7 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 
 	sessVars := s.sessionVars
 	sessVars.StartTime = time.Now()
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.is_internal", isInternalAlias{s.isInternal()}.isInternalDumpTriggerCheck)
 
 	// Some executions are done in compile stage, so we reset them before compile.
 	if err := executor.ResetContextOfStmt(s, stmtNode); err != nil {
@@ -2372,24 +2445,6 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 	if topsqlstate.TopSQLEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
 		ctx = topsql.AttachAndRegisterSQLInfo(ctx, normalizedSQL, digest, s.sessionVars.InRestrictedSQL)
-	}
-	if sessVars.InPlanReplayer {
-		sessVars.StmtCtx.EnableOptimizerDebugTrace = true
-	} else if dom := domain.GetDomain(s); dom != nil && !sessVars.InRestrictedSQL {
-		// This is the earliest place we can get the SQL digest for this execution.
-		// If we find this digest is registered for PLAN REPLAYER CAPTURE, we need to enable optimizer debug trace no matter
-		// the plan digest will be matched or not.
-		if planReplayerHandle := dom.GetPlanReplayerHandle(); planReplayerHandle != nil {
-			tasks := planReplayerHandle.GetTasks()
-			for _, task := range tasks {
-				if task.SQLDigest == digest.String() {
-					sessVars.StmtCtx.EnableOptimizerDebugTrace = true
-				}
-			}
-		}
-	}
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		plannercore.DebugTraceReceivedCommand(s.pctx, cmdByte, stmtNode)
 	}
 
 	if err := s.validateStatementInTxn(stmtNode); err != nil {
@@ -2566,7 +2621,8 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 		digestKey := normalizedSQL
 		// digestKey := sessVars.StmtCtx.OriginalSQL
 
-		sessVars.StmtCtx.MemTracker.InitMemArbitrator(
+		tracker := sessVars.StmtCtx.MemTracker
+		if !tracker.InitMemArbitrator(
 			globalMemArbitrator,
 			sessVars.MemQuotaQuery,
 			sessVars.MemTracker.Killer,
@@ -2574,20 +2630,22 @@ func (s *session) ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (sqlex
 			memPriority,
 			enableWaitAverse,
 			reserveSize,
-		)
+			s.isInternal(),
+		) {
+			return nil, errors.New("failed to init mem-arbitrator")
+		}
+
+		defer func() { // detach mem-arbitrator and rethrow panic if any
+			if r := recover(); r != nil {
+				tracker.DetachMemArbitrator()
+				panic(r)
+			}
+		}()
 	}
 
 	var recordSet sqlexec.RecordSet
 	if stmt.PsStmt != nil { // point plan short path
-		// Generate trace ID for point-get path (same as runStmt does)
-		prevTraceID := s.sessionVars.PrevTraceID
-		startTS := s.sessionVars.TxnCtx.StartTS
-		stmtCount := uint64(s.sessionVars.TxnCtx.StatementCount)
-		traceID := traceevent.GenerateTraceID(startTS, stmtCount)
-		ctx = trace.ContextWithTraceID(ctx, traceID)
-
-		// Store trace ID for next statement
-		s.sessionVars.PrevTraceID = traceID
+		ctx, prevTraceID := resetStmtTraceID(ctx, s)
 
 		// Emit stmt.start trace event (simplified for point-get fast path)
 		if traceevent.IsEnabled(traceevent.StmtLifecycle) {
@@ -2727,6 +2785,52 @@ func (s *session) hasFileTransInConn() bool {
 	return false
 }
 
+type sqlDigestAlias struct {
+	Digest string
+}
+
+func (digest sqlDigestAlias) sqlDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.SQLDigest == digest.Digest
+}
+
+type userAlias struct {
+	user string
+}
+
+func (u userAlias) byUserDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.ByUser == u.user
+}
+
+type stmtLabelAlias struct {
+	label string
+}
+
+func (s stmtLabelAlias) stmtLabelDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.StmtLabel == s.label
+}
+
+// resetStmtTraceID generates a new trace ID for the current statement,
+// injects it into the session context for cross-statement correlation, and returns the previous trace ID.
+func resetStmtTraceID(ctx context.Context, se *session) (context.Context, []byte) {
+	// Capture previous trace ID from session variables (for statement chaining)
+	// We store it in session variables instead of context because the context
+	// is recreated for each statement and doesn't persist across executions
+	prevTraceID := se.sessionVars.PrevTraceID
+
+	// Inject trace ID into context for correlation across TiDB -> client-go -> TiKV
+	// This enables trace events to be correlated by trace_id field
+	// The trace ID is generated from transaction start_ts and statement count
+	startTS := se.sessionVars.TxnCtx.StartTS
+	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
+	traceID := traceevent.GenerateTraceID(ctx, startTS, stmtCount)
+	ctx = trace.ContextWithTraceID(ctx, traceID)
+	se.currentCtx = ctx
+	// Store trace ID for next statement
+	se.sessionVars.PrevTraceID = traceID
+
+	return ctx, prevTraceID
+}
+
 // runStmt executes the sqlexec.Statement and commit or rollback the current transaction.
 func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.RecordSet, err error) {
 	failpoint.Inject("assertTxnManagerInRunStmt", func() {
@@ -2742,26 +2846,16 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		r.Span.LogKV("sql", s.Text())
 	}
 
-	// Capture previous trace ID from session variables (for statement chaining)
-	// We store it in session variables instead of context because the context
-	// is recreated for each statement and doesn't persist across executions
-	prevTraceID := se.sessionVars.PrevTraceID
-
-	// Inject trace ID into context for correlation across TiDB -> client-go -> TiKV
-	// This enables trace events to be correlated by trace_id field
-	// The trace ID is generated from transaction start_ts and statement count
-	startTS := se.sessionVars.TxnCtx.StartTS
-	stmtCount := uint64(se.sessionVars.TxnCtx.StatementCount)
-	traceID := traceevent.GenerateTraceID(startTS, stmtCount)
-	ctx = trace.ContextWithTraceID(ctx, traceID)
-
-	// Store trace ID for next statement
-	se.sessionVars.PrevTraceID = traceID
+	ctx, prevTraceID := resetStmtTraceID(ctx, se)
+	stmtCtx := se.sessionVars.StmtCtx
+	sqlDigest, _ := stmtCtx.SQLDigest()
+	// Make sure StmtType is filled even if succ is false.
+	if stmtCtx.StmtType == "" {
+		stmtCtx.StmtType = stmtctx.GetStmtLabel(ctx, s.GetStmtNode())
+	}
 
 	// Emit stmt.start trace event
 	if traceevent.IsEnabled(traceevent.StmtLifecycle) {
-		stmtCtx := se.sessionVars.StmtCtx
-		sqlDigest, _ := stmtCtx.SQLDigest()
 		fields := []zap.Field{
 			zap.String("sql_digest", sqlDigest),
 			zap.Bool("autocommit", se.sessionVars.IsAutocommit()),
@@ -2773,6 +2867,12 @@ func runStmt(ctx context.Context, se *session, s sqlexec.Statement) (rs sqlexec.
 		}
 		traceevent.TraceEvent(ctx, traceevent.StmtLifecycle, "stmt.start", fields...)
 	}
+	// Not using closure to avoid unnecessary memory allocation.
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.sql_digest", sqlDigestAlias{sqlDigest}.sqlDigestDumpTriggerCheck)
+	if se.sessionVars.User != nil && se.sessionVars.User.Username != "" {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.by_user", userAlias{se.sessionVars.User.Username}.byUserDumpTriggerCheck)
+	}
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.user_command.stmt_label", stmtLabelAlias{stmtCtx.StmtType}.stmtLabelDumpTriggerCheck)
 
 	// Defer stmt.finish trace event to capture final state including errors
 	defer func() {
@@ -3111,6 +3211,15 @@ func (s *session) Close() {
 	}
 	if s.sessionVars.ConnectionID != 0 {
 		memory.RemovePoolFromGlobalMemArbitrator(s.sessionVars.ConnectionID)
+	}
+	// Detach session trackers during session cleanup.
+	// ANALYZE attaches session MemTracker to GlobalAnalyzeMemoryTracker; without
+	// detachment, closed sessions cannot be garbage collected.
+	if s.sessionVars.MemTracker != nil {
+		s.sessionVars.MemTracker.Detach()
+	}
+	if s.sessionVars.DiskTracker != nil {
+		s.sessionVars.DiskTracker.Detach()
 	}
 }
 
@@ -3762,24 +3871,24 @@ var (
 	errResultIsEmpty = dbterror.ClassExecutor.NewStd(errno.ErrResultIsEmpty)
 	// DDLJobTables is a list of tables definitions used in concurrent DDL.
 	DDLJobTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: ddl.JobTableSQL},
-		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: ddl.ReorgTableSQL},
-		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: ddl.HistoryTableSQL},
+		{ID: metadef.TiDBDDLJobTableID, Name: "tidb_ddl_job", SQL: metadef.CreateTiDBDDLJobTable},
+		{ID: metadef.TiDBDDLReorgTableID, Name: "tidb_ddl_reorg", SQL: metadef.CreateTiDBReorgTable},
+		{ID: metadef.TiDBDDLHistoryTableID, Name: "tidb_ddl_history", SQL: metadef.CreateTiDBDDLHistoryTable},
 	}
 	// MDLTables is a list of tables definitions used for metadata lock.
 	MDLTables = []TableBasicInfo{
-		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: ddl.MDLTableSQL},
+		{ID: metadef.TiDBMDLInfoTableID, Name: "tidb_mdl_info", SQL: metadef.CreateTiDBMDLTable},
 	}
 	// BackfillTables is a list of tables definitions used in dist reorg DDL.
 	BackfillTables = []TableBasicInfo{
-		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: ddl.BackgroundSubtaskTableSQL},
-		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: ddl.BackgroundSubtaskHistoryTableSQL},
+		{ID: metadef.TiDBBackgroundSubtaskTableID, Name: "tidb_background_subtask", SQL: metadef.CreateTiDBBackgroundSubtaskTable},
+		{ID: metadef.TiDBBackgroundSubtaskHistoryTableID, Name: "tidb_background_subtask_history", SQL: metadef.CreateTiDBBackgroundSubtaskHistoryTable},
 	}
 	// DDLNotifierTables contains the table definitions used in DDL notifier.
 	// It only contains the notifier table.
 	// Put it here to reuse a unified initialization function and make it easier to find.
 	DDLNotifierTables = []TableBasicInfo{
-		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: ddl.NotifierTableSQL},
+		{ID: metadef.TiDBDDLNotifierTableID, Name: "tidb_ddl_notifier", SQL: metadef.CreateTiDBDDLNotifierTable},
 	}
 
 	ddlTableVersionTables = []versionedDDLTables{
@@ -3844,13 +3953,15 @@ func InitDDLTables(store kv.Storage) error {
 }
 
 func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables []TableBasicInfo) error {
-	tableIDs := make([]int64, 0, len(tables))
-	for _, tbl := range tables {
-		tableIDs = append(tableIDs, tbl.ID)
-	}
-	splitAndScatterTable(store, tableIDs)
+	var (
+		tableIDs = make([]int64, 0, len(tables))
+		tblInfos = make([]*model.TableInfo, 0, len(tables))
+	)
 	p := parser.New()
 	for _, tbl := range tables {
+		failpoint.InjectCall("mockCreateSystemTableSQL", &tbl)
+		tableIDs = append(tableIDs, tbl.ID)
+
 		stmt, err := p.ParseOneStmt(tbl.SQL, "", "")
 		if err != nil {
 			return errors.Trace(err)
@@ -3867,7 +3978,16 @@ func createAndSplitTables(store kv.Storage, t *meta.Mutator, dbID int64, tables 
 		tblInfo.State = model.StatePublic
 		tblInfo.ID = tbl.ID
 		tblInfo.UpdateTS = t.StartTS
-		err = t.CreateTableOrView(dbID, tblInfo)
+		if err = checkSystemTableConstraint(tblInfo); err != nil {
+			return errors.Trace(err)
+		}
+
+		tblInfos = append(tblInfos, tblInfo)
+	}
+
+	splitAndScatterTable(store, tableIDs)
+	for _, tblInfo := range tblInfos {
+		err := t.CreateTableOrView(dbID, tblInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -3912,27 +4032,6 @@ func InitTiDBSchemaCacheSize(store kv.Storage) error {
 	}
 	vardef.SchemaCacheSize.Store(size)
 	return nil
-}
-
-// InitMDLVariableForUpgrade initializes the metadata lock variable.
-func InitMDLVariableForUpgrade(store kv.Storage) (bool, error) {
-	isNull := false
-	enable := false
-	var err error
-	err = kv.RunInNewTxn(kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL), store, true, func(_ context.Context, txn kv.Transaction) error {
-		t := meta.NewMutator(txn)
-		enable, isNull, err = t.GetMetadataLock()
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-	if isNull || !enable {
-		vardef.SetEnableMDL(false)
-	} else {
-		vardef.SetEnableMDL(true)
-	}
-	return isNull, err
 }
 
 // InitMDLVariable initializes the metadata lock variable.
@@ -4056,7 +4155,19 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	if err != nil {
 		return nil, err
 	}
-	ses[0].GetSessionVars().InRestrictedSQL = true
+	// Mark all bootstrap sessions as restricted since they are used for internal operations
+	// ses[0]: main bootstrap session
+	// ses[1-2]: reserved
+	// ses[3]: privilege loading
+	// ses[4]: sysvar cache
+	// ses[5]: telemetry, expression pushdown
+	// ses[6]: plan replayer collector
+	// ses[7]: dump file GC
+	// ses[8]: historical stats
+	// ses[9]: bootstrap SQL file
+	for i := range ses {
+		ses[i].GetSessionVars().InRestrictedSQL = true
+	}
 
 	// get system tz from mysql.tidb
 	tz, err := ses[0].getTableValue(ctx, mysql.TiDBTable, tidbSystemTZ)
@@ -4082,14 +4193,6 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	// To deal with the location partition failure caused by inconsistent NewCollationEnabled values(see issue #32416).
 	rebuildAllPartitionValueMapAndSorted(ctx, ses[0])
 
-	// We should make the load bind-info loop before other loops which has internal SQL.
-	// Because the internal SQL may access the global bind-info handler. As the result, the data race occurs here as the
-	// LoadBindInfoLoop inits global bind-info handler.
-	err = dom.InitBindingHandle()
-	if err != nil {
-		return nil, err
-	}
-
 	if !config.GetGlobalConfig().Security.SkipGrantTable {
 		err = dom.LoadPrivilegeLoop(ses[3])
 		if err != nil {
@@ -4099,6 +4202,14 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// We should make the load bind-info loop before other loops which has internal SQL.
+	// Binding Handle must be initialized after LoadSysVarCacheLoop since
+	// it'll use `tidb_mem_quota_binding_cache` to set the cache size.
+	err = dom.InitBindingHandle()
 	if err != nil {
 		return nil, err
 	}
@@ -4181,11 +4292,7 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	dom.SetupExtractHandle(extractWorkerSctxs)
 
 	// setup init stats loader
-	initStatsCtx, err := createSession(store)
-	if err != nil {
-		return nil, err
-	}
-	if err = dom.LoadAndUpdateStatsLoop(concurrency, initStatsCtx); err != nil {
+	if err = dom.LoadAndUpdateStatsLoop(concurrency); err != nil {
 		return nil, err
 	}
 
@@ -4238,6 +4345,12 @@ func GetDomain(store kv.Storage) (*domain.Domain, error) {
 	return domap.Get(store)
 }
 
+// GetOrCreateDomainWithFilter gets the associated domain for store. If domain not created, create a new one with the given schema filter.
+func GetOrCreateDomainWithFilter(store kv.Storage, filter issyncer.Filter) (*domain.Domain, error) {
+	return domap.GetOrCreateWithFilter(store, filter)
+}
+
+// getStartMode gets the start mode according to the bootstrap version.
 func getStartMode(ver int64) ddl.StartMode {
 	if ver == notBootstrapped {
 		return ddl.Bootstrap
@@ -4304,6 +4417,12 @@ func runInBootstrapSession(store kv.Storage, ver int64) {
 		// to let the older owner have time to notice that it's already retired.
 		time.Sleep(owner.WaitTimeOnForceOwner)
 		upgrade(s)
+	case ddl.Normal:
+		// We need to init MDL variable before start the domain to prevent potential stuck issue
+		// when upgrade is skipped. See https://github.com/pingcap/tidb/issues/64539.
+		if err := InitMDLVariable(store); err != nil {
+			logutil.BgLogger().Fatal("init metadata lock failed during normal startup", zap.Error(err))
+		}
 	}
 	finishBootstrap(store)
 	s.ClearValue(sessionctx.Initing)
@@ -5428,7 +5547,7 @@ func GetDBNames(seVar *variable.SessionVars) []string {
 		}
 	}
 	if len(dbNames) == 0 {
-		dbNames[seVar.CurrentDB] = struct{}{}
+		dbNames[strings.ToLower(seVar.CurrentDB)] = struct{}{}
 	}
 	ns := make([]string, 0, len(dbNames))
 	for n := range dbNames {

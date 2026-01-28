@@ -3,3 +3,13 @@ show tables like '%xx';
 Tables_in_show (%xx)
 show databases like '%xx';
 Database (%xx)
+drop table if exists t;
+create table t (id int, created_time datetime) TTL=created_time + interval 1 hour  partition by range columns(id) (partition p1 values less than (100));
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int DEFAULT NULL,
+  `created_time` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`created_time` + INTERVAL 1 HOUR */ /*T![ttl] TTL_ENABLE='ON' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */
+PARTITION BY RANGE COLUMNS(`id`)
+(PARTITION `p1` VALUES LESS THAN (100))

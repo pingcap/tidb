@@ -3158,6 +3158,7 @@ const (
 	ShowReplicaStatus
 	ShowDistributions
 	ShowDistributionJobs
+	ShowAffinity
 	// showTpCount is the count of all kinds of `SHOW` statements.
 	showTpCount
 )

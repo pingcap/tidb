@@ -4,11 +4,12 @@ go_test(
     name = "bootstraptest_test",
     timeout = "short",
     srcs = [
+        "boot_test.go",
         "bootstrap_upgrade_test.go",  #keep
         "main_test.go",
     ],
     flaky = True,
-    shard_count = 15,
+    shard_count = 37,
     deps = [
         "//pkg/config",
         "//pkg/config/kerneltype",
@@ -23,10 +24,15 @@ go_test(
         "//pkg/session",  #keep
         "//pkg/session/sessionapi",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/vardef",
+        "//pkg/statistics",
+        "//pkg/store/mockstore",
         "//pkg/testkit",  #keep
+        "//pkg/testkit/testenv",
         "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
+        "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",

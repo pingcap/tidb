@@ -71,6 +71,34 @@ func TestCrossDBBindingCache(t *testing.T) {
 	require.True(t, ok)
 }
 
+func TestDuplicatedBinding(t *testing.T) {
+	// 3 bindings with the same noDBDigest
+	bindingDB1 := &Binding{BindSQL: "SELECT * FROM db1.t1"}
+	bindingDB2 := &Binding{BindSQL: "SELECT * FROM db2.t1"}
+	bindingDB3 := &Binding{BindSQL: "SELECT * FROM db3.t1"}
+	c := newBindCache()
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+
+	digestMap := c.(*bindingCache).digestBiMap.(*digestBiMapImpl)
+	var noDBDigest string
+	for digest := range digestMap.noDBDigest2SQLDigest {
+		noDBDigest = digest
+	}
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(digestMap.noDBDigest2SQLDigest[noDBDigest]))
+	require.Equal(t, 3, len(digestMap.sqlDigest2noDBDigest))
+
+	// put 3 duplicated bindings again
+	require.Nil(t, c.SetBinding("db1", bindingDB1))
+	require.Nil(t, c.SetBinding("db2", bindingDB2))
+	require.Nil(t, c.SetBinding("db3", bindingDB3))
+	require.True(t, noDBDigest != "")
+	require.Equal(t, 3, len(digestMap.noDBDigest2SQLDigest[noDBDigest]))
+	require.Equal(t, 3, len(digestMap.sqlDigest2noDBDigest))
+}
+
 func TestBindCache(t *testing.T) {
 	binding := &Binding{BindSQL: "SELECT * FROM t1"}
 	kvSize := int(binding.size())
@@ -102,18 +130,6 @@ func TestBindCache(t *testing.T) {
 		}
 		return hit == 2
 	}, time.Second*5, time.Millisecond*100)
-}
-
-func getTableName(n []*ast.TableName) []string {
-	result := make([]string, 0, len(n))
-	for _, v := range n {
-		var sb strings.Builder
-		restoreFlags := format.RestoreKeyWordLowercase
-		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
-		v.Restore(restoreCtx)
-		result = append(result, sb.String())
-	}
-	return result
 }
 
 func TestExtractTableName(t *testing.T) {
@@ -150,7 +166,22 @@ func TestExtractTableName(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt(tt.sql, "", "")
 		require.NoErrorf(t, err, "sql: %s", tt.sql)
 		rs := CollectTableNames(stmt)
-		result := getTableName(rs)
+		result, err := getTableName(rs)
+		require.NoErrorf(t, err, "sql: %s", tt.sql)
 		require.Equalf(t, tt.tables, result, "sql: %s", tt.sql)
 	}
+}
+
+func getTableName(n []*ast.TableName) ([]string, error) {
+	result := make([]string, 0, len(n))
+	for _, v := range n {
+		var sb strings.Builder
+		restoreFlags := format.RestoreKeyWordLowercase
+		restoreCtx := format.NewRestoreCtx(restoreFlags, &sb)
+		if err := v.Restore(restoreCtx); err != nil {
+			return nil, err
+		}
+		result = append(result, sb.String())
+	}
+	return result, nil
 }

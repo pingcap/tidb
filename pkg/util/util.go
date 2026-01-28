@@ -19,11 +19,9 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
-	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -64,38 +62,6 @@ func StringsToInterfaces(strs []string) []any {
 	}
 
 	return is
-}
-
-// GetJSON fetches a page and parses it as JSON. The parsed result will be
-// stored into the `v`. The variable `v` must be a pointer to a type that can be
-// unmarshalled from JSON.
-//
-// Example:
-//
-//	client := &http.Client{}
-//	var resp struct { IP string }
-//	if err := util.GetJSON(client, "http://api.ipify.org/?format=json", &resp); err != nil {
-//		return errors.Trace(err)
-//	}
-//	fmt.Println(resp.IP)
-//
-// nolint:unused
-func GetJSON(client *http.Client, url string, v any) error {
-	resp, err := client.Get(url)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		return errors.Errorf("get %s http status code != 200, message %s", url, string(body))
-	}
-
-	return errors.Trace(json.NewDecoder(resp.Body).Decode(v))
 }
 
 // Str2Int64Map converts a string to a map[int64]struct{}.

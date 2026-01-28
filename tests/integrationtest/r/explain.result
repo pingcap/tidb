@@ -29,14 +29,14 @@ set session tidb_hashagg_partial_concurrency = 1;
 set session tidb_hashagg_final_concurrency = 1;
 explain format = 'plan_tree' select group_concat(a) from t group by id;
 id	task	access object	operator info
-StreamAgg	root		group by:Column#7, funcs:group_concat(Column#6 separator ",")->Column#5
-└─Projection	root		cast(explain.t.a, var_string(20))->Column#6, explain.t.id->Column#7
+StreamAgg	root		group by:Column, funcs:group_concat(Column separator ",")->Column
+└─Projection	root		cast(explain.t.a, var_string(20))->Column, explain.t.id->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain format = 'plan_tree' select group_concat(a, b) from t group by id;
 id	task	access object	operator info
-StreamAgg	root		group by:Column#8, funcs:group_concat(Column#6, Column#7 separator ",")->Column#5
-└─Projection	root		cast(explain.t.a, var_string(20))->Column#6, cast(explain.t.b, var_string(20))->Column#7, explain.t.id->Column#8
+StreamAgg	root		group by:Column, funcs:group_concat(Column, Column separator ",")->Column
+└─Projection	root		cast(explain.t.a, var_string(20))->Column, cast(explain.t.b, var_string(20))->Column, explain.t.id->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:true, stats:pseudo
 explain format = TRADITIONAL select group_concat(a, b) from t group by id;

@@ -15,11 +15,12 @@ import (
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/streamhelper"
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/tikv/client-go/v2/oracle"
 	pd "github.com/tikv/pd/client"
@@ -141,9 +142,9 @@ type pitrCollector struct {
 	// Immutable state.
 
 	// taskStorage is the log backup storage.
-	taskStorage storage.ExternalStorage
+	taskStorage storeapi.Storage
 	// restoreStorage is where the running restoration from.
-	restoreStorage storage.ExternalStorage
+	restoreStorage storeapi.Storage
 	// name is a human-friendly identity to this restoration.
 	// When restart from a checkpoint, a new name will be generated.
 	name string
@@ -317,11 +318,11 @@ func (c *pitrCollector) putSST(ctx context.Context, f *pb.File) error {
 	f = util.ProtoV1Clone(f)
 	out := c.sstPath(f.Name)
 
-	copier, ok := c.taskStorage.(storage.Copier)
+	copier, ok := c.taskStorage.(storeapi.Copier)
 	if !ok {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "storage %T does not support copying", c.taskStorage)
 	}
-	spec := storage.CopySpec{
+	spec := storeapi.CopySpec{
 		From: f.GetName(),
 		To:   out,
 	}
@@ -516,7 +517,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 		maxCopyConcurrency: deps.maxCopyConcurrency,
 	}
 
-	strg, err := storage.Create(ctx, ts[0].Info.Storage, false)
+	strg, err := objstore.Create(ctx, ts[0].Info.Storage, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -534,7 +535,7 @@ func newPiTRColl(ctx context.Context, deps PiTRCollDep) (*pitrCollector, error) 
 	}
 	coll.name = fmt.Sprintf("backup-%016X", t)
 
-	restoreStrg, err := storage.Create(ctx, deps.Storage, false)
+	restoreStrg, err := objstore.Create(ctx, deps.Storage, false)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

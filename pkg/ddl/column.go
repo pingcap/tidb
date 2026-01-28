@@ -294,6 +294,10 @@ func isDroppableColumn(tblInfo *model.TableInfo, colName ast.CIStr) error {
 	if err != nil {
 		return err
 	}
+	err = checkColumnReferencedByPartialCondition(tblInfo, colName)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -560,11 +564,10 @@ func (w *worker) updatePhysicalTableRow(
 				model.ActionRemovePartitioning,
 				model.ActionAlterTablePartitioning:
 				// Expected
+			case model.ActionModifyColumn:
+				workType = typeUpdateColumnWorker
 			default:
-				// workType = typeUpdateColumnWorker
-				// TODO: Support Modify Column on partitioned table
-				// https://github.com/pingcap/tidb/issues/38297
-				return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
+				return dbterror.ErrCancelledDDLJob.GenWithStack("Unsupported job Type.")
 			}
 			err := w.writePhysicalTableRecord(ctx, w.sessPool, p, workType, reorgInfo)
 			if err != nil {
@@ -599,20 +602,13 @@ func (w *worker) modifyTableColumn(
 		// Job is cancelled. So it can't be done.
 		failpoint.Return(dbterror.ErrCancelledDDLJob)
 	})
-	// TODO: Support partition tables.
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		//nolint:forcetypeassert
-		err := w.updatePhysicalTableRow(ctx, t.(table.PhysicalTable), reorgInfo)
+		err := w.updatePhysicalTableRow(ctx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
 	}
 
-	if _, ok := t.(table.PartitionedTable); ok {
-		// TODO: remove when modify column of partitioned table is supported
-		// https://github.com/pingcap/tidb/issues/38297
-		return dbterror.ErrCancelledDDLJob.GenWithStack("Modify Column on partitioned table / typeUpdateColumnWorker not yet supported.")
-	}
 	return nil
 }
 
@@ -633,10 +629,10 @@ type updateColumnWorker struct {
 func getOldAndNewColumnsForUpdateColumn(t table.Table, currElementID int64) (oldCol, newCol *model.ColumnInfo) {
 	for _, col := range t.WritableCols() {
 		if col.ID == currElementID {
-			changeColumnOrigName := table.FindCol(t.Cols(), getChangingColumnOriginName(col.ColumnInfo))
-			if changeColumnOrigName != nil {
+			changingColumn := table.FindCol(t.Cols(), col.GetChangingOriginName())
+			if changingColumn != nil {
 				newCol = col.ColumnInfo
-				oldCol = changeColumnOrigName.ColumnInfo
+				oldCol = changingColumn.ColumnInfo
 				return
 			}
 		}
@@ -934,8 +930,8 @@ func validatePosition(tblInfo *model.TableInfo, oldCol *model.ColumnInfo, pos *a
 func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.IndexInfo) {
 	for i := range oldIdxs {
 		oldIdxName := oldIdxs[i].Name.O
-		publicName := ast.NewCIStr(getRemovingObjOriginName(oldIdxName))
-		removingName := ast.NewCIStr(getRemovingObjName(oldIdxName))
+		publicName := ast.NewCIStr(oldIdxs[i].GetRemovingOriginName())
+		removingName := ast.NewCIStr(model.GenRemovingObjName(oldIdxName))
 
 		changingIdxs[i].Name = publicName
 		oldIdxs[i].Name = removingName
@@ -946,7 +942,7 @@ func markOldIndexesRemoving(oldIdxs []*model.IndexInfo, changingIdxs []*model.In
 func markOldObjectRemoving(oldCol, changingCol *model.ColumnInfo, oldIdxs, changingIdxs []*model.IndexInfo, newColName ast.CIStr) {
 	if oldCol.ID != changingCol.ID {
 		publicName := newColName
-		removingName := ast.NewCIStr(getRemovingObjName(oldCol.Name.O))
+		removingName := ast.NewCIStr(model.GenRemovingObjName(oldCol.Name.O))
 		renameColumnTo(oldCol, oldIdxs, removingName)
 		renameColumnTo(changingCol, changingIdxs, publicName)
 	}
@@ -1359,55 +1355,6 @@ func indexInfosToIDList(idxInfos []*model.IndexInfo) []int64 {
 	return ids
 }
 
-func genChangingColumnUniqueName(tblInfo *model.TableInfo, oldCol *model.ColumnInfo) string {
-	// Check whether the new column name is used.
-	columnNameMap := make(map[string]bool, len(tblInfo.Columns))
-	for _, col := range tblInfo.Columns {
-		columnNameMap[col.Name.L] = true
-	}
-	suffix := 0
-	newColumnName := fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
-	for columnNameMap[strings.ToLower(newColumnName)] {
-		suffix++
-		newColumnName = fmt.Sprintf("%s%s_%d", changingColumnPrefix, oldCol.Name.O, suffix)
-	}
-	return newColumnName
-}
-
-func genChangingIndexUniqueName(tblInfo *model.TableInfo, idxInfo *model.IndexInfo) string {
-	// Check whether the new index name is used.
-	indexNameMap := make(map[string]bool, len(tblInfo.Indices))
-	for _, idx := range tblInfo.Indices {
-		indexNameMap[idx.Name.L] = true
-	}
-	suffix := 0
-	newIndexName := fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
-	for indexNameMap[strings.ToLower(newIndexName)] {
-		suffix++
-		newIndexName = fmt.Sprintf("%s%s_%d", changingIndexPrefix, idxInfo.Name.O, suffix)
-	}
-	return newIndexName
-}
-
-func getChangingIndexOriginName(changingIdx *model.IndexInfo) string {
-	idxName := strings.TrimPrefix(changingIdx.Name.O, changingIndexPrefix)
-	// Since the unique idxName may contain the suffix number (indexName_num), better trim the suffix.
-	var pos int
-	if pos = strings.LastIndex(idxName, "_"); pos == -1 {
-		return idxName
-	}
-	return idxName[:pos]
-}
-
-func getChangingColumnOriginName(changingColumn *model.ColumnInfo) string {
-	columnName := strings.TrimPrefix(changingColumn.Name.O, changingColumnPrefix)
-	var pos int
-	if pos = strings.LastIndex(columnName, "_"); pos == -1 {
-		return columnName
-	}
-	return columnName[:pos]
-}
-
 func getExpressionIndexOriginName(originalName ast.CIStr) string {
 	columnName := strings.TrimPrefix(originalName.O, expressionIndexPrefix+"_")
 	var pos int
@@ -1415,15 +1362,4 @@ func getExpressionIndexOriginName(originalName ast.CIStr) string {
 		return columnName
 	}
 	return columnName[:pos]
-}
-
-func getRemovingObjName(name string) string {
-	if strings.HasPrefix(name, removingObjPrefix) {
-		return name
-	}
-	return fmt.Sprintf("%s%s", removingObjPrefix, name)
-}
-
-func getRemovingObjOriginName(idxName string) string {
-	return strings.TrimPrefix(idxName, removingObjPrefix)
 }

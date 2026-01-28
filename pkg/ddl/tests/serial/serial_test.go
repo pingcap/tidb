@@ -1275,3 +1275,35 @@ func TestGetReverseKey(t *testing.T) {
 	endKey = maxKey.Next()
 	checkRet(startKey, endKey, endKey)
 }
+
+func TestForbiddenDDLInNextGen(t *testing.T) {
+	if kerneltype.IsClassic() {
+		t.Skip("those forbidden DDLs are only for next-gen")
+	}
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(id int)")
+	tk.MustExec(`CREATE TABLE IF NOT EXISTS pt (
+		table_id BIGINT(64) NOT NULL,
+		sample_num BIGINT(64) NOT NULL DEFAULT 0,
+		sample_rate DOUBLE NOT NULL DEFAULT -1,
+		buckets BIGINT(64) NOT NULL DEFAULT 0,
+		topn BIGINT(64) NOT NULL DEFAULT -1,
+		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
+		column_ids TEXT(19372),
+		PRIMARY KEY (table_id) CLUSTERED
+	) partition by range(table_id)(partition p0 values less than MAXVALUE);`)
+
+	for _, sql := range []string{
+		`drop database sys`,
+		`drop database mysql`,
+		`truncate table mysql.tidb_global_task`,
+		`alter table mysql.analyze_options partition by hash(table_id) partitions 8`,
+		`alter table pt exchange partition p0 with table mysql.analyze_options`,
+	} {
+		t.Run(sql, func(t *testing.T) {
+			require.ErrorIs(t, tk.ExecToErr(sql), dbterror.ErrForbiddenDDL)
+		})
+	}
+}

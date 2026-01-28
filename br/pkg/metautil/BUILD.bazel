@@ -13,10 +13,10 @@ go_library(
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
-        "//br/pkg/storage",
         "//br/pkg/summary",
         "//br/pkg/utils",
         "//pkg/meta/model",
+        "//pkg/objstore/storeapi",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/util",
@@ -49,9 +49,10 @@ go_test(
     flaky = True,
     shard_count = 10,
     deps = [
-        "//br/pkg/storage",
         "//br/pkg/utils",
         "//pkg/meta/model",
+        "//pkg/objstore",
+        "//pkg/objstore/storeapi",
         "//pkg/parser/ast",
         "//pkg/statistics/handle/types",
         "//pkg/statistics/util",

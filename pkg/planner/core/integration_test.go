@@ -913,6 +913,26 @@ func TestHypoIndexHint(t *testing.T) {
 	})
 }
 
+func TestIssue65166(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`CREATE TABLE t_outer (
+			id bigint(20) NOT NULL,
+			scode varchar(64) NOT NULL,
+			username varchar(60) NOT NULL,
+			real_name varchar(100) NOT NULL DEFAULT '',
+			KEY idx1 ((lower(real_name))),
+			UNIQUE KEY idx2 (username,scode))`)
+		tk.MustExec(`CREATE TABLE t (
+			id int(11) unsigned NOT NULL,
+			scode varchar(64) NOT NULL DEFAULT '',
+			plat_id varchar(64) NOT NULL)`)
+		tk.MustQuery(`EXPLAIN FORMAT='plan_tree' SELECT a.id FROM
+			t AS a LEFT JOIN t_outer b ON b.username = a.plat_id
+			AND b.scode = a.scode ORDER BY a.id`).CheckNotContain("Join")
+	})
+}
+
 func TestIssue29503(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		defer config.RestoreFunc()()
@@ -1693,14 +1713,11 @@ func TestPointGetWithSelectLock(t *testing.T) {
 		"explain select c, d from t1 where (c = 1 or c = 2 )and d = 1 for update;",
 		"explain select c, d from t1 where c in (1,2,3,4) for update;",
 	}
-	tk.MustExec("set @@tidb_enable_tiflash_read_for_write_stmt = on;")
 	tk.MustExec("set @@sql_mode='';")
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tiflash';")
 	tk.MustExec("begin;")
-	// assert point get / batch point get can't work with tiflash in interaction txn
 	for _, sql := range sqls {
-		err = tk.ExecToErr(sql)
-		require.Error(t, err)
+		tk.MustQuery(sql).CheckNotContain("tiflash")
 	}
 	// assert point get / batch point get can work with tikv in interaction txn
 	tk.MustExec("set @@tidb_isolation_read_engines='tidb,tikv,tiflash';")

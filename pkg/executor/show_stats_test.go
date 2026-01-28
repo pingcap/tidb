@@ -85,11 +85,11 @@ func TestShowStatsMeta(t *testing.T) {
 	require.Equal(t, "p0", result.Rows()[1][2])
 
 	// For static partitioned table, there is no global table.
-	tk.MustExec("set @@global.tidb_partition_prune_mode='static'")
+	tk.MustExec("set @@tidb_partition_prune_mode='static'")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int, b int) partition by range(a) (partition p0 values less than (6))")
 	tk.MustExec(`insert into t values (1, 1)`)
-	tk.MustExec("analyze table t")
+	tk.MustExec("analyze table t all columns")
 	result = tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 't'").Sort()
 	require.Len(t, result.Rows(), 1)
 	require.Equal(t, "test", result.Rows()[0][0])

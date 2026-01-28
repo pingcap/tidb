@@ -15,6 +15,7 @@
 PROJECT=tidb
 GOPATH ?= $(shell go env GOPATH)
 GOMODCACHE ?= $(shell go env GOMODCACHE)
+GOOS ?= $(shell go env GOOS)
 P=8
 
 # Ensure GOPATH is set before running build process.
@@ -133,8 +134,8 @@ DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitHash=$(shell git
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GitBranch=$(shell git rev-parse --abbrev-ref HEAD)"
 DUMPLING_LDFLAGS += -X "github.com/pingcap/tidb/dumpling/cli.GoVersion=$(shell go version)"
 
-DUMPLING_GOBUILD := CGO_ENABLED=1 GO111MODULE=on go build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
-DUMPLING_GOTEST  := CGO_ENABLED=1 GO111MODULE=on go test -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOBUILD := CGO_ENABLED=1 ${GO} build -trimpath -ldflags '$(DUMPLING_LDFLAGS)'
+DUMPLING_GOTEST  := CGO_ENABLED=1 ${GO} test -ldflags '$(DUMPLING_LDFLAGS)'
 
 TEST_COVERAGE_DIR := "test_coverage"
 
@@ -142,7 +143,11 @@ ifneq ("$(CI)", "")
 	BAZEL_GLOBAL_CONFIG := --output_user_root=/home/jenkins/.tidb/tmp
 	BAZEL_CMD_CONFIG := --config=ci --repository_cache=/home/jenkins/.tidb/tmp
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
+else
+    BAZEL_CMD_CONFIG := --remote_cache=https://cache.hawkingrei.com/bazelcache --noremote_upload_local_results
 endif
-BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
-
+BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...,//lightning/...
+TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
+IMPORTER_PATH := ./bazel-bin/cmd/importer/importer_/importer
+TIDB_SERVER_CHECK_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server_check
 NOGO_FLAG=true

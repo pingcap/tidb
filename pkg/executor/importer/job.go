@@ -68,8 +68,11 @@ const (
 	// step goes from none -> importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
 	// when used in local sort, it means encode&sort data and then importing the data.
-	JobStepImporting  = "importing"
-	JobStepValidating = "validating"
+	JobStepImporting = "importing"
+	// JobStepResolvingConflicts is the step after importing to resolve conflicts,
+	// it's used in global sort.
+	JobStepResolvingConflicts = "resolving-conflicts"
+	JobStepValidating         = "validating"
 
 	baseQuerySQL = `SELECT
 					id, create_time, start_time, update_time, end_time,
@@ -127,6 +130,11 @@ type JobInfo struct {
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
+}
+
+// IsSuccess returns whether the job is successful.
+func (j *JobInfo) IsSuccess() bool {
+	return j.Status == JobStatusFinished
 }
 
 // GetJob returns the job with the given id if the user has privilege.

@@ -230,8 +230,12 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	}
 	batchSize := runawayRecordGCSelectBatchSize
 	deleteSize := runawayRecordGCBatchSize
-	failpoint.Inject("FastRunawayGC", func() {
-		expiredDuration = time.Millisecond * 1
+	failpoint.Inject("FastRunawayGC", func(val failpoint.Value) {
+		expiredDurationMs := val.(int)
+		if expiredDurationMs == 0 {
+			expiredDurationMs = 1
+		}
+		expiredDuration = time.Millisecond * time.Duration(expiredDurationMs)
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
@@ -244,6 +248,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 			return
 		}
 	})
+
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
@@ -283,13 +288,18 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 			logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 			return
 		}
+		if len(rows) == 0 {
+			return
+		}
+		logutil.BgLogger().Info("start to delete the expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 		leftRows = make([][]types.Datum, len(rows))
 		for i, row := range rows {
 			leftRows[i] = row.GetDatumRow(tb.KeyColumnTypes)
 		}
-		failpoint.Inject("deleteExpiredRows", func() {
-			hasDeletedExpiredRows.Store(true)
-		})
 		for startIndex := 0; startIndex < len(leftRows); startIndex += deleteSize {
 			endIndex := startIndex + deleteSize
 			if endIndex > len(leftRows) {
@@ -313,6 +323,11 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				)
 			}
 		}
+		logutil.BgLogger().Info("deleted expired rows",
+			zap.Int("rows", len(rows)),
+			zap.Int("batch-size", batchSize),
+			zap.Int("delete-size", deleteSize),
+		)
 	}
 }
 

@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/stretchr/testify/require"
 )
@@ -79,6 +80,7 @@ func testDAGPlanBuilderSimpleCase(t *testing.T, testKit *testkit.TestKit, cascad
 }
 
 func TestDAGPlanBuilderSimpleCase(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`)
 	if kerneltype.IsNextGen() {
 		t.Skip("Please run the TestDAGPlanBuilderSimpleCaseForNextGen")
 	}
@@ -86,6 +88,7 @@ func TestDAGPlanBuilderSimpleCase(t *testing.T) {
 }
 
 func TestDAGPlanBuilderSimpleCaseForNextGen(t *testing.T) {
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/SkipSystemTableCheck", `return(true)`)
 	if kerneltype.IsClassic() {
 		t.Skip("Please run the TestDAGPlanBuilderSimpleCase")
 	}

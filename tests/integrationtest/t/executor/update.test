@@ -713,3 +713,44 @@ update parent set ref = 3 where id = 2;
 --enable_warnings
 update ignore parent set ref = 3 where id = 2;
 --disable_warnings
+
+# Issue 65067
+# Create tables with nonclustered primary key
+DROP TABLE IF EXISTS t, tp;
+CREATE TABLE t (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED);
+CREATE TABLE tp (a INT, b INT, dt DATE, PRIMARY KEY (a) NONCLUSTERED) 
+PARTITION BY RANGE (a) (
+    PARTITION p0 VALUES LESS THAN (5),
+    PARTITION p1 VALUES LESS THAN (11),
+    PARTITION p2 VALUES LESS THAN (20)
+);
+
+# Insert test data
+INSERT INTO tp(a,b) VALUES (2,2),(4,4),(6,6);
+INSERT INTO t(a,b) VALUES (12,12),(14,14),(15,15),(16,16);
+
+# Check _tidb_rowid before exchange
+SELECT *, _tidb_rowid FROM t ORDER BY a;
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+
+# Exchange partition
+ALTER TABLE tp EXCHANGE PARTITION p2 WITH TABLE t;
+
+# Verify _tidb_rowid conflicts exist
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+# Shows duplicate _tidb_rowid values: (a=2,12 both have rowid=1), (a=4,14 both have rowid=2), (a=6,15 both have rowid=3)
+
+# Attempt to update all rows
+UPDATE tp SET dt = '2025-12-16';
+# Expected: 7 rows affected
+# Bug: Only 4 rows affected
+
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+
+# Another update to confirm the issue
+UPDATE tp SET b = 333;
+# Expected: 7 rows affected
+# Bug: Only 4 rows affected
+
+SELECT *, _tidb_rowid FROM tp ORDER BY a;
+DROP TABLE t, tp;

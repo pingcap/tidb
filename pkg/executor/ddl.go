@@ -356,7 +356,7 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	// Protect important system table from been dropped by a mistake.
 	// I can hardly find a case that a user really need to do this.
 	if dbName.L == "mysql" {
-		return errors.New("Drop 'mysql' database is forbidden")
+		return dbterror.ErrForbiddenDDL.FastGenByArgs("Drop 'mysql' database")
 	}
 
 	err := e.ddlExecutor.DropSchema(e.Ctx(), s)

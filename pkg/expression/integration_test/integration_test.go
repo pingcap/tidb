@@ -2832,7 +2832,7 @@ func TestTimeBuiltin(t *testing.T) {
 	result = tk.MustQuery(`select date("2019-09-12"), date("2019-09-12 12:12:09"), date("2019-09-12 12:12:09.121212");`)
 	result.Check(testkit.Rows("2019-09-12 2019-09-12 2019-09-12"))
 	result = tk.MustQuery(`select date("0000-00-00"), date("0000-00-00 12:12:09"), date("0000-00-00 00:00:00.121212"), date("0000-00-00 00:00:00.000000");`)
-	result.Check(testkit.Rows("<nil> 0000-00-00 0000-00-00 <nil>"))
+	result.Check(testkit.Rows("<nil> <nil> <nil> <nil>"))
 	result = tk.MustQuery(`select date("aa"), date(12.1), date("");`)
 	result.Check(testkit.Rows("<nil> <nil> <nil>"))
 

@@ -46,7 +46,7 @@ go_test(
         "provider_test.go",
     ],
     flaky = True,
-    shard_count = 6,
+    shard_count = 7,
     deps = [
         ":staleread",
         "//pkg/domain",
@@ -56,6 +56,7 @@ go_test(
         "//pkg/parser/ast",
         "//pkg/parser/auth",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessiontxn",
         "//pkg/store/mockstore",
         "//pkg/table/temptable",

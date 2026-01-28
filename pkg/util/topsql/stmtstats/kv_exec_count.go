@@ -28,7 +28,7 @@ import (
 func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvExecCounter {
 	return &KvExecCounter{
 		stats:  s,
-		digest: SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)},
+		digest: newSQLPlanDigest(sqlDigest, planDigest),
 		marked: map[string]struct{}{},
 	}
 }

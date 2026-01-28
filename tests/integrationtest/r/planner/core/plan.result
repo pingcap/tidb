@@ -356,20 +356,20 @@ affected rows: 0
 info: 
 explain format='plan_tree' (select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;
 id	task	access object	operator info
-TopN	root		Column#11, offset:0, count:273
+TopN	root		Column, offset:0, count:273
 └─Union	root		
-  ├─Projection	root		cast(Column#5, varbinary(274) BINARY)->Column#11, planner__core__plan.t1.c3->Column#12
-  │ └─Projection	root		locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3)->Column#5, planner__core__plan.t1.c3
+  ├─Projection	root		cast(Column, varbinary(274) BINARY)->Column, planner__core__plan.t1.c3->Column
+  │ └─Projection	root		locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3)->Column, planner__core__plan.t1.c3
   │   └─Projection	root		planner__core__plan.t1.c3
-  │     └─TopN	root		Column#13, offset:0, count:273
-  │       └─Projection	root		planner__core__plan.t1.c3, cast(locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3), varbinary(274) BINARY)->Column#13
+  │     └─TopN	root		Column, offset:0, count:273
+  │       └─Projection	root		planner__core__plan.t1.c3, cast(locate(planner__core__plan.t1.c3, planner__core__plan.t1.c3), varbinary(274) BINARY)->Column
   │         └─TableReader	root		data:TableFullScan
   │           └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection	root		cast(to_binary(Column#10), varbinary(274) BINARY)->Column#11, cast(planner__core__plan.t2.c1, tinyblob BINARY)->Column#12
-    └─Projection	root		concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)->Column#10, planner__core__plan.t2.c1
+  └─Projection	root		cast(to_binary(Column), varbinary(274) BINARY)->Column, cast(planner__core__plan.t2.c1, tinyblob BINARY)->Column
+    └─Projection	root		concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)->Column, planner__core__plan.t2.c1
       └─Projection	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2
-        └─TopN	root		Column#14, offset:0, count:273
-          └─Projection	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2, cast(to_binary(concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)), varbinary(274) BINARY)->Column#14
+        └─TopN	root		Column, offset:0, count:273
+          └─Projection	root		planner__core__plan.t2.c1, planner__core__plan.t2.c2, cast(to_binary(concat_ws(,, cast(planner__core__plan.t2.c2, var_string(87)), planner__core__plan.t2.c1)), varbinary(274) BINARY)->Column
             └─IndexReader	root		index:IndexFullScan
               └─IndexFullScan	cop[tikv]	table:t2, index:k1(c2, c1)	keep order:false, stats:pseudo
 drop table if exists golang1, golang2;

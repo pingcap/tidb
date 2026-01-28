@@ -50,6 +50,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	kvutil "github.com/tikv/client-go/v2/util"
 	atomicutil "go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -310,6 +312,8 @@ func (w *worker) handleUpdateJobError(jobCtx *jobContext, job *model.Job, err er
 
 // updateDDLJob updates the DDL job information.
 func (w *worker) updateDDLJob(jobCtx *jobContext, job *model.Job, updateRawArgs bool) error {
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.updateDDLJob")
+	defer r.End()
 	failpoint.Inject("mockErrEntrySizeTooLarge", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(kv.ErrEntryTooLarge)
@@ -581,6 +585,9 @@ func (w *worker) transitOneJobStep(
 	jobW *model.JobW,
 ) (int64, error) {
 	failpoint.InjectCall("beforeTransitOneJobStep", jobW)
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.transitOneJobStep")
+	defer r.End()
+
 	job := jobW.Job
 	txn, err := w.prepareTxn(job)
 	if err != nil {
@@ -828,6 +835,9 @@ func (w *worker) runOneJobStep(
 			w.countForPanic(jobCtx, job)
 		}, false)
 
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.runOneJobStep")
+	defer r.End()
+
 	// Mock for run ddl job panic.
 	failpoint.Inject("mockPanicInRunDDLJob", func(failpoint.Value) {})
 
@@ -932,6 +942,9 @@ func (w *worker) runOneJobStep(
 
 	prevState := job.State
 
+	if traceevent.IsEnabled(tracing.DDLJob) {
+		traceevent.TraceEvent(jobCtx.ctx, tracing.DDLJob, "runDDLJob callback", zap.String("ActionType", job.Type.String()))
+	}
 	// For every type, `schema/table` modification and `job` modification are conducted
 	// in the one kv transaction. The `schema/table` modification can be always discarded
 	// by kv reset when meets an unhandled error, but the `job` modification can't.
@@ -1071,6 +1084,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onAlterCheckConstraint(jobCtx, job)
 	case model.ActionRefreshMeta:
 		ver, err = onRefreshMeta(jobCtx, job)
+	case model.ActionAlterTableAffinity:
+		ver, err = onAlterTableAffinity(jobCtx, job)
 	default:
 		// Invalid job, cancel it.
 		job.State = model.JobStateCancelled

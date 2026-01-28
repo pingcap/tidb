@@ -35,6 +35,7 @@ import (
 	txn_driver "github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/store/gcworker"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
@@ -467,6 +468,9 @@ func (c *injectTraceClient) SendRequest(ctx context.Context, addr string, req *t
 		source.ConnectionId = info.ConnectionID
 		source.SessionAlias = info.SessionAlias
 	}
+	traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event.dev_debug", func(config *traceevent.DumpTriggerConfig) bool {
+		return config.Event.DevDebug.Type == traceevent.DevDebugTypeSendRequestTraceIDMissing
+	})
 	return c.Client.SendRequest(ctx, addr, req, timeout)
 }
 

@@ -194,7 +194,7 @@ select (a, b) != all (select a, b from naaj_B) from naaj_A;
 explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B);
 id	task	access object	operator info
 Projection	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
-└─Selection	root		Column#11
+└─Selection	root		Column
   └─HashJoin	root		Null-aware anti left outer semi join, left side:TableReader, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
@@ -228,7 +228,7 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from na
 explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c);
 id	task	access object	operator info
 Projection	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
-└─Selection	root		Column#11
+└─Selection	root		Column
   └─HashJoin	root		Null-aware anti left outer semi join, left side:TableReader, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
@@ -250,7 +250,7 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a) from n
 explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B where naaj_A.a != naaj_B.a);
 id	task	access object	operator info
 Projection	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
-└─Selection	root		Column#11
+└─Selection	root		Column
   └─HashJoin	root		Null-aware anti left outer semi join, left side:TableReader, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:ne(naaj.naaj_a.a, naaj.naaj_b.a)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
@@ -325,7 +325,7 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.c > naaj_B.c) from na
 explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c > naaj_B.c);
 id	task	access object	operator info
 Projection	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
-└─Selection	root		Column#11
+└─Selection	root		Column
   └─HashJoin	root		Null-aware anti left outer semi join, left side:TableReader, equal:[eq(naaj.naaj_a.a, naaj.naaj_b.a) eq(naaj.naaj_a.b, naaj.naaj_b.b)], other cond:gt(naaj.naaj_a.c, naaj.naaj_b.c)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
@@ -347,7 +347,7 @@ select (a, b) != all (select a, b from naaj_B where naaj_A.c = naaj_B.c) from na
 explain format = 'plan_tree' select * from naaj_A where (a, b) != all (select a, b from naaj_B  where naaj_A.c = naaj_B.c);
 id	task	access object	operator info
 Projection	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c
-└─Selection	root		Column#11
+└─Selection	root		Column
   └─HashJoin	root		anti left outer semi join, left side:TableReader, equal:[eq(naaj.naaj_a.c, naaj.naaj_b.c)], other cond:eq(naaj.naaj_a.a, naaj.naaj_b.a), eq(naaj.naaj_a.b, naaj.naaj_b.b)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
@@ -371,10 +371,10 @@ a	b	c
 1	1	1
 explain format='plan_tree' select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 id	task	access object	operator info
-HashJoin	root		Null-aware anti left outer semi join, left side:Projection, equal:[eq(Column#17, naaj.naaj_b.a) eq(Column#18, naaj.naaj_b.b)]
+HashJoin	root		Null-aware anti left outer semi join, left side:Projection, equal:[eq(Column, naaj.naaj_b.a) eq(Column, naaj.naaj_b.b)]
 ├─TableReader(Build)	root		data:TableFullScan
 │ └─TableFullScan	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
-└─Projection(Probe)	root		plus(naaj.naaj_a.a, 1)->Column#17, mul(naaj.naaj_a.b, 2)->Column#18
+└─Projection(Probe)	root		plus(naaj.naaj_a.a, 1)->Column, mul(naaj.naaj_a.b, 2)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
 select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
@@ -386,11 +386,11 @@ select (a+1,b*2) not in (select a, b from naaj_B) from naaj_A;
 0
 explain format='plan_tree' select * from naaj_A where (a+1,b*2) not in (select a+1, b-1 from naaj_B);
 id	task	access object	operator info
-HashJoin	root		Null-aware anti semi join, left side:Projection, equal:[eq(Column#15, Column#11) eq(Column#16, Column#12)]
-├─Projection(Build)	root		plus(naaj.naaj_b.a, 1)->Column#11, minus(naaj.naaj_b.b, 1)->Column#12
+HashJoin	root		Null-aware anti semi join, left side:Projection, equal:[eq(Column, Column) eq(Column, Column)]
+├─Projection(Build)	root		plus(naaj.naaj_b.a, 1)->Column, minus(naaj.naaj_b.b, 1)->Column
 │ └─TableReader	root		data:TableFullScan
 │   └─TableFullScan	cop[tikv]	table:naaj_B	keep order:false, stats:pseudo
-└─Projection(Probe)	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c, plus(naaj.naaj_a.a, 1)->Column#15, mul(naaj.naaj_a.b, 2)->Column#16
+└─Projection(Probe)	root		naaj.naaj_a.a, naaj.naaj_a.b, naaj.naaj_a.c, plus(naaj.naaj_a.a, 1)->Column, mul(naaj.naaj_a.b, 2)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:naaj_A	keep order:false, stats:pseudo
 select * from naaj_A where (a+1,b*2) not in (select a, b from naaj_B);
@@ -424,7 +424,7 @@ insert into chqin values (1,1,1),(2,2,2),(3,3,3);
 insert into chqin1 values (4,4,4),(5,5,5),(6,6,6);
 explain format='plan_tree' SELECT -1405353984 FROM chqin t1 WHERE t1.f1 not IN (  SELECT a1.f2 FROM chqin1 a1 WHERE  ( 1 >= t1.id ) ) ;
 id	task	access object	operator info
-Projection	root		-1405353984->Column#11
+Projection	root		-1405353984->Column
 └─HashJoin	root		CARTESIAN anti semi join, left side:TableReader, left cond:[ge(1, naaj.chqin.id)], other cond:eq(naaj.chqin.f1, naaj.chqin1.f2)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:a1	keep order:false, stats:pseudo

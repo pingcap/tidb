@@ -171,6 +171,17 @@ func (*MemBuf) Staging() kv.StagingHandle {
 // If the changes are not published by `Release`, they will be discarded.
 func (*MemBuf) Cleanup(_ kv.StagingHandle) {}
 
+// GetFlags returns the latest flags associated with key.
+func (*MemBuf) GetFlags(_ kv.Key) (kv.KeyFlags, error) {
+	return 0, kv.ErrNotExist
+}
+
+// UpdateFlags updates the flags associated with key.
+func (*MemBuf) UpdateFlags(_ kv.Key, _ ...kv.FlagsOp) {}
+
+// UpdateAssertionFlags updates the assertion flags associated with key.
+func (*MemBuf) UpdateAssertionFlags(_ kv.Key, _ kv.AssertionOp) {}
+
 // GetLocal implements the kv.MemBuffer interface.
 func (mb *MemBuf) GetLocal(ctx context.Context, key []byte) ([]byte, error) {
 	return kv.GetValue(ctx, mb, key)
@@ -256,11 +267,6 @@ func (*transaction) GetTableInfo(_ int64) *model.TableInfo {
 
 // CacheTableInfo implements the kv.Transaction interface.
 func (*transaction) CacheTableInfo(_ int64, _ *model.TableInfo) {
-}
-
-// SetAssertion implements the kv.Transaction interface.
-func (*transaction) SetAssertion(_ []byte, _ ...kv.FlagsOp) error {
-	return nil
 }
 
 // IsPipelined implements the kv.Transaction interface.

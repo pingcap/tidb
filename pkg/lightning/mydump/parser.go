@@ -25,11 +25,13 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -675,18 +677,18 @@ func ReadUntil(parser Parser, pos int64) error {
 func OpenReader(
 	ctx context.Context,
 	fileMeta *SourceFileMeta,
-	store storage.ExternalStorage,
-	decompressCfg storage.DecompressConfig,
-) (reader storage.ReadSeekCloser, err error) {
+	store storeapi.Storage,
+	decompressCfg compressedio.DecompressConfig,
+) (reader storeapi.ReadSeekCloser, err error) {
 	switch {
 	case fileMeta.Type == SourceTypeParquet:
-		reader, err = OpenParquetReader(ctx, store, fileMeta.Path, fileMeta.FileSize)
+		reader, err = OpenParquetReader(ctx, store, fileMeta.Path)
 	case fileMeta.Compression != CompressionNone:
 		compressType, err2 := ToStorageCompressType(fileMeta.Compression)
 		if err2 != nil {
 			return nil, err2
 		}
-		reader, err = storage.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
+		reader, err = objstore.WithCompression(store, compressType, decompressCfg).Open(ctx, fileMeta.Path, nil)
 	default:
 		reader, err = store.Open(ctx, fileMeta.Path, nil)
 	}

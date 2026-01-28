@@ -252,6 +252,8 @@ const (
 	ShowPlanCommand = "SHOW PLAN"
 	// ShowDistributionJobsCommand represents SHOW DISTRIBUTION JOBS statement
 	ShowDistributionJobsCommand = "SHOW DISTRIBUTION JOB"
+	// ShowAffinityCommand represents SHOW AFFINITY statement
+	ShowAffinityCommand = "SHOW AFFINITY"
 )
 
 // Admin Commands
@@ -315,6 +317,8 @@ const (
 	AdminAlterDDLJobsCommand = "ADMIN ALTER DDL JOBS"
 	// AdminCreateWorkloadSnapshotCommand represents ADMIN CREATE WORKLOAD SNAPSHOT statement
 	AdminCreateWorkloadSnapshotCommand = "ADMIN CREATE WORKLOAD SNAPSHOT"
+	// AdminReloadClusterBindingsCommand represents ADMIN RELOAD CLUSTER BINDINGS statement
+	AdminReloadClusterBindingsCommand = "ADMIN RELOAD CLUSTER BINDINGS"
 )
 
 // BRIE Commands
@@ -825,6 +829,8 @@ func (n *ShowStmt) SEMCommand() string {
 		return ShowDistributionsCommand
 	case ShowDistributionJobs:
 		return ShowDistributionJobsCommand
+	case ShowAffinity:
+		return ShowAffinityCommand
 	default:
 		return UnknownCommand
 	}
@@ -915,6 +921,8 @@ func (n *AdminStmt) SEMCommand() string {
 		return AdminAlterDDLJobsCommand
 	case AdminWorkloadRepoCreate:
 		return AdminCreateWorkloadSnapshotCommand
+	case AdminReloadClusterBindings:
+		return AdminReloadClusterBindingsCommand
 	default:
 		return UnknownCommand
 	}

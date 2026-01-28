@@ -133,6 +133,14 @@ type cacheTableSnapshot struct {
 }
 
 func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+	if len(options) > 0 {
+		var opt tikv.BatchGetOptions
+		opt.Apply(options)
+		if opt.ReturnCommitTS() {
+			return nil, errors.New("WithReturnCommitTS option is not supported for cacheTableSnapshot.BatchGet")
+		}
+	}
+
 	values := make(map[string]kv.ValueEntry)
 	if s.memBuffer == nil {
 		return values, nil
@@ -160,6 +168,14 @@ func (s cacheTableSnapshot) BatchGet(ctx context.Context, keys []kv.Key, options
 }
 
 func (s cacheTableSnapshot) Get(ctx context.Context, key kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+	if len(options) > 0 {
+		var opt tikv.GetOptions
+		opt.Apply(options)
+		if opt.ReturnCommitTS() {
+			return kv.ValueEntry{}, errors.New("WithReturnCommitTS option is not supported for cacheTableSnapshot.Get")
+		}
+	}
+
 	return s.memBuffer.Get(ctx, key, options...)
 }
 
@@ -247,10 +263,11 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string]kv.ValueEntry
 	var indexKeys []kv.Key
 	var err error
-	if e.Ctx().GetSessionVars().MaxExecutionTime > 0 {
+	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
+	if maxExecutionTime > 0 {
 		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
 		defer cancel()
 	}
 

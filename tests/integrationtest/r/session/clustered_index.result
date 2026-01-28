@@ -23,9 +23,9 @@ c2
 cd
 explain format = 'plan_tree' select count(1) from t1 use index(idx1) where c2 = 'cd';
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#7)->Column#5
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#7
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─Selection	cop[tikv]		eq(session__clustered_index.t1.c2, "cd")
       └─IndexRangeScan	cop[tikv]	table:t1, index:idx1(c2)	range:["c","c"], keep order:false, stats:pseudo
 select count(1) from t1 use index(idx1) where c2 = 'cd';
@@ -40,9 +40,9 @@ c2
 cd
 explain format = 'plan_tree' select count(1) from t2 use index(idx1) where c2 = 'cd';
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#10)->Column#5
+StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#10
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─Selection	cop[tikv]		eq(session__clustered_index.t2.c2, "cd")
       └─IndexFullScan	cop[tikv]	table:t2, index:idx1(c1, c2)	keep order:false, stats:pseudo
 select count(1) from t2 use index(idx1) where c2 = 'cd';

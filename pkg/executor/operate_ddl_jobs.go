@@ -21,6 +21,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 )
 
@@ -170,6 +172,9 @@ func (e *AlterDDLJobExec) processAlterDDLJobConfig(
 		if !job.IsAlterable() {
 			return fmt.Errorf("unsupported DDL operation: %s. "+
 				"Supported DDL operations are: ADD INDEX, MODIFY COLUMN, and ALTER TABLE REORGANIZE PARTITION", job.Type.String())
+		}
+		if kerneltype.IsNextGen() && job.Type == model.ActionAddIndex {
+			return variable.ErrNotSupportedInNextGen.GenWithStackByArgs("Altering ADD INDEX job")
 		}
 		if err = e.updateReorgMeta(job, model.AdminCommandByEndUser); err != nil {
 			continue

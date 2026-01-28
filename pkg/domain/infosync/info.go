@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
 	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/pingcap/tidb/pkg/domain/affinity"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/errno"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -75,8 +76,8 @@ const (
 	TablePrometheusCacheExpiry = 10 * time.Second
 	// RequestRetryInterval is the sleep time before next retry for http request
 	RequestRetryInterval = 200 * time.Millisecond
-	// SyncBundlesMaxRetry is the max retry times for sync placement bundles
-	SyncBundlesMaxRetry = 3
+	// RequestPDMaxRetry is the max retry times for sync placement bundles
+	RequestPDMaxRetry = 3
 )
 
 // ErrPrometheusAddrIsNotSet is the error that Prometheus address is not set in PD and etcd
@@ -179,6 +180,10 @@ func GlobalInfoSyncerInit(
 	is.initTiFlashReplicaManager(codec)
 	is.initResourceManagerClient(pdCli)
 	setGlobalInfoSyncer(is)
+
+	// Initialize affinity package
+	affinity.InitManager(is.pdHTTPCli)
+
 	return is, nil
 }
 
@@ -363,7 +368,7 @@ func DeleteTiFlashTableSyncProgress(tableInfo *model.TableInfo) error {
 	return nil
 }
 
-// MustGetTiFlashProgress gets tiflash replica progress from tiflashProgressCache, if cache not exist, it calculates progress from PD and TiFlash and inserts progress into cache.
+// MustGetTiFlashProgress gets tiflash replica progress of a specified tableID from tiflashProgressCache, if cache not exist, it calculates progress from PD and TiFlash and inserts progress into cache.
 func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *map[int64]pdhttp.StoreInfo) (float64, error) {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
@@ -383,12 +388,14 @@ func MustGetTiFlashProgress(tableID int64, replicaCount uint64, tiFlashStores *m
 		}
 		stores := make(map[int64]pdhttp.StoreInfo)
 		for _, store := range tikvStats.Stores {
-			if engine.IsTiFlashHTTPResp(&store.Store) {
+			// Note that only TiFlash write nodes need to be polled under NextGen kernel.
+			// TiFlash compute nodes under NextGen kernel do not hold any Regions data, so it is excluded here.
+			if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 				stores[store.Store.ID] = store
 			}
 		}
 		*tiFlashStores = stores
-		logutil.BgLogger().Debug("updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
+		logutil.BgLogger().Debug("MustGetTiFlashProgress updateTiFlashStores finished", zap.Int("TiFlash store count", len(*tiFlashStores)))
 	}
 	progress, _, err := is.tiflashReplicaManager.CalculateTiFlashProgress(tableID, replicaCount, *tiFlashStores)
 	if err != nil {
@@ -537,7 +544,7 @@ func DeleteResourceGroup(ctx context.Context, name string) error {
 
 // PutRuleBundlesWithDefaultRetry will retry for default times
 func PutRuleBundlesWithDefaultRetry(ctx context.Context, bundles []*placement.Bundle) (err error) {
-	return PutRuleBundlesWithRetry(ctx, bundles, SyncBundlesMaxRetry, RequestRetryInterval)
+	return PutRuleBundlesWithRetry(ctx, bundles, RequestPDMaxRetry, RequestRetryInterval)
 }
 
 // GetMinStartTS get min start timestamp.
@@ -813,7 +820,8 @@ func SyncTiFlashTableSchema(ctx context.Context, tableID int64) error {
 	}
 	tiflashStores := make([]pdhttp.StoreInfo, 0, len(tikvStats.Stores))
 	for _, store := range tikvStats.Stores {
-		if engine.IsTiFlashHTTPResp(&store.Store) {
+		// Only need to sync schema to TiFlash write nodes under NextGen kernel.
+		if engine.IsTiFlashWriteHTTPResp(&store.Store) {
 			tiflashStores = append(tiflashStores, store)
 		}
 	}
@@ -1011,9 +1019,9 @@ func DeleteInternalSession(se any) {
 	sm.DeleteInternalSession(se)
 }
 
-// ContainsInternalSessionForTest is the entry function for check whether an internal session is in Manager.
+// ContainsInternalSession is the entry function for check whether an internal session is in Manager.
 // It is only used for test.
-func ContainsInternalSessionForTest(se any) bool {
+func ContainsInternalSession(se any) bool {
 	is, err := getGlobalInfoSyncer()
 	if err != nil {
 		return false

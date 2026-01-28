@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -42,14 +43,14 @@ import (
 
 func TestDumpStatsAPI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-
+	tmp := t.TempDir()
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
 	cfg := util.NewTestConfig()
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
@@ -84,7 +85,7 @@ func TestDumpStatsAPI(t *testing.T) {
 		require.NoError(t, resp0.Body.Close())
 	}()
 
-	path := "/tmp/stats.json"
+	path := filepath.Join(tmp, "stats.json")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)
@@ -116,7 +117,7 @@ func TestDumpStatsAPI(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "null", string(js))
 
-	path1 := "/tmp/stats_history.json"
+	path1 := filepath.Join(tmp, "stats_history.json")
 	fp1, err := os.Create(path1)
 	require.NoError(t, err)
 	require.NotNil(t, fp1)
@@ -293,6 +294,7 @@ func checkData(t *testing.T, path string, client *testserverclient.TestServerCli
 }
 
 func TestStatsPriorityQueueAPI(t *testing.T) {
+	tmp := t.TempDir()
 	store := testkit.CreateMockStore(t)
 	driver := server2.NewTiDBDriver(store)
 	client := testserverclient.NewTestServerClient()
@@ -300,7 +302,7 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
@@ -349,6 +351,7 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 
 // fix issue 53966
 func TestLoadNullStatsFile(t *testing.T) {
+	tmp := t.TempDir()
 	// Setting up the mock store
 	store := testkit.CreateMockStore(t)
 
@@ -359,7 +362,7 @@ func TestLoadNullStatsFile(t *testing.T) {
 	cfg.Port = client.Port
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
-	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
+	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	// Creating and running the server
 	server, err := server2.NewServer(cfg, driver)
@@ -379,7 +382,7 @@ func TestLoadNullStatsFile(t *testing.T) {
 	client.WaitUntilServerOnline()
 
 	// Creating the stats file
-	path := "/tmp/stats.json"
+	path := filepath.Join(tmp, "stats.json")
 	fp, err := os.Create(path)
 	require.NoError(t, err)
 	require.NotNil(t, fp)

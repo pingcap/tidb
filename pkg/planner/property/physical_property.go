@@ -313,6 +313,37 @@ type PhysicalProperty struct {
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
 	// It is true when the agg is in the outer child tree of apply.
 	NoCopPushDown bool
+
+	// PartialOrderInfo is used for TopN's partial order optimization.
+	// When this field is not nil, it indicates that prefix index can be used
+	// to provide partial order for TopN.
+	// For example:
+	// query: order by a, b limit 10
+	// partialOrderInfo: sortItems: [a, b]
+	// The partialOrderInfo property will pass through to the datasource and try to matchPartialOrderProperty such as:
+	// index: (a, b(10) )
+	PartialOrderInfo *PartialOrderInfo
+}
+
+// PartialOrderInfo records information needed for partial order optimization.
+// When PhysicalProperty.PartialOrderInfo is not nil, it indicates that
+// prefix index can be used to provide partial order.
+type PartialOrderInfo struct {
+	// SortItems are the ORDER BY columns from TopN
+	SortItems []*SortItem
+}
+
+// AllSameOrder checks if all the items have same order.
+func (p *PartialOrderInfo) AllSameOrder() (isSame bool, desc bool) {
+	if len(p.SortItems) == 0 {
+		return true, false
+	}
+	for i := 1; i < len(p.SortItems); i++ {
+		if p.SortItems[i].Desc != p.SortItems[i-1].Desc {
+			return
+		}
+	}
+	return true, p.SortItems[0].Desc
 }
 
 // IndexJoinRuntimeProp is the inner runtime property for index join.
@@ -494,6 +525,11 @@ func (p *PhysicalProperty) HashCode() []byte {
 		return p.hashcode
 	}
 	hashcodeSize := 8 + 8 + 8 + (16+8)*len(p.SortItems) + 8
+	if p.PartialOrderInfo != nil {
+		hashcodeSize += (16 + 8) * len(p.PartialOrderInfo.SortItems)
+	} else {
+		hashcodeSize += 8
+	}
 	p.hashcode = make([]byte, 0, hashcodeSize)
 	if p.CanAddEnforcer {
 		p.hashcode = codec.EncodeInt(p.hashcode, 1)
@@ -547,6 +583,20 @@ func (p *PhysicalProperty) HashCode() []byte {
 	} else {
 		p.hashcode = codec.EncodeInt(p.hashcode, 0)
 	}
+	// encode PartialOrderInfo into physical prop's hashcode.
+	if p.PartialOrderInfo != nil {
+		p.hashcode = codec.EncodeInt(p.hashcode, 1)
+		for _, item := range p.PartialOrderInfo.SortItems {
+			p.hashcode = append(p.hashcode, item.Col.HashCode()...)
+			if item.Desc {
+				p.hashcode = codec.EncodeInt(p.hashcode, 1)
+			} else {
+				p.hashcode = codec.EncodeInt(p.hashcode, 0)
+			}
+		}
+	} else {
+		p.hashcode = codec.EncodeInt(p.hashcode, 0)
+	}
 	return p.hashcode
 }
 
@@ -567,6 +617,7 @@ func (p *PhysicalProperty) CloneEssentialFields() *PhysicalProperty {
 		MPPPartitionCols:      p.MPPPartitionCols,
 		CTEProducerStatus:     p.CTEProducerStatus,
 		NoCopPushDown:         p.NoCopPushDown,
+		PartialOrderInfo:      p.PartialOrderInfo, // Copy PartialOrderInfo for TopN partial order optimization
 		// we default not to clone basic indexJoinProp by default.
 		// and only call admitIndexJoinProp to inherit the indexJoinProp for special pattern operators.
 	}

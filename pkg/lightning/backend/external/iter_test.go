@@ -23,9 +23,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -33,11 +35,11 @@ import (
 )
 
 type trackOpenMemStorage struct {
-	*storage.MemStorage
+	*objstore.MemStorage
 	opened atomic.Int32
 }
 
-func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storage.ReaderOption) (storage.ExternalFileReader, error) {
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storeapi.ReaderOption) (objectio.Reader, error) {
 	s.opened.Inc()
 	r, err := s.MemStorage.Open(ctx, path, nil)
 	if err != nil {
@@ -47,12 +49,12 @@ func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storage.
 }
 
 type trackOpenFileReader struct {
-	storage.ExternalFileReader
+	objectio.Reader
 	store *trackOpenMemStorage
 }
 
 func (r *trackOpenFileReader) Close() error {
-	err := r.ExternalFileReader.Close()
+	err := r.Reader.Close()
 	if err != nil {
 		return err
 	}
@@ -62,7 +64,7 @@ func (r *trackOpenFileReader) Close() error {
 
 func TestMergeKVIter(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	filenames := []string{"/test1", "/test2", "/test3"}
 	data := [][][2]string{
 		{},
@@ -116,7 +118,7 @@ func TestMergeKVIter(t *testing.T) {
 
 func TestOneUpstream(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	filenames := []string{"/test1"}
 	data := [][][2]string{
 		{{"key1", "value1"}, {"key2", "value2"}, {"key3", "value3"}},
@@ -167,7 +169,7 @@ func TestOneUpstream(t *testing.T) {
 
 func TestAllEmpty(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	filenames := []string{"/test1", "/test2"}
 	for _, filename := range filenames {
 		writer, err := memStore.Create(ctx, filename, nil)
@@ -193,7 +195,7 @@ func TestAllEmpty(t *testing.T) {
 
 func TestCorruptContent(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	filenames := []string{"/test1", "/test2"}
 	data := [][][2]string{
 		{{"key1", "value1"}, {"key3", "value3"}},
@@ -320,7 +322,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 }
 
 type eofReader struct {
-	storage.ExternalFileReader
+	objectio.Reader
 }
 
 func (r eofReader) Seek(_ int64, _ int) (int64, error) {
@@ -344,7 +346,7 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 	reader.curBuf = [][]byte{reader.smallBuf}
 	pool := membuf.NewPool()
 	reader.concurrentReader.largeBufferPool = pool.NewBuffer()
-	reader.concurrentReader.store = storage.NewMemStorage()
+	reader.concurrentReader.store = objstore.NewMemStorage()
 
 	// set current reader to concurrent reader, and then close it
 	reader.concurrentReader.now = true
@@ -352,13 +354,13 @@ func TestReadAfterCloseConnReader(t *testing.T) {
 	require.NoError(t, err)
 
 	wrapKVReader := &KVReader{byteReader: reader}
-	_, _, err = wrapKVReader.nextKV()
+	_, _, err = wrapKVReader.NextKV()
 	require.ErrorIs(t, err, io.EOF)
 }
 
 func TestHotspot(t *testing.T) {
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 
 	// 2 files, check hotspot is 0 -> nil -> 1 -> 0 -> 1
 	keys := [][]string{
@@ -453,7 +455,7 @@ func TestMemoryUsageWhenHotspotChange(t *testing.T) {
 
 	ctx := context.Background()
 	dir := t.TempDir()
-	store, err := storage.NewLocalStorage(dir)
+	store, err := objstore.NewLocalStorage(dir)
 	require.NoError(t, err)
 
 	// check if we will leak 100*100MB = 1GB memory
@@ -545,10 +547,6 @@ func (i *intReader) switchConcurrentMode(bool) error { return nil }
 func (i *intReader) close() error {
 	i.refCnt.Dec()
 	return nil
-}
-
-func (i *intReader) getRequestCount() int64 {
-	return 0
 }
 
 func buildOpener(in [][]int, refCnt *atomic.Int64) []readerOpenerFn[myInt, *intReader] {
@@ -646,7 +644,7 @@ func TestLimitSizeMergeIterDiffWeight(t *testing.T) {
 }
 
 type slowOpenStorage struct {
-	*storage.MemStorage
+	*objstore.MemStorage
 	sleep   time.Duration
 	openCnt atomic.Int32
 }
@@ -654,8 +652,8 @@ type slowOpenStorage struct {
 func (s *slowOpenStorage) Open(
 	ctx context.Context,
 	filePath string,
-	o *storage.ReaderOption,
-) (storage.ExternalFileReader, error) {
+	o *storeapi.ReaderOption,
+) (objectio.Reader, error) {
 	time.Sleep(s.sleep)
 	s.openCnt.Inc()
 	return s.MemStorage.Open(ctx, filePath, o)
@@ -673,7 +671,7 @@ func TestMergePropBaseIter(t *testing.T) {
 	}
 	ctx := context.Background()
 	store := &slowOpenStorage{
-		MemStorage: storage.NewMemStorage(),
+		MemStorage: objstore.NewMemStorage(),
 		sleep:      oneOpenSleep,
 	}
 	for i, filename := range filenames {
@@ -712,7 +710,7 @@ func TestEmptyBaseReader4LimitSizeMergeIter(t *testing.T) {
 	}
 	ctx := context.Background()
 	store := &slowOpenStorage{
-		MemStorage: storage.NewMemStorage(),
+		MemStorage: objstore.NewMemStorage(),
 	}
 	// empty file so reader will be closed at init
 	for _, filename := range filenames {
@@ -741,7 +739,7 @@ func TestCloseLimitSizeMergeIterHalfway(t *testing.T) {
 		filenames[i] = fmt.Sprintf("/test%06d", i)
 	}
 	ctx := context.Background()
-	store := &trackOpenMemStorage{MemStorage: storage.NewMemStorage()}
+	store := &trackOpenMemStorage{MemStorage: objstore.NewMemStorage()}
 
 	for i, filename := range filenames {
 		writer, err := store.Create(ctx, filename, nil)

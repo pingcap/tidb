@@ -9,24 +9,26 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/backup"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/spf13/pflag"
 )
 
 const (
-	flagTableConcurrency = "table-concurrency"
-	flagStorePatterns    = "stores"
-	flagTTL              = "ttl"
-	flagSafePoint        = "safepoint"
-	flagStorage          = "storage"
-	flagLoadCreds        = "load-creds"
-	flagJSON             = "json"
-	flagRecent           = "recent"
-	flagTo               = "to"
-	flagBase             = "base"
-	flagYes              = "yes"
-	flagDryRun           = "dry-run"
+	flagTableConcurrency  = "table-concurrency"
+	flagRestoredTS        = "restored-ts"
+	flagUpstreamClusterID = "upstream-cluster-id"
+	flagStorePatterns     = "stores"
+	flagTTL               = "ttl"
+	flagSafePoint         = "safepoint"
+	flagStorage           = "storage"
+	flagLoadCreds         = "load-creds"
+	flagJSON              = "json"
+	flagRecent            = "recent"
+	flagTo                = "to"
+	flagBase              = "base"
+	flagYes               = "yes"
+	flagDryRun            = "dry-run"
 )
 
 type PauseGcConfig struct {
@@ -67,13 +69,13 @@ func (cfg *PauseGcConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type Base64ifyConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	LoadCerd   bool
 }
 
 func DefineFlagsForBase64ifyConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "The external storage input.")
 	flags.Bool(flagLoadCreds, false, "whether loading the credientials from current environment and marshal them to the base64 string. [!]")
 }
@@ -96,13 +98,13 @@ func (cfg *Base64ifyConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type ListMigrationConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	JSONOutput bool
 }
 
 func DefineFlagsForListMigrationConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "the external storage input.")
 	flags.Bool(flagJSON, false, "output the result in json format.")
 }
@@ -125,7 +127,7 @@ func (cfg *ListMigrationConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 }
 
 type MigrateToConfig struct {
-	storage.BackendOptions
+	objstore.BackendOptions
 	StorageURI string
 	Recent     bool
 	MigrateTo  int
@@ -136,7 +138,7 @@ type MigrateToConfig struct {
 }
 
 func DefineFlagsForMigrateToConfig(flags *pflag.FlagSet) {
-	storage.DefineFlags(flags)
+	objstore.DefineFlags(flags)
 	flags.StringP(flagStorage, "s", "", "the external storage input.")
 	flags.Bool(flagRecent, true, "migrate to the most recent migration and BASE.")
 	flags.Int(flagTo, 0, "migrate all migrations from the BASE to the specified sequence number.")
@@ -225,12 +227,63 @@ type ChecksumWithRewriteRulesConfig struct {
 func DefineFlagsForChecksumTableConfig(f *pflag.FlagSet) {
 	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
+	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+	f.Uint64(flagUpstreamClusterID, 0, "")
+}
+
+func DefineFlagsForChecksumUpstreamTableConfig(f *pflag.FlagSet) {
+	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+		"including tableInfo/checksum and stats.")
+	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+}
+
+func DefineFlagsForChecksumPitrTableConfig(f *pflag.FlagSet) {
+	f.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
+		"including tableInfo/checksum and stats.")
+	f.Uint64(flagRestoredTS, 0, "The point time to checksum")
+	f.Uint64(flagUpstreamClusterID, 0, "The upstream cluster id of used pitr id map")
 }
 
 func (cfg *ChecksumWithRewriteRulesConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
 	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
 	if err != nil {
 		return
+	}
+	return cfg.Config.ParseFromFlags(flags)
+}
+
+type ChecksumWithPitrIdMapConfig struct {
+	task.RestoreConfig
+}
+
+func (cfg *ChecksumWithPitrIdMapConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreTS, err = flags.GetUint64(flagRestoredTS)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.UpstreamClusterID, err = flags.GetUint64(flagUpstreamClusterID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return cfg.Config.ParseFromFlags(flags)
+}
+
+type ChecksumUpstreamConfig struct {
+	task.RestoreConfig
+}
+
+func (cfg *ChecksumUpstreamConfig) ParseFromFlags(flags *pflag.FlagSet) (err error) {
+	cfg.TableConcurrency, err = flags.GetUint(flagTableConcurrency)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.RestoreTS, err = flags.GetUint64(flagRestoredTS)
+	if err != nil {
+		return errors.Trace(err)
 	}
 	return cfg.Config.ParseFromFlags(flags)
 }
