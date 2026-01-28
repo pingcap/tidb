@@ -520,6 +520,34 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, " +
 		"scheduler: {process: 0s}}}, lock_rpc:5s, rpc_count:50, retry_count:2}"
 	require.Equal(t, expect, stats.String())
+
+	stats.SharedLockKeys = lockDetail.Clone()
+	require.Equal(t, expect+", shared_"+expect, stats.String())
+
+	// Test Clone with SharedLockKeys
+	clonedStats := stats.Clone().(*RuntimeStatsWithCommit)
+	require.Equal(t, stats.String(), clonedStats.String())
+	require.NotNil(t, clonedStats.SharedLockKeys)
+	require.Equal(t, stats.SharedLockKeys.LockKeys, clonedStats.SharedLockKeys.LockKeys)
+
+	// Test Merge with SharedLockKeys
+	stats2 := &RuntimeStatsWithCommit{
+		SharedLockKeys: &util.LockKeysDetails{
+			TotalTime: time.Second,
+			RegionNum: 3,
+			LockKeys:  5,
+		},
+	}
+	stats.Merge(stats2)
+	require.Equal(t, int32(5), stats.SharedLockKeys.RegionNum)
+	require.Equal(t, int32(15), stats.SharedLockKeys.LockKeys)
+
+	// Test Merge into empty SharedLockKeys
+	stats3 := &RuntimeStatsWithCommit{}
+	stats3.Merge(stats2)
+	require.NotNil(t, stats3.SharedLockKeys)
+	require.Equal(t, int32(3), stats3.SharedLockKeys.RegionNum)
+	require.Equal(t, int32(5), stats3.SharedLockKeys.LockKeys)
 }
 
 func TestRootRuntimeStats(t *testing.T) {

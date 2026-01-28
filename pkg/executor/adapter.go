@@ -542,6 +542,11 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 					metrics.PessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
 				}
 			}
+			if execDetails.SharedLockKeysDetail != nil {
+				if execDetails.SharedLockKeysDetail.LockKeys > 0 {
+					metrics.StatementSharedLockKeysCount.Observe(float64(execDetails.SharedLockKeysDetail.LockKeys))
+				}
+			}
 
 			if err == nil && execDetails.LockKeysDetail != nil &&
 				(execDetails.LockKeysDetail.AggressiveLockNewCount > 0 || execDetails.LockKeysDetail.AggressiveLockDerivedCount > 0) {
@@ -1153,6 +1158,44 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 	}()
 
+	tryLockKeys := func(e exec.Executor, keys []kv.Key, shared bool) (exec.Executor, error) {
+		seVars := sctx.GetSessionVars()
+		keys = filterTemporaryTableKeys(seVars, keys)
+		keys = filterLockTableKeys(seVars.StmtCtx, keys)
+		if len(keys) == 0 {
+			return nil, nil
+		}
+		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys), shared)
+		if err != nil {
+			return nil, err
+		}
+		var lockKeyStats *util.LockKeysDetails
+		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
+		startLocking := time.Now()
+		err = txn.LockKeys(ctx, lockCtx, keys...)
+		a.phaseLockDurations[0] += time.Since(startLocking)
+		if e.RuntimeStats() != nil {
+			e.RuntimeStats().Record(time.Since(startLocking), 0)
+		}
+		if lockKeyStats != nil {
+			if shared {
+				seVars.StmtCtx.MergeSharedLockKeysExecDetails(lockKeyStats)
+			} else {
+				seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
+			}
+		}
+		if err == nil {
+			return nil, nil
+		}
+		e, err = a.handlePessimisticLockError(ctx, err)
+		if err != nil {
+			if exeerrors.ErrDeadlock.Equal(err) {
+				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+			}
+			return nil, err
+		}
+		return e, nil
+	}
 	isFirstAttempt := true
 
 	for {
@@ -1160,6 +1203,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			failpoint.Inject("pessimisticDMLRetry", nil)
 		}
 
+		txnCtx.ResetUnchangedKeysForLock()
 		startTime := time.Now()
 		_, err = a.handleNoDelayExecutor(ctx, e)
 		if !txn.Valid() {
@@ -1184,43 +1228,51 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			}
 			continue
 		}
+
 		keys, err1 := txn.(pessimisticTxn).KeysNeedToLock()
 		if err1 != nil {
 			return err1
 		}
-		keys = txnCtx.CollectUnchangedKeysForLock(keys)
-		if len(keys) == 0 {
-			return nil
-		}
-		keys = filterTemporaryTableKeys(sctx.GetSessionVars(), keys)
-		seVars := sctx.GetSessionVars()
-		keys = filterLockTableKeys(seVars.StmtCtx, keys)
-		lockCtx, err := newLockCtx(sctx, seVars.LockWaitTimeout, len(keys))
-		if err != nil {
-			return err
-		}
-		var lockKeyStats *util.LockKeysDetails
-		ctx = context.WithValue(ctx, util.LockKeysDetailCtxKey, &lockKeyStats)
-		startLocking := time.Now()
-		err = txn.LockKeys(ctx, lockCtx, keys...)
-		a.phaseLockDurations[0] += time.Since(startLocking)
-		if e.RuntimeStats() != nil {
-			e.RuntimeStats().Record(time.Since(startLocking), 0)
-		}
-		if lockKeyStats != nil {
-			seVars.StmtCtx.MergeLockKeysExecDetails(lockKeyStats)
-		}
-		if err == nil {
-			return nil
-		}
-		e, err = a.handlePessimisticLockError(ctx, err)
-		if err != nil {
-			// todo: Report deadlock
-			if exeerrors.ErrDeadlock.Equal(err) {
-				metrics.StatementDeadlockDetectDuration.Observe(time.Since(startLocking).Seconds())
+
+		if !a.Ctx.GetSessionVars().ForeignKeyCheckInSharedLock {
+			// When `tidb_foreign_key_check_in_shared_lock` is off, lock all keys in exclusive mode
+			keys = txnCtx.CollectUnchangedKeysForXLock(keys)
+			keys = txnCtx.CollectUnchangedKeysForSLock(keys)
+			ex, err := tryLockKeys(e, keys, false)
+			if err != nil {
+				return err
 			}
-			return err
+			if ex != nil {
+				e = ex
+				continue
+			}
+			return nil
 		}
+
+		// When `tidb_foreign_key_check_in_shared_lock` is on, lock keys in two phases:
+		//
+		//   1. acquire exclusive locks for keys that need exclusive locks
+		//   2. acquire shared locks for keys that need shared locks
+
+		// acquire xlocks
+		keys = txnCtx.CollectUnchangedKeysForXLock(keys)
+		if ex, err := tryLockKeys(e, keys, false); err != nil {
+			return err
+		} else if ex != nil {
+			e = ex
+			continue
+		}
+
+		// acquire slocks
+		keys = txnCtx.CollectUnchangedKeysForSLock(keys[:0])
+		if ex, err := tryLockKeys(e, keys, true); err != nil {
+			return err
+		} else if ex != nil {
+			e = ex
+			continue
+		}
+
+		return nil
 	}
 }
 
@@ -1491,10 +1543,11 @@ func (a *ExecStmt) FinishExecuteStmt(txnTS uint64, err error, hasMoreResults boo
 	sessVars := a.Ctx.GetSessionVars()
 	execDetail := sessVars.StmtCtx.GetExecDetails()
 	// Attach commit/lockKeys runtime stats to executor runtime stats.
-	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
+	if (execDetail.CommitDetail != nil || execDetail.LockKeysDetail != nil || execDetail.SharedLockKeysDetail != nil) && sessVars.StmtCtx.RuntimeStatsColl != nil {
 		statsWithCommit := &execdetails.RuntimeStatsWithCommit{
-			Commit:   execDetail.CommitDetail,
-			LockKeys: execDetail.LockKeysDetail,
+			Commit:         execDetail.CommitDetail,
+			LockKeys:       execDetail.LockKeysDetail,
+			SharedLockKeys: execDetail.SharedLockKeysDetail,
 		}
 		sessVars.StmtCtx.RuntimeStatsColl.RegisterStats(a.Plan.ID(), statsWithCommit)
 	}
