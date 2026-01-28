@@ -644,6 +644,20 @@ function prepare_tici_config() {
                 envsubst < "$TICI_CONFIG_DIR/worker.toml.in" > "$TICI_CONFIG_DIR/worker.toml"
                 TICI_WORKER_CONFIG="${TICI_WORKER_CONFIG:-$TICI_CONFIG_DIR/worker.toml}"
             fi
+            if [ -f "$TICI_CONFIG_DIR/tiflash-learner.toml.in" ]; then
+                envsubst < "$TICI_CONFIG_DIR/tiflash-learner.toml.in" > "$TICI_CONFIG_DIR/tiflash-learner.toml"
+                TIFLASH_PROXY_CONFIG="${TIFLASH_PROXY_CONFIG:-$TICI_CONFIG_DIR/tiflash-learner.toml}"
+            else
+                echo "tiflash-learner.toml.in not found in $TICI_CONFIG_DIR; TiCI requires TiFlash proxy config" >&2
+                exit 1
+            fi
+            if [ -f "$TICI_CONFIG_DIR/tiflash.toml.in" ]; then
+                envsubst < "$TICI_CONFIG_DIR/tiflash.toml.in" > "$TICI_CONFIG_DIR/tiflash.toml"
+                TIFLASH_CONFIG="${TIFLASH_CONFIG:-$TICI_CONFIG_DIR/tiflash.toml}"
+            else
+                echo "tiflash.toml.in not found in $TICI_CONFIG_DIR; TiCI requires TiFlash config" >&2
+                exit 1
+            fi
         else
             echo "envsubst not found; cannot render TiCI configs" >&2
             exit 1
@@ -668,6 +682,9 @@ function make_tiflash_config_for_tici() {
     : "${TIFLASH_PROXY_PORT:=20170}"
     : "${TIFLASH_PROXY_STATUS_PORT:=20292}"
     : "${TICI_READER_PORT:=8520}"
+    : "${TICI_READER_HEARTBEAT_INTERVAL:=3s}"
+    : "${TICI_READER_MAX_HEARTBEAT_RETRIES:=3}"
+    : "${TICI_READER_HEARTBEAT_WORKER_COUNT:=8}"
     TIFLASH_SERVICE_ADDR="127.0.0.1:${TIFLASH_SERVICE_PORT}"
     TIFLASH_PROXY_SERVER_ADDR="127.0.0.1:${TIFLASH_PROXY_PORT}"
     TIFLASH_PROXY_ADVERTISE_ADDR="$TIFLASH_PROXY_SERVER_ADDR"
@@ -675,78 +692,6 @@ function make_tiflash_config_for_tici() {
     TIFLASH_PROXY_ENGINE_ADDR="127.0.0.1:${TIFLASH_SERVICE_PORT}"
     TICI_READER_ADDR="127.0.0.1:${TICI_READER_PORT}"
     mkdir -p "$TICI_CONFIG_DIR"
-
-    cat > "$TIFLASH_PROXY_CONFIG" <<EOF
-[rocksdb]
-wal-dir = ""
-
-[server]
-addr = "${TIFLASH_PROXY_SERVER_ADDR}"
-advertise-addr = "${TIFLASH_PROXY_ADVERTISE_ADDR}"
-status-addr = "${TIFLASH_PROXY_STATUS_ADDR}"
-engine-addr = "${TIFLASH_PROXY_ENGINE_ADDR}"
-
-[storage]
-data-dir = "${TIFLASH_PROXY_DATA_DIR}"
-reserve-space = "${TIFLASH_PROXY_RESERVE_SPACE}"
-EOF
-
-    cat > "$TICI_CONFIG_DIR/tiflash.toml" <<EOF
-listen_host = "${TIFLASH_LISTEN_HOST}"
-path = "${TIFLASH_DATA_DIR}"
-tmp_path = "${TIFLASH_TMP_DIR}"
-capacity = "${TIFLASH_CAPACITY}"
-
-[application]
-runAsDaemon = true
-
-[flash]
-service_addr = "${TIFLASH_SERVICE_ADDR}"
-tidb_status_addr = "${TIDB_STATUS_ADDR}"
-
-[flash.proxy]
-config = "${TIFLASH_PROXY_CONFIG}"
-log-file = "${TIFLASH_PROXY_LOG_FILE}"
-
-[logger]
-count = 20
-level = "info"
-log = "${TIFLASH_LOG_PATH}"
-errorlog = "${TIFLASH_ERROR_LOG_PATH}"
-size = "1000M"
-
-[raft]
-pd_addr = "${PD_ADDR}"
-
-[profiles]
-[profiles.default]
-max_memory_usage = 10000000000
-
-[tici.reader-node]
-addr = "${TICI_READER_ADDR}"
-heartbeat_interval = "3s"
-max_heartbeat_retries = 3
-heartbeat-worker-count = 8
-
-[tici.frag-reader]
-doc-store-cache-size = "64MB"
-remove-zero-ref-frag-delay = "300s"
-
-[tici.logger]
-filename = "./logs/tici_searchlib.log"
-level = "info"
-
-[tici.storage]
-data-dir = "./data//tici/searchlib"
-[tici.s3]
-access-key = "${S3_ACCESS_KEY}"
-bucket = "${S3_BUCKET}"
-endpoint = "${S3_ENDPOINT}"
-prefix = "${S3_PREFIX}"
-secret-key = "${S3_SECRET_KEY}"
-use-path-style = ${S3_USE_PATH_STYLE}
-EOF
-
     TIFLASH_CONFIG="${TIFLASH_CONFIG:-$TICI_CONFIG_DIR/tiflash.toml}"
     TIFLASH_PROXY_CONFIG="${TIFLASH_PROXY_CONFIG:-$TICI_CONFIG_DIR/tiflash-learner.toml}"
 }

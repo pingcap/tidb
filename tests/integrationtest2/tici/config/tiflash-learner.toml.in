@@ -1,0 +1,12 @@
+[rocksdb]
+wal-dir = ""
+
+[server]
+addr = "${TIFLASH_PROXY_SERVER_ADDR}"
+advertise-addr = "${TIFLASH_PROXY_ADVERTISE_ADDR}"
+status-addr = "${TIFLASH_PROXY_STATUS_ADDR}"
+engine-addr = "${TIFLASH_PROXY_ENGINE_ADDR}"
+
+[storage]
+data-dir = "${TIFLASH_PROXY_DATA_DIR}"
+reserve-space = "${TIFLASH_PROXY_RESERVE_SPACE}"
