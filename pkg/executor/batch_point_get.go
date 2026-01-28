@@ -115,7 +115,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		// and avoid using the cached value from PessimisticLock response.
 		if e.lock && e.commitTSOffset < 0 {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-		} else if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
+		} else if lock != nil && e.commitTSOffset < 0 && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
@@ -252,13 +252,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(e.Ctx().GetSessionVars().MaxExecutionTime)*time.Millisecond)
 		defer cancel()
-	}
-	e.commitTSOffset = -1
-	for i, col := range e.Schema().Columns {
-		if col.ID == model.ExtraCommitTSID {
-			e.commitTSOffset = i
-			break
-		}
 	}
 
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
