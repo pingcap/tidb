@@ -1363,8 +1363,23 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 	// internally based on this value and PrefixCol/PrefixLen.
 	partialOrderedLimit := p.Count + p.Offset
 	p.PartialOrderedLimit = partialOrderedLimit
-	p.PrefixCol = matchResult.PrefixCol
 	p.PrefixLen = matchResult.PrefixLen
+	// Find the corresponding prefix column in TopN's schema.
+	// matchResult.PrefixCol is from IndexScan's schema, but
+	// Projection operators may remap columns. We need to find the column in TopN's
+	// schema that has the same UniqueID as matchResult.PrefixCol.
+	// Column UniqueID remains unchanged even after Projection remapping.
+	p.PrefixCol = nil
+	for _, col := range p.Schema().Columns {
+		if col.UniqueID == matchResult.PrefixCol.UniqueID {
+			p.PrefixCol = col
+			break
+		}
+	}
+	// Fallback: if not found in rootTask schema (should not happen)
+	if p.PrefixCol == nil {
+		return base.InvalidTask
+	}
 
 	// Decide whether we can push a special Limit down to the index plan.
 	// Conditions:
@@ -1394,7 +1409,7 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 		pushedDownLimit := physicalop.PhysicalLimit{
 			Count:               partialOrderedLimit,
 			PartialOrderedLimit: partialOrderedLimit,
-			PrefixCol:           matchResult.PrefixCol,
+			PrefixCol:           p.PrefixCol,
 			PrefixLen:           matchResult.PrefixLen,
 		}.Init(p.SCtx(), limitStats, p.QueryBlockOffset())
 		pushedDownLimit.SetChildren(copTask.IndexPlan)
