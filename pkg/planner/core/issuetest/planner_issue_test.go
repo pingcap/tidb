@@ -52,35 +52,6 @@ func TestPlannerIssueRegressions(t *testing.T) {
 		stmt, err := parser.New().ParseOneStmt("select * from t use index(b) where b > 1 order by b limit 1", "", "")
 		require.NoError(t, err)
 
-<<<<<<< HEAD
-func Test53726(t *testing.T) {
-	// test for RemoveUnnecessaryFirstRow
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t7(c int); ")
-	tk.MustExec("insert into t7 values (575932053), (-258025139);")
-	tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
-		Sort().Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
-	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
-		Check(testkit.Rows(
-			"HashAgg_10 8000.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#4, funcs:firstrow(Column#9)->Column#5",
-			"└─TableReader_11 8000.00 root  data:HashAgg_4",
-			"  └─HashAgg_4 8000.00 cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
-			"    └─TableFullScan_9 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
-
-	tk.MustExec("analyze table t7 all columns")
-	tk.MustQuery("select distinct cast(c as decimal), cast(c as signed) from t7").
-		Sort().
-		Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
-	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
-		Check(testkit.Rows(
-			"HashAgg_6 2.00 root  group by:Column#12, Column#13, funcs:firstrow(Column#12)->Column#4, funcs:firstrow(Column#13)->Column#5",
-			"└─Projection_14 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#12, cast(test.t7.c, bigint(22) BINARY)->Column#13",
-			"  └─TableReader_13 2.00 root  data:TableFullScan_12",
-			"    └─TableFullScan_12 2.00 cop[tikv] table:t7 keep order:false"))
-}
-=======
 		nodeW := resolve.NewNodeW(stmt)
 		p, _, err := planner.Optimize(context.TODO(), tk.Session(), nodeW, dom.InfoSchema())
 		require.NoError(t, err)
@@ -88,7 +59,6 @@ func Test53726(t *testing.T) {
 
 		var idxLookUpPlan *physicalop.PhysicalIndexLookUpReader
 		var ok bool
->>>>>>> master
 
 		for {
 			idxLookUpPlan, ok = p.(*physicalop.PhysicalIndexLookUpReader)
@@ -99,29 +69,8 @@ func Test53726(t *testing.T) {
 		}
 		require.True(t, ok)
 
-<<<<<<< HEAD
-	tk.MustQuery("explain format='brief' SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1").
-		Check(testkit.Rows(
-			"Projection 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#11",
-			"└─IndexJoin 9990.00 root  inner join, inner:HashAgg, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
-			"  ├─TableReader(Build) 9990.00 root  data:Selection",
-			"  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
-			"  │   └─TableFullScan 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-			"  └─HashAgg(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11, funcs:firstrow(test.tb.b1)->test.tb.b1",
-			"    └─IndexLookUp 9990.00 root  ",
-			"      ├─Selection(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
-			"      │ └─IndexRangeScan 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
-			"      └─TableRowIDScan(Probe) 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
-	// test for issues/55169
-	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
-	tk.MustExec("create table t2(col_1 int, col_2 int, index idx_2(col_1));")
-	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
-	tk.MustQuery("select /*+ inl_join(tmp) */ * from t1 inner join (select col_1, group_concat(distinct col_2 order by col_2) from t2 group by col_1) tmp on t1.col_1 = tmp.col_1;").Check(testkit.Rows())
-}
-=======
 		is := idxLookUpPlan.IndexPlans[0].(*physicalop.PhysicalIndexScan)
 		ts := idxLookUpPlan.TablePlans[0].(*physicalop.PhysicalTableScan)
->>>>>>> master
 
 		require.NotEqual(t, is.Columns, ts.Columns)
 	})
@@ -256,20 +205,6 @@ SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer semi join, left side:HashAgg",
-<<<<<<< HEAD
-		"├─HashAgg(Build) 1.00 root  group by:Column#24, Column#25, funcs:firstrow(1)->Column#51",
-		"│ └─TableDual 0.00 root  rows:0",
-		"└─HashAgg(Probe) 2.00 root  group by:Column#11, funcs:firstrow(1)->Column#48",
-		"  └─HashJoin 10000.00 root  CARTESIAN left outer semi join, left side:TableReader",
-		"    ├─HashAgg(Build) 1.00 root  group by:Column#10, Column#9, funcs:firstrow(1)->Column#50",
-		"    │ └─TableDual 0.00 root  rows:0",
-		"    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-		"      └─TableFullScan 10000.00 cop[tikv] table:table1 keep order:false, stats:pseudo",
-		"ScalarSubQuery N/A root  Output: ScalarQueryCol#16, ScalarQueryCol#17, ScalarQueryCol#18, ScalarQueryCol#19",
-		"└─TableReader 10000.00 root  data:TableFullScan",
-		"  └─TableFullScan 10000.00 cop[tikv] table:SUBQUERY2_t1 keep order:false, stats:pseudo"))
-	tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
-=======
 			"├─HashAgg(Build) 1.00 root  group by:Column#24, Column#25, funcs:firstrow(1)->Column#51",
 			"│ └─TableDual 0.00 root  rows:0",
 			"└─HashAgg(Probe) 2.00 root  group by:Column#11, funcs:firstrow(1)->Column#48",
@@ -282,34 +217,11 @@ GROUP BY field1;`).Check(testkit.Rows("HashJoin 2.00 root  CARTESIAN left outer 
 			"└─TableReader 10000.00 root  data:TableFullScan",
 			"  └─TableFullScan 10000.00 cop[tikv] table:SUBQUERY2_t1 keep order:false, stats:pseudo"))
 		tk.MustQuery(`SELECT (4,5) IN (SELECT 8,0 UNION SELECT 8, 8) AS field1
->>>>>>> master
 FROM t1 AS table1
 WHERE (EXISTS (SELECT SUBQUERY2_t1.a1 AS SUBQUERY2_field1 FROM t1 AS SUBQUERY2_t1)) OR table1.b1 >= 55
 GROUP BY field1;`).Check(testkit.Rows("0"))
 	})
 
-<<<<<<< HEAD
-func TestIssue59902(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t1(a int primary key, b int);")
-	tk.MustExec("create table t2(a int, b int, key idx(a));")
-	tk.MustExec(`INSERT INTO t1 (a, b) VALUES (1, 100), (2, 200), (3, 300);`)
-	tk.MustExec(`INSERT INTO t2 (a, b) VALUES (1, 10), (1, 20), (2, 30), (4, 40);`)
-	tk.MustExec("set tidb_enable_inl_join_inner_multi_pattern=on;")
-	tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
-		Check(testkit.Rows(
-			"Projection 1.00 root  test.t1.b, ifnull(Column#12, 0)->Column#12",
-			"└─MergeJoin 1.00 root  left outer join, left side:Point_Get, left key:test.t1.a, right key:test.t2.a",
-			"  ├─StreamAgg(Build) 8.00 root  group by:test.t2.a, funcs:count(Column#13)->Column#12, funcs:firstrow(test.t2.a)->test.t2.a",
-			"  │ └─IndexReader 8.00 root  index:StreamAgg",
-			"  │   └─StreamAgg 8.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#13",
-			"  │     └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(a) range:[1,1], keep order:true, stats:pseudo",
-			"  └─Point_Get(Probe) 1.00 root table:t1 handle:1"))
-	tk.MustQuery("select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").Check(testkit.Rows("100 2"))
-}
-=======
 	t.Run("merge-join-with-correlated-count", func(t *testing.T) {
 		tk := newTestKit(t)
 		tk.MustExec("create table t1(a int primary key, b int);")
@@ -328,7 +240,6 @@ func TestIssue59902(t *testing.T) {
 				"  └─Point_Get(Probe) 1.00 root table:t1 handle:1"))
 		tk.MustQuery("select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").Check(testkit.Rows("100 2"))
 	})
->>>>>>> master
 
 	t.Run("instance-plan-cache-with-prepare", func(t *testing.T) {
 		tk1 := testkit.NewTestKit(t, store)
@@ -397,39 +308,6 @@ func TestIssue59902(t *testing.T) {
 			"      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"))
 	})
 
-<<<<<<< HEAD
-func TestJoinReorderWithAddSelection(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec(`create table t0(vkey integer, c3 varchar(0));`)
-	tk.MustExec(`create table t1(vkey integer, c10 integer);`)
-	tk.MustExec(`create table t2(c12 integer, c13 integer, c14 varchar(0), c15 double);`)
-	tk.MustExec(`create table t3(vkey varchar(0), c20 integer);`)
-	tk.MustQuery(`explain select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);`).Check(testkit.Rows(
-		`Projection_34 0.00 root  0->Column#33`,
-		`└─HashJoin_50 0.00 root  inner join, equal:[eq(Column#34, Column#35)]`,
-		`  ├─HashJoin_71(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]`,
-		`  │ ├─Selection_72(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)`,
-		`  │ │ └─HashJoin_82 0.00 root  left outer join, left side:HashJoin_97, equal:[eq(test.t3.c20, test.t1.vkey)]`,
-		`  │ │   ├─HashJoin_97(Build) 0.00 root  inner join, equal:[eq(test.t0.vkey, test.t2.c13)]`,
-		`  │ │   │ ├─TableDual_107(Build) 0.00 root  rows:0`,
-		`  │ │   │ └─TableReader_106(Probe) 9990.00 root  data:Selection_105`,
-		`  │ │   │   └─Selection_105 9990.00 cop[tikv]  not(isnull(test.t2.c13))`,
-		`  │ │   │     └─TableFullScan_104 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
-		`  │ │   └─HashJoin_115(Probe) 9990.00 root  CARTESIAN left outer join, left side:TableReader_119`,
-		`  │ │     ├─TableDual_120(Build) 0.00 root  rows:0`,
-		`  │ │     └─TableReader_119(Probe) 9990.00 root  data:Selection_118`,
-		`  │ │       └─Selection_118 9990.00 cop[tikv]  not(isnull(test.t1.vkey))`,
-		`  │ │         └─TableFullScan_117 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
-		`  │ └─Projection_126(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#34`,
-		`  │   └─TableReader_130 9990.00 root  data:Selection_129`,
-		`  │     └─Selection_129 9990.00 cop[tikv]  not(isnull(test.t2.c14))`,
-		`  │       └─TableFullScan_128 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
-		`  └─Projection_133(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#35`,
-		`    └─TableReader_136 10000.00 root  data:TableFullScan_135`,
-		`      └─TableFullScan_135 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
-=======
 	t.Run("plan-cache-explain-for-connection", func(t *testing.T) {
 		tk := newTestKit(t)
 		tk.MustExec("create table t(a int, b int, c int)")
@@ -443,7 +321,6 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).MultiCheckContain([]string{"IndexRangeScan"})
 	})
->>>>>>> master
 }
 
 func TestOnlyFullGroupCantFeelUnaryConstant(t *testing.T) {

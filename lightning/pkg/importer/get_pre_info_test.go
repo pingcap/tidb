@@ -251,25 +251,6 @@ func TestGetPreInfoGetAllTableStructures(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func generateParquetData(t *testing.T) []byte {
-	type parquetStruct struct {
-		ID   int64  `parquet:"name=id, type=INT64"`
-		Name string `parquet:"name=name, type=BYTE_ARRAY"`
-	}
-	pf := pqt_buf_src.NewBufferFile()
-	pw, err := pqtwriter.NewParquetWriter(pf, new(parquetStruct), 4)
-	require.NoError(t, err)
-	for i := range 10 {
-		require.NoError(t, pw.Write(parquetStruct{
-			ID:   int64(i + 1),
-			Name: fmt.Sprintf("name_%d", i+1),
-		}))
-	}
-	require.NoError(t, pw.WriteStop())
-	require.NoError(t, pf.Close())
-	return slices.Clone(pf.Bytes())
-=======
 func readParquetData(t *testing.T) []byte {
 	s, err := objstore.ParseBackend("./testdata", nil)
 	require.NoError(t, err)
@@ -288,7 +269,6 @@ func readParquetData(t *testing.T) []byte {
 	require.NoError(t, err)
 
 	return bs
->>>>>>> master
 }
 
 func TestGetPreInfoReadFirstRow(t *testing.T) {
