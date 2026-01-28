@@ -15,6 +15,12 @@
 # limitations under the License.
 
 set -eux
+
+# start a new cluster
+. run_services
+echo "restart a services"
+restart_services
+
 DB="$TEST_NAME"
 TABLE="usertable"
 DB_COUNT=3

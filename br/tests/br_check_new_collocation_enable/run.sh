@@ -50,7 +50,7 @@ run_sql "INSERT INTO $DB.usertable2 VALUES (\"c\", \"d\");"
 
 # backup db
 echo "backup start ... with brv4.0.8 without NewCollactionEnable"
-bin/brv4.0.8 backup db --db "$DB" -s "local://$TEST_DIR/$DB" \
+brv4.0.8 backup db --db "$DB" -s "local://$TEST_DIR/$DB" \
     --ca "$TEST_DIR/certs/ca.pem" \
     --cert "$TEST_DIR/certs/br.pem" \
     --key "$TEST_DIR/certs/br.key" \

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coreos/go-semver/semver"
+	"git.pingcap.net/pingkai/semver/coreos/semver"
 	perrors "github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/stretchr/testify/require"

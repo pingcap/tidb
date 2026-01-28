@@ -94,11 +94,22 @@ type Parser struct {
 
 	explicitCharset       bool
 	strictDoubleFieldType bool
+	inProcedure           bool
 
 	// the following fields are used by yyParse to reduce allocation.
 	cache  []yySymType
 	yylval yySymType
 	yyVAL  *yySymType
+}
+
+// InProcedure is used to set the inProcedure flag to true.
+func (p *Parser) InProcedure() {
+	p.inProcedure = true
+}
+
+// OutProcedure is used to set the inProcedure flag to false.
+func (p *Parser) OutProcedure() {
+	p.inProcedure = false
 }
 
 func yySetOffset(yyVAL *yySymType, offset int) {
@@ -134,31 +145,31 @@ func New() *Parser {
 }
 
 // SetStrictDoubleTypeCheck enables/disables strict double type check.
-func (parser *Parser) SetStrictDoubleTypeCheck(val bool) {
-	parser.strictDoubleFieldType = val
+func (p *Parser) SetStrictDoubleTypeCheck(val bool) {
+	p.strictDoubleFieldType = val
 }
 
 // SetParserConfig sets the parser config.
-func (parser *Parser) SetParserConfig(config ParserConfig) {
-	parser.EnableWindowFunc(config.EnableWindowFunction)
-	parser.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
-	parser.lexer.skipPositionRecording = config.SkipPositionRecording
+func (p *Parser) SetParserConfig(config ParserConfig) {
+	p.EnableWindowFunc(config.EnableWindowFunction)
+	p.SetStrictDoubleTypeCheck(config.EnableStrictDoubleTypeCheck)
+	p.lexer.skipPositionRecording = config.SkipPositionRecording
 }
 
 // ParseSQL parses a query string to raw ast.StmtNode.
-func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
-	resetParams(parser)
-	parser.lexer.reset(sql)
-	for _, p := range params {
-		if err := p.ApplyOn(parser); err != nil {
+func (p *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.StmtNode, warns []error, err error) {
+	resetParams(p)
+	p.lexer.reset(sql)
+	for _, param := range params {
+		if err := param.ApplyOn(p); err != nil {
 			return nil, nil, err
 		}
 	}
-	parser.src = sql
-	parser.result = parser.result[:0]
+	p.src = sql
+	p.result = p.result[:0]
 
-	var l yyLexer = &parser.lexer
-	yyParse(l, parser)
+	var l yyLexer = &p.lexer
+	yyParse(l, p)
 
 	warns, errs := l.Errors()
 	if len(warns) > 0 {
@@ -169,26 +180,26 @@ func (parser *Parser) ParseSQL(sql string, params ...ParseParam) (stmt []ast.Stm
 	if len(errs) != 0 {
 		return nil, warns, errors.Trace(errs[0])
 	}
-	for _, stmt := range parser.result {
+	for _, stmt := range p.result {
 		ast.SetFlag(stmt)
 	}
-	return parser.result, warns, nil
+	return p.result, warns, nil
 }
 
 // Parse parses a query string to raw ast.StmtNode.
 // If charset or collation is "", default charset and collation will be used.
-func (parser *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode, warns []error, err error) {
-	return parser.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
+func (p *Parser) Parse(sql, charset, collation string) (stmt []ast.StmtNode, warns []error, err error) {
+	return p.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 }
 
-func (parser *Parser) lastErrorAsWarn() {
-	parser.lexer.lastErrorAsWarn()
+func (p *Parser) lastErrorAsWarn() {
+	p.lexer.lastErrorAsWarn()
 }
 
 // ParseOneStmt parses a query and returns an ast.StmtNode.
 // The query must have one statement, otherwise ErrSyntax is returned.
-func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
-	stmts, _, err := parser.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
+func (p *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode, error) {
+	stmts, _, err := p.ParseSQL(sql, CharsetConnection(charset), CollationConnection(collation))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -200,13 +211,13 @@ func (parser *Parser) ParseOneStmt(sql, charset, collation string) (ast.StmtNode
 }
 
 // SetSQLMode sets the SQL mode for parser.
-func (parser *Parser) SetSQLMode(mode mysql.SQLMode) {
-	parser.lexer.SetSQLMode(mode)
+func (p *Parser) SetSQLMode(mode mysql.SQLMode) {
+	p.lexer.SetSQLMode(mode)
 }
 
 // EnableWindowFunc controls whether the parser to parse syntax related with window function.
-func (parser *Parser) EnableWindowFunc(val bool) {
-	parser.lexer.EnableWindowFunc(val)
+func (p *Parser) EnableWindowFunc(val bool) {
+	p.lexer.EnableWindowFunc(val)
 }
 
 // ParseErrorWith returns "You have a syntax error near..." error message compatible with mysql.
@@ -220,13 +231,13 @@ func ParseErrorWith(errstr string, lineno int) error {
 // The select statement is not at the end of the whole statement, if the last
 // field text was set from its offset to the end of the src string, update
 // the last field text.
-func (parser *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
+func (p *Parser) setLastSelectFieldText(st *ast.SelectStmt, lastEnd int) {
 	if st.Kind != ast.SelectStmtKindSelect {
 		return
 	}
 	lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
-	if lastField.Offset+len(lastField.OriginalText()) >= len(parser.src)-1 {
-		lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+	if lastField.Offset+len(lastField.OriginalText()) >= len(p.src)-1 {
+		lastField.SetText(p.lexer.client, p.src[lastField.Offset:lastEnd])
 	}
 }
 
@@ -234,19 +245,19 @@ func (*Parser) startOffset(v *yySymType) int {
 	return v.offset
 }
 
-func (parser *Parser) endOffset(v *yySymType) int {
+func (p *Parser) endOffset(v *yySymType) int {
 	offset := v.offset
-	for offset > 0 && unicode.IsSpace(rune(parser.src[offset-1])) {
+	for offset > 0 && unicode.IsSpace(rune(p.src[offset-1])) {
 		offset--
 	}
 	return offset
 }
 
-func (parser *Parser) parseHint(input string) ([]*ast.TableOptimizerHint, []error) {
-	if parser.hintParser == nil {
-		parser.hintParser = newHintParser()
+func (p *Parser) parseHint(input string) ([]*ast.TableOptimizerHint, []error) {
+	if p.hintParser == nil {
+		p.hintParser = newHintParser()
 	}
-	return parser.hintParser.parse(input, parser.lexer.GetSQLMode(), parser.lexer.lastHintPos)
+	return p.hintParser.parse(input, p.lexer.GetSQLMode(), p.lexer.lastHintPos)
 }
 
 func toInt(l yyLexer, lval *yySymType, str string) int {
