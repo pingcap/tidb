@@ -173,9 +173,13 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks := it.GetTasks()
 	require.Equal(t, len(tasks), 2)
-	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
+	pbTasks, err := tasks[0].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 1)
 	require.Equal(t, tasks[0].RowCountHint, 5)
-	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 1)
+	pbTasks, err = tasks[1].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 1)
 	require.Equal(t, tasks[1].RowCountHint, 9)
 
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
@@ -189,7 +193,9 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 1)
-	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 3)
+	pbTasks, err = tasks[0].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 3)
 	require.Equal(t, tasks[0].RowCountHint, 14)
 
 	// paging will disable store batch.
@@ -226,8 +232,36 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	require.Nil(t, errRes)
 	tasks = it.GetTasks()
 	require.Equal(t, len(tasks), 2)
-	require.Equal(t, len(tasks[0].ToPBBatchTasks()), 1)
-	require.Equal(t, len(tasks[1].ToPBBatchTasks()), 0)
+	pbTasks, err = tasks[0].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 1)
+	pbTasks, err = tasks[1].ToPBBatchTasks()
+	require.NoError(t, err)
+	require.Equal(t, len(pbTasks), 0)
+}
+
+func TestBuildCopIteratorWithRangeVersionMapRequiresPointRanges(t *testing.T) {
+	store, err := mockstore.NewMockStore()
+	require.NoError(t, err)
+	defer require.NoError(t, store.Close())
+	copClient := store.GetClient().(*copr.CopClient)
+	ctx := context.Background()
+	killed := uint32(0)
+	vars := kv.NewVariables(&killed)
+	opt := &kv.ClientSendOption{}
+
+	// use a non-point range with rangeVersionMap to trigger the validation check
+	ranges := copr.BuildKeyRanges("a", "z")
+	rangeVersionMap := map[string]uint64{
+		ranges[0].StartKey.AsString(): 1,
+	}
+	req := &kv.Request{
+		Tp:          kv.ReqTypeDAG,
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, rangeVersionMap, []int{1}),
+		Concurrency: 1,
+	}
+	_, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
+	require.NotNil(t, errRes)
 }
 
 type mockResourceGroupProvider struct {
