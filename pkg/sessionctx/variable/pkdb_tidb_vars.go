@@ -20,6 +20,8 @@ const (
 	PKDBEnableWhitelist = "pkdb_enable_whitelist"
 	// PKDBExtraDataType indicates whether to enable extra data types.
 	PKDBExtraDataType = "pkdb_extra_data_type"
+	// PKDBEnableEAL indicates whether to enable the EAL feature.
+	PKDBEnableEAL = "pkdb_eal"
 )
 
 // Default TiDB system variable values.
@@ -37,6 +39,7 @@ const (
 	DefTiDBCreateFromSelectUsingImport = false
 	DefPKDBEnableWhitelist             = false
 	DefPKDBExtraDataType               = false
+	DefPKDBEnableEAL                   = false
 )
 
 // UnspecifiedServerID indicates the unspecified server id.
@@ -56,4 +59,5 @@ var (
 	AutomaticSPPrivileges      = atomic.NewBool(true)
 	EnableDutySeparationMode   = atomic.NewBool(DefTiDBEnableDutySeparationMode)
 	EnableWhitelist            = atomic.NewBool(DefPKDBEnableWhitelist)
+	EnableEAL                  = atomic.NewBool(DefPKDBEnableEAL)
 )

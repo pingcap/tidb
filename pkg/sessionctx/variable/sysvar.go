@@ -3675,6 +3675,14 @@ var defaultSysVars = []*SysVar{
 			return BoolToOnOff(parsertypes.EnableExtraDataType.Load()), nil
 		},
 	},
+	{Scope: ScopeGlobal, Name: PKDBEnableEAL, Value: BoolToOnOff(DefPKDBEnableEAL), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableEAL.Store(TiDBOptOn(val))
+			return nil
+		}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableEAL.Load()), nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

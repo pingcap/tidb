@@ -2648,6 +2648,17 @@ func (s *SessionVars) SetTxnIsolationLevelOneShotStateForNextTxn() {
 	}
 }
 
+// TakeIsolationLevelOneShotInTxn takes the isoLevelOneShot value in transaction.
+func (s *SessionVars) TakeIsolationLevelOneShotInTxn() string {
+	if isoLevelOneShot := &s.txnIsolationLevelOneShot; isoLevelOneShot.state == oneShotSet {
+		isolation := isoLevelOneShot.value
+		isoLevelOneShot.value = ""
+		isoLevelOneShot.state = oneShotDef
+		return isolation
+	}
+	return ""
+}
+
 // IsPessimisticReadConsistency if true it means the statement is in a read consistency pessimistic transaction.
 func (s *SessionVars) IsPessimisticReadConsistency() bool {
 	return s.TxnCtx.IsPessimistic && s.IsIsolation(ast.ReadCommitted)
