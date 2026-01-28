@@ -168,7 +168,8 @@ func TestInconsistentIndex(t *testing.T) {
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	idx := tbl.Meta().FindIndexByName("idx_a")
-	idxOp := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	idxOp, err := tables.NewIndex(tbl.Meta().ID, tbl.Meta(), idx)
+	require.NoError(t, err)
 	ctx := mock.NewContext()
 	ctx.Store = store
 

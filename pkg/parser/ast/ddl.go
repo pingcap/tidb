@@ -735,6 +735,7 @@ type IndexOption struct {
 	Visibility   IndexVisibility
 	PrimaryKeyTp model.PrimaryKeyType
 	Global       bool
+	Condition    ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
 }
 
 // IsEmpty is true if only default options are given
@@ -746,7 +747,8 @@ func (n *IndexOption) IsEmpty() bool {
 		len(n.ParserName.O) > 0 ||
 		n.Comment != "" ||
 		n.Global ||
-		n.Visibility != IndexVisibilityDefault {
+		n.Visibility != IndexVisibilityDefault ||
+		n.Condition != nil {
 		return false
 	}
 	return true
@@ -820,6 +822,17 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("INVISIBLE")
 		}
 	}
+
+	if n.Condition != nil {
+		if hasPrevOption {
+			ctx.WritePlain(" ")
+		}
+		ctx.WriteKeyWord("WHERE ")
+		if err := n.Condition.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing IndexOption Condition")
+		}
+	}
+
 	return nil
 }
 

@@ -406,6 +406,13 @@ func (t *TableInfo) MoveColumnInfo(from, to int) {
 				idxCol.Offset = newOffset
 			}
 		}
+
+		for _, affectedCol := range idx.AffectColumn {
+			newOffset, ok := updatedOffsets[affectedCol.Offset]
+			if ok {
+				affectedCol.Offset = newOffset
+			}
+		}
 	}
 
 	// Reconstruct the dependency column offsets.

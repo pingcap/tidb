@@ -6,7 +6,6 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/ddl/copr",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/distsql/context",
         "//pkg/expression",
         "//pkg/expression/exprctx",
         "//pkg/infoschema",
