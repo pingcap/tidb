@@ -1013,9 +1013,18 @@ const (
 	// division operations performed with the / operator.
 	DivPrecisionIncrement = "div_precision_increment"
 
+	// TiDBPlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
+	TiDBPlanCacheMaxDecimalParamNums = "tidb_plan_cache_max_decimal_param_nums"
+
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBEnableUDVSubstitute indicates whether to enable user defined variable substitute.
+	TiDBEnableUDVSubstitute = "tidb_enable_udv_substitute"
+
+	// TiDBEnableSPParamSubstitute indicates whether to enable stored procedure parameter substitute.
+	TiDBEnableSPParamSubstitute = "tidb_enable_sp_param_substitute"
 )
 
 // TiDB vars that have only global scope
@@ -1247,6 +1256,20 @@ const (
 	// TiDBTSOClientRPCMode controls how the TSO client performs the TSO RPC requests. It internally controls the
 	// concurrency of the RPC. This variable provides an approach to tune the latency of getting timestamps from PD.
 	TiDBTSOClientRPCMode = "tidb_tso_client_rpc_mode"
+	// TiDBEnableLabelSecurity is use to enable or disable label security on TiDB.
+	TiDBEnableLabelSecurity = "tidb_enable_label_security"
+	// TiDBEnableLoginHistory indicates whether tidb need enable the login-history.
+	TiDBEnableLoginHistory = "tidb_enable_login_history"
+	// TiDBLoginHistoryRetainDuration indicates the duration of retaining the record in mysql.log_history.
+	TiDBLoginHistoryRetainDuration = "tidb_login_history_retain_duration"
+	// TiDBEnableProcedure if enable store procedure
+	TiDBEnableProcedure = "tidb_enable_procedure"
+	// TiDBEnableProcedureAstCache indicates whether tidb need enable or disable ast cache.
+	TiDBEnableProcedureAstCache = "tidb_enable_sp_ast_cache"
+	//TiDBProcedureLastErrorSQL procedure last hander SQL warning/error.
+	TiDBProcedureLastErrorSQL = "sp_last_error_sql"
+	// TiDBEnableDutySeparationMode indicates if enable the mode of duty separation.
+	TiDBEnableDutySeparationMode = "tidb_enable_duty_separation_mode"
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
@@ -1562,6 +1585,7 @@ const (
 	DefTiDBTTLRunningTasks                            = -1
 	DefPasswordReuseHistory                           = 0
 	DefPasswordReuseTime                              = 0
+	DefMaxUserConnections                             = 0
 	DefTiDBStoreBatchSize                             = 4
 	DefTiDBHistoricalStatsDuration                    = 7 * 24 * time.Hour
 	DefTiDBEnableHistoricalStatsForCapture            = false
@@ -1620,6 +1644,7 @@ const (
 	DefOptEnableProjectionPushDown                    = true
 	DefTiDBEnableSharedLockPromotion                  = false
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
+	DefTiDBPlanCacheMaxDecimalParamNums               = -1
 	DefTiDBLoadBindingTimeout                         = 200
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 )
@@ -1725,6 +1750,7 @@ var (
 	PasswordHistory                 = atomic.NewInt64(DefPasswordReuseHistory)
 	PasswordReuseInterval           = atomic.NewInt64(DefPasswordReuseTime)
 	IsSandBoxModeEnabled            = atomic.NewBool(false)
+	MaxUserConnectionsCount         = atomic.NewUint32(DefMaxUserConnections)
 	MaxPreparedStmtCountValue       = atomic.NewInt64(DefMaxPreparedStmtCount)
 	HistoricalStatsDuration         = atomic.NewDuration(DefTiDBHistoricalStatsDuration)
 	EnableHistoricalStatsForCapture = atomic.NewBool(DefTiDBEnableHistoricalStatsForCapture)

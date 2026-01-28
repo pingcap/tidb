@@ -41,3 +41,6 @@ MODULE.bazel.lock
 genkeyword
 test_coverage
 coverage.dat
+tidb-enterprise-utilities
+tidb-security-advanced
+*.test.bin

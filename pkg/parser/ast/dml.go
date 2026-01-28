@@ -281,6 +281,8 @@ type TableName struct {
 	IndexHints     []*IndexHint
 	PartitionNames []model.CIStr
 	TableSample    *TableSample
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *TableSplit
 	// AS OF is used to see the data as it was at a specific point in time.
 	AsOf *AsOfClause
 	// IsAlias is true if this table name is an alias.
@@ -351,6 +353,12 @@ func (n *TableName) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(" ")
 		if err := n.TableSample.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing TableName.TableSample")
+		}
+	}
+	if n.TableSplit != nil {
+		ctx.WritePlain(" ")
+		if err := n.TableSplit.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while splicing TableName.TableSplit")
 		}
 	}
 	return nil
@@ -444,6 +452,13 @@ func (n *TableName) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.TableSample = newTs.(*TableSample)
+	}
+	if n.TableSplit != nil {
+		newTblSplit, ok := n.TableSplit.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.TableSplit = newTblSplit.(*TableSplit)
 	}
 	if n.AsOf != nil {
 		newNode, skipChildren := n.AsOf.Accept(v)
@@ -574,6 +589,12 @@ func (n *TableSource) Restore(ctx *format.RestoreCtx) error {
 				return errors.Annotate(err, "An error occurred while splicing TableName.TableSample")
 			}
 		}
+		if tn.TableSplit != nil {
+			ctx.WritePlain(" ")
+			if err := tn.TableSplit.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while splicing TableName.TableSplit")
+			}
+		}
 
 		if needParen {
 			ctx.WritePlain(")")
@@ -660,8 +681,12 @@ func (n SelectLockType) String() string {
 type WildCardField struct {
 	node
 
-	Table  model.CIStr
+	// For example, when querying `SELECT test.t.* FROM t`,
+	// `SELECT test.t.* FROM t` -> {Schema: "test", Table: "t"}
+	// `SELECT t.* FROM t` -> {Schema: "", Table: "t"}
+	// `SELECT t.a FROM t` -> nil
 	Schema model.CIStr
+	Table  model.CIStr
 }
 
 // Restore implements Node interface.
@@ -708,6 +733,11 @@ type SelectField struct {
 	Auxiliary             bool
 	AuxiliaryColInAgg     bool
 	AuxiliaryColInOrderBy bool
+
+	// IsUnfoldFromWildCard indicates whether this field is unfolded from a wildcard, which can be used in checking privilege.
+	// Although we always check SELECT privilege in column-level, a table-level access deny can be return if the
+	// column is unfolded from a wildcard.
+	IsUnfoldFromWildCard bool
 }
 
 // Restore implements Node interface.
@@ -1062,6 +1092,36 @@ func (s *TableSample) Accept(v Visitor) (node Node, ok bool) {
 	return v.Leave(s)
 }
 
+// TableSplit represents a table split range returned by SHOW TABLE SPLITS.
+type TableSplit struct {
+	node
+	// Start is the lower bound of the split, as a hex-encoded string.
+	Start string
+	// End is the upper bound of the split, as a hex-encoded string.
+	End string
+}
+
+// Restore implements Node interface.
+func (ts *TableSplit) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("TABLESPLIT")
+	ctx.WritePlain("(")
+	ctx.WriteString(ts.Start)
+	ctx.WritePlain(", ")
+	ctx.WriteString(ts.End)
+	ctx.WritePlain(")")
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (ts *TableSplit) Accept(v Visitor) (node Node, ok bool) {
+	newNode, skipChildren := v.Enter(ts)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n := newNode.(*TableSplit)
+	return v.Leave(n)
+}
+
 type SelectStmtKind uint8
 
 const (
@@ -1314,6 +1374,12 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 				}
 			}
 		}
+		if n.SelectIntoOpt != nil && n.SelectIntoOpt.Tp == SelectIntoVars {
+			ctx.WritePlain(" ")
+			if err := n.SelectIntoOpt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
+			}
+		}
 
 		if n.From != nil {
 			ctx.WriteKeyWord(" FROM ")
@@ -1440,7 +1506,7 @@ func (n *SelectStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.SelectIntoOpt != nil {
+	if n.SelectIntoOpt != nil && n.SelectIntoOpt.Tp == SelectIntoOutfile {
 		ctx.WritePlain(" ")
 		if err := n.SelectIntoOpt.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore SelectStmt.SelectIntoOpt")
@@ -1469,6 +1535,14 @@ func (n *SelectStmt) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*SelectStmt)
+
+	if n.SelectIntoOpt != nil {
+		node, ok := n.SelectIntoOpt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.SelectIntoOpt = node.(*SelectIntoOption)
+	}
 
 	if n.With != nil {
 		node, ok := n.With.Accept(v)
@@ -3658,26 +3732,48 @@ type SelectIntoOption struct {
 	FileName   string
 	FieldsInfo *FieldsClause
 	LinesInfo  *LinesClause
+	// VarList used for `SELECT ... INTO @var_list`.
+	VarList          []ExprNode
+	ProcedureVarList []ExprNode
 }
 
 // Restore implements Node interface.
 func (n *SelectIntoOption) Restore(ctx *format.RestoreCtx) error {
-	if n.Tp != SelectIntoOutfile {
+	if n.Tp == SelectIntoOutfile {
+		ctx.WriteKeyWord("INTO OUTFILE ")
+		ctx.WriteString(n.FileName)
+		if n.FieldsInfo != nil {
+			if err := n.FieldsInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
+			}
+		}
+		if n.LinesInfo != nil {
+			if err := n.LinesInfo.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
+			}
+		}
+	} else if n.Tp == SelectIntoVars {
+		if len(n.VarList) > 0 && len(n.ProcedureVarList) > 0 {
+			return errors.New("An error occurred while restore SelectIntoOption. " +
+				"User defined variables and procedure local variables can't be in one select into statement")
+		}
+		var intoVars []ExprNode
+		intoVars = append(intoVars, n.VarList...)
+		intoVars = append(intoVars, n.ProcedureVarList...)
+		if len(intoVars) > 0 {
+			ctx.WriteKeyWord("INTO ")
+			for i, val := range intoVars {
+				if i != 0 {
+					ctx.WritePlain(",")
+				}
+				if err := val.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore SelectIntoOption")
+				}
+			}
+		}
+	} else {
 		// only support SELECT/TABLE/VALUES ... INTO OUTFILE statement now
 		return errors.New("Unsupported SelectionInto type")
-	}
-
-	ctx.WriteKeyWord("INTO OUTFILE ")
-	ctx.WriteString(n.FileName)
-	if n.FieldsInfo != nil {
-		if err := n.FieldsInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.FieldsInfo")
-		}
-	}
-	if n.LinesInfo != nil {
-		if err := n.LinesInfo.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore SelectInto.LinesInfo")
-		}
 	}
 	return nil
 }
@@ -3687,6 +3783,14 @@ func (n *SelectIntoOption) Accept(v Visitor) (Node, bool) {
 	newNode, skipChildren := v.Enter(n)
 	if skipChildren {
 		return v.Leave(newNode)
+	}
+	n = newNode.(*SelectIntoOption)
+	for i, val := range n.VarList {
+		node, ok := val.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.VarList[i] = node.(ExprNode)
 	}
 	return v.Leave(n)
 }
