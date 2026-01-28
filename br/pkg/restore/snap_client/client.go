@@ -19,7 +19,9 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -53,14 +55,18 @@ import (
 	"github.com/pingcap/tidb/br/pkg/summary"
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
+	"github.com/pingcap/tidb/pkg/ddl/label"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
@@ -1114,6 +1120,8 @@ func (rc *SnapClient) createTables(
 		}
 	}
 	cts := make([]*restoreutils.CreatedTable, 0, len(tables))
+	var tablesWithMergeOption []*restoreutils.CreatedTable
+
 	for _, table := range tables {
 		newTableInfo, err := restore.GetTableSchema(rc.dom, table.DB.Name, table.Info.Name)
 		if err != nil {
@@ -1134,8 +1142,133 @@ func (rc *SnapClient) createTables(
 		}
 		log.Debug("new created tables", zap.Any("table", ct))
 		cts = append(cts, ct)
+
+		// Collect tables that need merge_option (either table-level or partition-level)
+		if table.IsMergeOptionAllowed || len(table.PartitionMergeOptionAllowed) > 0 {
+			tablesWithMergeOption = append(tablesWithMergeOption, ct)
+		}
 	}
+
+	// Batch set merge_option for collected tables and partitions
+	if len(tablesWithMergeOption) > 0 {
+		err := rc.setMergeOptionForTables(ctx, tablesWithMergeOption)
+		if err != nil {
+			return nil, errors.Annotatef(err, "failed to batch set merge_option for tables")
+		}
+	}
+
 	return cts, nil
+}
+
+// setMergeOptionForTables sets merge_option for multiple tables and partitions using batch update
+func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables []*restoreutils.CreatedTable) error {
+	if len(createdTables) == 0 {
+		return nil
+	}
+
+	log.Info("batch setting merge_option for tables and partitions", zap.Int("count", len(createdTables)))
+
+	var rulesToSet []*label.Rule
+
+	for _, ct := range createdTables {
+		table := ct.OldTable
+		newTableInfo := ct.Table
+		// Set merge_option for the table itself if IsMergeOptionAllowed is true
+		if table.IsMergeOptionAllowed {
+			rule := label.NewRule()
+			// Use .L (lowercase) to match DDL behavior for case-insensitive matching
+			dbName := table.DB.Name.L
+			tableName := table.Info.Name.L
+			rule.ID = fmt.Sprintf(label.TableIDFormat, label.IDPrefix, dbName, tableName)
+			rule.Labels = []pdhttp.RegionLabel{
+				{Key: "db", Value: dbName},
+				{Key: "table", Value: tableName},
+				{Key: "merge_option", Value: "allow"},
+			}
+			rule.RuleType = "key-range"
+
+			// Set the key range for this table using the NEW table ID (after restore)
+			startKey := tablecodec.EncodeTablePrefix(newTableInfo.ID)
+			endKey := tablecodec.EncodeTablePrefix(newTableInfo.ID + 1)
+			rule.Data = []any{
+				map[string]string{
+					"start_key": hex.EncodeToString(codec.EncodeBytes([]byte{}, startKey)),
+					"end_key":   hex.EncodeToString(codec.EncodeBytes([]byte{}, endKey)),
+				},
+			}
+			rule.Index = label.RuleIndexTable
+
+			rulesToSet = append(rulesToSet, rule)
+		}
+
+		// Set merge_option for partitions if PartitionMergeOptionAllowed is set
+		if len(table.PartitionMergeOptionAllowed) > 0 &&
+			table.Info.Partition != nil && len(table.Info.Partition.Definitions) > 0 &&
+			newTableInfo.Partition != nil && len(newTableInfo.Partition.Definitions) > 0 {
+			newPartitionMap := make(map[string]*model.PartitionDefinition)
+			for i := range newTableInfo.Partition.Definitions {
+				def := &newTableInfo.Partition.Definitions[i]
+				newPartitionMap[def.Name.O] = def
+			}
+
+			for _, oldDef := range table.Info.Partition.Definitions {
+				// Only set merge_option for partitions that have it enabled
+				// Use .O (original) for map lookup to preserve case, but .L for rule ID matching
+				if table.PartitionMergeOptionAllowed[oldDef.Name.O] {
+					// Find the corresponding new partition definition
+					newDef, exists := newPartitionMap[oldDef.Name.O]
+					if !exists {
+						log.Warn("partition not found in restored table, skipping merge_option",
+							zap.String("partition", oldDef.Name.O))
+						continue
+					}
+
+					rule := label.NewRule()
+					// Use .L (lowercase) to match DDL behavior for case-insensitive matching
+					dbName := table.DB.Name.L
+					tableName := table.Info.Name.L
+					partitionName := oldDef.Name.L
+					rule.ID = fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, partitionName)
+					rule.Labels = []pdhttp.RegionLabel{
+						{Key: "db", Value: dbName},
+						{Key: "table", Value: tableName},
+						{Key: "partition", Value: partitionName},
+						{Key: "merge_option", Value: "allow"},
+					}
+					rule.RuleType = "key-range"
+
+					// Set the key range for this partition using the NEW partition ID (after restore)
+					startKey := tablecodec.EncodeTablePrefix(newDef.ID)
+					endKey := tablecodec.EncodeTablePrefix(newDef.ID + 1)
+					rule.Data = []any{
+						map[string]string{
+							"start_key": hex.EncodeToString(codec.EncodeBytes([]byte{}, startKey)),
+							"end_key":   hex.EncodeToString(codec.EncodeBytes([]byte{}, endKey)),
+						},
+					}
+					rule.Index = label.RuleIndexPartition
+
+					rulesToSet = append(rulesToSet, rule)
+				}
+			}
+		}
+	}
+
+	// Put label rules to PD in batches to avoid overwhelming PD
+	totalRules := len(rulesToSet)
+	for batch := range slices.Chunk(rulesToSet, utils.LabelRuleBatchSize) {
+		log.Debug("putting label rules batch",
+			zap.Int("batch_size", len(batch)),
+			zap.Int("total", totalRules))
+
+		err := infosync.UpdateLabelRules(ctx, label.NewRulePatch(batch, nil))
+		if err != nil {
+			return errors.Annotatef(err, "failed to put label rules (batch_size=%d, total=%d) for merge_option to PD", len(batch), totalRules)
+		}
+	}
+
+	log.Info("successfully put all label rules", zap.Int("total_rules", totalRules))
+	return nil
 }
 
 // SortTablesBySchemaID sorts tables by their schema ID to ensure tables in the same schema
