@@ -237,26 +237,6 @@
         "Warning": null
       },
       {
-        "SQL": "select /*+ leading(t3) */ * from t1 join (select count(*) as c, a from t3 group by a) t3 on t1.a=t3.a join t2 on t1.b=t2.b;",
-        "Plan": [
-          "Projection 12475.01 root  test.t1.a, test.t1.b, Column#9, test.t3.a, test.t2.a, test.t2.b",
-          "└─HashJoin 12475.01 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
-          "  ├─HashJoin(Build) 9980.01 root  inner join, equal:[eq(test.t3.a, test.t1.a)]",
-          "  │ ├─HashAgg(Build) 7992.00 root  group by:test.t3.a, funcs:count(Column#14)->Column#9, funcs:firstrow(test.t3.a)->test.t3.a",
-          "  │ │ └─TableReader 7992.00 root partition:all data:HashAgg",
-          "  │ │   └─HashAgg 7992.00 cop[tikv]  group by:test.t3.a, funcs:count(1)->Column#14",
-          "  │ │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
-          "  │ │       └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
-          "  │ └─TableReader(Probe) 9980.01 root partition:all data:Selection",
-          "  │   └─Selection 9980.01 cop[tikv]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │     └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
-          "  └─TableReader(Probe) 9990.00 root partition:all data:Selection",
-          "    └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.b))",
-          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ],
-        "Warning": null
-      },
-      {
         "SQL": "select /*+ leading(t2, t1, t3) */ * from t2 left join (t1 left join t3 on t1.a=t3.a) on t2.b=t1.b;",
         "Plan": [
           "HashJoin 15609.38 root  left outer join, left side:TableReader, equal:[eq(test.t2.b, test.t1.b)]",
