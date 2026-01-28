@@ -804,7 +804,7 @@ func TestInitStatsIssue41938(t *testing.T) {
 }
 
 func TestDumpStatsDeltaInBatch(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
