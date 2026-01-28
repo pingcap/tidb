@@ -16,7 +16,6 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"slices"
 	"sync/atomic"
@@ -495,7 +494,7 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 			}
 			continue
 		}
-		e.values = append(e.values, val.Value)
+		e.values = append(e.values, val)
 		handles = append(handles, e.handles[i])
 		if e.lock && rc {
 			existKeys = append(existKeys, key)

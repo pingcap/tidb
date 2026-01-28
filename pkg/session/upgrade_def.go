@@ -2047,7 +2047,7 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer254(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateTiDBSoftDeleteTableStatusTable)
+	doReentrantDDL(s, metadef.CreateTiDBSoftDeleteTableStatusTable)
 
 	// mysql.tidb_ttl_task is introduced in version131, but schema may vary for upgraded clusters.
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS job_type varchar(32) NOT NULL DEFAULT 'ttl' AFTER job_id", infoschema.ErrColumnExists)

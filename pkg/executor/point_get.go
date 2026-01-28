@@ -678,7 +678,7 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 	if e.txn.Valid() && !e.txn.IsReadOnly() {
 		// We cannot use txn.Get directly here because the snapshot in txn and the snapshot of e.snapshot may be
 		// different for pessimistic transaction.
-		val, err = kv.GetValue(ctx, e.txn.GetMemBuffer(), key)
+		val, err = e.txn.GetMemBuffer().Get(ctx, key)
 		if err == nil {
 			return val, err
 		}
