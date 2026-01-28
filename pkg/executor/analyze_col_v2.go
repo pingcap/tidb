@@ -706,7 +706,10 @@ workLoop:
 				sampleNum := task.rootRowCollector.Base().Samples.Len()
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including empty SampleItems of all sample rows, if exceeds, fast fail
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize)
+				// 8 means the pointer size of sampleItems slice.
+				// types.EmptyDatumSize means the empty datum size we shallow copied from row.Columns to SampleItem.Value.
+				// The real underlying byte slice of Datum in row.Columns has already be accounted FromProto().
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + types.EmptyDatumSize)
 				e.memTracker.Consume(collectorMemSize)
 				var collator collate.Collator
 				ft := e.colsInfo[task.slicePos].FieldType
@@ -730,14 +733,12 @@ workLoop:
 						deltaSize := int64(cap(val.GetBytes()))
 						collectorMemSize += deltaSize
 						e.memTracker.BufferedConsume(&bufferedMemSize, deltaSize)
+						collectorMemSize += deltaSize
 					}
 					sampleItems = append(sampleItems, &statistics.SampleItem{
 						Value:   &val,
 						Ordinal: j,
 					})
-					// Memory accounting for the datum copied into the local variable.
-					e.memTracker.BufferedConsume(&bufferedMemSize, types.EmptyDatumSize)
-					e.memTracker.BufferedRelease(&bufferedReleaseSize, types.EmptyDatumSize)
 				}
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
@@ -755,7 +756,8 @@ workLoop:
 				sampleItems := make([]*statistics.SampleItem, 0, sampleNum)
 				// consume mandatory memory at the beginning, including all SampleItems, if exceeds, fast fail
 				// 8 is size of reference, 8 is the size of "b := make([]byte, 0, 8)"
-				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8)
+				// types.EmptyDatumSize: same meaning as above branch.
+				collectorMemSize := int64(sampleNum) * (8 + statistics.EmptySampleItemSize + 8 + types.EmptyDatumSize)
 				e.memTracker.Consume(collectorMemSize)
 				errCtx := e.ctx.GetSessionVars().StmtCtx.ErrCtx()
 			indexSampleCollectLoop:
@@ -786,6 +788,11 @@ workLoop:
 							resultCh <- err
 							continue workLoop
 						}
+					}
+					if len(b) > 8 {
+						// We already accounted 8 bytes before the loop started,
+						// here we need to account the remaining bytes.
+						collectorMemSize += int64(len(b) - 8)
 					}
 					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
