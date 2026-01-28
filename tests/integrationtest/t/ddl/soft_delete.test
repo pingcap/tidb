@@ -21,6 +21,9 @@ use test_sd;
 # Create table
 create table t1 (id int primary key, name varchar(50)) softdelete = retention 7 day;
 show create table t1;
+select COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE, COLUMN_KEY from information_schema.columns
+  where table_schema = 'test_sd' and table_name = 't1' and column_name = '_tidb_softdelete_time';
+
 create table t2 (id int primary key, name varchar(50)) softdelete retention 7 hour;
 show create table t2;
 create table t3 (id int primary key, name varchar(50)) softdelete retention 4 hour softdelete_job_interval = '2h' softdelete_job_enable = 'ON';

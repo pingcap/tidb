@@ -30,6 +30,10 @@ set tidb_enable_clustered_index = DEFAULT;
 create table t (id int primary key, name varchar(50));
 show create table t;
 alter database test_aa active_active = 'OFF' softdelete = 'OFF';
+select COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE, COLUMN_KEY from information_schema.columns
+  where table_schema = 'test_aa' and table_name = 't'
+    and column_name in ('_tidb_origin_ts', '_tidb_softdelete_time')
+  order by column_name;
 show create database test_aa;
 
 drop table if exists t;
