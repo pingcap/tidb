@@ -741,31 +741,25 @@ function start_tici_server() {
     fi
 
     echo "Starting tici meta..."
-    (
-        cd "$SCRIPT_DIR/logs"
-        exec "$tici_bin" meta --config "$meta_config" \
-            --host "$meta_host" \
-            --port "$meta_port" \
-            --status-port "$meta_status_port" \
-            --advertise-host "$meta_host" \
-            --pd-addr "$pd_addr" \
-            $TICI_META_ARGS
-    ) > "$meta_log_file" 2>&1 &
+    "$tici_bin" meta --config "$meta_config" \
+        --host "$meta_host" \
+        --port "$meta_port" \
+        --status-port "$meta_status_port" \
+        --advertise-host "$meta_host" \
+        --pd-addr "$pd_addr" \
+        $TICI_META_ARGS > "$meta_log_file" 2>&1 &
     TICI_META_PID=$!
     register_pid $TICI_META_PID
     echo "tici-meta(PID: $TICI_META_PID) started"
 
     echo "Starting tici worker..."
-    (
-        cd "$SCRIPT_DIR/logs"
-        exec "$tici_bin" worker --config "$worker_config" \
-            --host "$worker_host" \
-            --port "$worker_port" \
-            --status-port "$worker_status_port" \
-            --advertise-host "$worker_host" \
-            --pd-addr "$pd_addr" \
-            $TICI_WORKER_ARGS
-    ) > "$worker_log_file" 2>&1 &
+    "$tici_bin" worker --config "$worker_config" \
+        --host "$worker_host" \
+        --port "$worker_port" \
+        --status-port "$worker_status_port" \
+        --advertise-host "$worker_host" \
+        --pd-addr "$pd_addr" \
+        $TICI_WORKER_ARGS > "$worker_log_file" 2>&1 &
     TICI_WORKER_PID=$!
     register_pid $TICI_WORKER_PID
     echo "tici-worker(PID: $TICI_WORKER_PID) started"
@@ -817,10 +811,16 @@ function start_ticdc_server() {
     ticdc_port=${2:-8300}
     data_dir=${3:-$TICDC_DATA_DIR}
     log_file=${4:-$TICDC_LOG_FILE}
+    use_newarch=${5:-0}
+    local newarch_flag=""
+
+    if [ "$use_newarch" -ne 0 ]; then
+        newarch_flag="--newarch=true"
+    fi
 
     echo "Starting TiCDC server..."
     mkdir -p "$data_dir"
-    $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$data_dir --newarch=true --log-file=$log_file &
+    $TICDC_BIN server --pd=$pd_client_addr --addr=127.0.0.1:$ticdc_port --data-dir=$data_dir $newarch_flag --log-file=$log_file &
     TICDC_PID=$!
     register_pid $TICDC_PID
     sleep 5  # Wait for TiCDC to connect
@@ -999,7 +999,11 @@ fi
 if [ ${#ticdc_cases[@]} -ne 0 ] || [ ${#tici_cases[@]} -ne 0 ]; then
     alloc_port
     ticdc_port=$ALLOCATED_PORT
-    start_ticdc_server "http://127.0.0.1:$upstream_pd_client_port" $ticdc_port
+    use_newarch=0
+    if [ ${#tici_cases[@]} -ne 0 ]; then
+        use_newarch=1
+    fi
+    start_ticdc_server "http://127.0.0.1:$upstream_pd_client_port" $ticdc_port "$TICDC_DATA_DIR" "$TICDC_LOG_FILE" "$use_newarch"
 
     echo "TiCDC started successfully!"
     if [ ${#ticdc_cases[@]} -ne 0 ]; then
