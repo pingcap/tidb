@@ -634,8 +634,8 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterPipeLineClose", func(pipe *operator.AsyncPipeline) {
 		pipeClosed = true
 		reader, writer := pipe.GetReaderAndWriter()
-		require.EqualValues(t, 4, reader.GetWorkerPoolSize())
-		require.EqualValues(t, 6, writer.GetWorkerPoolSize())
+		require.EqualValues(t, 8, reader.GetWorkerPoolSize())
+		require.EqualValues(t, 8, writer.GetWorkerPoolSize())
 	})
 
 	// Change the batch size and concurrency during table scanning and check the modified parameters.
