@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -339,36 +338,32 @@ type checkIndexWorker struct {
 }
 
 type fastCheckSysSessionVarsBackup struct {
-	optimizerUseInvisibleIndexes     bool
-	memQuotaQuery                    int64
-	distSQLScanConcurrency           int
-	executorConcurrency              int
-	enablePaging                     bool
-	minPagingSize                    int
-	maxPagingSize                    int
-	storeBatchSize                   int
-	enabledRateLimitAction           bool
-	maxExecutionTime                 uint64
-	tikvClientReadTimeout            uint64
-	loadBasedReplicaReadThreshold    time.Duration
-	replicaClosestReadThresholdMilli int64
+	optimizerUseInvisibleIndexes bool
+	memQuotaQuery                int64
+	distSQLScanConcurrency       int
+	executorConcurrency          int
+	enablePaging                 bool
+	minPagingSize                int
+	maxPagingSize                int
+	storeBatchSize               int
+	enabledRateLimitAction       bool
+	maxExecutionTime             uint64
+	tikvClientReadTimeout        uint64
 }
 
 func backupFastCheckSysSessionVars(sv *variable.SessionVars) fastCheckSysSessionVarsBackup {
 	return fastCheckSysSessionVarsBackup{
-		optimizerUseInvisibleIndexes:     sv.OptimizerUseInvisibleIndexes,
-		memQuotaQuery:                    sv.MemQuotaQuery,
-		distSQLScanConcurrency:           sv.DistSQLScanConcurrency(),
-		executorConcurrency:              sv.ExecutorConcurrency,
-		enablePaging:                     sv.EnablePaging,
-		minPagingSize:                    sv.MinPagingSize,
-		maxPagingSize:                    sv.MaxPagingSize,
-		storeBatchSize:                   sv.StoreBatchSize,
-		enabledRateLimitAction:           sv.EnabledRateLimitAction,
-		maxExecutionTime:                 sv.MaxExecutionTime,
-		tikvClientReadTimeout:            sv.TiKVClientReadTimeout,
-		loadBasedReplicaReadThreshold:    sv.LoadBasedReplicaReadThreshold,
-		replicaClosestReadThresholdMilli: sv.ReplicaClosestReadThreshold,
+		optimizerUseInvisibleIndexes: sv.OptimizerUseInvisibleIndexes,
+		memQuotaQuery:                sv.MemQuotaQuery,
+		distSQLScanConcurrency:       sv.DistSQLScanConcurrency(),
+		executorConcurrency:          sv.ExecutorConcurrency,
+		enablePaging:                 sv.EnablePaging,
+		minPagingSize:                sv.MinPagingSize,
+		maxPagingSize:                sv.MaxPagingSize,
+		storeBatchSize:               sv.StoreBatchSize,
+		enabledRateLimitAction:       sv.EnabledRateLimitAction,
+		maxExecutionTime:             sv.MaxExecutionTime,
+		tikvClientReadTimeout:        sv.TiKVClientReadTimeout,
 	}
 }
 
@@ -384,8 +379,6 @@ func (b fastCheckSysSessionVarsBackup) restoreTo(sv *variable.SessionVars) {
 	sv.EnabledRateLimitAction = b.enabledRateLimitAction
 	sv.MaxExecutionTime = b.maxExecutionTime
 	sv.TiKVClientReadTimeout = b.tikvClientReadTimeout
-	sv.LoadBasedReplicaReadThreshold = b.loadBasedReplicaReadThreshold
-	sv.ReplicaClosestReadThreshold = b.replicaClosestReadThresholdMilli
 }
 
 func applyFastCheckSysSessionVars(sysVars, userVars *variable.SessionVars) {
@@ -400,8 +393,6 @@ func applyFastCheckSysSessionVars(sysVars, userVars *variable.SessionVars) {
 	sysVars.EnabledRateLimitAction = userVars.EnabledRateLimitAction
 	sysVars.MaxExecutionTime = userVars.MaxExecutionTime
 	sysVars.TiKVClientReadTimeout = userVars.TiKVClientReadTimeout
-	sysVars.LoadBasedReplicaReadThreshold = userVars.LoadBasedReplicaReadThreshold
-	sysVars.ReplicaClosestReadThreshold = userVars.ReplicaClosestReadThreshold
 }
 
 func (w *checkIndexWorker) initSessCtx(se sessionctx.Context) (restore func()) {

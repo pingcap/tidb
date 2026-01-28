@@ -2522,16 +2522,14 @@ func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	const (
-		expectedMemQuotaQuery             = int64(2 * 1024 * 1024 * 1024)
-		expectedDistSQLScanConcurrency    = 7
-		expectedExecutorConcurrency       = 9
-		expectedMinPagingSize             = 123
-		expectedMaxPagingSize             = 456
-		expectedStoreBatchSize            = 789
-		expectedMaxExecutionTimeMS        = uint64(10 * 60 * 1000)
-		expectedTiKVClientReadTimeoutMS   = uint64(10 * 60 * 1000)
-		expectedLoadBasedReplicaReadThres = 1500 * time.Millisecond
-		expectedReplicaClosestReadThres   = int64(4097)
+		expectedMemQuotaQuery           = int64(2 * 1024 * 1024 * 1024)
+		expectedDistSQLScanConcurrency  = 7
+		expectedExecutorConcurrency     = 9
+		expectedMinPagingSize           = 123
+		expectedMaxPagingSize           = 456
+		expectedStoreBatchSize          = 789
+		expectedMaxExecutionTimeMS      = uint64(10 * 60 * 1000)
+		expectedTiKVClientReadTimeoutMS = uint64(10 * 60 * 1000)
 	)
 
 	var called atomic.Bool
@@ -2548,8 +2546,6 @@ func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
 		assert.Equal(t, expectedStoreBatchSize, sysVars.StoreBatchSize)
 		assert.Equal(t, expectedMaxExecutionTimeMS, sysVars.MaxExecutionTime)
 		assert.Equal(t, expectedTiKVClientReadTimeoutMS, sysVars.TiKVClientReadTimeout)
-		assert.Equal(t, expectedLoadBasedReplicaReadThres, sysVars.LoadBasedReplicaReadThreshold)
-		assert.Equal(t, expectedReplicaClosestReadThres, sysVars.ReplicaClosestReadThreshold)
 	})
 
 	tk := testkit.NewTestKit(t, store)
@@ -2569,8 +2565,6 @@ func TestFastAdminCheckPropagateSessionVarsToSysSession(t *testing.T) {
 	tk.MustExec("set @@tidb_enable_rate_limit_action = 1")
 	tk.MustExec(fmt.Sprintf("set @@max_execution_time = %d", expectedMaxExecutionTimeMS))
 	tk.MustExec(fmt.Sprintf("set @@tikv_client_read_timeout = %d", expectedTiKVClientReadTimeoutMS))
-	tk.MustExec(fmt.Sprintf("set @@tidb_load_based_replica_read_threshold = '%s'", expectedLoadBasedReplicaReadThres))
-	tk.MustExec(fmt.Sprintf("set @@tidb_adaptive_closest_read_threshold = %d", expectedReplicaClosestReadThres))
 
 	tk.MustExec("admin check table t")
 	require.True(t, called.Load(), "failpoint callback not triggered")
