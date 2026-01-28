@@ -1269,7 +1269,7 @@ func DisableRunBootstrapSQLFileInTest() {
 }
 
 var (
-	bootstrapVersion = []func(sessiontypes.Session, int64) {
+	bootstrapVersion = []func(sessiontypes.Session, int64){
 		upgradeToVer2,
 		upgradeToVer3,
 		upgradeToVer4,

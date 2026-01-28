@@ -1760,7 +1760,7 @@ var (
 
 	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
 	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
-	AccelerateUserCreationUpdate = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
+	AccelerateUserCreationUpdate                    = atomic.NewBool(DefTiDBAccelerateUserCreationUpdate)
 )
 
 var (

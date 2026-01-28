@@ -1905,7 +1905,7 @@ func TestCheckPasswordExpired(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
 	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	record := privileges.NewUserRecord("%", "root")
-	userPrivilege := privileges.NewUserPrivileges(privileges.NewHandle(nil), nil)
+	userPrivilege := privileges.NewUserPrivileges(privileges.NewHandle(nil, nil), nil)
 
 	record.PasswordExpired = true
 	_, err := userPrivilege.CheckPasswordExpired(sessionVars, &record)
@@ -2168,7 +2168,7 @@ func TestSQLVariableAccelerateUserCreationUpdate(t *testing.T) {
 	// 2. change the variable and check
 	tk.MustExec("set @@global.tidb_accelerate_user_creation_update = on")
 	tk.MustQuery("select @@global.tidb_accelerate_user_creation_update").Check(testkit.Rows("1"))
-	require.True(t, vardef.AccelerateUserCreationUpdate.Load())
+	require.True(t, variable.AccelerateUserCreationUpdate.Load())
 	tk.MustExec("create user bbb")
 	handle.CheckFullData(t, false)
 	// trigger priv reload, but data for bbb is not really loaded

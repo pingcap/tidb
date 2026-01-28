@@ -257,7 +257,7 @@ func (g roleGraphEdgesTable) Find(user, host string) bool {
 	if host == "" {
 		host = "%"
 	}
-    key := auth.RoleIdentity{user, host}
+	key := auth.RoleIdentity{user, host}
 	if g.roleList == nil {
 		return false
 	}
@@ -412,7 +412,7 @@ func (p *MySQLPrivilege) FindAllRole(activeRoles []*auth.RoleIdentity) []*auth.R
 		if _, ok := visited[role.String()]; !ok {
 			visited[role.String()] = true
 			ret = append(ret, role)
-            key := auth.RoleIdentity{role.Username, role.Hostname}
+			key := auth.RoleIdentity{role.Username, role.Hostname}
 			if edgeTable, ok := p.roleGraph[key]; ok {
 				for _, v := range edgeTable.roleList {
 					if _, ok := visited[v.String()]; !ok {
@@ -431,7 +431,7 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	rec := p.matchUser(user, host)
 	r := p.matchUser(role.Username, role.Hostname)
 	if rec != nil && r != nil {
-        key := auth.RoleIdentity{rec.User, rec.Host}
+		key := auth.RoleIdentity{rec.User, rec.Host}
 		return p.roleGraph[key].Find(role.Username, role.Hostname)
 	}
 	return false
@@ -1247,8 +1247,8 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.Resul
 			toUser = row.GetString(i)
 		}
 	}
-    fromKey := auth.RoleIdentity{fromUser, fromHost}
-    toKey := auth.RoleIdentity{toUser, toHost}
+	fromKey := auth.RoleIdentity{fromUser, fromHost}
+	toKey := auth.RoleIdentity{toUser, toHost}
 	roleGraph, ok := p.roleGraph[toKey]
 	if !ok {
 		roleGraph = roleGraphEdgesTable{roleList: make(map[auth.RoleIdentity]*auth.RoleIdentity)}
@@ -1830,7 +1830,7 @@ func (p *MySQLPrivilege) showGrants(ctx sessionctx.Context, user, host string, r
 	slices.Sort(gs[sortFromIdx:])
 
 	// Show role grants.
-    graphKey := auth.RoleIdentity{user, host}
+	graphKey := auth.RoleIdentity{user, host}
 	edgeTable, ok := p.roleGraph[graphKey]
 	g = ""
 	if ok {
@@ -2063,7 +2063,7 @@ func (p *MySQLPrivilege) getDefaultRoles(user, host string) []*auth.RoleIdentity
 }
 
 func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
-    key := auth.RoleIdentity{user, host}
+	key := auth.RoleIdentity{user, host}
 	edgeTable, ok := p.roleGraph[key]
 	ret := make([]*auth.RoleIdentity, 0, len(edgeTable.roleList))
 	if ok {
@@ -2072,6 +2072,11 @@ func (p *MySQLPrivilege) getAllRoles(user, host string) []*auth.RoleIdentity {
 		}
 	}
 	return ret
+}
+
+// SetGlobalVarsAccessor is only used for test.
+func (p *MySQLPrivilege) SetGlobalVarsAccessor(globalVars variable.GlobalVarAccessor) {
+	p.globalVars = globalVars
 }
 
 // Handle wraps MySQLPrivilege providing thread safe access.

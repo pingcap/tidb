@@ -15,6 +15,7 @@
 package privileges_test
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -22,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
@@ -71,7 +73,7 @@ func TestLoadUserTable(t *testing.T) {
 	for _, plugin := range []string{mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password} {
 		p = privileges.NewMySQLPrivilege()
 		p.SetGlobalVarsAccessor(se.GetSessionVars().GlobalVarsAccessor)
-		require.NoError(t, se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.DefaultAuthPlugin, plugin))
+		require.NoError(t, se.GetSessionVars().GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.DefaultAuthPlugin, plugin))
 		require.NoError(t, p.LoadUserTable(se.GetSQLExecutor()))
 		require.Equal(t, plugin, p.User()[0].AuthPlugin)
 	}
@@ -313,13 +315,13 @@ func TestLoadRoleGraph(t *testing.T) {
 	p = privileges.NewMySQLPrivilege()
 	require.NoError(t, p.LoadRoleGraph(se.GetSQLExecutor()))
 	graph := p.RoleGraph()
-	require.True(t, graph["root@%"].Find("r_2", "%"))
-	require.True(t, graph["root@%"].Find("r_4", "%"))
-	require.True(t, graph["user2@%"].Find("r_1", "%"))
-	require.True(t, graph["user1@%"].Find("r_3", "%"))
-	_, ok := graph["illedal"]
+	require.True(t, graph[auth.RoleIdentity{"root", "%"}].Find("r_2", "%"))
+	require.True(t, graph[auth.RoleIdentity{"root", "%"}].Find("r_4", "%"))
+	require.True(t, graph[auth.RoleIdentity{"user2", "%"}].Find("r_1", "%"))
+	require.True(t, graph[auth.RoleIdentity{"user1", "%"}].Find("r_3", "%"))
+	_, ok := graph[auth.RoleIdentity{Username: "illedal"}]
 	require.False(t, ok)
-	require.False(t, graph["root@%"].Find("r_1", "%"))
+	require.False(t, graph[auth.RoleIdentity{"root", "%"}].Find("r_1", "%"))
 }
 
 func TestRoleGraphBFS(t *testing.T) {

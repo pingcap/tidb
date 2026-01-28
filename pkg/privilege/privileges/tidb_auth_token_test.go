@@ -30,6 +30,7 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
@@ -482,7 +483,7 @@ func (p *MySQLPrivilege) GlobalPriv(user string) []globalPrivRecord {
 	return ret.data
 }
 
-func (p *MySQLPrivilege) RoleGraph() map[string]roleGraphEdgesTable {
+func (p *MySQLPrivilege) RoleGraph() map[auth.RoleIdentity]roleGraphEdgesTable {
 	return p.roleGraph
 }
 
