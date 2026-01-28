@@ -17,6 +17,7 @@ package copr
 import (
 	"context"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -171,6 +172,23 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 	}
 
 	realResp := rpcResp.Resp.(*mpp.DispatchTaskResponse)
+	failpoint.Inject("mppDispatchRespTaskAlreadyRegistered", func(val failpoint.Value) {
+		if val.(bool) {
+			realResp.Error = &mpp.Error{Msg: "task is already registered"}
+		}
+	})
+	// TiFlash may return "task is already registered" when TiDB dispatches the same MPP task more than once
+	// (e.g. due to coordinator-side retry such as RPC timeout / transient network failure).
+	// In such cases, the task has already been accepted and is running on TiFlash, so we treat it as success
+	// (idempotent dispatch) and continue the query.
+	// TODO: Prefer matching by a stable error code once TiFlash exposes one in mpp.Error.
+	if ignoreMPPDispatchAlreadyRegistered(realResp) {
+		logutil.BgLogger().Warn("ignore mpp dispatch error: task already registered",
+			zap.String("error", "task is already registered"),
+			zap.Uint64("timestamp", req.StartTs),
+			zap.Int64("task", req.ID),
+			zap.Int64("mpp-version", req.MppVersion.ToInt64()))
+	}
 	if realResp.Error != nil {
 		return realResp, false, nil
 	}
@@ -186,6 +204,22 @@ func (c *MPPClient) DispatchMPPTask(param kv.DispatchMPPTaskParam) (resp *mpp.Di
 		}
 	}
 	return realResp, retry, err
+}
+
+// ignoreMPPDispatchAlreadyRegistered checks whether the given dispatch response contains
+// the "task is already registered" error. If so, it clears the error and returns true.
+//
+// NOTE: This helper is intentionally small and side-effect free (except mutating resp.Error)
+// so that it can be unit-tested without requiring a full TiFlash/Mpp execution environment.
+func ignoreMPPDispatchAlreadyRegistered(resp *mpp.DispatchTaskResponse) bool {
+	if resp == nil || resp.Error == nil {
+		return false
+	}
+	if strings.Contains(resp.Error.Msg, "task is already registered") {
+		resp.Error = nil
+		return true
+	}
+	return false
 }
 
 // CancelMPPTasks cancels mpp tasks
