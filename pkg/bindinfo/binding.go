@@ -136,9 +136,6 @@ type BindingMatchInfo struct {
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
 	sessionVars := sctx.GetSessionVars()
-	defer func(begin time.Time) {
-		sessionVars.DurationOptimizer.BindingMatch = time.Since(begin)
-	}(time.Now())
 	useBinding := sessionVars.UsePlanBaselines
 	if !useBinding || stmtNode == nil {
 		return
@@ -185,6 +182,9 @@ func setMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.Stm
 }
 
 func matchSQLBindingCore(sctx sessionctx.Context, sessionVars *variable.SessionVars, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
+	defer func(begin time.Time) {
+		sessionVars.DurationOptimizer.BindingMatch = time.Since(begin)
+	}(time.Now())
 	// record the normalization result into info to avoid repeat normalization next time.
 	var noDBDigest string
 	var tableNames []*ast.TableName
