@@ -34,22 +34,22 @@ cd /tidb/tests/integrationtest2
 ## 下载二进制（third_bin 不完整）
 
 如果 `../third_bin` 缺少上述二进制，`run-tests.sh` 会直接报错。
-请先执行 `tici/download.sh` 下载。此脚本依赖 `oras`、`yq`。
+请先通过 `https://github.com/PingCAP-QE/ci/blob/main/scripts/artifacts/download_pingcap_oci_artifact.sh` 下载。此脚本依赖 `oras`、`yq`。
 
 示例（下载指定分支的 tiflash）：
 ```bash
 cd /tidb/tests/integrationtest2/third_bin
-OCI_ARTIFACT_HOST='hub-zot.pingcap.net/mirrors/hub' ../tici/download.sh --tiflash=feature/fts
+OCI_ARTIFACT_HOST='hub-zot.pingcap.net/mirrors/hub' download_pingcap_oci_artifact.sh --tiflash=feature-fts
 ```
 
 示例（下载最新的 cdc）：
 ```bash
 cd /tidb/tests/integrationtest2/tici/third_bin
-OCI_ARTIFACT_HOST='hub-zot.pingcap.net/mirrors/hub' ../tici/download.sh --ticdc-new=master
+OCI_ARTIFACT_HOST='hub-zot.pingcap.net/mirrors/hub' download_pingcap_oci_artifact.sh --ticdc-new=master
 ```
 
 示例（下载最新的 tici）：
 ```bash
 cd /tidb/tests/integrationtest2/tici/third_bin
-OCI_ARTIFACT_HOST='hub-zot.pingcap.net/mirrors/hub' ../tici/download.sh --tici=master
+OCI_ARTIFACT_HOST='hub-zot.pingcap.net/mirrors/hub' download_pingcap_oci_artifact.sh --tici=master
 ```
