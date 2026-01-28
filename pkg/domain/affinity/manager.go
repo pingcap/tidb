@@ -32,6 +32,20 @@ type pdManager struct {
 	pdhttp.Client
 }
 
+// TODO: remove these interface shims after the pdhttp.Client includes these methods directly.
+type affinityGroupsCreator interface {
+	CreateAffinityGroupsWithSkipExistCheck(ctx context.Context, affinityGroups map[string][]pdhttp.AffinityGroupKeyRange) (map[string]*pdhttp.AffinityGroupState, error)
+}
+
+type affinityGroupsGetter interface {
+	GetAffinityGroups(ctx context.Context, ids []string) (map[string]*pdhttp.AffinityGroupState, error)
+}
+
+const (
+	maxAffinityGroupIDsQueryLen = 4096
+	maxAffinityGroupIDsCount    = 100
+)
+
 // NewPDManager creates a new affinity manager that uses PD HTTP client.
 func NewPDManager(client pdhttp.Client) Manager {
 	return &pdManager{client}
@@ -45,14 +59,18 @@ func (m *pdManager) CreateAffinityGroupsIfNotExists(ctx context.Context, groups 
 		return nil
 	}
 
+	if creator, ok := m.Client.(affinityGroupsCreator); ok {
+		_, err := creator.CreateAffinityGroupsWithSkipExistCheck(ctx, groups)
+		return err
+	}
+
 	// Collect group IDs to check
 	groupIDs := make([]string, 0, len(groups))
 	for id := range groups {
 		groupIDs = append(groupIDs, id)
 	}
 
-	// TODO: move check to PD
-	// Check which groups already exist
+	// Fallback for older PD clients: check which groups already exist.
 	existingGroups, err := m.GetAffinityGroups(ctx, groupIDs)
 	if err != nil {
 		return err
@@ -90,20 +108,58 @@ func (m *pdManager) GetAffinityGroups(ctx context.Context, ids []string) (map[st
 		return make(map[string]*pdhttp.AffinityGroupState), nil
 	}
 
-	// TODO: avoid using GetAllAffinityGroups
+	if len(ids) > maxAffinityGroupIDsCount || affinityGroupIDsQueryLen(ids) > maxAffinityGroupIDsQueryLen {
+		allGroups, err := m.Client.GetAllAffinityGroups(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return filterAffinityGroups(allGroups, ids), nil
+	}
+
+	if getter, ok := m.Client.(affinityGroupsGetter); ok {
+		return getter.GetAffinityGroups(ctx, ids)
+	}
+
 	allGroups, err := m.Client.GetAllAffinityGroups(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter by requested IDs
-	result := make(map[string]*pdhttp.AffinityGroupState)
+	return filterAffinityGroups(allGroups, ids), nil
+}
+
+func affinityGroupIDsQueryLen(ids []string) int {
+	if len(ids) == 0 {
+		return 0
+	}
+	total := 0
+	for i, id := range ids {
+		if i == 0 {
+			total += len("ids=")
+		} else {
+			total += len("&ids=")
+		}
+		total += len(id)
+	}
+	return total
+}
+
+func filterAffinityGroups(groups map[string]*pdhttp.AffinityGroupState, ids []string) map[string]*pdhttp.AffinityGroupState {
+	result := make(map[string]*pdhttp.AffinityGroupState, len(ids))
+	if len(groups) == 0 {
+		return result
+	}
+	seen := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
-		if group, ok := allGroups[id]; ok {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		if group, ok := groups[id]; ok {
 			result[id] = group
 		}
 	}
-	return result, nil
+	return result
 }
 
 type mockManager struct {
