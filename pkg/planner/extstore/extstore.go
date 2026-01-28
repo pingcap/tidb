@@ -87,7 +87,11 @@ func (w *extStorage) Open(ctx context.Context, path string, option *storeapi.Rea
 	return s.Open(ctx, path, option)
 }
 
-func (w *extStorage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn func(path string, size int64) error) error {
+func (w *extStorage) WalkDir(
+	ctx context.Context,
+	opt *storeapi.WalkOption,
+	fn func(path string, size int64) error,
+) error {
 	s, err := w.getStorage(ctx)
 	if err != nil {
 		return err
