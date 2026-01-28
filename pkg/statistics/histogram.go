@@ -1063,7 +1063,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// oneValue assumes "one value qualifies", and is used as a lower bound.
 	// outOfRangeBetweenRate (default == 100) avoids an artificially low NDV.
 	// TODO: If we have a large number of added rows, the NDV may be underestimated.
-	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
+	histNDV = max(histNDV, 1)
+	oneValue := hg.NotNullCount() / float64(histNDV)
 	if float64(histNDV) < outOfRangeBetweenRate {
 		// If NDV is low, it may no longer be representative of the data since ANALYZE
 		// was last run. Use a default value against realtimeRowCount.
@@ -1206,6 +1207,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 	minEst := min(estRows, oneValue)
 	if skewRatio > 0 {
 		result = CalculateSkewRatioCounts(minEst, maxAddedRows, skewRatio)
+	} else {
+		result.MinEst = minEst
+		result.Est = estRows
 	}
 	result.Est = max(result.Est, oneValue)
 	result.MaxEst = max(result.Est, maxAddedRows)
