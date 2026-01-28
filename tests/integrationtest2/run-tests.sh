@@ -61,6 +61,7 @@ MINIO_LOG_FILE="./logs/minio.log"
 
 rm -rf ./logs
 mkdir ./logs
+mkdir -p ./report
 
 build=1
 mysql_tester="./mysql_tester"
@@ -68,6 +69,7 @@ tidb_server=""
 ticdc_server=$TICDC_BIN
 portgenerator=""
 mysql_tester_log="./integration-test.out"
+XUNITFILE=""
 tests=""
 record=0
 record_case=""
@@ -912,9 +914,13 @@ function start_tidb_cluster()
 function run_mysql_tester()
 {
     local downstream_args=()
+    local xunit_args=()
 
     if [ -n "${DOWNSTREAM_PORT:-}" ]; then
         downstream_args=(-downstream "root:@tcp(127.0.0.1:$DOWNSTREAM_PORT)/test")
+    fi
+    if [ -n "${XUNITFILE:-}" ]; then
+        xunit_args=(-xunitfile "$XUNITFILE")
     fi
 
     if [ $record -eq 1 ]; then
@@ -922,6 +928,7 @@ function run_mysql_tester()
         $mysql_tester \
           -port "$UPSTREAM_PORT" \
           "${downstream_args[@]}" \
+          "${xunit_args[@]}" \
           --check-error=true \
           --path-dumpling="./third_bin/dumpling" \
           --record $@
@@ -930,6 +937,7 @@ function run_mysql_tester()
         $mysql_tester \
           -port "$UPSTREAM_PORT" \
           "${downstream_args[@]}" \
+          "${xunit_args[@]}" \
           --check-error=true \
           --path-dumpling="./third_bin/dumpling" \
           $@
@@ -963,23 +971,23 @@ else
     read -ra test_list <<< "$tests"
     for test_name in "${test_list[@]}"; do
         case "$test_name" in
-            ticdc/*)
-                ticdc_cases+=("$test_name")
-                ;;
             ticdc)
                 while IFS= read -r file; do
                     file_name=$(basename "$file" .test)
                     ticdc_cases+=("ticdc/$file_name")
                 done < <(find t/ticdc -name "*.test")
                 ;;
-            tici/*)
-                tici_cases+=("$test_name")
-                ;;
             tici)
                 while IFS= read -r file; do
                     file_name=$(basename "$file" .test)
                     tici_cases+=("tici/$file_name")
                 done < <(find t/tici -name "*.test")
+                ;;
+            ticdc/*)
+                ticdc_cases+=("$test_name")
+                ;;
+            tici/*)
+                tici_cases+=("$test_name")
                 ;;
             *)
                 non_ticdc_cases+=("$test_name")
@@ -991,6 +999,10 @@ fi
 need_downstream=0
 if [ ${#ticdc_cases[@]} -ne 0 ]; then
     need_downstream=1
+fi
+
+if [ ${#tici_cases[@]} -ne 0 ] && [ ${#ticdc_cases[@]} -eq 0 ] && [ ${#non_ticdc_cases[@]} -eq 0 ]; then
+    XUNITFILE="${XUNITFILE:-./report/tici-junit.xml}"
 fi
 
 start_tidb_cluster "$need_downstream"
