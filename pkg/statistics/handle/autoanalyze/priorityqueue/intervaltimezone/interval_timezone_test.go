@@ -58,7 +58,7 @@ func TestLastFailedAnalysisDurationUseCorrectTimezone(t *testing.T) {
 
 	// Step 2: Start the job.
 	// The session should reset its time zone to the global value (Europe/Berlin).
-	// If it keeps the contaminated system time zone, the duration can be skewed.
+	// If it keeps the contaminated system time zone, the start time will be wrong.
 	h.StartAnalyzeJob(job)
 
 	time.Sleep(2 * time.Second) // Ensure some time passes.
