@@ -12,29 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package workload
+package workloadcases
 
 import (
 	"encoding/json"
 	"fmt"
+
+	"github.com/pingcap/tidb/pkg/testkit/brhelper/workload"
 )
 
 type NexusDDLDestructiveCase struct {
 	Suffix string `json:"suffix"`
 	N      int    `json:"n"`
-
-	ddls []nexusDDLEvent
 }
 
 func (c *NexusDDLDestructiveCase) Name() string { return "NexusDDLDestructive" }
 
-func (c *NexusDDLDestructiveCase) Prepare(ctx Context) (json.RawMessage, error) {
-	c.ddls = nil
-
+func (c *NexusDDLDestructiveCase) Prepare(ctx workload.Context) (json.RawMessage, error) {
 	suffix := c.Suffix
 	if suffix == "" {
 		var err error
-		suffix, err = RandSuffix()
+		suffix, err = workload.RandSuffix()
 		if err != nil {
 			return nil, err
 		}
@@ -51,23 +49,16 @@ func (c *NexusDDLDestructiveCase) Prepare(ctx Context) (json.RawMessage, error) 
 		NextTableID: 1,
 		Tables:      []nexusTableState{{Name: "t_0"}},
 	}
-	if err := nexusExecDDL(ctx, ctx.DB, &c.ddls, 0, "CREATE DATABASE IF NOT EXISTS "+QIdent(st.DB)); err != nil {
+	if err := nexusExecDDL(ctx, ctx.DB, 0, "CREATE DATABASE IF NOT EXISTS "+workload.QIdent(st.DB)); err != nil {
 		return nil, err
 	}
-	if err := nexusCreateTable(ctx, ctx.DB, &c.ddls, 0, st.DB, st.Tables[0].Name); err != nil {
+	if err := nexusCreateTable(ctx, ctx.DB, 0, st.DB, st.Tables[0].Name); err != nil {
 		return nil, err
 	}
-
-	ctx.SetSummary(nexusSummary{
-		DB:     st.DB,
-		N:      st.N,
-		Ticked: st.Ticked,
-		DDLs:   c.ddls,
-	})
 	return json.Marshal(st)
 }
 
-func (c *NexusDDLDestructiveCase) Tick(ctx TickContext, raw json.RawMessage) error {
+func (c *NexusDDLDestructiveCase) Tick(ctx workload.TickContext, raw json.RawMessage) error {
 	var st nexusState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return err
@@ -80,31 +71,31 @@ func (c *NexusDDLDestructiveCase) Tick(ctx TickContext, raw json.RawMessage) err
 	tickNo := st.Ticked + 1
 	half := nexusHalf(st.N)
 
-	if EveryNTick(tickNo, st.N) {
+	if workload.EveryNTick(tickNo, st.N) {
 		name := nexusTableName(st.NextTableID)
 		st.NextTableID++
-		if err := nexusCreateTable(ctx, ctx.DB, &c.ddls, tickNo, st.DB, name); err != nil {
+		if err := nexusCreateTable(ctx, ctx.DB, tickNo, st.DB, name); err != nil {
 			return err
 		}
 		st.Tables = append(st.Tables, nexusTableState{Name: name})
 	}
 
-	if EveryNTick(tickNo, half) && len(st.Tables) > 0 {
+	if workload.EveryNTick(tickNo, half) && len(st.Tables) > 0 {
 		idx := ctx.RNG.IntN(len(st.Tables))
 		oldName := st.Tables[idx].Name
 		newName := nexusTableName(st.NextTableID)
 		st.NextTableID++
-		stmt := "RENAME TABLE " + QTable(st.DB, oldName) + " TO " + QTable(st.DB, newName)
-		if err := nexusExecDDL(ctx, ctx.DB, &c.ddls, tickNo, stmt); err != nil {
+		stmt := "RENAME TABLE " + workload.QTable(st.DB, oldName) + " TO " + workload.QTable(st.DB, newName)
+		if err := nexusExecDDL(ctx, ctx.DB, tickNo, stmt); err != nil {
 			return err
 		}
 		st.Tables[idx].Name = newName
 	}
 
-	if EveryNTick(tickNo, 2*st.N) && len(st.Tables) > 0 {
+	if workload.EveryNTick(tickNo, 2*st.N) && len(st.Tables) > 0 {
 		idx := ctx.RNG.IntN(len(st.Tables))
-		stmt := "TRUNCATE TABLE " + QTable(st.DB, st.Tables[idx].Name)
-		if err := nexusExecDDL(ctx, ctx.DB, &c.ddls, tickNo, stmt); err != nil {
+		stmt := "TRUNCATE TABLE " + workload.QTable(st.DB, st.Tables[idx].Name)
+		if err := nexusExecDDL(ctx, ctx.DB, tickNo, stmt); err != nil {
 			return err
 		}
 	}
@@ -126,7 +117,7 @@ func (c *NexusDDLDestructiveCase) Tick(ctx TickContext, raw json.RawMessage) err
 	return nil
 }
 
-func (c *NexusDDLDestructiveCase) Exit(ctx ExitContext, raw json.RawMessage) error {
+func (c *NexusDDLDestructiveCase) Exit(ctx workload.ExitContext, raw json.RawMessage) error {
 	var st nexusState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return err
@@ -139,13 +130,6 @@ func (c *NexusDDLDestructiveCase) Exit(ctx ExitContext, raw json.RawMessage) err
 	st.Checksums = sums
 	st.LogDone = true
 
-	ctx.SetSummary(nexusSummary{
-		DB:     st.DB,
-		N:      st.N,
-		Ticked: st.Ticked,
-		DDLs:   c.ddls,
-	})
-
 	updated, err := json.Marshal(st)
 	if err != nil {
 		return err
@@ -154,24 +138,24 @@ func (c *NexusDDLDestructiveCase) Exit(ctx ExitContext, raw json.RawMessage) err
 	return nil
 }
 
-func (c *NexusDDLDestructiveCase) Verify(ctx Context, raw json.RawMessage) error {
+func (c *NexusDDLDestructiveCase) Verify(ctx workload.Context, raw json.RawMessage) error {
 	var st nexusState
 	if err := json.Unmarshal(raw, &st); err != nil {
 		return err
 	}
-	if err := Require(st.LogDone, "NexusDDLDestructive: log not executed"); err != nil {
+	if err := workload.Require(st.LogDone, "NexusDDLDestructive: log not executed"); err != nil {
 		return err
 	}
-	if err := Require(len(st.Checksums) > 0, "NexusDDLDestructive: checksum not recorded; run Exit first"); err != nil {
+	if err := workload.Require(len(st.Checksums) > 0, "NexusDDLDestructive: checksum not recorded; run Exit first"); err != nil {
 		return err
 	}
 
 	for _, t := range st.Tables {
-		ok, err := TableExists(ctx, ctx.DB, st.DB, t.Name)
+		ok, err := workload.TableExists(ctx, ctx.DB, st.DB, t.Name)
 		if err != nil {
 			return err
 		}
-		if err := Require(ok, "NexusDDLDestructive: table %s.%s not found", st.DB, t.Name); err != nil {
+		if err := workload.Require(ok, "NexusDDLDestructive: table %s.%s not found", st.DB, t.Name); err != nil {
 			return err
 		}
 
@@ -179,15 +163,15 @@ func (c *NexusDDLDestructiveCase) Verify(ctx Context, raw json.RawMessage) error
 		if !ok {
 			return fmt.Errorf("NexusDDLDestructive: missing checksum for table %s.%s", st.DB, t.Name)
 		}
-		got, err := AdminChecksumTable(ctx, ctx.DB, st.DB, t.Name)
+		got, err := workload.AdminChecksumTable(ctx, ctx.DB, st.DB, t.Name)
 		if err != nil {
 			return err
 		}
-		if err := Require(got.TotalKvs == want.TotalKvs, "NexusDDLDestructive: Total_kvs mismatch for %s.%s: got %q want %q", st.DB, t.Name, got.TotalKvs, want.TotalKvs); err != nil {
+		if err := workload.Require(got.TotalKvs == want.TotalKvs, "NexusDDLDestructive: Total_kvs mismatch for %s.%s: got %q want %q", st.DB, t.Name, got.TotalKvs, want.TotalKvs); err != nil {
 			return err
 		}
 		if want.TotalBytes != "" {
-			if err := Require(got.TotalBytes == want.TotalBytes, "NexusDDLDestructive: Total_bytes mismatch for %s.%s: got %q want %q", st.DB, t.Name, got.TotalBytes, want.TotalBytes); err != nil {
+			if err := workload.Require(got.TotalBytes == want.TotalBytes, "NexusDDLDestructive: Total_bytes mismatch for %s.%s: got %q want %q", st.DB, t.Name, got.TotalBytes, want.TotalBytes); err != nil {
 				return err
 			}
 		}

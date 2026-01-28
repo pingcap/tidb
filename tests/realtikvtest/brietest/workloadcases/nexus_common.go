@@ -12,24 +12,20 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package workload
+package workloadcases
 
 import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
+
+	"github.com/pingcap/tidb/pkg/testkit/brhelper/workload"
 )
 
 type nexusTableState struct {
 	Name      string   `json:"name"`
 	NextColID int      `json:"next_col_id,omitempty"`
 	Cols      []string `json:"cols,omitempty"`
-}
-
-type nexusDDLEvent struct {
-	Tick int    `json:"tick"`
-	Stmt string `json:"stmt"`
 }
 
 type nexusState struct {
@@ -41,27 +37,8 @@ type nexusState struct {
 	NextTableID int               `json:"next_table_id"`
 	Tables      []nexusTableState `json:"tables"`
 
-	Checksums map[string]TableChecksum `json:"checksums,omitempty"`
-	LogDone   bool                     `json:"log_done"`
-}
-
-type nexusSummary struct {
-	DB     string          `json:"db"`
-	N      int             `json:"n"`
-	Ticked int             `json:"ticked"`
-	DDLs   []nexusDDLEvent `json:"ddls,omitempty"`
-}
-
-func (s nexusSummary) SummaryTable() string {
-	var b strings.Builder
-	_, _ = fmt.Fprintf(&b, "db=%s n=%d ticked=%d", s.DB, s.N, s.Ticked)
-	if len(s.DDLs) > 0 {
-		b.WriteString("\nddls:")
-		for _, e := range s.DDLs {
-			_, _ = fmt.Fprintf(&b, "\n  - [%d] %s", e.Tick, e.Stmt)
-		}
-	}
-	return b.String()
+	Checksums map[string]workload.TableChecksum `json:"checksums,omitempty"`
+	LogDone   bool                              `json:"log_done"`
 }
 
 func nexusDefaultN(n int) int {
@@ -83,34 +60,31 @@ func nexusTableName(id int) string {
 	return fmt.Sprintf("t_%d", id)
 }
 
-func nexusExecDDL(ctx context.Context, db *sql.DB, ddls *[]nexusDDLEvent, tick int, stmt string) error {
-	if ddls != nil {
-		*ddls = append(*ddls, nexusDDLEvent{Tick: tick, Stmt: stmt})
-	}
+func nexusExecDDL(ctx context.Context, db *sql.DB, tick int, stmt string) error {
 	_, err := db.ExecContext(ctx, stmt)
 	return err
 }
 
-func nexusCreateTable(ctx context.Context, db *sql.DB, ddls *[]nexusDDLEvent, tick int, schema, table string) error {
-	stmt := "CREATE TABLE IF NOT EXISTS " + QTable(schema, table) + " (" +
+func nexusCreateTable(ctx context.Context, db *sql.DB, tick int, schema, table string) error {
+	stmt := "CREATE TABLE IF NOT EXISTS " + workload.QTable(schema, table) + " (" +
 		"id BIGINT PRIMARY KEY AUTO_INCREMENT," +
 		"v BIGINT," +
 		"s VARCHAR(64) NOT NULL" +
 		")"
-	return nexusExecDDL(ctx, db, ddls, tick, stmt)
+	return nexusExecDDL(ctx, db, tick, stmt)
 }
 
 func nexusInsertRow(ctx context.Context, db *sql.DB, schema, table string, tick int) error {
-	_, err := db.ExecContext(ctx, "INSERT INTO "+QTable(schema, table)+" (v,s) VALUES (?,?)",
+	_, err := db.ExecContext(ctx, "INSERT INTO "+workload.QTable(schema, table)+" (v,s) VALUES (?,?)",
 		int64(tick), fmt.Sprintf("%s_%d", table, tick),
 	)
 	return err
 }
 
-func nexusRecordChecksums(ctx context.Context, db *sql.DB, schema string, tables []nexusTableState) (map[string]TableChecksum, error) {
-	out := make(map[string]TableChecksum, len(tables))
+func nexusRecordChecksums(ctx context.Context, db *sql.DB, schema string, tables []nexusTableState) (map[string]workload.TableChecksum, error) {
+	out := make(map[string]workload.TableChecksum, len(tables))
 	for _, t := range tables {
-		sum, err := AdminChecksumTable(ctx, db, schema, t.Name)
+		sum, err := workload.AdminChecksumTable(ctx, db, schema, t.Name)
 		if err != nil {
 			return nil, err
 		}

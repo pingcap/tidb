@@ -73,35 +73,34 @@ func (r *Runner) Cases() []CaseSpec {
 	return out
 }
 
-func (r *Runner) Prepare(ctx context.Context) (*Summary, error) {
+func (r *Runner) Prepare(ctx context.Context) error {
 	if err := r.store.Reset(ctx); err != nil {
-		return nil, err
+		return err
 	}
 
-	summary := NewSummary()
 	for _, spec := range r.cases {
-		state, err := spec.Case.Prepare(Context{Context: ctx, DB: r.db, CaseName: spec.Name, Summary: summary})
+		state, err := spec.Case.Prepare(Context{Context: ctx, DB: r.db})
 		if err != nil {
-			return nil, err
+			return err
 		}
 		if err := r.store.Put(ctx, spec.Name, state); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return summary, nil
+	return nil
 }
 
-func (r *Runner) Run(ctx context.Context, cfg RunConfig) (*Summary, error) {
+func (r *Runner) Run(ctx context.Context, cfg RunConfig) error {
 	if cfg.TickCount <= 0 {
-		return nil, fmt.Errorf("workload: TickCount must be > 0")
+		return fmt.Errorf("workload: TickCount must be > 0")
 	}
 	if cfg.TickInterval < 0 {
-		return nil, fmt.Errorf("workload: TickInterval must be >= 0")
+		return fmt.Errorf("workload: TickInterval must be >= 0")
 	}
 
 	states, err := r.store.GetAll(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	byName := make(map[string]Case, len(r.cases))
 	for _, spec := range r.cases {
@@ -109,7 +108,7 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (*Summary, error) {
 	}
 	for name := range states {
 		if _, ok := byName[name]; !ok {
-			return nil, fmt.Errorf("workload: unknown case %q in state store", name)
+			return fmt.Errorf("workload: unknown case %q in state store", name)
 		}
 	}
 
@@ -120,34 +119,33 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (*Summary, error) {
 		}
 	}
 	if len(selected) == 0 {
-		return nil, fmt.Errorf("workload: no cases in state store; run Prepare first")
+		return fmt.Errorf("workload: no cases in state store; run Prepare first")
 	}
 
-	summary := NewSummary()
 	rngs := newCaseRNGs(cfg.Seed, selected)
 	if cfg.Parallel {
-		if err := r.runParallelTicks(ctx, cfg, selected, states, summary, rngs); err != nil {
-			return nil, err
+		if err := r.runParallelTicks(ctx, cfg, selected, states, rngs); err != nil {
+			return err
 		}
 	} else {
-		if err := r.runSequentialTicks(ctx, cfg, selected, states, summary, rngs); err != nil {
-			return nil, err
+		if err := r.runSequentialTicks(ctx, cfg, selected, states, rngs); err != nil {
+			return err
 		}
 	}
 
 	for _, spec := range selected {
 		state, ok := states[spec.Name]
 		if !ok {
-			return nil, fmt.Errorf("workload: case %q not found in state store; run Prepare first", spec.Name)
+			return fmt.Errorf("workload: case %q not found in state store; run Prepare first", spec.Name)
 		}
 		exitCtx := ExitContext{
-			Context: Context{Context: ctx, DB: r.db, CaseName: spec.Name, Summary: summary},
+			Context: Context{Context: ctx, DB: r.db},
 			UpdateStateFn: func(updated json.RawMessage) {
 				states[spec.Name] = updated
 			},
 		}
 		if err := spec.Case.Exit(exitCtx, state); err != nil {
-			return nil, err
+			return err
 		}
 	}
 
@@ -158,9 +156,9 @@ func (r *Runner) Run(ctx context.Context, cfg RunConfig) (*Summary, error) {
 		}
 	}
 	if err := r.store.PutMany(ctx, finalStates); err != nil {
-		return nil, err
+		return err
 	}
-	return summary, nil
+	return nil
 }
 
 func (r *Runner) Verify(ctx context.Context) error {
@@ -184,7 +182,7 @@ func (r *Runner) Verify(ctx context.Context) error {
 		if !ok {
 			return fmt.Errorf("workload: unknown case %q in state store", name)
 		}
-		if err := c.Verify(Context{Context: ctx, DB: r.db, CaseName: name}, state); err != nil {
+		if err := c.Verify(Context{Context: ctx, DB: r.db}, state); err != nil {
 			return err
 		}
 	}
@@ -196,7 +194,6 @@ func (r *Runner) runSequentialTicks(
 	cfg RunConfig,
 	selected []CaseSpec,
 	states map[string]json.RawMessage,
-	summary *Summary,
 	rngs map[string]*rand.Rand,
 ) error {
 	shuffleRNG := rand.New(rand.NewPCG(uint64(cfg.Seed), uint64(cfg.Seed>>1)))
@@ -210,7 +207,7 @@ func (r *Runner) runSequentialTicks(
 			}
 			rng := rngs[spec.Name]
 			tickCtx := TickContext{
-				Context: Context{Context: ctx, DB: r.db, CaseName: spec.Name, Summary: summary},
+				Context: Context{Context: ctx, DB: r.db},
 				RNG:     rng,
 				UpdateStateFn: func(updated json.RawMessage) {
 					states[spec.Name] = updated
@@ -235,12 +232,11 @@ func (r *Runner) runParallelTicks(
 	cfg RunConfig,
 	selected []CaseSpec,
 	states map[string]json.RawMessage,
-	summary *Summary,
 	rngs map[string]*rand.Rand,
 ) error {
 	var mu sync.Mutex
 	for tick := 0; tick < cfg.TickCount; tick++ {
-		if err := r.runParallelTick(ctx, selected, states, summary, rngs, &mu); err != nil {
+		if err := r.runParallelTick(ctx, selected, states, rngs, &mu); err != nil {
 			return err
 		}
 
@@ -257,7 +253,6 @@ func (r *Runner) runParallelTick(
 	ctx context.Context,
 	selected []CaseSpec,
 	states map[string]json.RawMessage,
-	summary *Summary,
 	rngs map[string]*rand.Rand,
 	mu *sync.Mutex,
 ) error {
@@ -291,7 +286,7 @@ func (r *Runner) runParallelTick(
 			rng := rngs[spec.Name]
 
 			tickCtx := TickContext{
-				Context: Context{Context: runCtx, DB: r.db, CaseName: spec.Name, Summary: summary},
+				Context: Context{Context: runCtx, DB: r.db},
 				RNG:     rng,
 				UpdateStateFn: func(updated json.RawMessage) {
 					mu.Lock()

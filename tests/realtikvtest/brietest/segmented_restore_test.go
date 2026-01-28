@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/brhelper/workload"
+	"github.com/pingcap/tidb/tests/realtikvtest/brietest/workloadcases"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,12 +44,12 @@ func TestSegmentedRestoreWorkload(t *testing.T) {
 
 	store := workload.NewMemoryStore()
 	cases := []workload.Case{
-		&workload.NexusDDLDestructiveCase{},
-		&workload.NexusDDLCase{},
-		&workload.AddIndexCase{},
+		&workloadcases.NexusDDLDestructiveCase{},
+		&workloadcases.NexusDDLCase{},
+		&workloadcases.AddIndexCase{},
 	}
 	if tiflashCount := tiflashStoreCount(t, kit.tk); tiflashCount > 0 {
-		cases = append(cases, &workload.ModifyTiFlashCase{NAP: tiflashCount})
+		cases = append(cases, &workloadcases.ModifyTiFlashCase{NAP: tiflashCount})
 	} else {
 		t.Log("TiFlash not found in environment, won't run tiflash related cases.")
 	}
@@ -56,7 +57,7 @@ func TestSegmentedRestoreWorkload(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	_, err = runner.Prepare(ctx)
+	err = runner.Prepare(ctx)
 	require.NoError(t, err)
 
 	kit.RunFullBackup(func(cfg *task.BackupConfig) {
@@ -80,7 +81,7 @@ func TestSegmentedRestoreWorkload(t *testing.T) {
 	}
 
 	for range 4 {
-		_, err := runner.Run(ctx, runCfg)
+		err := runner.Run(ctx, runCfg)
 		require.NoError(t, err)
 		kit.forceFlushAndWait(taskName)
 		checkpoints = append(checkpoints, kit.CheckpointTSOf(taskName))

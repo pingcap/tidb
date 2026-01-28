@@ -24,16 +24,6 @@ import (
 type Context struct {
 	context.Context
 	DB *sql.DB
-
-	CaseName string
-	Summary  *Summary
-}
-
-func (c Context) SetSummary(summary any) {
-	if c.Summary == nil || c.CaseName == "" {
-		return
-	}
-	c.Summary.Set(c.CaseName, summary)
 }
 
 type TickContext struct {
