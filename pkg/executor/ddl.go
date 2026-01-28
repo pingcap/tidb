@@ -945,11 +945,20 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 		return errors.Errorf("alter %s %s is not supported now", "table", meta.Name.O)
 	}
 	if (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
-		obj := "materialized view"
-		if meta.IsMaterializedViewLog() {
-			obj = "materialized view log"
+		allow := true
+		for _, spec := range s.Specs {
+			if spec == nil || spec.Tp != ast.AlterTableSetTiFlashReplica {
+				allow = false
+				break
+			}
 		}
-		return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("alter", obj, meta.Name.O)
+		if !allow {
+			obj := "materialized view"
+			if meta.IsMaterializedViewLog() {
+				obj = "materialized view log"
+			}
+			return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("alter", obj, meta.Name.O)
+		}
 	}
 	if !meta.IsMaterializedView() && !meta.IsMaterializedViewLog() {
 		if err := e.checkMVBaseTableDDLGate(is, meta.ID, fmt.Sprintf("alter table %s", meta.Name.O)); err != nil {

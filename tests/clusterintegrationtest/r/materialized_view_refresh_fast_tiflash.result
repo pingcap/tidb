@@ -1,0 +1,57 @@
+// materialized view: FAST refresh with MV log scan on TiFlash (selection + update/delete)
+drop database if exists mv_refresh_fast_tiflash;
+create database mv_refresh_fast_tiflash;
+use mv_refresh_fast_tiflash;
+set @@tidb_enable_materialized_view = 1;
+create table t (id int primary key, a int, b int);
+create materialized view log on t(a,b);
+set @log_tbl_name := (select table_name from information_schema.tables where table_schema='mv_refresh_fast_tiflash' and table_name like '__tidb_mvlog_%' limit 1);
+set @log_tbl := concat('`mv_refresh_fast_tiflash`.`', @log_tbl_name, '`');
+set @sql := concat('alter table ', @log_tbl, ' set tiflash replica 1');
+prepare stmt from @sql;
+execute stmt;
+deallocate prepare stmt;
+insert into t values (1,1,10),(2,1,20),(3,null,5),(4,2,0);
+create materialized view mv as
+select a, count(*) as cnt, sum(b) as sb
+from t
+where b > 0
+group by a
+refresh fast every 60;
+insert into t values (5,1,30);
+update t set b = 0 where id = 2;
+delete from t where id = 1;
+insert into t values (6,null,7);
+update t set a = 2, b = 9 where id = 4;
+select sleep(30);
+sleep(30)
+0
+set @@tidb_isolation_read_engines="tikv,tiflash";
+set @@tidb_allow_mpp=1;
+set @@tidb_enforce_mpp=1;
+admin refresh materialized view mv fast;
+set @@tidb_isolation_read_engines="tikv";
+set @@tidb_allow_mpp=0;
+set @@tidb_enforce_mpp=0;
+set @mv_id := (select tidb_table_id from information_schema.tables where table_schema='mv_refresh_fast_tiflash' and table_name='mv');
+set @last_tso := (select last_refresh_tso from mysql.mv_refresh_info where mv_id = @mv_id);
+set @@tidb_snapshot = @last_tso;
+select a, count(*) as cnt, sum(b) as sb
+from t
+where b > 0
+group by a
+order by a;
+a	cnt	sb
+NULL	2	12
+1	1	30
+2	1	9
+set @@tidb_snapshot = '';
+select * from mv order by a;
+a	cnt	sb
+NULL	2	12
+1	1	30
+2	1	9
+drop database if exists mv_refresh_fast_tiflash;
+set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
+set @@tidb_allow_mpp=0;
+set @@tidb_enforce_mpp=0;
