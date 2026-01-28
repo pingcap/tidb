@@ -1386,7 +1386,7 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 		// X: The estimated extra rows to read to fulfill the TopN.
 		// We need to read more prefix values that are the same as the last line
 		// to ensure the correctness of the final calculation of the Top n rows.
-		maxX := estimateMaxXForPartialOrder(p.SCtx(), copTask)
+		maxX := estimateMaxXForPartialOrder()
 		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
 		childProfile := copTask.IndexPlan.StatsInfo()
 		limitStats := property.DeriveLimitStats(childProfile, estimatedRows)
@@ -1409,7 +1409,7 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 
 // estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
 // This value is used for statistics (row count estimation).
-func estimateMaxXForPartialOrder(ctx base.PlanContext, copTask *physicalop.CopTask) uint64 {
+func estimateMaxXForPartialOrder() uint64 {
 	// TODO: implement it by TopN/buckets and adjust it by session variable.
 	return 0
 }

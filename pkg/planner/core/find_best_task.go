@@ -1520,18 +1520,22 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		}
 		var currentCandidate *candidatePath
 		if path.IsTablePath() {
+			if prop.PartialOrderInfo != nil {
+				// skyline pruning table path with partial order property is not supported yet.
+				// TODO: support it in the future after we support prefix column as partial order.
+				continue
+			}
 			currentCandidate = getTableCandidate(ds, path, prop)
 		} else {
 			// Check if this path can be used for partial order optimization
 			var matchPartialOrderIndex bool
 			if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN &&
 				prop.PartialOrderInfo != nil {
-				if matchPartialOrderProperty(path, prop.PartialOrderInfo).Matched {
-					matchPartialOrderIndex = true
-				} else {
+				if !matchPartialOrderProperty(path, prop.PartialOrderInfo).Matched {
 					// skyline pruning all indexes that cannot provide partial order when we are looking for
 					continue
 				}
+				matchPartialOrderIndex = true
 			}
 
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
