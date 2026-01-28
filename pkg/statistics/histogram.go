@@ -1059,12 +1059,19 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return DefaultRowEst(0)
 	}
 
-	// oneValue assumes "one value qualifes", and is used as a lower bound.
-	oneValue := float64(0)
-	if histNDV > 0 {
-		oneValue = max(1, hg.NotNullCount()/max(float64(histNDV), outOfRangeBetweenRate)) // avoid inaccurate selectivity caused by small NDV
+	// Step 1: Calculate "one value"
+	// oneValue assumes "one value qualifies", and is used as a lower bound.
+	// outOfRangeBetweenRate (default == 100) avoids an artificially low NDV.
+	// TODO: If we have a large number of added rows, the NDV may be underestimated.
+	oneValue := max(1.0, hg.NotNullCount()/float64(histNDV))
+	if float64(histNDV) < outOfRangeBetweenRate {
+		// If NDV is low, it may no longer be representative of the data since ANALYZE
+		// was last run. Use a default value against realtimeRowCount.
+		// If NDV is not representitative, then hg.NotNullCount may not be either.
+		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
 	}
 
+	// Step 2: If modifications are not allowed, return the one value.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
 	// one value qualifies.
 	allowUseModifyCount := sctx.GetSessionVars().GetOptObjective() != vardef.OptObjectiveDeterminate
@@ -1120,7 +1127,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, avgRowCount float64
+	var leftPercent, rightPercent float64
 	// keep l and r unchanged, use actualL and actualR to calculate.
 	actualL := l
 	actualR := r
@@ -1159,14 +1166,24 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
-	// percentInHist is the percentage of rows that were included in the histogram.
-	// This is used to scale back the out-of-range estimate.
-	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
-	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
-	// Assume on average, half of newly added rows are within the histogram range, and the other
-	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
+
+	// maxTotalPercent is the maximum out of range percentage that is used for MaxEst.
+	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
+
+	estRows := oneValue
+	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+	if totalPercent > 0 {
+		// Multiplying addedRows by 0.5 provides the assumption that 50% "addedRows" are inside
+		// the histogram range, and 50% (0.5) are out-of-range. Users can adjust this
+		// magic number by setting the session variable `tidb_opt_risk_range_skew_ratio`.
+		addedRowMultiplier := 0.5
+		if skewRatio > 0 {
+			addedRowMultiplier = skewRatio
+		}
+		estRows = (addedRows * addedRowMultiplier) * totalPercent
+	}
 
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
@@ -1180,28 +1197,20 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
 		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
+	maxAddedRows := addedRows
+	if maxTotalPercent > 0 {
+		// Always apply maxTotalPercent to maxAddedRows (matching old behavior where addedRows was always scaled)
+		maxAddedRows *= maxTotalPercent
+	}
 
-	skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
-	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
+	minEst := min(estRows, oneValue)
 	if skewRatio > 0 {
-		// Add "ratio" of the maximum row count that could be out of range, i.e. all newly added rows
-		result := CalculateSkewRatioCounts(avgRowCount, addedRows, skewRatio)
-		result.Est = max(result.Est, oneValue)
-		result.MinEst = 1
-		result.MaxEst = max(result.Est, addedRows)
-		return result
+		result = CalculateSkewRatioCounts(minEst, maxAddedRows, skewRatio)
 	}
+	result.Est = max(result.Est, oneValue)
+	result.MaxEst = max(result.Est, maxAddedRows)
 
-	// Use oneValue as lower bound and provide meaningful min/max estimates
-	finalEst := max(avgRowCount, oneValue)
-	// Maximum could be as high as all added rows.
-	maxEst := max(finalEst, addedRows)
-
-	return RowEstimate{
-		Est:    finalEst,
-		MinEst: 1, // Assume a minimum of 1 row qualifies
-		MaxEst: maxEst,
-	}
+	return result
 }
 
 // Copy deep copies the histogram.
