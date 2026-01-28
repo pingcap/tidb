@@ -547,7 +547,6 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 	}
 
 	colOrIdxName := ""
-	logMsg := ""
 	switch reorgInfo.Type {
 	case model.ActionAddIndex, model.ActionAddPrimaryKey:
 		args, err := model.GetModifyIndexArgs(reorgInfo.Job)
@@ -556,7 +555,6 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			colOrIdxName = getIdxNamesFromArgs(args)
 		}
-		logMsg = "update backfill progress for AddIndex|AddPrimaryKey"
 	case model.ActionModifyColumn:
 		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
 		if err != nil {
@@ -564,12 +562,9 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			colOrIdxName = args.OldColumnName.O
 		}
-		logMsg = "update backfill progress for modify column"
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
-		logMsg = "update backfill progress for partition"
 	}
 	getBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), colOrIdxName).Set(progress * 100)
-	logutil.DDLLogger().Warn(logMsg, zap.Float64("progress", progress))
 }
 
 func getTableEstimatedCount(w *worker, tblInfo *model.TableInfo) int64 {
