@@ -365,7 +365,7 @@ function require_tici_binaries() {
 
     if [ ${#missing[@]} -ne 0 ]; then
         echo "Error: required binaries missing for TiCI tests: ${missing[*]}" >&2
-        echo "Run: $SCRIPT_DIR/tici/prepare-binaries.sh (or set DOWNLOAD_SH) to download them." >&2
+        echo "Run: $SCRIPT_DIR/tici/download.sh to download them." >&2
         exit 1
     fi
 }
