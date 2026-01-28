@@ -198,6 +198,9 @@ func matchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 }
 
 func matchSQLBindingInternal(sctx sessionctx.Context, sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	defer func(begin time.Time) {
+		sessionVars.DurationOptimizer.BindingMatch = time.Since(begin)
+	}(time.Now())
 	_, noDBDigest := NormalizeStmtForBinding(stmtNode, "", true)
 	tableNames := CollectTableNames(stmtNode)
 
