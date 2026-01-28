@@ -379,7 +379,6 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
-
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
