@@ -2200,23 +2200,7 @@ func convertToPartialTableScan(ds *logicalop.DataSource, prop *property.Physical
 func overwritePartialTableScanSchema(ds *logicalop.DataSource, ts *physicalop.PhysicalTableScan) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
-		if (ds.TableInfo.PKIsHandle || ds.TableInfo.IsCommonHandle) && ds.UnMutableHandleCols != nil {
-			handleCols = ds.UnMutableHandleCols
-		} else {
-			var handleCol *expression.Column
-			if ds.TableInfo.PKIsHandle {
-				if pkInfo := ds.TableInfo.GetPkColInfo(); pkInfo != nil {
-					handleCol = ds.TblColsByID[pkInfo.ID]
-				}
-			}
-			if handleCol == nil {
-				handleCol = ds.TblColsByID[model.ExtraHandleID]
-			}
-			if handleCol == nil {
-				handleCol = ds.NewExtraHandleSchemaCol()
-			}
-			handleCols = util.NewIntHandleCols(handleCol)
-		}
+		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
 	exprCols := make([]*expression.Column, 0, hdColNum)
