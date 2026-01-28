@@ -1055,7 +1055,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
+		dbMaps, err = rc.loadSchemasMapFromLastTask(ctx, rc.startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}

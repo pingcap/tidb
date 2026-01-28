@@ -79,7 +79,7 @@ func TestSegmentedRestoreWorkload(t *testing.T) {
 		Parallel:     true,
 	}
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_, err := runner.Run(ctx, runCfg)
 		require.NoError(t, err)
 		kit.forceFlushAndWait(taskName)
@@ -104,14 +104,9 @@ func TestSegmentedRestoreWorkload(t *testing.T) {
 			rc.LastRestore = idx == len(checkpoints)-1
 			rc.IsLastRestoreUserSpecified = true
 			rc.UseCheckpoint = true
-			rc.CheckpointStorage = kit.LocalURI("checkpoint")
 			if idx > 0 {
 				rc.StartTS = checkpoints[idx-1]
 				rc.FullBackupStorage = ""
-			}
-			kit.SetFilter(&rc.Config, "test*.*")
-			if idx != len(checkpoints)-1 {
-				rc.ExplicitFilter = false
 			}
 		})
 	}
