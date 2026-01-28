@@ -29,6 +29,7 @@ type FTSInfo struct {
 var FTSFuncMap map[string]struct{} = map[string]struct{}{
 	ast.FTSMatchWord:   {},
 	ast.FTSMatchPrefix: {},
+	ast.FTSMatchPhrase: {},
 }
 
 // ContainsFullTextSearchFn recursively checks whether the expression tree contains a
