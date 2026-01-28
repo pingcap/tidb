@@ -1,0 +1,24 @@
+// _tidb_commit_ts on TiFlash: stable(snapshot) read should be non-zero
+drop database if exists mv_commit_ts_snapshot_tiflash;
+create database mv_commit_ts_snapshot_tiflash;
+use mv_commit_ts_snapshot_tiflash;
+set @@tidb_enable_materialized_view = 1;
+create table t (id int, a int);
+insert into t values (1,2),(2,3);
+alter table t set tiflash replica 1;
+select sleep(30);
+sleep(30)
+0
+set @@tidb_isolation_read_engines="tiflash";
+set @@tidb_allow_mpp=1;
+set @@tidb_enforce_mpp=1;
+select min(_tidb_commit_ts) > 0 from t;
+min(_tidb_commit_ts) > 0
+1
+select count(*) from t where _tidb_commit_ts = 0;
+count(*)
+0
+drop database if exists mv_commit_ts_snapshot_tiflash;
+set @@tidb_isolation_read_engines="tidb,tikv,tiflash";
+set @@tidb_allow_mpp=0;
+set @@tidb_enforce_mpp=0;

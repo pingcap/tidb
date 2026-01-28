@@ -17,27 +17,47 @@
 set -euo pipefail
 
 function start_tidb() {
-  export VERSION_SOURCE="nightly"
+  local playground_ver="${TIUP_PLAYGROUND_VERSION:-nightly}"
+  export VERSION_SOURCE="$playground_ver"
 
-  if [ ! -f "../../bin/tidb-server" ]; then
+  local tidb_binpath="${TIDB_BINPATH:-../../bin/tidb-server}"
+  if [ -z "${TIDB_BINPATH:-}" ] && [ ! -f "$tidb_binpath" ]; then
     cd ../../ || exit 1
     echo "building tidb-server..."
     make
     echo "build successfully"
     cd - || exit 1
   fi
+  if [ ! -f "$tidb_binpath" ]; then
+    echo "* tidb-server binary not found: $tidb_binpath"
+    exit 1
+  fi
 
   echo "Starting TiUP Playground in the background..."
-  if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash" ]; then
-    tiup playground nightly --mode=tidb \
-    --db.binpath=../../bin/tidb-server \
-    --db.config=./config.toml \
-    --kv.binpath=../../bin/tikv-server \
-    --pd.binpath=../../bin/pd-server \
-    --tiflash.binpath=../../bin/tiflash &
-  else
-    tiup playground nightly --db=1 --kv=1 --tiflash=1 --db.binpath=../../bin/tidb-server --db.config=./config.toml &
+  local args=(playground "$playground_ver" --db=1 --kv=1 --tiflash=1 --db.binpath="$tidb_binpath" --db.config=./config.toml)
+  if [ -n "${TIKV_BINPATH:-}" ]; then
+    if [ ! -f "${TIKV_BINPATH}" ]; then
+      echo "* tikv-server binary not found: ${TIKV_BINPATH}"
+      exit 1
+    fi
+    args+=(--kv.binpath="${TIKV_BINPATH}")
+  elif [ -f "../../bin/tikv-server" ]; then
+    args+=(--kv.binpath=../../bin/tikv-server)
   fi
+  if [ -n "${TIFLASH_BINPATH:-}" ]; then
+    if [ ! -f "${TIFLASH_BINPATH}" ]; then
+      echo "* tiflash binary not found: ${TIFLASH_BINPATH}"
+      exit 1
+    fi
+    args+=(--tiflash.binpath="${TIFLASH_BINPATH}")
+  elif [ -f "../../bin/tiflash" ]; then
+    args+=(--tiflash.binpath=../../bin/tiflash)
+  fi
+  if [ -f "../../bin/pd-server" ]; then
+    args+=(--pd.binpath=../../bin/pd-server)
+  fi
+
+  tiup "${args[@]}" &
 }
 
 function check_and_prepare_datasets() {
@@ -127,37 +147,36 @@ function stop_tiup() {
 }
 
 function print_versions() {
+  local tidb_binpath="${TIDB_BINPATH:-../../bin/tidb-server}"
+
   # Print versions
-  if [ "$VERSION_SOURCE" = "nightly" ]; then
-    echo "+ TiDB Version"
-    ../../bin/tidb-server -V
-    echo
-    if [ -f "../../bin/tikv-server" ] && [ -f "../../bin/pd-server" ] && [ -f "../../bin/tiflash" ]; then
-      echo "+ TiKV Version"
-      ../../bin/tikv-server --version
-      echo
-      echo "+ TiFlash Version"
-      ../../bin/tiflash --version
-      echo
-    else
-      echo "+ TiKV Version"
-      tiup tikv:nightly --version
-      echo
-      echo "+ TiFlash Version"
-      tiup tiflash:nightly --version
-      echo
-    fi
+  echo "+ TiDB Version"
+  if [ -f "$tidb_binpath" ]; then
+    "$tidb_binpath" -V
   else
-    echo "+ TiDB Version"
-    tiup tidb:v8.5.1 -V
-    echo
-    echo "+ TiKV Version"
-    tiup tikv:v8.5.1 --version
-    echo
-    echo "+ TiFlash Version"
-    tiup tiflash:v8.5.1 --version
-    echo
+    tiup tidb:"$VERSION_SOURCE" -V
   fi
+  echo
+
+  echo "+ TiKV Version"
+  if [ -n "${TIKV_BINPATH:-}" ]; then
+    "${TIKV_BINPATH}" --version
+  elif [ -f "../../bin/tikv-server" ]; then
+    ../../bin/tikv-server --version
+  else
+    tiup tikv:"$VERSION_SOURCE" --version
+  fi
+  echo
+
+  echo "+ TiFlash Version"
+  if [ -n "${TIFLASH_BINPATH:-}" ]; then
+    "${TIFLASH_BINPATH}" --version
+  elif [ -f "../../bin/tiflash" ]; then
+    ../../bin/tiflash --version
+  else
+    tiup tiflash:"$VERSION_SOURCE" --version
+  fi
+  echo
 
   echo "+ TiUP Version"
   ~/.tiup/bin/tiup playground -v
