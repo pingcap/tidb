@@ -65,7 +65,7 @@ type TimeCostRecorderForTest interface {
 // 2. If the mode is DumpAll, then return true.
 // 3. If the stats delta haven't been dumped in the past hour, then return true.
 // 4. If the table stats is pseudo or empty or `Modify Count / Table Count` exceeds the threshold.
-func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item variable.TableDelta, currentTime time.Time) bool {
+func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bool, id int64, item *variable.TableDelta, currentTime time.Time) bool {
 	tableItem, ok := s.statsHandle.TableItemByID(is, id)
 	if !ok {
 		return false
@@ -142,9 +142,11 @@ func (s *statsUsageImpl) DumpStatsDeltaToKV(dumpAll bool) error {
 			// Collect all updates in the batch.
 			for _, id := range batchTableIDs {
 				item := deltaMap[id]
-				if !s.needDumpStatsDelta(is, dumpAll, id, item, batchStart) {
+				if !s.needDumpStatsDelta(is, dumpAll, id, &item, batchStart) {
+					deltaMap[id] = item
 					continue
 				}
+				deltaMap[id] = item
 				batchUpdates = append(batchUpdates, storage.NewDeltaUpdate(id, item, false))
 			}
 			if time.Since(batchStart) > tooSlowThreshold {
@@ -594,8 +596,23 @@ func (m *TableDelta) Merge(deltaMap map[int64]variable.TableDelta) {
 	}
 	m.lock.Lock()
 	defer m.lock.Unlock()
-	for id, item := range deltaMap {
-		UpdateTableDeltaMap(m.delta, id, item.Delta, item.Count)
+	for id, incoming := range deltaMap {
+		item := m.delta[id]
+		item.Delta += incoming.Delta
+		item.Count += incoming.Count
+		if item.InitTime.IsZero() {
+			item.InitTime = incoming.InitTime
+		} else if !incoming.InitTime.IsZero() && incoming.InitTime.Before(item.InitTime) {
+			item.InitTime = incoming.InitTime
+		}
+		if item.TableID == 0 {
+			if incoming.TableID != 0 {
+				item.TableID = incoming.TableID
+			} else {
+				item.TableID = id
+			}
+		}
+		m.delta[id] = item
 	}
 }
 
