@@ -49,7 +49,7 @@ func (w *extStorage) getStorage(ctx context.Context) (storeapi.Storage, error) {
 	var err error
 	w.storage, err = objstore.New(ctx, w.backend, w.opts)
 	if err != nil {
-		logutil.BgLogger().Error("failed to initialize external storage, will retry on next request", zap.Error(err))
+		logutil.BgLogger().Warn("failed to initialize external storage, will retry on next request", zap.Error(err))
 		return nil, err
 	}
 	return w.storage, nil
