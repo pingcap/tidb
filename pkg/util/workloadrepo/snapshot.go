@@ -202,7 +202,11 @@ func (w *worker) takeSnapshot(ctx context.Context) (uint64, error) {
 
 func (w *worker) startSnapshot(_ctx context.Context) func() {
 	return func() {
-		w.resetSnapshotInterval(w.snapshotInterval)
+		w.Lock()
+		if w.snapshotTicker != nil {
+			w.resetSnapshotInterval(w.snapshotInterval)
+		}
+		w.Unlock()
 
 		// this is for etcd watch
 		// other wise wch won't be collected after the exit of this function
