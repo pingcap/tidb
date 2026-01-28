@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"go.uber.org/zap"
@@ -32,18 +32,18 @@ import (
 type ttlTimerHook = ttlJobTimerHook
 
 func newTTLTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *ttlTimerHook {
-	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: cache.TTLJobTypeTTL, jobEnable: vardef.EnableTTLJob.Load})
+	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: session.TTLJobTypeTTL, jobEnable: vardef.EnableTTLJob.Load})
 }
 
 // softdeleteTimerHook handles softdelete timer events.
 type softdeleteTimerHook = ttlJobTimerHook
 
 func newSoftdeleteTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *softdeleteTimerHook {
-	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: cache.TTLJobTypeSoftDelete, jobEnable: vardef.SoftDeleteJobEnable.Load})
+	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: session.TTLJobTypeSoftDelete, jobEnable: vardef.SoftDeleteJobEnable.Load})
 }
 
 type ttlJobTimerHookConfig struct {
-	jobType   cache.TTLJobType
+	jobType   session.TTLJobType
 	jobEnable func() bool
 }
 

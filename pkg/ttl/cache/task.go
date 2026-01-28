@@ -18,22 +18,10 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
-)
-
-// TTLJobType represents the type of TTL job
-type TTLJobType = string
-
-const (
-	// TTLJobTypeTTL represents a normal TTL job
-	TTLJobTypeTTL TTLJobType = "ttl"
-	// TTLJobTypeSoftDelete represents a softdelete cleanup job
-	TTLJobTypeSoftDelete TTLJobType = "softdelete"
-	// TTLJobTypeRunawayGC represents a GC job for runaway system table.
-	// It is used by the SQL builder to pick the correct time column.
-	TTLJobTypeRunawayGC TTLJobType = "runaway_gc"
 )
 
 const selectFromTTLTask = `SELECT LOW_PRIORITY
@@ -80,7 +68,8 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-func InsertIntoTTLTask(loc *time.Location, jobID string, jobType TTLJobType, tableID int64, scanID int,
+func InsertIntoTTLTask(loc *time.Location, jobID string, jobType session.TTLJobType, tableID int64, scanID int,
+
 	scanRangeStart []types.Datum, scanRangeEnd []types.Datum,
 	expireTime time.Time, createdTime time.Time) (string, []any, error) {
 	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
@@ -109,8 +98,9 @@ const (
 
 // TTLTask is a row recorded in mysql.tidb_ttl_task
 type TTLTask struct {
-	JobID            string
-	JobType          TTLJobType // the type of this job: ttl or softdelete
+	JobID   string
+	JobType session.TTLJobType // the type of this job: ttl or softdelete
+
 	TableID          int64
 	ScanID           int64
 	ScanRangeStart   []types.Datum

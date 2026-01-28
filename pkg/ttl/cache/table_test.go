@@ -258,7 +258,8 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tz2 := time.FixedZone("-02:00", -2*3600)
 	now, err := time.ParseInLocation(time.DateTime, "1999-02-28 23:00:00", tz2)
 	require.NoError(t, err)
-	tm, err := ttlTbl.EvalExpireTimeForJob(context.TODO(), se, now, cache.TTLJobTypeTTL)
+	tm, err := ttlTbl.EvalExpireTimeForJob(context.TODO(), se, now, session.TTLJobTypeTTL)
+
 	require.NoError(t, err)
 	// The expired time should be calculated according to the global time zone
 	require.Equal(t, "1999-02-01 03:00:00", tm.In(tz1).Format(time.DateTime))
@@ -274,7 +275,8 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	require.NoError(t, err)
 	now, err = time.ParseInLocation(time.DateTime, "2020-01-01 15:00:00", tz1)
 	require.NoError(t, err)
-	tm, err = ttlTbl2.EvalExpireTimeForJob(context.TODO(), se, now, cache.TTLJobTypeTTL)
+	tm, err = ttlTbl2.EvalExpireTimeForJob(context.TODO(), se, now, session.TTLJobTypeTTL)
+
 	require.NoError(t, err)
 	require.Equal(t, "2020-01-01 13:57:00", tm.Format(time.DateTime))
 	require.Same(t, tz1, tm.Location())

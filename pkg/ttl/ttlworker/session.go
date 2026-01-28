@@ -188,10 +188,10 @@ func prepareSession(se session.Session) (func(), error) {
 	return restore, nil
 }
 
-func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time, jobType cache.TTLJobType) (*ttlTableSession, error) {
+func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time, jobType session.TTLJobType) (*ttlTableSession, error) {
 	var cfg ttlWorkConfig
 	switch jobType {
-	case cache.TTLJobTypeSoftDelete:
+	case session.TTLJobTypeSoftDelete:
 		cfg = ttlWorkConfig{
 			jobType:   jobType,
 			jobEnable: vardef.SoftDeleteJobEnable.Load,
@@ -205,7 +205,7 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 		// SoftDelete cleanup job needs to read/delete tombstones. If SoftDeleteRewrite is enabled,
 		// SELECT may hide tombstones and DELETE may be rewritten to UPDATE (soft-delete) again.
 		se.GetSessionVars().SoftDeleteRewrite = false
-	case cache.TTLJobTypeTTL:
+	case session.TTLJobTypeTTL:
 		cfg = ttlWorkConfig{
 			jobType:   jobType,
 			jobEnable: vardef.EnableTTLJob.Load,
@@ -213,11 +213,11 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 				if !newTbl.TTLInfo.Enable {
 					return errors.New("table TTL disabled")
 				}
-				newTimeCol, err := newTbl.TimeColumnForJob(cache.TTLJobTypeTTL)
+				newTimeCol, err := newTbl.TimeColumnForJob(session.TTLJobTypeTTL)
 				if err != nil {
 					return err
 				}
-				oldTimeCol, err := oldTbl.TimeColumnForJob(cache.TTLJobTypeTTL)
+				oldTimeCol, err := oldTbl.TimeColumnForJob(session.TTLJobTypeTTL)
 				if err != nil {
 					return err
 				}
@@ -226,7 +226,7 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 				}
 				if newTblInfo.TTLInfo.IntervalExprStr != oldTbl.TTLInfo.IntervalExprStr ||
 					newTblInfo.TTLInfo.IntervalTimeUnit != oldTbl.TTLInfo.IntervalTimeUnit {
-					newExpireTime, err := newTbl.EvalExpireTimeForJob(ctx, s, s.Now(), cache.TTLJobTypeTTL)
+					newExpireTime, err := newTbl.EvalExpireTimeForJob(ctx, s, s.Now(), session.TTLJobTypeTTL)
 					if err != nil {
 						return err
 					}
@@ -253,7 +253,7 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 }
 
 // NewScanSession creates a session for scan
-func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time, jobType cache.TTLJobType) (*ttlTableSession, func() error, error) {
+func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time, jobType session.TTLJobType) (*ttlTableSession, func() error, error) {
 	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
 	origPaging := se.GetSessionVars().EnablePaging
 	se.GetSessionVars().InternalSQLScanUserTable = true
@@ -306,7 +306,7 @@ type ttlTableSession struct {
 }
 
 type ttlWorkConfig struct {
-	jobType     cache.TTLJobType
+	jobType     session.TTLJobType
 	jobEnable   func() bool
 	validateNew func(ctx context.Context, s session.Session, oldTbl, newTbl *cache.PhysicalTable, newTblInfo *model.TableInfo, expire time.Time) error
 }
@@ -372,8 +372,8 @@ func (s *ttlTableSession) validateTTLWork(ctx context.Context) error {
 		s.tbl.Schema,
 		newTblInfo,
 		s.tbl.Partition,
-		s.cfg.jobType == cache.TTLJobTypeTTL,
-		s.cfg.jobType == cache.TTLJobTypeSoftDelete,
+		s.cfg.jobType == session.TTLJobTypeTTL,
+		s.cfg.jobType == session.TTLJobTypeSoftDelete,
 	)
 	if err != nil {
 		return err

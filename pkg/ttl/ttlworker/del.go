@@ -110,7 +110,7 @@ func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 type ttlDeleteTask struct {
 	jobID      string
 	scanID     int64
-	jobType    cache.TTLJobType
+	jobType    session.TTLJobType
 	tbl        *cache.PhysicalTable
 	expire     time.Time
 	rows       [][]types.Datum
@@ -147,6 +147,7 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		)
 		return
 	}
+
 	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := vardef.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
@@ -158,7 +159,21 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			leftRows = leftRows[maxBatch:]
 		}
 
-		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, t.jobType, delBatch, t.expire)
+		minCheckpointTS := uint64(0)
+		if t.jobType == session.TTLJobTypeSoftDelete && t.tbl.TableInfo.IsActiveActive {
+			minCheckpointTS, err = rawSe.GetMinActiveActiveCheckpointTS(
+				ctx,
+				t.tbl.Schema.O,
+				t.tbl.Name.O,
+			)
+			if err != nil {
+				t.statistics.IncErrorRows(t.jobType, len(leftRows))
+				t.taskLogger(logutil.Logger(ctx)).Warn("get ticdc min checkpoint ts failed", zap.Error(err))
+				return
+			}
+		}
+
+		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, t.jobType, delBatch, t.expire, minCheckpointTS)
 		if err != nil {
 			t.statistics.IncErrorRows(t.jobType, len(delBatch))
 			t.taskLogger(logutil.Logger(ctx)).Warn(

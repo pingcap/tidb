@@ -61,7 +61,8 @@ func NewSoftDeleteTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) (*
 				pid = partition.ID
 			}
 
-			sql, args := cache.SelectFromTableStatusWithID(cache.TTLJobTypeSoftDelete, pid)
+			sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeSoftDelete, pid)
+
 			rows, err := se.ExecuteSQL(ctx, sql, args...)
 			if err != nil {
 				return time.Time{}, err
