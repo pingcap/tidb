@@ -65,8 +65,7 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 
 	// Build key ranges.
 	expect := getExpectedRanges(1, hrs)
-	actual, _, hints, err := TableHandlesToKVRanges(1, handles, nil)
-	require.NoError(t, err)
+	actual, _, hints := TableHandlesToKVRanges(1, handles, nil)
 
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))
@@ -110,8 +109,7 @@ func TestTablePartitionHandlesToKVRanges(t *testing.T) {
 	expect = append(expect, getExpectedRanges(1, hrs[6:])...)
 
 	// Build actual key ranges.
-	actual, _, hints, err := TableHandlesToKVRanges(0, handles, nil)
-	require.NoError(t, err)
+	actual, _, hints := TableHandlesToKVRanges(0, handles, nil)
 
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))
@@ -120,21 +118,6 @@ func TestTablePartitionHandlesToKVRanges(t *testing.T) {
 		require.Equal(t, expect[i].StartKey, actual[i].StartKey)
 		require.Equal(t, expect[i].EndKey, actual[i].EndKey)
 	}
-}
-
-func TestTableHandlesToKVRangesWithVersionMapError(t *testing.T) {
-	tid := int64(1)
-	handles := []kv.Handle{kv.IntHandle(1)}
-
-	// missing handle in version map should return error instead of panic
-	handleVersionMap := kv.NewHandleMap()
-	_, _, _, err := TableHandlesToKVRanges(tid, handles, handleVersionMap)
-	require.Error(t, err)
-
-	// wrong version type should return error instead of panic
-	handleVersionMap.Set(handles[0], int64(123))
-	_, _, _, err = TableHandlesToKVRanges(tid, handles, handleVersionMap)
-	require.Error(t, err)
 }
 
 func TestTableRangesToKVRanges(t *testing.T) {

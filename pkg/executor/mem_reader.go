@@ -766,10 +766,7 @@ func (m *memIndexLookUpReader) getMemRowsIter(ctx context.Context) (memRowsIter,
 		}
 		numHandles += len(handles)
 		physicalTableID := physicalTableIDs[i]
-		ranges, _, _, err := distsql.TableHandlesToKVRanges(physicalTableID, handles, nil)
-		if err != nil {
-			return nil, err
-		}
+		ranges, _, _ := distsql.TableHandlesToKVRanges(physicalTableID, handles, nil)
 		tblKVRanges = append(tblKVRanges, ranges...)
 	}
 	if numHandles == 0 {
@@ -1114,12 +1111,9 @@ func (m *memIndexMergeReader) getMemRows(ctx context.Context) ([][]types.Datum, 
 	var tblKVRanges []kv.KeyRange
 	if m.partitionMode {
 		// `tid` for partition handle is useless, so use 0 here.
-		tblKVRanges, _, _, err = distsql.TableHandlesToKVRanges(0, handles, nil)
+		tblKVRanges, _, _ = distsql.TableHandlesToKVRanges(0, handles, nil)
 	} else {
-		tblKVRanges, _, _, err = distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles, nil)
-	}
-	if err != nil {
-		return nil, err
+		tblKVRanges, _, _ = distsql.TableHandlesToKVRanges(getPhysicalTableID(m.table), handles, nil)
 	}
 
 	colIDs, pkColIDs, rd := getColIDAndPkColIDs(m.ctx, m.table, m.columns)
