@@ -558,12 +558,12 @@ func (t *TableInfo) IsView() bool {
 	return t.View != nil
 }
 
-// IsMaterializedView checks if TableInfo is a materialized view table (TiDB demo).
+// IsMaterializedView checks if TableInfo is a materialized view table.
 func (t *TableInfo) IsMaterializedView() bool {
 	return t.MaterializedViewInfo != nil
 }
 
-// IsMaterializedViewLog checks if TableInfo is a materialized view log table (TiDB demo).
+// IsMaterializedViewLog checks if TableInfo is a materialized view log table.
 func (t *TableInfo) IsMaterializedViewLog() bool {
 	return t.MaterializedViewLogInfo != nil
 }

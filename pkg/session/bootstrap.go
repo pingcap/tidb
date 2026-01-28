@@ -848,6 +848,7 @@ const (
 		last_refresh_time TIMESTAMP NULL DEFAULT NULL,
 		last_error TEXT DEFAULT NULL,
 		INDEX idx_base_table_id (base_table_id),
+		INDEX idx_log_table_id (log_table_id),
 		INDEX idx_next_run_time (next_run_time));`
 )
 

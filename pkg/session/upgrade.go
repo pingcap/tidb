@@ -476,6 +476,10 @@ const (
 	// version254
 	// Add mysql.mv_refresh_info for materialized view refresh.
 	version254 = 254
+
+	// version255
+	// Add idx_log_table_id to mysql.mv_refresh_info.
+	version255 = 255
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -489,7 +493,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version254
+var currentBootstrapVersion int64 = version255
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -668,6 +672,7 @@ var (
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
 		{version: version254, fn: upgradeToVer254},
+		{version: version255, fn: upgradeToVer255},
 	}
 )
 
@@ -2045,4 +2050,8 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 
 func upgradeToVer254(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, CreateMaterializedViewRefreshInfoTable)
+}
+
+func upgradeToVer255(s sessionapi.Session, _ int64) {
+	doReentrantDDL(s, "ALTER TABLE mysql.mv_refresh_info ADD INDEX idx_log_table_id(log_table_id)", dbterror.ErrDupKeyName)
 }
