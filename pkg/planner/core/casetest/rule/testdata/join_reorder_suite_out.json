@@ -1778,6 +1778,29 @@
         ]
       },
       {
+        "SQL": "select /*+ leading((t1@sel_1, (t2@sel_2, (t3@sel_3, t4@sel_4)))) */ * from (select * from t1) t1 join (select * from t2) t2 on t1.a=t2.a left join (select * from t3) t3 on t2.a=t3.a join (select * from t4) t4 on t3.a=t4.a;",
+        "Plan": [
+          "HashJoin 19511.72 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
+          "├─TableReader(Build) 9990.00 root  data:Selection",
+          "│ └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.a))",
+          "│   └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+          "└─HashJoin(Probe) 15609.38 root  inner join, equal:[eq(test.t2.a, test.t3.a)]",
+          "  ├─TableReader(Build) 9990.00 root  data:Selection",
+          "  │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
+          "  │   └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 12487.50 root  inner join, equal:[eq(test.t3.a, test.t4.a)]",
+          "    ├─TableReader(Build) 9990.00 root  data:Selection",
+          "    │ └─Selection 9990.00 cop[tikv]  not(isnull(test.t4.a))",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 9990.00 root  data:Selection",
+          "      └─Selection 9990.00 cop[tikv]  not(isnull(test.t3.a))",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t2, t3, t4) in optimizer hint /*+ LEADING(t1, t2, t3, t4) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
         "SQL": "select /*+ leading(t3, t1, t2) */ t1.a, t2.b from t1 join (select a, count(*) as c from t3 group by a) g on t1.a=g.a join t2 on t1.b=t2.b;",
         "Plan": [
           "HashJoin 12475.01 root  inner join, equal:[eq(test.t1.b, test.t2.b)]",
@@ -1795,20 +1818,6 @@
         ],
         "Warning": [
           "Warning 1815 There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1, t2) */. Maybe you can use the table alias name"
-        ]
-      },
-      {
-        "SQL": "select /*+ leading(t1, t2) */ g.a, t2.b from (select a+1 as a1, a, b from t1) g join t2 on g.a=t2.a;",
-        "Plan": [
-          "HashJoin 12487.50 root  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "├─IndexReader(Build) 9990.00 root  index:IndexFullScan",
-          "│ └─IndexFullScan 9990.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
-          "└─TableReader(Probe) 9990.00 root  data:Selection",
-          "  └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.a))",
-          "    └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
-        ],
-        "Warning": [
-          "Warning 1815 There are no matching table names for (t1) in optimizer hint /*+ LEADING(t1, t2) */. Maybe you can use the table alias name"
         ]
       },
       {

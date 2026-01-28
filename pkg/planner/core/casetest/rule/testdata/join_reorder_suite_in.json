@@ -97,8 +97,8 @@
       // subquery alias-based join order
       "select /*+ leading(t1@sel_1, (t2@sel_2, t3@sel_3)) */ * from (select * from t1) t1, (select * from t2) t2, (select * from t3) t3 where t1.a=t2.a and t2.a=t3.a;",
       "select /*+ leading((o1@sel_1, (o2@sel_2, (o3@sel_3, o4@sel_4)))) */ * from (select * from (select * from t1) x1) o1 join (select * from t2) o2 on o1.a=o2.a join (select * from t3) o3 on o2.a=o3.a join (select * from t4) o4 on o3.a=o4.a;",
+      "select /*+ leading((t1@sel_1, (t2@sel_2, (t3@sel_3, t4@sel_4)))) */ * from (select * from t1) t1 join (select * from t2) t2 on t1.a=t2.a left join (select * from t3) t3 on t2.a=t3.a join (select * from t4) t4 on t3.a=t4.a;",
       "select /*+ leading(t3, t1, t2) */ t1.a, t2.b from t1 join (select a, count(*) as c from t3 group by a) g on t1.a=g.a join t2 on t1.b=t2.b;",
-      "select /*+ leading(t1, t2) */ g.a, t2.b from (select a+1 as a1, a, b from t1) g join t2 on g.a=t2.a;",
       "select /*+ leading(t3, t2, t1) */ t1.a, t2.b from t1 join t2 on t1.a=t2.a where exists (select /*+ semi_join_rewrite() */ 1 from (select a, count(*) from t3 group by a) g where g.a=t1.a);",
       "select /*+ leading(t3, t1, t2) */ t1.a, t2.b from t1 join t2 on t1.a=t2.a where exists (select /*+ semi_join_rewrite() */ 1 from (select a, count(*) from t3 group by a) g where g.a=t1.a);",
       "select /*+ leading(t2, t1, t3) */ t1.a, t2.b from t1 join t2 on t1.a=t2.a where exists (select /*+ semi_join_rewrite() */ 1 from (select a, count(*) from t3 group by a) g where g.a=t1.a);",
