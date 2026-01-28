@@ -520,6 +520,9 @@ func TestRuntimeStatsWithCommit(t *testing.T) {
 		"commit_log: 60µs, apply_batch_wait: 70µs, apply: {total:80µs, mutex_lock: 90µs, write_leader_wait: 100µs, write_wal: 101µs, write_memtable: 102µs}, " +
 		"scheduler: {process: 0s}}}, lock_rpc:5s, rpc_count:50, retry_count:2}"
 	require.Equal(t, expect, stats.String())
+
+	stats.SharedLockKeys = lockDetail.Clone()
+	require.Equal(t, expect+", shared_"+expect, stats.String())
 }
 
 func TestRootRuntimeStats(t *testing.T) {

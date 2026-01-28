@@ -875,64 +875,8 @@ func (e *RuntimeStatsWithCommit) String() string {
 		}
 		buf.WriteString("}")
 	}
-	if e.LockKeys != nil {
-		if buf.Len() > 0 {
-			buf.WriteString(", ")
-		}
-		buf.WriteString("lock_keys: {")
-		if e.LockKeys.TotalTime > 0 {
-			buf.WriteString("time:")
-			buf.WriteString(FormatDuration(e.LockKeys.TotalTime))
-		}
-		if e.LockKeys.RegionNum > 0 {
-			buf.WriteString(", region:")
-			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RegionNum), 10))
-		}
-		if e.LockKeys.LockKeys > 0 {
-			buf.WriteString(", keys:")
-			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.LockKeys), 10))
-		}
-		if e.LockKeys.ResolveLock.ResolveLockTime > 0 {
-			buf.WriteString(", resolve_lock:")
-			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.ResolveLock.ResolveLockTime)))
-		}
-		e.LockKeys.Mu.Lock()
-		if e.LockKeys.BackoffTime > 0 {
-			buf.WriteString(", backoff: {time: ")
-			buf.WriteString(FormatDuration(time.Duration(e.LockKeys.BackoffTime)))
-			if len(e.LockKeys.Mu.BackoffTypes) > 0 {
-				buf.WriteString(", type: ")
-				e.formatBackoff(buf, e.LockKeys.Mu.BackoffTypes)
-			}
-			buf.WriteString("}")
-		}
-		if e.LockKeys.Mu.SlowestReqTotalTime > 0 {
-			buf.WriteString(", slowest_rpc: {total: ")
-			buf.WriteString(strconv.FormatFloat(e.LockKeys.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64))
-			buf.WriteString("s, region_id: ")
-			buf.WriteString(strconv.FormatUint(e.LockKeys.Mu.SlowestRegion, 10))
-			buf.WriteString(", store: ")
-			buf.WriteString(e.LockKeys.Mu.SlowestStoreAddr)
-			buf.WriteString(", ")
-			buf.WriteString(e.LockKeys.Mu.SlowestExecDetails.String())
-			buf.WriteString("}")
-		}
-		e.LockKeys.Mu.Unlock()
-		if e.LockKeys.LockRPCTime > 0 {
-			buf.WriteString(", lock_rpc:")
-			buf.WriteString(time.Duration(e.LockKeys.LockRPCTime).String())
-		}
-		if e.LockKeys.LockRPCCount > 0 {
-			buf.WriteString(", rpc_count:")
-			buf.WriteString(strconv.FormatInt(e.LockKeys.LockRPCCount, 10))
-		}
-		if e.LockKeys.RetryCount > 0 {
-			buf.WriteString(", retry_count:")
-			buf.WriteString(strconv.FormatInt(int64(e.LockKeys.RetryCount), 10))
-		}
-
-		buf.WriteString("}")
-	}
+	e.formatLockKeysDetails(buf, "lock_keys", e.LockKeys)
+	e.formatLockKeysDetails(buf, "shared_lock_keys", e.SharedLockKeys)
 	return buf.String()
 }
 
@@ -959,6 +903,68 @@ func (*RuntimeStatsWithCommit) formatBackoff(buf *bytes.Buffer, backoffTypes []s
 		buf.WriteString(tp)
 	}
 	buf.WriteByte(']')
+}
+
+func (e *RuntimeStatsWithCommit) formatLockKeysDetails(buf *bytes.Buffer, label string, lockKeys *util.LockKeysDetails) {
+	if lockKeys == nil {
+		return
+	}
+	if buf.Len() > 0 {
+		buf.WriteString(", ")
+	}
+	buf.WriteString(label)
+	buf.WriteString(": {")
+	if lockKeys.TotalTime > 0 {
+		buf.WriteString("time:")
+		buf.WriteString(FormatDuration(lockKeys.TotalTime))
+	}
+	if lockKeys.RegionNum > 0 {
+		buf.WriteString(", region:")
+		buf.WriteString(strconv.FormatInt(int64(lockKeys.RegionNum), 10))
+	}
+	if lockKeys.LockKeys > 0 {
+		buf.WriteString(", keys:")
+		buf.WriteString(strconv.FormatInt(int64(lockKeys.LockKeys), 10))
+	}
+	if lockKeys.ResolveLock.ResolveLockTime > 0 {
+		buf.WriteString(", resolve_lock:")
+		buf.WriteString(FormatDuration(time.Duration(lockKeys.ResolveLock.ResolveLockTime)))
+	}
+	lockKeys.Mu.Lock()
+	if lockKeys.BackoffTime > 0 {
+		buf.WriteString(", backoff: {time: ")
+		buf.WriteString(FormatDuration(time.Duration(lockKeys.BackoffTime)))
+		if len(lockKeys.Mu.BackoffTypes) > 0 {
+			buf.WriteString(", type: ")
+			e.formatBackoff(buf, lockKeys.Mu.BackoffTypes)
+		}
+		buf.WriteString("}")
+	}
+	if lockKeys.Mu.SlowestReqTotalTime > 0 {
+		buf.WriteString(", slowest_rpc: {total: ")
+		buf.WriteString(strconv.FormatFloat(lockKeys.Mu.SlowestReqTotalTime.Seconds(), 'f', 3, 64))
+		buf.WriteString("s, region_id: ")
+		buf.WriteString(strconv.FormatUint(lockKeys.Mu.SlowestRegion, 10))
+		buf.WriteString(", store: ")
+		buf.WriteString(lockKeys.Mu.SlowestStoreAddr)
+		buf.WriteString(", ")
+		buf.WriteString(lockKeys.Mu.SlowestExecDetails.String())
+		buf.WriteString("}")
+	}
+	lockKeys.Mu.Unlock()
+	if lockKeys.LockRPCTime > 0 {
+		buf.WriteString(", lock_rpc:")
+		buf.WriteString(time.Duration(lockKeys.LockRPCTime).String())
+	}
+	if lockKeys.LockRPCCount > 0 {
+		buf.WriteString(", rpc_count:")
+		buf.WriteString(strconv.FormatInt(lockKeys.LockRPCCount, 10))
+	}
+	if lockKeys.RetryCount > 0 {
+		buf.WriteString(", retry_count:")
+		buf.WriteString(strconv.FormatInt(int64(lockKeys.RetryCount), 10))
+	}
+	buf.WriteString("}")
 }
 
 // RURuntimeStats is a wrapper of util.RUDetails,

@@ -542,9 +542,10 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 					metrics.PessimisticLockKeysDuration.Observe(execDetails.LockKeysDetail.TotalTime.Seconds())
 				}
 			}
-			sharedLockKeysCnt := a.Ctx.GetSessionVars().StmtCtx.SharedLockKeysCount
-			if sharedLockKeysCnt > 0 {
-				metrics.StatementSharedLockKeysCount.Observe(float64(sharedLockKeysCnt))
+			if execDetails.SharedLockKeysDetail != nil {
+				if execDetails.SharedLockKeysDetail.LockKeys > 0 {
+					metrics.StatementSharedLockKeysCount.Observe(float64(execDetails.SharedLockKeysDetail.LockKeys))
+				}
 			}
 
 			if err == nil && execDetails.LockKeysDetail != nil &&
@@ -1234,7 +1235,7 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 		}
 
 		if !a.Ctx.GetSessionVars().ForeignKeyCheckInSharedLock {
-			// When ForeignKeyCheckInSharedLock is false, lock all keys in exclusive mode
+			// When `tidb_foreign_key_check_in_shared_lock` is off, lock all keys in exclusive mode
 			keys = txnCtx.CollectUnchangedKeysForXLock(keys)
 			keys = txnCtx.CollectUnchangedKeysForSLock(keys)
 			ex, err := tryLockKeys(e, keys, false)
@@ -1247,6 +1248,11 @@ func (a *ExecStmt) handlePessimisticDML(ctx context.Context, e exec.Executor) (e
 			}
 			return nil
 		}
+
+		// When `tidb_foreign_key_check_in_shared_lock` is on, lock keys in two phases:
+		//
+		//   1. acquire exclusive locks for keys that need exclusive locks
+		//   2. acquire shared locks for keys that need shared locks
 
 		// acquire xlocks
 		keys = txnCtx.CollectUnchangedKeysForXLock(keys)
