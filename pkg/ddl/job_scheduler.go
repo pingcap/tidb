@@ -55,6 +55,7 @@ import (
 	tidblogutil "github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
+	clientgotrace "github.com/tikv/client-go/v2/trace"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -310,8 +311,8 @@ func (s *jobScheduler) schedule() error {
 	defer ticker.Stop()
 	s.mustReloadSchemas()
 
-	trace := traceevent.NewTrace()
-	ctx := tracing.WithFlightRecorder(s.schCtx, trace)
+	trace := traceevent.NewTraceBuf()
+	ctx := traceevent.WithTraceBuf(s.schCtx, trace)
 
 	for {
 		if err := s.schCtx.Err(); err != nil {
@@ -525,7 +526,7 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 			pool.put(wk)
 		}()
 
-		trace := traceevent.NewTrace()
+		trace := traceevent.NewTraceBuf()
 		jobCtx := s.getJobRunCtx(trace, jobW.ID, jobW.TraceInfo)
 		defer trace.DiscardOrFlush(jobCtx.ctx)
 
@@ -565,11 +566,12 @@ func (s *jobScheduler) deliveryJob(ctx context.Context, wk *worker, pool *worker
 	})
 }
 
-func (s *jobScheduler) getJobRunCtx(trace *traceevent.Trace, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
+func (s *jobScheduler) getJobRunCtx(trace *traceevent.TraceBuf, jobID int64, traceInfo *tracing.TraceInfo) *jobContext {
 	ch, _ := s.ddlJobDoneChMap.Load(jobID)
-	newCtx := tracing.WithFlightRecorder(s.schCtx, trace)
+	newCtx := traceevent.WithTraceBuf(s.schCtx, trace)
 	if len(traceInfo.TraceID) > 0 {
-		newCtx = traceevent.ContextWithTraceID(newCtx, traceInfo.TraceID)
+		trace.SetTraceID(traceInfo.TraceID)
+		newCtx = clientgotrace.ContextWithTraceID(newCtx, traceInfo.TraceID)
 	}
 	return &jobContext{
 		ctx:                  newCtx,
