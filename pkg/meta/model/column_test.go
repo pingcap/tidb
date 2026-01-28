@@ -116,7 +116,7 @@ func TestInternalColumn(t *testing.T) {
 		{NewExtraHandleColInfo(), mysql.TypeLonglong, 0, 0, mysql.NotNullFlag | mysql.PriKeyFlag},
 		{NewExtraCommitTSColInfo(), mysql.TypeLonglong, 0, 0, 0},
 		{NewExtraOriginTSColInfo(), mysql.TypeLonglong, 0, 0, mysql.UnsignedFlag},
-		{NewExtraSoftDeleteTimeColInfo(), mysql.TypeTimestamp, 0, 6, 0},
+		{NewExtraSoftDeleteTimeColInfo(), mysql.TypeTimestamp, mysql.MaxDatetimeWidthWithFsp, 6, 0},
 	}
 	for _, c := range cases {
 		eflen, edecimal := mysql.GetDefaultFieldLengthAndDecimal(c.typ)
