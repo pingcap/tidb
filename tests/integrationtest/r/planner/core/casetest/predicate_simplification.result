@@ -89,11 +89,7 @@ TableReader	root		data:Selection
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select 1 from t A, t B where A.f <> 3 and B.f in (1,2,3) and A.f <> 1 and A.f <> 2 -- on different columns. No simplification should be done.;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#9
-=======
 Projection	root		1->Column
->>>>>>> master
 └─HashJoin	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 1, 2, 3)
@@ -103,11 +99,7 @@ Projection	root		1->Column
       └─TableFullScan	cop[tikv]	table:A	keep order:false, stats:pseudo
 explain format='plan_tree' select 1 from t A, t B where B.f <> 2 and A.f <> 3 and B.f in (1,2,3) and A.f in (3,1,4) and A.f <> 1 and A.f <> 2 -- simplification for two columns.;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#9
-=======
 Projection	root		1->Column
->>>>>>> master
 └─HashJoin	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		in(planner__core__casetest__predicate_simplification.t.f, 4)
@@ -122,17 +114,10 @@ TableReader	root		data:Selection
   └─TableFullScan	cop[tikv]	table:ts	keep order:false, stats:pseudo
 explain format='plan_tree' select count(*) cnt from ts where f <> '1' and f in ('1','2','3') group by a having cnt > 100  -- aggregate  ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Selection	root		gt(Column#5, 100)
-└─HashAgg	root		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(Column#6)->Column#5
-  └─TableReader	root		data:HashAgg
-    └─HashAgg	cop[tikv]		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(1)->Column#6
-=======
 Selection	root		gt(Column, 100)
 └─HashAgg	root		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(Column)->Column
   └─TableReader	root		data:HashAgg
     └─HashAgg	cop[tikv]		group by:planner__core__casetest__predicate_simplification.ts.a, funcs:count(1)->Column
->>>>>>> master
       └─Selection	cop[tikv]		in(planner__core__casetest__predicate_simplification.ts.f, "2", "3")
         └─TableFullScan	cop[tikv]	table:ts	keep order:false, stats:pseudo
 explain format='plan_tree' select f from t where f <> NULL  and f in (1,2,3) -- Special case of NULL with no simplification.;
@@ -312,92 +297,55 @@ INSERT INTO t1 (a1, b1, c1) VALUES (1, 2, 3), (4, NULL, 5),  (NULL, 6, 7),  (8, 
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR b1 > 10;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#6
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 AND b1 > 10;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#6
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:Selection
   └─Selection	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t1.b1, 10)
     └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR b1 > 10;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#6
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:Selection
   └─Selection	cop[tikv]		gt(planner__core__casetest__predicate_simplification.t1.b1, 10)
     └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND b1 > 10;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#6
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableDual	root		rows:0
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#12
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#6
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#11
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableDual	root		rows:0
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#6
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableDual	root		rows:0
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE a1 > 5 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 )) ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#12
-└─Selection	root		or(gt(planner__core__casetest__predicate_simplification.t1.a1, 5), Column#11)
-=======
 Projection	root		1->Column
 └─Selection	root		or(gt(planner__core__casetest__predicate_simplification.t1.a1, 5), Column)
->>>>>>> master
   └─HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -406,11 +354,7 @@ Projection	root		1->Column
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR a1 in (select a2 from t2);
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#11
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
@@ -419,11 +363,7 @@ WHERE
 (1 OR (1 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE b2 = b1) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)))) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))
 ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#30
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree'
@@ -432,11 +372,7 @@ WHERE
 (1 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
 ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#30
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree'
@@ -445,11 +381,7 @@ WHERE
 (0 OR (0 OR (1 OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) OR EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ) AND EXISTS(SELECT 1 FROM t2 WHERE a2 = a1 ))))
 ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#30
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree'
@@ -457,17 +389,10 @@ SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) 
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
 id	task	access object	operator info
 Union	root		
-<<<<<<< HEAD
-├─Projection	root		1->Column#25
-│ └─TableReader	root		data:TableFullScan
-│   └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
-└─Projection	root		1->Column#25
-=======
 ├─Projection	root		1->Column
 │ └─TableReader	root		data:TableFullScan
 │   └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 └─Projection	root		1->Column
->>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
@@ -475,44 +400,27 @@ SELECT 1 FROM t1 AS tab WHERE 1 = 0 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1)) 
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT 1 FROM t2 WHERE a2 = a1));
 id	task	access object	operator info
 Union	root		
-<<<<<<< HEAD
-├─Projection	root		1->Column#25
-│ └─Selection	root		Column#11
-=======
 ├─Projection	root		1->Column
 │ └─Selection	root		Column
->>>>>>> master
 │   └─HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__predicate_simplification.t1.a1, planner__core__casetest__predicate_simplification.t2.a2)]
 │     ├─TableReader(Build)	root		data:TableFullScan
 │     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 │     └─TableReader(Probe)	root		data:TableFullScan
 │       └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
-<<<<<<< HEAD
-└─Projection	root		1->Column#25
-=======
 └─Projection	root		1->Column
->>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 1 OR (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 )) ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#12
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:tab	keep order:false, stats:pseudo
 explain format='plan_tree'
 SELECT 1 FROM t1 AS tab WHERE 1 = 0 AND (EXISTS(SELECT  /*+ NO_DECORRELATE() */ 1 FROM t2 WHERE a2 = a1 ))
 ;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		1->Column#11
-=======
 Projection	root		1->Column
->>>>>>> master
 └─TableDual	root		rows:0
 explain format='plan_tree'
 SELECT * FROM t1 WHERE (1 = 1 OR a1 = 1) OR (b1 = 2);
@@ -767,13 +675,8 @@ r0
 249.0000
 explain format='plan_tree' SELECT AVG(DISTINCT `t910beff5`.`col_40`) AS `r0` FROM `t910beff5` WHERE `t910beff5`.`col_41`>='D1$9+VTpEe)' OR `t910beff5`.`col_41` BETWEEN 'znRD*2pkmtm4' AND 'PBueg(&tWY%dzsT(_' GROUP BY `t910beff5`.`col_40`,`t910beff5`.`col_41` HAVING `t910beff5`.`col_41`='cwx!P4xaX)U';
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#8, Column#9, funcs:avg(distinct Column#7)->Column#5
-└─Projection	root		cast(planner__core__casetest__predicate_simplification.t910beff5.col_40, decimal(3,0) UNSIGNED BINARY)->Column#7, planner__core__casetest__predicate_simplification.t910beff5.col_40->Column#8, planner__core__casetest__predicate_simplification.t910beff5.col_41->Column#9
-=======
 HashAgg	root		group by:Column, Column, funcs:avg(distinct Column)->Column
 └─Projection	root		cast(planner__core__casetest__predicate_simplification.t910beff5.col_40, decimal(3,0) UNSIGNED BINARY)->Column, planner__core__casetest__predicate_simplification.t910beff5.col_40->Column, planner__core__casetest__predicate_simplification.t910beff5.col_41->Column
->>>>>>> master
   └─TableReader	root		data:Selection
     └─Selection	cop[tikv]		eq(planner__core__casetest__predicate_simplification.t910beff5.col_41, "cwx!P4xaX)U"), or(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "D1$9+VTpEe)"), and(ge(planner__core__casetest__predicate_simplification.t910beff5.col_41, "znRD*2pkmtm4"), le(planner__core__casetest__predicate_simplification.t910beff5.col_41, "PBueg(&tWY%dzsT(_")))
       └─TableFullScan	cop[tikv]	table:t910beff5	keep order:false, stats:pseudo
@@ -796,17 +699,10 @@ UNIQUE KEY idx_14 (col_72,col_71) /*!80000 INVISIBLE */
 ) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;
 explain format='plan_tree' select /*+ NO_HASH_JOIN( t43fc4f8a , st_57 */ avg( distinct  st_57.r1 ) as r0 from t43fc4f8a , ( select  /*+ use_index( tlcf30036b ) */ /*+ agg_to_cop()  */  elt(2, tlcf30036b.col_72 , tlcf30036b.col_72 ) as r0 , bit_or( tlcf30036b.col_71 ) as r1 from tlcf30036b where IsNull( tlcf30036b.col_71 ) and not( tlcf30036b.col_72 in ( '1980-08-05' ,'2033-10-20' ,'2030-06-22' ,'1972-04-20' ) ) group by tlcf30036b.col_72  having tlcf30036b.col_72 in ( '2004-03-24' ,'2006-02-04' ,'1993-06-20' ,null ) and not( tlcf30036b.col_72 < '2026-03-29' ) order by r0,r1 ) st_57 where st_57.r1 in ( 13307631398032338238 ,10696905560280898882 ,5314440087685082217 ,17229250596274672311 ) group by t43fc4f8a.col_51,t43fc4f8a.col_49  having t43fc4f8a.col_49 <=> 11261 order by r0 limit 562300838;
 id	task	access object	operator info
-<<<<<<< HEAD
-TopN	root		Column#15, offset:0, count:562300838
-└─HashAgg	root		group by:Column#18, Column#19, funcs:avg(distinct Column#17)->Column#15
-  └─Projection	root		cast(Column#11, decimal(20,0) UNSIGNED BINARY)->Column#17, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51->Column#18, planner__core__casetest__predicate_simplification.t43fc4f8a.col_49->Column#19
-    └─Projection	root		planner__core__casetest__predicate_simplification.t43fc4f8a.col_49, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51, Column#11
-=======
 TopN	root		Column, offset:0, count:562300838
 └─HashAgg	root		group by:Column, Column, funcs:avg(distinct Column)->Column
   └─Projection	root		cast(Column, decimal(20,0) UNSIGNED BINARY)->Column, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51->Column, planner__core__casetest__predicate_simplification.t43fc4f8a.col_49->Column
     └─Projection	root		planner__core__casetest__predicate_simplification.t43fc4f8a.col_49, planner__core__casetest__predicate_simplification.t43fc4f8a.col_51, Column
->>>>>>> master
       └─HashJoin	root		CARTESIAN inner join
         ├─TableDual(Build)	root		rows:0
         └─TableReader(Probe)	root	partition:all	data:Selection

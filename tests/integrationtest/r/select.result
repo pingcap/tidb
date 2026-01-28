@@ -259,15 +259,9 @@ drop table if exists t;
 create table t (a int, b int, c int, key idx(a, b, c));
 explain format = 'plan_tree' select count(a) from t;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:count(Column#14)->Column#6
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(select.t.a)->Column#14
-=======
 StreamAgg	root		funcs:count(Column)->Column
 └─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(select.t.a)->Column
->>>>>>> master
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 select count(a) from t;
 count(a)
@@ -276,30 +270,18 @@ insert t values(0,0,0);
 explain format = 'plan_tree' select distinct b from t group by a;
 id	task	access object	operator info
 HashAgg	root		group by:select.t.b, funcs:firstrow(select.t.b)->select.t.b
-<<<<<<< HEAD
-└─StreamAgg	root		group by:select.t.a, funcs:firstrow(Column#10)->select.t.b
-  └─IndexReader	root		index:StreamAgg
-    └─StreamAgg	cop[tikv]		group by:select.t.a, funcs:firstrow(select.t.b)->Column#10
-=======
 └─StreamAgg	root		group by:select.t.a, funcs:firstrow(Column)->select.t.b
   └─IndexReader	root		index:StreamAgg
     └─StreamAgg	cop[tikv]		group by:select.t.a, funcs:firstrow(select.t.b)->Column
->>>>>>> master
       └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select distinct b from t group by a;
 b
 0
 explain format = 'plan_tree' select count(b) from t group by a;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		group by:select.t.a, funcs:count(Column#11)->Column#6
-└─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		group by:select.t.a, funcs:count(select.t.b)->Column#11
-=======
 StreamAgg	root		group by:select.t.a, funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
   └─StreamAgg	cop[tikv]		group by:select.t.a, funcs:count(select.t.b)->Column
->>>>>>> master
     └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(b) from t group by a;
 count(b)
@@ -307,15 +289,9 @@ count(b)
 insert t values(1,1,1),(3,3,6),(3,2,5),(2,1,4),(1,1,3),(1,1,2);
 explain format = 'plan_tree' select count(a) from t where b>0 group by a, b;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		group by:select.t.a, select.t.b, funcs:count(Column#11)->Column#6
-└─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column#11
-=======
 StreamAgg	root		group by:select.t.a, select.t.b, funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
   └─StreamAgg	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column
->>>>>>> master
     └─Selection	cop[tikv]		gt(select.t.b, 0)
       └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b;
@@ -326,17 +302,10 @@ count(a)
 1
 explain format = 'plan_tree' select count(a) from t where b>0 group by a, b order by a;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		Column#6->Column#7
-└─StreamAgg	root		group by:select.t.a, select.t.b, funcs:count(Column#16)->Column#6, funcs:firstrow(select.t.a)->select.t.a
-  └─IndexReader	root		index:StreamAgg
-    └─StreamAgg	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column#16
-=======
 Projection	root		Column
 └─StreamAgg	root		group by:select.t.a, select.t.b, funcs:count(Column)->Column, funcs:firstrow(select.t.a)->select.t.a
   └─IndexReader	root		index:StreamAgg
     └─StreamAgg	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column
->>>>>>> master
       └─Selection	cop[tikv]		gt(select.t.b, 0)
         └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a;
@@ -348,15 +317,9 @@ count(a)
 explain format = 'plan_tree' select count(a) from t where b>0 group by a, b order by a limit 1;
 id	task	access object	operator info
 Limit	root		offset:0, count:1
-<<<<<<< HEAD
-└─StreamAgg	root		group by:select.t.a, select.t.b, funcs:count(Column#17)->Column#6, funcs:firstrow(select.t.a)->select.t.a
-  └─IndexReader	root		index:StreamAgg
-    └─StreamAgg	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column#17
-=======
 └─StreamAgg	root		group by:select.t.a, select.t.b, funcs:count(Column)->Column, funcs:firstrow(select.t.a)->select.t.a
   └─IndexReader	root		index:StreamAgg
     └─StreamAgg	cop[tikv]		group by:select.t.a, select.t.b, funcs:count(select.t.a)->Column
->>>>>>> master
       └─Selection	cop[tikv]		gt(select.t.b, 0)
         └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b, c)	keep order:true, stats:pseudo
 select count(a) from t where b>0 group by a, b order by a limit 1;
@@ -437,34 +400,20 @@ drop table if exists t;
 create table t(a int, b int);
 explain format = 'plan_tree' select a != any (select a from t t2) from t t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		and(or(or(gt(Column#14, 1), ne(select.t.a, Column#13)), if(ne(Column#15, 0), <nil>, 0)), and(ne(Column#16, 0), if(isnull(select.t.a), <nil>, 1)))->Column#17
-└─HashJoin	root		CARTESIAN inner join
-  ├─StreamAgg(Build)	root		funcs:max(Column#25)->Column#13, funcs:count(distinct Column#26)->Column#14, funcs:sum(Column#27)->Column#15, funcs:count(1)->Column#16
-  │ └─Projection	root		select.t.a->Column#25, select.t.a->Column#26, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column#27
-=======
 Projection	root		and(or(or(gt(Column, 1), ne(select.t.a, Column)), if(ne(Column, 0), <nil>, 0)), and(ne(Column, 0), if(isnull(select.t.a), <nil>, 1)))->Column
 └─HashJoin	root		CARTESIAN inner join
   ├─StreamAgg(Build)	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
   │ └─Projection	root		select.t.a->Column, select.t.a->Column, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column
->>>>>>> master
   │   └─TableReader	root		data:TableFullScan
   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select a = all (select a from t t2) from t t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		or(and(and(le(Column#14, 1), eq(select.t.a, Column#13)), if(ne(Column#15, 0), <nil>, 1)), or(eq(Column#16, 0), if(isnull(select.t.a), <nil>, 0)))->Column#17
-└─HashJoin	root		CARTESIAN inner join
-  ├─StreamAgg(Build)	root		funcs:max(Column#25)->Column#13, funcs:count(distinct Column#26)->Column#14, funcs:sum(Column#27)->Column#15, funcs:count(1)->Column#16
-  │ └─Projection	root		select.t.a->Column#25, select.t.a->Column#26, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column#27
-=======
 Projection	root		or(and(and(le(Column, 1), eq(select.t.a, Column)), if(ne(Column, 0), <nil>, 1)), or(eq(Column, 0), if(isnull(select.t.a), <nil>, 0)))->Column
 └─HashJoin	root		CARTESIAN inner join
   ├─StreamAgg(Build)	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
   │ └─Projection	root		select.t.a->Column, select.t.a->Column, cast(isnull(select.t.a), decimal(20,0) BINARY)->Column
->>>>>>> master
   │   └─TableReader	root		data:TableFullScan
   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
@@ -475,19 +424,11 @@ drop table if exists s;
 create table s(a varchar(20), b varchar(20));
 explain format = 'plan_tree' select a in (select a from s where s.b = t.b) from t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		left outer semi join, left side:Projection, equal:[eq(Column#14, Column#15)], other cond:eq(cast(select.t.a, double BINARY), cast(select.s.a, double BINARY))
-├─Projection(Build)	root		select.s.a, cast(select.s.b, double BINARY)->Column#15
-│ └─TableReader	root		data:TableFullScan
-│   └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
-└─Projection(Probe)	root		select.t.a, cast(select.t.b, double BINARY)->Column#14
-=======
 HashJoin	root		left outer semi join, left side:Projection, equal:[eq(Column, Column)], other cond:eq(cast(select.t.a, double BINARY), cast(select.s.a, double BINARY))
 ├─Projection(Build)	root		select.s.a, cast(select.s.b, double BINARY)->Column
 │ └─TableReader	root		data:TableFullScan
 │   └─TableFullScan	cop[tikv]	table:s	keep order:false, stats:pseudo
 └─Projection(Probe)	root		select.t.a, cast(select.t.b, double BINARY)->Column
->>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select a in (select a+b from t t2 where t2.b = t1.b) from t t1;
@@ -516,13 +457,8 @@ create table t(a int, b int);
 explain format = 'plan_tree' select a from t order by rand();
 id	task	access object	operator info
 Projection	root		select.t.a
-<<<<<<< HEAD
-└─Sort	root		Column#5
-  └─Projection	root		select.t.a, rand()->Column#5
-=======
 └─Sort	root		Column
   └─Projection	root		select.t.a, rand()->Column
->>>>>>> master
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select a, b from t order by abs(2);
@@ -532,13 +468,8 @@ TableReader	root		data:TableFullScan
 explain format = 'plan_tree' select a from t order by abs(rand())+1;
 id	task	access object	operator info
 Projection	root		select.t.a
-<<<<<<< HEAD
-└─Sort	root		Column#5
-  └─Projection	root		select.t.a, plus(abs(rand()), 1)->Column#5
-=======
 └─Sort	root		Column
   └─Projection	root		select.t.a, plus(abs(rand()), 1)->Column
->>>>>>> master
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 drop table if exists t1;
@@ -562,11 +493,7 @@ PRIMARY KEY (`id`)
 );
 explain format = 'plan_tree' select row_number() over( partition by i ) - x as rnk from t;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		minus(Column#6, select.t.x)->Column#8
-=======
 Projection	root		minus(Column, select.t.x)->Column
->>>>>>> master
 └─Shuffle	root		execution info: concurrency:5, data sources:[TableReader]
   └─Window	root		row_number()->Column#6 over(partition by select.t.i rows between current row and current row)
     └─Sort	root		select.t.i

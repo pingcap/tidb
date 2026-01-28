@@ -186,11 +186,7 @@ HashJoin	root		CARTESIAN left outer join, left side:TableReader
 explain format = 'plan_tree' select * from t1 where t1.b > 1 or t1.b in (select b from t2);
 id	task	access object	operator info
 Projection	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b
-<<<<<<< HEAD
-└─Selection	root		or(gt(expression__explain.t1.b, 1), Column#9)
-=======
 └─Selection	root		or(gt(expression__explain.t1.b, 1), Column)
->>>>>>> master
   └─HashJoin	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(expression__explain.t1.b, expression__explain.t2.b)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo

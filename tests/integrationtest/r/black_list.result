@@ -57,37 +57,18 @@ insert into mysql.expr_pushdown_blacklist(name) values('enum');
 admin reload expr_pushdown_blacklist;
 explain format='plan_tree' select /*+ HASH_AGG() */ max(a) from t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:max(black_list.t.a)->Column#6
-=======
 HashAgg	root		funcs:max(black_list.t.a)->Column
->>>>>>> master
 └─IndexReader	root		index:IndexFullScan
   └─IndexFullScan	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ STREAM_AGG() */ max(a) from t;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:max(black_list.t.a)->Column#6
-=======
 StreamAgg	root		funcs:max(black_list.t.a)->Column
->>>>>>> master
 └─IndexReader	root		index:IndexFullScan
   └─IndexFullScan	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
 delete from mysql.expr_pushdown_blacklist;
 admin reload expr_pushdown_blacklist;
 explain format='plan_tree' select /*+ HASH_AGG() */ max(a) from t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:max(Column#8)->Column#6
-└─IndexReader	root		index:HashAgg
-  └─HashAgg	cop[tikv]		funcs:max(black_list.t.a)->Column#8
-    └─IndexFullScan	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
-explain format='plan_tree' select /*+ STREAM_AGG() */ max(a) from t;
-id	task	access object	operator info
-StreamAgg	root		funcs:max(Column#8)->Column#6
-└─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:max(black_list.t.a)->Column#8
-=======
 HashAgg	root		funcs:max(Column)->Column
 └─IndexReader	root		index:HashAgg
   └─HashAgg	cop[tikv]		funcs:max(black_list.t.a)->Column
@@ -97,7 +78,6 @@ id	task	access object	operator info
 StreamAgg	root		funcs:max(Column)->Column
 └─IndexReader	root		index:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:max(black_list.t.a)->Column
->>>>>>> master
     └─IndexFullScan	cop[tikv]	table:t, index:idx(b, a)	keep order:false, stats:pseudo
 insert into mysql.expr_pushdown_blacklist(name) values('enum');
 admin reload expr_pushdown_blacklist;

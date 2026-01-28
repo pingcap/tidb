@@ -597,11 +597,7 @@ insert into t values (1), (5), (10), (15), (20), (30), (50);
 explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 1) select * from cte1; -- non-recursive limit, inline cte1;
 id	task	access object	operator info
 Limit	root		offset:0, count:1
-<<<<<<< HEAD
-└─HashAgg	root		group by:Column#24, funcs:firstrow(Column#24)->Column#24
-=======
 └─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
->>>>>>> master
   └─Union	root		
     ├─IndexReader	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
@@ -610,11 +606,7 @@ Limit	root		offset:0, count:1
 explain format='plan_tree' with recursive cte1(c1) as (select c1 from t1 union select c1 from t2 limit 100 offset 100) select * from cte1; -- non-recursive limit, inline cte1;
 id	task	access object	operator info
 Limit	root		offset:100, count:100
-<<<<<<< HEAD
-└─HashAgg	root		group by:Column#24, funcs:firstrow(Column#24)->Column#24
-=======
 └─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
->>>>>>> master
   └─Union	root		
     ├─IndexReader	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
@@ -749,20 +741,6 @@ explain format='plan_tree' with a as (select count(*) from t1), b as (select 2 a
 id	task	access object	operator info
 CTEFullScan	root	CTE:tmp	data:CTE_4
 CTE_4	root		Recursive CTE
-<<<<<<< HEAD
-├─Projection(Seed Part)	root		1->Column#32
-│ └─IndexReader	root		index:IndexFullScan
-│   └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	root		cast(plus(Column#33, 1), bigint BINARY)->Column#36
-  └─HashJoin	root		CARTESIAN inner join, other cond:lt(plus(Column#33, 1), Column#34)
-    ├─CTEFullScan(Build)	root	CTE:b	data:CTE_1
-    └─CTETable(Probe)	root		Scan on CTE_4
-CTE_1	root		Non-Recursive CTE
-└─Projection(Seed Part)	root		2->Column#10
-  └─HashAgg	root		funcs:count(Column#43)->Column#41
-    └─IndexReader	root		index:HashAgg
-      └─HashAgg	cop[tikv]		funcs:count(1)->Column#43
-=======
 ├─Projection(Seed Part)	root		1->Column
 │ └─IndexReader	root		index:IndexFullScan
 │   └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
@@ -775,21 +753,11 @@ CTE_1	root		Non-Recursive CTE
   └─HashAgg	root		funcs:count(Column)->Column
     └─IndexReader	root		index:HashAgg
       └─HashAgg	cop[tikv]		funcs:count(1)->Column
->>>>>>> master
         └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 explain format='plan_tree' with a as (select count(*) from t1), b as (select 2 as bb from a), c as (with recursive tmp as (select bb as res from b union all select res+1 from tmp where res +1 < 10) select * from tmp) select * from c; -- inline a, b, cannot be inline tmp, c;
 id	task	access object	operator info
 CTEFullScan	root	CTE:tmp	data:CTE_4
 CTE_4	root		Recursive CTE
-<<<<<<< HEAD
-├─Projection(Seed Part)	root		2->Column#43
-│ └─HashAgg	root		funcs:count(Column#52)->Column#50
-│   └─IndexReader	root		index:HashAgg
-│     └─HashAgg	cop[tikv]		funcs:count(1)->Column#52
-│       └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
-└─Projection(Recursive Part)	root		cast(plus(Column#44, 1), bigint BINARY)->Column#46
-  └─Selection	root		lt(plus(Column#44, 1), 10)
-=======
 ├─Projection(Seed Part)	root		2->Column
 │ └─HashAgg	root		funcs:count(Column)->Column
 │   └─IndexReader	root		index:HashAgg
@@ -797,7 +765,6 @@ CTE_4	root		Recursive CTE
 │       └─IndexFullScan	cop[tikv]	table:t1, index:c2(c2)	keep order:false, stats:pseudo
 └─Projection(Recursive Part)	root		cast(plus(Column, 1), bigint BINARY)->Column
   └─Selection	root		lt(plus(Column, 1), 10)
->>>>>>> master
     └─CTETable	root		Scan on CTE_4
 create table test(a int);
 explain format='plan_tree' WITH RECURSIVE CTE (x) AS (SELECT 1 UNION ALL SELECT distinct a FROM test), CTE1 AS (SELECT x FROM CTE UNION ALL select CTE.x from CTE join CTE1 on CTE.x=CTE1.x) SELECT * FROM CTE1; -- CTE contain distinct and ref by CET1 recursive part cannot be inlined;
@@ -805,18 +772,6 @@ id	task	access object	operator info
 CTEFullScan	root	CTE:cte1	data:CTE_1
 CTE_1	root		Recursive CTE
 ├─CTEFullScan(Seed Part)	root	CTE:cte	data:CTE_0
-<<<<<<< HEAD
-└─HashJoin(Recursive Part)	root		inner join, equal:[eq(Column#13, Column#14)]
-  ├─Selection(Build)	root		not(isnull(Column#14))
-  │ └─CTETable	root		Scan on CTE_1
-  └─Selection(Probe)	root		not(isnull(Column#13))
-    └─CTEFullScan	root	CTE:cte	data:CTE_0
-CTE_0	root		Non-Recursive CTE
-└─Union(Seed Part)	root		
-  ├─Projection	root		1->Column#9
-  │ └─TableDual	root		rows:1
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#9
-=======
 └─HashJoin(Recursive Part)	root		inner join, equal:[eq(Column, Column)]
   ├─Selection(Build)	root		not(isnull(Column))
   │ └─CTETable	root		Scan on CTE_1
@@ -827,7 +782,6 @@ CTE_0	root		Non-Recursive CTE
   ├─Projection	root		1->Column
   │ └─TableDual	root		rows:1
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column
->>>>>>> master
     └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
       └─TableReader	root		data:HashAgg
         └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
@@ -838,18 +792,6 @@ id	task	access object	operator info
 CTEFullScan	root	CTE:cte1	data:CTE_1
 CTE_1	root		Recursive CTE
 ├─CTEFullScan(Seed Part)	root	CTE:cte	data:CTE_0
-<<<<<<< HEAD
-└─HashJoin(Recursive Part)	root		inner join, equal:[eq(Column#13, Column#14)]
-  ├─Selection(Build)	root		not(isnull(Column#14))
-  │ └─CTETable	root		Scan on CTE_1
-  └─Selection(Probe)	root		not(isnull(Column#13))
-    └─CTEFullScan	root	CTE:cte	data:CTE_0
-CTE_0	root		Non-Recursive CTE
-└─Union(Seed Part)	root		
-  ├─Projection	root		1->Column#9
-  │ └─TableDual	root		rows:1
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column#9
-=======
 └─HashJoin(Recursive Part)	root		inner join, equal:[eq(Column, Column)]
   ├─Selection(Build)	root		not(isnull(Column))
   │ └─CTETable	root		Scan on CTE_1
@@ -860,7 +802,6 @@ CTE_0	root		Non-Recursive CTE
   ├─Projection	root		1->Column
   │ └─TableDual	root		rows:1
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.test.a, bigint BINARY)->Column
->>>>>>> master
     └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.test.a)->planner__core__casetest__physicalplantest__physical_plan.test.a
       └─TableReader	root		data:HashAgg
         └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.test.a, 
@@ -936,13 +877,8 @@ set session tidb_opt_agg_push_down = 0;
 set tidb_cost_model_version=2;
 explain format = 'plan_tree' select /*+ HASH_AGG(), AGG_TO_COP() */ sum(distinct b) from pt;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(distinct Column#10)->Column#5
-└─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.pt.b, decimal(10,0) BINARY)->Column#10
-=======
 HashAgg	root		funcs:sum(distinct Column)->Column
 └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.pt.b, decimal(10,0) BINARY)->Column
->>>>>>> master
   └─PartitionUnion	root		
     ├─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.pt.b, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pt.b)->planner__core__casetest__physicalplantest__physical_plan.pt.b, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pt.b)->planner__core__casetest__physicalplantest__physical_plan.pt.b
     │ └─TableReader	root		data:HashAgg
@@ -957,11 +893,7 @@ sum(distinct b)
 NULL
 explain format = 'plan_tree' select /*+ HASH_AGG(), AGG_TO_COP() */ count(distinct a) from (select * from ta union all select * from tb) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:count(distinct Column#7)->Column#8
-=======
 HashAgg	root		funcs:count(distinct Column)->Column
->>>>>>> master
 └─Union	root		
   ├─TableReader	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
@@ -972,15 +904,6 @@ count(distinct a)
 1
 explain format = 'plan_tree' select distinct DATE_FORMAT(timestamp, '%Y-%m-%d %H') as tt from tc ;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#6, funcs:firstrow(Column#7)->Column#4
-└─PartitionUnion	root		
-  ├─HashAgg	root		group by:Column#8, funcs:firstrow(Column#8)->Column#7, funcs:firstrow(Column#8)->Column#6
-  │ └─IndexReader	root		index:HashAgg
-  │   └─HashAgg	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.tc.timestamp, "%Y-%m-%d %H"), 
-  │     └─IndexFullScan	cop[tikv]	table:tc, partition:p2020072312, index:idx_timestamp(timestamp)	keep order:false, stats:pseudo
-  └─HashAgg	root		group by:Column#11, funcs:firstrow(Column#11)->Column#7, funcs:firstrow(Column#11)->Column#6
-=======
 HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
 └─PartitionUnion	root		
   ├─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
@@ -988,7 +911,6 @@ HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
   │   └─HashAgg	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.tc.timestamp, "%Y-%m-%d %H"), 
   │     └─IndexFullScan	cop[tikv]	table:tc, partition:p2020072312, index:idx_timestamp(timestamp)	keep order:false, stats:pseudo
   └─HashAgg	root		group by:Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
->>>>>>> master
     └─IndexReader	root		index:HashAgg
       └─HashAgg	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.tc.timestamp, "%Y-%m-%d %H"), 
         └─IndexFullScan	cop[tikv]	table:tc, partition:p2020072313, index:idx_timestamp(timestamp)	keep order:false, stats:pseudo
@@ -1021,11 +943,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a+1;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
@@ -1039,11 +957,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by t1.a-1;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, minus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, minus(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
@@ -1057,11 +971,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
@@ -1075,11 +985,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by -t1.a+3;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(unaryminus(planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
@@ -1093,11 +999,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(1, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(1, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
@@ -1111,11 +1013,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
@@ -1129,11 +1027,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1-t1.a+3;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(minus(1, planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, desc, stats:pseudo
@@ -1147,11 +1041,7 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 1+t1.a+3;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(plus(1, planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column#9
-=======
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, plus(plus(1, planner__core__casetest__physicalplantest__physical_plan.t.a), 3)->Column
->>>>>>> master
   └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
     ├─IndexReader(Build)	root		index:IndexFullScan
     │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
@@ -1165,13 +1055,8 @@ a
 explain format = 'plan_tree' select /*+ TIDB_SMJ(t1, t2) */ t1.a from t t1, t t2 where t1.a = t2.b order by 3*t1.a;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a
-<<<<<<< HEAD
-└─Sort	root		Column#9
-  └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, mul(3, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#9
-=======
 └─Sort	root		Column
   └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, mul(3, planner__core__casetest__physicalplantest__physical_plan.t.a)->Column
->>>>>>> master
     └─MergeJoin	root		inner join, left key:planner__core__casetest__physicalplantest__physical_plan.t.a, right key:planner__core__casetest__physicalplantest__physical_plan.t.b
       ├─IndexReader(Build)	root		index:IndexFullScan
       │ └─IndexFullScan	cop[tikv]	table:t2, index:idx_b(b)	keep order:true, stats:pseudo
@@ -1346,13 +1231,8 @@ explain format='plan_tree' SELECT col2 FROM PK_S_MULTI_31 AS T1 WHERE (SELECT co
 id	task	access object	operator info
 Sort	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
 └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2
-<<<<<<< HEAD
-  └─Selection	root		gt(Column#9, 2)
-    └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:count(distinct planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->Column#9
-=======
   └─Selection	root		gt(Column, 2)
     └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2, funcs:count(distinct planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col2)->Column
->>>>>>> master
       └─HashJoin	root		CARTESIAN left outer join, left side:IndexReader, other cond:gt(planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1, planner__core__casetest__physicalplantest__physical_plan.pk_s_multi_31.col1)
         ├─IndexReader(Build)	root		index:IndexFullScan
         │ └─IndexFullScan	cop[tikv]	table:T2, index:PRIMARY(COL1, COL2)	keep order:false, stats:pseudo
@@ -1440,32 +1320,6 @@ NULL	1	NULL
 6.0000	1	6
 explain format='plan_tree' select date_format(d,'%Y') as df, sum(a), count(b), count(distinct c) from t group by date_format(d,'%Y');
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#10, Column#7, cast(Column#14, bigint BINARY)->Column#8, Column#9
-└─HashAgg	root		group by:Column#24, funcs:sum(Column#20)->Column#7, funcs:sum(Column#21)->Column#14, funcs:count(Column#22)->Column#9, funcs:firstrow(Column#23)->planner__core__casetest__physicalplantest__physical_plan.t.d
-  └─Projection	root		Column#12->Column#20, cast(Column#13, decimal(20,0) BINARY)->Column#21, planner__core__casetest__physicalplantest__physical_plan.t.c->Column#22, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#23, date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column#24
-    └─HashAgg	root		group by:Column#15, planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:sum(Column#16)->Column#12, funcs:count(Column#17)->Column#13, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(Column#19)->planner__core__casetest__physicalplantest__physical_plan.t.d
-      └─TableReader	root		data:HashAgg
-        └─HashAgg	cop[tikv]		group by:date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, "%Y"), planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#16, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column#17, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->Column#19
-          └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format='plan_tree' select d, a, count(*), count(b), count(distinct c) from t group by d, a;
-id	task	access object	operator info
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.d, planner__core__casetest__physicalplantest__physical_plan.t.a, cast(Column#11, bigint BINARY)->Column#7, cast(Column#13, bigint BINARY)->Column#8, Column#9
-└─HashAgg	root		group by:Column#22, Column#23, funcs:sum(Column#19)->Column#11, funcs:sum(Column#20)->Column#13, funcs:count(Column#21)->Column#9, funcs:firstrow(Column#22)->planner__core__casetest__physicalplantest__physical_plan.t.a, funcs:firstrow(Column#23)->planner__core__casetest__physicalplantest__physical_plan.t.d
-  └─Projection	root		cast(Column#10, decimal(20,0) BINARY)->Column#19, cast(Column#12, decimal(20,0) BINARY)->Column#20, planner__core__casetest__physicalplantest__physical_plan.t.c->Column#21, planner__core__casetest__physicalplantest__physical_plan.t.a->Column#22, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#23
-    └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:count(Column#14)->Column#10, funcs:count(Column#15)->Column#12, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.a)->planner__core__casetest__physicalplantest__physical_plan.t.a, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->planner__core__casetest__physicalplantest__physical_plan.t.d
-      └─TableReader	root		data:HashAgg
-        └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:count(1)->Column#14, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column#15
-          └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format='plan_tree' select d, sum(a), count(b), avg(distinct c) from t group by d;
-id	task	access object	operator info
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.d, Column#7, cast(Column#12, bigint BINARY)->Column#8, Column#9
-└─HashAgg	root		group by:Column#20, funcs:sum(Column#17)->Column#7, funcs:sum(Column#18)->Column#12, funcs:avg(Column#19)->Column#9, funcs:firstrow(Column#20)->planner__core__casetest__physicalplantest__physical_plan.t.d
-  └─Projection	root		Column#10->Column#17, cast(Column#11, decimal(20,0) BINARY)->Column#18, cast(planner__core__casetest__physicalplantest__physical_plan.t.c, decimal(10,0) BINARY)->Column#19, planner__core__casetest__physicalplantest__physical_plan.t.d->Column#20
-    └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:sum(Column#13)->Column#10, funcs:count(Column#14)->Column#11, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->planner__core__casetest__physicalplantest__physical_plan.t.d
-      └─TableReader	root		data:HashAgg
-        └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#13, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column#14
-=======
 Projection	root		date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column, Column, cast(Column, bigint BINARY)->Column, Column
 └─HashAgg	root		group by:Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:count(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t.d
   └─Projection	root		Column, cast(Column, decimal(20,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.t.c->Column, planner__core__casetest__physicalplantest__physical_plan.t.d->Column, date_format(planner__core__casetest__physicalplantest__physical_plan.t.d, %Y)->Column
@@ -1490,7 +1344,6 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.d, C
     └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:sum(Column)->Column, funcs:count(Column)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.c)->planner__core__casetest__physicalplantest__physical_plan.t.c, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.d)->planner__core__casetest__physicalplantest__physical_plan.t.d
       └─TableReader	root		data:HashAgg
         └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column
->>>>>>> master
           └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 set tidb_cost_model_version=DEFAULT;
 set @@tidb_opt_skew_distinct_agg=DEFAULT;
@@ -1972,13 +1825,8 @@ Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized f
 Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized for MPP joins, please check the hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1) */ sum(t1.a in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─MergeJoin	root		left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -1996,13 +1844,8 @@ Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized f
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ sum(t1.a in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -2017,13 +1860,8 @@ Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for lef
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_build(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -2038,13 +1876,8 @@ Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for lef
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─MergeJoin	root		left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -2062,13 +1895,8 @@ Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized f
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_build(t1) */ sum(t1.a not in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─MergeJoin	root		anti left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -2086,13 +1914,8 @@ Warning	1815	Some HASH_JOIN_BUILD and HASH_JOIN_PROBE hints cannot be utilized f
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t1) */ sum(t1.a not in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─HashJoin	root		anti left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -2107,13 +1930,8 @@ Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for ant
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_build(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─HashJoin	root		anti left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.a)]
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -2128,13 +1946,8 @@ Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for ant
 Warning	1815	HASH_JOIN_BUILD and HASH_JOIN_PROBE hints are not supported for anti left outer semi join because the build side is fixed. Please remove these hints
 explain format = 'plan_tree' select /*+ hash_join_probe(t2@sel_2) */ sum(t1.a not in (select a from t2)) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:sum(Column#12)->Column#11
-└─Projection	root		cast(Column#10, decimal(3,0) BINARY)->Column#12
-=======
 HashAgg	root		funcs:sum(Column)->Column
 └─Projection	root		cast(Column, decimal(3,0) BINARY)->Column
->>>>>>> master
   └─MergeJoin	root		anti left outer semi join, left side:TableReader, left key:planner__core__casetest__physicalplantest__physical_plan.t1.a, right key:planner__core__casetest__physicalplantest__physical_plan.t2.a
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:true, stats:pseudo
@@ -3275,11 +3088,7 @@ Level	Code	Message
 Warning	1815	NO_DECORRELATE() is inapplicable because it's not in an IN subquery, an EXISTS subquery, an ANY/ALL/SOME subquery or a scalar subquery.
 explain format = 'plan_tree' select a+1, b-1 from (select /*+ no_decorrelate() */ * from t1) n;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		plus(planner__core__casetest__physicalplantest__physical_plan.t1.a, 1)->Column#5, minus(planner__core__casetest__physicalplantest__physical_plan.t1.b, 1)->Column#6
-=======
 Projection	root		plus(planner__core__casetest__physicalplantest__physical_plan.t1.a, 1)->Column, minus(planner__core__casetest__physicalplantest__physical_plan.t1.b, 1)->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 select a+1, b-1 from (select /*+ no_decorrelate() */ * from t1) n;
@@ -3344,11 +3153,7 @@ Level	Code	Message
 explain format = 'plan_tree' select t1.a from t1 where t1.a = any (select t2.b from t2 where t2.a = t1.b);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a
-<<<<<<< HEAD
-└─Selection	root		Column#8
-=======
 └─Selection	root		Column
->>>>>>> master
   └─HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t2.a)], other cond:eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.b)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -3362,11 +3167,7 @@ Level	Code	Message
 explain format = 'plan_tree' select t1.a from t1 where t1.a = any (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a
-<<<<<<< HEAD
-└─Selection	root		Column#8
-=======
 └─Selection	root		Column
->>>>>>> master
   └─Apply	root		CARTESIAN left outer semi join, left side:TableReader, other cond:eq(planner__core__casetest__physicalplantest__physical_plan.t1.a, planner__core__casetest__physicalplantest__physical_plan.t2.b)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -3379,21 +3180,12 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, t1.a != any (select t2.b from t2 where t2.a = t1.b) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, and(or(or(gt(Column#12, 1), ne(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#11)), if(ne(Column#13, 0), <nil>, 0)), and(ne(Column#14, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 1)))->Column#15
-└─Apply	root		CARTESIAN inner join
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(Column#23)->Column#11, funcs:count(distinct Column#24)->Column#12, funcs:sum(Column#25)->Column#13, funcs:count(1)->Column#14
-    └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#23, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#24, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#25
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, and(or(or(gt(Column, 1), ne(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column)), if(ne(Column, 0), <nil>, 0)), and(ne(Column, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 1)))->Column
 └─Apply	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
     └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column
->>>>>>> master
       └─TableReader	root		data:TableRangeScan
         └─TableRangeScan	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a != any (select t2.b from t2 where t2.a = t1.b) from t1;
@@ -3404,21 +3196,12 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, t1.a != any (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, and(or(or(gt(Column#12, 1), ne(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#11)), if(ne(Column#13, 0), <nil>, 0)), and(ne(Column#14, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 1)))->Column#15
-└─Apply	root		CARTESIAN inner join
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(Column#23)->Column#11, funcs:count(distinct Column#24)->Column#12, funcs:sum(Column#25)->Column#13, funcs:count(1)->Column#14
-    └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#23, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#24, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#25
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, and(or(or(gt(Column, 1), ne(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column)), if(ne(Column, 0), <nil>, 0)), and(ne(Column, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 1)))->Column
 └─Apply	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:count(distinct Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
     └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column, planner__core__casetest__physicalplantest__physical_plan.t2.b->Column, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column
->>>>>>> master
       └─TableReader	root		data:TableRangeScan
         └─TableRangeScan	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a != any (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1;
@@ -3429,21 +3212,12 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, t1.a > all (select t2.b from t2 where t2.a = t1.b) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, or(and(gt(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#11), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 0)))->Column#14
-└─Apply	root		CARTESIAN inner join
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(Column#22)->Column#11, funcs:sum(Column#23)->Column#12, funcs:count(1)->Column#13
-    └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#22, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#23
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, or(and(gt(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column), if(ne(Column, 0), <nil>, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 0)))->Column
 └─Apply	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
     └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column
->>>>>>> master
       └─TableReader	root		data:TableRangeScan
         └─TableRangeScan	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a > all (select t2.b from t2 where t2.a = t1.b) from t1;
@@ -3454,21 +3228,12 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, t1.a > all (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, or(and(gt(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#11), if(ne(Column#12, 0), <nil>, 1)), or(eq(Column#13, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 0)))->Column#14
-└─Apply	root		CARTESIAN inner join
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:max(Column#22)->Column#11, funcs:sum(Column#23)->Column#12, funcs:count(1)->Column#13
-    └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column#22, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column#23
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, or(and(gt(planner__core__casetest__physicalplantest__physical_plan.t1.a, Column), if(ne(Column, 0), <nil>, 1)), or(eq(Column, 0), if(isnull(planner__core__casetest__physicalplantest__physical_plan.t1.a), <nil>, 0)))->Column
 └─Apply	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	root		funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column
     └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.t2.b->Column, cast(isnull(planner__core__casetest__physicalplantest__physical_plan.t2.b), decimal(20,0) BINARY)->Column
->>>>>>> master
       └─TableReader	root		data:TableRangeScan
         └─TableRangeScan	cop[tikv]	table:t2	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.t2.a, planner__core__casetest__physicalplantest__physical_plan.t1.b)], keep order:false, stats:pseudo
 select t1.a, t1.a > all (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b) from t1;
@@ -3547,11 +3312,7 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select exists (select /*+ no_decorrelate() */ t3.b from t3 where t3.a = t1.b limit 2) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		Column#13
-=======
 Projection	root		Column
->>>>>>> master
 └─Apply	root		CARTESIAN left outer semi join, left side:TableReader
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -3568,15 +3329,6 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#12->Column#14
-└─Apply	root		CARTESIAN left outer join, left side:HashAgg
-  ├─HashAgg(Build)	root		funcs:sum(Column#17)->Column#8, funcs:firstrow(Column#18)->planner__core__casetest__physicalplantest__physical_plan.t1.a
-  │ └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.t1.a, decimal(10,0) BINARY)->Column#17, planner__core__casetest__physicalplantest__physical_plan.t1.a->Column#18
-  │   └─TableReader	root		data:TableFullScan
-  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─Projection(Probe)	root		Column#8->Column#12
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	root		funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t1.a
@@ -3584,7 +3336,6 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, 
   │   └─TableReader	root		data:TableFullScan
   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─Projection(Probe)	root		Column
->>>>>>> master
     └─Point_Get	root	table:t2	handle:10
 select t1.a, (select sum(t1.a) from t2 where t2.a = 10) from t1;
 a	(select sum(t1.a) from t2 where t2.a = 10)
@@ -3593,16 +3344,6 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select t1.a, (select /*+ no_decorrelate() */ sum(t1.a) from t2 where t2.a = 10) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column#12->Column#14
-└─Apply	root		CARTESIAN left outer join, left side:HashAgg
-  ├─HashAgg(Build)	root		funcs:sum(Column#17)->Column#8, funcs:firstrow(Column#18)->planner__core__casetest__physicalplantest__physical_plan.t1.a
-  │ └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.t1.a, decimal(10,0) BINARY)->Column#17, planner__core__casetest__physicalplantest__physical_plan.t1.a->Column#18
-  │   └─TableReader	root		data:TableFullScan
-  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  └─MaxOneRow(Probe)	root		
-    └─Projection	root		Column#8->Column#12
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, Column
 └─Apply	root		CARTESIAN left outer join, left side:HashAgg
   ├─HashAgg(Build)	root		funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.t1.a
@@ -3611,7 +3352,6 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t1.a, 
   │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
     └─Projection	root		Column
->>>>>>> master
       └─Point_Get	root	table:t2	handle:10
 select t1.a, (select /*+ no_decorrelate() */ sum(t1.a) from t2 where t2.a = 10) from t1;
 a	(select /*+ no_decorrelate()  sum(t1.a) from t2 where t2.a = 10)
@@ -3620,19 +3360,11 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select (select count(t3.a) from t3 where t3.b = t1.b) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		ifnull(Column#13, 0)->Column#13
-└─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t3.b)]
-  ├─HashAgg(Build)	root		group by:planner__core__casetest__physicalplantest__physical_plan.t3.b, funcs:count(Column#14)->Column#13, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t3.b)->planner__core__casetest__physicalplantest__physical_plan.t3.b
-  │ └─TableReader	root		data:HashAgg
-  │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.t3.b, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t3.a)->Column#14
-=======
 Projection	root		ifnull(Column, 0)->Column
 └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t1.b, planner__core__casetest__physicalplantest__physical_plan.t3.b)]
   ├─HashAgg(Build)	root		group by:planner__core__casetest__physicalplantest__physical_plan.t3.b, funcs:count(Column)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t3.b)->planner__core__casetest__physicalplantest__physical_plan.t3.b
   │ └─TableReader	root		data:HashAgg
   │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.t3.b, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t3.a)->Column
->>>>>>> master
   │     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.t3.b))
   │       └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
@@ -3645,24 +3377,14 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select (select /*+ no_decorrelate() */ count(t3.a) from t3 where t3.b = t1.b) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		Column#13
-=======
 Projection	root		Column
->>>>>>> master
 └─Apply	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-<<<<<<< HEAD
-    └─StreamAgg	root		funcs:count(Column#15)->Column#13
-      └─TableReader	root		data:StreamAgg
-        └─StreamAgg	cop[tikv]		funcs:count(planner__core__casetest__physicalplantest__physical_plan.t3.a)->Column#15
-=======
     └─StreamAgg	root		funcs:count(Column)->Column
       └─TableReader	root		data:StreamAgg
         └─StreamAgg	cop[tikv]		funcs:count(planner__core__casetest__physicalplantest__physical_plan.t3.a)->Column
->>>>>>> master
           └─Selection	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t3.b, planner__core__casetest__physicalplantest__physical_plan.t1.b)
             └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 select (select /*+ no_decorrelate() */ count(t3.a) from t3 where t3.b = t1.b) from t1;
@@ -3678,13 +3400,8 @@ IndexHashJoin	root		left outer join, inner:StreamAgg, left side:IndexLookUp, out
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-<<<<<<< HEAD
-└─StreamAgg(Probe)	root		group by:Column#40, funcs:sum(Column#39)->Column#16, funcs:firstrow(Column#40)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#39, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#40
-=======
 └─StreamAgg(Probe)	root		group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column
->>>>>>> master
     └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.tb.code
       └─IndexLookUp	root		
         ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
@@ -3696,24 +3413,15 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#16
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column
->>>>>>> master
 └─Apply	root		CARTESIAN left outer join, left side:IndexLookUp
   ├─IndexLookUp(Build)	root		
   │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
   │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
   │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-<<<<<<< HEAD
-    └─StreamAgg	root		funcs:sum(Column#24)->Column#16
-      └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#24
-=======
     └─StreamAgg	root		funcs:sum(Column)->Column
       └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column
->>>>>>> master
         └─IndexLookUp	root		
           ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
           └─TableRowIDScan(Probe)	cop[tikv]	table:tb	keep order:false, stats:pseudo
@@ -3728,13 +3436,8 @@ HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-<<<<<<< HEAD
-└─HashAgg(Probe)	root		group by:Column#37, funcs:sum(Column#36)->Column#22, funcs:firstrow(Column#37)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#36, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#37
-=======
 └─HashAgg(Probe)	root		group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column
->>>>>>> master
     └─HashJoin	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		like(cast(planner__core__casetest__physicalplantest__physical_plan.tc.code, var_string(20)), "999%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.name))
@@ -3748,24 +3451,15 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#22
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column
->>>>>>> master
 └─Apply	root		CARTESIAN left outer join, left side:IndexLookUp
   ├─IndexLookUp(Build)	root		
   │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
   │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
   │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-<<<<<<< HEAD
-    └─StreamAgg	root		funcs:sum(Column#32)->Column#22
-      └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#32
-=======
     └─StreamAgg	root		funcs:sum(Column)->Column
       └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column
->>>>>>> master
         └─IndexHashJoin	root		semi join, inner:IndexLookUp, left side:IndexLookUp, outer key:planner__core__casetest__physicalplantest__physical_plan.tb.name, inner key:planner__core__casetest__physicalplantest__physical_plan.tc.name, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.tb.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)
           ├─IndexLookUp(Build)	root		
           │ ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
@@ -3787,13 +3481,8 @@ HashJoin	root		left outer join, left side:IndexLookUp, equal:[eq(planner__core__
 │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
 │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
 │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-<<<<<<< HEAD
-└─HashAgg(Probe)	root		group by:Column#32, funcs:sum(Column#31)->Column#22, funcs:firstrow(Column#32)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-  └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#31, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column#32
-=======
 └─HashAgg(Probe)	root		group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->planner__core__casetest__physicalplantest__physical_plan.tb.id
   └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column, planner__core__casetest__physicalplantest__physical_plan.tb.id->Column
->>>>>>> master
     └─Apply	root		CARTESIAN semi join, left side:TableReader
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
@@ -3810,24 +3499,15 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME,(SELECT /*+ no_decorrelate() */ sum(tb.CODE) FROM tb WHERE ta.id = tb.id and exists (select /*+ no_decorrelate() */ 1 from tc where tb.name=tc.name and tc.`code` like '999%')) tb_sum_code FROM ta WHERE ta.NAME LIKE 'chad999%';
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column#22
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.name, Column
->>>>>>> master
 └─Apply	root		CARTESIAN left outer join, left side:IndexLookUp
   ├─IndexLookUp(Build)	root		
   │ ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.ta.name, "chad999%", 92)
   │ │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad99:"), keep order:false, stats:pseudo
   │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
   └─MaxOneRow(Probe)	root		
-<<<<<<< HEAD
-    └─StreamAgg	root		funcs:sum(Column#27)->Column#22
-      └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column#27
-=======
     └─StreamAgg	root		funcs:sum(Column)->Column
       └─Projection	root		cast(planner__core__casetest__physicalplantest__physical_plan.tb.code, decimal(10,0) BINARY)->Column
->>>>>>> master
         └─Apply	root		CARTESIAN semi join, left side:IndexLookUp
           ├─IndexLookUp(Build)	root		
           │ ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
@@ -3844,23 +3524,14 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.id, 'split' as flag FROM ta WHERE ta.NAME ='chad999' and (select max(tb.code) from tb where ta.id=tb.id ) > 900;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.id, split->Column#12
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.id, split->Column
->>>>>>> master
 └─IndexJoin	root		inner join, inner:Selection, outer key:planner__core__casetest__physicalplantest__physical_plan.ta.id, inner key:planner__core__casetest__physicalplantest__physical_plan.tb.id, equal cond:eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)
   ├─IndexLookUp(Build)	root		
   │ ├─IndexRangeScan(Build)	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad999"], keep order:false, stats:pseudo
   │ └─Selection(Probe)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.ta.id))
   │   └─TableRowIDScan	cop[tikv]	table:ta	keep order:false, stats:pseudo
-<<<<<<< HEAD
-  └─Selection(Probe)	root		gt(Column#11, 900)
-    └─StreamAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column#11, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.id)->planner__core__casetest__physicalplantest__physical_plan.tb.id
-=======
   └─Selection(Probe)	root		gt(Column, 900)
     └─StreamAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.tb.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tb.id)->planner__core__casetest__physicalplantest__physical_plan.tb.id
->>>>>>> master
       └─Projection	root		planner__core__casetest__physicalplantest__physical_plan.tb.id, planner__core__casetest__physicalplantest__physical_plan.tb.code
         └─IndexLookUp	root		
           ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tb.id))
@@ -3872,24 +3543,14 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' SELECT ta.id, 'split' as flag FROM ta WHERE ta.NAME ='chad999' and (select /*+ no_decorrelate() */ max(tb.code) from tb where ta.id=tb.id ) > 900;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.id, split->Column#12
-=======
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.id, split->Column
->>>>>>> master
 └─Apply	root		CARTESIAN inner join
   ├─IndexLookUp(Build)	root		
   │ ├─IndexRangeScan(Build)	cop[tikv]	table:ta, index:idx_ta_name(name)	range:["chad999","chad999"], keep order:false, stats:pseudo
   │ └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-<<<<<<< HEAD
-  └─Selection(Probe)	root		gt(Column#11, 900)
-    └─MaxOneRow	root		
-      └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column#11
-=======
   └─Selection(Probe)	root		gt(Column, 900)
     └─MaxOneRow	root		
       └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tb.code)->Column
->>>>>>> master
         └─TopN	root		planner__core__casetest__physicalplantest__physical_plan.tb.code:desc, offset:0, count:1
           └─IndexLookUp	root		
             ├─IndexRangeScan(Build)	cop[tikv]	table:tb, index:idx_tb_id(id)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.tb.id)], keep order:false, stats:pseudo
@@ -3903,21 +3564,6 @@ Level	Code	Message
 explain format = 'plan_tree' SELECT ta.NAME FROM ta WHERE EXISTS (select 1 from tb where ta.code = tb.code and tb.NAME LIKE 'chad9%') AND (select max(id) from tc where ta.name=tc.name and tc.name like 'chad99%') > 100 and (select max(id) from td where ta.id=td.id and td.name like 'chad999%') > 100;
 id	task	access object	operator info
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.id, planner__core__casetest__physicalplantest__physical_plan.td.id)]
-<<<<<<< HEAD
-├─Selection(Build)	root		gt(Column#23, 100)
-│ └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.td.id, funcs:max(Column#60)->Column#23, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.td.id)->planner__core__casetest__physicalplantest__physical_plan.td.id
-│   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.td.id, funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column#60
-│       └─Selection	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.td.name, "chad999%", 92), not(isnull(planner__core__casetest__physicalplantest__physical_plan.td.id))
-│         └─TableFullScan	cop[tikv]	table:td	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.name, planner__core__casetest__physicalplantest__physical_plan.tc.name)]
-  ├─Selection(Build)	root		gt(Column#17, 100)
-  │ └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(Column#44)->Column#17, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.tc.name)->planner__core__casetest__physicalplantest__physical_plan.tc.name
-  │   └─IndexLookUp	root		
-  │     ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
-  │     │ └─IndexRangeScan	cop[tikv]	table:tc, index:idx_tc_name(name)	range:["chad99","chad9:"), keep order:false, stats:pseudo
-  │     └─HashAgg(Probe)	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#44
-=======
 ├─Selection(Build)	root		gt(Column, 100)
 │ └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.td.id, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.td.id)->planner__core__casetest__physicalplantest__physical_plan.td.id
 │   └─TableReader	root		data:HashAgg
@@ -3931,7 +3577,6 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__
   │     ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
   │     │ └─IndexRangeScan	cop[tikv]	table:tc, index:idx_tc_name(name)	range:["chad99","chad9:"), keep order:false, stats:pseudo
   │     └─HashAgg(Probe)	cop[tikv]		group by:planner__core__casetest__physicalplantest__physical_plan.tc.name, funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column
->>>>>>> master
   │       └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
   └─HashJoin(Probe)	root		semi join, left side:TableReader, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)]
     ├─TableReader(Build)	root		data:Selection
@@ -3958,15 +3603,9 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
   │ │   ├─Selection(Build)	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.ta.code))
   │ │   │ └─IndexRangeScan	cop[tikv]	table:ta, index:idx_ta_code(code)	range: decided by [eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)], keep order:false, stats:pseudo
   │ │   └─TableRowIDScan(Probe)	cop[tikv]	table:ta	keep order:false, stats:pseudo
-<<<<<<< HEAD
-  │ └─Selection(Probe)	root		gt(Column#17, 100)
-  │   └─MaxOneRow	root		
-  │     └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#17
-=======
   │ └─Selection(Probe)	root		gt(Column, 100)
   │   └─MaxOneRow	root		
   │     └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column
->>>>>>> master
   │       └─TopN	root		planner__core__casetest__physicalplantest__physical_plan.tc.id:desc, offset:0, count:1
   │         └─IndexLookUp	root		
   │           ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.name, planner__core__casetest__physicalplantest__physical_plan.tc.name), like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
@@ -3974,15 +3613,9 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
   │           └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.tc.id:desc, offset:0, count:1
   │             └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.id))
   │               └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
-<<<<<<< HEAD
-  └─Selection(Probe)	root		gt(Column#23, 100)
-    └─MaxOneRow	root		
-      └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column#23
-=======
   └─Selection(Probe)	root		gt(Column, 100)
     └─MaxOneRow	root		
       └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column
->>>>>>> master
         └─TopN	root		planner__core__casetest__physicalplantest__physical_plan.td.id:desc, offset:0, count:1
           └─IndexLookUp	root		
             ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.td.name, "chad999%", 92)
@@ -4009,15 +3642,9 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
   │ │     └─Limit(Probe)	cop[tikv]		offset:0, count:1
   │ │       └─Selection	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.code, planner__core__casetest__physicalplantest__physical_plan.tb.code)
   │ │         └─TableRowIDScan	cop[tikv]	table:tb	keep order:false, stats:pseudo
-<<<<<<< HEAD
-  │ └─Selection(Probe)	root		gt(Column#17, 100)
-  │   └─MaxOneRow	root		
-  │     └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column#17
-=======
   │ └─Selection(Probe)	root		gt(Column, 100)
   │   └─MaxOneRow	root		
   │     └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tc.id)->Column
->>>>>>> master
   │       └─TopN	root		planner__core__casetest__physicalplantest__physical_plan.tc.id:desc, offset:0, count:1
   │         └─IndexLookUp	root		
   │           ├─Selection(Build)	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.ta.name, planner__core__casetest__physicalplantest__physical_plan.tc.name), like(planner__core__casetest__physicalplantest__physical_plan.tc.name, "chad99%", 92)
@@ -4025,15 +3652,9 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.ta.nam
   │           └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.tc.id:desc, offset:0, count:1
   │             └─Selection	cop[tikv]		not(isnull(planner__core__casetest__physicalplantest__physical_plan.tc.id))
   │               └─TableRowIDScan	cop[tikv]	table:tc	keep order:false, stats:pseudo
-<<<<<<< HEAD
-  └─Selection(Probe)	root		gt(Column#23, 100)
-    └─MaxOneRow	root		
-      └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column#23
-=======
   └─Selection(Probe)	root		gt(Column, 100)
     └─MaxOneRow	root		
       └─StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.td.id)->Column
->>>>>>> master
         └─TopN	root		planner__core__casetest__physicalplantest__physical_plan.td.id:desc, offset:0, count:1
           └─IndexLookUp	root		
             ├─Selection(Build)	cop[tikv]		like(planner__core__casetest__physicalplantest__physical_plan.td.name, "chad999%", 92)
@@ -4052,23 +3673,6 @@ create table t (a int(11) not null, b varchar(10) not null, c date not null, d c
 create table t_pick_row_id (a char(20) not null);
 explain format = 'plan_tree' select count(*) from t;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:count(Column#13)->Column#11
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#13
-    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'plan_tree' select count(1), count(3.1415), count(0), count(null) from t -- shouldn't be rewritten;
-id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#19)->Column#11, funcs:count(Column#20)->Column#12, funcs:count(Column#21)->Column#13, funcs:count(Column#22)->Column#14
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#19, funcs:count(3.1415)->Column#20, funcs:count(0)->Column#21, funcs:count(NULL)->Column#22
-    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'plan_tree' select count(*) from t where a=1;
-id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#13)->Column#11
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#13
-=======
 StreamAgg	root		funcs:count(Column)->Column
 └─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(1)->Column
@@ -4084,23 +3688,10 @@ id	task	access object	operator info
 StreamAgg	root		funcs:count(Column)->Column
 └─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(1)->Column
->>>>>>> master
     └─Selection	cop[tikv]		eq(planner__core__casetest__physicalplantest__physical_plan.t.a, 1)
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(*) from t_pick_row_id;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:count(Column#6)->Column#4
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#6
-    └─TableFullScan	cop[tikv]	table:t_pick_row_id	keep order:false, stats:pseudo
-explain format = 'plan_tree' select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- shouldn't be rewritten;
-id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t.a, Column#11)]
-├─StreamAgg(Build)	root		funcs:count(Column#23)->Column#11
-│ └─TableReader	root		data:StreamAgg
-│   └─StreamAgg	cop[tikv]		funcs:count(1)->Column#23
-=======
 StreamAgg	root		funcs:count(Column)->Column
 └─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(1)->Column
@@ -4111,37 +3702,23 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__
 ├─StreamAgg(Build)	root		funcs:count(Column)->Column
 │ └─TableReader	root		data:StreamAgg
 │   └─StreamAgg	cop[tikv]		funcs:count(1)->Column
->>>>>>> master
 │     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten;
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c, planner__core__casetest__physicalplantest__physical_plan.t.d, planner__core__casetest__physicalplantest__physical_plan.t.e, planner__core__casetest__physicalplantest__physical_plan.t.f, planner__core__casetest__physicalplantest__physical_plan.t.g, planner__core__casetest__physicalplantest__physical_plan.t.h
-<<<<<<< HEAD
-└─Apply	root		CARTESIAN inner join, other cond:gt(planner__core__casetest__physicalplantest__physical_plan.t.a, Column#21)
-  ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:outTable	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		funcs:count(Column#23)->Column#21
-    └─TableReader	root		data:StreamAgg
-      └─StreamAgg	cop[tikv]		funcs:count(1)->Column#23
-=======
 └─Apply	root		CARTESIAN inner join, other cond:gt(planner__core__casetest__physicalplantest__physical_plan.t.a, Column)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:outTable	keep order:false, stats:pseudo
   └─StreamAgg(Probe)	root		funcs:count(Column)->Column
     └─TableReader	root		data:StreamAgg
       └─StreamAgg	cop[tikv]		funcs:count(1)->Column
->>>>>>> master
         └─Selection	cop[tikv]		eq(cast(planner__core__casetest__physicalplantest__physical_plan.t.a, double BINARY), cast(planner__core__casetest__physicalplantest__physical_plan.t.b, double BINARY))
           └─TableFullScan	cop[tikv]	table:inn	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:count(1)->Column#21
-=======
 HashAgg	root		funcs:count(1)->Column
->>>>>>> master
 └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.e)]
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
@@ -4149,25 +3726,11 @@ HashAgg	root		funcs:count(1)->Column
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(distinct 1) from t -- shouldn't be rewritten;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:count(distinct 1)->Column#11
-=======
 StreamAgg	root		funcs:count(distinct 1)->Column
->>>>>>> master
 └─TableReader	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select count(1), count(a), count(b) from t -- shouldn't be rewritten;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:count(Column#17)->Column#11, funcs:count(Column#18)->Column#12, funcs:count(Column#19)->Column#13
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#17, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#18, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column#19
-    └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-explain format = 'plan_tree' select a, count(*) from t group by a -- shouldn't be rewritten;
-id	task	access object	operator info
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, Column#11
-└─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.a, funcs:count(1)->Column#11, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.a)->planner__core__casetest__physicalplantest__physical_plan.t.a
-=======
 StreamAgg	root		funcs:count(Column)->Column, funcs:count(Column)->Column, funcs:count(Column)->Column
 └─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(1)->Column, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column, funcs:count(planner__core__casetest__physicalplantest__physical_plan.t.b)->Column
@@ -4176,20 +3739,13 @@ explain format = 'plan_tree' select a, count(*) from t group by a -- shouldn't b
 id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, Column
 └─HashAgg	root		group by:planner__core__casetest__physicalplantest__physical_plan.t.a, funcs:count(1)->Column, funcs:firstrow(planner__core__casetest__physicalplantest__physical_plan.t.a)->planner__core__casetest__physicalplantest__physical_plan.t.a
->>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format = 'plan_tree' select sum(a) from t -- sum shouldn't be rewritten;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:sum(Column#13)->Column#11
-└─TableReader	root		data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column#13
-=======
 StreamAgg	root		funcs:sum(Column)->Column
 └─TableReader	root		data:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:sum(planner__core__casetest__physicalplantest__physical_plan.t.a)->Column
->>>>>>> master
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 set tidb_cost_model_version=DEFAULT;
 drop table if exists t, tcommon, thash;
@@ -4490,11 +4046,7 @@ UNIQUE KEY `idx_262` (`col_304`)
 insert into tbl_43 values("BCmuENPHzSOIMJLPB"),("LDOdXZYpOR"),("R"),("TloTqcHhdgpwvMsSoJ"),("UajN"),("mAwLZbiyq"),("swLIoWa");
 explain format = 'plan_tree' select min(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:min(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#3
-=======
 StreamAgg	root		funcs:min(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column
->>>>>>> master
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:1)
   ├─Limit(Build)	cop[tikv]		offset:0, count:1
   │ └─TableRangeScan	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, stats:pseudo
@@ -4512,11 +4064,7 @@ min(col_304)
 BCmuENPHzSOIMJLPB                                                                                                                                                                                              
 explain format = 'plan_tree' select max(col_304) from (select /*+ use_index_merge( tbl_43 ) */ * from tbl_43 where not( tbl_43.col_304 between 'YEpfYfPVvhMlHGHSMKm' and 'PE' ) or tbl_43.col_304 in ( 'LUBGzGMA' ) and tbl_43.col_304 between 'HpsjfuSReCwBoh' and 'fta' or not( tbl_43.col_304 between 'MFWmuOsoyDv' and 'TSeMYpDXnFIyp' ) order by col_304) x;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column#3
-=======
 StreamAgg	root		funcs:max(planner__core__casetest__physicalplantest__physical_plan.tbl_43.col_304)->Column
->>>>>>> master
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:1)
   ├─Limit(Build)	cop[tikv]		offset:0, count:1
   │ └─TableRangeScan	cop[tikv]	table:tbl_43	range:[-inf,"YEpfYfPVvhMlHGHSMKm"), keep order:true, desc, stats:pseudo

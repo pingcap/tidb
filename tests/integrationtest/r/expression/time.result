@@ -107,11 +107,7 @@ TableReader	root		data:Selection
   └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 ScalarSubQuery	root		Output: ScalarQueryCol#8
 └─MaxOneRow	root		
-<<<<<<< HEAD
-  └─StreamAgg	root		funcs:max(expression__time.t.b)->Column#7
-=======
   └─StreamAgg	root		funcs:max(expression__time.t.b)->Column
->>>>>>> master
     └─TopN	root		expression__time.t.b:desc, offset:0, count:1
       └─TableReader	root		data:TopN
         └─TopN	cop[tikv]		expression__time.t.b:desc, offset:0, count:1

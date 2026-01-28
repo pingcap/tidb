@@ -64,8 +64,8 @@ t4_gi	CREATE TABLE `t4_gi` (
   `id` int NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
   /*T![softdelete] , KEY `i1` (`_tidb_softdelete_time`) GLOBAL */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-PARTITION BY HASH (`id`) PARTITIONS 4 /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+PARTITION BY HASH (`id`) PARTITIONS 4
 drop table if exists t4_gi;
 alter database test_sd softdelete = 'off';
 create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;

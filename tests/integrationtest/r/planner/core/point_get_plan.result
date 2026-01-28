@@ -9,11 +9,7 @@ id	task	access object	operator info
 Point_Get	root	table:t, index:idx(a)	
 explain format='plan_tree' select t.*, _tidb_rowid, date_format(a, "") from t where a = 1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, planner__core__point_get_plan.t._tidb_rowid, date_format(cast(planner__core__point_get_plan.t.a, datetime BINARY), )->Column#5
-=======
 Projection	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, planner__core__point_get_plan.t._tidb_rowid, date_format(cast(planner__core__point_get_plan.t.a, datetime BINARY), )->Column
->>>>>>> master
 └─Point_Get	root	table:t, index:idx(a)	
 begin;
 insert into t values (1, 1);
@@ -23,19 +19,11 @@ Point_Get	root	table:t, index:idx(a)
 commit;
 explain format='plan_tree' select count(_tidb_rowid) from t where a=1;
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:count(planner__core__point_get_plan.t._tidb_rowid)->Column#5
-└─Point_Get	root	table:t, index:idx(a)	
-explain format='plan_tree' select *, date_format(b, "") from t where a =1 for update;
-id	task	access object	operator info
-Projection	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, date_format(cast(planner__core__point_get_plan.t.b, datetime BINARY), )->Column#5
-=======
 StreamAgg	root		funcs:count(planner__core__point_get_plan.t._tidb_rowid)->Column
 └─Point_Get	root	table:t, index:idx(a)	
 explain format='plan_tree' select *, date_format(b, "") from t where a =1 for update;
 id	task	access object	operator info
 Projection	root		planner__core__point_get_plan.t.a, planner__core__point_get_plan.t.b, date_format(cast(planner__core__point_get_plan.t.b, datetime BINARY), )->Column
->>>>>>> master
 └─Point_Get	root	table:t, index:idx(a)	
 create table t1 (pk int, a int, b int, primary key(pk), unique key(a));
 explain format='plan_tree' select t1.*, _tidb_rowid from t1 where a = 1;

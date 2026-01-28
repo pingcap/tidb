@@ -399,15 +399,9 @@ insert into tbl1 (id) select null; insert into tbl1 (id) select null from tbl1; 
 update tbl1 set s=id%32;
 explain format = 'plan_tree' select count(*) from tbl1 where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		funcs:count(Column#7)->Column#5
-└─IndexReader	root		index:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#7
-=======
 StreamAgg	root		funcs:count(Column)->Column
 └─IndexReader	root		index:StreamAgg
   └─StreamAgg	cop[tikv]		funcs:count(1)->Column
->>>>>>> master
     └─Selection	cop[tikv]		like(md5(cast(explain_generate_column_substitute.tbl1.s, var_string(20))), "02e74f10e0327ad868d138f2b4fdd6f%", 92)
       └─IndexRangeScan	cop[tikv]	table:tbl1, index:expression_index(md5(`s`))	range:["02e74f10e0327ad868d138f2b4fdd6f","02e74f10e0327ad868d138f2b4fdd6g"), keep order:false, stats:pseudo
 select count(*) from tbl1 use index() where md5(s) like '02e74f10e0327ad868d138f2b4fdd6f%';
@@ -431,42 +425,24 @@ Projection	root		explain_generate_column_substitute.t.a, explain_generate_column
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false
 explain format = 'plan_tree' select count(upper(b)) from t group by upper(b);
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		group by:upper(explain_generate_column_substitute.t.b), funcs:count(upper(explain_generate_column_substitute.t.b))->Column#8
-=======
 StreamAgg	root		group by:upper(explain_generate_column_substitute.t.b), funcs:count(upper(explain_generate_column_substitute.t.b))->Column
->>>>>>> master
 └─IndexReader	root		index:IndexFullScan
   └─IndexFullScan	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
 explain format = 'plan_tree' select max(upper(b)) from t group by upper(b);
 id	task	access object	operator info
-<<<<<<< HEAD
-StreamAgg	root		group by:upper(explain_generate_column_substitute.t.b), funcs:max(upper(explain_generate_column_substitute.t.b))->Column#8
-=======
 StreamAgg	root		group by:upper(explain_generate_column_substitute.t.b), funcs:max(upper(explain_generate_column_substitute.t.b))->Column
->>>>>>> master
 └─IndexReader	root		index:IndexFullScan
   └─IndexFullScan	cop[tikv]	table:t, index:expression_index_2(upper(`b`))	keep order:true
 explain format = 'plan_tree' select count(upper(b)) from t use index() group by upper(b);
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#11, funcs:count(Column#11)->Column#8
-└─Projection	root		upper(explain_generate_column_substitute.t.b)->Column#11
-=======
 HashAgg	root		group by:Column, funcs:count(Column)->Column
 └─Projection	root		upper(explain_generate_column_substitute.t.b)->Column
->>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false
 explain format = 'plan_tree' select max(upper(b)) from t use index() group by upper(b);
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#11, funcs:max(Column#11)->Column#8
-└─Projection	root		upper(explain_generate_column_substitute.t.b)->Column#11
-=======
 HashAgg	root		group by:Column, funcs:max(Column)->Column
 └─Projection	root		upper(explain_generate_column_substitute.t.b)->Column
->>>>>>> master
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false
 drop table if exists t;

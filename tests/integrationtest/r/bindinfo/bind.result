@@ -100,11 +100,7 @@ drop global binding for SELECT * from t1,t2 where t1.id = t2.id;
 create index index_id on t1(id);
 explain format='plan_tree' SELECT * from t1 union SELECT * from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
-=======
 HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
->>>>>>> master
 └─Union	root		
   ├─IndexReader	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
@@ -112,11 +108,7 @@ HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
     └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
 explain format='plan_tree' SELECT * from t1 use index(index_id) union SELECT * from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
-=======
 HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
->>>>>>> master
 └─Union	root		
   ├─IndexReader	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
@@ -125,11 +117,7 @@ HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
 create global binding for SELECT * from t1 union SELECT * from t1 using SELECT * from t1 use index(index_id) union SELECT * from t1;
 explain format='plan_tree' SELECT * from t1 union SELECT * from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#7, funcs:firstrow(Column#7)->Column#7
-=======
 HashAgg	root		group by:Column, funcs:firstrow(Column)->Column
->>>>>>> master
 └─Union	root		
   ├─IndexReader	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t1, index:index_id(id)	keep order:false, stats:pseudo
@@ -222,11 +210,7 @@ HashJoin	root		left outer semi join, left side:TableReader, equal:[eq(bindinfo__
   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		Column#13
-=======
 Projection	root		Column
->>>>>>> master
 └─Apply	root		CARTESIAN left outer semi join, left side:TableReader
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
@@ -241,11 +225,7 @@ using
 select exists (select /*+ no_decorrelate() */ t2.b from t2 where t2.a = t1.b limit 2) from t1;
 explain format='plan_tree' select exists (select t2.b from t2 where t2.a = t1.b limit 2) from t1;
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		Column#13
-=======
 Projection	root		Column
->>>>>>> master
 └─Apply	root		CARTESIAN left outer semi join, left side:TableReader
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

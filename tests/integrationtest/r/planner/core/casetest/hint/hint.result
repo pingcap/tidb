@@ -267,11 +267,7 @@ TopN	root		planner__core__casetest__hint__hint.t.a, offset:0, count:1
     └─TableRangeScan	cop[tikv]	table:t	range:[-inf,10), keep order:false, stats:pseudo
 explain format='plan_tree' WITH CTE AS (select /*+ order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#10, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10
-=======
 HashAgg	root		group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
->>>>>>> master
 └─Union	root		
   ├─Selection	root		lt(planner__core__casetest__hint__hint.t1.a, 18)
   │ └─CTEFullScan	root	CTE:cte	data:CTE_0
@@ -286,11 +282,7 @@ CTE_0	root		Non-Recursive CTE
       └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' WITH CTE AS (select /*+ order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9
-=======
 HashAgg	root		group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
->>>>>>> master
 └─Union	root		
   ├─Selection	root		lt(planner__core__casetest__hint__hint.t.a, 18)
   │ └─CTEFullScan	root	CTE:cte	data:CTE_0
@@ -304,11 +296,7 @@ CTE_0	root		Non-Recursive CTE
         └─TableRangeScan	cop[tikv]	table:t	range:[-inf,10), keep order:true, stats:pseudo
 explain format='plan_tree' WITH CTE AS (select /*+ no_order_index(t1, idx_a) */ * from t1 where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#10, Column#9, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10
-=======
 HashAgg	root		group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
->>>>>>> master
 └─Union	root		
   ├─Selection	root		lt(planner__core__casetest__hint__hint.t1.a, 18)
   │ └─CTEFullScan	root	CTE:cte	data:CTE_0
@@ -323,11 +311,7 @@ CTE_0	root		Non-Recursive CTE
       └─TableRowIDScan(Probe)	cop[tikv]	table:t1	keep order:false, stats:pseudo
 explain format='plan_tree' WITH CTE AS (select /*+ no_order_index(t, primary) */ * from t where a<10 order by a limit 1) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9
-=======
 HashAgg	root		group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column
->>>>>>> master
 └─Union	root		
   ├─Selection	root		lt(planner__core__casetest__hint__hint.t.a, 18)
   │ └─CTEFullScan	root	CTE:cte	data:CTE_0
@@ -381,13 +365,8 @@ create definer='root'@'localhost' view v1 as select t.a, t.b from t join (select
 create definer='root'@'localhost' view v2 as select t.a, t.b from t join (select count(*) as a from t1 join v1 on t1.b=v1.b group by v1.a) tt on t.a = tt.a;
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#13)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   ├─Sort(Build)	root		planner__core__casetest__hint__hint.t2.b
 │   │ └─TableReader	root		data:Selection
@@ -402,15 +381,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel_1), merge_join(t@qb_v_1) */ * from v;
 id	task	access object	operator info
-<<<<<<< HEAD
-MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#13
-├─Sort(Build)	root		Column#13
-│ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#13
-=======
 MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column
 ├─Sort(Build)	root		Column
 │ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │     └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │       ├─Sort(Build)	root		planner__core__casetest__hint__hint.t2.b
@@ -427,17 +400,10 @@ MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, ri
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#22
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#21)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#21
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │   ├─Sort(Build)	root		planner__core__casetest__hint__hint.t2.b
 │   │   │ └─TableReader	root		data:Selection
@@ -459,17 +425,10 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#22
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#21)]
-│   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#21
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │   │   └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │     ├─Sort(Build)	root		planner__core__casetest__hint__hint.t2.b
@@ -494,21 +453,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#31)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#31
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#30)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#30
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#29)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#29
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │   │   ├─Sort(Build)	root		planner__core__casetest__hint__hint.t2.b
 │   │   │   │ └─TableReader	root		data:Selection
@@ -537,21 +487,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#31)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#31
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#30)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#30
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#29)]
-│   │   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#29
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │   │   │   └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t1.b, right key:planner__core__casetest__hint__hint.t2.b
 │   │   │     ├─Sort(Build)	root		planner__core__casetest__hint__hint.t2.b
@@ -583,17 +524,10 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#22)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#22
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#21)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#21
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │   ├─TableReader(Build)	root		data:Selection
 │   │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -615,21 +549,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v1_2, v1@sel_1 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v1@sel_1 .@sel_1), merge_join(t@qb_v1_1) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#22
-├─Sort(Build)	root		Column#22
-│ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#22
-│   └─Sort	root		planner__core__casetest__hint__hint.t.a
-│     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#21)]
-│       ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#21
-=======
 MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column
 ├─Sort(Build)	root		Column
 │ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   └─Sort	root		planner__core__casetest__hint__hint.t.a
 │     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │       ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │       │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │       │   ├─TableReader(Build)	root		data:Selection
 │       │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -652,21 +577,12 @@ MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, ri
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#31)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#31
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#30)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#30
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#29)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#29
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │   │   ├─TableReader(Build)	root		data:Selection
 │   │   │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -695,15 +611,6 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v1_2, v2@sel_1 . v1@sel_2 .@sel_2), merge_join(t1@qb_v1_2), stream_agg(@qb_v1_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t@qb_v1_1) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#31)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#31
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#30)]
-│   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#30
-│   │ └─Sort	root		planner__core__casetest__hint__hint.t.a
-│   │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#29)]
-│   │     ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#29
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
@@ -711,7 +618,6 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
 │   │ └─Sort	root		planner__core__casetest__hint__hint.t.a
 │   │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │     ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │     │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │     │   ├─TableReader(Build)	root		data:Selection
 │   │     │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -742,21 +648,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#31)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#31
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#30)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#30
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#29)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#29
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │   │   │   ├─TableReader(Build)	root		data:Selection
 │   │   │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -785,16 +682,6 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2), stream_agg(@qb_v2_2), qb_name(qb_v2_1, v2), merge_join(t@qb_v2_1) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#31
-├─Sort(Build)	root		Column#31
-│ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#31
-│   └─Sort	root		planner__core__casetest__hint__hint.t.a
-│     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#30)]
-│       ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#30
-│       │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#29)]
-│       │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#29
-=======
 MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column
 ├─Sort(Build)	root		Column
 │ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
@@ -803,7 +690,6 @@ MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, ri
 │       ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │       │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │       │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │       │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t1.b, planner__core__casetest__hint__hint.t2.b)]
 │       │   │   ├─TableReader(Build)	root		data:Selection
 │       │   │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t1.b))
@@ -846,13 +732,8 @@ create definer='root'@'localhost' view v3 as select /*+ merge_join(t) */ t.a, t.
 create definer='root'@'localhost' view v4 as select * from t4 where a > 2 and b > 3;
 explain format='plan_tree' select /*+ qb_name(qb_v, v@sel_1 .@sel_2), qb_name(qb_v, v@sel_1 .@sel_1), merge_join(t1@qb_v) */ * from v;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -873,17 +754,10 @@ Level	Code	Message
 Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format='plan_tree' select /*+ qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_2), qb_name(qb_v, v1@sel_1 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -911,21 +785,12 @@ Level	Code	Message
 Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format='plan_tree' select /*+ qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_2), qb_name(qb_v, v2@sel_1 .v1@sel_2 .v@sel_2 .@sel_1), merge_join(t1@qb_v) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -960,17 +825,10 @@ Level	Code	Message
 Warning	1815	Duplicate query block name qb_v for view's query block hint, only the first one is effective
 explain format='plan_tree' select /*+ qb_name(qb_v1_2, v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -996,21 +854,12 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
 explain format='plan_tree' select /*+ qb_name(qb_v1_2, v2@sel_1 . v@sel_1 .@sel_2), merge_join(t1@qb_v1_2) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1043,21 +892,12 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v1_2 is unused, please check whether the table list in the qb_name hint qb_v1_2 is correct
 explain format='plan_tree' select /*+ qb_name(qb_v2_2, vv@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1090,21 +930,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v2_2, v2@sel_1 .@sel_2), merge_join(t1@qb_v2_2) */ * from v2 vv;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1137,13 +968,8 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v2_2 is unused, please check whether the table list in the qb_name hint qb_v2_2 is correct
 explain format='plan_tree' select * from (select /*+ qb_name(qb_v_2, v@sel_1 .@sel_2), merge_join(t1@qb_v_2) */ * from v) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │ ├─TableReader(Build)	root		data:Selection
@@ -1162,13 +988,8 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
 explain format='plan_tree' select * from (select /*+ qb_name(qb_v_2, v.@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v@sel_1 .@sel1), merge_join(t@qb_v_1) */ * from v) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
-├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │     ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
@@ -1190,17 +1011,10 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format='plan_tree' select * from (select /*+ qb_name(qb_v_2, v1@sel_1 . v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1226,17 +1040,10 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_2 is unused, please check whether the table list in the qb_name hint qb_v_2 is correct
 explain format='plan_tree' select * from (select /*+ qb_name(qb_v_2, v1.v@sel_2 .@sel_2), merge_join(t1@qb_v_2), stream_agg(@qb_v_2), qb_name(qb_v_1, v1@sel_1 . v@sel_2 .@sel_1), merge_join(t@qb_v_1) */ * from v1) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │   │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │     ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
@@ -1265,13 +1072,8 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -1290,13 +1092,8 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v@sel_2 .@sel_2), qb_name(qb_v_1, v@sel_2 .@sel1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
-├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │     ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
@@ -1318,17 +1115,10 @@ Level	Code	Message
 Warning	1815	The qb_name hint qb_v_1 is unused, please check whether the table list in the qb_name hint qb_v_1 is correct
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2) */ * from (select /*+ merge_join(t1@qb_v_2) */ * from v1) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -1354,17 +1144,10 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v1@sel_2 . v@sel_2 .@sel_1) */ * from (select /*+ merge_join(t1@qb_v_2), stream_agg(@qb_v_2), merge_join(t@qb_v_1) */ * from v1) t;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─StreamAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │   │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │     ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
@@ -1393,21 +1176,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v1_2, v2. v1@sel_2 .@sel_2), qb_name(qb_v1_1, v2@sel_1 . v1@sel_2 .@sel_1), merge_join(t1@qb_v1_2, t@qb_v1_1), merge_join(t1@qb_v1_2) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1442,21 +1216,12 @@ Level	Code	Message
 Warning	1815	Only one query block name is allowed in a view hint, otherwise the hint will be invalid
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(t1@qb_v_2, t3@qb_v_2) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t2.a, right key:planner__core__casetest__hint__hint.t3.a
 │   │   │   ├─Sort(Build)	root		planner__core__casetest__hint__hint.t3.a
 │   │   │   │ └─TableReader	root		data:Selection
@@ -1491,21 +1256,12 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_2), qb_name(qb_v_1, v2@sel_1 . v1@sel_2 . v@sel_2 .@sel_1), merge_join(@qb_v_2 t1, t3) */ * from v2;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t2.a, right key:planner__core__casetest__hint__hint.t3.a
 │   │   │   ├─Sort(Build)	root		planner__core__casetest__hint__hint.t3.a
 │   │   │   │ └─TableReader	root		data:Selection
@@ -1540,13 +1296,8 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v .@sel_2), merge_join(t1@qb_v_2) */ * from v;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -1565,15 +1316,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_1, v@sel_1), merge_join(t@qb_v_1) */ * from v;
 id	task	access object	operator info
-<<<<<<< HEAD
-MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#17
-├─Sort(Build)	root		Column#17
-│ └─HashAgg	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column
 ├─Sort(Build)	root		Column
 │ └─HashAgg	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │     ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │     │ ├─TableReader(Build)	root		data:Selection
@@ -1591,17 +1336,10 @@ MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, ri
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_2, v1 .v@sel_2 .@sel_2), merge_join(t1@qb_v_2) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -1627,17 +1365,10 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v_1, v1 .v@sel_2), merge_join(t@qb_v_1) */ * from v1;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#26)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#26
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#25)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#25
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1663,13 +1394,8 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ merge_join(t1@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2) */ * from v;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#17)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   ├─MergeJoin(Build)	root		inner join, left key:planner__core__casetest__hint__hint.t2.b, right key:planner__core__casetest__hint__hint.t1.b
 │   │ ├─Sort(Build)	root		planner__core__casetest__hint__hint.t1.b
@@ -1688,15 +1414,9 @@ HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Co
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ merge_join(t@qb_v_1), stream_agg(@qb_v_2), qb_name(qb_v_2, v@sel_1 .@sel_2), qb_name(qb_v_1, v@sel_1 .@sel_1) */ * from v;
 id	task	access object	operator info
-<<<<<<< HEAD
-MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#17
-├─Sort(Build)	root		Column#17
-│ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#17
-=======
 MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column
 ├─Sort(Build)	root		Column
 │ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   └─Sort	root		planner__core__casetest__hint__hint.t2.a
 │     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │       ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
@@ -1715,16 +1435,6 @@ MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, ri
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2) */ * from v3;
 id	task	access object	operator info
-<<<<<<< HEAD
-MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column#35
-├─Sort(Build)	root		Column#35
-│ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│   └─Sort	root		planner__core__casetest__hint__hint.t.a
-│     └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│       ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│       │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│       │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, right key:Column
 ├─Sort(Build)	root		Column
 │ └─StreamAgg	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
@@ -1733,7 +1443,6 @@ MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, ri
 │       ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │       │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │       │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │       │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │       │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │       │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1767,21 +1476,12 @@ MergeJoin	root		inner join, left key:planner__core__casetest__hint__hint.t.a, ri
       └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ qb_name(qb_v3_2, v3@sel_1 .@sel_2), merge_join(t1@qb_v3_2), hash_agg(@qb_v3_2), qb_name(qb_v3_1, v3@sel_1 .@sel_1), hash_join(t@qb_v3_1) */ * from v3;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#35)]
-├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#35
-│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#34)]
-│   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column#34
-│   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column#33)]
-│   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column#33
-=======
 HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.a, funcs:count(1)->Column
 │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.a, Column)]
 │   │   ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t2.a, funcs:count(1)->Column
->>>>>>> master
 │   │   │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.a, planner__core__casetest__hint__hint.t3.a)]
 │   │   │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t2.b, planner__core__casetest__hint__hint.t1.b)]
 │   │   │   │ ├─TableReader(Build)	root		data:Selection
@@ -1983,19 +1683,11 @@ Warning	1815	The INDEX MERGE JOIN hint is deprecated for usage, try other hints.
 explain format='plan_tree' select * from t t1, (select /*+ HASH_AGG() */ b, max(a) from t t2 group by b) t2 where t1.b = t2.b order by t1.b;
 id	task	access object	operator info
 Sort	root		planner__core__casetest__hint__hint.t.b
-<<<<<<< HEAD
-└─Projection	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.b, Column#9
-  └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.b)]
-    ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.b, funcs:max(Column#16)->Column#9, funcs:firstrow(planner__core__casetest__hint__hint.t.b)->planner__core__casetest__hint__hint.t.b
-    │ └─IndexReader	root		index:HashAgg
-    │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__hint__hint.t.b, funcs:max(planner__core__casetest__hint__hint.t.a)->Column#16
-=======
 └─Projection	root		planner__core__casetest__hint__hint.t.a, planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.c, planner__core__casetest__hint__hint.t.b, Column
   └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__hint__hint.t.b, planner__core__casetest__hint__hint.t.b)]
     ├─HashAgg(Build)	root		group by:planner__core__casetest__hint__hint.t.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__hint__hint.t.b)->planner__core__casetest__hint__hint.t.b
     │ └─IndexReader	root		index:HashAgg
     │   └─HashAgg	cop[tikv]		group by:planner__core__casetest__hint__hint.t.b, funcs:max(planner__core__casetest__hint__hint.t.a)->Column
->>>>>>> master
     │     └─IndexFullScan	cop[tikv]	table:t2, index:b(b)	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:Selection
       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__hint__hint.t.b))

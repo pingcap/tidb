@@ -62,8 +62,8 @@ t	CREATE TABLE `t` (
   `id` int NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
   /*T![softdelete] , KEY `i3` (`_tidb_softdelete_time`) GLOBAL */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-PARTITION BY HASH (`id`) PARTITIONS 4 /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+PARTITION BY HASH (`id`) PARTITIONS 4
 drop table if exists t;
 create table t (
 id int primary key,

@@ -188,11 +188,7 @@ SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 c0
 explain format='plan_tree' SELECT v0.c0 FROM v0 WHERE (v0.c0)NOT LIKE(BINARY v0.c0);
 id	task	access object	operator info
-<<<<<<< HEAD
-Projection	root		is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20)))->Column#9
-=======
 Projection	root		is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20)))->Column
->>>>>>> master
 └─HashJoin	root		CARTESIAN inner join
   ├─Selection(Build)	root		not(like(cast(is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20))), var_string(20)), cast(is_ipv4(cast(collation_check_use_collation.t0.c1, var_string(20))), binary(1)), 92))
   │ └─TableReader	root		data:TableFullScan

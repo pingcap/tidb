@@ -6,30 +6,18 @@ partition p2 values less than (10));
 insert into p values (1,3), (2,3), (3,4), (4,4), (5,6), (7,9), (8,9);
 explain format='plan_tree' select count(*), max(id), min(id) from p use index(idx);
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:count(Column#10)->Column#5, funcs:max(Column#11)->Column#6, funcs:min(Column#12)->Column#7
-└─IndexReader	root	partition:all	index:HashAgg
-  └─HashAgg	cop[tikv]		funcs:count(1)->Column#10, funcs:max(globalindex__aggregate.p.id)->Column#11, funcs:min(globalindex__aggregate.p.id)->Column#12
-=======
 HashAgg	root		funcs:count(Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
 └─IndexReader	root	partition:all	index:HashAgg
   └─HashAgg	cop[tikv]		funcs:count(1)->Column, funcs:max(globalindex__aggregate.p.id)->Column, funcs:min(globalindex__aggregate.p.id)->Column
->>>>>>> master
     └─IndexFullScan	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
 select count(*), max(id), min(id) from p use index(idx);
 count(*)	max(id)	min(id)
 7	8	1
 explain format='plan_tree' select count(*), max(id), min(id) from p partition(p0) use index(idx);
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root	NULL	funcs:count(Column#10)->Column#5, funcs:max(Column#11)->Column#6, funcs:min(Column#12)->Column#7
-└─IndexReader	root	partition:p0	index:HashAgg
-  └─HashAgg	cop[tikv]	NULL	funcs:count(1)->Column#10, funcs:max(globalindex__aggregate.p.id)->Column#11, funcs:min(globalindex__aggregate.p.id)->Column#12
-=======
 HashAgg	root	NULL	funcs:count(Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
 └─IndexReader	root	partition:p0	index:HashAgg
   └─HashAgg	cop[tikv]	NULL	funcs:count(1)->Column, funcs:max(globalindex__aggregate.p.id)->Column, funcs:min(globalindex__aggregate.p.id)->Column
->>>>>>> master
     └─Selection	cop[tikv]	NULL	in(_tidb_tid, tid0)
       └─IndexFullScan	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
 select count(*), max(id), min(id) from p partition(p0) use index(idx);
@@ -37,17 +25,10 @@ count(*)	max(id)	min(id)
 2	2	1
 explain format='plan_tree' select avg(id), max(id), min(id) from p use index(idx) group by c;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:globalindex__aggregate.p.c, funcs:avg(Column#10, Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:min(Column#13)->Column#7
-└─IndexLookUp	root	partition:all	
-  ├─IndexFullScan(Build)	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	cop[tikv]		group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column#10, funcs:sum(globalindex__aggregate.p.id)->Column#11, funcs:max(globalindex__aggregate.p.id)->Column#12, funcs:min(globalindex__aggregate.p.id)->Column#13
-=======
 HashAgg	root		group by:globalindex__aggregate.p.c, funcs:avg(Column, Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
 └─IndexLookUp	root	partition:all	
   ├─IndexFullScan(Build)	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
   └─HashAgg(Probe)	cop[tikv]		group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column, funcs:sum(globalindex__aggregate.p.id)->Column, funcs:max(globalindex__aggregate.p.id)->Column, funcs:min(globalindex__aggregate.p.id)->Column
->>>>>>> master
     └─TableRowIDScan	cop[tikv]	table:p	keep order:false, stats:pseudo
 select avg(id), max(id), min(id) from p use index(idx) group by c;
 avg(id)	max(id)	min(id)
@@ -57,19 +38,11 @@ avg(id)	max(id)	min(id)
 7.5000	8	7
 explain format='plan_tree' select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root	NULL	group by:globalindex__aggregate.p.c, funcs:avg(Column#10, Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:min(Column#13)->Column#7
-└─IndexLookUp	root	partition:p0	NULL
-  ├─Selection(Build)	cop[tikv]	NULL	in(_tidb_tid, tid0)
-  │ └─IndexFullScan	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
-  └─HashAgg(Probe)	cop[tikv]	NULL	group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column#10, funcs:sum(globalindex__aggregate.p.id)->Column#11, funcs:max(globalindex__aggregate.p.id)->Column#12, funcs:min(globalindex__aggregate.p.id)->Column#13
-=======
 HashAgg	root	NULL	group by:globalindex__aggregate.p.c, funcs:avg(Column, Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
 └─IndexLookUp	root	partition:p0	NULL
   ├─Selection(Build)	cop[tikv]	NULL	in(_tidb_tid, tid0)
   │ └─IndexFullScan	cop[tikv]	table:p, index:idx(id)	keep order:false, stats:pseudo
   └─HashAgg(Probe)	cop[tikv]	NULL	group by:globalindex__aggregate.p.c, funcs:count(globalindex__aggregate.p.id)->Column, funcs:sum(globalindex__aggregate.p.id)->Column, funcs:max(globalindex__aggregate.p.id)->Column, funcs:min(globalindex__aggregate.p.id)->Column
->>>>>>> master
     └─TableRowIDScan	cop[tikv]	table:p	keep order:false, stats:pseudo
 select avg(id), max(id), min(id) from p partition(p0) use index(idx) group by c;
 avg(id)	max(id)	min(id)
@@ -77,28 +50,17 @@ avg(id)	max(id)	min(id)
 alter table p add unique index idx1(c, id) global;
 explain format='plan_tree' select count(*), max(id), min(id) from p use index(idx1);
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		funcs:count(Column#11)->Column#5, funcs:max(Column#12)->Column#6, funcs:min(Column#13)->Column#7
-└─IndexReader	root	partition:all	index:HashAgg
-  └─HashAgg	cop[tikv]		funcs:count(1)->Column#11, funcs:max(globalindex__aggregate.p.id)->Column#12, funcs:min(globalindex__aggregate.p.id)->Column#13
-=======
 HashAgg	root		funcs:count(Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
 └─IndexReader	root	partition:all	index:HashAgg
   └─HashAgg	cop[tikv]		funcs:count(1)->Column, funcs:max(globalindex__aggregate.p.id)->Column, funcs:min(globalindex__aggregate.p.id)->Column
->>>>>>> master
     └─IndexFullScan	cop[tikv]	table:p, index:idx1(c, id)	keep order:false, stats:pseudo
 select count(*), max(id), min(id) from p use index(idx1);
 count(*)	max(id)	min(id)
 7	8	1
 explain format='plan_tree' select avg(id), max(id), min(id) from p use index(idx1) group by c;
 id	task	access object	operator info
-<<<<<<< HEAD
-HashAgg	root		group by:Column#27, funcs:avg(Column#24)->Column#5, funcs:max(Column#25)->Column#6, funcs:min(Column#26)->Column#7
-└─Projection	root		cast(globalindex__aggregate.p.id, decimal(10,0) BINARY)->Column#24, globalindex__aggregate.p.id->Column#25, globalindex__aggregate.p.id->Column#26, globalindex__aggregate.p.c->Column#27
-=======
 HashAgg	root		group by:Column, funcs:avg(Column)->Column, funcs:max(Column)->Column, funcs:min(Column)->Column
 └─Projection	root		cast(globalindex__aggregate.p.id, decimal(10,0) BINARY)->Column, globalindex__aggregate.p.id->Column, globalindex__aggregate.p.id->Column, globalindex__aggregate.p.c->Column
->>>>>>> master
   └─IndexReader	root	partition:all	index:IndexFullScan
     └─IndexFullScan	cop[tikv]	table:p, index:idx1(c, id)	keep order:false, stats:pseudo
 select avg(id), max(id), min(id) from p use index(idx1) group by c;
