@@ -177,6 +177,11 @@ func (t trivialFlushStream) RecvMsg(m any) error {
 	return nil
 }
 
+func (f *fakeStore) FlushNow(ctx context.Context, in *logbackup.FlushNowRequest, opts ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
+	f.flush()
+	return &logbackup.FlushNowResponse{Results: []*logbackup.FlushResult{{TaskName: "Universe", Success: true}}}, nil
+}
+
 func (f *fakeStore) GetID() uint64 {
 	return f.id
 }
@@ -193,10 +198,6 @@ func (f *fakeStore) SubscribeFlushEvent(ctx context.Context, in *logbackup.Subsc
 		ch <- glftrr
 	}
 	return trivialFlushStream{c: ch, cx: ctx}, nil
-}
-
-func (f *fakeStore) FlushNow(_ context.Context, _ *logbackup.FlushNowRequest, _ ...grpc.CallOption) (*logbackup.FlushNowResponse, error) {
-	return nil, nil
 }
 
 func (f *fakeStore) SetSupportFlushSub(b bool) {
@@ -673,7 +674,7 @@ func newTestEnv(c *fakeCluster, t *testing.T) *testEnv {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}
@@ -778,7 +779,7 @@ func (t *testEnv) putTask() {
 		Name: "whole",
 		Info: &backup.StreamBackupTaskInfo{
 			Name:    "whole",
-			StartTs: 5,
+			StartTs: 0,
 		},
 		Ranges: rngs,
 	}

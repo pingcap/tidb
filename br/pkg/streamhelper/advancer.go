@@ -126,6 +126,9 @@ func NewCheckpointWithSpan(s spans.Valued) *checkpoint {
 }
 
 func (c *checkpoint) safeTS() uint64 {
+	if c.TS == 0 {
+		return 0
+	}
 	return c.TS - 1
 }
 
@@ -433,7 +436,7 @@ func (c *CheckpointAdvancer) onTaskEvent(ctx context.Context, e TaskEvent) error
 		}
 		log.Info("get global checkpoint", zap.Uint64("checkpoint", globalCheckpointTs))
 		c.lastCheckpoint = newCheckpointWithTS(globalCheckpointTs)
-		p, err := c.env.BlockGCUntil(ctx, globalCheckpointTs-1)
+		p, err := c.env.BlockGCUntil(ctx, c.lastCheckpoint.safeTS())
 		if err != nil {
 			log.Warn("failed to upload service GC safepoint, skipping.", logutil.ShortError(err))
 		}
