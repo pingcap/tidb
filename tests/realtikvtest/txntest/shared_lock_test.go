@@ -44,6 +44,9 @@ func TestSharedLockBlockedByExclusiveLock(t *testing.T) {
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk3.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk3.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
 
 	prepareForeignKeyTables(tk1)
 
@@ -95,6 +98,9 @@ func TestSharedLockBlockExclusiveLock(t *testing.T) {
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk3.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk3.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
 
 	prepareForeignKeyTables(tk1)
 
@@ -144,6 +150,9 @@ func TestSharedLockChildTableConflict(t *testing.T) {
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	tk3.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk3.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
 
 	prepareForeignKeyTables(tk1)
 
@@ -239,6 +248,8 @@ func TestSharedLockLockView(t *testing.T) {
 	tk1.MustExec("use test")
 	tk2.MustExec("use test")
 	testTk.MustExec("use test")
+	tk1.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
+	tk2.MustExec("set @@tidb_foreign_key_check_in_shared_lock = ON")
 
 	prepareForeignKeyTables(tk1)
 
