@@ -311,6 +311,7 @@ func hashInt64Uint64Map(b []byte, m map[int64]uint64) []byte {
 // All information that might affect the plan should be considered in this function.
 func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding string, cacheable bool, reason string, err error) {
 	if matchedBinding, matched, _ := bindinfo.MatchSQLBinding(sctx, stmt.PreparedAst.Stmt); matched {
+		// Record the matched binding SQL so the plan cache key reflects the effective hints.
 		binding = matchedBinding.BindSQL
 	}
 
