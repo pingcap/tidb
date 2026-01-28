@@ -22,6 +22,11 @@ go_library(
         "//pkg/parser/ast",
         "//pkg/parser/format",
         "//pkg/parser/mysql",
+<<<<<<< HEAD
+=======
+        "//pkg/planner/core/cost",
+        "//pkg/planner/core/stats",
+>>>>>>> f4cf761aa1d (planner: skip out of range for full range (#65854))
         "//pkg/planner/planctx",
         "//pkg/planner/property",
         "//pkg/planner/util",
