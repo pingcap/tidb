@@ -20,9 +20,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -81,9 +83,9 @@ func TestNullConditionForPrefixIndex(t *testing.T) {
 		ps := []*sessmgr.ProcessInfo{tkProcess}
 		testKit.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		testKit.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#7)->Column#5",
+			"StreamAgg_19 1.00 root  funcs:count(Column#8)->Column#6",
 			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#7",
+			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#8",
 			"    └─IndexRangeScan_18 99.90 cop[tikv] table:t1, index:idx2(c1, c2) range:[\"0xfff\" -inf,\"0xfff\" +inf], keep order:false, stats:pseudo"))
 	})
 }
@@ -235,9 +237,9 @@ func TestOrderedIndexWithIsNull(t *testing.T) {
 		testKit.MustExec("insert into t2 values (), (), ()")
 		testKit.MustExec("analyze table t2")
 		testKit.MustQuery("explain select count(*) from t2 where id is null;").Check(testkit.Rows(
-			"StreamAgg_19 1.00 root  funcs:count(Column#5)->Column#3",
+			"StreamAgg_19 1.00 root  funcs:count(Column#6)->Column#4",
 			"└─IndexReader_20 1.00 root  index:StreamAgg_11",
-			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#5",
+			"  └─StreamAgg_11 1.00 cop[tikv]  funcs:count(1)->Column#6",
 			"    └─IndexRangeScan_18 3.00 cop[tikv] table:t2, index:index_on_id(id) range:[NULL,NULL], keep order:false"))
 	})
 }
@@ -369,5 +371,97 @@ func TestAnalyzeColumnarIndex(t *testing.T) {
 		testKit.MustQuery("show warnings").Sort().Check(testkit.Rows(
 			"Warning 1105 analyzing columnar index is not supported, skip idx",
 			"Warning 1105 analyzing columnar index is not supported, skip idx2"))
+	})
+}
+
+func TestPartialIndexWithPlanCache(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+
+		tk.MustExec("prepare stmt from 'select * from t where a = ?'")
+		tk.MustExec("set @a = 123")
+
+		// IS NOT NULL pre condition can use plan cache.
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess := tk.Session().ShowProcess()
+		ps := []*sessmgr.ProcessInfo{tkProcess}
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx1")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+		// Normal pre condition can not use plan cache.
+		tk.MustExec("prepare stmt from 'select * from t where b = ?'")
+		tk.MustExec("set @a = 20")
+		tk.MustExec("execute stmt using @a")
+		tk.MustExec("execute stmt using @a")
+		tkProcess = tk.Session().ShowProcess()
+		ps[0] = tkProcess
+		tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
+		tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).CheckContain("idx2")
+		tk.MustExec("execute stmt using @a")
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	})
+}
+
+func TestPartialIndexWithIndexPrune(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int, b int, index idx1(a) where a is not null, index idx2(b) where b > 10)")
+		tk.MustQuery("explain select * from t use index(idx1) where a > 1").CheckContain("idx1")
+
+		// Set the prune behavior to prune all non interesting ones.
+		tk.MustExec("set @@tidb_opt_index_prune_threshold=0")
+
+		// The failpoint will check whether all partial indexes are pruned.
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/rule/InjectCheckForIndexPrune"
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*util.AccessPath) {
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.ConditionExprString != "" {
+					require.True(t, false, "Partial index should be pruned")
+				}
+			}
+		}))
+		tk.MustQuery("select * from t")
+
+		// idx1 is pruned because a is not referenced as interesting one.
+		// idx2 is kept though its constraint is not matched.
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*util.AccessPath) {
+			idx2Found := false
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx1" {
+					require.True(t, false, "Partial index idx1 should be pruned")
+				}
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx2" {
+					idx2Found = true
+				}
+			}
+			require.True(t, idx2Found, "Partial index idx2 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t order by b").CheckNotContain("idx2")
+
+		// idx2 is pruned because b is not referenced as interesting one.
+		// idx1 is kept though its constraint is not matched.
+		require.NoError(t, failpoint.EnableCall(fpName, func(paths []*util.AccessPath) {
+			idx1Found := false
+			for _, path := range paths {
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx2" {
+					require.True(t, false, "Partial index idx2 should be pruned")
+				}
+				if path != nil && path.Index != nil && path.Index.Name.L == "idx1" {
+					idx1Found = true
+				}
+			}
+			require.True(t, idx1Found, "Partial index idx1 should not be pruned")
+		}))
+		tk.MustQuery("explain select * from t where a is null").CheckNotContain("idx1")
+		require.NoError(t, failpoint.Disable(fpName))
 	})
 }

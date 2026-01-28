@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package utils
+package gc
 
 import (
 	"context"
@@ -12,7 +12,6 @@ import (
 	"github.com/pingcap/log"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/tikv/client-go/v2/oracle"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -49,26 +48,15 @@ func (sp BRServiceSafePoint) MarshalLogObject(encoder zapcore.ObjectEncoder) err
 	return nil
 }
 
-// getGCSafePoint returns the current gc safe point.
-// TODO: Some cluster may not enable distributed GC.
-func getGCSafePoint(ctx context.Context, pdClient pd.Client) (uint64, error) {
-	safePoint, err := pdClient.UpdateGCSafePoint(ctx, 0)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return safePoint, nil
-}
-
 // MakeSafePointID makes a unique safe point ID, for reduce name conflict.
 func MakeSafePointID() string {
 	return fmt.Sprintf(brServiceSafePointIDFormat, uuid.New())
 }
 
-// CheckGCSafePoint checks whether the ts is older than GC safepoint.
+// CheckGCSafePoint checks whether the ts is older than GC safepoint using Manager.
 // Note: It ignores errors other than exceed GC safepoint.
-func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error {
-	// TODO: use PDClient.GetGCSafePoint instead once PD client exports it.
-	safePoint, err := getGCSafePoint(ctx, pdClient)
+func CheckGCSafePoint(ctx context.Context, mgr Manager, ts uint64) error {
+	safePoint, err := mgr.GetGCSafePoint(ctx)
 	if err != nil {
 		log.Warn("fail to get GC safe point", zap.Error(err))
 		return nil
@@ -79,36 +67,23 @@ func CheckGCSafePoint(ctx context.Context, pdClient pd.Client, ts uint64) error 
 	return nil
 }
 
-// UpdateServiceSafePoint register BackupTS to PD, to lock down BackupTS as safePoint with TTL seconds.
-func UpdateServiceSafePoint(ctx context.Context, pdClient pd.Client, sp BRServiceSafePoint) error {
-	log.Debug("update PD safePoint limit with TTL", zap.Object("safePoint", sp))
-
-	lastSafePoint, err := pdClient.UpdateServiceGCSafePoint(ctx, sp.ID, sp.TTL, sp.BackupTS-1)
-	if lastSafePoint > sp.BackupTS-1 && sp.TTL > 0 {
-		log.Warn("service GC safe point lost, we may fail to back up if GC lifetime isn't long enough",
-			zap.Uint64("lastSafePoint", lastSafePoint),
-			zap.Object("safePoint", sp),
-		)
-	}
-	return errors.Trace(err)
-}
-
-// StartServiceSafePointKeeper will run UpdateServiceSafePoint periodicity
-// hence keeping service safepoint won't lose.
+// StartServiceSafePointKeeper starts a goroutine to periodically update the service safe point.
+// It uses the provided Manager to set the safe point.
+// The keeper will run until the context is canceled.
 func StartServiceSafePointKeeper(
 	ctx context.Context,
-	pdClient pd.Client,
 	sp BRServiceSafePoint,
+	mgr Manager,
 ) error {
 	if sp.ID == "" || sp.TTL <= 0 {
 		return errors.Annotatef(berrors.ErrInvalidArgument, "invalid service safe point %v", sp)
 	}
-	if err := CheckGCSafePoint(ctx, pdClient, sp.BackupTS); err != nil {
+	if err := CheckGCSafePoint(ctx, mgr, sp.BackupTS); err != nil {
 		return errors.Trace(err)
 	}
-	// Update service safe point immediately to cover the gap between starting
+	// Set service safe point immediately to cover the gap between starting
 	// update goroutine and updating service safe point.
-	if err := UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+	if err := mgr.SetServiceSafePoint(ctx, sp); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -125,13 +100,13 @@ func StartServiceSafePointKeeper(
 				log.Debug("service safe point keeper exited")
 				return
 			case <-updateTick.C:
-				if err := UpdateServiceSafePoint(ctx, pdClient, sp); err != nil {
+				if err := mgr.SetServiceSafePoint(ctx, sp); err != nil {
 					log.Warn("failed to update service safe point, backup may fail if gc triggered",
 						zap.Error(err),
 					)
 				}
 			case <-checkTick.C:
-				if err := CheckGCSafePoint(ctx, pdClient, sp.BackupTS); err != nil {
+				if err := CheckGCSafePoint(ctx, mgr, sp.BackupTS); err != nil {
 					log.Panic("cannot pass gc safe point check, aborting",
 						zap.Error(err),
 						zap.Object("safePoint", sp),
