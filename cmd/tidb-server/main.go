@@ -40,7 +40,6 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
 	"github.com/pingcap/tidb/pkg/extension"
 	_ "github.com/pingcap/tidb/pkg/extension/_import"
-	"github.com/pingcap/tidb/pkg/external"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
@@ -1139,18 +1138,4 @@ func setupSEM() {
 			sem.Enable()
 		}
 	}
-}
-
-func setupExternalStorage(namespace string) {
-	cfg := config.GetGlobalConfig()
-	// Use cloud_storage_uri system variable, fallback to TempDir if not set
-	cloudStorageURI := variable.GetSysVar(vardef.TiDBCloudStorageURI)
-	path := cloudStorageURI.Value
-	if len(path) == 0 {
-		path = cfg.TempDir
-	}
-	logutil.BgLogger().Info("initialize external storage", zap.String("path", path), zap.String("namespace", namespace))
-
-	err := external.CreateExternalStorage(path, namespace, nil)
-	terror.MustNil(err)
 }

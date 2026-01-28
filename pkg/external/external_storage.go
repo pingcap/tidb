@@ -17,21 +17,14 @@ package external
 import (
 	"context"
 	"io"
-	"path/filepath"
 	"sync"
 
-	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-)
-
-var (
-	globalMu              sync.RWMutex
-	globalExternalStorage *externalStorage
 )
 
 type externalStorage struct {
@@ -168,47 +161,4 @@ func (w *fileWriter) Write(p []byte) (int, error) {
 
 func (w *fileWriter) Close() error {
 	return w.writer.Close(w.ctx)
-}
-
-// CreateExternalStorage creates a global external storage.
-func CreateExternalStorage(rawURL, namespace string, opts *storeapi.Options) error {
-	u, err := objstore.ParseRawURL(rawURL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	if namespace != "" {
-		u.Path = filepath.Join(u.Path, namespace)
-	}
-
-	backend, err := objstore.ParseBackendFromURL(u, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	globalMu.Lock()
-	defer globalMu.Unlock()
-	globalExternalStorage = &externalStorage{
-		backend:  backend,
-		opts:     opts,
-		basePath: u.Path,
-	}
-	return nil
-}
-
-// GetExternalStorage returns the global external storage.
-func GetExternalStorage() storeapi.Storage {
-	globalMu.RLock()
-	defer globalMu.RUnlock()
-	return globalExternalStorage
-}
-
-// GetStorageBasePath returns the base path of the global external storage.
-func GetStorageBasePath() string {
-	globalMu.RLock()
-	defer globalMu.RUnlock()
-	if globalExternalStorage == nil {
-		return ""
-	}
-	return globalExternalStorage.basePath
 }
