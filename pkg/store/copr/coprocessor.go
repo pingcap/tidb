@@ -265,11 +265,11 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	taskID        uint64
-	region        tikv.RegionVerID
-	bucketsVer    uint64
-	ranges        *KeyRanges
-	rangeVersions []uint64 // used only in TiCI lookup
+	taskID          uint64
+	region          tikv.RegionVerID
+	bucketsVer      uint64
+	ranges          *KeyRanges
+	versionedRanges []*coprocessor.VersionedKeyRange // used only in TiCI lookup
 
 	respChan  chan *copResponse
 	storeAddr string
@@ -317,16 +317,20 @@ func (r *copTask) ToPBBatchTasks() ([]*coprocessor.StoreBatchTask, error) {
 	}
 	pbTasks := make([]*coprocessor.StoreBatchTask, 0, len(r.batchTaskList))
 	for _, task := range r.batchTaskList {
-		if task.task.rangeVersions != nil && len(task.task.rangeVersions) != len(task.region.GetRanges()) {
-			return nil, errors.Errorf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", len(task.region.GetRanges()), len(task.task.rangeVersions))
+		if task.task.versionedRanges != nil && len(task.task.versionedRanges) != task.task.ranges.Len() {
+			return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.task.ranges.Len(), len(task.task.versionedRanges))
 		}
 		storeBatchTask := &coprocessor.StoreBatchTask{
-			RegionId:      task.region.GetRegionId(),
-			RegionEpoch:   task.region.GetRegionEpoch(),
-			Peer:          task.peer,
-			Ranges:        task.region.GetRanges(),
-			TaskId:        task.task.taskID,
-			RangeVersions: task.task.rangeVersions,
+			RegionId:    task.region.GetRegionId(),
+			RegionEpoch: task.region.GetRegionEpoch(),
+			Peer:        task.peer,
+			Ranges:      task.region.GetRanges(),
+			TaskId:      task.task.taskID,
+		}
+		if task.task.versionedRanges != nil {
+			// Use `versioned_ranges` instead of `ranges` to avoid duplicated encoding.
+			storeBatchTask.VersionedRanges = task.task.versionedRanges
+			storeBatchTask.Ranges = nil
 		}
 		pbTasks = append(pbTasks, storeBatchTask)
 	}
@@ -589,9 +593,9 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				}
 			}
 			ranges := loc.Ranges.Slice(i, nextI)
-			var rangeVersions []uint64
+			var versionedRanges []*coprocessor.VersionedKeyRange
 			if opt.rangeVersionMap != nil {
-				rangeVersions = make([]uint64, 0, ranges.Len())
+				versionedRanges = make([]*coprocessor.VersionedKeyRange, 0, ranges.Len())
 				// If the rangeVersionMap is not nil, we need to get the version of each range.
 				ranges.Do(func(ran *kv.KeyRange) {
 					if !ran.IsPoint() {
@@ -601,7 +605,10 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 						return
 					}
 					if ver, ok := opt.rangeVersionMap[ran.StartKey.AsString()]; ok {
-						rangeVersions = append(rangeVersions, ver)
+						versionedRanges = append(versionedRanges, &coprocessor.VersionedKeyRange{
+							Range:  (*coprocessor.KeyRange)(unsafe.Pointer(ran)),
+							ReadTs: ver,
+						})
 					} else {
 						if err == nil {
 							err = errors.Errorf("rangeVersionMap is not nil, but no version found for range %v", ran)
@@ -613,18 +620,18 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				}
 			}
 			task := &copTask{
-				region:        loc.Location.Region,
-				bucketsVer:    loc.getBucketVersion(),
-				ranges:        loc.Ranges.Slice(i, nextI),
-				rangeVersions: rangeVersions,
-				cmdType:       cmdType,
-				storeType:     req.StoreType,
-				eventCb:       eventCb,
-				paging:        req.Paging.Enable,
-				pagingSize:    pagingSize,
-				requestSource: req.RequestSource,
-				RowCountHint:  hint,
-				busyThreshold: req.StoreBusyThreshold,
+				region:          loc.Location.Region,
+				bucketsVer:      loc.getBucketVersion(),
+				ranges:          loc.Ranges.Slice(i, nextI),
+				versionedRanges: versionedRanges,
+				cmdType:         cmdType,
+				storeType:       req.StoreType,
+				eventCb:         eventCb,
+				paging:          req.Paging.Enable,
+				pagingSize:      pagingSize,
+				requestSource:   req.RequestSource,
+				RowCountHint:    hint,
+				busyThreshold:   req.StoreBusyThreshold,
 			}
 			if !opt.ignoreTiKVClientReadTimeout {
 				task.tikvClientReadTimeout = req.TiKVClientReadTimeout
@@ -1573,8 +1580,10 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 		ConnectionAlias: worker.req.ConnAlias,
 	}
 
-	if task.rangeVersions != nil {
-		copReq.RangeVersions = task.rangeVersions
+	if task.versionedRanges != nil {
+		// Use `versioned_ranges` instead of `ranges` to avoid duplicated encoding.
+		copReq.VersionedRanges = task.versionedRanges
+		copReq.Ranges = nil
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
@@ -1801,17 +1810,17 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
 		var rangeVersionMap map[string]uint64
-		if task.rangeVersions != nil {
+		if task.versionedRanges != nil {
 			// construct the range version map
+			if len(task.versionedRanges) != task.ranges.Len() {
+				return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
+			}
 			rangeVersionMap = make(map[string]uint64, task.ranges.Len())
 			i := 0
 			task.ranges.Do(func(r *kv.KeyRange) {
-				rangeVersionMap[r.StartKey.AsString()] = task.rangeVersions[i]
+				rangeVersionMap[r.StartKey.AsString()] = task.versionedRanges[i].ReadTs
 				i++
 			})
-			if i != len(task.rangeVersions) {
-				return nil, errors.Errorf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", task.ranges.Len(), len(task.rangeVersions))
-			}
 		}
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 			req:                         worker.req,
@@ -1969,17 +1978,17 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				return batchRespList, nil, errors.Trace(err)
 			}
 			var rangeVersionMap map[string]uint64
-			if task.rangeVersions != nil {
+			if task.versionedRanges != nil {
 				// construct the range version map
+				if len(task.versionedRanges) != task.ranges.Len() {
+					return batchRespList, nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
+				}
 				rangeVersionMap = make(map[string]uint64, task.ranges.Len())
 				i := 0
 				task.ranges.Do(func(r *kv.KeyRange) {
-					rangeVersionMap[r.StartKey.AsString()] = task.rangeVersions[i]
+					rangeVersionMap[r.StartKey.AsString()] = task.versionedRanges[i].ReadTs
 					i++
 				})
-				if i != len(task.rangeVersions) {
-					return batchRespList, nil, errors.Errorf("rangeVersions length mismatch: ranges=%d rangeVersions=%d", task.ranges.Len(), len(task.rangeVersions))
-				}
 			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,
@@ -2111,7 +2120,7 @@ func (worker *copIteratorWorker) buildCacheKey(task *copTask, copReq *coprocesso
 	// If there are many ranges, it is very likely to be a TableLookupRequest. They are not worth to cache since
 	// computing is not the main cost. Ignore requests with many ranges directly to avoid slowly building the cache key.
 	// for versioned lookup, we cannot use cache.
-	if task.rangeVersions == nil && task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
+	if task.versionedRanges == nil && task.cmdType == tikvrpc.CmdCop && worker.store.coprCache != nil && worker.req.Cacheable && worker.store.coprCache.CheckRequestAdmission(len(copReq.Ranges)) {
 		cKey, err := coprCacheBuildKey(copReq)
 		if err == nil {
 			cacheKey = cKey

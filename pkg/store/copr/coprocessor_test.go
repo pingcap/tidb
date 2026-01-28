@@ -698,12 +698,16 @@ func TestBuildCopTasksWithRangeVersionMapRequiresPointRanges(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestCopTaskToPBBatchTasksRangeVersionsLenMismatch(t *testing.T) {
+func TestCopTaskToPBBatchTasksVersionedRangesLenMismatch(t *testing.T) {
 	parent := &copTask{
 		batchTaskList: map[uint64]*batchedCopTask{},
 	}
 	sub := &copTask{
-		rangeVersions: []uint64{1, 2},
+		ranges: buildCopRanges("a", "b"),
+		versionedRanges: []*coprocessor.VersionedKeyRange{
+			{},
+			{},
+		},
 	}
 	parent.batchTaskList[1] = &batchedCopTask{
 		task: sub,
