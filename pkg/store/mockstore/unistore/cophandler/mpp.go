@@ -103,7 +103,7 @@ func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader 
 			ts.physTblIDColIdx = new(int)
 			*ts.physTblIDColIdx = i
 		}
-		if col.ColumnId == model.ExtraCommitTsID {
+		if col.ColumnId == model.ExtraCommitTSID {
 			ts.commitTsColIdx = new(int)
 			*ts.commitTsColIdx = i
 		}
@@ -130,7 +130,7 @@ func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan)
 			ts.physTblIDColIdx = new(int)
 			*ts.physTblIDColIdx = i
 		}
-		if col.ColumnId == model.ExtraCommitTsID {
+		if col.ColumnId == model.ExtraCommitTSID {
 			ts.commitTsColIdx = new(int)
 			*ts.commitTsColIdx = i
 		}
@@ -154,7 +154,7 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 
 	lastCol := pb.Columns[numCols-1]
 	var commitTsColIdx *int
-	if lastCol.GetColumnId() == model.ExtraCommitTsID {
+	if lastCol.GetColumnId() == model.ExtraCommitTSID {
 		numIdxCols--
 		commitTsColIdx = new(int)
 		*commitTsColIdx = numIdxCols

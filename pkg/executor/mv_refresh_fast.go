@@ -154,8 +154,8 @@ func mvBuildDeltaQuery(
 	whereParts := func(oldNew string) string {
 		parts := []string{
 			fmt.Sprintf("%s.%s > %%? AND %s.%s < %%?",
-				mvQuoteIdent(qualifier), mvQuoteIdent(model.ExtraCommitTsName),
-				mvQuoteIdent(qualifier), mvQuoteIdent(model.ExtraCommitTsName),
+				mvQuoteIdent(qualifier), mvQuoteIdent(model.ExtraCommitTSName),
+				mvQuoteIdent(qualifier), mvQuoteIdent(model.ExtraCommitTSName),
 			),
 			fmt.Sprintf("%s.%s = '%s'", mvQuoteIdent(qualifier), mvQuoteIdent(ast.NewCIStr(materializedview.MVLogColumnOldNew)), oldNew),
 		}

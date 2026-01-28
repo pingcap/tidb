@@ -2050,7 +2050,7 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer254(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, CreateMaterializedViewRefreshInfoTable)
+	doReentrantDDL(s, metadef.CreateMaterializedViewRefreshInfoTable)
 }
 
 func upgradeToVer255(s sessionapi.Session, _ int64) {

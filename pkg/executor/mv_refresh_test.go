@@ -242,7 +242,7 @@ func TestMVCommitTsColumnReturnsNonZero(t *testing.T) {
 		}
 		mu.Unlock()
 		for _, col := range cols {
-			if col.GetColumnId() == model.ExtraCommitTsID {
+			if col.GetColumnId() == model.ExtraCommitTSID {
 				sawCommitTSInReq = true
 				return
 			}

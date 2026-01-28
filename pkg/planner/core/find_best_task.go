@@ -2659,7 +2659,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		return base.InvalidTask
 	}
 	for _, col := range ds.Columns {
-		if col.ID == model.ExtraCommitTsID {
+		if col.ID == model.ExtraCommitTSID {
 			return base.InvalidTask
 		}
 	}
@@ -2738,7 +2738,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		return base.InvalidTask
 	}
 	for _, col := range ds.Columns {
-		if col.ID == model.ExtraCommitTsID {
+		if col.ID == model.ExtraCommitTSID {
 			return base.InvalidTask
 		}
 	}

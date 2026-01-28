@@ -403,7 +403,7 @@ func TestIndexScanWithExtraPhysTblIDAndCommitTs(t *testing.T) {
 		{ColumnId: indexColID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 		{ColumnId: model.ExtraHandleID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 		{ColumnId: model.ExtraPhysTblID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
-		{ColumnId: model.ExtraCommitTsID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraCommitTSID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 	}
 
 	dagRequest := newDagBuilder().
@@ -442,7 +442,7 @@ func TestTableScanWithCommitTs(t *testing.T) {
 	require.Nil(t, errs)
 
 	colInfos := append(slices.Clone(data.colInfos), &tipb.ColumnInfo{
-		ColumnId:  model.ExtraCommitTsID,
+		ColumnId:  model.ExtraCommitTSID,
 		Tp:        int32(mysql.TypeLonglong),
 		Collation: -mysql.DefaultCollationID,
 		Flag:      int32(mysql.NotNullFlag | mysql.UnsignedFlag),
@@ -478,7 +478,7 @@ func TestIndexScanSpecialColumnsMustBeTrailing(t *testing.T) {
 
 	colInfos := []*tipb.ColumnInfo{
 		{ColumnId: 1, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
-		{ColumnId: model.ExtraCommitTsID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraCommitTSID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 		{ColumnId: model.ExtraHandleID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 	}
 
