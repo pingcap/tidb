@@ -1238,13 +1238,13 @@ func (p *MySQLPrivilege) decodeRoleEdgesTable(row chunk.Row, fs []*resolve.Resul
 	for i, f := range fs {
 		switch f.ColumnAsName.L {
 		case "from_host":
-			fromHost = row.GetString(i)
+			fromHost = strings.Clone(row.GetString(i))
 		case "from_user":
-			fromUser = row.GetString(i)
+			fromUser = strings.Clone(row.GetString(i))
 		case "to_host":
-			toHost = row.GetString(i)
+			toHost = strings.Clone(row.GetString(i))
 		case "to_user":
-			toUser = row.GetString(i)
+			toUser = strings.Clone(row.GetString(i))
 		}
 	}
 	fromKey := auth.RoleIdentity{Username: fromUser, Hostname: fromHost}
@@ -2140,6 +2140,7 @@ func (h *Handle) Get() *MySQLPrivilege {
 // UpdateAll loads all the users' privilege info from kv storage.
 func (h *Handle) UpdateAll() error {
 	priv := newMySQLPrivilege()
+	priv.globalVars = h.globalVars
 	res, err := h.sctx.Get()
 	if err != nil {
 		return errors.Trace(err)
