@@ -501,7 +501,10 @@ func GenerateExtractFile(ctx context.Context) (io.WriteCloser, string, error) {
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	storage := extstore.GetGlobalExtStorage()
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
 	writer, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
 	if err != nil {
 		return nil, "", errors.AddStack(err)

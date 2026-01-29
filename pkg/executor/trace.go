@@ -282,7 +282,10 @@ func generateOptimizerTraceFile(ctx context.Context) (io.WriteCloser, string, er
 	}
 	key := base64.URLEncoding.EncodeToString(b)
 	fileName := fmt.Sprintf("optimizer_trace_%v_%v.zip", key, time)
-	storage := extstore.GetGlobalExtStorage()
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
 	writer, err := storage.Create(ctx, filepath.Join(dirPath, fileName), nil)
 	if err != nil {
 		return nil, "", errors.AddStack(err)

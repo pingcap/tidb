@@ -165,8 +165,10 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 }
 
 func (e *PlanReplayerExec) createFile(ctx context.Context) error {
-	var err error
-	storage := extstore.GetGlobalExtStorage()
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return err
+	}
 	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
 	if err != nil {
 		return err

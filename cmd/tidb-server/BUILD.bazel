@@ -22,7 +22,6 @@ go_library(
         "//pkg/parser/terror",
         "//pkg/parser/types",
         "//pkg/planner/core",
-        "//pkg/planner/extstore",
         "//pkg/plugin",
         "//pkg/privilege/privileges",
         "//pkg/resourcemanager",
