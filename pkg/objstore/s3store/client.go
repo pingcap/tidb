@@ -347,6 +347,7 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 		u.Concurrency = concurrency
 		u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(concurrency * s3like.HardcodedChunkSize)
 		if c.s3Compatible {
+			u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 			u.ClientOptions = append(u.ClientOptions, withContentMD5)
 		}
 	})
@@ -357,7 +358,7 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 	}
 }
 
-// withContentMD5 removes all flexible checksum procecdures from an operation,
+// withContentMD5 removes flexible checksum procedures from an operation,
 // instead computing an MD5 checksum for the request payload.
 func withContentMD5(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
