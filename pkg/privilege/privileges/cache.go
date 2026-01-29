@@ -437,9 +437,9 @@ func (p *MySQLPrivilege) FindRole(user string, host string, role *auth.RoleIdent
 	return false
 }
 
-func findRole(h *Handle, user string, host string, role *auth.RoleIdentity) bool {
-	terror.Log(h.ensureActiveUser(user))
-	terror.Log(h.ensureActiveUser(role.Username))
+func findRole(ctx context.Context, h *Handle, user string, host string, role *auth.RoleIdentity) bool {
+	terror.Log(h.ensureActiveUser(ctx, user))
+	terror.Log(h.ensureActiveUser(ctx, role.Username))
 	mysqlPrivilege := h.Get()
 	return mysqlPrivilege.FindRole(user, host, role)
 }
@@ -2101,7 +2101,12 @@ func NewHandle(sctx util.SessionPool, globalVars variable.GlobalVarAccessor) *Ha
 }
 
 // ensureActiveUser ensure that the specific user data is loaded in-memory.
-func (h *Handle) ensureActiveUser(user string) error {
+func (h *Handle) ensureActiveUser(ctx context.Context, user string) error {
+	if p := ctx.Value("mock"); p != nil {
+		visited := p.(*bool)
+		*visited = true
+	}
+
 	if h.fullData.Load() {
 		// All users data are in-memory, nothing to do
 		return nil

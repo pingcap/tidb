@@ -15,6 +15,7 @@
 package privilege
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -45,7 +46,7 @@ type VerificationInfo struct {
 // Manager is the interface for providing privilege related operations.
 type Manager interface {
 	// ShowGrants shows granted privileges for user.
-	ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
+	ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) ([]string, error)
 
 	// GetEncodedPassword shows the encoded password for user.
 	GetEncodedPassword(user, host string) string
@@ -102,10 +103,10 @@ type Manager interface {
 
 	// ActiveRoles active roles for current session.
 	// The first illegal role will be returned.
-	ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
+	ActiveRoles(ctx context.Context, sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string)
 
 	// FindEdge find if there is an edge between role and user.
-	FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
+	FindEdge(ctx context.Context, sctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool
 
 	// GetDefaultRoles returns all default roles for certain user.
 	GetDefaultRoles(user, host string) []*auth.RoleIdentity
