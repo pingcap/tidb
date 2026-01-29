@@ -1997,6 +1997,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2073,6 +2074,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
