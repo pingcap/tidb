@@ -744,3 +744,73 @@ func TestV2TableCodec(t *testing.T) {
 	tbid = DecodeTableID(key)
 	require.Equal(t, int64(0), tbid)
 }
+
+// TestDecodeIndexHandleWithPartitionIDInKeyAndValue tests the scenario where
+// a GlobalIndexVersionV1+ non-unique index has partition ID in both the key
+// (new format) and the value (legacy global index format). This can produce
+// a nested PartitionHandle if not handled correctly.
+// See: https://github.com/pingcap/tidb/pull/65380#discussion_r2721786298
+func TestDecodeIndexHandleWithPartitionIDInKeyAndValue(t *testing.T) {
+	tableID := int64(100)
+	indexID := int64(1)
+	partitionID := int64(42)
+	handleID := int64(999)
+	colsLen := 1
+
+	// Build index key with one column value
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	indexedValues := []types.Datum{types.NewIntDatum(123)}
+	encodedCols, err := codec.EncodeKey(sc.TimeZone(), nil, indexedValues...)
+	require.NoError(t, err)
+
+	// Build the key: table prefix + table ID + index ID + encoded columns + partition handle suffix
+	// For GlobalIndexVersionV1+ non-unique indexes, the key suffix is:
+	// PartitionIDFlag + partition_id (8 bytes) + IntHandleFlag + handle (8 bytes)
+	key := make([]byte, 0)
+	key = append(key, tablePrefix...)
+	key = codec.EncodeInt(key, tableID)
+	key = append(key, indexPrefixSep...)
+	key = codec.EncodeInt(key, indexID)
+	key = append(key, encodedCols...)
+	// Add partition handle suffix (GlobalIndexVersionV1+ format)
+	key = append(key, PartitionIDFlag)
+	key = codec.EncodeInt(key, partitionID)
+	key = append(key, codec.IntHandleFlag)
+	key = codec.EncodeInt(key, handleID)
+
+	// Build index value with partition ID (global index value format)
+	// Format: TailLen | PartitionIDFlag | PartitionID | Padding
+	// We need len(value) >= 9 to trigger the partition ID check in DecodeIndexHandle
+	value := make([]byte, 0)
+	value = append(value, 0) // TailLen placeholder
+	value = append(value, PartitionIDFlag)
+	value = codec.EncodeInt(value, partitionID)
+	// Pad to make the value long enough (minimum 10 bytes for new encoding)
+	for len(value) < 10 {
+		value = append(value, 0)
+	}
+	value[0] = byte(len(value) - 1 - 1 - 8) // TailLen = total - 1(TailLen) - 1(PartitionIDFlag) - 8(PartitionID)
+
+	// Decode the handle
+	handle, err := DecodeIndexHandle(key, value, colsLen)
+	require.NoError(t, err)
+
+	// The handle should be a PartitionHandle
+	ph, ok := handle.(kv.PartitionHandle)
+	require.True(t, ok, "expected PartitionHandle, got %T", handle)
+
+	// The correct behavior should be:
+	// - PartitionID should equal the expected partition ID (42)
+	// - Inner handle should be IntHandle(999), not another PartitionHandle
+	require.Equal(t, partitionID, ph.PartitionID, "partition ID mismatch")
+
+	// Check that we do NOT have a nested PartitionHandle
+	// If the inner handle is also a PartitionHandle, that's the bug described in
+	// https://github.com/pingcap/tidb/pull/65380#discussion_r2721786298
+	_, isNested := ph.Handle.(kv.PartitionHandle)
+	require.False(t, isNested, "DecodeIndexHandle should not create nested PartitionHandle; "+
+		"when handle from key is already a PartitionHandle, skip value-based wrapping")
+
+	// Verify the inner handle is the expected IntHandle
+	require.Equal(t, kv.IntHandle(handleID), ph.Handle, "inner handle should be IntHandle")
+}
