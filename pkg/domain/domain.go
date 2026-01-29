@@ -514,7 +514,6 @@ func (do *Domain) Close() {
 
 	do.sysSessionPool.Close()
 	do.dxfSessionPool.Close()
-	do.advancedSysSessionPool.Close()
 	variable.UnregisterStatistics(do.BindingHandle())
 	if do.onClose != nil {
 		do.onClose()
@@ -528,6 +527,8 @@ func (do *Domain) Close() {
 	if handle := do.statsHandle.Load(); handle != nil {
 		handle.Close()
 	}
+
+	do.advancedSysSessionPool.Close()
 
 	do.crossKSSessMgr.Close()
 
