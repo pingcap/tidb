@@ -88,7 +88,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
 	for i := range samples {
-		samples[i] = &SampleItem{}
+		samples[i] = &SampleItem{Value: &types.Datum{}}
 	}
 	start := 1000
 	samples[0].Value.SetInt64(0)
