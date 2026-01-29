@@ -1944,8 +1944,13 @@ func (p *preprocessor) updateStateFromStaleReadProcessor() error {
 			p.sctx.GetSessionVars().StmtCtx.IsStaleness = true
 			if !p.sctx.GetSessionVars().InTxn() {
 				txnManager := sessiontxn.GetTxnManager(p.sctx)
+				enterType := sessiontxn.EnterNewTxnWithReplaceProvider
+				if !p.sctx.GetSessionVars().IsAutocommit() {
+					// start a stale-read transaction so that subsequent reads reuse the same snapshot.
+					enterType = sessiontxn.EnterNewTxnWithBeginStmt
+				}
 				newTxnRequest := &sessiontxn.EnterNewTxnRequest{
-					Type:     sessiontxn.EnterNewTxnWithReplaceProvider,
+					Type:     enterType,
 					Provider: staleread.NewStalenessTxnContextProvider(p.sctx, p.LastSnapshotTS, p.InfoSchema),
 				}
 				if err := txnManager.EnterNewTxn(context.TODO(), newTxnRequest); err != nil {
