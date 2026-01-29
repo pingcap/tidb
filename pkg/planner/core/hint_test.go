@@ -175,3 +175,52 @@ func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
 		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("0"))
 	})
 }
+
+func TestSetVarJoinReorderBlockingPenaltyRatio(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec(`use test`)
+
+		testKit.MustExec(`set @@tidb_enable_outer_join_reorder = 1`)
+		testKit.MustExec(`set @@tidb_opt_join_reorder_threshold = 0`)
+
+		testKit.MustExec(`create table t_part(p_key int, brand varchar(20), container varchar(20))`)
+		testKit.MustExec(`create table t_lineitem(l_key int, quantity int, price decimal(15,2))`)
+
+		sql := `select /*+ set_var(tidb_opt_join_reorder_blocking_penalty_ratio=0) */ sum(price) / 7.0 as avg_price from t_lineitem l, t_part p where p_key = l_key and brand = 'Brand#44' and container = 'WRAP PKG' and quantity < (select 0.2 * avg(quantity) from t_lineitem where l_key = p_key)`
+		testKit.MustQuery("explain format='plan_tree' " + sql).Check(testkit.Rows(
+			`Projection root  div(Column, 7.0)->Column`,
+			`└─StreamAgg root  funcs:sum(test.t_lineitem.price)->Column`,
+			`  └─HashJoin root  inner join, equal:[eq(test.t_part.p_key, test.t_lineitem.l_key)], other cond:lt(cast(test.t_lineitem.quantity, decimal(10,0) BINARY), mul(0.2, Column))`,
+			`    ├─HashJoin(Build) root  inner join, equal:[eq(test.t_part.p_key, test.t_lineitem.l_key)]`,
+			`    │ ├─TableReader(Build) root  data:Selection`,
+			`    │ │ └─Selection cop[tikv]  eq(test.t_part.brand, "Brand#44"), eq(test.t_part.container, "WRAP PKG"), not(isnull(test.t_part.p_key))`,
+			`    │ │   └─TableFullScan cop[tikv] table:p keep order:false, stats:pseudo`,
+			`    │ └─HashAgg(Probe) root  group by:test.t_lineitem.l_key, funcs:avg(Column, Column)->Column, funcs:firstrow(test.t_lineitem.l_key)->test.t_lineitem.l_key`,
+			`    │   └─TableReader root  data:HashAgg`,
+			`    │     └─HashAgg cop[tikv]  group by:test.t_lineitem.l_key, funcs:count(test.t_lineitem.quantity)->Column, funcs:sum(test.t_lineitem.quantity)->Column`,
+			`    │       └─Selection cop[tikv]  not(isnull(test.t_lineitem.l_key))`,
+			`    │         └─TableFullScan cop[tikv] table:t_lineitem keep order:false, stats:pseudo`,
+			`    └─TableReader(Probe) root  data:Selection`,
+			`      └─Selection cop[tikv]  not(isnull(test.t_lineitem.l_key))`,
+			`        └─TableFullScan cop[tikv] table:l keep order:false, stats:pseudo`,
+		))
+		sql = `select /*+ set_var(tidb_opt_join_reorder_blocking_penalty_ratio=0.5) */ sum(price) / 7.0 as avg_price from t_lineitem l, t_part p where p_key = l_key and brand = 'Brand#44' and container = 'WRAP PKG' and quantity < (select 0.2 * avg(quantity) from t_lineitem where l_key = p_key)`
+		testKit.MustQuery("explain format='plan_tree' " + sql).Check(testkit.Rows(
+			`Projection root  div(Column, 7.0)->Column`,
+			`└─StreamAgg root  funcs:sum(test.t_lineitem.price)->Column`,
+			`  └─HashJoin root  inner join, equal:[eq(test.t_part.p_key, test.t_lineitem.l_key)], other cond:lt(cast(test.t_lineitem.quantity, decimal(10,0) BINARY), mul(0.2, Column))`,
+			`    ├─HashJoin(Build) root  inner join, equal:[eq(test.t_part.p_key, test.t_lineitem.l_key)]`,
+			`    │ ├─TableReader(Build) root  data:Selection`,
+			`    │ │ └─Selection cop[tikv]  eq(test.t_part.brand, "Brand#44"), eq(test.t_part.container, "WRAP PKG"), not(isnull(test.t_part.p_key))`,
+			`    │ │   └─TableFullScan cop[tikv] table:p keep order:false, stats:pseudo`,
+			`    │ └─TableReader(Probe) root  data:Selection`,
+			`    │   └─Selection cop[tikv]  not(isnull(test.t_lineitem.l_key))`,
+			`    │     └─TableFullScan cop[tikv] table:l keep order:false, stats:pseudo`,
+			`    └─HashAgg(Probe) root  group by:test.t_lineitem.l_key, funcs:avg(Column, Column)->Column, funcs:firstrow(test.t_lineitem.l_key)->test.t_lineitem.l_key`,
+			`      └─TableReader root  data:HashAgg`,
+			`        └─HashAgg cop[tikv]  group by:test.t_lineitem.l_key, funcs:count(test.t_lineitem.quantity)->Column, funcs:sum(test.t_lineitem.quantity)->Column`,
+			`          └─Selection cop[tikv]  not(isnull(test.t_lineitem.l_key))`,
+			`            └─TableFullScan cop[tikv] table:t_lineitem keep order:false, stats:pseudo`,
+		))
+	})
+}

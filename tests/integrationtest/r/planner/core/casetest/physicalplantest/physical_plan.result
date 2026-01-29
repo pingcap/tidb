@@ -245,11 +245,10 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' with cte as (select * from tc where tc.a < 60) select * from cte c1, cte c2 where c1.a <18;
 id	task	access object	operator info
-Projection	root		planner__core__casetest__physicalplantest__physical_plan.tc.a, planner__core__casetest__physicalplantest__physical_plan.tc.a
-└─HashJoin	root		CARTESIAN inner join
-  ├─Selection(Build)	root		lt(planner__core__casetest__physicalplantest__physical_plan.tc.a, 18)
-  │ └─CTEFullScan	root	CTE:cte AS c1	data:CTE_0
-  └─CTEFullScan(Probe)	root	CTE:cte AS c2	data:CTE_0
+HashJoin	root		CARTESIAN inner join
+├─Selection(Build)	root		lt(planner__core__casetest__physicalplantest__physical_plan.tc.a, 18)
+│ └─CTEFullScan	root	CTE:cte AS c1	data:CTE_0
+└─CTEFullScan(Probe)	root	CTE:cte AS c2	data:CTE_0
 CTE_0	root		Non-Recursive CTE
 └─TableReader(Seed Part)	root		data:Selection
   └─Selection	cop[tikv]		lt(planner__core__casetest__physicalplantest__physical_plan.tc.a, 60)

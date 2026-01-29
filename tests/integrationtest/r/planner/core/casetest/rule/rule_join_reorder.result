@@ -7013,41 +7013,41 @@ Level	Code	Message
 Warning	1815	There are no matching table names for (t2, t3) in optimizer hint /*+ LEADING(t2, t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 right join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)]
-├─Selection(Build)	root		not(isnull(Column))
-│ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-│   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-│       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-│         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
-  │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
-    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
+│   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b) eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+  │ ├─Selection(Build)	root		not(isnull(Column))
+  │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+  │ │   └─TableReader	root		data:HashAgg
+  │ │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+  │ │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │ │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
+  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 right join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)]
-  ├─Selection(Build)	root		not(isnull(Column))
-  │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-  │   └─TableReader	root		data:HashAgg
-  │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-  │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-  │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)]
+    ├─Selection(Build)	root		not(isnull(Column))
+    │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+    │   └─TableReader	root		data:HashAgg
+    │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+    │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+    │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
     └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
@@ -7057,86 +7057,86 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
           └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)]
-├─Selection(Build)	root		not(isnull(Column))
-│ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-│   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-│       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-│         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
-  │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
-    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
+│   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b) eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+  │ ├─Selection(Build)	root		not(isnull(Column))
+  │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+  │ │   └─TableReader	root		data:HashAgg
+  │ │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+  │ │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │ │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
+  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t1) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a = (select max(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b) eq(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)]
-├─Selection(Build)	root		not(isnull(Column))
-│ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-│   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-│       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-│         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
-  │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
-    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
+│   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b) eq(Column, planner__core__casetest__rule__rule_join_reorder.t1.a)]
+  │ ├─Selection(Build)	root		not(isnull(Column))
+  │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+  │ │   └─TableReader	root		data:HashAgg
+  │ │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:max(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+  │ │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │ │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
+  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t1) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4, t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
-├─Selection(Build)	root		not(isnull(Column))
-│ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-│   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-│       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-│         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
-  │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
-    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
+│   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
+  │ ├─Selection(Build)	root		not(isnull(Column))
+  │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+  │ │   └─TableReader	root		data:HashAgg
+  │ │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+  │ │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │ │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
+  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t4, t3) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
 explain format='plan_tree' select /*+ leading(t4) */ * from t1 left join t2 on t1.a=t2.a right join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
 Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t2.a, planner__core__casetest__rule__rule_join_reorder.t2.b, planner__core__casetest__rule__rule_join_reorder.t4.a, planner__core__casetest__rule__rule_join_reorder.t4.b
-└─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
-  ├─Selection(Build)	root		not(isnull(Column))
-  │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-  │   └─TableReader	root		data:HashAgg
-  │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-  │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-  │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashJoin	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
+    ├─Selection(Build)	root		not(isnull(Column))
+    │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+    │   └─TableReader	root		data:HashAgg
+    │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+    │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+    │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
     └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t4.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
@@ -7146,46 +7146,46 @@ Projection	root		planner__core__casetest__rule__rule_join_reorder.t1.a, planner_
           └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ leading(t3@sel_2) */ * from t1 left join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
-├─Selection(Build)	root		not(isnull(Column))
-│ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-│   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-│       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-│         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
-  │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		left outer join, left side:TableReader, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
-    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
+│   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
+  │ ├─Selection(Build)	root		not(isnull(Column))
+  │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+  │ │   └─TableReader	root		data:HashAgg
+  │ │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+  │ │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │ │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
+  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3) */. Maybe you can use the table alias name
 explain format='plan_tree' select /*+ leading(t3@sel_2, t2) */ * from t1 right join t2 on t1.a=t2.a join t4 on t1.b = t4.b where t1.a > (select min(t3.a) from t3 where t1.b = t3.b);
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
-├─Selection(Build)	root		not(isnull(Column))
-│ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
-│   └─TableReader	root		data:HashAgg
-│     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
-│       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-│         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
-  │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
-    │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-        └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t4.b)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.b))
+│   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)], other cond:gt(planner__core__casetest__rule__rule_join_reorder.t1.a, Column)
+  │ ├─Selection(Build)	root		not(isnull(Column))
+  │ │ └─HashAgg	root		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(Column)->Column, funcs:firstrow(planner__core__casetest__rule__rule_join_reorder.t3.b)->planner__core__casetest__rule__rule_join_reorder.t3.b
+  │ │   └─TableReader	root		data:HashAgg
+  │ │     └─HashAgg	cop[tikv]		group by:planner__core__casetest__rule__rule_join_reorder.t3.b, funcs:min(planner__core__casetest__rule__rule_join_reorder.t3.a)->Column
+  │ │       └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │ │         └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
+  │ └─TableReader(Probe)	root		data:Selection
+  │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b))
+  │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:Selection
+    └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+      └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 Level	Code	Message
 Warning	1815	There are no matching table names for (t3) in optimizer hint /*+ LEADING(t3, t2) */. Maybe you can use the table alias name
 Warning	1815	leading hint is inapplicable, check if the leading hint table is valid
@@ -7490,61 +7490,6 @@ join t4 on t1.c = t4.c
 )
 select * from cte, tt;
 id	task	access object	operator info
-Projection	root		Column, planner__core__casetest__rule__rule_join_reorder.tt.a, planner__core__casetest__rule__rule_join_reorder.tt.b, planner__core__casetest__rule__rule_join_reorder.tt.c, planner__core__casetest__rule__rule_join_reorder.tt.d
-└─HashJoin	root		CARTESIAN inner join
-  ├─Projection(Build)	root		1->Column
-  │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.c, planner__core__casetest__rule__rule_join_reorder.t4.c)]
-  │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
-  │   │ ├─TableReader(Build)	root		data:Selection
-  │   │ │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-  │   │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-  │   │ └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-  │   │   ├─TableReader(Build)	root		data:Selection
-  │   │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │   │   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  │   │   └─TableReader(Probe)	root		data:Selection
-  │   │     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.c))
-  │   │       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  │   └─TableReader(Probe)	root		data:Selection
-  │     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.c))
-  │       └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format='plan_tree' with cte as (
-select 1 from t1
-join t2 on t1.a = t2.a
-join t3 on t1.b = t3.b
-join t4 on t1.c = t4.c
-)
-select * from cte, tt;
-id	task	access object	operator info
-Projection	root		Column, planner__core__casetest__rule__rule_join_reorder.tt.a, planner__core__casetest__rule__rule_join_reorder.tt.b, planner__core__casetest__rule__rule_join_reorder.tt.c, planner__core__casetest__rule__rule_join_reorder.tt.d
-└─HashJoin	root		CARTESIAN inner join
-  ├─Projection(Build)	root		1->Column
-  │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.c, planner__core__casetest__rule__rule_join_reorder.t4.c)]
-  │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
-  │   │ ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
-  │   │ │ ├─TableReader(Build)	root		data:Selection
-  │   │ │ │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
-  │   │ │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
-  │   │ │ └─TableReader(Probe)	root		data:Selection
-  │   │ │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.c))
-  │   │ │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-  │   │ └─TableReader(Probe)	root		data:Selection
-  │   │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
-  │   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  │   └─TableReader(Probe)	root		data:Selection
-  │     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.c))
-  │       └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:TableFullScan
-    └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
-explain format='plan_tree' select * from tt, (
-select /*+ straight_join() */ 1 from t1
-join t2 on t1.a = t2.a
-join t3 on t1.b = t3.b
-join t4 on t1.c = t4.c
-) sub;
-id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
 ├─Projection(Build)	root		1->Column
 │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.c, planner__core__casetest__rule__rule_join_reorder.t4.c)]
@@ -7564,6 +7509,60 @@ HashJoin	root		CARTESIAN inner join
 │       └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 └─TableReader(Probe)	root		data:TableFullScan
   └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format='plan_tree' with cte as (
+select 1 from t1
+join t2 on t1.a = t2.a
+join t3 on t1.b = t3.b
+join t4 on t1.c = t4.c
+)
+select * from cte, tt;
+id	task	access object	operator info
+HashJoin	root		CARTESIAN inner join
+├─Projection(Build)	root		1->Column
+│ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.c, planner__core__casetest__rule__rule_join_reorder.t4.c)]
+│   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+│   │ ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t3.b, planner__core__casetest__rule__rule_join_reorder.t1.b)]
+│   │ │ ├─TableReader(Build)	root		data:Selection
+│   │ │ │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+│   │ │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+│   │ │ └─TableReader(Probe)	root		data:Selection
+│   │ │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.c))
+│   │ │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+│   │ └─TableReader(Probe)	root		data:Selection
+│   │   └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+│   │     └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+│   └─TableReader(Probe)	root		data:Selection
+│     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.c))
+│       └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
+explain format='plan_tree' select * from tt, (
+select /*+ straight_join() */ 1 from t1
+join t2 on t1.a = t2.a
+join t3 on t1.b = t3.b
+join t4 on t1.c = t4.c
+) sub;
+id	task	access object	operator info
+Projection	root		planner__core__casetest__rule__rule_join_reorder.tt.a, planner__core__casetest__rule__rule_join_reorder.tt.b, planner__core__casetest__rule__rule_join_reorder.tt.c, planner__core__casetest__rule__rule_join_reorder.tt.d, Column
+└─HashJoin	root		CARTESIAN inner join
+  ├─Projection(Build)	root		1->Column
+  │ └─HashJoin	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.c, planner__core__casetest__rule__rule_join_reorder.t4.c)]
+  │   ├─HashJoin(Build)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.b, planner__core__casetest__rule__rule_join_reorder.t3.b)]
+  │   │ ├─TableReader(Build)	root		data:Selection
+  │   │ │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t3.b))
+  │   │ │   └─TableFullScan	cop[tikv]	table:t3	keep order:false
+  │   │ └─HashJoin(Probe)	root		inner join, equal:[eq(planner__core__casetest__rule__rule_join_reorder.t1.a, planner__core__casetest__rule__rule_join_reorder.t2.a)]
+  │   │   ├─TableReader(Build)	root		data:Selection
+  │   │   │ └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t2.a))
+  │   │   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+  │   │   └─TableReader(Probe)	root		data:Selection
+  │   │     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.a)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.b)), not(isnull(planner__core__casetest__rule__rule_join_reorder.t1.c))
+  │   │       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+  │   └─TableReader(Probe)	root		data:Selection
+  │     └─Selection	cop[tikv]		not(isnull(planner__core__casetest__rule__rule_join_reorder.t4.c))
+  │       └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:tt	keep order:false, stats:pseudo
 explain format='plan_tree' with cte as (
 select 1 from t1
 join t2 on t1.a = t2.a
