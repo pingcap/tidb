@@ -1018,12 +1018,13 @@ func runMultiSchemaTestWithBackfillDML(t *testing.T, createSQL, alterSQL, backfi
 		deadline := time.Now().Add(30 * time.Second)
 		for haveAnyEntriesForTableID(t, tkO, tableID) {
 			if time.Now().After(deadline) {
-				require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
+				break
 			}
 			err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 			require.NoError(t, err)
 			time.Sleep(500 * time.Millisecond)
 		}
+		require.False(t, HaveEntriesForTableIndex(t, tkO, tableID, 0), "Old table id %d has still entries!", tableID)
 	}
 	err = gcWorker.DeleteRanges(context.Background(), uint64(math.MaxInt64))
 	require.NoError(t, err)
@@ -1065,6 +1066,10 @@ func haveAnyEntriesForTableID(t *testing.T, tk *testkit.TestKit, tableID int64) 
 	require.NoError(t, sessiontxn.NewTxn(context.Background(), ctx))
 	txn, err := ctx.Txn(true)
 	require.NoError(t, err)
+	defer func() {
+		err := txn.Rollback()
+		require.NoError(t, err)
+	}()
 
 	it, err := txn.Iter(start, end)
 	require.NoError(t, err)
