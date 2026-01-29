@@ -1756,9 +1756,13 @@ func GetFinishedModifyColumnArgs(job *Job) (*ModifyColumnArgs, error) {
 }
 
 // RefreshMetaArgs is the argument for RefreshMeta.
+// InvolvedDB/InvolvedTable used for setting InvolvingSchemaInfo to
+// indicates the schema info involved in the DDL job.
 type RefreshMetaArgs struct {
-	SchemaID int64 `json:"schema_id,omitempty"`
-	TableID  int64 `json:"table_id,omitempty"`
+	SchemaID      int64  `json:"schema_id,omitempty"`
+	TableID       int64  `json:"table_id,omitempty"`
+	InvolvedDB    string `json:"involved_db,omitempty"`
+	InvolvedTable string `json:"involved_table,omitempty"`
 }
 
 func (a *RefreshMetaArgs) getArgsV1(*Job) []any {

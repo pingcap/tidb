@@ -331,7 +331,7 @@ func TestTableModeWithRefreshMeta(t *testing.T) {
 	// set table mode failure before refresh meta
 	err := testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
 	require.ErrorContains(t, err, "doesn't exist")
-	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, ntInfo.ID)
+	testutil.RefreshMeta(sctx, t, de, dbInfo.ID, ntInfo.ID, dbInfo.Name.O, ntInfo.Name.O)
 	// set table mode success after refresh meta
 	err = testutil.SetTableMode(sctx, t, store, de, dbInfo, ntInfo, model.TableModeImport)
 	require.NoError(t, err)

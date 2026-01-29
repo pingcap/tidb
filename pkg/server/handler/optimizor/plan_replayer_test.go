@@ -528,7 +528,7 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	return filename
 }
 
-func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) string {
+func prepareData4Issue64802(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain, injectedPanic bool) string {
 	h := dom.StatsHandle()
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
@@ -554,6 +554,32 @@ SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2
 FROM test_table t1
 JOIN test_table t2 ON t1.id = t2.id;
 `)
+	tk.MustExec(`create database test2`)
+	tk.MustExec(`use test2`)
+	tk.MustExec(`CREATE TABLE test_table (
+    id INT PRIMARY KEY,
+    value1 INT,
+    value2 INT
+);`)
+	err = statstestutil.HandleNextDDLEventWithTxn(h)
+	require.NoError(t, err)
+	tk.MustExec(`CREATE global BINDING FOR
+SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id
+USING
+SELECT /*+ HASH_JOIN(t1, t2) */ t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
+FROM test_table t1
+JOIN test_table t2 ON t1.id = t2.id;
+`)
+	tk.MustExec(`use test`)
+	if injectedPanic {
+		fpName := "github.com/pingcap/tidb/pkg/planner/core/ConsumeVolcanoOptimizePanic"
+		require.NoError(t, failpoint.Enable(fpName, "panic(\"injected panic\")"))
+		defer func() {
+			require.NoError(t, failpoint.Disable(fpName))
+		}()
+	}
 	rows := tk.MustQuery("plan replayer dump explain SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2 FROM test_table t1 JOIN test_table t2 ON t1.id = t2.id;")
 	require.True(t, rows.Next(), "unexpected data")
 	var filename string
@@ -565,6 +591,14 @@ JOIN test_table t2 ON t1.id = t2.id;
 }
 
 func TestIssue64802(t *testing.T) {
+	testIssue64802(t, false)
+}
+
+func TestIssue64802WithPanic(t *testing.T) {
+	testIssue64802(t, true)
+}
+
+func testIssue64802(t *testing.T, injectedPanic bool) {
 	origin := config.GetGlobalConfig().TempDir
 	defer func() {
 		config.GetGlobalConfig().TempDir = origin
@@ -577,7 +611,7 @@ func TestIssue64802(t *testing.T) {
 	server, client := prepareServerAndClientForTest(t, store, dom)
 	defer server.Close()
 
-	filename := prepareData4Issue64802(t, client, dom)
+	filename := prepareData4Issue64802(t, client, dom, false)
 	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 
 	// 2. check the contents of the plan replayer zip files.
@@ -643,7 +677,6 @@ func TestIssue64802(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table test.test_table")
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
-
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2
 FROM test_table t1
@@ -772,6 +805,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	ts2 := oracle.GoTimeToTS(time2)
 	stats1, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
 	require.NoError(t, err)
+	stats1.Sort()
 
 	// 1-2. second insert and second analyze, trigger second dump history stats
 	tk.MustExec("insert into t value(4,4,4), (5,5,5), (6,6,6)")
@@ -785,6 +819,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	ts3 := oracle.GoTimeToTS(time3)
 	stats2, err := statsHandle.DumpStatsToJSON("test", tblInfo, nil, true)
 	require.NoError(t, err)
+	stats2.Sort()
 
 	// 2. get the plan replayer and assert
 
@@ -808,6 +843,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	// the result is the same as stats2, and IsHistoricalStats is false.
 	require.Len(t, jsonTbls1, 1)
 	require.False(t, jsonTbls1[0].IsHistoricalStats)
+	jsonTbls1[0].Sort()
 	require.Equal(t, jsonTbls1[0], stats2)
 
 	// because we failed to get historical stats, there's an error message.
@@ -831,6 +867,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Len(t, jsonTbls2, 1)
 	require.True(t, jsonTbls2[0].IsHistoricalStats)
 	jsonTbls2[0].IsHistoricalStats = false
+	jsonTbls2[0].Sort()
 	require.Equal(t, jsonTbls2[0], stats1)
 
 	// succeeded to get historical stats, there should be no error message.
@@ -854,6 +891,7 @@ func TestDumpPlanReplayerAPIWithHistoryStats(t *testing.T) {
 	require.Len(t, jsonTbls3, 1)
 	require.True(t, jsonTbls3[0].IsHistoricalStats)
 	jsonTbls3[0].IsHistoricalStats = false
+	jsonTbls3[0].Sort()
 	require.Equal(t, jsonTbls3[0], stats2)
 
 	// succeeded to get historical stats, there should be no error message.

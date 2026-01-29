@@ -82,9 +82,6 @@ import (
 
 const (
 	expressionIndexPrefix = "_V$"
-	changingColumnPrefix  = "_Col$_"
-	removingObjPrefix     = "_Tombstone$_"
-	changingIndexPrefix   = "_Idx$_"
 	tableNotExist         = -1
 	tinyBlobMaxLength     = 255
 	blobMaxLength         = 65535
@@ -2105,7 +2102,6 @@ func (e *executor) multiSchemaChange(ctx sessionctx.Context, ti ast.Ident, info 
 		return errors.Trace(err)
 	}
 	mergeAddIndex(info)
-	setNeedAnalyze(info)
 	return e.DoDDLJob(ctx, job)
 }
 
@@ -5075,7 +5071,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 		}
 	case model.ActionModifyColumn:
 		setReorgParam()
-		if modifyColumnNeedReorg(job.CtxVars) {
+		if job.NeedReorg {
 			err := setDistTaskParam()
 			if err != nil {
 				return err
@@ -5096,7 +5092,7 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				}
 			case model.ActionModifyColumn:
 				setReorgParam()
-				if modifyColumnNeedReorg(sub.CtxVars) {
+				if job.NeedReorg {
 					err := setDistTaskParam()
 					if err != nil {
 						return err
@@ -5740,10 +5736,17 @@ func (e *executor) AlterTableMode(sctx sessionctx.Context, args *model.AlterTabl
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     schema.Name.O,
 		Type:           model.ActionAlterTableMode,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: schema.Name.L,
+				Table:    table.Meta().Name.L,
+			},
+		},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)
@@ -6742,6 +6745,7 @@ func (e *executor) DoDDLJobWrapper(ctx sessionctx.Context, jobW *JobWrapper) (re
 		// Instead, we merge all the jobs into one pending job.
 		return appendToSubJobs(mci, jobW)
 	}
+	e.checkInvolvingSchemaInfoInTest(job)
 	// Get a global job ID and put the DDL job in the queue.
 	setDDLJobQuery(ctx, job)
 	e.deliverJobTask(jobW)
@@ -7078,10 +7082,17 @@ func (e *executor) RefreshMeta(sctx sessionctx.Context, args *model.RefreshMetaA
 		Version:        model.JobVersion2,
 		SchemaID:       args.SchemaID,
 		TableID:        args.TableID,
+		SchemaName:     args.InvolvedDB,
 		Type:           model.ActionRefreshMeta,
 		BinlogInfo:     &model.HistoryInfo{},
 		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
 		SQLMode:        sctx.GetSessionVars().SQLMode,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{
+			{
+				Database: args.InvolvedDB,
+				Table:    args.InvolvedTable,
+			},
+		},
 	}
 	sctx.SetValue(sessionctx.QueryString, "skip")
 	err := e.doDDLJob2(sctx, job, args)

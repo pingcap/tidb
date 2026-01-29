@@ -39,7 +39,7 @@ const (
 	// MetaFile represents file name
 	MetaFile = "backupmeta"
 	// MetaJSONFile represents backup meta json file name
-	MetaJSONFile = "backupmeta.json"
+	MetaJSONFile = "jsons/backupmeta.json"
 	// MaxBatchSize represents the internal channel buffer size of MetaWriter and MetaReader.
 	MaxBatchSize = 1024
 

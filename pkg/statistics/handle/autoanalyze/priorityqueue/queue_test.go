@@ -16,6 +16,7 @@ package priorityqueue_test
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
@@ -260,10 +261,10 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	require.NotZero(t, updatedJob1.GetWeight())
 	require.Equal(t, tbl1.Meta().ID, updatedJob1.GetTableID())
 
-	// Update some rows in t2.
-	tk.MustExec("update t2 set a = 3 where a = 2")
-	tk.MustExec("update t2 set a = 4 where a = 3")
-	tk.MustExec("update t2 set a = 5 where a = 4")
+	// Update 15 times on t2.
+	for i := 0; i < 15; i++ {
+		tk.MustExec("update t2 set a = a + 1 where a = " + strconv.Itoa(i+3))
+	}
 
 	// Dump the stats to kv.
 	require.NoError(t, handle.DumpStatsDeltaToKV(true))
@@ -276,7 +277,7 @@ func testProcessDMLChanges(t *testing.T, partitioned bool) {
 	updatedJob2, err := pq.Peek()
 	require.NoError(t, err)
 	require.NotZero(t, updatedJob2.GetWeight())
-	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size")
+	require.Equal(t, tbl2.Meta().ID, updatedJob2.GetTableID(), "t2 should have higher weight due to smaller table size and more changes")
 }
 
 func TestProcessDMLChanges(t *testing.T) {

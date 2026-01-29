@@ -458,12 +458,7 @@ func (e *LoadDataController) PopulateChunks(ctx context.Context) (ecp map[int32]
 func (ti *TableImporter) getTotalRawFileSize(indexCnt int64) int64 {
 	var totalSize int64
 	for _, file := range ti.dataFiles {
-		size := file.RealSize
-		if file.Type == mydump.SourceTypeParquet {
-			// parquet file is compressed, thus estimates with a factor of 2
-			size *= 2
-		}
-		totalSize += size
+		totalSize += file.RealSize
 	}
 	return totalSize * indexCnt
 }

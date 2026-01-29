@@ -313,15 +313,6 @@ func TestCheckClusterVersion(t *testing.T) {
 	}
 
 	{
-		build.ReleaseVersion = "v6.0.0"
-		mock.getAllStores = func() []*metapb.Store {
-			return []*metapb.Store{{Version: "v4.4.0"}}
-		}
-		err := CheckClusterVersion(context.Background(), &mock, CheckVersionForBR)
-		require.Error(t, err)
-	}
-
-	{
 		build.ReleaseVersion = "v8.2.0"
 		mock.getAllStores = func() []*metapb.Store {
 			return []*metapb.Store{{Version: "v8.1.0"}}

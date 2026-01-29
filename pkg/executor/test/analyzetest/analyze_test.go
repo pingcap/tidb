@@ -510,7 +510,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "220000", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 0.500000 for table test.t, reason to use this rate is \"use min(1, 110000/220000) as the sample-rate=0.5\"",
 	))
 	tk.MustExec("insert into t values(1),(1),(1)")
@@ -520,7 +519,6 @@ func TestAdjustSampleRateNote(t *testing.T) {
 	require.Equal(t, "3", result.Rows()[0][5])
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1105 No predicate column has been collected yet for table test.t, so only indexes and the columns composing the indexes will be analyzed",
 		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t, reason to use this rate is \"use min(1, 110000/3) as the sample-rate=1\"",
 	))
 }
@@ -2726,6 +2724,11 @@ PARTITION BY RANGE ( a ) (
 func TestAutoAnalyzeAwareGlobalVariableChange(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
+	bakRunAutoAnalyze := variable.RunAutoAnalyze.Load()
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1")
+	t.Cleanup(func() {
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_enable_auto_analyze = %t", bakRunAutoAnalyze))
+	})
 	tk.MustExec("use test")
 	tk.MustQuery("select @@global.tidb_enable_analyze_snapshot").Check(testkit.Rows("0"))
 	// We want to test that HandleAutoAnalyze is aware of setting @@global.tidb_enable_analyze_snapshot to 1 and reads data from snapshot.

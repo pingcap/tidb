@@ -41,7 +41,7 @@ const (
 	basicTaskColumns = `t.id, t.task_key, t.type, t.state, t.step, t.priority, t.concurrency, t.create_time, t.target_scope`
 	// TaskColumns is the columns for task.
 	// TODO: dispatcher_id will update to scheduler_id later
-	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error`
+	TaskColumns = basicTaskColumns + `, t.start_time, t.state_update_time, t.meta, t.dispatcher_id, t.error, t.modify_params`
 	// InsertTaskColumns is the columns used in insert task.
 	InsertTaskColumns   = `task_key, type, state, priority, concurrency, step, meta, create_time, target_scope`
 	basicSubtaskColumns = `id, step, task_key, type, exec_id, state, concurrency, create_time, ordinal, start_time`
@@ -57,27 +57,43 @@ var (
 	// ErrUnstableSubtasks is the error when we detected that the subtasks are
 	// unstable, i.e. count, order and content of the subtasks are changed on
 	// different call.
-	ErrUnstableSubtasks = errors.New("unstable subtasks")
+	ErrUnstableSubtasks = goerrors.New("unstable subtasks")
 
 	// ErrTaskNotFound is the error when we can't found task.
 	// i.e. TransferTasks2History move task from tidb_global_task to tidb_global_task_history.
-	ErrTaskNotFound = errors.New("task not found")
+	ErrTaskNotFound = goerrors.New("task not found")
 
 	// ErrTaskAlreadyExists is the error when we submit a task with the same task key.
 	// i.e. SubmitTask in handle may submit a task twice.
-	ErrTaskAlreadyExists = errors.New("task already exists")
+	ErrTaskAlreadyExists = goerrors.New("task already exists")
+
+	// ErrTaskStateNotAllow is the error when the task state is not allowed to do the operation.
+	ErrTaskStateNotAllow = goerrors.New("task state not allow to do the operation")
+
+	// ErrTaskChanged is the error when task changed by other operation.
+	ErrTaskChanged = goerrors.New("task changed by other operation")
 
 	// ErrSubtaskNotFound is the error when can't find subtask by subtask_id and execId,
 	// i.e. scheduler change the subtask's execId when subtask need to balance to other nodes.
-	ErrSubtaskNotFound = errors.New("subtask not found")
+	ErrSubtaskNotFound = goerrors.New("subtask not found")
 )
+
+// Manager is the interface for task manager.
+// those methods are used by application side, we expose them through interface
+// to make tests easier.
+type Manager interface {
+	GetCPUCountOfNode(ctx context.Context) (int, error)
+	GetTaskByID(ctx context.Context, taskID int64) (task *proto.Task, err error)
+	ModifyTaskByID(ctx context.Context, taskID int64, param *proto.ModifyParam) error
+}
 
 // TaskExecInfo is the execution information of a task, on some exec node.
 type TaskExecInfo struct {
 	*proto.TaskBase
 	// SubtaskConcurrency is the concurrency of subtask in current task step.
 	// TODO: will be used when support subtask have smaller concurrency than task,
-	// TODO: such as post-process of import-into.
+	// TODO: such as post-process of import-into. Also remember the 'modifying' state
+	// also update subtask concurrency.
 	// TODO: we might need create one task executor for each step in this case, to alloc
 	// TODO: minimal resource
 	SubtaskConcurrency int
@@ -251,6 +267,7 @@ func (mgr *TaskManager) GetTopUnfinishedTasks(ctx context.Context) ([]*proto.Tas
 		proto.TaskStateCancelling,
 		proto.TaskStatePausing,
 		proto.TaskStateResuming,
+		proto.TaskStateModifying,
 	)
 }
 
@@ -380,7 +397,16 @@ func (mgr *TaskManager) GetTaskByID(ctx context.Context, taskID int64) (task *pr
 
 // GetTaskBaseByID implements the TaskManager.GetTaskBaseByID interface.
 func (mgr *TaskManager) GetTaskBaseByID(ctx context.Context, taskID int64) (task *proto.TaskBase, err error) {
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
+	err = mgr.WithNewSession(func(se sessionctx.Context) error {
+		var err2 error
+		task, err2 = mgr.getTaskBaseByID(ctx, se.GetSQLExecutor(), taskID)
+		return err2
+	})
+	return
+}
+
+func (*TaskManager) getTaskBaseByID(ctx context.Context, exec sqlexec.SQLExecutor, taskID int64) (task *proto.TaskBase, err error) {
+	rs, err := sqlexec.ExecSQL(ctx, exec, "select "+basicTaskColumns+" from mysql.tidb_global_task t where id = %?", taskID)
 	if err != nil {
 		return task, err
 	}
@@ -610,22 +636,6 @@ func (mgr *TaskManager) GetSubtaskErrors(ctx context.Context, taskID int64) ([]e
 	}
 
 	return subTaskErrors, nil
-}
-
-// HasSubtasksInStates checks if there are subtasks in the states.
-func (mgr *TaskManager) HasSubtasksInStates(ctx context.Context, tidbID string, taskID int64, step proto.Step, states ...proto.SubtaskState) (bool, error) {
-	args := []any{tidbID, taskID, step}
-	for _, state := range states {
-		args = append(args, state)
-	}
-	rs, err := mgr.ExecuteSQLWithNewSession(ctx, `select 1 from mysql.tidb_background_subtask
-		where exec_id = %? and task_key = %? and step = %?
-			and state in (`+strings.Repeat("%?,", len(states)-1)+"%?) limit 1", args...)
-	if err != nil {
-		return false, err
-	}
-
-	return len(rs) > 0, nil
 }
 
 // UpdateSubtasksExecIDs update subtasks' execID.

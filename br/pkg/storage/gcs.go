@@ -597,8 +597,6 @@ type gcsObjectReader struct {
 
 	prefetchSize int
 	// reader context used for implement `io.Seek`
-	// currently, lightning depends on package `xitongsys/parquet-go` to read parquet file and it needs `io.Seeker`
-	// See: https://github.com/xitongsys/parquet-go/blob/207a3cee75900b2b95213627409b7bac0f190bb3/source/source.go#L9-L10
 	ctx context.Context
 }
 

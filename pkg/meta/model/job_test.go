@@ -327,8 +327,8 @@ func TestJobSize(t *testing.T) {
 - SubJob.FromProxyJob()
 - SubJob.ToProxyJob()
 `
-	require.Equal(t, 408, int(unsafe.Sizeof(Job{})), msg)
-	require.Equal(t, 160, int(unsafe.Sizeof(SubJob{})), msg)
+	require.Equal(t, 392, int(unsafe.Sizeof(Job{})), msg)
+	require.Equal(t, 144, int(unsafe.Sizeof(SubJob{})), msg)
 }
 
 func TestBackfillMetaCodec(t *testing.T) {

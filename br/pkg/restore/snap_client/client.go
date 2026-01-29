@@ -168,6 +168,8 @@ type SnapClient struct {
 	// restoreUUID is the UUID of this restore.
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
+
+	checkPrivilegeTableRowsCollateCompatiblity bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -268,6 +270,18 @@ func (rc *SnapClient) GetTLSConfig() *tls.Config {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
+}
+
+// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
+	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+}
+
+// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
+	return rc.checkPrivilegeTableRowsCollateCompatiblity
 }
 
 func (rc *SnapClient) updateConcurrency() {
@@ -1340,6 +1354,7 @@ func (rc *SnapClient) execAndValidateChecksum(
 
 	item, exists := rc.checkpointChecksum[tbl.Table.ID]
 	if !exists {
+		logger.Info("did not find checksum from checkpoint, scanning table to calculate checksum")
 		startTS, err := restore.GetTSWithRetry(ctx, rc.pdClient)
 		if err != nil {
 			return errors.Trace(err)
