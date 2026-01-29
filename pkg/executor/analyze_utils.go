@@ -109,7 +109,7 @@ func getAnalyzePanicErr(r any) error {
 	return errors.Trace(errAnalyzeWorkerPanic)
 }
 
-func normalizeAnalyzeCtxErr(ctx context.Context, err error) error {
+func normalizeCtxErrWithCause(ctx context.Context, err error) error {
 	if err == nil {
 		return nil
 	}

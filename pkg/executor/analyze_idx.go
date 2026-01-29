@@ -230,7 +230,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, resul
 		})
 		data, err := result.NextRaw(killerCtx)
 		if err != nil {
-			err = normalizeAnalyzeCtxErr(killerCtx, err)
+			err = normalizeCtxErrWithCause(killerCtx, err)
 			e.logAnalyzeCanceledInTest(killerCtx, err, "analyze index nextRaw canceled")
 			return nil, nil, nil, nil, err
 		}
