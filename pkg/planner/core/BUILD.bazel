@@ -300,7 +300,6 @@ go_test(
         "//pkg/planner/util/costusage",
         "//pkg/planner/util/optimizetrace",
         "//pkg/session",
-        "//pkg/session/sessionapi",
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/sessiontxn",
