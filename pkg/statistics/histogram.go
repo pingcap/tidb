@@ -1187,6 +1187,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
+<<<<<<< HEAD
 	// Step 7: Calculate the width of the predicate
 	// TODO: If predWidth == 0, it may be because the common prefix is too large.
 	// In future - out of range for equal predicates should also use this logic
@@ -1202,6 +1203,13 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// and return the max as worst case.
 		histWidth = 0
 	}
+=======
+	// Calculate left overlap percentage if the range overlaps with (boundL, histL)
+	leftPercent := calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
+
+	// Calculate right overlap percentage if the range overlaps with (histR, boundR)
+	rightPercent := calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
 
 	// Step 8: Calculate the out of range percentages
 	// Calculate left overlap percentage if the range overlaps with (boundL, histL)
@@ -1217,7 +1225,18 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+<<<<<<< HEAD
 	maxAddedRows := addedRows
+=======
+	// percentInHist is the percentage of rows that were included in the histogram.
+	// This is used to scale back the out-of-range estimate.
+	percentInHist := hg.NotNullCount() / hg.TotalRowCount()
+	addedOutOfRangePct := min(1.0-percentInHist, 0.5)
+	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
+	// Assume on average, half of newly added rows are within the histogram range, and the other
+	// half are distributed out of range according to the diagram in the function description.
+	avgRowCount := (addedRows * addedOutOfRangePct) * totalPercent
+>>>>>>> 62e3fca48dd (statistics: refactor out of range percent calculations (#65857))
 
 	// Step 10: Calculate the estimated rows
 	estRows := oneValue
