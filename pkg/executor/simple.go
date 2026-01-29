@@ -2516,7 +2516,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 		h = s.User.Hostname
 
 		checker := privilege.GetPrivilegeManager(e.Ctx())
-		checker.MatchIdentity(u, h, false)
 		activeRoles := e.Ctx().GetSessionVars().ActiveRoles
 		if checker != nil && !checker.RequestVerification(activeRoles, "", "", "", mysql.SuperPriv) {
 			currUser := e.Ctx().GetSessionVars().User
