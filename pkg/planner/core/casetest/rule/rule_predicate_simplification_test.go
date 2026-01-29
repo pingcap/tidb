@@ -122,11 +122,38 @@ func TestPredicateSimplification(tt *testing.T) {
 		tk.MustExec(`SET tidb_opt_fix_control = "44830:ON";`)
 		tk.MustExec(`SET GLOBAL tidb_enable_non_prepared_plan_cache=ON;`)
 		tk.MustExec(`SET tidb_enable_non_prepared_plan_cache=ON;`)
+		tk.MustExec(`INSERT INTO t1 (id, a, b) VALUES ('r1', 1, 10);`)
+		tk.MustExec(`INSERT INTO t2 (c1, c2, c3) VALUES ('x', 'y', 'z');`)
+		tk.MustExec(`INSERT INTO t3 (c1, c2, c3) VALUES ('x', 'y', 'z');`)
+		tk.MustExec(`INSERT INTO t4 (c1, c2, c3, state) VALUES ('x', 'y', 'z', 'ACTIVE');`)
+		tk.MustExec(`INSERT INTO t6 (a, b, c, d) VALUES (1, 1, 1, 1);`)
+		tk.MustExec(`CREATE TABLE ps_t1 (
+  id bigint not null,
+  c0 decimal(12,2) not null,
+  c1 varchar(64) not null,
+  primary key (id) clustered
+);`)
+		tk.MustExec(`CREATE TABLE ps_t2 (
+  id bigint not null,
+  c0 tinyint(1) not null,
+  c1 bigint not null,
+  c2 timestamp null default null,
+  c3 decimal(12,2) default null,
+  c4 date not null,
+  c5 bigint not null,
+  primary key (id) clustered
+);`)
+		tk.MustExec(`CREATE TABLE ps_t3 (
+  c1 tinyint
+);`)
+		tk.MustExec(`INSERT INTO ps_t1 (id, c0, c1) VALUES (1, 4.41, 's91');
+INSERT INTO ps_t2 (id, c0, c1, c2, c3, c4, c5) VALUES (2, 1, 10, '2024-01-01 08:00:00', 1.00, '2024-01-01', 1);`)
 		// since the plan may differ under different planner mode, recommend to record explain result to json accordingly.
 		var input []string
 		var output []struct {
 			SQL               string
 			Plan              []string
+			Result            []string
 			LastPlanFromCache []string
 			Warning           []string
 		}
@@ -138,14 +165,14 @@ func TestPredicateSimplification(tt *testing.T) {
 				tk.MustQuery(tt)
 				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("EXPLAIN FORMAT='brief' " + tt).Rows())
 				output[i].Warning = testdata.ConvertRowsToStrings(tk.MustQuery("show warnings").Rows())
-				tk.MustQuery(tt)
+				output[i].Result = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
 				output[i].LastPlanFromCache = testdata.ConvertRowsToStrings(tk.MustQuery("select @@last_plan_from_cache").Rows())
 			})
 			tk.MustQuery(tt)
 			res := tk.MustQuery("EXPLAIN FORMAT='brief' " + tt)
 			res.Check(testkit.Rows(output[i].Plan...))
 			tk.MustQuery("show warnings").Check(testkit.Rows(output[i].Warning...))
-			tk.MustQuery(tt)
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Result...))
 			isPlanCacheRes := tk.MustQuery("select @@last_plan_from_cache")
 			isPlanCacheRes.Check(testkit.Rows(output[i].LastPlanFromCache...))
 		}
