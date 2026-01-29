@@ -427,10 +427,37 @@ func (m *ownerManager) campaignAndWatch(ctx context.Context) error {
 
 func (m *ownerManager) closeSession() {
 	if m.etcdSes != nil {
+		lease := m.etcdSes.Lease()
 		if err := m.etcdSes.Close(); err != nil {
 			m.logger.Info("etcd session close failed", zap.Error(err))
+			// concurrency.Session.Close uses the session context for lease revoke, if it's already canceled,
+			// it will leave the lease to expire and the campaign key can block a new election for the TTL.
+			m.revokeSessionLease(lease)
 		}
 		m.etcdSes = nil
+	}
+	m.sessionLease.Store(0)
+}
+
+func (m *ownerManager) revokeSessionLease(lease clientv3.LeaseID) {
+	if m.etcdCli == nil || lease == clientv3.NoLease {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), keyOpDefaultTimeout)
+	_, err := m.etcdCli.Revoke(ctx, lease)
+	cancel()
+	if err == nil || terror.ErrorEqual(err, rpctypes.ErrLeaseNotFound) {
+		return
+	}
+	m.logger.Info("etcd session lease revoke failed", zap.String("lease", util2.FormatLeaseID(lease)), zap.Error(err))
+
+	// Best-effort cleanup to unblock elections when lease revoke fails.
+	campaignKey := fmt.Sprintf("%s%x", m.key+"/", lease)
+	ctx, cancel = context.WithTimeout(context.Background(), keyOpDefaultTimeout)
+	_, err = m.etcdCli.Delete(ctx, campaignKey)
+	cancel()
+	if err != nil {
+		m.logger.Info("etcd campaign key delete failed", zap.String("campaignKey", campaignKey), zap.Error(err))
 	}
 }
 
