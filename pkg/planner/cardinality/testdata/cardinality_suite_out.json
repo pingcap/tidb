@@ -24,107 +24,149 @@
       {
         "Start": 800,
         "End": 900,
-        "Count": 763
+        "Count": 763,
+        "MinEst": 759,
+        "MaxEst": 2258
       },
       {
         "Start": 900,
         "End": 950,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 950,
         "End": 1000,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 1000,
         "End": 1050,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 1050,
         "End": 1100,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 1150,
         "End": 1200,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 1200,
         "End": 1300,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 1300,
         "End": 1400,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 1400,
         "End": 1500,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 1500,
         "End": 1600,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 300,
         "End": 899,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 800,
         "End": 1000,
-        "Count": 763
+        "Count": 763,
+        "MinEst": 759,
+        "MaxEst": 2258
       },
       {
         "Start": 900,
         "End": 1500,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 300,
         "End": 1500,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 200,
         "End": 300,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 100,
         "End": 200,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": 200,
         "End": 400,
-        "Count": 763
+        "Count": 763,
+        "MinEst": 759,
+        "MaxEst": 2258
       },
       {
         "Start": 200,
         "End": 1000,
-        "Count": 4500
+        "Count": 4500,
+        "MinEst": 4500,
+        "MaxEst": 4500
       },
       {
         "Start": 0,
         "End": 100,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": -100,
         "End": 100,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       },
       {
         "Start": -100,
         "End": 0,
-        "Count": 13
+        "Count": 13,
+        "MinEst": 9,
+        "MaxEst": 1508
       }
     ]
   },
