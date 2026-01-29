@@ -71,21 +71,21 @@ type AnalyzeColumnsExec struct {
 func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
 		res := e.toV2().analyzeColumnsPushDownV2(ctx, gp)
-		e.logAnalyzeColumnsCanceledInTest(ctx, res.Err)
+		e.logAnalyzeCanceledInTest(ctx, res.Err, "analyze columns canceled")
 		return res
 	}
 	res := e.toV1().analyzeColumnsPushDownV1(ctx)
-	e.logAnalyzeColumnsCanceledInTest(ctx, res.Err)
+	e.logAnalyzeCanceledInTest(ctx, res.Err, "analyze columns canceled")
 	return res
 }
 
-func (e *AnalyzeColumnsExec) logAnalyzeColumnsCanceledInTest(ctx context.Context, err error) {
+func (e *AnalyzeColumnsExec) logAnalyzeCanceledInTest(ctx context.Context, err error, msg string) {
 	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
 		return
 	}
 	cause := context.Cause(ctx)
 	ctxErr := ctx.Err()
-	statslogutil.StatsLogger().Info("analyze columns canceled",
+	statslogutil.StatsLogger().Info(msg,
 		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
 		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
 		zap.Error(err),
@@ -156,18 +156,7 @@ func (e *AnalyzeColumnsExec) buildResp(ctx context.Context, ranges []*ranger.Ran
 	}
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
-		if intest.InTest && stderrors.Is(err, context.Canceled) {
-			cause := context.Cause(ctx)
-			ctxErr := ctx.Err()
-			statslogutil.StatsLogger().Info("analyze columns distsql canceled",
-				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-				zap.Error(err),
-				zap.Error(cause),
-				zap.Error(ctxErr),
-				zap.Stack("stack"),
-			)
-		}
+		e.logAnalyzeCanceledInTest(ctx, err, "analyze columns distsql canceled")
 		return nil, err
 	}
 	return result, nil
