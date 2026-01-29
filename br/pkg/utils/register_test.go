@@ -113,17 +113,16 @@ func TestTaskRegisterFailedGrant(t *testing.T) {
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-grant")
+	var list RegisterTasksList
 	require.Eventually(t, func() bool {
-		list, err := GetImportTasksFrom(ctx, client)
+		var err error
+		list, err = GetImportTasksFrom(ctx, client)
 		return err == nil && len(list.Tasks) > 0
 	}, 5*time.Second, 50*time.Millisecond)
-	list, err := GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
-	require.True(t, len(list.Tasks) > 0)
 }
 
 func TestTaskRegisterFailedReput(t *testing.T) {
@@ -158,15 +157,14 @@ func TestTaskRegisterFailedReput(t *testing.T) {
 
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-keepalive-stop")
 	failpoint.Disable("github.com/pingcap/tidb/br/pkg/utils/brie-task-register-failed-to-reput")
+	var list RegisterTasksList
 	require.Eventually(t, func() bool {
-		list, err := GetImportTasksFrom(ctx, client)
+		var err error
+		list, err = GetImportTasksFrom(ctx, client)
 		return err == nil && len(list.Tasks) > 0
 	}, 5*time.Second, 50*time.Millisecond)
-	list, err := GetImportTasksFrom(ctx, client)
-	require.NoError(t, err)
 	for _, task := range list.Tasks {
 		t.Log(task.MessageToUser())
 		require.Equal(t, "/tidb/brie/import/restore/test", task.Key)
 	}
-	require.True(t, len(list.Tasks) > 0)
 }
