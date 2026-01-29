@@ -605,7 +605,7 @@ func insertFailedJobForPartitionWithStartTime(
 	)
 }
 
-func TestAutoAnalyzePanicsWhenExistenceMapEmptyInCache(t *testing.T) {
+func TestAutoAnalyzeNoPanicsWhenExistenceMapEmptyInCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
