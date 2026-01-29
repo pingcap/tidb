@@ -17,6 +17,9 @@ package memory
 import (
 	"container/list"
 	"math/bits"
+	"runtime"
+	"runtime/metrics"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -250,3 +253,65 @@ func intoRatio(x float64) (zMilli int64) {
 }
 
 type cpuCacheLinePad cpu.CacheLinePad
+
+// RuntimeMemStats represents the runtime memory statistics
+type RuntimeMemStats struct {
+	HeapAlloc, HeapInuse, TotalFree, MemOffHeap,
+	LastGC int64
+}
+
+var metricsMemStats struct {
+	heapSample []metrics.Sample
+	sync.Mutex
+}
+
+// SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
+func SampleRuntimeMemStats() (s RuntimeMemStats) {
+	{
+		metricsMemStats.Lock()
+
+		metrics.Read(metricsMemStats.heapSample)
+		s = RuntimeMemStats{
+			HeapAlloc: int64(metricsMemStats.heapSample[0].Value.Uint64()),
+			HeapInuse: int64(metricsMemStats.heapSample[0].Value.Uint64() + metricsMemStats.heapSample[1].Value.Uint64()), // inuse = alloc + unused
+			TotalFree: int64(metricsMemStats.heapSample[5].Value.Uint64()),
+			MemOffHeap: int64(metricsMemStats.heapSample[4].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[0].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[1].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[2].Value.Uint64()) -
+				int64(metricsMemStats.heapSample[3].Value.Uint64()),
+		}
+
+		metricsMemStats.Unlock()
+	}
+
+	s.LastGC = int64(ReadMemStats().LastGC)
+
+	return s
+}
+
+// IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
+func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
+	return RuntimeMemStats{
+		HeapAlloc:  int64(s.HeapAlloc),
+		HeapInuse:  int64(s.HeapInuse),
+		TotalFree:  int64(s.TotalAlloc - s.Alloc),
+		MemOffHeap: int64(s.Sys - s.HeapSys),
+		LastGC:     int64(s.LastGC),
+	}
+}
+
+func init() {
+	metricsMemStats.heapSample = []metrics.Sample{
+		// heap alloc
+		{Name: "/memory/classes/heap/objects:bytes"},
+		// heap available
+		{Name: "/memory/classes/heap/unused:bytes"}, // unused
+		{Name: "/memory/classes/heap/free:bytes"},
+		{Name: "/memory/classes/heap/released:bytes"},
+		// memory total
+		{Name: "/memory/classes/total:bytes"},
+		// total free
+		{Name: "/gc/heap/frees:bytes"},
+	}
+}
