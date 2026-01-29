@@ -697,14 +697,11 @@ workLoop:
 				totalBuffered += bytes
 				e.memTracker.BufferedConsume(&bufferedMemSize, bytes)
 			}
-			flushBuffered := func() {
+			flushBuffered := func(cum *int64) {
 				if bufferedMemSize != 0 {
 					e.memTracker.Consume(bufferedMemSize)
 					bufferedMemSize = 0
 				}
-			}
-			flushBufferedAndUpdateCollectorMemSize := func(cum *int64) {
-				flushBuffered()
 				*cum += totalBuffered
 				totalBuffered = 0
 			}
@@ -750,7 +747,7 @@ workLoop:
 						Ordinal: j,
 					})
 				}
-				flushBufferedAndUpdateCollectorMemSize(&collectorMemSize)
+				flushBuffered(&collectorMemSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
@@ -788,8 +785,6 @@ workLoop:
 							b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, tmpDatum)
 							err = errCtx.HandleError(err)
 							if err != nil {
-								flushBuffered()
-								totalBuffered = 0
 								resultCh <- err
 								continue workLoop
 							}
@@ -798,8 +793,6 @@ workLoop:
 						b, err = codec.EncodeKey(e.ctx.GetSessionVars().StmtCtx.TimeZone(), b, row.Columns[col.Offset])
 						err = errCtx.HandleError(err)
 						if err != nil {
-							flushBuffered()
-							totalBuffered = 0
 							resultCh <- err
 							continue workLoop
 						}
@@ -814,7 +807,7 @@ workLoop:
 						Value: &tmp,
 					})
 				}
-				flushBufferedAndUpdateCollectorMemSize(&collectorMemSize)
+				flushBuffered(&collectorMemSize)
 				collector = &statistics.SampleCollector{
 					Samples:   sampleItems,
 					NullCount: task.rootRowCollector.Base().NullCount[task.slicePos],
