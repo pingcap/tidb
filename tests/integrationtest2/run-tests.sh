@@ -70,6 +70,7 @@ ticdc_server=$TICDC_BIN
 portgenerator=""
 mysql_tester_log="./integration-test.out"
 XUNITFILE=""
+REPORT_DIR="./report"
 tests=""
 record=0
 record_case=""
@@ -915,6 +916,9 @@ function run_mysql_tester()
 {
     local downstream_args=()
     local xunit_args=()
+    local case_label="mysql_tester"
+    local tmp_log=""
+    local exit_code=0
 
     if [ -n "${DOWNSTREAM_PORT:-}" ]; then
         downstream_args=(-downstream "root:@tcp(127.0.0.1:$DOWNSTREAM_PORT)/test")
@@ -922,6 +926,14 @@ function run_mysql_tester()
     if [ -n "${XUNITFILE:-}" ]; then
         xunit_args=(-xunitfile "$XUNITFILE")
     fi
+    if [ $# -eq 1 ]; then
+        case_label="$1"
+    fi
+    if [ -n "${XUNITFILE:-}" ]; then
+        mkdir -p "$(dirname "$XUNITFILE")"
+    fi
+
+    tmp_log="$(mktemp "${TMPDIR:-/tmp}/mysql-tester.XXXXXX")"
 
     if [ $record -eq 1 ]; then
         echo "run & record integration test cases: $tests"
@@ -931,7 +943,8 @@ function run_mysql_tester()
           "${xunit_args[@]}" \
           --check-error=true \
           --path-dumpling="./third_bin/dumpling" \
-          --record $@
+          --record $@ 2>&1 | tee "$tmp_log"
+        exit_code=${PIPESTATUS[0]}
     else
         echo "run integration test cases: $tests"
         $mysql_tester \
@@ -940,8 +953,41 @@ function run_mysql_tester()
           "${xunit_args[@]}" \
           --check-error=true \
           --path-dumpling="./third_bin/dumpling" \
-          $@
+          $@ 2>&1 | tee "$tmp_log"
+        exit_code=${PIPESTATUS[0]}
     fi
+
+    if [ $exit_code -ne 0 ] && [ -n "${XUNITFILE:-}" ]; then
+        if [ ! -s "$XUNITFILE" ]; then
+            local failure_body
+            failure_body=$(sed \
+                -e 's/&/&amp;/g' \
+                -e 's/</&lt;/g' \
+                -e 's/>/&gt;/g' \
+                -e 's/\"/&quot;/g' \
+                -e "s/'/&apos;/g" \
+                "$tmp_log")
+            cat > "$XUNITFILE" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites>
+  <testsuite name="mysql_tester" tests="1" failures="1">
+    <testcase name="$case_label">
+      <failure message="mysql_tester failed">$failure_body</failure>
+    </testcase>
+  </testsuite>
+</testsuites>
+EOF
+        fi
+    fi
+
+    rm -f "$tmp_log"
+    return $exit_code
+}
+
+function report_name_for_case() {
+    local name="$1"
+    name="${name//\//_}"
+    echo "$REPORT_DIR/${name}.xml"
 }
 
 if [ $record -eq 1 ]; then
@@ -1001,8 +1047,13 @@ if [ ${#ticdc_cases[@]} -ne 0 ]; then
     need_downstream=1
 fi
 
+TICI_ONLY_RUN=0
 if [ ${#tici_cases[@]} -ne 0 ] && [ ${#ticdc_cases[@]} -eq 0 ] && [ ${#non_ticdc_cases[@]} -eq 0 ]; then
-    XUNITFILE="${XUNITFILE:-./report/tici-junit.xml}"
+    TICI_ONLY_RUN=1
+    rm -f "$REPORT_DIR"/*.xml
+    if [ ${#tici_cases[@]} -eq 1 ]; then
+        XUNITFILE="${XUNITFILE:-$(report_name_for_case "${tici_cases[0]}")}"
+    fi
 fi
 
 start_tidb_cluster "$need_downstream"
@@ -1046,7 +1097,14 @@ if [ ${#ticdc_cases[@]} -ne 0 ]; then
 fi
 
 if [ ${#tici_cases[@]} -ne 0 ]; then
-    run_mysql_tester "${tici_cases[@]}"
+    if [ $TICI_ONLY_RUN -ne 0 ] && [ ${#tici_cases[@]} -gt 1 ]; then
+        for case_name in "${tici_cases[@]}"; do
+            XUNITFILE="$(report_name_for_case "$case_name")"
+            run_mysql_tester "$case_name"
+        done
+    else
+        run_mysql_tester "${tici_cases[@]}"
+    fi
 fi
 
 kill -15 $SERVER_PID
