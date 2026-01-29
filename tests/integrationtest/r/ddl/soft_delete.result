@@ -30,6 +30,10 @@ t1	CREATE TABLE `t1` (
   `name` varchar(50) DEFAULT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+select COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE, COLUMN_KEY from information_schema.columns
+where table_schema = 'test_sd' and table_name = 't1' and column_name = '_tidb_softdelete_time';
+COLUMN_NAME	COLUMN_DEFAULT	IS_NULLABLE	DATA_TYPE	CHARACTER_MAXIMUM_LENGTH	CHARACTER_OCTET_LENGTH	NUMERIC_PRECISION	NUMERIC_SCALE	DATETIME_PRECISION	CHARACTER_SET_NAME	COLLATION_NAME	COLUMN_TYPE	COLUMN_KEY
+_tidb_softdelete_time	NULL	YES	timestamp	NULL	NULL	NULL	NULL	6	NULL	NULL	timestamp(6)	
 create table t2 (id int primary key, name varchar(50)) softdelete retention 7 hour;
 show create table t2;
 Table	Create Table
@@ -64,8 +68,8 @@ t4_gi	CREATE TABLE `t4_gi` (
   `id` int NOT NULL,
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
   /*T![softdelete] , KEY `i1` (`_tidb_softdelete_time`) GLOBAL */
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-PARTITION BY HASH (`id`) PARTITIONS 4 /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
+PARTITION BY HASH (`id`) PARTITIONS 4
 drop table if exists t4_gi;
 alter database test_sd softdelete = 'off';
 create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
@@ -114,6 +118,14 @@ t4	CREATE TABLE `t4` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 30 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='OFF' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='9h' */
 alter table t4 softdelete = 'OFF';
+show create table t4;
+Table	Create Table
+t4	CREATE TABLE `t4` (
+  `id` int NOT NULL,
+  `name` varchar(50) DEFAULT NULL,
+  `_tidb_softdelete_time` timestamp(6) NULL DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter table t4 drop column _tidb_softdelete_time;
 show create table t4;
 Table	Create Table
@@ -143,6 +155,41 @@ alter table parent_fk softdelete retention 7 day;
 Error 8200 (HY000): Unsupported SOFTDELETE is unspported on referenced foreign key table
 alter table child_fk softdelete retention 7 day;
 Error 8200 (HY000): Unsupported SOFTDELETE is unspported on table with foreign key
+drop table if exists t;
+create table `t` (
+`id` int not null,
+primary key (`id`),
+_tidb_softdelete_time timestamp(6) NULL DEFAULT NULL
+);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int NOT NULL,
+  `_tidb_softdelete_time` timestamp(6) NULL DEFAULT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
+drop table if exists t;
+create table `t` (
+`id` int not null,
+primary key (`id`),
+_tidb_softdelete_time timestamp(6) NULL DEFAULT NULL,
+key `i1` (`_tidb_softdelete_time`)
+) softdelete = retention 7 day;
+Error 1060 (42S21): Duplicate column name '_tidb_softdelete_time'
+create table `t` (
+`id` int not null,
+primary key (`id`),
+key `i1` (`_tidb_softdelete_time`)
+) softdelete = retention 7 day;
+alter table t add index i3 (`_tidb_softdelete_time`);
+show create table t;
+Table	Create Table
+t	CREATE TABLE `t` (
+  `id` int NOT NULL,
+  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
+  /*T![softdelete] , KEY `i1` (`_tidb_softdelete_time`) */
+  /*T![softdelete] , KEY `i3` (`_tidb_softdelete_time`) */
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */
 create global temporary table tmp_sd3 (id int) on commit delete rows;
 alter table tmp_sd3 softdelete retention 7 day;
 Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table

@@ -1081,7 +1081,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden || model.IsInternalColumn(col.Name) {
+		if col == nil || col.Hidden || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
+			continue
+		}
+		if tableInfo.SoftdeleteInfo != nil && model.IsSoftDeleteColumn(col.Name) {
+			continue
+		}
+		if tableInfo.IsActiveActive && model.IsActiveActiveColumn(col.Name) {
 			continue
 		}
 		if needAddComma {
@@ -1447,9 +1453,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	// add partition info here.
-	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
-
 	if tableInfo.TTLInfo != nil {
 		restoreCtx.WritePlain(" ")
 		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
@@ -1557,6 +1560,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 	}
 
+	// add partition info here.
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
