@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -258,6 +259,10 @@ func (e *InsertExec) updateDupRow(
 type removeOldRow struct {
 	handle kv.Handle
 	oldRow []types.Datum
+
+	// isSoftDelete indicates whether the current remove operation is to remove a soft-deleted row.
+	// For example, INSERT should remove the conflict soft-deleted row to ensure the row can be inserted successfully.
+	isSoftDelete bool
 }
 
 // batchUpdateDupRows updates multi-rows in batch if they are duplicate with rows in table.
@@ -378,6 +383,9 @@ func (e *InsertExec) batchUpdateDupRows(ctx context.Context, newRows [][]types.D
 					return err
 				}
 				intest.Assert(!unchanged, "old row should not be identical to the new row, it's supposed that change happens")
+				if rm.isSoftDelete {
+					e.softDeleteStats.ImplicitRemoveRows++
+				}
 			}
 
 			err := e.addRecord(ctx, newRows[i], addRecordDupKeyCheck)
@@ -411,8 +419,9 @@ func (e *InsertExec) handleConflictWithOldRow(ctx context.Context,
 		}
 		if shouldRemoveOldRow {
 			removeOldRows = append(removeOldRows, removeOldRow{
-				handle: handle,
-				oldRow: oldRow,
+				handle:       handle,
+				oldRow:       oldRow,
+				isSoftDelete: e.Table.Meta().SoftdeleteInfo != nil && e.Ctx().GetSessionVars().SoftDeleteRewrite,
 			})
 			return false, removeOldRows, nil
 		}
@@ -503,6 +512,9 @@ func (e *InsertExec) Close() error {
 	defer e.memTracker.ReplaceBytesUsed(0)
 	e.setMessage()
 	e.reportActiveActiveStats("Insert")
+	if rows := e.softDeleteStats.ImplicitRemoveRows; rows > 0 {
+		metrics.SoftDeleteImplicitDeleteRowsInsert.Observe(float64(rows))
+	}
 	if e.SelectExec != nil {
 		return exec.Close(e.SelectExec)
 	}
