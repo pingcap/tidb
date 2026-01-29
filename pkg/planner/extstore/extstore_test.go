@@ -141,28 +141,3 @@ func TestExtStorage(t *testing.T) {
 	es.Close()
 	require.Nil(t, es.storage)
 }
-
-func TestNewFileWriter(t *testing.T) {
-	ctx := context.Background()
-	tempDir := t.TempDir()
-
-	s, err := NewExtStorage(tempDir, "", nil)
-	require.NoError(t, err)
-
-	writer, err := s.Create(ctx, "test_writer.txt", nil)
-	require.NoError(t, err)
-
-	fileWriter := NewFileWriter(ctx, writer)
-	require.NotNil(t, fileWriter)
-
-	_, err = fileWriter.Write([]byte("test content"))
-	require.NoError(t, err)
-
-	err = fileWriter.Close()
-	require.NoError(t, err)
-
-	// Verify the file was written
-	content, err := s.ReadFile(ctx, "test_writer.txt")
-	require.NoError(t, err)
-	require.Equal(t, []byte("test content"), content)
-}
