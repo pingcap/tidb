@@ -1044,6 +1044,23 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if err = checkTableInfoValidWithStmt(metaBuildCtx, tbInfo, s); err != nil {
 		return err
 	}
+
+	// Process region split policies from CREATE TABLE
+	if len(s.SplitIndex) > 0 {
+		for _, splitOpt := range s.SplitIndex {
+			policy, indexName, err := normalizeSplitPolicy(metaBuildCtx.GetExprCtx(), splitOpt, tbInfo)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if indexName == "" {
+				tbInfo.TableSplitPolicy = policy
+			} else {
+				indexInfo := tbInfo.FindIndexByName(indexName)
+				indexInfo.RegionSplitPolicy = policy
+			}
+		}
+	}
+
 	if err = checkTableForeignKeysValid(ctx, is, schema.Name.L, tbInfo); err != nil {
 		return err
 	}
@@ -1933,6 +1950,8 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 		case ast.AlterTableDisableKeys, ast.AlterTableEnableKeys:
 			// Nothing to do now, see https://github.com/pingcap/tidb/issues/1051
 			// MyISAM specific
+		case ast.AlterTableSplitIndex:
+			err = e.AlterTableSetRegionSplitPolicy(sctx, ident, spec.SplitIndex)
 		case ast.AlterTableRemoveTTL:
 			// the parser makes sure we have only one `ast.AlterTableRemoveTTL` in an alter statement
 			err = e.AlterTableRemoveTTL(sctx, ident)
@@ -5089,6 +5108,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		OpType: model.OpAddIndex,
 	}
 
+	// Check if we should warn about missing region split policy
+	// If other indexes already have region split policy, warn user to set policy for new index
+	checkAndWarnMissingRegionSplitPolicy(ctx, tblInfo, indexName)
+
 	err = e.doDDLJob2(ctx, job, args)
 	// key exists, but if_not_exists flags is true, so we ignore this error.
 	if dbterror.ErrDupKeyName.Equal(err) && ifNotExists {
@@ -7189,4 +7212,56 @@ func isReservedSchemaObjInNextGen(id int64) bool {
 		failpoint.Return(false)
 	})
 	return kerneltype.IsNextGen() && metadef.IsReservedID(id)
+}
+
+// AlterTableSetRegionSplitPolicy sets persistent region split policy for table
+func (e *executor) AlterTableSetRegionSplitPolicy(ctx sessionctx.Context, ident ast.Ident, splitOpt *ast.SplitIndexOption) error {
+	schema, tb, err := e.getSchemaAndTableByIdent(ident)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	meta := tb.Meta()
+
+	policy, indexName, err := normalizeSplitPolicy(ctx.GetExprCtx(), splitOpt, tb.Meta())
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        meta.ID,
+		SchemaName:     schema.Name.L,
+		TableName:      meta.Name.L,
+		Type:           model.ActionAlterTableSetRegionSplitPolicy,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+
+	args := &model.AlterTableSetRegionSplitPolicyArgs{
+		IndexName: indexName,
+		Policy:    policy,
+	}
+	return e.doDDLJob2(ctx, job, args)
+}
+
+// checkAndWarnMissingRegionSplitPolicy checks if table has other indexes with region split policy,
+// and warns user to set policy for newly created index.
+func checkAndWarnMissingRegionSplitPolicy(ctx sessionctx.Context, tblInfo *model.TableInfo, newIndexName ast.CIStr) {
+	// Check if any existing index has RegionSplitPolicy
+	hasExistingPolicy := false
+	for _, idx := range tblInfo.Indices {
+		if idx.RegionSplitPolicy != nil {
+			hasExistingPolicy = true
+			break
+		}
+	}
+
+	// If existing indexes have region split policy, warn about new index
+	if hasExistingPolicy {
+		ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(
+			"It is recommended to add a region split strategy to the new index '" + newIndexName.O + "' to avoid write hotspots"))
+	}
 }

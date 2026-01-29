@@ -33,11 +33,11 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
-	cutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/regionsplit"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -163,7 +163,7 @@ func (e *SplitIndexRegionExec) getSplitIdxKeysFromValueList() (keys [][]byte, er
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID int64, keys [][]byte) ([][]byte, error) {
-	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
+	keys = regionsplit.GetSplitIdxPhysicalStartAndOtherIdxKeys(e.tableInfo, e.indexInfo, physicalID, keys)
 	index, err := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
 	if err != nil {
 		return nil, err
@@ -177,20 +177,6 @@ func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromValueList(physicalID i
 		keys = append(keys, idxKey)
 	}
 	return keys, nil
-}
-
-func (e *SplitIndexRegionExec) getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID int64, keys [][]byte) [][]byte {
-	// 1. Split in the start key for the index if the index is not the first index.
-	// For the first index, splitting the start key can produce the region [tid, tid_i_1), which is useless.
-	if len(e.tableInfo.Indices) > 0 && e.tableInfo.Indices[0].ID != e.indexInfo.ID {
-		startKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID)
-		keys = append(keys, startKey)
-	}
-
-	// 2. Split in the end key.
-	endKey := tablecodec.EncodeTableIndexPrefix(physicalID, e.indexInfo.ID+1)
-	keys = append(keys, endKey)
-	return keys
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxKeysFromBound() (keys [][]byte, err error) {
@@ -228,48 +214,8 @@ func (e *SplitIndexRegionExec) getSplitIdxKeysFromBound() (keys [][]byte, err er
 }
 
 func (e *SplitIndexRegionExec) getSplitIdxPhysicalKeysFromBound(physicalID int64, keys [][]byte) ([][]byte, error) {
-	keys = e.getSplitIdxPhysicalStartAndOtherIdxKeys(physicalID, keys)
-	index, err := tables.NewIndex(physicalID, e.tableInfo, e.indexInfo)
-	if err != nil {
-		return nil, err
-	}
-	// Split index regions by lower, upper value and calculate the step by (upper - lower)/num.
 	sc := e.Ctx().GetSessionVars().StmtCtx
-	lowerIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), e.lower, kv.IntHandle(math.MinInt64), nil)
-	if err != nil {
-		return nil, err
-	}
-	// Use math.MinInt64 as handle_id for the upper index key to avoid affecting calculate split point.
-	// If use math.MaxInt64 here, test of `TestSplitIndex` will report error.
-	upperIdxKey, _, err := index.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), e.upper, kv.IntHandle(math.MinInt64), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	if bytes.Compare(lowerIdxKey, upperIdxKey) >= 0 {
-		lowerStr := datumSliceToString(e.lower)
-		upperStr := datumSliceToString(e.upper)
-		errMsg := fmt.Sprintf("Split index `%v` region lower value %v should less than the upper value %v",
-			e.indexInfo.Name, lowerStr, upperStr)
-		return nil, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
-	}
-	return cutil.GetValuesList(lowerIdxKey, upperIdxKey, e.num, keys), nil
-}
-
-func datumSliceToString(ds []types.Datum) string {
-	str := "("
-	for i, d := range ds {
-		s, err := d.ToString()
-		if err != nil {
-			return fmt.Sprintf("%v", ds)
-		}
-		if i > 0 {
-			str += ","
-		}
-		str += s
-	}
-	str += ")"
-	return str
+	return regionsplit.GetSplitIndexKeys(sc, e.tableInfo, e.indexInfo, physicalID, e.lower, e.upper, e.num, keys, exeerrors.ErrInvalidSplitRegionRanges)
 }
 
 // SplitTableRegionExec represents a split table regions executor.
@@ -394,8 +340,6 @@ func isCtxDone(ctx context.Context) bool {
 	}
 }
 
-var minRegionStepValue = int64(1000)
-
 func (e *SplitTableRegionExec) getSplitTableKeys() ([][]byte, error) {
 	if len(e.valueLists) > 0 {
 		return e.getSplitTableKeysFromValueList()
@@ -489,78 +433,9 @@ func (e *SplitTableRegionExec) getSplitTableKeysFromBound() ([][]byte, error) {
 	return keys, nil
 }
 
-func (e *SplitTableRegionExec) calculateIntBoundValue() (lowerValue int64, step int64, err error) {
-	isUnsigned := false
-	if e.tableInfo.PKIsHandle {
-		if pkCol := e.tableInfo.GetPkColInfo(); pkCol != nil {
-			isUnsigned = mysql.HasUnsignedFlag(pkCol.GetFlag())
-		}
-	}
-	if isUnsigned {
-		lowerRecordID := e.lower[0].GetUint64()
-		upperRecordID := e.upper[0].GetUint64()
-		if upperRecordID <= lowerRecordID {
-			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
-			return 0, 0, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
-		}
-		step = int64((upperRecordID - lowerRecordID) / uint64(e.num))
-		lowerValue = int64(lowerRecordID)
-	} else {
-		lowerRecordID := e.lower[0].GetInt64()
-		upperRecordID := e.upper[0].GetInt64()
-		if upperRecordID <= lowerRecordID {
-			errMsg := fmt.Sprintf("lower value %v should less than the upper value %v", lowerRecordID, upperRecordID)
-			return 0, 0, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
-		}
-		step = int64(uint64(upperRecordID-lowerRecordID) / uint64(e.num))
-		lowerValue = lowerRecordID
-	}
-	if step < minRegionStepValue {
-		errMsg := fmt.Sprintf("the region size is too small, expected at least %d, but got %d", minRegionStepValue, step)
-		return 0, 0, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
-	}
-	return lowerValue, step, nil
-}
-
 func (e *SplitTableRegionExec) getSplitTablePhysicalKeysFromBound(physicalID int64, keys [][]byte) ([][]byte, error) {
-	recordPrefix := tablecodec.GenTableRecordPrefix(physicalID)
-	// Split a separate region for index.
-	containsIndex := len(e.tableInfo.Indices) > 0 && !(e.tableInfo.IsCommonHandle && len(e.tableInfo.Indices) == 1)
-	if containsIndex {
-		keys = append(keys, recordPrefix)
-	}
-
-	if e.handleCols.IsInt() {
-		low, step, err := e.calculateIntBoundValue()
-		if err != nil {
-			return nil, err
-		}
-		recordID := low
-		for i := 1; i < e.num; i++ {
-			recordID += step
-			key := tablecodec.EncodeRecordKey(recordPrefix, kv.IntHandle(recordID))
-			keys = append(keys, key)
-		}
-		return keys, nil
-	}
-	lowerHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.lower)
-	if err != nil {
-		return nil, err
-	}
-	upperHandle, err := e.handleCols.BuildHandleByDatums(e.Ctx().GetSessionVars().StmtCtx, e.upper)
-	if err != nil {
-		return nil, err
-	}
-	if lowerHandle.Compare(upperHandle) >= 0 {
-		lowerStr := datumSliceToString(e.lower)
-		upperStr := datumSliceToString(e.upper)
-		errMsg := fmt.Sprintf("Split table `%v` region lower value %v should less than the upper value %v",
-			e.tableInfo.Name.O, lowerStr, upperStr)
-		return nil, exeerrors.ErrInvalidSplitRegionRanges.GenWithStackByArgs(errMsg)
-	}
-	low := tablecodec.EncodeRecordKey(recordPrefix, lowerHandle)
-	up := tablecodec.EncodeRecordKey(recordPrefix, upperHandle)
-	return cutil.GetValuesList(low, up, e.num, keys), nil
+	sc := e.Ctx().GetSessionVars().StmtCtx
+	return regionsplit.GetSplitTableKeys(sc, e.tableInfo, e.handleCols, physicalID, e.lower, e.upper, e.num, keys, exeerrors.ErrInvalidSplitRegionRanges)
 }
 
 // RegionMeta contains a region's peer detail

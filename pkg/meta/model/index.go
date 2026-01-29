@@ -224,18 +224,19 @@ type IndexInfo struct {
 	Columns             []*IndexColumn     `json:"idx_cols"` // Index columns.
 	State               SchemaState        `json:"state"`
 	BackfillState       BackfillState      `json:"backfill_state"`
-	Comment             string             `json:"comment"`                 // Comment
-	Tp                  ast.IndexType      `json:"index_type"`              // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
-	Unique              bool               `json:"is_unique"`               // Whether the index is unique.
-	Primary             bool               `json:"is_primary"`              // Whether the index is primary key.
-	Invisible           bool               `json:"is_invisible"`            // Whether the index is invisible.
-	Global              bool               `json:"is_global"`               // Whether the index is global.
-	MVIndex             bool               `json:"mv_index"`                // Whether the index is multivalued index.
-	VectorInfo          *VectorIndexInfo   `json:"vector_index"`            // VectorInfo is the vector index information.
-	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`          // InvertedInfo is the inverted index information.
-	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`         // FullTextInfo is the FULLTEXT index information.
-	ConditionExprString string             `json:"condition_expr_string"`   // ConditionExprString is the string representation of the partial index condition.
-	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"` // AffectColumn is the columns related to the index.
+	Comment             string             `json:"comment"`                       // Comment
+	Tp                  ast.IndexType      `json:"index_type"`                    // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Unique              bool               `json:"is_unique"`                     // Whether the index is unique.
+	Primary             bool               `json:"is_primary"`                    // Whether the index is primary key.
+	Invisible           bool               `json:"is_invisible"`                  // Whether the index is invisible.
+	Global              bool               `json:"is_global"`                     // Whether the index is global.
+	MVIndex             bool               `json:"mv_index"`                      // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo   `json:"vector_index"`                  // VectorInfo is the vector index information.
+	InvertedInfo        *InvertedIndexInfo `json:"inverted_index"`                // InvertedInfo is the inverted index information.
+	FullTextInfo        *FullTextIndexInfo `json:"full_text_index"`               // FullTextInfo is the FULLTEXT index information.
+	ConditionExprString string             `json:"condition_expr_string"`         // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn     `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
+	RegionSplitPolicy   *RegionSplitPolicy `json:"region_split_policy,omitempty"` // RegionSplitPolicy is the persistent split policy.
 }
 
 // Hash64 implement HashEquals interface.
@@ -274,6 +275,9 @@ func (index *IndexInfo) Clone() *IndexInfo {
 		for i := range index.AffectColumn {
 			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
 		}
+	}
+	if index.RegionSplitPolicy != nil {
+		ni.RegionSplitPolicy = index.RegionSplitPolicy.Clone()
 	}
 	return &ni
 }
@@ -353,6 +357,35 @@ func (index *IndexInfo) GetColumnarIndexType() ColumnarIndexType {
 		return ColumnarIndexTypeFulltext
 	}
 	return ColumnarIndexTypeNA
+}
+
+// RegionSplitPolicy defines the persistent region split policy for an index
+type RegionSplitPolicy struct {
+	// Lower bound values (stored as string representation)
+	Lower []string `json:"lower"`
+
+	// Upper bound values (stored as string representation)
+	Upper []string `json:"upper"`
+
+	// Number of regions to split into
+	Regions int64 `json:"regions"`
+}
+
+// Clone clones RegionSplitPolicy
+func (r *RegionSplitPolicy) Clone() *RegionSplitPolicy {
+	if r == nil {
+		return nil
+	}
+	nr := *r
+	if len(r.Lower) > 0 {
+		nr.Lower = make([]string, len(r.Lower))
+		copy(nr.Lower, r.Lower)
+	}
+	if len(r.Upper) > 0 {
+		nr.Upper = make([]string, len(r.Upper))
+		copy(nr.Upper, r.Upper)
+	}
+	return &nr
 }
 
 // HasCondition checks whether the index has a partial index condition.
