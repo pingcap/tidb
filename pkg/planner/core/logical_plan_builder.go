@@ -4639,22 +4639,22 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	ds := logicalop.DataSource{
-		DBName:              dbName,
-		TableAsName:         asName,
-		Table:               tbl,
-		TableInfo:           tableInfo,
-		PhysicalTableID:     tableInfo.ID,
-		AstIndexHints:       tn.IndexHints,
-		IndexHints:          b.TableHints().IndexHintList,
-		IndexMergeHints:     indexMergeHints,
-		PossibleAccessPaths: possiblePaths,
+		DBName:                 dbName,
+		TableAsName:            asName,
+		Table:                  tbl,
+		TableInfo:              tableInfo,
+		PhysicalTableID:        tableInfo.ID,
+		AstIndexHints:          tn.IndexHints,
+		IndexHints:             b.TableHints().IndexHintList,
+		IndexMergeHints:        indexMergeHints,
+		PossibleAccessPaths:    possiblePaths,
 		AllPossibleAccessPaths: possiblePaths,
-		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
-		PartitionNames:      tn.PartitionNames,
-		TblCols:             make([]*expression.Column, 0, len(columns)),
-		PreferPartitions:    make(map[int][]pmodel.CIStr),
-		IS:                  b.is,
-		IsForUpdateRead:     b.isForUpdateRead,
+		Columns:                make([]*model.ColumnInfo, 0, len(columns)),
+		PartitionNames:         tn.PartitionNames,
+		TblCols:                make([]*expression.Column, 0, len(columns)),
+		PreferPartitions:       make(map[int][]pmodel.CIStr),
+		IS:                     b.is,
+		IsForUpdateRead:        b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
