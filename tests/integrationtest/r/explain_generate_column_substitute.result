@@ -580,7 +580,7 @@ delete from t2 where c_decimal > c_double/2 order by c_int, c_str, c_double, c_d
 explain format='plan_tree' select t2.c_enum from t2,t1 where t1.c_int - 1 = t2.c_int - 1 order  by t2.c_enum;
 id	task	access object	operator info
 Sort	root		explain_generate_column_substitute.t2.c_enum
-└─HashJoin	root		inner join, equal:[eq(minus(explain_generate_column_substitute.t1.c_int, 1), minus(explain_generate_column_substitute.t2.c_int, 1))]
+└─HashJoin	root		inner join, equal:[eq(minus(explain_generate_column_substitute.t2.c_int, 1), minus(explain_generate_column_substitute.t1.c_int, 1))]
   ├─Selection(Build)	root		not(isnull(minus(explain_generate_column_substitute.t2.c_int, 1)))
   │ └─Projection	root		explain_generate_column_substitute.t2.c_enum, minus(explain_generate_column_substitute.t2.c_int, 1), explain_generate_column_substitute.t2._tidb_rowid
   │   └─UnionScan	root		
