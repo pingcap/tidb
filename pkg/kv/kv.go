@@ -383,18 +383,9 @@ func (t StoreType) Name() string {
 
 // KeyRanges wrap the ranges for partitioned table cases.
 // We might send ranges from different in the one request.
-type VersionedKeyRange struct {
-	Range  KeyRange
-	ReadTS uint64
-}
-
 type KeyRanges struct {
 	ranges        [][]KeyRange
 	rowCountHints [][]int
-
-	// versionedRanges stores per-range read_ts for TiCI versioned lookup.
-	// When non-empty, it must align with `ranges` (same shape/order), and all ranges must be point ranges.
-	versionedRanges [][]VersionedKeyRange
 
 	isPartitioned bool
 }
@@ -542,25 +533,6 @@ func (rr *KeyRanges) TotalRangeNum() int {
 	return ret
 }
 
-func (rr *KeyRanges) HasVersionedRanges() bool {
-	return rr != nil && rr.versionedRanges != nil
-}
-
-func (rr *KeyRanges) GetVersionedRangesByPartition(partitionIdx int) []VersionedKeyRange {
-	if rr == nil || rr.versionedRanges == nil || partitionIdx < 0 || partitionIdx >= len(rr.versionedRanges) {
-		return nil
-	}
-	return rr.versionedRanges[partitionIdx]
-}
-
-// SetVersionedRangesNonPartitioned attaches versioned ranges for non-partitioned requests.
-func (rr *KeyRanges) SetVersionedRangesNonPartitioned(v []VersionedKeyRange) {
-	if rr == nil {
-		return
-	}
-	rr.versionedRanges = [][]VersionedKeyRange{v}
-}
-
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.
@@ -571,6 +543,9 @@ type Request struct {
 	// KeyRanges makes sure that the request is sent first by partition then by region.
 	// When the table is small, it's possible that multiple partitions are in the same region.
 	KeyRanges *KeyRanges
+	// HandleVersionMap stores per-handle read_ts for TiCI versioned lookup.
+	// When non-nil, the request is sent using `CmdVersionedCop` with `versioned_ranges`.
+	HandleVersionMap *HandleMap
 
 	// For PartitionTableScan used by tiflash.
 	PartitionIDAndRanges []PartitionIDAndRanges

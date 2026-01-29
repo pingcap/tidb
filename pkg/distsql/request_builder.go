@@ -171,22 +171,18 @@ func (builder *RequestBuilder) SetHandleRangesForTables(dctx *distsqlctx.DistSQL
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
-	keyRanges, versionedRanges, hints := TableHandlesToKVRanges(tid, handles, handleVersionMap)
+	builder.Request.HandleVersionMap = handleVersionMap
+	keyRanges, hints := TableHandlesToKVRanges(tid, handles, handleVersionMap)
 	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
-	if versionedRanges != nil {
-		builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
-	}
 	return builder
 }
 
 // SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
 // handles in slice must be kv.PartitionHandle.
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
-	keyRanges, versionedRanges, hints := PartitionHandlesToKVRanges(handles, handleVersionMap)
+	builder.Request.HandleVersionMap = handleVersionMap
+	keyRanges, hints := PartitionHandlesToKVRanges(handles, handleVersionMap)
 	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
-	if versionedRanges != nil {
-		builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
-	}
 	return builder
 }
 
@@ -626,13 +622,18 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 	return signedRanges, unsignedRanges
 }
 
-// TableHandlesToKVRanges converts sorted handle to kv ranges.
-// For continuous handles, we should merge them to a single key range.
-func TableHandlesToKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
+// TableHandlesToKVRanges converts sorted handles to kv ranges.
+//
+// For continuous handles, we merge them to a single key range.
+// When handleVersionMap is non-nil (TiCI versioned lookup), each handle is converted to a point range.
+func TableHandlesToKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []int) {
 	if handleVersionMap != nil {
-		return tableHandlesToVersionedKVRanges(tid, handles, handleVersionMap)
+		return tableHandlesToPointKVRanges(tid, handles)
 	}
+	return tableHandlesToMergedKVRanges(tid, handles)
+}
 
+func tableHandlesToMergedKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []int) {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	i := 0
@@ -673,13 +674,12 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv
 		hints = append(hints, j-i)
 		i = j
 	}
-	return krs, nil, hints
+	return krs, hints
 }
 
-func tableHandlesToVersionedKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
+func tableHandlesToPointKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []int) {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
-	versionedRanges := make([]kv.VersionedKeyRange, 0, len(handles))
 	for i := range handles {
 		var isCommonHandle bool
 		var commonHandle *kv.CommonHandle
@@ -705,26 +705,22 @@ func tableHandlesToVersionedKVRanges(tid int64, handles []kv.Handle, handleVersi
 		}
 		krs = append(krs, ran)
 		hints = append(hints, 1)
-		version, ok := handleVersionMap.Get(handles[i])
-		if !ok {
-			panic(fmt.Sprintf("handle %v not found in handleVersionMap", handles[i]))
-		}
-		uint64Version, ok := version.(uint64)
-		if !ok {
-			panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
-		}
-		versionedRanges = append(versionedRanges, kv.VersionedKeyRange{Range: ran, ReadTS: uint64Version})
 	}
-	return krs, versionedRanges, hints
+	return krs, hints
 }
 
-// PartitionHandlesToKVRanges convert ParitionHandles to kv ranges.
-// Handle in slices must be kv.PartitionHandle
-func PartitionHandlesToKVRanges(handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
+// PartitionHandlesToKVRanges converts partition handles to kv ranges.
+// Handles in slice must be kv.PartitionHandle.
+//
+// When handleVersionMap is non-nil (TiCI versioned lookup), each handle is converted to a point range.
+func PartitionHandlesToKVRanges(handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []int) {
 	if handleVersionMap != nil {
-		return partitionHandlesToVersionedKVRanges(handles, handleVersionMap)
+		return partitionHandlesToPointKVRanges(handles)
 	}
+	return partitionHandlesToMergedKVRanges(handles)
+}
 
+func partitionHandlesToMergedKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	i := 0
@@ -760,13 +756,12 @@ func PartitionHandlesToKVRanges(handles []kv.Handle, handleVersionMap *kv.Handle
 		hints = append(hints, j-i)
 		i = j
 	}
-	return krs, nil, hints
+	return krs, hints
 }
 
-func partitionHandlesToVersionedKVRanges(handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
+func partitionHandlesToPointKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
-	versionedRanges := make([]kv.VersionedKeyRange, 0, len(handles))
 	for i := range handles {
 		ph := handles[i].(kv.PartitionHandle)
 		h := ph.Handle
@@ -787,17 +782,8 @@ func partitionHandlesToVersionedKVRanges(handles []kv.Handle, handleVersionMap *
 		}
 		krs = append(krs, ran)
 		hints = append(hints, 1)
-		version, ok := handleVersionMap.Get(handles[i])
-		if !ok {
-			panic(fmt.Sprintf("handle %v not found in handleVersionMap", handles[i]))
-		}
-		uint64Version, ok := version.(uint64)
-		if !ok {
-			panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
-		}
-		versionedRanges = append(versionedRanges, kv.VersionedKeyRange{Range: ran, ReadTS: uint64Version})
 	}
-	return krs, versionedRanges, hints
+	return krs, hints
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".
