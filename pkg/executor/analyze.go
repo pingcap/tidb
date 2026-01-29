@@ -560,6 +560,7 @@ func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Conte
 		}
 	}()
 	return ctx, func() {
+		cancel(nil)
 		close(stopCh)
 	}
 }
