@@ -676,6 +676,9 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 	for range l {
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
+	cleanupCollector := func() {
+		retCollector.DestroyAndPutToPool()
+	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
 	for {
 		select {
@@ -689,6 +692,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 			colResp := &tipb.AnalyzeColumnsResp{}
 			err := colResp.Unmarshal(data)
 			if err != nil {
+				cleanupCollector()
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
@@ -726,18 +730,21 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 			}
 			if err != nil {
 				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
+				cleanupCollector()
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
 			err = ctx.Err()
 			if err != nil {
 				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
+				cleanupCollector()
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
 			if intest.InTest {
 				panic("this ctx should be canceled with the error")
 			}
+			cleanupCollector()
 			resultCh <- &samplingMergeResult{err: errors.New("context canceled without error")}
 			return
 		}
