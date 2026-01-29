@@ -558,9 +558,6 @@ func (rr *KeyRanges) SetVersionedRangesNonPartitioned(v []VersionedKeyRange) {
 	if rr == nil {
 		return
 	}
-	if len(rr.ranges) != 1 || len(rr.ranges[0]) != len(v) {
-		panic(errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", rr.TotalRangeNum(), len(v)))
-	}
 	rr.versionedRanges = [][]VersionedKeyRange{v}
 }
 

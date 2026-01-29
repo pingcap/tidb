@@ -171,28 +171,22 @@ func (builder *RequestBuilder) SetHandleRangesForTables(dctx *distsqlctx.DistSQL
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
-	if handleVersionMap == nil {
-		keyRanges, hints := TableHandlesToKVRanges(tid, handles)
-		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
-		return builder
-	}
-	keyRanges, versionedRanges, hints := TableHandlesToVersionedKVRanges(tid, handles, handleVersionMap)
+	keyRanges, versionedRanges, hints := TableHandlesToKVRanges(tid, handles, handleVersionMap)
 	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
-	builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
+	if versionedRanges != nil {
+		builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
+	}
 	return builder
 }
 
 // SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
 // handles in slice must be kv.PartitionHandle.
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
-	if handleVersionMap == nil {
-		keyRanges, hints := PartitionHandlesToKVRanges(handles)
-		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
-		return builder
-	}
-	keyRanges, versionedRanges, hints := PartitionHandlesToVersionedKVRanges(handles, handleVersionMap)
+	keyRanges, versionedRanges, hints := PartitionHandlesToKVRanges(handles, handleVersionMap)
 	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
-	builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
+	if versionedRanges != nil {
+		builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
+	}
 	return builder
 }
 
@@ -632,52 +626,51 @@ func SplitRangesAcrossInt64Boundary(ranges []*ranger.Range, keepOrder bool, desc
 	return signedRanges, unsignedRanges
 }
 
-// TableHandlesToVersionedKVRanges converts handles to point ranges and binds per-handle read_ts.
-func TableHandlesToVersionedKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
-	krs := make([]kv.KeyRange, 0, len(handles))
-	hints := make([]int, 0, len(handles))
-	versionedRanges := make([]kv.VersionedKeyRange, 0, len(handles))
-	for i := range handles {
-		var isCommonHandle bool
-		var commonHandle *kv.CommonHandle
-		if partitionHandle, ok := handles[i].(kv.PartitionHandle); ok {
-			tid = partitionHandle.PartitionID
-			commonHandle, isCommonHandle = partitionHandle.Handle.(*kv.CommonHandle)
-		} else {
-			commonHandle, isCommonHandle = handles[i].(*kv.CommonHandle)
-		}
-		var ran kv.KeyRange
-		if isCommonHandle {
-			ran = kv.KeyRange{
-				StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
-				EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).PrefixNext()),
-			}
-		} else {
-			low := codec.EncodeInt(nil, handles[i].IntValue())
-			high := kv.Key(low).PrefixNext()
-			ran = kv.KeyRange{
-				StartKey: tablecodec.EncodeRowKey(tid, low),
-				EndKey:   tablecodec.EncodeRowKey(tid, high),
-			}
-		}
-		krs = append(krs, ran)
-		hints = append(hints, 1)
-		version, ok := handleVersionMap.Get(handles[i])
-		if !ok {
-			panic(fmt.Sprintf("handle %v not found in handleVersionMap", handles[i]))
-		}
-		uint64Version, ok := version.(uint64)
-		if !ok {
-			panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
-		}
-		versionedRanges = append(versionedRanges, kv.VersionedKeyRange{Range: ran, ReadTS: uint64Version})
-	}
-	return krs, versionedRanges, hints
-}
-
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
 // For continuous handles, we should merge them to a single key range.
-func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []int) {
+func TableHandlesToKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
+	if handleVersionMap != nil {
+		krs := make([]kv.KeyRange, 0, len(handles))
+		hints := make([]int, 0, len(handles))
+		versionedRanges := make([]kv.VersionedKeyRange, 0, len(handles))
+		for i := range handles {
+			var isCommonHandle bool
+			var commonHandle *kv.CommonHandle
+			if partitionHandle, ok := handles[i].(kv.PartitionHandle); ok {
+				tid = partitionHandle.PartitionID
+				commonHandle, isCommonHandle = partitionHandle.Handle.(*kv.CommonHandle)
+			} else {
+				commonHandle, isCommonHandle = handles[i].(*kv.CommonHandle)
+			}
+			var ran kv.KeyRange
+			if isCommonHandle {
+				ran = kv.KeyRange{
+					StartKey: tablecodec.EncodeRowKey(tid, commonHandle.Encoded()),
+					EndKey:   tablecodec.EncodeRowKey(tid, kv.Key(commonHandle.Encoded()).PrefixNext()),
+				}
+			} else {
+				low := codec.EncodeInt(nil, handles[i].IntValue())
+				high := kv.Key(low).PrefixNext()
+				ran = kv.KeyRange{
+					StartKey: tablecodec.EncodeRowKey(tid, low),
+					EndKey:   tablecodec.EncodeRowKey(tid, high),
+				}
+			}
+			krs = append(krs, ran)
+			hints = append(hints, 1)
+			version, ok := handleVersionMap.Get(handles[i])
+			if !ok {
+				panic(fmt.Sprintf("handle %v not found in handleVersionMap", handles[i]))
+			}
+			uint64Version, ok := version.(uint64)
+			if !ok {
+				panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
+			}
+			versionedRanges = append(versionedRanges, kv.VersionedKeyRange{Range: ran, ReadTS: uint64Version})
+		}
+		return krs, versionedRanges, hints
+	}
+
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	i := 0
@@ -718,50 +711,49 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []in
 		hints = append(hints, j-i)
 		i = j
 	}
-	return krs, hints
-}
-
-// PartitionHandlesToVersionedKVRanges converts partition handles to point ranges and binds per-handle read_ts.
-func PartitionHandlesToVersionedKVRanges(handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
-	krs := make([]kv.KeyRange, 0, len(handles))
-	hints := make([]int, 0, len(handles))
-	versionedRanges := make([]kv.VersionedKeyRange, 0, len(handles))
-	for i := range handles {
-		ph := handles[i].(kv.PartitionHandle)
-		h := ph.Handle
-		pid := ph.PartitionID
-		var ran kv.KeyRange
-		if commonHandle, ok := h.(*kv.CommonHandle); ok {
-			ran = kv.KeyRange{
-				StartKey: tablecodec.EncodeRowKey(pid, commonHandle.Encoded()),
-				EndKey:   tablecodec.EncodeRowKey(pid, kv.Key(commonHandle.Encoded()).PrefixNext()),
-			}
-		} else {
-			low := codec.EncodeInt(nil, handles[i].IntValue())
-			high := kv.Key(low).PrefixNext()
-			ran = kv.KeyRange{
-				StartKey: tablecodec.EncodeRowKey(pid, low),
-				EndKey:   tablecodec.EncodeRowKey(pid, high),
-			}
-		}
-		krs = append(krs, ran)
-		hints = append(hints, 1)
-		version, ok := handleVersionMap.Get(handles[i])
-		if !ok {
-			panic(fmt.Sprintf("handle %v not found in handleVersionMap", handles[i]))
-		}
-		uint64Version, ok := version.(uint64)
-		if !ok {
-			panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
-		}
-		versionedRanges = append(versionedRanges, kv.VersionedKeyRange{Range: ran, ReadTS: uint64Version})
-	}
-	return krs, versionedRanges, hints
+	return krs, nil, hints
 }
 
 // PartitionHandlesToKVRanges convert ParitionHandles to kv ranges.
 // Handle in slices must be kv.PartitionHandle
-func PartitionHandlesToKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
+func PartitionHandlesToKVRanges(handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, []kv.VersionedKeyRange, []int) {
+	if handleVersionMap != nil {
+		krs := make([]kv.KeyRange, 0, len(handles))
+		hints := make([]int, 0, len(handles))
+		versionedRanges := make([]kv.VersionedKeyRange, 0, len(handles))
+		for i := range handles {
+			ph := handles[i].(kv.PartitionHandle)
+			h := ph.Handle
+			pid := ph.PartitionID
+			var ran kv.KeyRange
+			if commonHandle, ok := h.(*kv.CommonHandle); ok {
+				ran = kv.KeyRange{
+					StartKey: tablecodec.EncodeRowKey(pid, commonHandle.Encoded()),
+					EndKey:   tablecodec.EncodeRowKey(pid, kv.Key(commonHandle.Encoded()).PrefixNext()),
+				}
+			} else {
+				low := codec.EncodeInt(nil, handles[i].IntValue())
+				high := kv.Key(low).PrefixNext()
+				ran = kv.KeyRange{
+					StartKey: tablecodec.EncodeRowKey(pid, low),
+					EndKey:   tablecodec.EncodeRowKey(pid, high),
+				}
+			}
+			krs = append(krs, ran)
+			hints = append(hints, 1)
+			version, ok := handleVersionMap.Get(handles[i])
+			if !ok {
+				panic(fmt.Sprintf("handle %v not found in handleVersionMap", handles[i]))
+			}
+			uint64Version, ok := version.(uint64)
+			if !ok {
+				panic(fmt.Sprintf("handle %v version %v is not uint64", handles[i], version))
+			}
+			versionedRanges = append(versionedRanges, kv.VersionedKeyRange{Range: ran, ReadTS: uint64Version})
+		}
+		return krs, versionedRanges, hints
+	}
+
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	i := 0
@@ -797,7 +789,7 @@ func PartitionHandlesToKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
 		hints = append(hints, j-i)
 		i = j
 	}
-	return krs, hints
+	return krs, nil, hints
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".

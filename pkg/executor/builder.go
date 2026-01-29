@@ -4956,12 +4956,12 @@ func (builder *dataReaderBuilder) buildTableReaderForIndexJoin(ctx context.Conte
 				continue
 			}
 			handle := kv.IntHandle(content.Keys[0].GetInt64())
-			ranges, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle})
+			ranges, _, _ := distsql.TableHandlesToKVRanges(pid, []kv.Handle{handle}, nil)
 			kvRanges = append(kvRanges, ranges...)
 		}
 	} else {
 		for _, p := range usedPartitionList {
-			ranges, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles)
+			ranges, _, _ := distsql.TableHandlesToKVRanges(p.GetPhysicalID(), handles, nil)
 			kvRanges = append(kvRanges, ranges...)
 		}
 	}
