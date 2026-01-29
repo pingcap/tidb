@@ -110,6 +110,27 @@ type IndexKVGenerator struct {
 	idxVals []types.Datum
 }
 
+// NewEmptyIndexKVGenerator creates a new IndexKVGenerator for empty indexes.
+func NewEmptyIndexKVGenerator(
+	index Index,
+	ec errctx.Context,
+	loc *time.Location,
+	handle kv.Handle,
+	handleRestoredData []types.Datum,
+	idxData []types.Datum,
+) IndexKVGenerator {
+	return IndexKVGenerator{
+		index:             index,
+		ec:                ec,
+		loc:               loc,
+		handle:            handle,
+		handleRestoreData: handleRestoredData,
+		isMultiValue:      false,
+		idxVals:           idxData,
+		i:                 1, // trick to make Valid() return false
+	}
+}
+
 // NewMultiValueIndexKVGenerator creates a new IndexKVGenerator for multi-value indexes.
 func NewMultiValueIndexKVGenerator(
 	index Index,
