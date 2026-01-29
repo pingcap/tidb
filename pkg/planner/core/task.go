@@ -1351,7 +1351,7 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 //	     └─Limit(with partial info)
 //	... (other operators)
 //
-// Case2: One phase TopN, where the whole TopN can be executed in the coprocessor:
+// Case2: One phase TopN, where the whole TopN can only be executed in TiDB:
 //
 //	TopN(with partial info)
 //	  ├─IndexPlan
