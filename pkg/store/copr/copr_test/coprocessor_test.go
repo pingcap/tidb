@@ -81,7 +81,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req := &kv.Request{
 		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{1, 1, 3, copr.CopSmallTaskRow}),
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, copr.CopSmallTaskRow}),
 		Concurrency: 15,
 	}
 	it, errRes := copClient.BuildCopIterator(ctx, req, vars, opt)
@@ -95,7 +95,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
 		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{1, 1, 3, 3}),
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
 		Concurrency: 15,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
@@ -110,7 +110,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	ranges = copr.BuildKeyRanges("a", "z")
 	req = &kv.Request{
 		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{10}),
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{10}),
 		Concurrency: 15,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
@@ -124,7 +124,7 @@ func TestBuildCopIteratorWithRowCountHint(t *testing.T) {
 	ranges = copr.BuildKeyRanges("a", "z")
 	req = &kv.Request{
 		Tp:          kv.ReqTypeDAG,
-		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{copr.CopSmallTaskRow + 1}),
+		KeyRanges:   kv.NewNonParitionedKeyRangesWithHint(ranges, []int{copr.CopSmallTaskRow + 1}),
 		Concurrency: 15,
 	}
 	it, errRes = copClient.BuildCopIterator(ctx, req, vars, opt)
@@ -165,7 +165,7 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	ranges := copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req := &kv.Request{
 		Tp:             kv.ReqTypeDAG,
-		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{1, 1, 3, 3}),
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
 		Concurrency:    15,
 		StoreBatchSize: 1,
 	}
@@ -185,7 +185,7 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
 		Tp:             kv.ReqTypeDAG,
-		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{1, 1, 3, 3}),
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
 		Concurrency:    15,
 		StoreBatchSize: 3,
 	}
@@ -202,7 +202,7 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	ranges = copr.BuildKeyRanges("a", "c", "d", "e", "h", "x", "y", "z")
 	req = &kv.Request{
 		Tp:             kv.ReqTypeDAG,
-		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{1, 1, 3, 3}),
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
 		Concurrency:    15,
 		StoreBatchSize: 3,
 		Paging: struct {
@@ -224,7 +224,7 @@ func TestBuildCopIteratorWithBatchStoreCopr(t *testing.T) {
 	ranges = copr.BuildKeyRanges("a", "b", "h", "i", "o", "p")
 	req = &kv.Request{
 		Tp:             kv.ReqTypeDAG,
-		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{1, 33, 32}),
+		KeyRanges:      kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 33, 32}),
 		Concurrency:    15,
 		StoreBatchSize: 3,
 	}
@@ -332,7 +332,7 @@ func TestBuildCopIteratorWithRunawayChecker(t *testing.T) {
 	})
 	req := &kv.Request{
 		Tp:                kv.ReqTypeDAG,
-		KeyRanges:         kv.NewNonParitionedKeyRangesWithHint(ranges, nil, []int{1, 1, 3, 3}),
+		KeyRanges:         kv.NewNonParitionedKeyRangesWithHint(ranges, []int{1, 1, 3, 3}),
 		Concurrency:       15,
 		RunawayChecker:    checker,
 		ResourceGroupName: group1,

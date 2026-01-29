@@ -173,11 +173,11 @@ func (builder *RequestBuilder) SetHandleRangesForTables(dctx *distsqlctx.DistSQL
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
 	if handleVersionMap == nil {
 		keyRanges, _, hints := TableHandlesToKVRanges(tid, handles, nil)
-		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, nil, hints)
+		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
 		return builder
 	}
 	keyRanges, versionedRanges, hints := TableHandlesToVersionedKVRanges(tid, handles, handleVersionMap)
-	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, nil, hints)
+	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
 	builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
 	return builder
 }
@@ -187,11 +187,11 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, h
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
 	if handleVersionMap == nil {
 		keyRanges, _, hints := PartitionHandlesToKVRanges(handles, nil)
-		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, nil, hints)
+		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
 		return builder
 	}
 	keyRanges, versionedRanges, hints := PartitionHandlesToVersionedKVRanges(handles, handleVersionMap)
-	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, nil, hints)
+	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
 	builder.Request.KeyRanges.SetVersionedRangesNonPartitioned(versionedRanges)
 	return builder
 }
@@ -274,7 +274,7 @@ func (builder *RequestBuilder) SetKeyRanges(keyRanges []kv.KeyRange) *RequestBui
 
 // SetKeyRangesWithHints sets "KeyRanges" for "kv.Request" with row count hints.
 func (builder *RequestBuilder) SetKeyRangesWithHints(keyRanges []kv.KeyRange, hints []int) *RequestBuilder {
-	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, nil, hints)
+	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
 	return builder
 }
 

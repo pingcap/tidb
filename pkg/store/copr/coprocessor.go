@@ -500,66 +500,6 @@ func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
 	return true
 }
 
-func ensureMonotonicVersionedKeyRanges(ctx context.Context, ranges *KeyRanges, versionedRanges []kv.VersionedKeyRange) (bool, error) {
-	if ranges == nil || ranges.Len() == 0 {
-		return false, nil
-	}
-	if len(versionedRanges) != ranges.Len() {
-		return false, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", ranges.Len(), len(versionedRanges))
-	}
-	for i := range ranges.Len() {
-		r := ranges.At(i)
-		vr := versionedRanges[i].Range
-		if !bytes.Equal(r.StartKey, vr.StartKey) || !bytes.Equal(r.EndKey, vr.EndKey) {
-			return false, errors.Errorf("versionedRanges not aligned with ranges: idx=%d", i)
-		}
-	}
-
-	total := ranges.Len()
-	prev := ranges.At(0)
-	validateRange := func(r kv.KeyRange) bool {
-		return len(r.EndKey) == 0 || bytes.Compare(r.StartKey, r.EndKey) <= 0
-	}
-	valid := validateRange(prev)
-	sorted := true
-	for i := 1; i < total; i++ {
-		curr := ranges.At(i)
-		valid = validateRange(curr) && valid
-		switch {
-		case len(prev.EndKey) == 0:
-			sorted = false
-		case bytes.Compare(prev.EndKey, curr.StartKey) > 0:
-			sorted = false
-		}
-		prev = curr
-	}
-	if sorted && valid {
-		return false, nil
-	}
-
-	flat := ranges.ToRanges()
-	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges",
-		zap.Int("rangeCount", ranges.Len()),
-		formatRanges(NewKeyRanges(flat)),
-		zap.Stack("stack"))
-
-	sortedVersionedRanges := append([]kv.VersionedKeyRange(nil), versionedRanges...)
-	slices.SortFunc(sortedVersionedRanges, func(a, b kv.VersionedKeyRange) int {
-		if cmp := bytes.Compare(a.Range.StartKey, b.Range.StartKey); cmp != 0 {
-			return cmp
-		}
-		return bytes.Compare(a.Range.EndKey, b.Range.EndKey)
-	})
-	copy(versionedRanges, sortedVersionedRanges)
-
-	sortedRanges := make([]kv.KeyRange, 0, len(sortedVersionedRanges))
-	for _, v := range sortedVersionedRanges {
-		sortedRanges = append(sortedRanges, v.Range)
-	}
-	ranges.Reset(sortedRanges)
-	return true, nil
-}
-
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
@@ -573,16 +513,27 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			formatRanges(ranges))
 	}
 	cmdType := tikvrpc.CmdCop
-	reordered := false
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
 	if opt.versionedRanges != nil {
 		cmdType = tikvrpc.CmdVersionedCop
-		var err error
-		reordered, err = ensureMonotonicVersionedKeyRanges(ctx, ranges, opt.versionedRanges)
-		if err != nil {
-			return nil, err
+		if len(opt.versionedRanges) != ranges.Len() {
+			return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", ranges.Len(), len(opt.versionedRanges))
 		}
-	} else {
-		reordered = ensureMonotonicKeyRanges(ctx, ranges)
+		if reordered {
+			slices.SortFunc(opt.versionedRanges, func(a, b kv.VersionedKeyRange) int {
+				if cmp := bytes.Compare(a.Range.StartKey, b.Range.StartKey); cmp != 0 {
+					return cmp
+				}
+				return bytes.Compare(a.Range.EndKey, b.Range.EndKey)
+			})
+		}
+		for i := range ranges.Len() {
+			r := ranges.At(i)
+			vr := opt.versionedRanges[i].Range
+			if !bytes.Equal(r.StartKey, vr.StartKey) || !bytes.Equal(r.EndKey, vr.EndKey) {
+				return nil, errors.Errorf("versionedRanges not aligned with ranges: idx=%d", i)
+			}
+		}
 	}
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -1888,15 +1839,19 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			if len(task.versionedRanges) != task.ranges.Len() {
 				return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
 			}
-			versionedKVRanges = make([]kv.VersionedKeyRange, 0, task.ranges.Len())
-			i := 0
-			task.ranges.Do(func(r *kv.KeyRange) {
+			versionedKVRanges = make([]kv.VersionedKeyRange, 0, len(task.versionedRanges))
+			for _, vr := range task.versionedRanges {
+				if vr == nil || vr.GetRange() == nil {
+					return nil, errors.New("invalid VersionedKeyRange: nil range")
+				}
 				versionedKVRanges = append(versionedKVRanges, kv.VersionedKeyRange{
-					Range:  *r,
-					ReadTS: task.versionedRanges[i].ReadTs,
+					Range: kv.KeyRange{
+						StartKey: vr.GetRange().GetStart(),
+						EndKey:   vr.GetRange().GetEnd(),
+					},
+					ReadTS: vr.GetReadTs(),
 				})
-				i++
-			})
+			}
 		}
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 			req:                         worker.req,
@@ -2058,15 +2013,19 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				if len(task.versionedRanges) != task.ranges.Len() {
 					return batchRespList, nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
 				}
-				versionedKVRanges = make([]kv.VersionedKeyRange, 0, task.ranges.Len())
-				i := 0
-				task.ranges.Do(func(r *kv.KeyRange) {
+				versionedKVRanges = make([]kv.VersionedKeyRange, 0, len(task.versionedRanges))
+				for _, vr := range task.versionedRanges {
+					if vr == nil || vr.GetRange() == nil {
+						return batchRespList, nil, errors.New("invalid VersionedKeyRange: nil range")
+					}
 					versionedKVRanges = append(versionedKVRanges, kv.VersionedKeyRange{
-						Range:  *r,
-						ReadTS: task.versionedRanges[i].ReadTs,
+						Range: kv.KeyRange{
+							StartKey: vr.GetRange().GetStart(),
+							EndKey:   vr.GetRange().GetEnd(),
+						},
+						ReadTS: vr.GetReadTs(),
 					})
-					i++
-				})
+				}
 			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,
