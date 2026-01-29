@@ -89,26 +89,6 @@ func TestFixControl44823(t *testing.T) {
 	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
 }
 
-func TestIssue46760(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int)`)
-	tk.MustExec(`prepare st from 'select * from t where a<?'`)
-	tk.MustExec(`set @a=1`)
-	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
-	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-
-	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760{}, struct{}{})
-	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
-	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.t failed: mock error"))
-	tk.MustExec(`set @a=1`)
-	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
-	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-}
-
 func TestCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	mockCtx := mock.NewContext()
@@ -332,14 +312,6 @@ func TestCacheable(t *testing.T) {
 	require.True(t, core.Cacheable(stmt, is))
 }
 
-func TestIssue49166(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (c int)`)
-	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
-}
-
 func TestNonPreparedPlanCacheable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -450,6 +422,28 @@ func TestNonPreparedPlanCacheable(t *testing.T) {
 		ok, _ := core.NonPreparedPlanCacheableWithCtx(sctx.GetPlanCtx(), stmt, is)
 		require.True(t, ok)
 	}
+
+	// issue:46760
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (a int)`)
+	tk.MustExec(`prepare st from 'select * from t where a<?'`)
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
+
+	ctx := context.WithValue(context.Background(), core.PlanCacheKeyTestIssue46760{}, struct{}{})
+	tk.MustExecWithContext(ctx, `prepare st from 'select * from t where a<?'`)
+	tk.MustQuery(`show warnings`).Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.t failed: mock error"))
+	tk.MustExec(`set @a=1`)
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`execute st using @a`).Check(testkit.Rows())
+	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
+
+	// issue:49166
+	tk.MustExec(`drop table if exists t`)
+	tk.MustExec(`create table t (c int)`)
+	tk.MustContainErrMsg(`prepare stmt from "select c from t limit 1 into outfile 'text'"`, "This command is not supported in the prepared statement protocol yet")
 }
 
 func BenchmarkNonPreparedPlanCacheableChecker(b *testing.B) {

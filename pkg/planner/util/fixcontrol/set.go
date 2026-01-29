@@ -42,7 +42,8 @@ func ParseToMap(s string) (result map[uint64]string, warnMsgs []string, err erro
 		s = strings.TrimSpace(s[colonIdx+1:])
 		var value string
 		// if it starts with quote, we need to find the closing quote, and the content between is the value for this fix
-		if s[0] == '\'' || s[0] == '"' {
+		// NOTE: s can be empty here for inputs like "123:", so guard the index access.
+		if len(s) > 0 && (s[0] == '\'' || s[0] == '"') {
 			quote := s[0]
 			endIdx := strings.IndexByte(s[1:], quote)
 			if endIdx < 0 {
