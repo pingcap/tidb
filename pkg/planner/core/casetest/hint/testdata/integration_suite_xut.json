@@ -778,18 +778,16 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb_v7, v7), merge(@qb_v7) */ * from v7;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  Column, Column",
-          "    └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary], [name: Column, collate: binary]",
-          "          └─HashAgg mpp[tiflash]  group by:Column, Column, ",
-          "            └─Union mpp[tiflash]  ",
-          "              ├─Selection mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
-          "              │ └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "              └─Selection mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
-          "                └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "HashAgg root  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
+          "└─Union root  ",
+          "  ├─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  lt(test.t.a, 18), lt(test.t.a, 60)",
+          "  │     └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
+          "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
@@ -841,63 +839,62 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_1PHASE_AGG(@qb) */ * from v11;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a, Column",
-          "    └─Projection mpp[tiflash]  Column, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
-          "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column",
-          "          └─ExchangeReceiver mpp[tiflash]  ",
-          "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "              └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "Projection root  test.t.a, Column",
+          "└─HashAgg root  group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
+          "  └─Projection root  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column",
+          "    └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The agg can not push down to the MPP side, the MPP_1PHASE_AGG() hint is invalid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb, v11) read_from_storage(tiflash[t@qb]), MPP_2PHASE_AGG(@qb) */ * from v11;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a, Column",
-          "    └─Projection mpp[tiflash]  Column, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "            └─HashAgg mpp[tiflash]  group by:Column, funcs:sum(Column)->Column",
-          "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column",
-          "                └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "Projection root  test.t.a, Column",
+          "└─HashAgg root  group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
+          "  └─Projection root  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column",
+          "    └─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The agg can not push down to the MPP side, the MPP_2PHASE_AGG() hint is invalid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), shuffle_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a, test.t.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "      │   └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
-          "          └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "HashJoin root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ qb_name(qb, v12) read_from_storage(tiflash[t1@qb, t@qb]), broadcast_join(t1@qb, t@qb) */ * from v12;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t.a, test.t.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "      └─TableFullScan(Probe) mpp[tiflash] table:t1 keep order:false, stats:pseudo"
+          "HashJoin root  inner join, equal:[eq(test.t.a, test.t.a)]",
+          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "│   └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo",
+          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+        ]
       }
     ]
   },
@@ -1084,90 +1081,102 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t6), shuffle_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.a, collate: binary]",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t5.a, collate: binary]",
-          "          └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
-          "            ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "            │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "            │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "            │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "            └─Selection(Probe) mpp[tiflash]  not(isnull(test.t6.b))",
-          "              └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo"
+          "Projection root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "└─HashJoin root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
+          "  │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t6.b, test.t5.b)]",
+          "    ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "    │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
+          "          └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t5), shuffle_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
-          "      │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t5.a, collate: binary]",
-          "        │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "        └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t4.a, collate: binary]",
-          "            └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "              └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo"
+          "Projection root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "└─HashJoin root  inner join, equal:[eq(test.t5.b, test.t6.b)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
+          "  │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "    ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "    │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
+          "          └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the shuffle_join() hint is invalid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t6), broadcast_join(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
-          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t6.b))",
+          "Projection root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "└─HashJoin root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
+          "  │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t6.b, test.t5.b)]",
+          "    ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "    │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
           "          └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t5), broadcast_join(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
-          "      │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t4.a))",
+          "Projection root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "└─HashJoin root  inner join, equal:[eq(test.t5.b, test.t6.b)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
+          "  │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "    ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "    │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
           "          └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo"
         ],
-        "Warn": null
+        "Warn": [
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid",
+          "[planner:1815]The join can not push down to the MPP side, the broadcast_join() hint is invalid"
+        ]
       },
       {
         "SQL": "explain format = 'plan_tree' select /*+ leading(t3), hash_join(t1) */ * from t1 join t2 on t1.a = t2.a left join t3 on t2.b = t3.b;",
@@ -1720,20 +1729,20 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t4, t6]), leading(t6), hash_join_build(t4) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "      │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t6.b, test.t5.b)]",
-          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
-          "        │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
-          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t6.b))",
+          "Projection root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "└─HashJoin root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
+          "  │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t6.b, test.t5.b)]",
+          "    ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "    │     └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
           "          └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1741,20 +1750,20 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ read_from_storage(tiflash[t5]), leading(t5), hash_join_probe(t5) */ * from t4 join t5 join t6 where t4.a = t5.a and t5.b = t6.b;",
         "Plan": [
-          "TableReader root  MppVersion: 3, data:ExchangeSender",
-          "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection mpp[tiflash]  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t5.b, test.t6.b)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
-          "      │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
-          "      └─HashJoin(Probe) mpp[tiflash]  inner join, equal:[eq(test.t5.a, test.t4.a)]",
-          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "        │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
-          "        │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
-          "        └─Selection(Probe) mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
+          "Projection root  test.t4.a, test.t4.b, test.t5.a, test.t5.b, test.t6.a, test.t6.b",
+          "└─HashJoin root  inner join, equal:[eq(test.t5.b, test.t6.b)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Selection mpp[tiflash]  not(isnull(test.t6.b))",
+          "  │     └─TableFullScan mpp[tiflash] table:t6 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) root  inner join, equal:[eq(test.t5.a, test.t4.a)]",
+          "    ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    │   └─Selection mpp[tiflash]  not(isnull(test.t4.a))",
+          "    │     └─TableFullScan mpp[tiflash] table:t4 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "        └─Selection mpp[tiflash]  not(isnull(test.t5.a)), not(isnull(test.t5.b))",
           "          └─TableFullScan mpp[tiflash] table:t5 keep order:false, stats:pseudo"
         ],
         "Warn": null

@@ -24,24 +24,34 @@ func TestDual(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
 		testKit.MustExec("use test")
 		testKit.MustExec("CREATE TABLE t (id INT PRIMARY KEY AUTO_INCREMENT,d INT);")
+		firstDual := "TableDual_9 0.00 root  rows:0"
+		proj := "Projection_9 0.00 root  3->Column#4"
+		secondDual := "└─TableDual_11 0.00 root  rows:0"
+		nullDual := "TableDual_7 0.00 root  rows:0"
+		if cascades == "on" {
+			firstDual = "TableDual_8 0.00 root  rows:0"
+			proj = "Projection_8 0.00 root  3->Column#4"
+			secondDual = "└─TableDual_9 0.00 root  rows:0"
+			nullDual = "TableDual_6 0.00 root  rows:0"
+		}
 		testKit.MustQuery("explain select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
-			"TableDual_9 0.00 root  rows:0"))
+			firstDual))
 		testKit.MustQuery("select a from (select d as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
 		testKit.MustQuery("explain select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows(
-			"Projection_9 0.00 root  3->Column#4",
-			"└─TableDual_11 0.00 root  rows:0"))
+			proj,
+			secondDual))
 		testKit.MustQuery("select a from (select 1+2 as a from t where d = 0) k where k.a = 5").Check(testkit.Rows())
 		testKit.MustQuery("explain select * from t where d != null;").Check(testkit.Rows(
-			"TableDual_7 0.00 root  rows:0"))
+			nullDual))
 		testKit.MustQuery("explain select * from t where d > null;").Check(testkit.Rows(
-			"TableDual_7 0.00 root  rows:0"))
+			nullDual))
 		testKit.MustQuery("explain select * from t where d >= null;").Check(testkit.Rows(
-			"TableDual_7 0.00 root  rows:0"))
+			nullDual))
 		testKit.MustQuery("explain select * from t where d < null;").Check(testkit.Rows(
-			"TableDual_7 0.00 root  rows:0"))
+			nullDual))
 		testKit.MustQuery("explain select * from t where d <= null;").Check(testkit.Rows(
-			"TableDual_7 0.00 root  rows:0"))
+			nullDual))
 		testKit.MustQuery("explain select * from t where d = null;").Check(testkit.Rows(
-			"TableDual_7 0.00 root  rows:0"))
+			nullDual))
 	})
 }

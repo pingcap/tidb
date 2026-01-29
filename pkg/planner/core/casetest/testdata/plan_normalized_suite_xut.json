@@ -610,11 +610,11 @@
         ]
       },
       {
-        "Digest": "5fc0a796273b90410acda281d59ff137547ace7422739f9b1dbf90ded8cb836c",
+        "Digest": "df3acacd9a691cd211189e4f19f72de8f1e5c07ca8e5d9e3a743bf12202e535a",
         "Plan": [
-          " TableReader           root         ",
-          " └─ExchangeSender      cop[tiflash] ",
-          "   └─Projection        cop[tiflash] plus(test.t1.a, test.t1.b)",
+          " Projection            root         plus(test.t1.a, test.t1.b)",
+          " └─TableReader         root         ",
+          "   └─ExchangeSender    cop[tiflash] ",
           "     └─Selection       cop[tiflash] lt(plus(test.t1.a, test.t1.b), ?)",
           "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
@@ -636,50 +636,44 @@
       {
         "SQL": "explain format = 'plan_tree' select * from t1;",
         "Plan": [
-          " TableReader       root         ",
-          " └─ExchangeSender  cop[tiflash] ",
-          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          " TableReader     root         ",
+          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where a<1;",
         "Plan": [
-          " TableReader       root         ",
-          " └─ExchangeSender  cop[tiflash] ",
-          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:lt(test.t1.a, ?), keep order:false"
+          " TableReader     root         ",
+          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:lt(test.t1.a, ?), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where a>3",
         "Plan": [
-          " TableReader       root         ",
-          " └─ExchangeSender  cop[tiflash] ",
-          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          " TableReader     root         ",
+          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where a=1",
         "Plan": [
-          " TableReader       root         ",
-          " └─ExchangeSender  cop[tiflash] ",
-          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:eq(test.t1.a, ?), keep order:false"
+          " TableReader     root         ",
+          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:eq(test.t1.a, ?), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where a in (1,2,3)",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] in(test.t1.a, ?, ?, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          " TableReader       root         ",
+          " └─Selection       cop[tiflash] in(test.t1.a, ?, ?, ?)",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where b=1",
         "Plan": [
-          " TableReader       root         ",
-          " └─ExchangeSender  cop[tiflash] ",
-          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:eq(test.t1.b, ?), keep order:false"
+          " TableReader     root         ",
+          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:eq(test.t1.b, ?), keep order:false"
         ]
       },
       {
@@ -696,64 +690,57 @@
       {
         "SQL": "explain format = 'plan_tree' select a from t1 where a>3",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.a, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
+          " TableReader       root         ",
+          " └─Selection       cop[tiflash] gt(test.t1.a, ?)",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select a from t1 where a>3 and b>1",
         "Plan": [
-          " TableReader           root         ",
-          " └─ExchangeSender      cop[tiflash] ",
-          "   └─Projection        cop[tiflash] test.t1.a",
-          "     └─Selection       cop[tiflash] gt(test.t1.b, ?)",
-          "       └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          " TableReader         root         ",
+          " └─Projection        cop[tiflash] test.t1.a",
+          "   └─Selection       cop[tiflash] gt(test.t1.b, ?)",
+          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where a>3 and b>1 and c>1",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?)",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          " TableReader       root         ",
+          " └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?)",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where a<1 or b<2",
         "Plan": [
-          " TableReader       root         ",
-          " └─ExchangeSender  cop[tiflash] ",
-          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:or(lt(test.t1.a, ?), lt(test.t1.b, ?)), keep order:false"
+          " TableReader     root         ",
+          " └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:or(lt(test.t1.a, ?), lt(test.t1.b, ?)), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where (a<1 or b<2) and (a>3 and b>2)",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          " TableReader       root         ",
+          " └─Selection       cop[tiflash] gt(test.t1.b, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where (a<1 or b<2) and (a>3 and b>2) and c>1",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          " TableReader       root         ",
+          " └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(lt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
         "SQL": "explain format = 'plan_tree' select * from t1 where (a>2 or b<2) and (a>3 and b>2) and c>2",
         "Plan": [
-          " TableReader         root         ",
-          " └─ExchangeSender    cop[tiflash] ",
-          "   └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(gt(test.t1.a, ?), lt(test.t1.b, ?))",
-          "     └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
+          " TableReader       root         ",
+          " └─Selection       cop[tiflash] gt(test.t1.b, ?), gt(test.t1.c, ?), or(gt(test.t1.a, ?), lt(test.t1.b, ?))",
+          "   └─TableFullScan cop[tiflash] table:t1, range:[?,?], pushed down filter:gt(test.t1.a, ?), keep order:false"
         ]
       },
       {
@@ -845,9 +832,9 @@
       {
         "SQL": "explain format = 'plan_tree' select a from t1 where a>3 and b>1",
         "Plan": [
-          " TableReader           root         ",
-          " └─ExchangeSender      cop[tiflash] ",
-          "   └─Projection        cop[tiflash] test.t1.a",
+          " Projection            root         test.t1.a",
+          " └─TableReader         root         ",
+          "   └─ExchangeSender    cop[tiflash] ",
           "     └─Selection       cop[tiflash] gt(test.t1.a, ?), gt(test.t1.b, ?)",
           "       └─TableFullScan cop[tiflash] table:t1, index:idx_a(a), range:[?,?], keep order:false, invertedindex:idx_a"
         ]
