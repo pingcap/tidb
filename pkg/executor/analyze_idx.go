@@ -62,18 +62,7 @@ func analyzeIndexPushdown(ctx context.Context, idxExec *AnalyzeIndexExec) *stati
 	}
 	hist, cms, fms, topN, err := idxExec.buildStats(ctx, ranges, true)
 	if err != nil {
-		if intest.InTest && stderrors.Is(err, context.Canceled) {
-			cause := context.Cause(ctx)
-			ctxErr := ctx.Err()
-			statslogutil.StatsLogger().Info("analyze index canceled",
-				zap.Uint32("killSignal", idxExec.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-				zap.Uint64("connID", idxExec.ctx.GetSessionVars().ConnectionID),
-				zap.Error(err),
-				zap.Error(cause),
-				zap.Error(ctxErr),
-				zap.Stack("stack"),
-			)
-		}
+		idxExec.logAnalyzeCanceledInTest(ctx, err, "analyze index canceled")
 		return &statistics.AnalyzeResults{Err: err, Job: idxExec.job}
 	}
 	var statsVer = statistics.Version1
@@ -183,18 +172,7 @@ func (e *AnalyzeIndexExec) fetchAnalyzeResult(ctx context.Context, ranges []*ran
 	}
 	result, err := distsql.Analyze(ctx, e.ctx.GetClient(), kvReq, e.ctx.GetSessionVars().KVVars, e.ctx.GetSessionVars().InRestrictedSQL, e.ctx.GetDistSQLCtx())
 	if err != nil {
-		if intest.InTest && stderrors.Is(err, context.Canceled) {
-			cause := context.Cause(ctx)
-			ctxErr := ctx.Err()
-			statslogutil.StatsLogger().Info("analyze index distsql canceled",
-				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-				zap.Error(err),
-				zap.Error(cause),
-				zap.Error(ctxErr),
-				zap.Stack("stack"),
-			)
-		}
+		e.logAnalyzeCanceledInTest(ctx, err, "analyze index distsql canceled")
 		return err
 	}
 	if isNullRange {
@@ -253,18 +231,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, resul
 		data, err := result.NextRaw(killerCtx)
 		if err != nil {
 			err = normalizeAnalyzeCtxErr(killerCtx, err)
-			if intest.InTest && stderrors.Is(err, context.Canceled) {
-				cause := context.Cause(killerCtx)
-				ctxErr := killerCtx.Err()
-				statslogutil.StatsLogger().Info("analyze index nextRaw canceled",
-					zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-					zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-					zap.Error(err),
-					zap.Error(cause),
-					zap.Error(ctxErr),
-					zap.Stack("stack"),
-				)
-			}
+			e.logAnalyzeCanceledInTest(killerCtx, err, "analyze index nextRaw canceled")
 			return nil, nil, nil, nil, err
 		}
 		if data == nil {
@@ -291,6 +258,22 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, resul
 		cms.CalcDefaultValForAnalyze(uint64(hist.NDV))
 	}
 	return hist, cms, fms, topn, nil
+}
+
+func (e *AnalyzeIndexExec) logAnalyzeCanceledInTest(ctx context.Context, err error, msg string) {
+	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
+		return
+	}
+	cause := context.Cause(ctx)
+	ctxErr := ctx.Err()
+	statslogutil.StatsLogger().Info(msg,
+		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Error(err),
+		zap.Error(cause),
+		zap.Error(ctxErr),
+		zap.Stack("stack"),
+	)
 }
 
 func (e *AnalyzeIndexExec) buildSimpleStats(killerCtx context.Context, ranges []*ranger.Range, considerNull bool) (fms *statistics.FMSketch, nullHist *statistics.Histogram, err error) {
