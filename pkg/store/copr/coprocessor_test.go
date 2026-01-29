@@ -701,11 +701,8 @@ func TestCopTaskToPBBatchTasksVersionedRangesLenMismatch(t *testing.T) {
 		batchTaskList: map[uint64]*batchedCopTask{},
 	}
 	sub := &copTask{
-		ranges: buildCopRanges("a", "b"),
-		versionedRanges: []*coprocessor.VersionedKeyRange{
-			{},
-			{},
-		},
+		ranges:          buildCopRanges("a", "b"),
+		versionedRanges: []kv.VersionedKeyRange{{}, {}},
 	}
 	parent.batchTaskList[1] = &batchedCopTask{
 		task: sub,

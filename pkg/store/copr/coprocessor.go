@@ -271,11 +271,13 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 
 // copTask contains a related Region and KeyRange for a kv.Request.
 type copTask struct {
-	taskID          uint64
-	region          tikv.RegionVerID
-	bucketsVer      uint64
-	ranges          *KeyRanges
-	versionedRanges []*coprocessor.VersionedKeyRange // used only in TiCI lookup
+	taskID     uint64
+	region     tikv.RegionVerID
+	bucketsVer uint64
+	ranges     *KeyRanges
+	// versionedRanges stores per-range read_ts for TiCI versioned lookup.
+	// When non-nil, it must align with `ranges` (same order/length), and all ranges must be point ranges.
+	versionedRanges []kv.VersionedKeyRange
 
 	respChan  chan *copResponse
 	storeAddr string
@@ -317,6 +319,22 @@ func (r *copTask) String() string {
 		r.region.GetID(), r.region.GetConfVer(), r.region.GetVer(), r.ranges.Len(), r.storeAddr)
 }
 
+func versionedKeyRangesToPB(versionedRanges []kv.VersionedKeyRange) []*coprocessor.VersionedKeyRange {
+	if versionedRanges == nil {
+		return nil
+	}
+	pbRanges := make([]coprocessor.VersionedKeyRange, len(versionedRanges))
+	pbPtrs := make([]*coprocessor.VersionedKeyRange, len(versionedRanges))
+	for i := range versionedRanges {
+		pbRanges[i] = coprocessor.VersionedKeyRange{
+			Range:  (*coprocessor.KeyRange)(unsafe.Pointer(&versionedRanges[i].Range)),
+			ReadTs: versionedRanges[i].ReadTS,
+		}
+		pbPtrs[i] = &pbRanges[i]
+	}
+	return pbPtrs
+}
+
 func (r *copTask) ToPBBatchTasks() ([]*coprocessor.StoreBatchTask, error) {
 	if len(r.batchTaskList) == 0 {
 		return nil, nil
@@ -335,7 +353,7 @@ func (r *copTask) ToPBBatchTasks() ([]*coprocessor.StoreBatchTask, error) {
 		}
 		if task.task.versionedRanges != nil {
 			// Use `versioned_ranges` instead of `ranges` to avoid duplicated encoding.
-			storeBatchTask.VersionedRanges = task.task.versionedRanges
+			storeBatchTask.VersionedRanges = versionedKeyRangesToPB(task.task.versionedRanges)
 			storeBatchTask.Ranges = nil
 		}
 		pbTasks = append(pbTasks, storeBatchTask)
@@ -616,9 +634,8 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				}
 			}
 			ranges := loc.Ranges.Slice(i, nextI)
-			var versionedRanges []*coprocessor.VersionedKeyRange
+			var versionedRanges []kv.VersionedKeyRange
 			if locVersionedRanges != nil {
-				versionedRanges = make([]*coprocessor.VersionedKeyRange, 0, ranges.Len())
 				for j := i; j < nextI; j++ {
 					ran := loc.Ranges.RefAt(j)
 					if !ran.IsPoint() {
@@ -628,16 +645,13 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 					if !bytes.Equal(vr.Range.StartKey, ran.StartKey) || !bytes.Equal(vr.Range.EndKey, ran.EndKey) {
 						return nil, errors.Errorf("versionedRanges not aligned with ranges: idx=%d", j)
 					}
-					versionedRanges = append(versionedRanges, &coprocessor.VersionedKeyRange{
-						Range:  (*coprocessor.KeyRange)(unsafe.Pointer(ran)),
-						ReadTs: vr.ReadTS,
-					})
 				}
+				versionedRanges = locVersionedRanges[i:nextI]
 			}
 			task := &copTask{
 				region:          loc.Location.Region,
 				bucketsVer:      loc.getBucketVersion(),
-				ranges:          loc.Ranges.Slice(i, nextI),
+				ranges:          ranges,
 				versionedRanges: versionedRanges,
 				cmdType:         cmdType,
 				storeType:       req.StoreType,
@@ -1583,22 +1597,25 @@ func (worker *copIteratorWorker) handleTaskOnce(bo *Backoffer, task *copTask) (*
 	if err != nil {
 		return nil, err
 	}
+	var ranges []*coprocessor.KeyRange
+	var versionedRanges []*coprocessor.VersionedKeyRange
+	if task.versionedRanges != nil {
+		// Use `versioned_ranges` instead of `ranges` to avoid duplicated encoding.
+		versionedRanges = versionedKeyRangesToPB(task.versionedRanges)
+	} else {
+		ranges = task.ranges.ToPBRanges()
+	}
 	copReq := coprocessor.Request{
 		Tp:              worker.req.Tp,
 		StartTs:         worker.req.StartTs,
 		Data:            worker.req.Data,
-		Ranges:          task.ranges.ToPBRanges(),
+		Ranges:          ranges,
 		SchemaVer:       worker.req.SchemaVar,
 		PagingSize:      task.pagingSize,
 		Tasks:           batchTasks,
 		ConnectionId:    worker.req.ConnID,
 		ConnectionAlias: worker.req.ConnAlias,
-	}
-
-	if task.versionedRanges != nil {
-		// Use `versioned_ranges` instead of `ranges` to avoid duplicated encoding.
-		copReq.VersionedRanges = task.versionedRanges
-		copReq.Ranges = nil
+		VersionedRanges: versionedRanges,
 	}
 
 	cacheKey, cacheValue := worker.buildCacheKey(task, &copReq)
@@ -1824,24 +1841,9 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		var versionedKVRanges []kv.VersionedKeyRange
-		if task.versionedRanges != nil {
-			if len(task.versionedRanges) != task.ranges.Len() {
-				return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
-			}
-			versionedKVRanges = make([]kv.VersionedKeyRange, 0, len(task.versionedRanges))
-			for _, vr := range task.versionedRanges {
-				if vr == nil || vr.GetRange() == nil {
-					return nil, errors.New("invalid VersionedKeyRange: nil range")
-				}
-				versionedKVRanges = append(versionedKVRanges, kv.VersionedKeyRange{
-					Range: kv.KeyRange{
-						StartKey: vr.GetRange().GetStart(),
-						EndKey:   vr.GetRange().GetEnd(),
-					},
-					ReadTS: vr.GetReadTs(),
-				})
-			}
+		versionedKVRanges := task.versionedRanges
+		if versionedKVRanges != nil && len(versionedKVRanges) != task.ranges.Len() {
+			return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(versionedKVRanges))
 		}
 		remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 			req:                         worker.req,
@@ -1998,24 +2000,9 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return batchRespList, nil, errors.Trace(err)
 			}
-			var versionedKVRanges []kv.VersionedKeyRange
-			if task.versionedRanges != nil {
-				if len(task.versionedRanges) != task.ranges.Len() {
-					return batchRespList, nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
-				}
-				versionedKVRanges = make([]kv.VersionedKeyRange, 0, len(task.versionedRanges))
-				for _, vr := range task.versionedRanges {
-					if vr == nil || vr.GetRange() == nil {
-						return batchRespList, nil, errors.New("invalid VersionedKeyRange: nil range")
-					}
-					versionedKVRanges = append(versionedKVRanges, kv.VersionedKeyRange{
-						Range: kv.KeyRange{
-							StartKey: vr.GetRange().GetStart(),
-							EndKey:   vr.GetRange().GetEnd(),
-						},
-						ReadTS: vr.GetReadTs(),
-					})
-				}
+			versionedKVRanges := task.versionedRanges
+			if versionedKVRanges != nil && len(versionedKVRanges) != task.ranges.Len() {
+				return batchRespList, nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(versionedKVRanges))
 			}
 			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
 				req:                         worker.req,
