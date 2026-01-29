@@ -80,6 +80,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sem"
 	"github.com/pingcap/tidb/pkg/util/servermemorylimit"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/syncutil"
 	"github.com/tikv/client-go/v2/tikv"
@@ -220,6 +221,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataForMemoryUsageOpsHistory()
 		case infoschema.ClusterTableMemoryUsageOpsHistory:
 			err = e.setDataForClusterMemoryUsageOpsHistory(sctx)
+		case infoschema.TableUserLoginHistory:
+			err = e.setDataForUserLoginHistory(ctx, sctx)
 		case infoschema.TableResourceGroups:
 			err = e.setDataFromResourceGroups()
 		case infoschema.TableRunawayWatches:
@@ -234,6 +237,16 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableRoutines:
+			err = e.setDataForRoutines(ctx, sctx)
+		case infoschema.TableColumnPrivileges:
+			err = e.setDataFromColumnPrivileges(ctx, sctx)
+		case infoschema.TableTablePrivileges:
+			err = e.setDataFromTablePrivileges(ctx, sctx)
+		case infoschema.TableSchemaPrivileges:
+			err = e.setDataFromSchemaPrivileges(ctx, sctx)
+		case infoschema.TableRegions:
+			err = e.setDataForTableRegions(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -1033,6 +1046,56 @@ func (e *hugeMemTableRetriever) retrieve(ctx context.Context, sctx sessionctx.Co
 	e.retrieved = len(e.rows) == 0
 
 	return adjustColumns(e.rows, e.columns, e.table), nil
+}
+
+func (e *memtableRetriever) setDataForRoutines(ctx context.Context, sctx sessionctx.Context) error {
+	exec, _ := sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnProcedure)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil, `select route_schema,name,type,definition_utf8,parameter_str,is_deterministic,sql_data_access,security_type,definer,sql_mode,
+	character_set_client,connection_collation,schema_collation,created,last_altered,comment,options,external_language from mysql.routines;`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 18 {
+			continue
+		}
+		routineType := chunkRow.GetEnum(2)
+		if routineType.String() != "PROCEDURE" {
+			return errors.Errorf("Not support %s", routineType.String())
+		}
+		routeSchema := chunkRow.GetString(0)
+		name := chunkRow.GetString(1)
+		definitionUtf8 := chunkRow.GetString(3)
+		isDeterministic := chunkRow.GetInt64(5)
+		sqlDataAccess := chunkRow.GetEnum(6)
+		securityType := chunkRow.GetEnum(7)
+		definer := chunkRow.GetString(8)
+		sqlMode := chunkRow.GetSet(9)
+		characterSetClient := chunkRow.GetString(10)
+		connectionCollation := chunkRow.GetString(11)
+		schemaCollation := chunkRow.GetString(12)
+		created := chunkRow.GetTime(13)
+		lastAltered := chunkRow.GetTime(14)
+		comment := chunkRow.GetString(15)
+		externalLanguage := chunkRow.GetString(17)
+		deterministicStatus := "NO"
+		if isDeterministic == 1 {
+			deterministicStatus = "YES"
+		}
+		// unspport function
+		row := types.MakeDatums(name, "def", routeSchema, name, routineType.String(), "", nil, nil, nil, nil, nil, nil, nil, nil, "SQL",
+			definitionUtf8, nil, externalLanguage, "SQL", deterministicStatus, sqlDataAccess.String(), nil, securityType.String(), created,
+			lastAltered, sqlMode.String(), comment, definer, characterSetClient, connectionCollation, schemaCollation)
+		rows = append(rows, row)
+	}
+
+	e.rows = rows
+	return nil
 }
 
 func (e *hugeMemTableRetriever) setDataForColumns(ctx context.Context, sctx sessionctx.Context) error {
@@ -2075,6 +2138,123 @@ func (e *memtableRetriever) setDataForTiKVRegionStatus(ctx context.Context, sctx
 	return nil
 }
 
+func (e *memtableRetriever) setDataForTableRegions(ctx context.Context, sctx sessionctx.Context) (err error) {
+	checker := privilege.GetPrivilegeManager(sctx)
+	tikvStore, ok := sctx.GetStore().(helper.Storage)
+	if !ok {
+		return errors.New("Information about table regions can be gotten only when the storage is TiKV")
+	}
+	splitStore, ok := sctx.GetStore().(kv.SplittableStore)
+	if !ok {
+		return errors.New("Information about table regions can be gotten only when the storage is splittable")
+	}
+
+	is := sctx.GetDomainInfoSchema().(infoschema.InfoSchema)
+	setTableRegionsByName := func(schemaName, tableName pmodel.CIStr) {
+		if util.IsMemOrSysDB(schemaName.L) {
+			return
+		}
+
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schemaName.L, tableName.L, "", mysql.AllPrivMask) {
+			return
+		}
+
+		tb, err := is.TableByName(ctx, schemaName, tableName)
+		if err != nil {
+			return
+		}
+
+		tableID := tb.Meta().ID
+		var physicalIDs []int64
+		var partitionNames []string
+		if pi := tb.Meta().Partition; pi != nil && len(pi.Definitions) > 0 {
+			// Handle partitioned tables.
+			numPartitions := len(pi.Definitions)
+			physicalIDs = make([]int64, numPartitions)
+			partitionNames = make([]string, numPartitions)
+			for i, p := range pi.Definitions {
+				physicalIDs[i] = p.ID
+				partitionNames[i] = p.Name.L
+			}
+		} else {
+			// Handle non-partitioned tables.
+			physicalIDs = []int64{tableID}
+			partitionNames = []string{""}
+		}
+
+		// In a partitioned table, it's possible for regions of different partitions to have the same ID.
+		// Therefore, we pass nil for uniqueRegionMap to avoid filtering and ensure that we retrieve all
+		// regions belonging to the physical table of a specific partition.
+		// TODO: handle EnableSplitTableRegion
+		for idx, physicalID := range physicalIDs {
+			regions, err := getPhysicalTableRecordRegions(physicalID, tb.Meta(), tikvStore, splitStore, nil)
+			if err != nil {
+				return
+			}
+
+			e.setNewTableRegionsCol(regions, physicalID, partitionNames[idx], tableID, schemaName.String(), tableName.String())
+		}
+	}
+
+	if e.extractor != nil {
+		extractor, ok := e.extractor.(*plannercore.TableRegionsExtractor)
+		if ok && extractor.GetSchemaName().String() != "" && extractor.GetTableName().String() != "" {
+			setTableRegionsByName(extractor.GetSchemaName(), extractor.GetTableName())
+			return
+		}
+	}
+
+	dbInfos := is.AllSchemas()
+	for _, dbInfo := range dbInfos {
+		schemaName := dbInfo.Name
+		if util.IsMemOrSysDB(schemaName.L) {
+			continue
+		}
+
+		tableInfos, _ := is.SchemaTableInfos(ctx, schemaName)
+		for _, tableInfo := range tableInfos {
+			tableName := tableInfo.Name
+			setTableRegionsByName(schemaName, tableName)
+		}
+	}
+
+	return nil
+}
+
+func (e *memtableRetriever) setNewTableRegionsCol(regions []regionMeta, physicalID int64, partitionName string, tableID int64, schemaName, tableName string) {
+	tableStart := tablecodec.GenTableRecordPrefix(physicalID)
+	tableEnd := tableStart.PrefixNext()
+
+	for _, region := range regions {
+		row := make([]types.Datum, len(infoschema.TableRegionsCols))
+
+		regionMeta := region.region
+		regionStart := kv.Key(regionMeta.StartKey)
+		regionEnd := kv.Key(regionMeta.EndKey)
+		if regionStart.Cmp(tableStart) < 0 {
+			regionStart = tableStart
+		}
+		if regionEnd.Cmp(tableEnd) > 0 {
+			regionEnd = tableEnd
+		}
+
+		row[0].SetUint64(regionMeta.Id)
+		row[1].SetString(regionStart.String(), mysql.DefaultCollationName)
+		row[2].SetString(regionEnd.String(), mysql.DefaultCollationName)
+		row[3].SetInt64(tableID)
+		row[4].SetString(schemaName, mysql.DefaultCollationName)
+		row[5].SetString(tableName, mysql.DefaultCollationName)
+		if partitionName != "" {
+			row[6].SetInt64(physicalID)
+			row[7].SetString(partitionName, mysql.DefaultCollationName)
+		}
+		row[8].SetInt64(region.approximateSize)
+		row[9].SetInt64(region.approximateKeys)
+
+		e.rows = append(e.rows, row)
+	}
+}
+
 func (e *memtableRetriever) getRegionsInfoForTable(ctx context.Context, h *helper.Helper, is infoschema.InfoSchema, tableID int64) (*pd.RegionsInfo, error) {
 	tbl, _ := is.TableByID(ctx, tableID)
 	if tbl == nil {
@@ -2952,6 +3132,46 @@ func (e *memtableRetriever) setDataForClusterMemoryUsageOpsHistory(ctx sessionct
 	if err != nil {
 		return err
 	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataForUserLoginHistory(ctx context.Context, sctx sessionctx.Context) error {
+	loginUser := sctx.GetSessionVars().User
+	if loginUser == nil {
+		return nil
+	}
+
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT * FROM mysql.login_history WHERE user = %? AND user_host = %?`, loginUser.AuthUsername, loginUser.AuthHostname)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		time := chunkRow.GetTime(0)
+		serverHost := chunkRow.GetString(1)
+		user := chunkRow.GetString(2)
+		if user != loginUser.AuthUsername {
+			continue
+		}
+
+		userHost := chunkRow.GetString(3)
+		database := chunkRow.GetString(4)
+		connectionID := chunkRow.GetUint64(5)
+		result := chunkRow.GetString(6)
+		clientHost := chunkRow.GetString(7)
+		detail := chunkRow.GetString(8)
+
+		row := types.MakeDatums(time, serverHost, user, userHost, database, connectionID, result, clientHost, detail)
+		rows = append(rows, row)
+	}
+
 	e.rows = rows
 	return nil
 }
@@ -4000,6 +4220,199 @@ func (e *memtableRetriever) setDataFromClusterIndexUsage(ctx context.Context, sc
 	rows, err := infoschema.AppendHostInfoToRows(sctx, e.rows)
 	if err != nil {
 		return err
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromColumnPrivileges(ctx context.Context, sctx sessionctx.Context) error {
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT c.user,
+			concat("'", c.user, "'@'", c.host, "'") AS GRANTEE,
+			'def' AS TABLE_CATALOG,
+			c.db AS TABLE_SCHEMA,
+			c.table_name AS TABLE_NAME,
+			c.column_name AS COLUMN_NAME,
+			c.column_priv AS PRIVILEGE_TYPE,
+			CASE
+				WHEN find_in_set('Grant', t.table_priv) > 0 THEN "YES"
+				ELSE "NO"
+			END AS IS_GRANTABLE
+		FROM mysql.columns_priv AS c
+    	JOIN mysql.tables_priv AS t
+			ON c.user = t.user
+				AND c.host = t.host
+				AND c.db = t.db
+				AND c.table_name = t.table_name;`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 8 {
+			continue
+		}
+		userName := chunkRow.GetString(0)
+		if !(pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "columns_priv", "", mysql.SelectPriv) &&
+			pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv)) &&
+			user != nil && userName != user.Username {
+			continue
+		}
+		grantee := chunkRow.GetString(1)
+		tableCatalog := chunkRow.GetString(2) // always "def"
+		db := chunkRow.GetString(3)
+		tableName := chunkRow.GetString(4)
+		columnName := chunkRow.GetString(5)
+		privilegeTypes := chunkRow.GetSet(6)
+		isGrantable := chunkRow.GetString(7)
+		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
+			rows = append(rows, types.MakeDatums(
+				grantee,
+				tableCatalog,
+				db,
+				tableName,
+				columnName,
+				strings.ToUpper(priv),
+				isGrantable,
+			))
+		}
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTablePrivileges(ctx context.Context, sctx sessionctx.Context) error {
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	chunkRows, _, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT user,
+			concat("'", user, "'@'", host, "'") AS GRANTEE,
+			"def" AS TABLE_CATALOG,
+			db AS TABLE_SCHEMA,
+			table_name AS TABLE_NAME,
+			table_priv AS PRIVILEGE_TYPE,
+			CASE
+				WHEN find_in_set('Grant', table_priv) > 0 THEN "YES"
+				ELSE "NO"
+			END AS IS_GRANTABLE
+		FROM mysql.tables_priv
+		WHERE table_priv != '';`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 7 {
+			continue
+		}
+		userName := chunkRow.GetString(0)
+		if !pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "tables_priv", "", mysql.SelectPriv) && user != nil && userName != user.Username {
+			continue
+		}
+		grantee := chunkRow.GetString(1)
+		tableCatalog := chunkRow.GetString(2) // always "def"
+		db := chunkRow.GetString(3)
+		tableName := chunkRow.GetString(4)
+		privilegeTypes := chunkRow.GetSet(5)
+		isGrantable := chunkRow.GetString(6)
+		for _, priv := range strings.Split(privilegeTypes.String(), ",") {
+			if u := strings.ToUpper(priv); u != "GRANT" {
+				rows = append(rows, types.MakeDatums(
+					grantee,
+					tableCatalog,
+					db,
+					tableName,
+					u,
+					isGrantable,
+				))
+			}
+		}
+	}
+
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromSchemaPrivileges(ctx context.Context, sctx sessionctx.Context) error {
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	user := sctx.GetSessionVars().User
+	pm := privilege.GetPrivilegeManager(sctx)
+	chunkRows, resFields, err := exec.ExecRestrictedSQL(ctx, nil,
+		`SELECT user,
+			concat("'", user, "'@'", host, "'") AS GRANTEE,
+			"def" AS TABLE_CATALOG,
+			db AS TABLE_SCHEMA,
+			Grant_priv,
+			Select_priv,
+			Insert_priv,
+			Update_priv,
+			Delete_priv,
+			Create_priv,
+			Drop_priv,
+			References_priv,
+			Index_priv,
+			Alter_priv,
+			Create_tmp_table_priv,
+			Lock_tables_priv,
+			Create_view_priv,
+			Show_view_priv,
+			Create_routine_priv,
+			Alter_routine_priv,
+			Execute_priv,
+			Event_priv,
+			Trigger_priv
+		FROM mysql.db;`)
+	if err != nil {
+		return err
+	}
+	if len(chunkRows) == 0 {
+		return nil
+	}
+
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	for _, chunkRow := range chunkRows {
+		if chunkRow.Len() != 23 {
+			continue
+		}
+		userName := chunkRow.GetString(0)
+		if !pm.RequestVerification(sctx.GetSessionVars().ActiveRoles, "mysql", "db", "", mysql.SelectPriv) && user != nil && userName != user.Username {
+			continue
+		}
+		grantee := chunkRow.GetString(1)
+		tableCatalog := chunkRow.GetString(2) // always "def"
+		tableSchema := chunkRow.GetString(3)
+		isGrantable := "NO"
+		if chunkRow.GetEnum(4).String() == "Y" {
+			isGrantable = "YES"
+		}
+		for i := 5; i < 23; i++ {
+			if chunkRow.GetEnum(i).String() == "Y" {
+				privilegeType := strings.ToUpper(mysql.Priv2Str[mysql.Col2PrivType[resFields[i].Column.Name.O]])
+				rows = append(rows, types.MakeDatums(
+					grantee,
+					tableCatalog,
+					tableSchema,
+					privilegeType,
+					isGrantable,
+				))
+			}
+		}
 	}
 	e.rows = rows
 	return nil

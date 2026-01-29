@@ -525,6 +525,48 @@ func (rr *KeyRanges) TotalRangeNum() int {
 	return ret
 }
 
+// Intersect filters rr.ranges to only include and trim KeyRanges overlapping the [start, end) span.
+func (rr *KeyRanges) Intersect(start, end []byte) {
+	beforeEnd := func(key, endKey []byte) bool {
+		return bytes.Compare(key, endKey) < 0 || len(endKey) == 0
+	}
+
+	ranges := make([][]KeyRange, 0, len(rr.ranges))
+	rowCountHints := make([][]int, 0, len(rr.rowCountHints))
+	for i, kvRanges := range rr.ranges {
+		newKvRanges := make([]KeyRange, 0, len(kvRanges))
+		newRowCountHints := make([]int, 0)
+		for j, kvRange := range kvRanges {
+			// Skip ranges outside [start, end). Empty keys ('end', 'kvRange.EndKey') are treated as positive infinity.
+			if !beforeEnd(kvRange.StartKey, end) || !beforeEnd(start, kvRange.EndKey) {
+				continue
+			}
+			// Trim the start key if it extends beyond the start boundary.
+			if bytes.Compare(kvRange.StartKey, start) < 0 {
+				kvRange.StartKey = start
+			}
+			// Trim the end key if it extends beyond the end boundary.
+			// Only trim the end key if 'end' is an actual boundary.
+			if len(end) > 0 && beforeEnd(end, kvRange.EndKey) {
+				kvRange.EndKey = end
+			}
+			newKvRanges = append(newKvRanges, kvRange)
+			if rr.rowCountHints != nil {
+				newRowCountHints = append(newRowCountHints, rr.rowCountHints[i][j])
+			}
+		}
+		if len(newKvRanges) > 0 {
+			ranges = append(ranges, newKvRanges)
+			if len(newRowCountHints) > 0 {
+				rowCountHints = append(rowCountHints, newRowCountHints)
+			}
+		}
+	}
+
+	rr.ranges = ranges
+	rr.rowCountHints = rowCountHints
+}
+
 // Request represents a kv request.
 type Request struct {
 	// Tp is the request type.

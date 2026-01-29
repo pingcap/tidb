@@ -17,9 +17,12 @@ package expression
 import (
 	"math"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -159,6 +162,65 @@ func TestUUID(t *testing.T) {
 	}
 	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
 	require.NoError(t, err)
+}
+
+func TestUUIDShort(t *testing.T) {
+	ctx := createContext(t)
+	f, err := newFunctionForTest(ctx, ast.UUIDShort)
+	require.NoError(t, err)
+	_, err = f.Eval(ctx, chunk.Row{})
+	require.Error(t, err) // unspecified sever id
+	originConfig := config.GetGlobalConfig()
+	originConfig.Instance.ServerID = 1
+	config.StoreGlobalConfig(originConfig)
+	defer func() {
+		config.StoreGlobalConfig(originConfig)
+	}()
+	globalUUIDShortAllocator.ts = 1760422595
+	d, err := f.Eval(ctx, chunk.Row{})
+	require.NoError(t, err)
+	require.Equal(t, uint64(101592584165523456), d.GetUint64())
+	_, err = funcs[ast.UUIDShort].getFunction(ctx, datumsToConstants(nil))
+	require.NoError(t, err)
+}
+
+func TestUUIDShortAllocator(t *testing.T) {
+	allocator := UUIDShortAllocator{
+		ts:    1760422595,
+		count: 0,
+	}
+	// basic test.
+	require.Equal(t, uint64(101592584165523456), allocator.next(1))
+
+	// concurrency test
+	now := time.Now().Unix()
+	allocator.ts = now
+	values := sync.Map{}
+	for i := 1; i < 100; i++ {
+		id := allocator.next(1)
+		_, loaded := values.LoadOrStore(id, true)
+		require.False(t, loaded, "duplicated value")
+	}
+	allocator.count = math.MaxUint32 - 100
+	var wg sync.WaitGroup
+	count := uint64(0)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				id := allocator.next(1)
+				_, loaded := values.LoadOrStore(id, true)
+				require.False(t, loaded, "duplicated value")
+				if atomic.AddUint64(&count, 1) > 10000 {
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	require.True(t, 10000 < count)
+	require.True(t, now < allocator.ts)
 }
 
 func TestAnyValue(t *testing.T) {

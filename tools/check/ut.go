@@ -79,13 +79,26 @@ ut run --junitfile xxx
 ut run --race
 
 // test with test.short flag
-ut run --short`
+ut run --short
+
+// test with long flag
+// when the '--long' flag is set, ut will only run the long tests and have different strategies for concurrency to make them stabler.
+ut run --long
+
+// test with real tikv
+ut run --real-tikv
+
+// retry failed tests up to N extra times
+ut run --retry-cnt 2
+ut run --retry-count 2`
 
 	fmt.Println(msg)
 	return true
 }
 
 var modulePath = filepath.Join("github.com", "pingcap", "tidb")
+
+var longTestWorkerCount = 2
 
 type task struct {
 	pkg  string
@@ -296,18 +309,28 @@ func cmdRun(args ...string) bool {
 	}
 
 	fmt.Printf("building task finish, parallelism=%d, count=%d, takes=%v\n", buildParallel, len(tasks), time.Since(start))
+	return runTestCases(tasks)
+}
 
+func runTestCases(tasks []task) bool {
+	testWorkerCount := p
+	if long {
+		testWorkerCount = longTestWorkerCount
+	}
+	if realTikv {
+		testWorkerCount = 1
+	}
 	taskCh := make(chan task, 100)
-	works := make([]numa, p)
+	works := make([]numa, testWorkerCount)
 	var wg sync.WaitGroup
-	for i := range p {
+	for i := range testWorkerCount {
 		wg.Add(1)
 		go works[i].worker(&wg, taskCh)
 	}
 
 	shuffle(tasks)
 
-	start = time.Now()
+	start := time.Now()
 	for _, task := range tasks {
 		taskCh <- task
 	}
@@ -441,6 +464,9 @@ var coverprofile string
 var coverFileTempDir string
 var race bool
 var short bool
+var long bool
+var realTikv bool
+var retryCount int
 
 var except string
 var only string
@@ -451,8 +477,11 @@ func main() {
 	coverprofile = handleFlags("--coverprofile")
 	except = handleFlags("--except")
 	only = handleFlags("--only")
+	retryCount = parseRetryCount()
 	race = handleFlag("--race")
 	short = handleFlag("--short")
+	long = handleFlag("--long")
+	realTikv = handleFlag("--real-tikv")
 
 	if coverprofile != "" {
 		var err error
@@ -717,6 +746,9 @@ func listPackages() ([]string, error) {
 		}
 		ret = append(ret, pkg)
 	}
+	if realTikv {
+		ret = filter(ret, isRealTiKVPackage)
+	}
 	return ret, nil
 }
 
@@ -754,16 +786,57 @@ func (n *numa) runTestCase(pkg string, fn string) testResult {
 
 	var buf bytes.Buffer
 	var err error
-	var start time.Time
+	var d time.Duration
+	attempts := retryCount + 1
+	for attempt := 1; attempt <= attempts; attempt++ {
+		buf.Reset()
+		d, err = n.runTestCaseOnce(pkg, fn, &buf)
+		if err == nil {
+			break
+		}
+		if attempt < attempts {
+			fmt.Fprintf(os.Stderr, "[RETRY] %s %s (%d/%d)\n", pkg, fn, attempt, attempts)
+			if filtered := filterRetryLog(buf.String()); filtered != "" {
+				fmt.Fprintln(os.Stderr, filtered)
+			}
+		}
+	}
+	if err != nil {
+		res.Failure = &JUnitFailure{
+			Message:  "Failed",
+			Contents: buf.String(),
+		}
+		res.err = err
+	}
+
+	res.d = d
+	res.Time = formatDurationAsSeconds(res.d)
+	return res
+}
+
+func (n *numa) runTestCaseOnce(pkg string, fn string, buf *bytes.Buffer) (time.Duration, error) {
+	var err error
+	var d time.Duration
 	for range 3 {
 		cmd := n.testCommand(pkg, fn)
 		cmd.Dir = filepath.Join(workDir, pkg)
 		// Combine the test case output, so the run result for failed cases can be displayed.
-		cmd.Stdout = &buf
-		cmd.Stderr = &buf
+		cmd.Stdout = buf
+		cmd.Stderr = buf
 
-		start = time.Now()
+		if short {
+			cmd.Args = append(cmd.Args, "--test.short")
+		}
+		if long {
+			cmd.Args = append(cmd.Args, "-long")
+		}
+		if realTikv {
+			cmd.Args = append(cmd.Args, "-with-real-tikv")
+		}
+
+		start := time.Now()
 		err = cmd.Run()
+		d = time.Since(start)
 		if err != nil {
 			//lint:ignore S1020
 			if _, ok := err.(*exec.ExitError); ok {
@@ -784,17 +857,32 @@ func (n *numa) runTestCase(pkg string, fn string) testResult {
 		}
 		break
 	}
-	if err != nil {
-		res.Failure = &JUnitFailure{
-			Message:  "Failed",
-			Contents: buf.String(),
-		}
-		res.err = err
-	}
+	return d, err
+}
 
-	res.d = time.Since(start)
-	res.Time = formatDurationAsSeconds(res.d)
-	return res
+var retryLogTimestampRegexp = regexp.MustCompile(`^\[\d{4}/\d{2}/\d{2} \d{2}:\d{2}:\d{2}\.\d{3} [+-]\d{2}:\d{2}\]`)
+
+func filterRetryLog(output string) string {
+	if output == "" {
+		return ""
+	}
+	lines := strings.Split(output, "\n")
+	var builder strings.Builder
+	wrote := false
+	for i, line := range lines {
+		if i == len(lines)-1 && line == "" {
+			break
+		}
+		if retryLogTimestampRegexp.MatchString(line) {
+			continue
+		}
+		if wrote {
+			builder.WriteByte('\n')
+		}
+		builder.WriteString(line)
+		wrote = true
+	}
+	return builder.String()
 }
 
 func collectTestResults(workers []numa) JUnitTestSuites {
@@ -851,15 +939,19 @@ func (n *numa) testCommand(pkg string, fn string) *exec.Cmd {
 		tmpFile := filepath.Join(coverFileTempDir, fileName)
 		args = append(args, "-test.coverprofile", tmpFile)
 	}
-	args = append(args, "-test.cpu", "1")
-	if !race {
+	// for long test, gives it more CPU resources for each test and limit the parallelism.
+	testCPU := 1
+	if long && p > longTestWorkerCount {
+		testCPU = p / longTestWorkerCount
+	}
+	args = append(args, "-test.cpu", strconv.Itoa(testCPU))
+	if !race && !long && !realTikv {
 		args = append(args, []string{"-test.timeout", "2m"}...)
 	} else {
 		// it takes a longer when race is enabled. so it is set more timeout value.
 		args = append(args, []string{"-test.timeout", "30m"}...)
 	}
-
-	// session.test -test.run TestClusteredPrefixColum
+	// session.test -test.run TestClusteredPrefixColumn
 	args = append(args, "-test.run", "^"+fn+"$")
 
 	return exec.Command(exe, args...)
@@ -870,10 +962,33 @@ func skipDIR(pkg string) bool {
 		"cmd", "dumpling", "tests", filepath.Join("tools", "check"), "build"}
 	for _, ignore := range skipDir {
 		if strings.HasPrefix(pkg, ignore) {
+			if ignore == "tests" && realTikv {
+				return false
+			}
 			return true
 		}
 	}
 	return false
+}
+
+func isRealTiKVPackage(pkg string) bool {
+	realTiKVDir := filepath.Join("tests", "realtikvtest")
+	if pkg == realTiKVDir {
+		return true
+	}
+	return strings.HasPrefix(pkg, realTiKVDir+string(filepath.Separator))
+}
+
+// goTestCmd run "go test --tags=intest[|,nextgen] args.."
+func goTestCmd(args ...string) *exec.Cmd {
+	cmd := exec.Command("go", "test")
+	tags := "--tags=intest"
+	if os.Getenv("NEXT_GEN") == "1" {
+		tags += ",nextgen"
+	}
+	cmd.Args = append(cmd.Args, tags)
+	cmd.Args = append(cmd.Args, args...)
+	return cmd
 }
 
 func buildTestBinary(pkg string) error {
@@ -1060,6 +1175,23 @@ func goVersion() string {
 		return "unknown"
 	}
 	return strings.TrimPrefix(strings.TrimSpace(string(out)), "go version ")
+}
+
+func parseRetryCount() int {
+	retryCountStr := handleFlags("--retry-count")
+	retryCountLegacy := handleFlags("--retry-cnt")
+	if retryCountStr == "" {
+		retryCountStr = retryCountLegacy
+	}
+	if retryCountStr == "" {
+		return 0
+	}
+	parsed, err := strconv.Atoi(retryCountStr)
+	if err != nil || parsed < 0 {
+		fmt.Printf("invalid --retry-count value: %q (must be >= 0)\n", retryCountStr)
+		os.Exit(1)
+	}
+	return parsed
 }
 
 func write(out io.Writer, suites JUnitTestSuites) error {
