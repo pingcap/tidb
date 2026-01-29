@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -670,6 +671,7 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 
 	// Step 2: Match by query-block alias (subquery name)
 	// Only execute this step if no direct table name match was found
+	matchIdx := -1
 	for i, joinGroup := range plans {
 		blockOffset := joinGroup.QueryBlockOffset()
 		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
@@ -677,10 +679,17 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
 			tableMatch := astTbl.TableName.L == blockName.TableName.L
 			if dbMatch && tableMatch {
-				newPlans := append(plans[:i], plans[i+1:]...)
-				return joinGroup, newPlans, true
+				if matchIdx != -1 {
+					intest.Assert(false, "leading subquery alias matches multiple join groups")
+					return nil, plans, false
+				}
+				matchIdx = i
 			}
 		}
+	}
+	if matchIdx != -1 {
+		newPlans := append(plans[:matchIdx], plans[matchIdx+1:]...)
+		return plans[matchIdx], newPlans, true
 	}
 
 	return nil, plans, false
