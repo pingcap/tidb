@@ -320,18 +320,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	defer e.memTracker.Release(rootRowCollector.Base().MemSize)
 	if err != nil {
 		taskCancel(err)
-		if intest.InTest && stderrors.Is(err, context.Canceled) {
-			cause := context.Cause(mergeCtx)
-			ctxErr := mergeCtx.Err()
-			logutil.BgLogger().Info("analyze columns merge canceled",
-				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-				zap.Error(err),
-				zap.Error(cause),
-				zap.Error(ctxErr),
-				zap.Stack("stack"),
-			)
-		}
+		e.logAnalyzeCanceledInTest(mergeCtx, err, "analyze columns merge canceled")
 		return 0, nil, nil, nil, nil, err
 	}
 
@@ -722,29 +711,13 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 				}
 			}
 			if err != nil {
-				if intest.InTest && stderrors.Is(err, context.Canceled) {
-					ctxErr := ctx.Err()
-					logutil.BgLogger().Info("analyze columns subMergeWorker canceled",
-						zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-						zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-						zap.Error(err),
-						zap.Error(ctxErr),
-						zap.Stack("stack"),
-					)
-				}
+				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
 			err = ctx.Err()
 			if err != nil {
-				if intest.InTest && stderrors.Is(err, context.Canceled) {
-					logutil.BgLogger().Info("analyze columns subMergeWorker canceled",
-						zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-						zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-						zap.Error(err),
-						zap.Stack("stack"),
-					)
-				}
+				e.logAnalyzeCanceledInTest(ctx, err, "analyze columns subMergeWorker canceled")
 				resultCh <- &samplingMergeResult{err: err}
 				return
 			}
@@ -755,6 +728,22 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 			return
 		}
 	}
+}
+
+func (e *AnalyzeColumnsExecV2) logAnalyzeCanceledInTest(ctx context.Context, err error, msg string) {
+	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
+		return
+	}
+	cause := context.Cause(ctx)
+	ctxErr := ctx.Err()
+	logutil.BgLogger().Info(msg,
+		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Error(err),
+		zap.Error(cause),
+		zap.Error(ctxErr),
+		zap.Stack("stack"),
+	)
 }
 
 func (e *AnalyzeColumnsExecV2) subBuildWorker(ctx context.Context, resultCh chan error, taskCh chan *samplingBuildTask, hists []*statistics.Histogram, topns []*statistics.TopN, collectors []*statistics.SampleCollector, exitCh chan struct{}) {
