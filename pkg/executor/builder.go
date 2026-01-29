@@ -2258,6 +2258,10 @@ func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec
 	if b.err != nil {
 		return nil
 	}
+	return b.newProjectionExec(childExec, v)
+}
+
+func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physicalop.PhysicalProjection) *ProjectionExec {
 	e := &ProjectionExec{
 		projectionExecutorContext: newProjectionExecutorContext(b.ctx),
 		BaseExecutorV2:            exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
@@ -2269,6 +2273,7 @@ func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
+	// index join would use the same logic.
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
@@ -5246,20 +5251,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 		}
 	}()
 
-	e := &ProjectionExec{
-		projectionExecutorContext: newProjectionExecutorContext(builder.ctx),
-		BaseExecutorV2:            exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
-		numWorkers:                int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay:          v.CalculateNoDelay,
-	}
-
-	// If the calculation row count for this Projection operator is smaller
-	// than a Chunk size, we turn back to the un-parallel Projection
-	// implementation to reduce the goroutine overhead.
-	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
-		e.numWorkers = 0
-	}
+	e := builder.newProjectionExec(childExec, v)
 	failpoint.Inject("buildProjectionForIndexJoinPanic", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
 			panic("buildProjectionForIndexJoinPanic")
