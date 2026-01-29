@@ -259,7 +259,7 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 	for i := range samplingStatsConcurrency {
 		id := i
 		gp.Go(func() {
-			e.subMergeWorker(mergeCtx, mergeResultCh, mergeTaskCh, l, id)
+			e.subMergeWorker(mergeCtx, taskCtx, mergeResultCh, mergeTaskCh, l, id)
 		})
 	}
 	// Merge the result from collectors.
@@ -637,7 +637,7 @@ func (e *AnalyzeColumnsExecV2) buildSubIndexJobForSpecialIndex(indexInfos []*mod
 	return tasks
 }
 
-func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
+func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx context.Context, resultCh chan<- *samplingMergeResult, taskCh <-chan []byte, l int, index int) {
 	// Only close the resultCh in the first worker.
 	closeTheResultCh := index == 0
 	defer func() {
@@ -715,6 +715,12 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, resultCh chan
 			subCollector.DestroyAndPutToPool()
 		case <-ctx.Done():
 			err := context.Cause(ctx)
+			if (err == nil || stderrors.Is(err, context.Canceled)) && parentCtx != nil {
+				parentErr := context.Cause(parentCtx)
+				if parentErr != nil {
+					err = parentErr
+				}
+			}
 			if err != nil {
 				if intest.InTest && stderrors.Is(err, context.Canceled) {
 					ctxErr := ctx.Err()
