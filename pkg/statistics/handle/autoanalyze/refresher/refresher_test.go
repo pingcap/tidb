@@ -605,7 +605,7 @@ func insertFailedJobForPartitionWithStartTime(
 	)
 }
 
-func TestAutoAnalyzeNoPanicsWhenExistenceMapEmptyInCache(t *testing.T) {
+func TestAutoAnalyzeHandlesEmptyExistenceMapInCache(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -613,7 +613,7 @@ func TestAutoAnalyzeNoPanicsWhenExistenceMapEmptyInCache(t *testing.T) {
 	tk.MustExec("insert into t values (1,1),(2,2)")
 	h := dom.StatsHandle()
 	// Make sure the count and modify count are updated.
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
