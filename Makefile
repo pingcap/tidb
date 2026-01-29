@@ -724,7 +724,7 @@ bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
 bazel_bin: ## Build importer/tidb binary files with Bazel build system
 	mkdir -p bin; \
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-workspace-status.sh --define gotags=$(BUILD_TAGS) --norun_validations ;\
  	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
  	cp -f ${IMPORTER_PATH} ./bin/ ;
 
@@ -734,7 +734,7 @@ bazel_build: ## Build TiDB using Bazel build system
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --stamp --workspace_status_command=./build/print-workspace-status.sh --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
 	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
 	cp -f ${IMPORTER_PATH} ./bin/ ; \
 	cp -f ${TIDB_SERVER_CHECK_PATH} ./bin/ ; \
