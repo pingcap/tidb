@@ -47,6 +47,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	parsertypes "github.com/pingcap/tidb/pkg/parser/types"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/plugin"
 	"github.com/pingcap/tidb/pkg/privilege/privileges"
 	"github.com/pingcap/tidb/pkg/resourcemanager"
@@ -389,6 +390,9 @@ func main() {
 	setupMetrics()
 
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
+	err = initGlobalExtStorage(keyspaceName)
+	terror.MustNil(err)
+
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
 	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
@@ -969,6 +973,26 @@ func setupLog() error {
 
 	// trigger internal http(s) client init.
 	util.InternalHTTPClient()
+	return nil
+}
+
+func initGlobalExtStorage(keyspaceName string) error {
+	uri := vardef.CloudStorageURI.Load()
+	if uri == "" {
+		logutil.BgLogger().Error("cloud storage uri is empty",
+			zap.String("category", "extstore"))
+		uri = fmt.Sprintf("file://%s", os.TempDir())
+	}
+	storage, err := extstore.CreateGlobalExtStorage(uri, keyspaceName)
+	if err != nil {
+		logutil.BgLogger().Error("failed to create global ext storage",
+			zap.String("category", "extstore"),
+			zap.Error(err))
+		return err
+	}
+	logutil.BgLogger().Info("initialized global ext storage",
+		zap.String("category", "extstore"),
+		zap.String("uri", storage.URI()))
 	return nil
 }
 
