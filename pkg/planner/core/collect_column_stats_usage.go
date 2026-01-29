@@ -57,17 +57,11 @@ type columnStatsUsageCollector struct {
 	// tblID2PartitionIDs is used for tables with static pruning mode.
 	// Note that we've no longer suggested to use static pruning mode.
 	tblID2PartitionIDs map[int64][]int64
-<<<<<<< HEAD:pkg/planner/core/collect_column_stats_usage.go
-=======
-
-	// operatorNum is the number of operators in the logical plan.
-	operatorNum uint64
 
 	// interestingColsByDS tracks all columns of interest for index pruning (WHERE + JOIN + ORDERING)
 	interestingColsByDS map[*logicalop.DataSource][]*expression.Column
 	// Temporary storage for deduplication
 	colSet map[int64]struct{}
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999)):pkg/planner/core/rule/collect_column_stats_usage.go
 }
 
 func newColumnStatsUsageCollector(enabledPlanCapture bool, collectIndexPruningCols bool) *columnStatsUsageCollector {
@@ -138,11 +132,14 @@ func (c *columnStatsUsageCollector) updateColMapFromExpressions(col *expression.
 	c.updateColMap(col, expression.ExtractColumnsAndCorColumnsFromExpressions(c.cols[:0], list))
 }
 
-func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(ds *logicalop.DataSource) {
+func (c *columnStatsUsageCollector) collectPredicateColumnsForDataSource(askedColGroups [][]*expression.Column, ds *logicalop.DataSource) {
 	// Skip all system tables.
 	if filter.IsSystemSchema(ds.DBName.L) {
 		intest.Assert(!ds.SCtx().GetSessionVars().InRestrictedSQL, "system table should have been skipped in restricted SQL mode")
 		return
+	}
+	if askedColGroups != nil {
+		ds.AskedColumnGroup = askedColGroups
 	}
 	// For partition tables, no matter whether it is static or dynamic pruning mode, we use table ID rather than partition ID to
 	// set TableColumnID.TableID. In this way, we keep the set of predicate columns consistent between different partitions and global table.
@@ -200,11 +197,6 @@ func (c *columnStatsUsageCollector) collectPredicateColumnsForUnionAll(p *logica
 	}
 }
 
-<<<<<<< HEAD:pkg/planner/core/collect_column_stats_usage.go
-func (c *columnStatsUsageCollector) collectFromPlan(lp base.LogicalPlan) {
-	for _, child := range lp.Children() {
-		c.collectFromPlan(child)
-=======
 // collectInterestingColumnsForDataSource collects all interesting columns (WHERE + JOIN + ORDERING + GROUP BY) for a DataSource.
 func (c *columnStatsUsageCollector) collectInterestingColumnsForDataSource(ds *logicalop.DataSource, accumulatedJoinCols []*expression.Column, accumulatedOrderingCols []*expression.Column) {
 	// Clear the map for reuse instead of allocating a new one
@@ -303,7 +295,7 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 				}
 			}
 		}
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999)):pkg/planner/core/rule/collect_column_stats_usage.go
+	}
 	}
 
 	for _, child := range lp.Children() {
@@ -313,20 +305,16 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 
 	switch x := lp.(type) {
 	case *logicalop.DataSource:
-<<<<<<< HEAD:pkg/planner/core/collect_column_stats_usage.go
-		c.collectPredicateColumnsForDataSource(x)
-=======
-		c.collectPredicateColumnsForDataSource(askedColGroups, x)
+		c.collectPredicateColumnsForDataSource(curColGroups, x)
 		// Collect all interesting columns (WHERE + JOIN + ORDERING) for index pruning
 		if c.interestingColsByDS != nil {
 			c.collectInterestingColumnsForDataSource(x, currentJoinCols, currentOrderingCols)
 		}
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999)):pkg/planner/core/rule/collect_column_stats_usage.go
 	case *logicalop.LogicalIndexScan:
-		c.collectPredicateColumnsForDataSource(x.Source)
+		c.collectPredicateColumnsForDataSource(curColGroups, x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalTableScan:
-		c.collectPredicateColumnsForDataSource(x.Source)
+		c.collectPredicateColumnsForDataSource(curColGroups, x.Source)
 		c.addPredicateColumnsFromExpressions(x.AccessConds, true)
 	case *logicalop.LogicalProjection:
 		// Schema change from children to self.
@@ -383,15 +371,9 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		c.collectPredicateColumnsForUnionAll(&x.LogicalUnionAll)
 	case *logicalop.LogicalCTE:
 		// Visit SeedPartLogicalPlan and RecursivePartLogicalPlan first.
-<<<<<<< HEAD:pkg/planner/core/collect_column_stats_usage.go
-		c.collectFromPlan(x.Cte.SeedPartLogicalPlan)
-		if x.Cte.RecursivePartLogicalPlan != nil {
-			c.collectFromPlan(x.Cte.RecursivePartLogicalPlan)
-=======
 		c.collectFromPlan(nil, x.Cte.SeedPartLogicalPlan, nil, nil)
 		if x.Cte.RecursivePartLogicalPlan != nil {
 			c.collectFromPlan(nil, x.Cte.RecursivePartLogicalPlan, nil, nil)
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999)):pkg/planner/core/rule/collect_column_stats_usage.go
 		}
 		// Schema change from seedPlan/recursivePlan to self.
 		columns := x.Schema().Columns
@@ -435,14 +417,6 @@ func CollectColumnStatsUsage(lp base.LogicalPlan) (
 	*intset.FastIntSet,
 	map[int64][]int64,
 ) {
-<<<<<<< HEAD:pkg/planner/core/collect_column_stats_usage.go
-	collector := newColumnStatsUsageCollector(lp.SCtx().GetSessionVars().IsPlanReplayerCaptureEnabled())
-	collector.collectFromPlan(lp)
-	if collector.collectVisitedTable {
-		recordTableRuntimeStats(lp.SCtx(), collector.visitedtbls)
-	}
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
-=======
 	// Check if we need to collect index pruning columns
 	threshold := lp.SCtx().GetSessionVars().OptIndexPruneThreshold
 	collectIndexPruningCols := threshold >= 0
@@ -460,6 +434,5 @@ func CollectColumnStatsUsage(lp base.LogicalPlan) (
 		}
 	}
 
-	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs, collector.operatorNum
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999)):pkg/planner/core/rule/collect_column_stats_usage.go
+	return collector.predicateCols, collector.visitedPhysTblIDs, collector.tblID2PartitionIDs
 }

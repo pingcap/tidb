@@ -8,12 +8,8 @@ go_test(
         "main_test.go",
     ],
     flaky = True,
-<<<<<<< HEAD
     race = "on",
-    shard_count = 37,
-=======
-    shard_count = 41,
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999))
+    shard_count = 40,
     deps = [
         "//pkg/config",
         "//pkg/domain",

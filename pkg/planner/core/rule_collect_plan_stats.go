@@ -25,14 +25,11 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
-<<<<<<< HEAD:pkg/planner/core/rule_collect_plan_stats.go
+	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/optimizetrace"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999)):pkg/planner/core/rule/rule_collect_plan_stats.go
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/statistics/asyncload"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -228,6 +225,9 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 	if threshold < 0 {
 		return
 	}
+	if ds.AllPossibleAccessPaths == nil {
+		ds.AllPossibleAccessPaths = ds.PossibleAccessPaths
+	}
 	// If we have only one path, we don't need to prune indexes.
 	if len(ds.AllPossibleAccessPaths) <= 1 {
 		return
@@ -240,7 +240,7 @@ func pruneIndexesForDataSource(ds *logicalop.DataSource, keptIndexIDs map[int64]
 	}
 
 	// Prune indexes
-	prunedPaths := PruneIndexesByWhereAndOrder(
+	prunedPaths := rule.PruneIndexesByWhereAndOrder(
 		ds,
 		ds.AllPossibleAccessPaths,
 		ds.InterestingColumns,
