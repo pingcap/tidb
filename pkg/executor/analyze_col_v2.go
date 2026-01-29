@@ -470,8 +470,12 @@ func (e *AnalyzeColumnsExecV2) handleNDVForSpecialIndexes(ctx context.Context, i
 	}()
 	tasks := e.buildSubIndexJobForSpecialIndex(indexInfos)
 	taskCh := make(chan *analyzeTask, len(tasks))
+	pendingJobs := make(map[uint64]*statistics.AnalyzeJob, len(tasks))
 	for _, task := range tasks {
 		AddNewAnalyzeJob(e.ctx, task.job)
+		if task.job != nil && task.job.ID != nil {
+			pendingJobs[*task.job.ID] = task.job
+		}
 	}
 	resultsCh := make(chan *statistics.AnalyzeResults, len(tasks))
 	if len(tasks) < samplingStatsConcurrency {
@@ -499,6 +503,9 @@ LOOP:
 			if !ok {
 				break LOOP
 			}
+			if results.Job != nil && results.Job.ID != nil {
+				delete(pendingJobs, *results.Job.ID)
+			}
 			if results.Err != nil {
 				err = results.Err
 				statsHandle.FinishAnalyzeJob(results.Job, err, statistics.TableAnalysisJob)
@@ -509,12 +516,19 @@ LOOP:
 			}
 			statsHandle.FinishAnalyzeJob(results.Job, nil, statistics.TableAnalysisJob)
 			totalResult.results[results.Ars[0].Hist[0].ID] = results
-		case <-ctx.Done():
+		}
+	}
+	if err == nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
 			err = context.Cause(ctx)
 			if err == nil {
-				err = ctx.Err()
+				err = ctxErr
 			}
-			break LOOP
+		}
+	}
+	if err != nil && len(pendingJobs) > 0 {
+		for _, job := range pendingJobs {
+			statsHandle.FinishAnalyzeJob(job, err, statistics.TableAnalysisJob)
 		}
 	}
 	if err != nil {
