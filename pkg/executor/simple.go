@@ -1774,19 +1774,11 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			hasSystemUser, err := userHasDynamicPrivilegeInternal(ctx, sqlExecutor, spec.User, "SYSTEM_USER")
-			if err != nil {
-				return err
-			}
-			if hasSystemUser && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
 			if sem.IsEnabled() {
-				hasRestrictedUser, err := userHasDynamicPrivilegeInternal(ctx, sqlExecutor, spec.User, "RESTRICTED_USER_ADMIN")
-				if err != nil {
-					return err
-				}
-				if hasRestrictedUser && !hasRestrictedUserPriv {
+				if !hasRestrictedUserPriv && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) {
 					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
 				}
 			}
@@ -2313,14 +2305,7 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
 		// any user with SUPER requires a user with SUPER to be able to DROP the user.
 		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
-		hasSystemUser, err := userHasDynamicPrivilegeInternal(internalCtx, sqlExecutor, user, "SYSTEM_USER")
-		if err != nil {
-			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
-				return err
-			}
-			return err
-		}
-		if hasSystemUser && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+		if !(hasSystemUserPriv || hasRestrictedUserPriv) && checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) {
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return err
 			}
@@ -2495,28 +2480,6 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 		return false, "", errClose
 	}
 	return rows > 0, authPlugin, err
-}
-
-// userHasDynamicPrivilegeInternal checks if a user has a specific dynamic privilege by querying the database directly.
-// This avoids loading the user into memory through ensureActiveUser.
-func userHasDynamicPrivilegeInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, user *auth.UserIdentity, privName string) (bool, error) {
-	sql := new(strings.Builder)
-	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND Priv=%?;`, mysql.SystemDB, "global_grants", user.Username, strings.ToLower(user.Hostname), privName)
-	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
-	if err != nil {
-		return false, err
-	}
-	req := recordSet.NewChunk(nil)
-	err = recordSet.Next(ctx, req)
-	var rows = 0
-	if err == nil {
-		rows = req.NumRows()
-	}
-	errClose := recordSet.Close()
-	if errClose != nil {
-		return false, errClose
-	}
-	return rows > 0, nil
 }
 
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
