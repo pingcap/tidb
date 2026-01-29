@@ -172,7 +172,7 @@ func (builder *RequestBuilder) SetHandleRangesForTables(dctx *distsqlctx.DistSQL
 // "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
 	if handleVersionMap == nil {
-		keyRanges, _, hints := TableHandlesToKVRanges(tid, handles, nil)
+		keyRanges, hints := TableHandlesToKVRanges(tid, handles)
 		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
 		return builder
 	}
@@ -186,7 +186,7 @@ func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, h
 // handles in slice must be kv.PartitionHandle.
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
 	if handleVersionMap == nil {
-		keyRanges, _, hints := PartitionHandlesToKVRanges(handles, nil)
+		keyRanges, hints := PartitionHandlesToKVRanges(handles)
 		builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
 		return builder
 	}
@@ -677,10 +677,7 @@ func TableHandlesToVersionedKVRanges(tid int64, handles []kv.Handle, handleVersi
 
 // TableHandlesToKVRanges converts sorted handle to kv ranges.
 // For continuous handles, we should merge them to a single key range.
-func TableHandlesToKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, map[string]uint64, []int) {
-	if handleVersionMap != nil {
-		panic("handleVersionMap is not supported in TableHandlesToKVRanges; use TableHandlesToVersionedKVRanges instead")
-	}
+func TableHandlesToKVRanges(tid int64, handles []kv.Handle) ([]kv.KeyRange, []int) {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	i := 0
@@ -721,7 +718,7 @@ func TableHandlesToKVRanges(tid int64, handles []kv.Handle, handleVersionMap *kv
 		hints = append(hints, j-i)
 		i = j
 	}
-	return krs, nil, hints
+	return krs, hints
 }
 
 // PartitionHandlesToVersionedKVRanges converts partition handles to point ranges and binds per-handle read_ts.
@@ -764,10 +761,7 @@ func PartitionHandlesToVersionedKVRanges(handles []kv.Handle, handleVersionMap *
 
 // PartitionHandlesToKVRanges convert ParitionHandles to kv ranges.
 // Handle in slices must be kv.PartitionHandle
-func PartitionHandlesToKVRanges(handles []kv.Handle, handleVersionMap *kv.HandleMap) ([]kv.KeyRange, map[string]uint64, []int) {
-	if handleVersionMap != nil {
-		panic("handleVersionMap is not supported in PartitionHandlesToKVRanges; use PartitionHandlesToVersionedKVRanges instead")
-	}
+func PartitionHandlesToKVRanges(handles []kv.Handle) ([]kv.KeyRange, []int) {
 	krs := make([]kv.KeyRange, 0, len(handles))
 	hints := make([]int, 0, len(handles))
 	i := 0
@@ -803,7 +797,7 @@ func PartitionHandlesToKVRanges(handles []kv.Handle, handleVersionMap *kv.Handle
 		hints = append(hints, j-i)
 		i = j
 	}
-	return krs, nil, hints
+	return krs, hints
 }
 
 // IndexRangesToKVRanges converts index ranges to "KeyRange".

@@ -65,7 +65,7 @@ func TestTableHandlesToKVRanges(t *testing.T) {
 
 	// Build key ranges.
 	expect := getExpectedRanges(1, hrs)
-	actual, _, hints := TableHandlesToKVRanges(1, handles, nil)
+	actual, hints := TableHandlesToKVRanges(1, handles)
 
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))
@@ -109,7 +109,7 @@ func TestTablePartitionHandlesToKVRanges(t *testing.T) {
 	expect = append(expect, getExpectedRanges(1, hrs[6:])...)
 
 	// Build actual key ranges.
-	actual, _, hints := TableHandlesToKVRanges(0, handles, nil)
+	actual, hints := TableHandlesToKVRanges(0, handles)
 
 	// Compare key ranges and expected key ranges.
 	require.Equal(t, len(expect), len(actual))

@@ -516,9 +516,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	reordered := ensureMonotonicKeyRanges(ctx, ranges)
 	if opt.versionedRanges != nil {
 		cmdType = tikvrpc.CmdVersionedCop
-		if len(opt.versionedRanges) != ranges.Len() {
-			return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", ranges.Len(), len(opt.versionedRanges))
-		}
 		if reordered {
 			slices.SortFunc(opt.versionedRanges, func(a, b kv.VersionedKeyRange) int {
 				if cmp := bytes.Compare(a.Range.StartKey, b.Range.StartKey); cmp != 0 {
@@ -526,13 +523,6 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				}
 				return bytes.Compare(a.Range.EndKey, b.Range.EndKey)
 			})
-		}
-		for i := range ranges.Len() {
-			r := ranges.At(i)
-			vr := opt.versionedRanges[i].Range
-			if !bytes.Equal(r.StartKey, vr.StartKey) || !bytes.Equal(r.EndKey, vr.EndKey) {
-				return nil, errors.Errorf("versionedRanges not aligned with ranges: idx=%d", i)
-			}
 		}
 	}
 	if req.StoreType == kv.TiDB {
