@@ -851,54 +851,42 @@ func finishAnalyzeJob(sctx sessionctx.Context, job *statistics.AnalyzeJob, analy
 		job.StartTime = job.EndTime
 		setStartTime = true
 	}
-	var sql string
-	var args []any
 
 	// process_id is used to see which process is running the analyze job and kill the analyze job. After the analyze job
 	// is finished(or failed), process_id is useless and we set it to NULL to avoid `kill tidb process_id` wrongly.
+	state := statistics.AnalyzeFinished
+	failReason := ""
 	if analyzeErr != nil {
-		failReason := analyzeErr.Error()
+		state = statistics.AnalyzeFailed
+		failReason = analyzeErr.Error()
 		const textMaxLength = 65535
 		if len(failReason) > textMaxLength {
 			failReason = failReason[:textMaxLength]
 		}
-
-		if analyzeType == statistics.TableAnalysisJob {
-			if setStartTime {
-				sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.StartTime.UTC().Format(types.TimeFormat), job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-			} else {
-				sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-			}
-		} else {
-			if setStartTime {
-				sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.StartTime.UTC().Format(types.TimeFormat), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-			} else {
-				sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, fail_reason = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFailed, failReason, *job.ID}
-			}
-		}
-	} else {
-		if analyzeType == statistics.TableAnalysisJob {
-			if setStartTime {
-				sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.StartTime.UTC().Format(types.TimeFormat), job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-			} else {
-				sql = "UPDATE mysql.analyze_jobs SET processed_rows = processed_rows + %?, end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.Progress.GetDeltaCount(), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-			}
-		} else {
-			if setStartTime {
-				sql = "UPDATE mysql.analyze_jobs SET start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.StartTime.UTC().Format(types.TimeFormat), job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-			} else {
-				sql = "UPDATE mysql.analyze_jobs SET end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE), state = %?, process_id = NULL WHERE id = %?"
-				args = []any{job.EndTime.UTC().Format(types.TimeFormat), statistics.AnalyzeFinished, *job.ID}
-			}
-		}
 	}
+
+	setClauses := make([]string, 0, 6)
+	args := make([]any, 0, 6)
+	if setStartTime {
+		setClauses = append(setClauses, "start_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)")
+		args = append(args, job.StartTime.UTC().Format(types.TimeFormat))
+	}
+	if analyzeType == statistics.TableAnalysisJob {
+		setClauses = append(setClauses, "processed_rows = processed_rows + %?")
+		args = append(args, job.Progress.GetDeltaCount())
+	}
+	setClauses = append(setClauses, "end_time = CONVERT_TZ(%?, '+00:00', @@TIME_ZONE)")
+	args = append(args, job.EndTime.UTC().Format(types.TimeFormat))
+	setClauses = append(setClauses, "state = %?")
+	args = append(args, state)
+	if analyzeErr != nil {
+		setClauses = append(setClauses, "fail_reason = %?")
+		args = append(args, failReason)
+	}
+	setClauses = append(setClauses, "process_id = NULL")
+
+	sql := fmt.Sprintf("UPDATE mysql.analyze_jobs SET %s WHERE id = %%?", strings.Join(setClauses, ", "))
+	args = append(args, *job.ID)
 
 	_, _, err := statsutil.ExecRows(sctx, sql, args...)
 	if err != nil {
