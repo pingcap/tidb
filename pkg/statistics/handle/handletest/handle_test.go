@@ -1645,7 +1645,7 @@ func TestPrunedIndexesNoAsyncStatsLoad(t *testing.T) {
 	}()
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 
@@ -1745,7 +1745,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitioned(t *testing.T) {
 	}()
 
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tp"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 
@@ -1841,7 +1841,7 @@ func TestPrunedIndexesNoAsyncStatsLoadPartitionedStatic(t *testing.T) {
 		h.SetLease(0)
 	}()
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tp"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tp"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	// Build maps for index name to ID
