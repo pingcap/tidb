@@ -60,11 +60,9 @@ func checkFileName(s string) bool {
 
 func TestPlanReplayer(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 
@@ -101,11 +99,9 @@ func TestPlanReplayer(t *testing.T) {
 
 func TestPlanReplayerCaptureSEM(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 
@@ -151,11 +147,9 @@ func TestPlanReplayerCapture(t *testing.T) {
 
 func TestPlanReplayerContinuesCapture(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 
@@ -187,11 +181,9 @@ func TestPlanReplayerContinuesCapture(t *testing.T) {
 func TestPlanReplayerDumpSingle(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 

@@ -222,9 +222,13 @@ func CreateGlobalExtStorage(uri string, namespace string) (storeapi.Storage, err
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	return &extStorage{
+	storage := &extStorage{
 		backend:  backend,
 		opts:     nil,
 		basePath: u.Path,
-	}, nil
+	}
+	globalExtStorageMu.Lock()
+	globalExtStorage = storage
+	globalExtStorageMu.Unlock()
+	return storage, nil
 }
