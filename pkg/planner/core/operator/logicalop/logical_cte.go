@@ -18,7 +18,9 @@ import (
 	"context"
 	"unsafe"
 
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/cardinality"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
@@ -179,16 +181,26 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 
 	var err error
+	cteCtx := p.SCtx()
+	if p.Cte.SeedPartLogicalPlan != nil {
+		cteCtx = p.Cte.SeedPartLogicalPlan.SCtx()
+	}
+	// Recursive CTE materializes rows into an internal worktable. In strict SQL mode, truncation should be an error
+	// (INSERT semantics). Use a stricter ExprCtx during optimization to scope the behavior.
+	if p.Cte.RecursivePartLogicalPlan != nil && cteCtx.GetSessionVars().SQLMode.HasStrictMode() {
+		cteCtx = MakeCTEStrictTruncateErrPlanCtx(cteCtx)
+	}
+
 	if p.Cte.SeedPartPhysicalPlan == nil {
 		// Build push-downed predicates.
 		if len(p.Cte.PushDownPredicates) > 0 {
-			newCond := expression.ComposeDNFCondition(p.SCtx().GetExprCtx(), p.Cte.PushDownPredicates...)
-			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(p.SCtx(), p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
+			newCond := expression.ComposeDNFCondition(cteCtx.GetExprCtx(), p.Cte.PushDownPredicates...)
+			newSel := LogicalSelection{Conditions: []expression.Expression{newCond}}.Init(cteCtx, p.Cte.SeedPartLogicalPlan.QueryBlockOffset())
 			newSel.SetChildren(p.Cte.SeedPartLogicalPlan)
 			p.Cte.SeedPartLogicalPlan = newSel
 			p.Cte.OptFlag = ruleutil.SetPredicatePushDownFlag(p.Cte.OptFlag)
 		}
-		p.Cte.SeedPartLogicalPlan, p.Cte.SeedPartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.SeedPartLogicalPlan)
+		p.Cte.SeedPartLogicalPlan, p.Cte.SeedPartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), cteCtx, p.Cte.OptFlag, p.Cte.SeedPartLogicalPlan)
 		if err != nil {
 			return nil, false, err
 		}
@@ -208,7 +220,7 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 	}
 	if p.Cte.RecursivePartLogicalPlan != nil {
 		if p.Cte.RecursivePartPhysicalPlan == nil {
-			_, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), p.SCtx(), p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
+			_, p.Cte.RecursivePartPhysicalPlan, _, err = utilfuncp.DoOptimize(context.TODO(), cteCtx, p.Cte.OptFlag, p.Cte.RecursivePartLogicalPlan)
 			if err != nil {
 				return nil, false, err
 			}
@@ -225,6 +237,37 @@ func (p *LogicalCTE) DeriveStats(_ []*property.StatsInfo, selfSchema *expression
 		}
 	}
 	return p.StatsInfo(), true, nil
+}
+
+// cteOverrideExprPlanCtx is a thin wrapper to override ExprCtx without mutating the original session/PlanContext.
+type cteOverrideExprPlanCtx struct {
+	base.PlanContext
+	exprCtx           exprctx.ExprContext
+	nullRejectExprCtx exprctx.ExprContext
+}
+
+func (c *cteOverrideExprPlanCtx) GetExprCtx() exprctx.ExprContext {
+	return c.exprCtx
+}
+
+func (c *cteOverrideExprPlanCtx) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return c.nullRejectExprCtx
+}
+
+// MakeCTEStrictTruncateErrPlanCtx returns a wrapped PlanContext so CTE worktable writes treat truncation like INSERT
+// in strict SQL mode, while keeping the behavior scoped to the CTE subtree.
+func MakeCTEStrictTruncateErrPlanCtx(pctx base.PlanContext) base.PlanContext {
+	origExprCtx := pctx.GetExprCtx()
+	overrideExprCtx := exprctx.ExprCtxWithHandleTruncateErrLevel(origExprCtx, errctx.LevelError)
+	if overrideExprCtx == origExprCtx {
+		return pctx
+	}
+
+	return &cteOverrideExprPlanCtx{
+		PlanContext:       pctx,
+		exprCtx:           overrideExprCtx,
+		nullRejectExprCtx: exprctx.WithNullRejectCheck(overrideExprCtx),
+	}
 }
 
 // ExtractColGroups inherits BaseLogicalPlan.LogicalPlan.<12th> implementation.

@@ -26,6 +26,7 @@ go_library(
         "compiler.go",
         "coprocessor.go",
         "cte.go",
+        "cte_exprctx.go",
         "cte_table_reader.go",
         "ddl.go",
         "delete.go",

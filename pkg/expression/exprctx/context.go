@@ -199,6 +199,17 @@ func (ctx *innerOverrideBuildContext) GetEvalCtx() EvalContext {
 	return ctx.evalCtx
 }
 
+// overrideEvalExprContext overrides EvalCtx while delegating all other ExprContext methods.
+type overrideEvalExprContext struct {
+	ExprContext
+	evalCtx EvalContext
+}
+
+// GetEvalCtx implements BuildContext.GetEvalCtx.
+func (ctx *overrideEvalExprContext) GetEvalCtx() EvalContext {
+	return ctx.evalCtx
+}
+
 // CtxWithHandleTruncateErrLevel returns a new BuildContext with the specified level for handling truncate error.
 func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildContext {
 	truncateAsWarnings, ignoreTruncate := false, false
@@ -229,6 +240,19 @@ func CtxWithHandleTruncateErrLevel(ctx BuildContext, level errctx.Level) BuildCo
 			typeCtx:     tc.WithFlags(flags),
 			errCtx:      ec.WithErrGroupLevel(errctx.ErrGroupTruncate, level),
 		},
+	}
+}
+
+// ExprCtxWithHandleTruncateErrLevel returns a new ExprContext with the specified level for handling truncate error.
+// It is like CtxWithHandleTruncateErrLevel but keeps the returned value as an ExprContext.
+func ExprCtxWithHandleTruncateErrLevel(ctx ExprContext, level errctx.Level) ExprContext {
+	overrideBuildCtx := CtxWithHandleTruncateErrLevel(ctx, level)
+	if overrideBuildCtx == ctx {
+		return ctx
+	}
+	return &overrideEvalExprContext{
+		ExprContext: ctx,
+		evalCtx:     overrideBuildCtx.GetEvalCtx(),
 	}
 }
 
