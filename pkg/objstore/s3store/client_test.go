@@ -367,6 +367,9 @@ func TestContentMD5OptionForS3Compatible(t *testing.T) {
 				require.True(t, ok)
 
 				assertContentMD5Option(t, mp.uploader.ClientOptions, tc.s3Compatible)
+				if tc.s3Compatible {
+					require.Equal(t, aws.RequestChecksumCalculationWhenRequired, mp.uploader.RequestChecksumCalculation)
+				}
 				require.True(t, s.Controller.Satisfied())
 			})
 		}
