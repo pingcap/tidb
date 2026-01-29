@@ -22,4 +22,15 @@ echo "build successfully"
 cd - || exit 1
 
 echo "Starting TiUP Playground in the background..."
-tiup playground nightly --db=1 --kv=1 --tiflash=1 --db.binpath=../../bin/tidb-server --db.config=./config.toml
+playground_ver="${TIUP_PLAYGROUND_VERSION:-nightly}"
+tidb_binpath="${TIDB_BINPATH:-../../bin/tidb-server}"
+
+args=(playground "$playground_ver" --db=1 --kv=1 --tiflash=1 --db.binpath="$tidb_binpath" --db.config=./config.toml)
+if [[ -n "${TIKV_BINPATH:-}" ]]; then
+  args+=(--kv.binpath="$TIKV_BINPATH")
+fi
+if [[ -n "${TIFLASH_BINPATH:-}" ]]; then
+  args+=(--tiflash.binpath="$TIFLASH_BINPATH")
+fi
+
+tiup "${args[@]}"

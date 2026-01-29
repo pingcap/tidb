@@ -34,6 +34,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
@@ -565,6 +566,22 @@ func (e *UpdateExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *UpdateExec) Open(ctx context.Context) error {
+	if !e.Ctx().GetSessionVars().InRestrictedSQL {
+		for _, tbl := range e.tblID2table {
+			if tbl == nil {
+				continue
+			}
+			meta := tbl.Meta()
+			if meta != nil && (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) {
+				obj := "materialized view"
+				if meta.IsMaterializedViewLog() {
+					obj = "materialized view log"
+				}
+				return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("update", obj, meta.Name.O)
+			}
+		}
+	}
+
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

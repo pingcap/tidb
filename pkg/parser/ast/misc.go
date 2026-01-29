@@ -2553,6 +2553,7 @@ const (
 	AdminAlterDDLJob
 	AdminWorkloadRepoCreate
 	AdminReloadClusterBindings
+	AdminRefreshMaterializedView
 	// adminTpCount is the total number of admin statement types.
 	adminTpCount
 )
@@ -2679,6 +2680,7 @@ type AdminStmt struct {
 	StatementScope  StatementScope
 	LimitSimple     LimitSimple
 	BDRRole         BDRRole
+	MVRefreshMode   *MaterializedViewRefreshMode
 	AlterJobOptions []*AlterJobOption
 }
 
@@ -2859,6 +2861,15 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminWorkloadRepoCreate:
 		ctx.WriteKeyWord("CREATE WORKLOAD SNAPSHOT")
+	case AdminRefreshMaterializedView:
+		ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
+		if err := restoreTables(); err != nil {
+			return err
+		}
+		if n.MVRefreshMode != nil {
+			ctx.WritePlain(" ")
+			ctx.WriteKeyWord((*n.MVRefreshMode).String())
+		}
 	default:
 		return errors.New("Unsupported AdminStmt type")
 	}

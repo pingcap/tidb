@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/memory"
 )
 
@@ -52,6 +53,19 @@ func (e *ReplaceExec) Close() error {
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
+	if meta := e.Table.Meta(); meta != nil && (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		obj := "materialized view"
+		if meta.IsMaterializedViewLog() {
+			obj = "materialized view log"
+		}
+		return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("replace into", obj, meta.Name.O)
+	}
+	if logTbl, _, err := findMVLogTable(ctx, e.Ctx(), e.Table); err != nil {
+		return err
+	} else if logTbl != nil {
+		return exeerrors.ErrMaterializedViewReplaceNotSupported.GenWithStackByArgs()
+	}
+
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 

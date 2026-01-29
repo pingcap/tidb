@@ -26,10 +26,14 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/materializedview"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -38,12 +42,14 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/table/temptable"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/gcutil"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -172,6 +178,14 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
+	case *ast.CreateMaterializedViewLogStmt:
+		err = e.executeCreateMaterializedViewLog(x)
+	case *ast.DropMaterializedViewLogStmt:
+		err = e.executeDropMaterializedViewLog(x)
+	case *ast.CreateMaterializedViewStmt:
+		err = e.executeCreateMaterializedView(ctx, x)
+	case *ast.DropMaterializedViewStmt:
+		err = e.executeDropMaterializedView(x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -257,6 +271,34 @@ func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
 	if exist {
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	schemaName := s.Table.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	ident.Schema = ast.NewCIStr(schemaName)
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(schemaName), s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	meta := tbl.Meta()
+	if (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		obj := "materialized view"
+		if meta.IsMaterializedViewLog() {
+			obj = "materialized view log"
+		}
+		return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("truncate", obj, meta.Name.O)
+	}
+	if !meta.IsMaterializedView() && !meta.IsMaterializedViewLog() {
+		if err := e.checkMVBaseTableDDLGate(is, meta.ID, fmt.Sprintf("truncate table %s", meta.Name.O)); err != nil {
+			return err
+		}
+	}
+
 	err = e.ddlExecutor.TruncateTable(e.Ctx(), ident)
 	return err
 }
@@ -338,6 +380,432 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
+func (e *DDLExec) checkMVBaseTableDDLGate(is infoschema.InfoSchema, baseTableID int64, action string) error {
+	logInfo, err := materializedview.FindLogTableInfo(is, baseTableID)
+	if err != nil {
+		return err
+	}
+	if logInfo != nil {
+		return exeerrors.ErrMaterializedViewLogExists.GenWithStackByArgs(action)
+	}
+	hasMV, err := materializedview.HasDependentMaterializedView(is, baseTableID)
+	if err != nil {
+		return err
+	}
+	if hasMV {
+		return exeerrors.ErrMaterializedViewDependentExists.GenWithStackByArgs(action)
+	}
+	return nil
+}
+
+func (e *DDLExec) executeCreateMaterializedViewLog(s *ast.CreateMaterializedViewLogStmt) error {
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
+	}
+
+	schemaName := s.Table.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	schema := ast.NewCIStr(schemaName)
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	baseTbl, err := is.TableByName(context.Background(), schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseInfo := baseTbl.Meta()
+	if baseInfo.IsView() || baseInfo.IsSequence() || baseInfo.IsMaterializedView() || baseInfo.IsMaterializedViewLog() {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schema.L, baseInfo.Name.O, "BASE TABLE")
+	}
+
+	if len(s.Columns) == 0 {
+		return errors.New("CREATE MATERIALIZED VIEW LOG requires a non-empty column list")
+	}
+
+	existingLog, err := materializedview.FindLogTableInfoInSchema(is, schema, baseInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if existingLog != nil {
+		return errors.Trace(infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schema, Name: ast.NewCIStr(existingLog.Name.O)}))
+	}
+
+	baseColIDs := make([]int64, 0, len(s.Columns))
+	logCols := make([]*model.ColumnInfo, 0, len(s.Columns)+2)
+	seen := make(map[string]struct{}, len(s.Columns))
+	for _, col := range s.Columns {
+		colName := col.Name.L
+		if _, ok := seen[colName]; ok {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(col.Name.O)
+		}
+		seen[colName] = struct{}{}
+		baseCol := model.FindColumnInfo(baseInfo.Columns, colName)
+		if baseCol == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(col.Name.O, baseInfo.Name.O)
+		}
+		baseColIDs = append(baseColIDs, baseCol.ID)
+
+		logCol := baseCol.Clone()
+		logCol.ID = int64(len(logCols) + 1)
+		logCol.Offset = len(logCols)
+		logCol.Hidden = false
+		logCol.State = model.StatePublic
+		logCol.ChangeStateInfo = nil
+		logCols = append(logCols, logCol)
+	}
+
+	metaCols := []struct {
+		name string
+	}{
+		{name: materializedview.MVLogColumnDMLType},
+		{name: materializedview.MVLogColumnOldNew},
+	}
+	for _, m := range metaCols {
+		ft := types.NewFieldType(mysql.TypeString)
+		ft.SetFlen(1)
+		ft.SetCharset(charset.CharsetBin)
+		ft.SetCollate(charset.CollationBin)
+		ft.SetFlag(mysql.NotNullFlag)
+		logCols = append(logCols, &model.ColumnInfo{
+			ID:        int64(len(logCols) + 1),
+			Name:      ast.NewCIStr(m.name),
+			Offset:    len(logCols),
+			FieldType: *ft,
+			State:     model.StatePublic,
+			Version:   model.CurrLatestColumnInfoVersion,
+		})
+	}
+
+	logTblInfo := &model.TableInfo{
+		Name:    ast.NewCIStr(fmt.Sprintf("__tidb_mvlog_%d", baseInfo.ID)),
+		Charset: baseInfo.Charset,
+		Collate: baseInfo.Collate,
+		Columns: logCols,
+		// No explicit indices: relies on implicit _tidb_rowid and commit_ts range scan.
+		MaterializedViewLogInfo: &model.MaterializedViewLogInfo{
+			BaseTableID: baseInfo.ID,
+			ColumnIDs:   baseColIDs,
+		},
+		Version:     model.CurrLatestTableInfoVersion,
+		UpdateTS:    baseInfo.UpdateTS,
+		MaxColumnID: int64(len(logCols)),
+	}
+
+	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	return e.ddlExecutor.CreateTableWithInfo(e.Ctx(), schema, logTblInfo, nil)
+}
+
+func (e *DDLExec) executeDropMaterializedViewLog(s *ast.DropMaterializedViewLogStmt) error {
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
+	}
+
+	schemaName := s.Table.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	schema := ast.NewCIStr(schemaName)
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	baseTbl, err := is.TableByName(context.Background(), schema, s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	baseInfo := baseTbl.Meta()
+
+	logInfo, err := materializedview.FindLogTableInfoInSchema(is, schema, baseInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if logInfo == nil {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(schema, s.Table.Name)
+	}
+
+	// Refuse to drop if any MV depends on this base table.
+	hasMV, err := materializedview.HasDependentMaterializedView(is, baseInfo.ID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if hasMV {
+		return exeerrors.ErrMaterializedViewDependentExists.GenWithStackByArgs("drop materialized view log")
+	}
+
+	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	return e.ddlExecutor.DropTable(e.Ctx(), &ast.DropTableStmt{
+		IfExists: false,
+		Tables: []*ast.TableName{
+			{Schema: schema, Name: ast.NewCIStr(logInfo.Name.O)},
+		},
+	})
+}
+
+func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.CreateMaterializedViewStmt) error {
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
+	}
+
+	viewSchemaName := s.ViewName.Schema.L
+	if viewSchemaName == "" {
+		viewSchemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if viewSchemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	viewSchema := ast.NewCIStr(viewSchemaName)
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	if _, ok := is.SchemaByName(viewSchema); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(viewSchema)
+	}
+	if _, err := is.TableByName(ctx, viewSchema, s.ViewName.Name); err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: viewSchema, Name: s.ViewName.Name})
+	}
+
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(s.Select)
+	if err := core.Preprocess(ctx, e.Ctx(), nodeW, core.WithPreprocessorReturn(ret)); err != nil {
+		return errors.Trace(err)
+	}
+	if ret.IsStaleness {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("materialized view query does not support staleness")
+	}
+
+	mvQuery, err := materializedview.ParseMVQuery(is, e.Ctx().GetSessionVars().CurrentDB, s.Select)
+	if err != nil {
+		return err
+	}
+
+	baseTbl, err := is.TableByName(ctx, mvQuery.BaseSchema, mvQuery.BaseTable)
+	if err != nil {
+		return err
+	}
+	baseInfo := baseTbl.Meta()
+
+	logInfo, err := materializedview.FindLogTableInfoInSchema(is, mvQuery.BaseSchema, baseInfo.ID)
+	if err != nil {
+		return err
+	}
+	if logInfo == nil {
+		return materializedview.ErrMVBaseTableHasNoLog.GenWithStackByArgs()
+	}
+
+	allowedColIDs := make(map[int64]struct{}, len(logInfo.MaterializedViewLogInfo.ColumnIDs))
+	for _, id := range logInfo.MaterializedViewLogInfo.ColumnIDs {
+		allowedColIDs[id] = struct{}{}
+	}
+	for id := range mvQuery.UsedBaseColumnIDs {
+		if _, ok := allowedColIDs[id]; !ok {
+			col := fmt.Sprintf("%d", id)
+			if colInfo := model.FindColumnInfoByID(baseInfo.Columns, id); colInfo != nil {
+				col = colInfo.Name.O
+			}
+			return materializedview.ErrMVQueryColumnNotInLog.GenWithStackByArgs(col)
+		}
+	}
+
+	plan, _, err := planner.Optimize(ctx, e.Ctx(), nodeW, is)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if plan == nil || plan.Schema() == nil || len(plan.Schema().Columns) != len(mvQuery.SelectItems) {
+		return errors.New("failed to derive materialized view schema from query")
+	}
+
+	existingColNames := make(map[string]struct{}, len(mvQuery.SelectItems))
+	mvCols := make([]*model.ColumnInfo, 0, len(mvQuery.SelectItems))
+
+	mvInfo := &model.MaterializedViewInfo{
+		BaseTableID:            baseInfo.ID,
+		LogTableID:             logInfo.ID,
+		RefreshMode:            model.MaterializedViewRefreshMode(s.RefreshMode.String()),
+		RefreshIntervalSeconds: s.RefreshIntervalSeconds,
+	}
+
+	groupByOffsets := make([]int, 0, len(mvQuery.GroupByBaseColumnIDs))
+	sel := s.Select.(*ast.SelectStmt)
+	if baseTN, _, err := materializedview.GetSingleBaseTableFromSelect(sel); err == nil && baseTN != nil {
+		// Make the MV definition stable and refresh-friendly: always qualify the base table with schema.
+		// This also avoids depending on session current_db during refresh.
+		baseTN.Schema = mvQuery.BaseSchema
+	}
+
+	for i, item := range mvQuery.SelectItems {
+		derivedName, err := materializedview.DeriveMVColumnName(baseInfo, sel.Fields.Fields[i], item)
+		if err != nil {
+			return err
+		}
+		colName := materializedview.AllocUniqueColumnName(existingColNames, derivedName)
+
+		colType := plan.Schema().Columns[i].RetType
+		if colType == nil {
+			return errors.New("failed to derive materialized view column type")
+		}
+		mvCols = append(mvCols, &model.ColumnInfo{
+			ID:        int64(len(mvCols) + 1),
+			Name:      colName,
+			Offset:    len(mvCols),
+			FieldType: *colType,
+			State:     model.StatePublic,
+			Version:   model.CurrLatestColumnInfoVersion,
+		})
+
+		if item.IsGroupBy {
+			groupByOffsets = append(groupByOffsets, i)
+			mvInfo.GroupByColumnIDs = append(mvInfo.GroupByColumnIDs, item.BaseColumnID)
+		}
+	}
+
+	restoreFlag := format.RestoreStringSingleQuotes | format.RestoreKeyWordUppercase | format.RestoreNameBackQuotes
+	var sb strings.Builder
+	if err := s.Select.Restore(format.NewRestoreCtx(restoreFlag, &sb)); err != nil {
+		return err
+	}
+	mvInfo.DefinitionSQL = sb.String()
+
+	idxCols := make([]*model.IndexColumn, 0, len(groupByOffsets))
+	for _, off := range groupByOffsets {
+		idxCols = append(idxCols, &model.IndexColumn{
+			Name:   mvCols[off].Name,
+			Offset: off,
+			Length: types.UnspecifiedLength,
+		})
+	}
+	mvTblInfo := &model.TableInfo{
+		Name:    s.ViewName.Name,
+		Charset: baseInfo.Charset,
+		Collate: baseInfo.Collate,
+		Columns: mvCols,
+		Indices: []*model.IndexInfo{
+			{
+				ID:            1,
+				Name:          ast.NewCIStr("uniq_mv_group"),
+				Table:         s.ViewName.Name,
+				Columns:       idxCols,
+				State:         model.StatePublic,
+				BackfillState: model.BackfillStateInapplicable,
+				Tp:            ast.IndexTypeBtree,
+				Unique:        true,
+			},
+		},
+		MaterializedViewInfo: mvInfo,
+		Version:              model.CurrLatestTableInfoVersion,
+		UpdateTS:             baseInfo.UpdateTS,
+		MaxColumnID:          int64(len(mvCols)),
+		MaxIndexID:           1,
+	}
+
+	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	if err := e.ddlExecutor.CreateTableWithInfo(e.Ctx(), viewSchema, mvTblInfo, nil); err != nil {
+		return err
+	}
+
+	// Initialize refresh info. W3 will turn this into a COMPLETE build and update last_refresh_tso atomically.
+	latestIS := domain.GetDomain(e.Ctx()).InfoSchema()
+	mvTbl, err := latestIS.TableByName(ctx, viewSchema, s.ViewName.Name)
+	if err != nil {
+		return err
+	}
+	internalCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	sqlExec, ok := e.Ctx().(interface{ GetSQLExecutor() sqlexec.SQLExecutor })
+	if !ok {
+		return errors.New("session does not support internal SQL execution")
+	}
+	mvID := mvTbl.Meta().ID
+	_, err = sqlexec.ExecSQL(internalCtx, sqlExec.GetSQLExecutor(),
+		`INSERT INTO mysql.mv_refresh_info (mv_id, base_table_id, log_table_id, refresh_interval_seconds, next_run_time, last_refresh_tso, last_refresh_type, last_refresh_result, last_error)
+		 VALUES (%?, %?, %?, %?, NULL, 0, 'COMPLETE', 'FAILED', 'building')`,
+		mvID, baseInfo.ID, logInfo.ID, s.RefreshIntervalSeconds,
+	)
+	if err == nil {
+		// Initial build: a COMPLETE refresh with a read-ts (= txn start_ts), and atomically record the refresh info.
+		if err := mvCompleteRefresh(ctx, e.Ctx(), kv.InternalTxnDDL, viewSchema, s.ViewName.Name, mvID, mvInfo.DefinitionSQL); err == nil {
+			return nil
+		} else {
+			// Best-effort cleanup to avoid leaving an orphan MV table / refresh info.
+			_, _ = sqlexec.ExecSQL(internalCtx, sqlExec.GetSQLExecutor(), "DELETE FROM mysql.mv_refresh_info WHERE mv_id = %?", mvID)
+			e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+			_ = e.ddlExecutor.DropTable(e.Ctx(), &ast.DropTableStmt{
+				IfExists: true,
+				Tables: []*ast.TableName{
+					{Schema: viewSchema, Name: s.ViewName.Name},
+				},
+			})
+			return errors.Annotatef(err, "materialized view %s build failed", s.ViewName.Name.O)
+		}
+	}
+
+	// Best-effort cleanup to avoid leaving an orphan MV table without refresh info.
+	_, _ = sqlexec.ExecSQL(internalCtx, sqlExec.GetSQLExecutor(), "DELETE FROM mysql.mv_refresh_info WHERE mv_id = %?", mvID)
+
+	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	cleanupErr := e.ddlExecutor.DropTable(e.Ctx(), &ast.DropTableStmt{
+		IfExists: true,
+		Tables: []*ast.TableName{
+			{Schema: viewSchema, Name: s.ViewName.Name},
+		},
+	})
+	if cleanupErr != nil {
+		return errors.Annotatef(err, "failed to insert into mysql.mv_refresh_info; cleanup drop materialized view %s failed: %v", s.ViewName.Name.O, cleanupErr)
+	}
+	return errors.Annotatef(err, "failed to insert into mysql.mv_refresh_info; materialized view %s has been rolled back", s.ViewName.Name.O)
+}
+
+func (e *DDLExec) executeDropMaterializedView(s *ast.DropMaterializedViewStmt) error {
+	if !e.Ctx().GetSessionVars().EnableMaterializedView {
+		return exeerrors.ErrMaterializedViewDisabled.GenWithStackByArgs()
+	}
+
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+
+	schemaName := s.ViewName.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	schema := ast.NewCIStr(schemaName)
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	tbl, err := is.TableByName(ctx, schema, s.ViewName.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !tbl.Meta().IsMaterializedView() {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schema.L, s.ViewName.Name.O, "MATERIALIZED VIEW")
+	}
+	mvID := tbl.Meta().ID
+
+	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
+	if err := e.ddlExecutor.DropTable(e.Ctx(), &ast.DropTableStmt{
+		IfExists: false,
+		Tables: []*ast.TableName{
+			{Schema: schema, Name: s.ViewName.Name},
+		},
+	}); err != nil {
+		return err
+	}
+
+	sqlExec, ok := e.Ctx().(interface{ GetSQLExecutor() sqlexec.SQLExecutor })
+	if !ok {
+		return errors.New("session does not support internal SQL execution")
+	}
+	_, err = sqlexec.ExecSQL(ctx, sqlExec.GetSQLExecutor(), "DELETE FROM mysql.mv_refresh_info WHERE mv_id = %?", mvID)
+	if err != nil {
+		// Don't fail the DROP MATERIALIZED VIEW since the MV table is already dropped.
+		e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.Annotatef(err, "failed to cleanup mysql.mv_refresh_info for materialized view %d", mvID))
+		return nil
+	}
+	return nil
+}
+
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	_, ok, err := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	if err != nil {
@@ -376,6 +844,43 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	currentDB := strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+
+	for _, tn := range s.Tables {
+		schemaName := tn.Schema.L
+		if schemaName == "" {
+			schemaName = currentDB
+		}
+		if schemaName == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schema := ast.NewCIStr(schemaName)
+
+		tbl, err := is.TableByName(context.Background(), schema, tn.Name)
+		if err != nil {
+			if infoschema.ErrTableNotExists.Equal(err) && s.IfExists {
+				continue
+			}
+			return errors.Trace(err)
+		}
+		meta := tbl.Meta()
+
+		if (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+			obj := "materialized view"
+			if meta.IsMaterializedViewLog() {
+				obj = "materialized view log"
+			}
+			return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("drop", obj, meta.Name.O)
+		}
+		if meta.IsView() || meta.IsSequence() || meta.IsMaterializedView() || meta.IsMaterializedViewLog() {
+			continue
+		}
+		if err := e.checkMVBaseTableDDLGate(is, meta.ID, fmt.Sprintf("drop table %s", meta.Name.O)); err != nil {
+			return err
+		}
+	}
+
 	return e.ddlExecutor.DropTable(e.Ctx(), s)
 }
 
@@ -421,6 +926,44 @@ func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) 
 	}
 	if ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
+	}
+
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	schemaName := s.Table.Schema.L
+	if schemaName == "" {
+		schemaName = strings.ToLower(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	if schemaName == "" {
+		return errors.Trace(plannererrors.ErrNoDB)
+	}
+	tbl, err := is.TableByName(ctx, ast.NewCIStr(schemaName), s.Table.Name)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	meta := tbl.Meta()
+	if meta.IsView() || meta.IsSequence() {
+		return errors.Errorf("alter %s %s is not supported now", "table", meta.Name.O)
+	}
+	if (meta.IsMaterializedView() || meta.IsMaterializedViewLog()) && !e.Ctx().GetSessionVars().InRestrictedSQL {
+		allow := true
+		for _, spec := range s.Specs {
+			if spec == nil || spec.Tp != ast.AlterTableSetTiFlashReplica {
+				allow = false
+				break
+			}
+		}
+		if !allow {
+			obj := "materialized view"
+			if meta.IsMaterializedViewLog() {
+				obj = "materialized view log"
+			}
+			return exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs("alter", obj, meta.Name.O)
+		}
+	}
+	if !meta.IsMaterializedView() && !meta.IsMaterializedViewLog() {
+		if err := e.checkMVBaseTableDDLGate(is, meta.ID, fmt.Sprintf("alter table %s", meta.Name.O)); err != nil {
+			return err
+		}
 	}
 
 	return e.ddlExecutor.AlterTable(ctx, e.Ctx(), s)

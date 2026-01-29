@@ -878,6 +878,22 @@ const (
 		summary json,
 		key idx_task_key(task_key),
 		key idx_state_update_time(state_update_time))`
+
+	// CreateMaterializedViewRefreshInfoTable is the CREATE TABLE SQL of `mysql.mv_refresh_info`.
+	CreateMaterializedViewRefreshInfoTable = `CREATE TABLE IF NOT EXISTS mysql.mv_refresh_info (
+		mv_id BIGINT NOT NULL,
+		base_table_id BIGINT NOT NULL,
+		log_table_id BIGINT NOT NULL,
+		refresh_interval_seconds INT NOT NULL,
+		next_run_time DATETIME DEFAULT NULL,
+		last_refresh_tso BIGINT UNSIGNED NOT NULL,
+		last_refresh_time DATETIME DEFAULT NULL,
+		last_refresh_type ENUM('COMPLETE','FAST') NOT NULL,
+		last_refresh_result ENUM('SUCCESS','FAILED') NOT NULL,
+		last_error TEXT DEFAULT NULL,
+		PRIMARY KEY(mv_id),
+		KEY idx_log_table_id(log_table_id)
+	)`
 	// NotifierTableName is `tidb_ddl_notifier`.
 	NotifierTableName = "tidb_ddl_notifier"
 	// CreateTiDBDDLNotifierTable is the CREATE TABLE SQL of `tidb_ddl_notifier`.

@@ -2803,10 +2803,25 @@ var defaultSysVars = []*SysVar{
 		s.EnablePaging = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableLegacyInstanceScope, Value: BoolToOnOff(vardef.DefEnableLegacyInstanceScope), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.EnableLegacyInstanceScope = TiDBOptOn(val)
+		{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableMaterializedView, Value: BoolToOnOff(vardef.DefTiDBEnableMaterializedView), Type: vardef.TypeBool, Hidden: true, SetSession: func(s *SessionVars, val string) error {
+			s.EnableMaterializedView = TiDBOptOn(val)
+			return nil
+		}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+		s.EnableMaterializedView = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableMaterializedViewDemo, Value: BoolToOnOff(vardef.DefTiDBEnableMaterializedViewDemo), Type: vardef.TypeBool, Hidden: true, SetSession: func(s *SessionVars, val string) error {
+		s.StmtCtx.AppendWarning(ErrWarnDeprecatedSyntaxSimpleMsg.FastGen("The 'tidb_enable_materialized_view_demo' variable is deprecated. Use 'tidb_enable_materialized_view' instead."))
+		s.EnableMaterializedView = TiDBOptOn(val)
+		return nil
+		}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			s.EnableMaterializedView = TiDBOptOn(val)
+			return nil
+		}},
+		{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableLegacyInstanceScope, Value: BoolToOnOff(vardef.DefEnableLegacyInstanceScope), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+			s.EnableLegacyInstanceScope = TiDBOptOn(val)
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBStatsLoadSyncWait, Value: strconv.Itoa(vardef.DefTiDBStatsLoadSyncWait), Type: vardef.TypeInt, MinValue: 0, MaxValue: math.MaxInt32,
 		SetSession: func(s *SessionVars, val string) error {
 			s.StatsLoadSyncWait.Store(TidbOptInt64(val, vardef.DefTiDBStatsLoadSyncWait))

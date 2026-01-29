@@ -22,6 +22,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/pingcap/badger"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -256,7 +257,9 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 		idxScan := scanExec.IdxScan
 		e.unique = idxScan.GetUnique()
 		e.scanCtx.desc = idxScan.Desc
-		e.initIdxScanCtx(idxScan)
+		if err := e.initIdxScanCtx(idxScan); err != nil {
+			return nil, err
+		}
 		if collectRangeCounts {
 			e.idxScanCtx.collectNDV = true
 			e.idxScanCtx.prevVals = make([][]byte, e.idxScanCtx.columnLen)
@@ -292,16 +295,53 @@ func newClosureExecutor(dagCtx *dagContext, outputOffsets []uint32, scanExec *ti
 	return e, nil
 }
 
-func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
+func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 	e.idxScanCtx = new(idxScanCtx)
 	e.idxScanCtx.columnLen = len(e.columnInfos)
 	e.idxScanCtx.pkStatus = pkColNotExists
 	e.idxScanCtx.execDetail = new(execDetail)
 
+	var (
+		commitTsIdx  = -1
+		physTblIDIdx = -1
+	)
+	for i, col := range e.columnInfos {
+		switch col.ColumnId {
+		case model.ExtraCommitTSID:
+			if commitTsIdx != -1 {
+				return errors.Errorf("duplicated special column %d", model.ExtraCommitTSID)
+			}
+			commitTsIdx = i
+		case model.ExtraPhysTblID:
+			if physTblIDIdx != -1 {
+				return errors.Errorf("duplicated special column %d", model.ExtraPhysTblID)
+			}
+			physTblIDIdx = i
+		}
+	}
+	if commitTsIdx != -1 && commitTsIdx != len(e.columnInfos)-1 {
+		return errors.Errorf("special column %d must be last (got idx=%d, len=%d)", model.ExtraCommitTSID, commitTsIdx, len(e.columnInfos))
+	}
+	if physTblIDIdx != -1 {
+		expected := len(e.columnInfos) - 1
+		if commitTsIdx != -1 {
+			expected = len(e.columnInfos) - 2
+		}
+		if physTblIDIdx != expected {
+			return errors.Errorf("special column %d must be trailing (got idx=%d, expected=%d, len=%d)", model.ExtraPhysTblID, physTblIDIdx, expected, len(e.columnInfos))
+		}
+	}
+
 	e.idxScanCtx.primaryColumnIds = idxScan.PrimaryColumnIds
 	lastColumn := e.columnInfos[len(e.columnInfos)-1]
 
-	// Here it is required that ExtraPhysTblID is last
+	// Trim trailing special columns which are not encoded in the index key/value.
+	// See `tablecodec.DecodeIndexKV` / coprocessor returned special columns.
+	if lastColumn.GetColumnId() == model.ExtraCommitTSID {
+		e.idxScanCtx.columnLen--
+		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
+	}
+	// Here it is required that ExtraPhysTblID is trailing.
 	if lastColumn.GetColumnId() == model.ExtraPhysTblID {
 		e.idxScanCtx.columnLen--
 		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
@@ -339,6 +379,7 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) {
 	for i, col := range colInfos[:e.idxScanCtx.columnLen] {
 		colIDs[col.ID] = i
 	}
+	return nil
 }
 
 func isCountAgg(pbAgg *tipb.Aggregation) bool {
@@ -471,6 +512,8 @@ type closureExecutor struct {
 	resultFieldType []*types.FieldType
 	kvRanges        []kv.KeyRange
 	startTS         uint64
+	curCommitTS     uint64
+	curCommitTSSet  bool
 	ignoreLock      bool
 	lockChecked     bool
 	scanType        scanType
@@ -569,6 +612,18 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 			}
 			if len(val) == 0 {
 				continue
+			}
+			e.curCommitTSSet = false
+			if s, ok := e.processor.(interface{ SetCurrentCommitTS(uint64) }); ok {
+				item, err := dbReader.GetTxn().Get(ran.StartKey)
+				if err != nil && errors.Cause(err) != badger.ErrKeyNotFound {
+					return nil, errors.Trace(err)
+				}
+				if err == nil {
+					s.SetCurrentCommitTS(item.Version())
+				} else {
+					s.SetCurrentCommitTS(0)
+				}
 			}
 			if e.counts != nil {
 				e.counts[i]++
@@ -828,6 +883,28 @@ func (e *closureExecutor) copyError(err error) error {
 	return ret
 }
 
+func (e *closureExecutor) SetCurrentCommitTS(commitTS uint64) {
+	e.curCommitTS = commitTS
+	e.curCommitTSSet = true
+}
+
+func (e *closureExecutor) getCommitTSByKey(key []byte) (uint64, error) {
+	if e.curCommitTSSet {
+		return e.curCommitTS, nil
+	}
+	if e.dbReader == nil {
+		return 0, errors.New("dbReader is nil")
+	}
+	item, err := e.dbReader.GetTxn().Get(key)
+	if err != nil {
+		if errors.Cause(err) == badger.ErrKeyNotFound {
+			return 0, nil
+		}
+		return 0, errors.Trace(err)
+	}
+	return item.Version(), nil
+}
+
 func (e *closureExecutor) mockReadScanProcessCore(key, value []byte) error {
 	e.scanCtx.chk.AppendRow(e.mockReader.chk.GetRow(e.mockReader.currentIndex))
 	e.mockReader.currentIndex++
@@ -847,11 +924,34 @@ func (e *closureExecutor) tableScanProcessCore(key, value []byte, commitTS uint6
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// Add ExtraPhysTblID if requested
-	// Assumes it is always last!
-	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+
+	rowIdx := e.scanCtx.chk.NumRows() - 1
+	commitTsIdx := -1
+	for i := range e.columnInfos {
+		if e.columnInfos[i].ColumnId == model.ExtraCommitTSID {
+			commitTsIdx = i
+			break
+		}
+	}
+	if commitTsIdx >= 0 {
+		commitTS, err := e.getCommitTSByKey(key)
+		if err != nil {
+			return err
+		}
+		col := e.scanCtx.chk.Column(commitTsIdx)
+		col.SetNull(rowIdx, false)
+		col.Uint64s()[rowIdx] = commitTS
+	}
+
+	for i := range e.columnInfos {
+		if e.columnInfos[i].ColumnId != model.ExtraPhysTblID {
+			continue
+		}
 		tblID := tablecodec.DecodeTableID(key)
-		e.scanCtx.chk.AppendInt64(len(e.columnInfos)-1, tblID)
+		col := e.scanCtx.chk.Column(i)
+		col.SetNull(rowIdx, false)
+		col.Int64s()[rowIdx] = tblID
+		break
 	}
 	incRow = true
 	return nil
@@ -937,13 +1037,31 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 			}
 		}
 	}
-	// Add ExtraPhysTblID if requested
-	// Assumes it is always last!
-	// If we need pid, it already filled by above loop. Because `DecodeIndexKV` func will return pid in `values`.
-	// The following if statement is to fill in the tid when we needed it.
-	if e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID && len(e.columnInfos) >= len(values) {
+	filledLen := len(values)
+
+	idxCommitTs := -1
+	idxPhysTblID := -1
+	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraCommitTSID {
+		idxCommitTs = len(e.columnInfos) - 1
+	}
+	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {
+		idxPhysTblID = len(e.columnInfos) - 1
+	} else if idxCommitTs >= 0 && len(e.columnInfos) > 1 && e.columnInfos[len(e.columnInfos)-2].ColumnId == model.ExtraPhysTblID {
+		idxPhysTblID = len(e.columnInfos) - 2
+	}
+
+	// If we need pid, it is filled by the loop above because `DecodeIndexKV` can return the pid in `values`.
+	// When it's not present, fill `_tidb_tid` (physical table id) from the key.
+	if idxPhysTblID >= 0 && idxPhysTblID >= filledLen {
 		tblID := tablecodec.DecodeTableID(decodedKey)
-		chk.AppendInt64(len(e.columnInfos)-1, tblID)
+		chk.AppendInt64(idxPhysTblID, tblID)
+	}
+	if idxCommitTs >= 0 && idxCommitTs >= filledLen {
+		commitTS, err := e.getCommitTSByKey(key)
+		if err != nil {
+			return err
+		}
+		chk.AppendUint64(idxCommitTs, commitTS)
 	}
 	gotRow = true
 	return nil

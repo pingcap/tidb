@@ -401,6 +401,10 @@ func doDDLWorks(s sessionapi.Session) {
 			mustExecute(s, tbl.SQL)
 		}
 	}
+	// Create materialized view system tables.
+	// These tables are created by DDL for both classic and nextgen to avoid
+	// depending on nextgen reserved IDs/versioned bootstrap tables.
+	mustExecute(s, metadef.CreateMaterializedViewRefreshInfoTable)
 	// Create bind_info table.
 	insertBuiltinBindInfoRow(s)
 	// Create `mysql.tidb_mdl_view` view.

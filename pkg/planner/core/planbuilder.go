@@ -1685,6 +1685,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminFlushPlanCache:
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
+	case ast.AdminRefreshMaterializedView:
+		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminSetBDRRole, ast.AdminUnsetBDRRole:
 		ret = &Simple{Statement: as, ResolveCtx: b.resolveCtx}
 	case ast.AdminShowBDRRole:
@@ -4196,6 +4198,17 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 			err = errors.Errorf("replace into sequence %s is not supported now", tableInfo.Name.O)
 		}
 		return nil, err
+	}
+	if (tableInfo.IsMaterializedView() || tableInfo.IsMaterializedViewLog()) && !b.ctx.GetSessionVars().InRestrictedSQL {
+		obj := "materialized view"
+		if tableInfo.IsMaterializedViewLog() {
+			obj = "materialized view log"
+		}
+		action := "insert into"
+		if insert.IsReplace {
+			action = "replace into"
+		}
+		return nil, exeerrors.ErrMaterializedViewOpNotSupported.GenWithStackByArgs(action, obj, tableInfo.Name.O)
 	}
 	// Build Schema with DBName otherwise ColumnRef with DBName cannot match any Column in Schema.
 	schema, names, err := expression.TableInfo2SchemaAndNames(b.ctx.GetExprCtx(), tn.Schema, tableInfo)

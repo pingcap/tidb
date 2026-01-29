@@ -208,6 +208,7 @@ type Domain struct {
 	logBackupAdvancer     *daemon.OwnerDaemon
 	historicalStatsWorker *HistoricalStatsWorker
 	ttlJobManager         atomic.Pointer[ttlworker.JobManager]
+	mvSchedulerStarted    atomicutil.Bool
 	runawayManager        *runaway.Manager
 	// resourceGroupsController can be changed via `SetResourceGroupsController`
 	// in unit test.
