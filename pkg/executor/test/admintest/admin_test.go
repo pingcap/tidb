@@ -1523,22 +1523,58 @@ func TestAdminCheckTableErrorLocate(t *testing.T) {
 	tk.MustExec("set cte_max_recursion_depth=10000;")
 	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
 
-	// Make some corrupted index. Build the index information.
 	sctx := mock.NewContext()
-	sctx.Store = store
 	ctx := sctx.GetTableCtx()
-	is := domain.InfoSchema()
-	dbName := pmodel.NewCIStr("test")
-	tblName := pmodel.NewCIStr("admin_test")
-	tbl, err := is.TableByName(context.Background(), dbName, tblName)
-	require.NoError(t, err)
-	tblInfo := tbl.Meta()
-	idxInfo := tblInfo.Indices[0]
-	indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+
+	// Make some corrupted index. Build the index information.
+	getIndex := func() table.Index {
+		sctx.Store = store
+		is := domain.InfoSchema()
+		dbName := pmodel.NewCIStr("test")
+		tblName := pmodel.NewCIStr("admin_test")
+		tbl, err := is.TableByName(context.Background(), dbName, tblName)
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+		idxInfo := tblInfo.Indices[0]
+		indexOpr := tables.NewIndex(tblInfo.ID, tblInfo, idxInfo)
+		return indexOpr
+	}
+
+	indexOpr := getIndex()
 
 	pattern := "handle:\\s(\\d+)"
 	r := regexp.MustCompile(pattern)
 
+	// No index record
+	for i := range 10001 {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		err = indexOpr.Delete(ctx, txn, types.MakeDatums(i), kv.IntHandle(i))
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+	}
+	err := tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+
+	// Reset table.
+	tk.MustExec("truncate admin_test")
+	indexOpr = getIndex()
+	// No table record
+	for i := range 100 {
+		txn, err := store.Begin()
+		require.NoError(t, err)
+		_, err = indexOpr.Create(ctx, txn, types.MakeDatums(i), kv.IntHandle(i), nil)
+		require.NoError(t, err)
+		err = txn.Commit(context.Background())
+		require.NoError(t, err)
+	}
+	err = tk.ExecToErr("admin check table admin_test")
+	require.Error(t, err)
+
+	tk.MustExec("truncate admin_test")
+	tk.MustExec("insert into admin_test with recursive cte(a, b) as (select 1, 1 union select a+1, b+1 from cte where cte.a< 10000) select * from cte;")
+	indexOpr = getIndex()
 	// Delete an index record randomly.
 	for i := 0; i < 10; i++ {
 		txn, err := store.Begin()

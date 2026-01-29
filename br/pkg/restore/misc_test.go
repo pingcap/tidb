@@ -31,6 +31,8 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	restoreutils "github.com/pingcap/tidb/br/pkg/restore/utils"
+	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/session"
@@ -366,4 +368,135 @@ func TestRegionScanner(t *testing.T) {
 		output_i += 1
 	})
 	require.Equal(t, len(output), output_i)
+}
+
+func TestParseLogRestoreTableIDsBlocklistFileName(t *testing.T) {
+	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName("RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta")
+	require.True(t, parsed)
+	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), restoreCommitTs)
+	require.Equal(t, uint64(0xFFFFFFFFFFFFFFFF), snapshotBackupTs)
+	unparsedFilenames := []string{
+		"KFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF.SFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF_KFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF_SFFFFFFFFFFFFFFFF.mata",
+		"RFFFFFFFKFFFFFFFF_SFFFFFFFFFFFFFFFF.meta",
+		"RFFFFFFFFFFFFFFFF_SFFFFFFFFKFFFFFFF.meta",
+	}
+	for _, filename := range unparsedFilenames {
+		_, _, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(filename)
+		require.False(t, parsed)
+	}
+}
+
+func TestLogRestoreTableIDsBlocklistFile(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	stg, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(0xFFFFFCDEFFFFF, 0xFFFFFFABCFFFF, []int64{1, 2, 3})
+	require.NoError(t, err)
+	restoreCommitTs, snapshotBackupTs, parsed := restore.ParseLogRestoreTableIDsBlocklistFileName(name)
+	require.True(t, parsed)
+	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), snapshotBackupTs)
+	err = stg.WriteFile(ctx, name, data)
+	require.NoError(t, err)
+	data, err = stg.ReadFile(ctx, name)
+	require.NoError(t, err)
+	restoreCommitTs, snapshotBackupTs, tableIds, err := restore.UnmarshalLogRestoreTableIDsBlocklistFile(data)
+	require.NoError(t, err)
+	require.Equal(t, uint64(0xFFFFFCDEFFFFF), restoreCommitTs)
+	require.Equal(t, uint64(0xFFFFFFABCFFFF), snapshotBackupTs)
+	require.Equal(t, []int64{1, 2, 3}, tableIds)
+}
+
+func writeBlocklistFile(
+	ctx context.Context, t *testing.T, s storage.ExternalStorage,
+	restoreCommitTs, snapshotBackupTs uint64, tableIds []int64,
+) {
+	name, data, err := restore.MarshalLogRestoreTableIDsBlocklistFile(restoreCommitTs, snapshotBackupTs, tableIds)
+	require.NoError(t, err)
+	err = s.WriteFile(ctx, name, data)
+	require.NoError(t, err)
+}
+
+func fakeTrackerID(tableIds []int64) *utils.PiTRIdTracker {
+	tracker := utils.NewPiTRIdTracker()
+	for _, tableId := range tableIds {
+		tracker.TableIdToDBIds[tableId] = make(map[int64]struct{})
+	}
+	return tracker
+}
+
+func TestCheckTableTrackerContainsTableIDsFromBlocklistFiles(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	stg, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	writeBlocklistFile(ctx, t, stg, 100, 10, []int64{100, 101, 102})
+	writeBlocklistFile(ctx, t, stg, 200, 20, []int64{200, 201, 202})
+	writeBlocklistFile(ctx, t, stg, 300, 30, []int64{300, 301, 302})
+	tableNameByTableID := func(tableID int64) string {
+		return fmt.Sprintf("table_%d", tableID)
+	}
+	checkTableIDLost := func(tableId int64) bool {
+		return false
+	}
+	checkTableIDLost2 := func(tableId int64) bool {
+		return true
+	}
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 250, 300, tableNameByTableID, checkTableIDLost)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "table_300")
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300, tableNameByTableID, checkTableIDLost)
+	require.NoError(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 250, 300, tableNameByTableID, checkTableIDLost2)
+	require.Error(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300, tableNameByTableID, checkTableIDLost)
+	require.NoError(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 250, 300, tableNameByTableID, checkTableIDLost2)
+	require.Error(t, err)
+
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25, tableNameByTableID, checkTableIDLost)
+	require.NoError(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{300, 301, 302}), 1, 25, tableNameByTableID, checkTableIDLost2)
+	require.Error(t, err)
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{200, 201, 202}), 1, 25, tableNameByTableID, checkTableIDLost)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "table_200")
+	err = restore.CheckTableTrackerContainsTableIDsFromBlocklistFiles(ctx, stg, fakeTrackerID([]int64{100, 101, 102}), 1, 25, tableNameByTableID, checkTableIDLost)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "table_100")
+}
+
+func filesCount(ctx context.Context, s storage.ExternalStorage) int {
+	count := 0
+	s.WalkDir(ctx, &storage.WalkOption{SubDir: restore.LogRestoreTableIDBlocklistFilePrefix}, func(path string, size int64) error {
+		count += 1
+		return nil
+	})
+	return count
+}
+
+func TestTruncateLogRestoreTableIDsBlocklistFiles(t *testing.T) {
+	ctx := context.Background()
+	base := t.TempDir()
+	stg, err := storage.NewLocalStorage(base)
+	require.NoError(t, err)
+	writeBlocklistFile(ctx, t, stg, 100, 10, []int64{100, 101, 102})
+	writeBlocklistFile(ctx, t, stg, 200, 20, []int64{200, 201, 202})
+	writeBlocklistFile(ctx, t, stg, 300, 30, []int64{300, 301, 302})
+
+	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 50)
+	require.NoError(t, err)
+	require.Equal(t, 3, filesCount(ctx, stg))
+
+	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 250)
+	require.NoError(t, err)
+	require.Equal(t, 1, filesCount(ctx, stg))
+
+	err = restore.TruncateLogRestoreTableIDsBlocklistFiles(ctx, stg, 350)
+	require.NoError(t, err)
+	require.Equal(t, 0, filesCount(ctx, stg))
 }

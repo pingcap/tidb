@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
@@ -306,7 +307,7 @@ func UpdateShiftTS(m *pb.Metadata, startTS uint64, restoreTS uint64) (uint64, bo
 
 	for _, ds := range m.FileGroups {
 		for _, d := range ds.DataFilesInfo {
-			if d.Cf == DefaultCF || d.MinBeginTsInDefaultCf == 0 {
+			if d.Cf == consts.DefaultCF || d.MinBeginTsInDefaultCf == 0 {
 				continue
 			}
 			if d.MinTs > restoreTS || d.MaxTs < startTS {
@@ -1008,7 +1009,7 @@ func MTMaybeSkipTruncateLog(cond bool) migrateToOpt {
 
 // migrateTo migrates to a migration.
 // If encountered some error during executing some operation, the operation will be put
-// to the new BASE, which can be retried then.
+// to the new BASE, which can be retryed then.
 func (m MigrationExt) migrateTo(ctx context.Context, mig *pb.Migration, opts ...migrateToOpt) MigratedTo {
 	opt := migToOpt{}
 	for _, o := range opts {
@@ -1256,8 +1257,9 @@ func (m MigrationExt) processCompactions(ctx context.Context, mig *pb.Migration,
 	// NOTE: Execution of truncation wasn't implemented here.
 	// If we are going to truncate some files, for now we still need to use `br log truncate`.
 	for _, compaction := range mig.Compactions {
-		// Can we also remove the compaction when `until-ts` is equal to `truncated-to`...?
-		if compaction.InputMaxTs >= mig.TruncatedTo {
+		// We can only clean up a compaction when we are sure all its inputs
+		// are no more used.
+		if compaction.InputMaxTs > mig.TruncatedTo {
 			result.NewBase.Compactions = append(result.NewBase.Compactions, compaction)
 		} else {
 			m.tryRemovePrefix(ctx, compaction.Artifacts, result)

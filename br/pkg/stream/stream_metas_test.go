@@ -23,6 +23,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/storage"
+	. "github.com/pingcap/tidb/br/pkg/utils/consts"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"

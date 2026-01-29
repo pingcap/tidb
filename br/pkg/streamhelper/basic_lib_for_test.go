@@ -730,7 +730,7 @@ func (t *testEnv) ClearV3GlobalCheckpointForTask(ctx context.Context, taskName s
 	return nil
 }
 
-func (t *testEnv) PauseTask(ctx context.Context, taskName string) error {
+func (t *testEnv) PauseTask(ctx context.Context, taskName string, _ ...streamhelper.PauseTaskOption) error {
 	t.taskCh <- streamhelper.TaskEvent{
 		Type: streamhelper.EventPause,
 		Name: taskName,

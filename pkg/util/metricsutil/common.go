@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
+	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/pkg/config"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
@@ -75,13 +76,17 @@ func RegisterMetrics() error {
 }
 
 // RegisterMetricsForBR register metrics with const label keyspace_id for BR.
-func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
+func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
 		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
 	}
 
 	timeoutSec := 10 * time.Second
-	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{},
+	securityOpt := pd.SecurityOption{}
+	if tls.IsEnabled() {
+		securityOpt = tls.ToPDSecurityOption()
+	}
+	pdCli, err := pd.NewClient(pdAddrs, securityOpt,
 		pd.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err

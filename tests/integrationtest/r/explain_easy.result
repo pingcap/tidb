@@ -826,13 +826,14 @@ Projection	1.00	root		Column#7->Column#8
       └─TableDual(Probe)	1.00	root		rows:1
 explain format = 'brief' select count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info
-Sort	8000.00	root		Column#5
-└─HashJoin	8000.00	root		CARTESIAN left outer join
-  ├─TableDual(Build)	1.00	root		rows:1
-  └─HashAgg(Probe)	8000.00	root		group by:explain_easy.t.b, funcs:count(Column#9)->Column#5
-    └─TableReader	8000.00	root		data:HashAgg
-      └─HashAgg	8000.00	cop[tikv]		group by:explain_easy.t.b, funcs:count(explain_easy.t.a)->Column#9
-        └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	8000.00	root		Column#5->Column#7
+└─Sort	8000.00	root		Column#6
+  └─Apply	8000.00	root		CARTESIAN left outer join
+    ├─HashAgg(Build)	8000.00	root		group by:explain_easy.t.b, funcs:count(explain_easy.t.a)->Column#5
+    │ └─TableReader	10000.00	root		data:TableFullScan
+    │   └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    └─Projection(Probe)	8000.00	root		Column#5->Column#6
+      └─TableDual	8000.00	root		rows:1
 explain format = 'brief' select (select sum(count(a))) from t;
 id	estRows	task	access object	operator info
 Projection	1.00	root		Column#5->Column#6
@@ -845,16 +846,18 @@ Projection	1.00	root		Column#5->Column#6
       └─TableDual	1.00	root		rows:1
 explain format = 'brief' select sum(a), (select sum(a)), count(a) from t group by b order by (select count(a));
 id	estRows	task	access object	operator info
-Projection	8000.00	root		Column#5->Column#9, Column#5->Column#10, Column#6->Column#11
-└─Sort	8000.00	root		Column#6
-  └─HashJoin	8000.00	root		CARTESIAN left outer join
-    ├─TableDual(Build)	1.00	root		rows:1
-    └─HashJoin(Probe)	8000.00	root		CARTESIAN left outer join
-      ├─TableDual(Build)	1.00	root		rows:1
-      └─HashAgg(Probe)	8000.00	root		group by:explain_easy.t.b, funcs:sum(Column#14)->Column#5, funcs:count(Column#15)->Column#6
-        └─TableReader	8000.00	root		data:HashAgg
-          └─HashAgg	8000.00	cop[tikv]		group by:explain_easy.t.b, funcs:sum(explain_easy.t.a)->Column#14, funcs:count(explain_easy.t.a)->Column#15
-            └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	8000.00	root		Column#5->Column#9, Column#7->Column#10, Column#6->Column#11
+└─Sort	8000.00	root		Column#8
+  └─Apply	8000.00	root		CARTESIAN left outer join
+    ├─Apply(Build)	8000.00	root		CARTESIAN left outer join
+    │ ├─HashAgg(Build)	8000.00	root		group by:Column#19, funcs:sum(Column#17)->Column#5, funcs:count(Column#18)->Column#6
+    │ │ └─Projection	10000.00	root		cast(explain_easy.t.a, decimal(10,0) BINARY)->Column#17, explain_easy.t.a->Column#18, explain_easy.t.b->Column#19
+    │ │   └─TableReader	10000.00	root		data:TableFullScan
+    │ │     └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
+    │ └─Projection(Probe)	8000.00	root		Column#5->Column#7
+    │   └─TableDual	8000.00	root		rows:1
+    └─Projection(Probe)	8000.00	root		Column#6->Column#8
+      └─TableDual	8000.00	root		rows:1
 drop table if exists t;
 create table t(a tinyint, b smallint, c mediumint, d int, e bigint);
 insert into mysql.opt_rule_blacklist VALUES("aggregation_push_down");

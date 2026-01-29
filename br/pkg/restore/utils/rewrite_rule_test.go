@@ -176,18 +176,22 @@ func TestRewriteRange(t *testing.T) {
 		// Test case 1: No rewrite rules
 		{
 			rg: &rtree.Range{
-				StartKey: []byte("startKey"),
-				EndKey:   []byte("endKey"),
+				KeyRange: rtree.KeyRange{
+					StartKey: []byte("startKey"),
+					EndKey:   []byte("endKey"),
+				},
 			},
 			rewriteRules:  nil,
-			expectedRange: &rtree.Range{StartKey: []byte("startKey"), EndKey: []byte("endKey")},
+			expectedRange: &rtree.Range{KeyRange: rtree.KeyRange{StartKey: []byte("startKey"), EndKey: []byte("endKey")}},
 			expectedError: nil,
 		},
 		// Test case 2: Rewrite rule found for both start key and end key
 		{
 			rg: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				},
 			},
 			rewriteRules: &utils.RewriteRules{
 				Data: []*import_sstpb.RewriteRule{
@@ -198,16 +202,20 @@ func TestRewriteRange(t *testing.T) {
 				},
 			},
 			expectedRange: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(2), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("endKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(2), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("endKey")...),
+				},
 			},
 			expectedError: nil,
 		},
 		// Test case 3: Rewrite rule found for end key
 		{
 			rg: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(1), []byte("endKey")...),
+				},
 			},
 			rewriteRules: &utils.RewriteRules{
 				Data: []*import_sstpb.RewriteRule{
@@ -218,16 +226,20 @@ func TestRewriteRange(t *testing.T) {
 				},
 			},
 			expectedRange: &rtree.Range{
-				StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
-				EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
+				KeyRange: rtree.KeyRange{
+					StartKey: append(tablecodec.GenTableIndexPrefix(1), []byte("startKey")...),
+					EndKey:   append(tablecodec.GenTableIndexPrefix(2), []byte("newEndKey")...),
+				},
 			},
 			expectedError: nil,
 		},
 		// Test case 4: Table ID mismatch
 		{
 			rg: &rtree.Range{
-				StartKey: []byte("t1_startKey"),
-				EndKey:   []byte("t2_endKey"),
+				KeyRange: rtree.KeyRange{
+					StartKey: []byte("t1_startKey"),
+					EndKey:   []byte("t2_endKey"),
+				},
 			},
 			rewriteRules: &utils.RewriteRules{
 				Data: []*import_sstpb.RewriteRule{
