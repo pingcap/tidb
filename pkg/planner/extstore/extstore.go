@@ -16,7 +16,6 @@ package extstore
 
 import (
 	"context"
-	"io"
 	"path/filepath"
 	"sync"
 
@@ -154,24 +153,6 @@ func (w *extStorage) Close() {
 // GetBasePath returns the base path of the storage.
 func (w *extStorage) GetBasePath() string {
 	return w.basePath
-}
-
-type fileWriter struct {
-	ctx    context.Context
-	writer objectio.Writer
-}
-
-// NewFileWriter creates a new io.WriteCloser from storeapi.FileWriter.
-func NewFileWriter(ctx context.Context, writer objectio.Writer) io.WriteCloser {
-	return &fileWriter{ctx: ctx, writer: writer}
-}
-
-func (w *fileWriter) Write(p []byte) (int, error) {
-	return w.writer.Write(w.ctx, p)
-}
-
-func (w *fileWriter) Close() error {
-	return w.writer.Close(w.ctx)
 }
 
 // NewExtStorage creates a new external storage instance.
