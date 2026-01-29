@@ -176,6 +176,11 @@ TASKLOOP:
 
 	err = e.waitFinish(ctx, g, resultsCh)
 	if err != nil {
+		if stderrors.Is(err, context.Canceled) {
+			if cause := context.Cause(ctx); cause != nil {
+				err = cause
+			}
+		}
 		return err
 	}
 
