@@ -151,6 +151,11 @@ func (w *extStorage) Close() {
 	}
 }
 
+// GetBasePath returns the base path of the storage.
+func (w *extStorage) GetBasePath() string {
+	return w.basePath
+}
+
 type fileWriter struct {
 	ctx    context.Context
 	writer objectio.Writer
@@ -190,4 +195,40 @@ func NewExtStorage(rawURL, namespace string, opts *storeapi.Options) (storeapi.S
 		opts:     opts,
 		basePath: u.Path,
 	}, nil
+}
+
+var (
+	globalExtStorage   storeapi.Storage
+	globalExtStorageMu sync.Mutex
+)
+
+// GetGlobalExtStorage returns the global external storage instance.
+func GetGlobalExtStorage() storeapi.Storage {
+	globalExtStorageMu.Lock()
+	defer globalExtStorageMu.Unlock()
+
+	return globalExtStorage
+}
+
+func CreateGlobalExtStorage(uri string, namespace string) (storeapi.Storage, error) {
+	u, err := objstore.ParseRawURL(uri)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if namespace != "" {
+		u.Path = filepath.Join(u.Path, namespace)
+	}
+	backend, err := objstore.ParseBackendFromURL(u, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	storage := &extStorage{
+		backend:  backend,
+		opts:     nil,
+		basePath: u.Path,
+	}
+	globalExtStorageMu.Lock()
+	globalExtStorage = storage
+	globalExtStorageMu.Unlock()
+	return storage, nil
 }

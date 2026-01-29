@@ -15,9 +15,11 @@
 package replayer
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sync"
@@ -26,6 +28,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/spf13/afero"
@@ -39,21 +43,36 @@ type PlanReplayerTaskKey struct {
 }
 
 // GeneratePlanReplayerFile generates plan replayer file
-func GeneratePlanReplayerFile(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (*os.File, string, error) {
+func GeneratePlanReplayerFile(ctx context.Context, storage storeapi.Storage, isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (io.WriteCloser, string, error) {
 	path := GetPlanReplayerDirName()
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
 	fileName, err := generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	zf, err := os.Create(filepath.Join(path, fileName))
+	writer, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	return zf, fileName, err
+	zf := NewFileWriter(ctx, writer)
+	return zf, fileName, nil
+}
+
+// NewFileWriter creates a new io.WriteCloser from objectio.Writer.
+func NewFileWriter(ctx context.Context, writer objectio.Writer) io.WriteCloser {
+	return &fileWriter{ctx: ctx, writer: writer}
+}
+
+type fileWriter struct {
+	ctx    context.Context
+	writer objectio.Writer
+}
+
+func (w *fileWriter) Write(p []byte) (int, error) {
+	return w.writer.Write(w.ctx, p)
+}
+
+func (w *fileWriter) Close() error {
+	return w.writer.Close(w.ctx)
 }
 
 // GeneratePlanReplayerFileName generates plan replayer capture task name
@@ -92,12 +111,14 @@ var (
 )
 
 // GetPlanReplayerDirName returns plan replayer directory path.
-// The path is related to the process id.
-//
-// This VFS is only for testing purposes,
-// but in fact, this VFS has already implemented protocols such as S3 and NFS.
-// it can be supported in the future.
+// The path is a relative path for external storage.
 func GetPlanReplayerDirName(vfs ...afero.Fs) string {
+	return "replayer"
+}
+
+// GetPlanReplayerFullPathDirName returns the full path for plan replayer directory.
+// This is used for backward compatibility with local file system.
+func GetPlanReplayerFullPathDirName(vfs ...afero.Fs) string {
 	PlanReplayerPathOnce.Do(func() {
 		var fs afero.Fs
 		fs = afero.NewOsFs()
