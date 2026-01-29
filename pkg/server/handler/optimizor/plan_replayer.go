@@ -92,8 +92,12 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 	isForwarded := len(req.URL.Query().Get("forward")) > 0
 	localAddr := net.JoinHostPort(dfHandler.address, strconv.Itoa(int(dfHandler.statusPort)))
 
-	storage := extstore.GetGlobalExtStorage()
 	ctx := req.Context()
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
 	exist, err := storage.FileExists(ctx, path)
 	if err != nil {
 		handler.WriteError(w, err)

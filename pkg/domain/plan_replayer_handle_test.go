@@ -70,9 +70,12 @@ func TestPlanReplayerHandleCollectTask(t *testing.T) {
 
 func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
 	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
 	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
 		storage.Close()
 	}()
 
@@ -139,9 +142,11 @@ func TestPlanReplayerGC(t *testing.T) {
 	handler := dom.GetDumpFileGCChecker()
 
 	tempDir := t.TempDir()
-	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
 	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
 	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
 		storage.Close()
 	}()
 
@@ -165,9 +170,12 @@ func TestPlanReplayerGC(t *testing.T) {
 
 func TestInsertPlanReplayerStatus(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
+	ctx := context.Background()
+	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
 	require.NoError(t, err)
+	extstore.SetGlobalExtStorageForTest(storage)
 	defer func() {
+		extstore.SetGlobalExtStorageForTest(nil)
 		storage.Close()
 	}()
 

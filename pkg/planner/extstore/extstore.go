@@ -16,147 +16,76 @@ package extstore
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-type extStorage struct {
-	opts     *storeapi.Options
-	backend  *backuppb.StorageBackend
-	basePath string
+var (
+	globalExtStorage   storeapi.Storage
+	globalExtStorageMu sync.Mutex
+)
 
-	mu      sync.Mutex
-	storage storeapi.Storage
+// GetGlobalExtStorage returns the global external storage instance.
+// If the storage is not initialized, it will be created automatically.
+func GetGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
+	globalExtStorageMu.Lock()
+	defer globalExtStorageMu.Unlock()
+
+	if globalExtStorage == nil {
+		storage, err := createGlobalExtStorage(ctx)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		globalExtStorage = storage
+	}
+	return globalExtStorage, nil
 }
 
-func (w *extStorage) getStorage(ctx context.Context) (storeapi.Storage, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.storage != nil {
-		return w.storage, nil
+func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
+	uri := vardef.CloudStorageURI.Load()
+	if uri == "" {
+		logutil.BgLogger().Warn("cloud storage uri is empty, using default local storage",
+			zap.String("category", "extstore"))
+		uri = fmt.Sprintf("file://%s", os.TempDir())
 	}
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 
-	var err error
-	w.storage, err = objstore.New(ctx, w.backend, w.opts)
+	storage, err := NewExtStorage(ctx, uri, keyspaceName)
 	if err != nil {
-		logutil.BgLogger().Warn("failed to initialize external storage, will retry on next request", zap.Error(err))
-		return nil, err
+		logutil.BgLogger().Error("failed to create global ext storage",
+			zap.String("category", "extstore"),
+			zap.String("uri", uri),
+			zap.Error(err))
+		return nil, errors.Trace(err)
 	}
-	return w.storage, nil
+
+	logutil.BgLogger().Info("initialized global ext storage",
+		zap.String("category", "extstore"),
+		zap.String("uri", uri),
+		zap.String("storage", storage.URI()))
+	return storage, nil
 }
 
-func (w *extStorage) WriteFile(ctx context.Context, name string, data []byte) error {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return err
-	}
-	return s.WriteFile(ctx, name, data)
-}
-
-func (w *extStorage) ReadFile(ctx context.Context, name string) ([]byte, error) {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.ReadFile(ctx, name)
-}
-
-func (w *extStorage) FileExists(ctx context.Context, name string) (bool, error) {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return false, err
-	}
-	return s.FileExists(ctx, name)
-}
-
-func (w *extStorage) Open(ctx context.Context, path string, option *storeapi.ReaderOption) (objectio.Reader, error) {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.Open(ctx, path, option)
-}
-
-func (w *extStorage) WalkDir(
-	ctx context.Context,
-	opt *storeapi.WalkOption,
-	fn func(path string, size int64) error,
-) error {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return err
-	}
-	return s.WalkDir(ctx, opt, fn)
-}
-
-func (w *extStorage) Create(ctx context.Context, path string, option *storeapi.WriterOption) (objectio.Writer, error) {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return s.Create(ctx, path, option)
-}
-
-func (w *extStorage) DeleteFile(ctx context.Context, name string) error {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return err
-	}
-	return s.DeleteFile(ctx, name)
-}
-
-func (w *extStorage) DeleteFiles(ctx context.Context, names []string) error {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return err
-	}
-	return s.DeleteFiles(ctx, names)
-}
-
-func (w *extStorage) Rename(ctx context.Context, oldFileName, newFileName string) error {
-	s, err := w.getStorage(ctx)
-	if err != nil {
-		return err
-	}
-	return s.Rename(ctx, oldFileName, newFileName)
-}
-
-func (w *extStorage) URI() string {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.storage != nil {
-		return w.storage.URI()
-	}
-	return ""
-}
-
-func (w *extStorage) Close() {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	if w.storage != nil {
-		w.storage.Close()
-		w.storage = nil
-	}
-}
-
-// GetBasePath returns the base path of the storage.
-func (w *extStorage) GetBasePath() string {
-	return w.basePath
+// SetGlobalExtStorageForTest sets the global external storage instance for testing.
+// This function should only be used in tests.
+func SetGlobalExtStorageForTest(storage storeapi.Storage) {
+	globalExtStorageMu.Lock()
+	defer globalExtStorageMu.Unlock()
+	globalExtStorage = storage
 }
 
 // NewExtStorage creates a new external storage instance.
-func NewExtStorage(rawURL, namespace string, opts *storeapi.Options) (storeapi.Storage, error) {
+func NewExtStorage(ctx context.Context, rawURL, namespace string) (storeapi.Storage, error) {
 	u, err := objstore.ParseRawURL(rawURL)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -171,45 +100,10 @@ func NewExtStorage(rawURL, namespace string, opts *storeapi.Options) (storeapi.S
 		return nil, errors.Trace(err)
 	}
 
-	return &extStorage{
-		backend:  backend,
-		opts:     opts,
-		basePath: u.Path,
-	}, nil
-}
-
-var (
-	globalExtStorage   storeapi.Storage
-	globalExtStorageMu sync.Mutex
-)
-
-// GetGlobalExtStorage returns the global external storage instance.
-func GetGlobalExtStorage() storeapi.Storage {
-	globalExtStorageMu.Lock()
-	defer globalExtStorageMu.Unlock()
-
-	return globalExtStorage
-}
-
-func CreateGlobalExtStorage(uri string, namespace string) (storeapi.Storage, error) {
-	u, err := objstore.ParseRawURL(uri)
+	storage, err := objstore.New(ctx, backend, nil)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if namespace != "" {
-		u.Path = filepath.Join(u.Path, namespace)
-	}
-	backend, err := objstore.ParseBackendFromURL(u, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	storage := &extStorage{
-		backend:  backend,
-		opts:     nil,
-		basePath: u.Path,
-	}
-	globalExtStorageMu.Lock()
-	globalExtStorage = storage
-	globalExtStorageMu.Unlock()
+
 	return storage, nil
 }

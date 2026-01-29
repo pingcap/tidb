@@ -90,11 +90,15 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
 	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
 
-	storage := extstore.GetGlobalExtStorage()
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		logutil.BgLogger().Error("get global ext storage failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err))
+		return
+	}
 	opt := &storeapi.WalkOption{
 		SubDir: path,
 	}
-	err := storage.WalkDir(ctx, opt, func(fileName string, size int64) error {
+	err = storage.WalkDir(ctx, opt, func(fileName string, size int64) error {
 		createTime, err := parseTime(fileName)
 		if err != nil {
 			logutil.BgLogger().Error("parseTime failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
@@ -458,7 +462,14 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	storage := extstore.GetGlobalExtStorage()
+	storage, err := extstore.GetGlobalExtStorage(w.ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("get global ext storage failed", zap.String("category", "plan-replayer-capture"),
+			zap.String("sqlDigest", taskKey.SQLDigest),
+			zap.String("planDigest", taskKey.PlanDigest),
+			zap.Error(err))
+		return false
+	}
 	file, fileName, err := replayer.GeneratePlanReplayerFile(w.ctx, storage, task.IsCapture, task.IsContinuesCapture, vardef.EnableHistoricalStatsForCapture.Load())
 	if err != nil {
 		logutil.BgLogger().Warn("generate task file failed", zap.String("category", "plan-replayer-capture"),

@@ -98,7 +98,10 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 
 func loadExtractResponse(ctx context.Context, name string) ([]byte, error) {
 	path := filepath.Join(domain.GetExtractTaskDirName(), name)
-	storage := extstore.GetGlobalExtStorage()
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return nil, err
+	}
 	fileReader, err := storage.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
