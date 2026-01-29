@@ -545,7 +545,10 @@ func (e *AnalyzeExec) buildAnalyzeKillCtx(parent context.Context) (context.Conte
 				if status == 0 {
 					return
 				}
-				err := exeerrors.ErrQueryInterrupted
+				err := killer.HandleSignal()
+				if err == nil {
+					err = exeerrors.ErrQueryInterrupted
+				}
 				cancel(err)
 				return
 			}
