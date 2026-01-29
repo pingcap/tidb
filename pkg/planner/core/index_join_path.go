@@ -17,6 +17,7 @@ package core
 import (
 	"bytes"
 	"fmt"
+	"math"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -86,6 +87,7 @@ func (mr *mutableIndexJoinRange) Rebuild(sctx planctx.PlanContext) error {
 // indexJoinPathResult records necessary information if we build IndexJoin on this chosen access path (or index).
 type indexJoinPathResult struct {
 	chosenPath     *util.AccessPath        // the chosen access path (or index)
+	candidate      *candidatePath          // the candidate representation of the chosen path, used for SkylinePruning
 	chosenAccess   []expression.Expression // expressions used to access this index
 	chosenRemained []expression.Expression // remaining expressions after accessing this index
 	chosenRanges   ranger.MutableRanges    // the ranges used to access this index
@@ -284,7 +286,7 @@ func indexJoinPathBuild(sctx planctx.PlanContext,
 }
 
 // indexJoinPathCompare compares these 2 index join paths and returns whether the current is better than the base.
-func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool) {
+func indexJoinPathCompare(ds *logicalop.DataSource, best, current *indexJoinPathResult) (curIsBetter bool) {
 	// Notice that there may be the cases like `t1.a = t2.a and b > 2 and b < 1`, so ranges can be nil though the conditions are valid.
 	// Obviously when the range is nil, we don't need index join.
 	if current == nil || len(current.chosenRanges.Range()) == 0 {
@@ -293,6 +295,19 @@ func indexJoinPathCompare(best, current *indexJoinPathResult) (curIsBetter bool)
 	if best == nil {
 		return true
 	}
+
+	// reuse Skyline pruning to compare the index join paths.
+	prop := &property.PhysicalProperty{ExpectedCnt: math.MaxFloat64} // default property without any requirement
+	preferRange := ds.SCtx().GetSessionVars().GetAllowPreferRangeScan()
+
+	cmpResult, _ := compareCandidates(ds.SCtx(), ds.StatisticTable, prop, current.candidate, best.candidate, preferRange)
+	if cmpResult == 1 {
+		return true
+	} else if cmpResult == -1 {
+		return false
+	}
+	// cmpResult == 0, go on to use NDV to compare.
+
 	// We choose the index by the NDV of the used columns, the larger the better.
 	// If NDVs are same, we choose index which uses more columns.
 	// Note that these 2 heuristic rules are too simple to cover all cases,
@@ -328,6 +343,7 @@ func indexJoinPathConstructResult(
 	copy(idxOff2KeyOff, buildTmp.curIdxOff2KeyOff)
 	return &indexJoinPathResult{
 		chosenPath:     path,
+		candidate:      getIndexCandidateForIndexJoin(sctx, path, usedColsLen),
 		usedColsLen:    len(ranges.Range()[0].LowVal),
 		usedColsNDV:    innerNDV,
 		chosenRanges:   ranges,
@@ -471,6 +487,39 @@ func indexJoinPathRangeInfo(sctx planctx.PlanContext,
 	}
 	buffer.WriteString("]")
 	return buffer.String()
+}
+
+// indexJoinPathGetRangeInfoAndMaxOneRow computes the range information string and determines
+// whether the index join can guarantee at most one row will be returned per probe.
+// This happens when:
+// 1. The chosen index is unique AND
+// 2. All index columns are used for the join (usedColsLen == len(FullIdxCols)) AND
+// 3. Either there are no access conditions, or the last access condition is an equality condition
+//
+// Parameters:
+//   - sctx: the plan context
+//   - outerJoinKeys: the outer join keys used to generate range info string
+//   - indexJoinResult: the index join path result containing the chosen path and access conditions
+//
+// Returns:
+//   - rangeInfo: a string representation of the range information for explain output
+//   - maxOneRow: true if the index join guarantees at most one row per probe
+func indexJoinPathGetRangeInfoAndMaxOneRow(
+	sctx planctx.PlanContext,
+	outerJoinKeys []*expression.Column,
+	indexJoinResult *indexJoinPathResult) (rangeInfo string, maxOneRow bool) {
+	rangeInfo = indexJoinPathRangeInfo(sctx, outerJoinKeys, indexJoinResult)
+	maxOneRow = false
+	if indexJoinResult.chosenPath.Index.Unique && indexJoinResult.usedColsLen == len(indexJoinResult.chosenPath.FullIdxCols) {
+		l := len(indexJoinResult.chosenAccess)
+		if l == 0 {
+			maxOneRow = true
+		} else {
+			sf, ok := indexJoinResult.chosenAccess[l-1].(*expression.ScalarFunction)
+			maxOneRow = ok && (sf.FuncName.L == ast.EQ)
+		}
+	}
+	return rangeInfo, maxOneRow
 }
 
 // Reset the 'curIdxOff2KeyOff', 'curNotUsedIndexCols' and 'curNotUsedColLens' by innerKeys and idxCols
@@ -686,7 +735,7 @@ func getBestIndexJoinPathResultByProp(
 				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 				continue
 			}
-			if indexJoinPathCompare(bestResult, result) {
+			if indexJoinPathCompare(innerDS, bestResult, result) {
 				bestResult = result
 			}
 		}
@@ -733,7 +782,7 @@ func getBestIndexJoinPathResult(
 				logutil.BgLogger().Warn("build index join failed", zap.Error(err))
 				continue
 			}
-			if indexJoinPathCompare(bestResult, result) {
+			if indexJoinPathCompare(innerChild, bestResult, result) {
 				bestResult = result
 			}
 		}

@@ -69,7 +69,7 @@ VALUES ('{"a": 1}', '{"1": "1"}'),
 ('{"a": 1}', '{"1": "1"}');
 INSERT INTO sgc2(j1, j2)
 VALUES ('{"a": 1}', '{"1": "1"}');
-ANALYZE TABLE sgc1, sgc2;
+ANALYZE TABLE sgc1, sgc2 predicate columns;
 EXPLAIN format = 'plan_tree' SELECT /*+ TIDB_INLJ(sgc1, sgc2) */ * from sgc1 join sgc2 on sgc1.a=sgc2.a;
 id	task	access object	operator info
 Projection	root		generated_columns.sgc1.j1, generated_columns.sgc1.j2, generated_columns.sgc1.a, generated_columns.sgc1.b, generated_columns.sgc2.j1, generated_columns.sgc2.j2, generated_columns.sgc2.a, generated_columns.sgc2.b
@@ -211,39 +211,39 @@ index (c));
 INSERT INTO t1 (a) VALUES (2), (1), (1), (3), (NULL);
 EXPLAIN format = 'plan_tree' SELECT sum(a) FROM t1 GROUP BY b;
 id	task	access object	operator info
-HashAgg	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection	root		cast(generated_columns.t1.a, decimal(10,0) BINARY)->Column#6, generated_columns.t1.b->Column#7
+HashAgg	root		group by:Column, funcs:sum(Column)->Column
+└─Projection	root		cast(generated_columns.t1.a, decimal(10,0) BINARY)->Column, generated_columns.t1.b->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'plan_tree' SELECT sum(a) FROM t1 GROUP BY c;
 id	task	access object	operator info
-HashAgg	root		group by:generated_columns.t1.c, funcs:sum(Column#6)->Column#5
+HashAgg	root		group by:generated_columns.t1.c, funcs:sum(Column)->Column
 └─TableReader	root		data:HashAgg
-  └─HashAgg	cop[tikv]		group by:generated_columns.t1.c, funcs:sum(generated_columns.t1.a)->Column#6
+  └─HashAgg	cop[tikv]		group by:generated_columns.t1.c, funcs:sum(generated_columns.t1.a)->Column
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'plan_tree' SELECT sum(b) FROM t1 GROUP BY a;
 id	task	access object	operator info
-HashAgg	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection	root		cast(generated_columns.t1.b, decimal(10,0) BINARY)->Column#6, generated_columns.t1.a->Column#7
+HashAgg	root		group by:Column, funcs:sum(Column)->Column
+└─Projection	root		cast(generated_columns.t1.b, decimal(10,0) BINARY)->Column, generated_columns.t1.a->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'plan_tree' SELECT sum(b) FROM t1 GROUP BY c;
 id	task	access object	operator info
-HashAgg	root		group by:Column#9, funcs:sum(Column#8)->Column#5
-└─Projection	root		cast(generated_columns.t1.b, decimal(10,0) BINARY)->Column#8, generated_columns.t1.c->Column#9
+HashAgg	root		group by:Column, funcs:sum(Column)->Column
+└─Projection	root		cast(generated_columns.t1.b, decimal(10,0) BINARY)->Column, generated_columns.t1.c->Column
   └─Projection	root		generated_columns.t1.b, generated_columns.t1.c
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'plan_tree' SELECT sum(c) FROM t1 GROUP BY a;
 id	task	access object	operator info
-HashAgg	root		group by:generated_columns.t1.a, funcs:sum(Column#6)->Column#5
+HashAgg	root		group by:generated_columns.t1.a, funcs:sum(Column)->Column
 └─TableReader	root		data:HashAgg
-  └─HashAgg	cop[tikv]		group by:generated_columns.t1.a, funcs:sum(generated_columns.t1.c)->Column#6
+  └─HashAgg	cop[tikv]		group by:generated_columns.t1.a, funcs:sum(generated_columns.t1.c)->Column
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 EXPLAIN format = 'plan_tree' SELECT sum(c) FROM t1 GROUP BY b;
 id	task	access object	operator info
-HashAgg	root		group by:Column#7, funcs:sum(Column#6)->Column#5
-└─Projection	root		cast(generated_columns.t1.c, decimal(10,0) BINARY)->Column#6, generated_columns.t1.b->Column#7
+HashAgg	root		group by:Column, funcs:sum(Column)->Column
+└─Projection	root		cast(generated_columns.t1.c, decimal(10,0) BINARY)->Column, generated_columns.t1.b->Column
   └─Projection	root		generated_columns.t1.b, generated_columns.t1.c
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

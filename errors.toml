@@ -201,9 +201,14 @@ error = '''
 pd not fully scattered
 '''
 
+["BR:PD:ErrPDRegionsNotFullyScatter"]
+error = '''
+regions not fully scattered
+'''
+
 ["BR:PD:ErrPDUknownScatterResult"]
 error = '''
-failed to wait region splitted
+failed to wait region split
 '''
 
 ["BR:PD:ErrPDUpdateFailed"]
@@ -371,6 +376,11 @@ error = '''
 store disk full
 '''
 
+["KV:ErrNoLeader"]
+error = '''
+region has no leader, region '%d'
+'''
+
 ["Lighting:Restore:ErrChecksumMismatch"]
 error = '''
 checksum mismatched remote vs local => (checksum: %d vs %d) (total_kvs: %d vs %d) (total_bytes:%d vs %d)
@@ -484,11 +494,6 @@ check multi-ingest support error
 ["Lightning:KV:ErrCreateKVClient"]
 error = '''
 create kv client error
-'''
-
-["Lightning:KV:ErrNoLeader"]
-error = '''
-write to tikv with no leader returned, region '%d', leader: %d
 '''
 
 ["Lightning:Loader:ErrInvalidSchemaFile"]
@@ -1611,6 +1616,16 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
+["ddl:8267"]
+error = '''
+%s is forbidden
+'''
+
 ["ddl:8270"]
 error = '''
 Invalid engine attribute format: %s
@@ -1619,6 +1634,11 @@ Invalid engine attribute format: %s
 ["ddl:8271"]
 error = '''
 Invalid storage class: %s
+'''
+
+["ddl:8272"]
+error = '''
+Cannot drop, change or modify column '%s': it is referenced in partial index '%s'
 '''
 
 ["ddl:9014"]

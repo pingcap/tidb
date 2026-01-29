@@ -198,6 +198,13 @@ func getKeysNeedCheckOneRow(ctx sessionctx.Context, t table.Table, row []types.D
 		if t.Meta().IsCommonHandle && v.Meta().Primary {
 			continue
 		}
+		ok, err1 := v.MeetPartialCondition(row)
+		if err1 != nil {
+			return nil, err1
+		}
+		if !ok {
+			continue
+		}
 		colVals, err1 := v.FetchValues(row, nil)
 		if err1 != nil {
 			return nil, err1
@@ -287,7 +294,7 @@ func dataToStrings(data []types.Datum) ([]string, error) {
 // t could be a normal table or a partition, but it must not be a PartitionedTable.
 func getOldRow(ctx context.Context, sctx sessionctx.Context, txn kv.Transaction, t table.Table, handle kv.Handle,
 	genExprs []expression.Expression) ([]types.Datum, error) {
-	oldValue, err := txn.Get(ctx, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
+	oldValue, err := kv.GetValue(ctx, txn, tablecodec.EncodeRecordKey(t.RecordPrefix(), handle))
 	if err != nil {
 		return nil, err
 	}

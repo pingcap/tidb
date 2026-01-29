@@ -29,7 +29,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -39,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1182,13 +1183,13 @@ func isTiKVIndexByName(idxName ast.CIStr, indexInfo *model.IndexInfo, tblInfo *m
 	return indexInfo != nil && !indexInfo.IsColumnarIndex()
 }
 
-func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo, suppressWarning bool) bool {
 	unSupportedReason := ""
 	sessionVars := ctx.GetSessionVars()
-	if tblInfo.IsCommonHandle {
-		unSupportedReason = "common handle table is not supported"
-	} else if tblInfo.Partition != nil {
-		unSupportedReason = "partition table is not supported"
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion < 1 {
+		unSupportedReason = "common handle table with old encoding version is not supported"
+	} else if index.Global {
+		unSupportedReason = "the global index in partition table is not supported"
 	} else if tblInfo.TempTableType != model.TempTableNone {
 		unSupportedReason = "temporary table is not supported"
 	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
@@ -1206,10 +1207,27 @@ func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.Tabl
 	}
 
 	if unSupportedReason != "" {
-		ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		if !suppressWarning {
+			ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		}
 		return false
 	}
 	return true
+}
+
+func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+	policy := ctx.GetSessionVars().IndexLookUpPushDownPolicy
+	switch policy {
+	case vardef.IndexLookUpPushDownPolicyForce:
+	case vardef.IndexLookUpPushDownPolicyAffinityForce:
+		if tblInfo.Affinity == nil {
+			// No affinity info, should not auto push down the index look up.
+			return false
+		}
+	default:
+		return false
+	}
+	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
 }
 
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName ast.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
@@ -1223,23 +1241,32 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
 
-	if tblInfo.TiFlashReplica == nil {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
-	} else if !tblInfo.TiFlashReplica.Available {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
-	} else {
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
-	}
-
 	// consider hypo TiFlash replicas
+	isHypoTiFlashReplica := false
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
 		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
 		originalTableName := tblInfo.Name.L
 		if hypoReplicas[dbName.L] != nil {
 			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
-				publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+				isHypoTiFlashReplica = true
 			}
 		}
+	}
+
+	if tblInfo.TiFlashReplica == nil {
+		if isHypoTiFlashReplica {
+			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
+		}
+	} else if !tblInfo.TiFlashReplica.Available {
+		if isHypoTiFlashReplica {
+			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
+		}
+	} else {
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 	}
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
@@ -1250,6 +1277,23 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	var err error
 	// Inverted Index can not be used as access path index.
 	invertedIndexes := make(map[string]struct{})
+
+	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
+	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
+	// tries to enable it.
+	forceNoIndexLookUpPushDown := false
+	if len(tableHints.NoIndexLookUpPushDown) > 0 {
+		for _, h := range tableHints.NoIndexLookUpPushDown {
+			if h.Match(&hint.HintedTable{
+				DBName:  dbName,
+				TblName: tblName,
+			}) {
+				h.Matched = true
+				forceNoIndexLookUpPushDown = true
+				break
+			}
+		}
+	}
 
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
@@ -1287,6 +1331,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			path := &util.AccessPath{Index: index}
+			if !forceNoIndexLookUpPushDown && checkAutoForceIndexLookUpPushDown(ctx, tblInfo, index) {
+				path.IndexLookUpPushDownBy = util.IndexLookUpPushDownBySysVar
+			}
 			publicPaths = append(publicPaths, path)
 		}
 	}
@@ -1400,9 +1447,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			if i >= indexHintsLen {
 				// Currently we only support to hint the index look up push down for comment-style sql hints.
 				// So only i >= indexHintsLen may have the hints here.
-				_, path.IsIndexLookUpPushDown = indexLookUpPushDownHints[i]
-				if path.IsIndexLookUpPushDown && !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index) {
-					continue
+				if _, ok := indexLookUpPushDownHints[i]; ok {
+					if forceNoIndexLookUpPushDown {
+						ctx.GetSessionVars().StmtCtx.SetHintWarning(
+							"hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified",
+						)
+						continue
+					}
+
+					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index, false) {
+						continue
+					}
+					path.IndexLookUpPushDownBy = util.IndexLookUpPushDownByHint
 				}
 			}
 			available = append(available, path)
@@ -1427,16 +1483,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
+	// it's possible that all these path are inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
 			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
 
@@ -1622,6 +1679,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+	case ast.AdminReloadClusterBindings:
+		return &SQLBindPlan{SQLBindOp: OpReloadClusterBindings}, nil
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminFlushPlanCache:
@@ -1660,7 +1719,7 @@ func (b *PlanBuilder) buildPhysicalIndexLookUpReader(_ context.Context, dbName a
 	commonInfos, commonCols, hasCommonCols := tryGetCommonHandleCols(tbl, fullExprCols)
 	idxColInfos := getIndexColumnInfos(tblInfo, idx)
 	idxColSchema := getIndexColsSchema(tblInfo, idx, fullExprCols)
-	idxCols, idxColLens := expression.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
+	idxCols, idxColLens := util.IndexInfo2PrefixCols(idxColInfos, idxColSchema.Columns, idx)
 	pseudoHistColl := statistics.PseudoHistColl(physicalID, false)
 	is := physicalop.PhysicalIndexScan{
 		Table:            tblInfo,
@@ -1793,7 +1852,7 @@ func tryGetCommonHandleCols(t table.Table, allColSchema *expression.Schema) ([]*
 		return nil, nil, false
 	}
 	pk := tables.FindPrimaryIndex(tblInfo)
-	commonHandleCols, _ := expression.IndexInfo2Cols(tblInfo.Columns, allColSchema.Columns, pk)
+	commonHandleCols, _ := util.IndexInfo2FullCols(tblInfo.Columns, allColSchema.Columns, pk)
 	commonHandelColInfos := tables.TryGetCommonPkColumns(t)
 	return commonHandelColInfos, commonHandleCols, true
 }
@@ -3581,7 +3640,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation:
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowAffinity:
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
@@ -3759,6 +3818,9 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		if err != nil {
 			return nil, err
 		}
+		for _, user := range raw.Users {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user.User, "RESTRICTED_USER_ADMIN")
+		}
 	case *ast.BRIEStmt:
 		p.SetSchemaAndNames(buildBRIESchema(raw.Kind))
 		if raw.Kind == ast.BRIEKindRestore {
@@ -3782,6 +3844,11 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 	case *ast.GrantRoleStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ROLE_ADMIN"}, false, err)
+		// If any of the roles are RESTRICTED, require RESTRICTED_ROLE_ADMIN
+		for _, role := range raw.Roles {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, &auth.UserIdentity{Username: role.Username, Hostname: role.Hostname},
+				"RESTRICTED_USER_ADMIN")
+		}
 	case *ast.RevokeRoleStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ROLE_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ROLE_ADMIN"}, false, err)
@@ -3789,11 +3856,19 @@ func (b *PlanBuilder) buildSimple(ctx context.Context, node ast.StmtNode) (base.
 		for _, user := range raw.Users {
 			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user, "RESTRICTED_USER_ADMIN")
 		}
+		// If any of the roles are RESTRICTED, require RESTRICTED_ROLE_ADMIN
+		for _, role := range raw.Roles {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, &auth.UserIdentity{Username: role.Username, Hostname: role.Hostname},
+				"RESTRICTED_USER_ADMIN")
+		}
 	case *ast.RevokeStmt:
 		var err error
 		b.visitInfo, err = collectVisitInfoFromRevokeStmt(ctx, b.ctx, b.visitInfo, raw)
 		if err != nil {
 			return nil, err
+		}
+		for _, user := range raw.Users {
+			b.visitInfo = appendVisitInfoIsRestrictedUser(ctx, b.visitInfo, b.ctx, user.User, "RESTRICTED_USER_ADMIN")
 		}
 	case *ast.KillStmt:
 		// All users can kill their own connections regardless.
@@ -3882,14 +3957,14 @@ func collectVisitInfoFromRevokeStmt(ctx context.Context, sctx base.PlanContext, 
 		if sctx.GetSessionVars().CurrentDB == "" {
 			return nil, plannererrors.ErrNoDB
 		}
-		dbName = sctx.GetSessionVars().CurrentDB
+		dbName = strings.ToLower(sctx.GetSessionVars().CurrentDB)
 	}
 	var nonDynamicPrivilege bool
 	var allPrivs []mysql.PrivilegeType
 	for _, item := range stmt.Privs {
 		if semv2.IsEnabled() {
-			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(item.Name)) ||
-				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(item.Priv.String())) {
+			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Name))) ||
+				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Priv.String()))) {
 				// In `semv2`, we'll support to limit non-dynamic privileges unless the user has the `RESTRICTED_PRIV_ADMIN` privilege.
 				// For example, `File` privilege might be restricted.
 				// It's also controlled by the `GRANT OPTION`, so the user will also need the `GRANT OPTION` for this privilege.
@@ -3963,8 +4038,8 @@ func collectVisitInfoFromGrantStmt(sctx base.PlanContext, vi []visitInfo, stmt *
 	authErr := genAuthErrForGrantStmt(sctx, dbName)
 	for _, item := range stmt.Privs {
 		if semv2.IsEnabled() {
-			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(item.Name)) ||
-				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(item.Priv.String())) {
+			if (len(item.Name) > 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Name))) ||
+				(len(item.Name) == 0 && semv2.IsRestrictedPrivilege(strings.ToUpper(item.Priv.String()))) {
 				// In `semv2`, we'll support to limit non-dynamic privileges unless the user has the `RESTRICTED_PRIV_ADMIN` privilege.
 				// For example, `File` privilege might be restricted.
 				// It's also controlled by the `GRANT OPTION`, so the user will also need the `GRANT OPTION` for this privilege.
@@ -4554,9 +4629,9 @@ func (b *PlanBuilder) buildLoadData(ctx context.Context, ld *ast.LoadDataStmt) (
 		insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 		deleteErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, "", insertErr)
 	if p.OnDuplicate == ast.OnDuplicateKeyHandlingReplace {
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.L, p.Table.Name.L, "", deleteErr)
 	}
 	tableInfo := p.Table.TableInfo
 	tableInPlan, ok := b.is.TableByID(ctx, tableInfo.ID)
@@ -4722,13 +4797,13 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		if err != nil {
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
-		importFromServer = storage.IsLocal(u)
+		importFromServer = objstore.IsLocal(u)
 		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
-			if kerneltype.IsNextGen() && storage.IsS3(u) {
+			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
 				if err := checkNextGenS3PathWithSem(u); err != nil {
 					return nil, err
 				}
@@ -4738,9 +4813,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// share the same AWS role to access import-into source data bucket, this
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
-		if kerneltype.IsNextGen() && sem.IsEnabled() && storage.IsS3(u) {
+		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
 			values := u.Query()
-			values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
+			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
 			ld.Path = u.String()
 		}
@@ -4806,11 +4881,11 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		deleteErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DELETE", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 		alterErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", user.AuthUsername, user.AuthHostname, p.Table.Name.O)
 	}
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.O, p.Table.Name.O, "", selectErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, p.Table.Schema.O, p.Table.Name.O, "", updateErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.O, p.Table.Name.O, "", insertErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.O, p.Table.Name.O, "", deleteErr)
-	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.O, p.Table.Name.O, "", alterErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, p.Table.Schema.L, p.Table.Name.L, "", selectErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, p.Table.Schema.L, p.Table.Name.L, "", updateErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, p.Table.Schema.L, p.Table.Name.L, "", insertErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, p.Table.Schema.L, p.Table.Name.L, "", deleteErr)
+	b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, p.Table.Schema.L, p.Table.Name.L, "", alterErr)
 	if importFromServer {
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.FilePriv, "", "", "", plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("FILE"))
 	}
@@ -4983,8 +5058,8 @@ func (b *PlanBuilder) requireInsertAndSelectPriv(tables []*ast.TableName) {
 			insertErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("INSERT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
 			selectErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT", user.AuthUsername, user.AuthHostname, tbl.Name.O)
 		}
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.O, tbl.Name.O, "", insertErr)
-		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.O, tbl.Name.O, "", selectErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, tbl.Schema.L, tbl.Name.L, "", insertErr)
+		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, tbl.Schema.L, tbl.Name.L, "", selectErr)
 	}
 }
 
@@ -5280,6 +5355,7 @@ func checkForUserVariables(in ast.Node) error {
 	}
 	return nil
 }
+
 func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan, error) {
 	var authErr error
 	switch v := node.(type) {
@@ -5300,10 +5376,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 			authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("ALTER", b.ctx.GetSessionVars().User.AuthUsername,
 				b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
 		}
-		dbName := v.Table.Schema.L
-		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
+		dbName := getLowerDB(v.Table.Schema, b.ctx.GetSessionVars())
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.AlterPriv, dbName,
 			v.Table.Name.L, "", authErr)
 		for _, spec := range v.Specs {
@@ -5328,7 +5401,7 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 				}
 				b.visitInfo = appendVisitInfo(b.visitInfo, mysql.InsertPriv, dbName,
 					spec.NewTable.Name.L, "", authErr)
-			} else if spec.Tp == ast.AlterTableDropPartition {
+			} else if spec.Tp == ast.AlterTableDropPartition || spec.Tp == ast.AlterTableTruncatePartition {
 				if b.ctx.GetSessionVars().User != nil {
 					authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("DROP", b.ctx.GetSessionVars().User.AuthUsername,
 						b.ctx.GetSessionVars().User.AuthHostname, v.Table.Name.L)
@@ -5761,7 +5834,7 @@ func getHintedStmtThroughPlanDigest(ctx base.PlanContext, planDigest string) (st
 				return err
 			}
 			if query == "" {
-				return errors.NewNoStackErrorf("can't find any plans for '" + planDigest + "'")
+				return errors.NewNoStackErrorf("can't find any plans for '%s'", planDigest)
 			}
 
 			p := parser.New()
@@ -5798,13 +5871,6 @@ func (b *PlanBuilder) buildExplain(ctx context.Context, explain *ast.ExplainStmt
 	stmtCtx := sctx.GetSessionVars().StmtCtx
 	var targetPlan base.Plan
 	if explain.Stmt != nil && !explain.Explore {
-		if strings.EqualFold(explain.Format, types.ExplainFormatCostTrace) {
-			origin := stmtCtx.EnableOptimizeTrace
-			stmtCtx.EnableOptimizeTrace = true
-			defer func() {
-				stmtCtx.EnableOptimizeTrace = origin
-			}()
-		}
 		nodeW := resolve.NewNodeWWithCtx(explain.Stmt, b.resolveCtx)
 		if stmtCtx.ExplainFormat == types.ExplainFormatPlanCache {
 			targetPlan, _, err = OptimizeAstNode(ctx, sctx, nodeW, b.is)
@@ -6096,6 +6162,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
+	case ast.ShowAffinity:
+		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }
@@ -6389,8 +6458,8 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	for k := range values {
 		lowerK := strings.ToLower(k)
-		if lowerK == storage.S3ExternalID {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
+		if lowerK == s3like.S3ExternalID {
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 		}
 	}
 

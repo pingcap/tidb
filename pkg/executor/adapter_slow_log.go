@@ -25,7 +25,9 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/slowlogrule"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 func init() {
@@ -40,6 +42,8 @@ func init() {
 		},
 	}
 }
+
+var sampleLoggerFactory = logutil.SampleLoggerFactory(time.Minute, 1, zap.String(logutil.LogFieldCategory, "slow log"))
 
 func mergeConditionFields(dst, src map[string]struct{}) {
 	for k := range src {
@@ -248,7 +252,6 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.HasMoreResults = hasMoreResults
 	items.PlanFromCache = sessVars.FoundInPlanCache
 	items.PlanFromBinding = sessVars.FoundInBinding
-	items.RewriteInfo = sessVars.RewritePhaseInfo
 	items.ResultRows = stmtCtx.GetResultRowsCount()
 	items.IsExplicitTxn = sessVars.TxnCtx.IsExplicit
 	items.IsWriteCacheTable = stmtCtx.WaitLockLeaseTime > 0
@@ -260,6 +263,7 @@ func SetSlowLogItems(a *ExecStmt, txnTS uint64, hasMoreResults bool, items *vari
 	items.CPUUsages = sessVars.SQLCPUUsages.GetCPUUsages()
 	items.StorageKV = stmtCtx.IsTiKV.Load()
 	items.StorageMPP = stmtCtx.IsTiFlash.Load()
+	items.MemArbitration = stmtCtx.MemTracker.MemArbitration().Seconds()
 
 	if a.retryCount > 0 {
 		items.ExecRetryTime = items.TimeTotal - sessVars.DurationParse - sessVars.DurationCompile - time.Since(a.retryStartTime)

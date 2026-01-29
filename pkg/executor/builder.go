@@ -169,6 +169,10 @@ func (b *MockExecutorBuilder) Build(p base.Plan) exec.Executor {
 }
 
 func (b *executorBuilder) build(p base.Plan) exec.Executor {
+	if phyWrapper, ok := p.(*plannercore.PhysicalPlanWrapper); ok {
+		p = phyWrapper.Inner
+	}
+
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -250,8 +254,6 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
-	case *plannercore.PhysicalSimpleWrapper:
-		return b.buildSimple(&v.Inner)
 	case *plannercore.Set:
 		return b.buildSet(v)
 	case *plannercore.SetConfig:
@@ -512,29 +514,29 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	noMVIndexOrPrefixIndexOrColumnarIndex := true
+	canUseFastCheck := true
 	for _, idx := range v.IndexInfos {
 		if idx.MVIndex || idx.IsColumnarIndex() {
-			noMVIndexOrPrefixIndexOrColumnarIndex = false
+			canUseFastCheck = false
 			break
 		}
 		for _, col := range idx.Columns {
 			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrColumnarIndex = false
+				canUseFastCheck = false
 				break
 			}
 		}
-		if !noMVIndexOrPrefixIndexOrColumnarIndex {
+		if !canUseFastCheck {
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrColumnarIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && canUseFastCheck {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
 			table:        v.Table,
 			indexInfos:   v.IndexInfos,
-			err:          &atomic.Pointer[error]{},
+			is:           b.is,
 		}
 		return e
 	}
@@ -564,7 +566,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 	return e
 }
 
-func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, hasGenedCol bool) []*model.ColumnInfo {
+func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, hasGenedColOrPartialIndex bool) []*model.ColumnInfo {
 	var pkCols []*model.IndexColumn
 	if tblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
@@ -572,7 +574,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 	}
 
 	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+len(pkCols))
-	if hasGenedCol {
+	if hasGenedColOrPartialIndex {
 		columns = tblInfo.Columns
 	} else {
 		for _, idxCol := range indexInfo.Columns {
@@ -619,20 +621,23 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	var hasGenedCol bool
+	var hasGenedColOrPartialIndex bool
 	for _, iCol := range index.Meta().Columns {
 		if tblInfo.Columns[iCol.Offset].IsGenerated() {
-			hasGenedCol = true
+			hasGenedColOrPartialIndex = true
 		}
 	}
-	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), hasGenedCol)
+	if index.Meta().HasCondition() {
+		hasGenedColOrPartialIndex = true
+	}
+	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), hasGenedColOrPartialIndex)
 	e := &RecoverIndexExec{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		columns:          cols,
-		containsGenedCol: hasGenedCol,
-		index:            index,
-		table:            t,
-		physicalID:       t.Meta().ID,
+		BaseExecutor:                   exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		columns:                        cols,
+		containsGenedColOrPartialIndex: hasGenedColOrPartialIndex,
+		index:                          index,
+		table:                          t,
+		physicalID:                     t.Meta().ID,
 	}
 	e.handleCols = buildHandleColsForExec(tblInfo, e.columns)
 	return e
@@ -2590,6 +2595,7 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				},
 			}
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			extractor := v.Extractor.(*plannercore.SlowQueryExtractor)
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -2598,7 +2604,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				retriever: &slowQueryRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
-					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+					extractor:  extractor,
+					limit:      extractor.Limit,
 					memTracker: memTracker,
 				},
 			}
@@ -3225,7 +3232,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		sampleRate = math.Min(1, 150000/approxiCount)
-		return sampleRate, fmt.Sprintf("Row count in stats_meta is much smaller compared with the row count got by PD, use min(1, 15000/%v) as the sample-rate=%v", approxiCount, sampleRate)
+		return sampleRate, fmt.Sprintf("Row count in stats_meta is much smaller compared with the row count got by PD, use min(1, 150000/%v) as the sample-rate=%v", approxiCount, sampleRate)
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.RealtimeCount == 0 {
@@ -5596,6 +5603,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 		isGlobal:     v.IsGlobal,
 		sqlBindOp:    v.SQLBindOp,
 		details:      v.Details,
+		isFromRemote: v.IsFromRemote,
 	}
 	return e
 }

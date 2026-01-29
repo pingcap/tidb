@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -25,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/partidx"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -123,6 +125,11 @@ type DataSource struct {
 
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
+
+	// InterestingColumns stores columns from this DataSource that are used in the query.
+	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
+	// index pruning early in the planning phase - which is an approximate heuristic.
+	InterestingColumns []*expression.Column
 }
 
 // Init initializes DataSource.
@@ -499,7 +506,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
+	is.IdxCols, is.IdxColLens = util.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
 
 	sg := TiKVSingleGather{
 		Source:        ds,
@@ -517,8 +524,8 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 	gathers = append(gathers, tg)
 	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+				util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
 			if ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))
@@ -561,6 +568,17 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
 		ID:       model.ExtraHandleID,
 		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
+	}
+}
+
+// NewExtraCommitTSSchemaCol creates a new column for extra commit ts.
+func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
+	tp := types.NewFieldType(mysql.TypeLonglong)
+	return &expression.Column{
+		RetType:  tp,
+		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:       model.ExtraCommitTSID,
+		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
 	}
 }
 
@@ -700,4 +718,78 @@ func isIndexColsCoveringCol(sctx expression.EvalContext, col *expression.Column,
 func (ds *DataSource) AppendTableCol(col *expression.Column) {
 	ds.TblCols = append(ds.TblCols, col)
 	ds.TblColsByID[col.ID] = col
+}
+
+// CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
+// It will go through each partial index to see whether it's condition constraints are all satisfied by the pushed down conditions.
+// Detailed checking can be found in the comment of `CheckConstraints`.
+// And we specially implement a `AlwaysMeetConstraints` function for IS NOT NULL constraint to make it suitable for plan cache.
+// It's a special handler now, and it's not easy to extend to other constraints.
+func (ds *DataSource) CheckPartialIndexes() {
+	var columnNames types.NameSlice
+	var removedPaths map[int64]struct{}
+	partialIndexUsedHint, hasPartialIndex := false, false
+	for _, path := range ds.PossibleAccessPaths {
+		// If there is no condition expression, it is not a partial index.
+		// So we skip it directly.
+		if path.Index == nil || path.Index.ConditionExprString == "" {
+			continue
+		}
+		hasPartialIndex = true
+		if columnNames == nil {
+			columnNames = make(types.NameSlice, 0, ds.schema.Len())
+			for i := range ds.Schema().Columns {
+				columnNames = append(columnNames, &types.FieldName{
+					TblName: ds.TableInfo.Name,
+					ColName: ds.Columns[i].Name,
+				})
+			}
+		}
+		// Convert the raw string expression to Expression.
+		expr, err := expression.ParseSimpleExpr(ds.SCtx().GetExprCtx(), path.Index.ConditionExprString, expression.WithInputSchemaAndNames(ds.schema, columnNames, ds.TableInfo))
+		cnfExprs := expression.SplitCNFItems(expr)
+		if err != nil || !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+			if removedPaths == nil {
+				removedPaths = make(map[int64]struct{})
+			}
+			removedPaths[path.Index.ID] = struct{}{}
+			continue
+		}
+		if path.Forced {
+			partialIndexUsedHint = true
+		}
+		// A special handler for plan cache.
+		// We only do it for single IS NOT NULL constraint now.
+		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
+			path.PartIdxCondNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+		}
+	}
+	// 1. No partial index,
+	// 2. Or no partial index is removed and no partial index is used by hint.
+	// In these cases, we don't need to do anything.
+	if !hasPartialIndex || (len(removedPaths) == 0 && !partialIndexUsedHint) {
+		return
+	}
+	checkIndex := func(path *util.AccessPath, checkForced bool) bool {
+		isRemoved := false
+		if path.Index != nil {
+			_, isRemoved = removedPaths[path.Index.ID]
+		}
+		return isRemoved || (checkForced && !path.Forced)
+	}
+	if partialIndexUsedHint {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+	} else {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+	}
 }

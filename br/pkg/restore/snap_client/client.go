@@ -169,6 +169,8 @@ type SnapClient struct {
 	// restoreUUID is the UUID of this restore.
 	// restore from a checkpoint inherits the same restoreUUID.
 	restoreUUID uuid.UUID
+
+	checkPrivilegeTableRowsCollateCompatiblity bool
 }
 
 // NewRestoreClient returns a new RestoreClient.
@@ -269,6 +271,18 @@ func (rc *SnapClient) GetTLSConfig() *tls.Config {
 // GetSupportPolicy tells whether target tidb support placement policy.
 func (rc *SnapClient) GetSupportPolicy() bool {
 	return rc.supportPolicy
+}
+
+// SetCheckPrivilegeTableRowsCollateCompatiblity set switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) SetCheckPrivilegeTableRowsCollateCompatiblity(v bool) {
+	rc.checkPrivilegeTableRowsCollateCompatiblity = v
+}
+
+// GetCheckPrivilegeTableRowsCollateCompatiblity get switch to check
+// privilege tables with different collate columns
+func (rc *SnapClient) GetCheckPrivilegeTableRowsCollateCompatiblity() bool {
+	return rc.checkPrivilegeTableRowsCollateCompatiblity
 }
 
 func (rc *SnapClient) updateConcurrency() {
@@ -435,10 +449,16 @@ func (rc *SnapClient) InitCheckpoint(
 	ctx context.Context,
 	snapshotCheckpointMetaManager checkpoint.SnapshotMetaManagerT,
 	config *pdutil.ClusterConfig,
+	restoreStartTS uint64,
 	logRestoredTS uint64,
 	hash []byte,
 	checkpointExists bool,
-) (checkpointSetWithTableID map[int64]map[string]struct{}, checkpointClusterConfig *pdutil.ClusterConfig, err error) {
+) (
+	checkpointSetWithTableID map[int64]map[string]struct{},
+	checkpointClusterConfig *pdutil.ClusterConfig,
+	newRestoreStartTS uint64,
+	err error,
+) {
 	// checkpoint sets distinguished by range key
 	checkpointSetWithTableID = make(map[int64]map[string]struct{})
 
@@ -446,12 +466,12 @@ func (rc *SnapClient) InitCheckpoint(
 		// load the checkpoint since this is not the first time to restore
 		meta, err := snapshotCheckpointMetaManager.LoadCheckpointMetadata(ctx)
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 		rc.restoreUUID = meta.RestoreUUID
 
 		if meta.UpstreamClusterID != rc.backupMeta.ClusterId {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The upstream cluster id[%d] of the current snapshot restore does not match that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %v if the cluster has been cleaned up.",
@@ -459,7 +479,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		if !bytes.Equal(meta.Hash, hash) {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The hash of the current snapshot restore does not match that recorded in checkpoint. "+
 					"Please don't use the checkpoint, "+
 					"or use the the same restore command. checkpoint manager: %v",
@@ -467,7 +487,7 @@ func (rc *SnapClient) InitCheckpoint(
 		}
 
 		if meta.RestoredTS != rc.backupMeta.EndVersion {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The current snapshot restore want to restore cluster to the BackupTS[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you should specify the last full backup storage instead, "+
 					"or just clean the checkpoint %s if the cluster has been cleaned up.",
@@ -480,13 +500,15 @@ func (rc *SnapClient) InitCheckpoint(
 		// Notice that if log restore checkpoint metadata is not stored, BR always enters
 		// snapshot restore.
 		if meta.LogRestoredTS != logRestoredTS {
-			return checkpointSetWithTableID, nil, errors.Errorf(
+			return checkpointSetWithTableID, nil, 0, errors.Errorf(
 				"The current PITR want to restore cluster to the log restored ts[%d], which is different from that[%d] recorded in checkpoint. "+
 					"Perhaps you shoud specify the log restored ts instead, "+
 					"or just clean the checkpoint database[%s] if the cluster has been cleaned up.",
 				logRestoredTS, meta.LogRestoredTS, snapshotCheckpointMetaManager,
 			)
 		}
+
+		newRestoreStartTS = meta.RestoreStartTS
 
 		// The schedulers config is nil, so the restore-schedulers operation is just nil.
 		// Then the undo function would use the result undo of `remove schedulers` operation,
@@ -506,12 +528,12 @@ func (rc *SnapClient) InitCheckpoint(
 			return nil
 		})
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 		// t2 is the latest time the checkpoint checksum persisted to the external storage.
 		checkpointChecksum, t2, err := snapshotCheckpointMetaManager.LoadCheckpointChecksum(ctx)
 		if err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 		rc.checkpointChecksum = checkpointChecksum
 		// use the later time to adjust the summary elapsed time.
@@ -525,6 +547,7 @@ func (rc *SnapClient) InitCheckpoint(
 		restoreID := uuid.New()
 		meta := &checkpoint.CheckpointMetadataForSnapshotRestore{
 			UpstreamClusterID: rc.backupMeta.ClusterId,
+			RestoreStartTS:    restoreStartTS,
 			RestoredTS:        rc.backupMeta.EndVersion,
 			LogRestoredTS:     logRestoredTS,
 			Hash:              hash,
@@ -532,20 +555,21 @@ func (rc *SnapClient) InitCheckpoint(
 			RestoreUUID:       restoreID,
 		}
 		rc.restoreUUID = restoreID
+		newRestoreStartTS = restoreStartTS
 		// a nil config means undo function
 		if config != nil {
 			meta.SchedulersConfig = &pdutil.ClusterConfig{Schedulers: config.Schedulers, ScheduleCfg: config.ScheduleCfg, RuleID: config.RuleID}
 		}
 		if err := snapshotCheckpointMetaManager.SaveCheckpointMetadata(ctx, meta); err != nil {
-			return checkpointSetWithTableID, nil, errors.Trace(err)
+			return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 		}
 	}
 
 	rc.checkpointRunner, err = checkpoint.StartCheckpointRunnerForRestore(ctx, snapshotCheckpointMetaManager)
 	if err != nil {
-		return checkpointSetWithTableID, nil, errors.Trace(err)
+		return checkpointSetWithTableID, nil, 0, errors.Trace(err)
 	}
-	return checkpointSetWithTableID, checkpointClusterConfig, nil
+	return checkpointSetWithTableID, checkpointClusterConfig, newRestoreStartTS, nil
 }
 
 func (rc *SnapClient) WaitForFinishCheckpoint(ctx context.Context, flush bool) {
@@ -989,9 +1013,12 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 	if len(rc.dbPool) == 0 {
 		log.Info("create databases sequentially")
 		for _, db := range dbs {
-			err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := rc.db.CreateDatabase(ctx, db.Info, rc.supportPolicy, rc.policyMap)
 			if err != nil {
 				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
 			}
 		}
 		return nil
@@ -1004,7 +1031,14 @@ func (rc *SnapClient) CreateDatabases(ctx context.Context, dbs []*metautil.Datab
 		db := db_
 		workers.ApplyWithIDInErrorGroup(eg, func(id uint64) error {
 			conn := rc.dbPool[id%uint64(len(rc.dbPool))]
-			return conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			exists, err := conn.CreateDatabase(ectx, db.Info, rc.supportPolicy, rc.policyMap)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			if exists {
+				db.SetReusedByPITR()
+			}
+			return nil
 		})
 	}
 	return eg.Wait()

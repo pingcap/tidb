@@ -27,6 +27,7 @@ record=0
 record_case=""
 stats="s"
 collation_opt=2
+runs_on_port=0
 
 set -eu
 trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
@@ -59,6 +60,8 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
+    -P <port>: Use tidb-server running on <port> for testing.
+
 "
 }
 
@@ -71,7 +74,7 @@ function find_available_port() {
             echo "Error: No available ports found below 65536." >&2
             exit 1
         fi
-        if ! lsof -i :"$port" &> /dev/null; then
+        if ! lsof -nP -i :"$port" &> /dev/null; then
             echo $port
             return 0
         fi
@@ -115,7 +118,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@0d83955ea569706e5296cd3e2f54efb7f1206d0b
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@f2d90ea9522d30c9a8e8d70cc31c7f016ca2801f
     mv src mysql_tester
 }
 
@@ -126,8 +129,13 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:d:c:i:h" opt; do
+while getopts "t:s:r:b:d:c:i:P:h" opt; do
     case $opt in
+        P)
+            runs_on_port="$OPTARG"
+            port="$OPTARG"
+            build=0
+            ;;
         t)
             tests="$OPTARG"
             ;;
@@ -190,7 +198,7 @@ if [ $build -eq 1 ]; then
     fi
     build_mysql_tester
 else
-    if [ -z "$tidb_server" ]; then
+    if [ -z "$tidb_server" ] && [ "$runs_on_port" -eq 0 ]; then
         tidb_server="./integrationtest_tidb-server"
         if [[ ! -f "$tidb_server" ]]; then
             build_tidb_server
@@ -210,9 +218,12 @@ fi
 
 rm -rf $mysql_tester_log
 
-ports=($(find_multiple_available_ports 4000 2))
-port=${ports[0]}
-status=${ports[1]}
+if [ "$runs_on_port" -eq 0 ]
+then
+    ports=($(find_multiple_available_ports 4000 2))
+    port=${ports[0]}
+    status=${ports[1]}
+fi
 
 function start_tidb_server()
 {
@@ -313,23 +324,35 @@ function check_case_name() {
 check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
-    start_tidb_server
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        start_tidb_server
+    fi
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        kill -15 $SERVER_PID
+        while ps -p $SERVER_PID > /dev/null; do
+            sleep 1
+        done
+    fi
     check_data_race
 fi
 
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
-    start_tidb_server
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        start_tidb_server
+    fi
     run_mysql_tester
-    kill -15 $SERVER_PID
-    while ps -p $SERVER_PID > /dev/null; do
-        sleep 1
-    done
+    if [ "$runs_on_port" -eq 0 ]
+    then
+        kill -15 $SERVER_PID
+        while ps -p $SERVER_PID > /dev/null; do
+            sleep 1
+        done
+    fi
     check_data_race
 fi
 

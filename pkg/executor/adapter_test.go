@@ -95,7 +95,7 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 	sessVars.CurrentDB = "testdb"
 	sessVars.DurationParse = time.Second
 	sessVars.DurationCompile = 2 * time.Second
-	sessVars.DurationOptimization = 3 * time.Second
+	sessVars.DurationOptimizer.Total = 3 * time.Second
 	sessVars.DurationWaitTS = 4 * time.Second
 	sessVars.StmtCtx.ExecRetryCount = 2
 	sessVars.StmtCtx.ExecSuccess = true
@@ -129,7 +129,8 @@ func TestPrepareAndCompleteSlowLogItemsForRules(t *testing.T) {
 				strings.ToLower(variable.SlowLogDBStr):      {},
 				strings.ToLower(variable.SlowLogSucc):       {},
 				strings.ToLower(execdetails.ProcessTimeStr): {},
-			}})
+			},
+		})
 
 	sessVars.SlowLogRules.NeedUpdateEffectiveFields = false
 	items := executor.PrepareSlowLogItemsForRules(goCtx, vardef.GlobalSlowLogRules.Load(), sessVars)
@@ -384,6 +385,61 @@ func TestWriteSlowLog(t *testing.T) {
 	checkWriteSlowLog(true)
 }
 
+func TestSlowLogMaxPerSec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	// default value
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 0"),
+	)
+	_, err := tk.Exec(`select @@SESSION.tidb_slow_log_max_per_sec`)
+	require.Equal(t, "[variable:1238]Variable 'tidb_slow_log_max_per_sec' is a GLOBAL variable", err.Error())
+	tk.MustQuery(`select @@Global.tidb_slow_log_max_per_sec`).Check(
+		testkit.Rows("0"),
+	)
+
+	// test errors
+	_, err = tk.Exec(`set session tidb_slow_log_max_per_sec="0"`)
+	require.Equal(t, "[variable:1229]Variable 'tidb_slow_log_max_per_sec' is a GLOBAL variable and should be set with SET GLOBAL", err.Error())
+	_, err = tk.Exec(`set global tidb_slow_log_max_per_sec=""`)
+	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tidb_slow_log_max_per_sec'", err.Error())
+	_, err = tk.Exec(`set global tidb_slow_log_max_per_sec="1.23"`)
+	require.Equal(t, "[variable:1232]Incorrect argument type to variable 'tidb_slow_log_max_per_sec'", err.Error())
+
+	// test warnings
+	_, err = tk.Exec(`set global tidb_slow_log_max_per_sec="-1"`)
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_slow_log_max_per_sec value: '-1'"))
+	tk.MustQuery(`select @@Global.tidb_slow_log_max_per_sec`).Check(
+		testkit.Rows("0"),
+	)
+	tk.MustExec(`set global tidb_slow_log_max_per_sec="1234567"`)
+	tk.MustQuery("SHOW WARNINGS").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_slow_log_max_per_sec value: '1234567'"))
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 1000000"),
+	)
+
+	// normal
+	tk.MustExec(`set global tidb_slow_log_max_per_sec="2"`)
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.False(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 2"),
+	)
+	tk.MustQuery(`select @@Global.tidb_slow_log_max_per_sec`).Check(
+		testkit.Rows("2"),
+	)
+	// no limit
+	tk.MustExec(`set global tidb_slow_log_max_per_sec="0"`)
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	require.True(t, vardef.GlobalSlowLogRateLimiter.Allow())
+	tk.MustQuery(`show variables like "tidb_slow_log_max_per_sec"`).Check(
+		testkit.Rows("tidb_slow_log_max_per_sec 0"),
+	)
+}
+
 func BenchmarkCheckSlowThreshold(b *testing.B) {
 	b.StopTimer()
 	b.ReportAllocs()
@@ -483,5 +539,91 @@ func BenchmarkCheckSlowLogRulesPreAlloc(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		execStmt.LogSlowQuery(ts, true, false)
+	}
+}
+
+func TestMaxExecutionTimeIncludesTSOWaitTime(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int primary key, b int)")
+	tk.MustExec("insert into t values (1, 1), (2, 2)")
+
+	testCases := []struct {
+		name             string
+		tsoDelayMs       int
+		maxExecutionTime uint64 // in milliseconds
+		expectTimeout    bool
+		description      string
+	}{
+		{
+			name:             "TSO delay 50ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       50,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (50ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 150ms, timeout 500ms - should not timeout",
+			tsoDelayMs:       150,
+			maxExecutionTime: 500,
+			expectTimeout:    false,
+			description:      "TSO wait time (150ms) should be included, total << 500ms",
+		},
+		{
+			name:             "TSO delay 300ms, timeout 50ms - should timeout",
+			tsoDelayMs:       300,
+			maxExecutionTime: 50,
+			expectTimeout:    true,
+			description:      "TSO wait time (300ms) exceeds timeout (50ms) clearly",
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Enable failpoint to inject delay in TSO Wait()
+			failpointName := "github.com/pingcap/tidb/pkg/sessiontxn/isolation/injectTSOWaitDelay"
+			require.NoError(t, failpoint.Enable(failpointName, `return(`+fmt.Sprintf("%d", tc.tsoDelayMs)+`)`))
+			defer func() {
+				require.NoError(t, failpoint.Disable(failpointName))
+			}()
+			// Set max_execution_time
+			tk.MustExec("set @@max_execution_time = ?", tc.maxExecutionTime)
+
+			// Execute a SELECT statement that will trigger TSO wait
+			// Use range scan instead of point get to avoid optimization
+			startTime := time.Now()
+			if tc.expectTimeout {
+				err := tk.QueryToErr("select * from t where a >= 1")
+				if err != nil {
+					require.Contains(t, err.Error(), "maximum statement execution time exceeded")
+				} else {
+					pi := tk.Session().ShowProcess()
+					require.NotNil(t, pi)
+					processElapsed := time.Since(pi.Time)
+					require.GreaterOrEqual(t, processElapsed, time.Duration(tc.maxExecutionTime)*time.Millisecond,
+						"ProcessInfo elapsed time should exceed max_execution_time. Got %v", processElapsed)
+				}
+			} else {
+				tk.MustQuery("select * from t where a >= 1")
+			}
+			elapsed := time.Since(startTime)
+
+			// Verify that the elapsed time includes the TSO delay
+			// Allow some skew for CI scheduling / overhead.
+			expectedMinTime := time.Duration(tc.tsoDelayMs) * time.Millisecond
+			skew := 200 * time.Millisecond
+			require.GreaterOrEqual(t, elapsed, expectedMinTime-skew,
+				"Elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, elapsed)
+
+			// Check ProcessInfo to verify the start time was set before TSO wait
+			pi := tk.Session().ShowProcess()
+			require.NotNil(t, pi)
+			if pi.MaxExecutionTime > 0 {
+				processElapsed := time.Since(pi.Time)
+				require.GreaterOrEqual(t, processElapsed, expectedMinTime-skew,
+					"ProcessInfo elapsed time should include TSO wait time. Expected at least %v, got %v", expectedMinTime, processElapsed)
+			}
+		})
 	}
 }

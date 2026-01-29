@@ -264,7 +264,10 @@ func initTableIndices(t *TableCommon) error {
 		}
 
 		// Use partition ID for index, because TableCommon may be table or partition.
-		idx := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		idx, err := NewIndex(t.physicalTableID, tblInfo, idxInfo)
+		if err != nil {
+			return err
+		}
 		intest.AssertFunc(func() bool {
 			// `TableCommon.indices` is type of `[]table.Index` to implement interface method `Table.Indices`.
 			// However, we have an assumption that the specific type of each element in it should always be `*index`.
@@ -527,16 +530,16 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -571,10 +574,33 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 		if idx.Meta().IsColumnarIndex() {
 			continue
 		}
+
+		oldDataMeetPartialCondition, err := idx.MeetPartialCondition(oldData)
+		if err != nil {
+			return err
+		}
+		if !oldDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
+			untouched = false
+			break
+		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
+
+		if !untouched {
 			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return err
@@ -582,7 +608,6 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if err = idx.Delete(ctx, txn, oldVs, h); err != nil {
 				return err
 			}
-			break
 		}
 	}
 	createIdxOpt := opt.GetCreateIdxOpt()
@@ -604,9 +629,25 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			untouched = false
 			break
 		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
 		if untouched && opt.SkipWriteUntouchedIndices() {
 			continue
 		}
+		newDataMeetPartialCondition, err := idx.MeetPartialCondition(newData)
+		if err != nil {
+			return err
+		}
+		if !newDataMeetPartialCondition {
+			// If the partial index condition is not met, we don't need to build the new index.
+			continue
+		}
+
 		newVs, err := idx.FetchValues(newData, nil)
 		if err != nil {
 			return err
@@ -867,7 +908,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 		if err == nil {
 			// If Global Index and reorganization truncate/drop partition, old partition,
-			// Accept and set Assertion key to kv.SetAssertUnknown for overwrite instead
+			// Accept and set Assertion key to kv.AssertUnknown for overwrite instead
 			dupErr := getDuplicateError(t.Meta(), recordID, r)
 			return recordID, dupErr
 		} else if !kv.ErrNotExist.Equal(err) {
@@ -894,15 +935,15 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertExist); err != nil {
 				failpoint.Return(nil, err)
 			}
 		}
 	})
 	if setPresume && !txn.IsPessimistic() {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+		err = setAssertion(txn, key, kv.AssertNotExist)
 	}
 	if err != nil {
 		return nil, err
@@ -964,10 +1005,18 @@ func (t *TableCommon) addIndices(sctx table.MutateContext, recordID kv.Handle, r
 		if t.meta.IsCommonHandle && v.Meta().Primary {
 			continue
 		}
-		// We declared `err` here to make sure `indexVals` is assigned with `=` instead of `:=`.
+
+		meetPartialCondition, err := v.MeetPartialCondition(r)
+		if err != nil {
+			return nil, err
+		}
+		if !meetPartialCondition {
+			continue
+		}
+
+		// We should make sure `indexVals` is assigned with `=` instead of `:=`.
 		// The latter one will create a new variable that shadows the outside `indexVals` that makes `indexVals` outside
 		// always nil, and we cannot reuse it.
-		var err error
 		indexVals, err = v.FetchValues(r, indexVals)
 		if err != nil {
 			return nil, err
@@ -1003,7 +1052,7 @@ func RowWithCols(t table.Table, ctx sessionctx.Context, h kv.Handle, cols []*tab
 	if err != nil {
 		return nil, err
 	}
-	value, err := txn.Get(context.TODO(), key)
+	value, err := kv.GetValue(context.TODO(), txn, key)
 	if err != nil {
 		return nil, err
 	}
@@ -1199,15 +1248,15 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if ctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -1224,6 +1273,20 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 		if v.Meta().IsColumnarIndex() {
 			continue
 		}
+		intest.AssertFunc(func() bool {
+			// if the index is partial index, it shouldn't have index layout.
+			return !(opt.HasIndexesLayout() && v.Meta().HasCondition())
+		})
+		meetPartialCondition, err := v.MeetPartialCondition(rec)
+		if err != nil {
+			return err
+		}
+		if !meetPartialCondition {
+			// If the partial index condition is not met, we don't need to delete it because
+			// it has never been written.
+			continue
+		}
+
 		var vals []types.Datum
 		if opt.HasIndexesLayout() {
 			vals, err = fetchIndexRow(v.Meta(), rec, nil, opt.GetIndexLayout(v.Meta().ID))
@@ -1247,7 +1310,6 @@ func (t *TableCommon) removeRowIndices(ctx table.MutateContext, txn kv.Transacti
 	return nil
 }
 
-// buildIndexForRow implements table.Table BuildIndexForRow interface.
 func (t *TableCommon) buildIndexForRow(ctx table.MutateContext, h kv.Handle, vals []types.Datum, newData []types.Datum, idx *index, txn kv.Transaction, untouched bool, opt *table.CreateIdxOpt) error {
 	rsData := TryGetHandleRestoredDataWrapper(t.meta, newData, nil, idx.Meta())
 	if _, err := idx.create(ctx, txn, vals, h, rsData, untouched, opt); err != nil {

@@ -49,7 +49,7 @@ func batchCheckTemporaryUniqueKey(
 		return nil
 	}
 
-	batchVals, err := txn.BatchGet(context.Background(), originIdxKeys)
+	batchVals, err := kv.BatchGetValue(context.Background(), txn, originIdxKeys)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -144,11 +144,14 @@ type mergeIndexWorker struct {
 	currentIndex *model.IndexInfo
 }
 
-func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) *mergeIndexWorker {
+func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements []*meta.Element) (*mergeIndexWorker, error) {
 	allIndexes := make([]table.Index, 0, len(elements))
 	for _, elem := range elements {
 		indexInfo := model.FindIndexInfoByID(t.Meta().Indices, elem.ID)
-		index := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		index, err := tables.NewIndex(t.GetPhysicalID(), t.Meta(), indexInfo)
+		if err != nil {
+			return nil, err
+		}
 		allIndexes = append(allIndexes, index)
 	}
 
@@ -156,7 +159,7 @@ func newMergeTempIndexWorker(bfCtx *backfillCtx, t table.PhysicalTable, elements
 		backfillCtx: bfCtx,
 		indexes:     allIndexes,
 		buffers:     newTempIdxBuffers(bfCtx.batchCnt),
-	}
+	}, nil
 }
 
 // BackfillData merge temp index data in txn.

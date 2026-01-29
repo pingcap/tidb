@@ -73,13 +73,13 @@ def go_deps():
         name = "com_github_4meepo_tagalign",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/4meepo/tagalign",
-        sha256 = "80c13c8453e860319019251a148808f1580a5c21a909978ea9251ac51aac098f",
-        strip_prefix = "github.com/4meepo/tagalign@v1.4.2",
+        sha256 = "33d56358e3bcf32c30ceb8ba94eab6964664b27cc051c85a828241731b145498",
+        strip_prefix = "github.com/4meepo/tagalign@v1.4.3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.2.zip",
-            "http://ats.apps.svc/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.3.zip",
+            "http://ats.apps.svc/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/4meepo/tagalign/com_github_4meepo_tagalign-v1.4.3.zip",
         ],
     )
     go_repository(
@@ -122,55 +122,16 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_ajstarks_deck",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/ajstarks/deck",
-        sha256 = "68bad2e38bf5b01e6bbd7b9bbdba35da94dac72bc4ba41f8ea5fe92aa836a3c3",
-        strip_prefix = "github.com/ajstarks/deck@v0.0.0-20200831202436-30c9fc6549a9",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ajstarks/deck/com_github_ajstarks_deck-v0.0.0-20200831202436-30c9fc6549a9.zip",
-            "http://ats.apps.svc/gomod/github.com/ajstarks/deck/com_github_ajstarks_deck-v0.0.0-20200831202436-30c9fc6549a9.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ajstarks/deck/com_github_ajstarks_deck-v0.0.0-20200831202436-30c9fc6549a9.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ajstarks/deck/com_github_ajstarks_deck-v0.0.0-20200831202436-30c9fc6549a9.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_ajstarks_deck_generate",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/ajstarks/deck/generate",
-        sha256 = "dce1cbc4cb42ac26512dd0bccf997baeea99fb4595cd419a28e8566d2d7c7ba8",
-        strip_prefix = "github.com/ajstarks/deck/generate@v0.0.0-20210309230005-c3f852c02e19",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ajstarks/deck/generate/com_github_ajstarks_deck_generate-v0.0.0-20210309230005-c3f852c02e19.zip",
-            "http://ats.apps.svc/gomod/github.com/ajstarks/deck/generate/com_github_ajstarks_deck_generate-v0.0.0-20210309230005-c3f852c02e19.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ajstarks/deck/generate/com_github_ajstarks_deck_generate-v0.0.0-20210309230005-c3f852c02e19.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ajstarks/deck/generate/com_github_ajstarks_deck_generate-v0.0.0-20210309230005-c3f852c02e19.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_ajstarks_svgo",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/ajstarks/svgo",
-        sha256 = "e25b5dbb6cc86d2a0b5db08aad757c534681c2cecb30d84746e09c661cbd7c6f",
-        strip_prefix = "github.com/ajstarks/svgo@v0.0.0-20211024235047-1546f124cd8b",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ajstarks/svgo/com_github_ajstarks_svgo-v0.0.0-20211024235047-1546f124cd8b.zip",
-            "http://ats.apps.svc/gomod/github.com/ajstarks/svgo/com_github_ajstarks_svgo-v0.0.0-20211024235047-1546f124cd8b.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ajstarks/svgo/com_github_ajstarks_svgo-v0.0.0-20211024235047-1546f124cd8b.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ajstarks/svgo/com_github_ajstarks_svgo-v0.0.0-20211024235047-1546f124cd8b.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_alecthomas_chroma_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/alecthomas/chroma/v2",
-        sha256 = "fc03b21c36ac2630e30647afcf2221b15e369104548255e5f3f5dcf50935bdf2",
-        strip_prefix = "github.com/alecthomas/chroma/v2@v2.19.0",
+        sha256 = "ff549a1706f8d23a7120053a4eac0013d77d2dfedbff7c94b5dcfbd0018065ff",
+        strip_prefix = "github.com/alecthomas/chroma/v2@v2.20.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.19.0.zip",
-            "http://ats.apps.svc/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.19.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.19.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.19.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.20.0.zip",
+            "http://ats.apps.svc/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.20.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.20.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alecthomas/chroma/v2/com_github_alecthomas_chroma_v2-v2.20.0.zip",
         ],
     )
     go_repository(
@@ -249,6 +210,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/alexkohler/prealloc/com_github_alexkohler_prealloc-v1.0.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/alexkohler/prealloc/com_github_alexkohler_prealloc-v1.0.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alexkohler/prealloc/com_github_alexkohler_prealloc-v1.0.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_alfatraining_structtag",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/alfatraining/structtag",
+        sha256 = "975776e20cdae4f84daaab3f1ea4863d97ea07a6afb483552bc8b2e78e5089f3",
+        strip_prefix = "github.com/alfatraining/structtag@v1.0.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/alfatraining/structtag/com_github_alfatraining_structtag-v1.0.0.zip",
+            "http://ats.apps.svc/gomod/github.com/alfatraining/structtag/com_github_alfatraining_structtag-v1.0.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/alfatraining/structtag/com_github_alfatraining_structtag-v1.0.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/alfatraining/structtag/com_github_alfatraining_structtag-v1.0.0.zip",
         ],
     )
     go_repository(
@@ -541,13 +515,13 @@ def go_deps():
         name = "com_github_andybalholm_brotli",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/andybalholm/brotli",
-        sha256 = "f5ae9b2f3260a22ff3f3445fff081d3ef12ee1aa3c0b87eadc59b5a8fb2cdef0",
-        strip_prefix = "github.com/andybalholm/brotli@v1.0.5",
+        sha256 = "d183c2a1277d2784861bfa89e3903ecba31ef08237c3e92fbdfd4ab0b551154e",
+        strip_prefix = "github.com/andybalholm/brotli@v1.1.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.0.5.zip",
-            "http://ats.apps.svc/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.0.5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.0.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.0.5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.1.1.zip",
+            "http://ats.apps.svc/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.1.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.1.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/andybalholm/brotli/com_github_andybalholm_brotli-v1.1.1.zip",
         ],
     )
     go_repository(
@@ -561,6 +535,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/antihax/optional/com_github_antihax_optional-v1.0.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/antihax/optional/com_github_antihax_optional-v1.0.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/antihax/optional/com_github_antihax_optional-v1.0.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_antlr4_go_antlr_v4",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/antlr4-go/antlr/v4",
+        sha256 = "2fb455ab1f46e53a3cfa678306a6e405f291b34858222db9240335c018ae9554",
+        strip_prefix = "github.com/antlr4-go/antlr/v4@v4.13.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/antlr4-go/antlr/v4/com_github_antlr4_go_antlr_v4-v4.13.1.zip",
+            "http://ats.apps.svc/gomod/github.com/antlr4-go/antlr/v4/com_github_antlr4_go_antlr_v4-v4.13.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/antlr4-go/antlr/v4/com_github_antlr4_go_antlr_v4-v4.13.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/antlr4-go/antlr/v4/com_github_antlr4_go_antlr_v4-v4.13.1.zip",
         ],
     )
     go_repository(
@@ -603,16 +590,16 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_apache_arrow_go_v12",
+        name = "com_github_apache_arrow_go_v18",
         build_file_proto_mode = "disable_global",
-        importpath = "github.com/apache/arrow/go/v12",
-        sha256 = "5eb05ed9c2c5e164503b00912b7b2456400578de29e7e8a8956a41acd861ab5b",
-        strip_prefix = "github.com/apache/arrow/go/v12@v12.0.1",
+        importpath = "github.com/apache/arrow-go/v18",
+        sha256 = "6b80a19ab873bca217efa54b6eb8a3708e171400d2e9abc91a91c9ecac83a119",
+        strip_prefix = "github.com/joechenrh/arrow-go/v18@v18.0.0-20250911101656-62c34c9a3b82",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/apache/arrow/go/v12/com_github_apache_arrow_go_v12-v12.0.1.zip",
-            "http://ats.apps.svc/gomod/github.com/apache/arrow/go/v12/com_github_apache_arrow_go_v12-v12.0.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/apache/arrow/go/v12/com_github_apache_arrow_go_v12-v12.0.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/apache/arrow/go/v12/com_github_apache_arrow_go_v12-v12.0.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250911101656-62c34c9a3b82.zip",
+            "http://ats.apps.svc/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250911101656-62c34c9a3b82.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250911101656-62c34c9a3b82.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/joechenrh/arrow-go/v18/com_github_joechenrh_arrow_go_v18-v18.0.0-20250911101656-62c34c9a3b82.zip",
         ],
     )
     go_repository(
@@ -632,13 +619,13 @@ def go_deps():
         name = "com_github_apache_thrift",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/apache/thrift",
-        sha256 = "50d5c610df30fa2a6039394d5142382b7d9938870dfb12ef46bddfa3da250893",
-        strip_prefix = "github.com/apache/thrift@v0.16.0",
+        sha256 = "c96231bd10eb2488974c977c1f1bafdce90ec56710d193f54f5771a379835a99",
+        strip_prefix = "github.com/apache/thrift@v0.21.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
-            "http://ats.apps.svc/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.16.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.21.0.zip",
+            "http://ats.apps.svc/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.21.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.21.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/apache/thrift/com_github_apache_thrift-v0.21.0.zip",
         ],
     )
     go_repository(
@@ -733,16 +720,29 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_atomicgo_cursor",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/atomicgo/cursor",
+        sha256 = "b77665289a1a6dc750cf3752537e5b5e67abdeb3e98547ce59d2eef210bf36cf",
+        strip_prefix = "github.com/atomicgo/cursor@v0.0.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/atomicgo/cursor/com_github_atomicgo_cursor-v0.0.1.zip",
+            "http://ats.apps.svc/gomod/github.com/atomicgo/cursor/com_github_atomicgo_cursor-v0.0.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/atomicgo/cursor/com_github_atomicgo_cursor-v0.0.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/atomicgo/cursor/com_github_atomicgo_cursor-v0.0.1.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_aws_aws_sdk_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go",
-        sha256 = "5d0522d952824a79d837bba9c0dfe1b024628a99be4f1d031611e18d7e98bbce",
-        strip_prefix = "github.com/aws/aws-sdk-go@v1.55.5",
+        sha256 = "c1cd94e343142198dd51601ada20340cd81d6c24d4d7931772ec43dc43dffac1",
+        strip_prefix = "github.com/aws/aws-sdk-go@v1.55.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go/com_github_aws_aws_sdk_go-v1.55.7.zip",
         ],
     )
     go_repository(
@@ -775,39 +775,52 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go_v2_config",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/config",
-        sha256 = "c33f05bfc1f0180913fbc6320a8e6ed5208120b1242aea6dc8de1f26a54f6ce5",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/config@v1.27.37",
+        sha256 = "f4fa9b6296595fce68477d7daddebad4dabebec8b5d882fa2dace98b315ffe92",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/config@v1.29.17",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.27.37.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/config/com_github_aws_aws_sdk_go_v2_config-v1.29.17.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_credentials",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/credentials",
-        sha256 = "37ad210e8824bfb95291fd05b33d32d206f3b2b4887af65baef391f16d316353",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/credentials@v1.17.35",
+        sha256 = "133d7a27cb83a637495f09566c864e05425eb3d98885b73b764d720fc05c1b96",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/credentials@v1.17.70",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.35.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/credentials/com_github_aws_aws_sdk_go_v2_credentials-v1.17.70.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_feature_ec2_imds",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/feature/ec2/imds",
-        sha256 = "1e693ac24c0f2bc4525293a5cddf1f5c8e1270c383dd65545c5a3ee1432b6af6",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/feature/ec2/imds@v1.16.14",
+        sha256 = "83778d050a9bfc3fe3f0590e3d08dc603154ab11312a3c03d9fb527431d4a2d8",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/feature/ec2/imds@v1.16.32",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.14.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/feature/ec2/imds/com_github_aws_aws_sdk_go_v2_feature_ec2_imds-v1.16.32.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_feature_s3_manager",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/feature/s3/manager",
+        sha256 = "1ce87f7dae55ae2e4afc9e5a30aa4c4020bf25cdcecb735816a9d789adea5e93",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/feature/s3/manager@v1.17.84",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/feature/s3/manager/com_github_aws_aws_sdk_go_v2_feature_s3_manager-v1.17.84.zip",
         ],
     )
     go_repository(
@@ -840,13 +853,13 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go_v2_internal_ini",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/internal/ini",
-        sha256 = "30ceb160c10eee87c002f89ce5a89100463ec2935a980a3652fc53fff4efe21a",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/internal/ini@v1.8.1",
+        sha256 = "7c134d09366b976ea1362c3dca8a394e130182af739a792d7b16089eefa8a514",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/internal/ini@v1.8.3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/internal/ini/com_github_aws_aws_sdk_go_v2_internal_ini-v1.8.3.zip",
         ],
     )
     go_repository(
@@ -860,6 +873,32 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/internal/v4a/com_github_aws_aws_sdk_go_v2_internal_v4a-v1.4.4.zip",
             "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/internal/v4a/com_github_aws_aws_sdk_go_v2_internal_v4a-v1.4.4.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/internal/v4a/com_github_aws_aws_sdk_go_v2_internal_v4a-v1.4.4.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_service_cloudwatch",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/service/cloudwatch",
+        sha256 = "b652decee1623251035d4e5d8d657eab4a4076cfc7b166ea13f0457a34f558a5",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/cloudwatch@v1.45.3",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/cloudwatch/com_github_aws_aws_sdk_go_v2_service_cloudwatch-v1.45.3.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_service_ec2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/service/ec2",
+        sha256 = "62a1c53b0e74fa93805c1376a66ac9143e61062f72b0096feb2b7fa3be2ce587",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/ec2@v1.232.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/ec2/com_github_aws_aws_sdk_go_v2_service_ec2-v1.232.0.zip",
         ],
     )
     go_repository(
@@ -915,6 +954,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_aws_aws_sdk_go_v2_service_kms",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/aws/aws-sdk-go-v2/service/kms",
+        sha256 = "bc1982015886c078bdb28cbdbbd25a44935333db2e9ba883e113ee028e3f9aff",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/kms@v1.41.2",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/kms/com_github_aws_aws_sdk_go_v2_service_kms-v1.41.2.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_aws_aws_sdk_go_v2_service_s3",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/s3",
@@ -931,39 +983,39 @@ def go_deps():
         name = "com_github_aws_aws_sdk_go_v2_service_sso",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/sso",
-        sha256 = "a7bd69b4ae523f519730bb75ed141f4fa1e62dbfa6fc7ec5e0e729f546124cd9",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sso@v1.23.1",
+        sha256 = "b0be331326a91101eaae56d4b9f5ed07d7a3124cc79291b8f47a674f60991e0b",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sso@v1.25.5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.23.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sso/com_github_aws_aws_sdk_go_v2_service_sso-v1.25.5.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_service_ssooidc",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/ssooidc",
-        sha256 = "59c0781f1cb61e9f94afe00d8addbfa757caf054e5efe1de9b266c8228839080",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/ssooidc@v1.27.1",
+        sha256 = "dd0ad13e8d73f583b4876420ac346502eedc8cf56b7092491e4fa37390c0675b",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/ssooidc@v1.30.3",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.27.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/ssooidc/com_github_aws_aws_sdk_go_v2_service_ssooidc-v1.30.3.zip",
         ],
     )
     go_repository(
         name = "com_github_aws_aws_sdk_go_v2_service_sts",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/aws/aws-sdk-go-v2/service/sts",
-        sha256 = "d8fd381f123a1b2e83a653acec96b39fb2a8ba4429b2ef8377410eb9136fb644",
-        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sts@v1.31.1",
+        sha256 = "6a6bbd067146a2f0184fca54100e66f8350348659c0590f0fb6bad8396b31141",
+        strip_prefix = "github.com/aws/aws-sdk-go-v2/service/sts@v1.34.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
-            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.31.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
+            "http://ats.apps.svc/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/aws/aws-sdk-go-v2/service/sts/com_github_aws_aws_sdk_go_v2_service_sts-v1.34.0.zip",
         ],
     )
     go_repository(
@@ -1256,26 +1308,13 @@ def go_deps():
         name = "com_github_bombsimon_wsl_v5",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/bombsimon/wsl/v5",
-        sha256 = "258a3b646a5f35ba2357f557d4820c0d8b96497554dcf0c8bdbbcb9785f30b4a",
-        strip_prefix = "github.com/bombsimon/wsl/v5@v5.1.0",
+        sha256 = "e639bd3c89ad4bf16faa385642e4e183f2e1af39164a030efe2b1338bd14abb9",
+        strip_prefix = "github.com/bombsimon/wsl/v5@v5.1.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.0.zip",
-            "http://ats.apps.svc/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.0.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_boombuler_barcode",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/boombuler/barcode",
-        sha256 = "812c5beeaa87864227f9d92a9ae71792dc0e6302a33737a91aabe1e511cde42b",
-        strip_prefix = "github.com/boombuler/barcode@v1.0.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/boombuler/barcode/com_github_boombuler_barcode-v1.0.1.zip",
-            "http://ats.apps.svc/gomod/github.com/boombuler/barcode/com_github_boombuler_barcode-v1.0.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/boombuler/barcode/com_github_boombuler_barcode-v1.0.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/boombuler/barcode/com_github_boombuler_barcode-v1.0.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.1.zip",
+            "http://ats.apps.svc/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/bombsimon/wsl/v5/com_github_bombsimon_wsl_v5-v5.1.1.zip",
         ],
     )
     go_repository(
@@ -1308,13 +1347,13 @@ def go_deps():
         name = "com_github_burntsushi_toml",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/BurntSushi/toml",
-        sha256 = "a10c8d3d6c4a9b73dc885464245eec6b27d64f430d6979389cd9c58adde15855",
-        strip_prefix = "github.com/BurntSushi/toml@v1.5.0",
+        sha256 = "01f03d6c3f4bfee108bda3202407b54ac0c295b8302a1315512f12ac05011fd8",
+        strip_prefix = "github.com/BurntSushi/toml@v1.6.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
-            "http://ats.apps.svc/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.5.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.6.0.zip",
+            "http://ats.apps.svc/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.6.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.6.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/BurntSushi/toml/com_github_burntsushi_toml-v1.6.0.zip",
         ],
     )
     go_repository(
@@ -1425,13 +1464,13 @@ def go_deps():
         name = "com_github_census_instrumentation_opencensus_proto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/census-instrumentation/opencensus-proto",
-        sha256 = "6fce66b7dcd2cba031ed9d73d77d6b21c2fe749c5de27cbb416a2d2cc1c68719",
-        strip_prefix = "github.com/census-instrumentation/opencensus-proto@v0.4.1",
+        sha256 = "b3c09f3e635d47b4138695a547d1f2c7138f382cbe5a8b5865b66a8e08233461",
+        strip_prefix = "github.com/census-instrumentation/opencensus-proto@v0.2.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.4.1.zip",
-            "http://ats.apps.svc/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.4.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.4.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.4.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/census-instrumentation/opencensus-proto/com_github_census_instrumentation_opencensus_proto-v0.2.1.zip",
         ],
     )
     go_repository(
@@ -1685,26 +1724,39 @@ def go_deps():
         name = "com_github_cncf_udpa_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cncf/udpa/go",
-        sha256 = "a449fa94e58117a79c17577e39f72f695c4876f74cbd9142d512278192ca90aa",
-        strip_prefix = "github.com/cncf/udpa/go@v0.0.0-20210930031921-04548b0d99d4",
+        sha256 = "f2a2fee0b2024946ddd3b7ec5cd06a6d318cdb8421a8d5afff4c2fd69f1e74a7",
+        strip_prefix = "github.com/cncf/udpa/go@v0.0.0-20191209042840-269d4d468f6f",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20210930031921-04548b0d99d4.zip",
-            "http://ats.apps.svc/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20210930031921-04548b0d99d4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20210930031921-04548b0d99d4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20210930031921-04548b0d99d4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20191209042840-269d4d468f6f.zip",
+            "http://ats.apps.svc/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20191209042840-269d4d468f6f.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20191209042840-269d4d468f6f.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cncf/udpa/go/com_github_cncf_udpa_go-v0.0.0-20191209042840-269d4d468f6f.zip",
         ],
     )
     go_repository(
         name = "com_github_cncf_xds_go",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/cncf/xds/go",
-        sha256 = "ab0d2fd980b15a582708a728cf8080ebb88778e59f3003b67c6aafaa9ad0f447",
-        strip_prefix = "github.com/cncf/xds/go@v0.0.0-20231128003011-0fa0005c9caa",
+        sha256 = "7065a27af09ed95a508f83ba57416ced0f0a70db6e0a0eef141d8e9f7725a114",
+        strip_prefix = "github.com/cncf/xds/go@v0.0.0-20250326154945-ae57f3c0d45f",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20231128003011-0fa0005c9caa.zip",
-            "http://ats.apps.svc/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20231128003011-0fa0005c9caa.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20231128003011-0fa0005c9caa.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20231128003011-0fa0005c9caa.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20250326154945-ae57f3c0d45f.zip",
+            "http://ats.apps.svc/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20250326154945-ae57f3c0d45f.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20250326154945-ae57f3c0d45f.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cncf/xds/go/com_github_cncf_xds_go-v0.0.0-20250326154945-ae57f3c0d45f.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_cockroachdb_apd_v3",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/cockroachdb/apd/v3",
+        sha256 = "6ad54bb71a36fba8ca6725a00d916e51815a4c68de54096313ca6fffda6c87c2",
+        strip_prefix = "github.com/cockroachdb/apd/v3@v3.2.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/cockroachdb/apd/v3/com_github_cockroachdb_apd_v3-v3.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/cockroachdb/apd/v3/com_github_cockroachdb_apd_v3-v3.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/cockroachdb/apd/v3/com_github_cockroachdb_apd_v3-v3.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/cockroachdb/apd/v3/com_github_cockroachdb_apd_v3-v3.2.1.zip",
         ],
     )
     go_repository(
@@ -1822,19 +1874,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/codegangsta/inject/com_github_codegangsta_inject-v0.0.0-20150114235600-33e0aa1cb7c0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/codegangsta/inject/com_github_codegangsta_inject-v0.0.0-20150114235600-33e0aa1cb7c0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/codegangsta/inject/com_github_codegangsta_inject-v0.0.0-20150114235600-33e0aa1cb7c0.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_colinmarc_hdfs_v2",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/colinmarc/hdfs/v2",
-        sha256 = "6a40084f999e3ddbd9a8566b1333646424201fc2ad28aa1a40ddf51aaf8fbc51",
-        strip_prefix = "github.com/colinmarc/hdfs/v2@v2.1.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/colinmarc/hdfs/v2/com_github_colinmarc_hdfs_v2-v2.1.1.zip",
-            "http://ats.apps.svc/gomod/github.com/colinmarc/hdfs/v2/com_github_colinmarc_hdfs_v2-v2.1.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/colinmarc/hdfs/v2/com_github_colinmarc_hdfs_v2-v2.1.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/colinmarc/hdfs/v2/com_github_colinmarc_hdfs_v2-v2.1.1.zip",
         ],
     )
     go_repository(
@@ -1994,6 +2033,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_creasty_defaults",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/creasty/defaults",
+        sha256 = "d9984bcd4b7326a6066f58bc94b46fe8657e50e1ba0a3ef6eb592b0ff96e6712",
+        strip_prefix = "github.com/creasty/defaults@v1.8.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+            "http://ats.apps.svc/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/creasty/defaults/com_github_creasty_defaults-v1.8.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_curioswitch_go_reassign",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/curioswitch/go-reassign",
@@ -2010,13 +2062,13 @@ def go_deps():
         name = "com_github_daixiang0_gci",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/daixiang0/gci",
-        sha256 = "7966444aa312d966da6207335143375faeb63fdd646a1adc16c6e76bf1892dbb",
-        strip_prefix = "github.com/daixiang0/gci@v0.13.6",
+        sha256 = "d5c0739deb919787a9e02c22e6dfcedd39ad7a41a8fdcf6d946d10bce2245354",
+        strip_prefix = "github.com/daixiang0/gci@v0.13.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.6.zip",
-            "http://ats.apps.svc/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.6.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.6.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.7.zip",
+            "http://ats.apps.svc/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/daixiang0/gci/com_github_daixiang0_gci-v0.13.7.zip",
         ],
     )
     go_repository(
@@ -2387,26 +2439,52 @@ def go_deps():
         name = "com_github_envoyproxy_go_control_plane",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/envoyproxy/go-control-plane",
-        sha256 = "dc6b843aff8edab08ad7147b542a88ed8f6105ae8cad9b4c4f61acee4b784209",
-        strip_prefix = "github.com/envoyproxy/go-control-plane@v0.12.0",
+        sha256 = "a5952b5ef963bd493d3667a5cab35f723d4e26c7727c1fb6486cb86f91e8a10e",
+        strip_prefix = "github.com/envoyproxy/go-control-plane@v0.13.4",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.12.0.zip",
-            "http://ats.apps.svc/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.12.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.12.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.12.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.13.4.zip",
+            "http://ats.apps.svc/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.13.4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.13.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/envoyproxy/go-control-plane/com_github_envoyproxy_go_control_plane-v0.13.4.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_envoyproxy_go_control_plane_envoy",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/envoyproxy/go-control-plane/envoy",
+        sha256 = "6baebcc1f441672ade0dacb4ca553a3d857f915590ca07bbe79314ddf62e6fae",
+        strip_prefix = "github.com/envoyproxy/go-control-plane/envoy@v1.32.4",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/envoyproxy/go-control-plane/envoy/com_github_envoyproxy_go_control_plane_envoy-v1.32.4.zip",
+            "http://ats.apps.svc/gomod/github.com/envoyproxy/go-control-plane/envoy/com_github_envoyproxy_go_control_plane_envoy-v1.32.4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/envoyproxy/go-control-plane/envoy/com_github_envoyproxy_go_control_plane_envoy-v1.32.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/envoyproxy/go-control-plane/envoy/com_github_envoyproxy_go_control_plane_envoy-v1.32.4.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_envoyproxy_go_control_plane_ratelimit",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/envoyproxy/go-control-plane/ratelimit",
+        sha256 = "1165c3cf1efb096a04a3d65b345f3780adce78f126583f7b98465c413a440766",
+        strip_prefix = "github.com/envoyproxy/go-control-plane/ratelimit@v0.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/envoyproxy/go-control-plane/ratelimit/com_github_envoyproxy_go_control_plane_ratelimit-v0.1.0.zip",
+            "http://ats.apps.svc/gomod/github.com/envoyproxy/go-control-plane/ratelimit/com_github_envoyproxy_go_control_plane_ratelimit-v0.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/envoyproxy/go-control-plane/ratelimit/com_github_envoyproxy_go_control_plane_ratelimit-v0.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/envoyproxy/go-control-plane/ratelimit/com_github_envoyproxy_go_control_plane_ratelimit-v0.1.0.zip",
         ],
     )
     go_repository(
         name = "com_github_envoyproxy_protoc_gen_validate",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/envoyproxy/protoc-gen-validate",
-        sha256 = "8c7149e937f9750d7a3527396f0836aa28fcb070e067f2b99a0349c532403a03",
-        strip_prefix = "github.com/envoyproxy/protoc-gen-validate@v1.0.4",
+        sha256 = "ad9d2639aff17db6be291069c5463c46ed8ac37a0c6c1b57fae5465c5effb567",
+        strip_prefix = "github.com/envoyproxy/protoc-gen-validate@v1.2.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.0.4.zip",
-            "http://ats.apps.svc/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.0.4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.0.4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.0.4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/envoyproxy/protoc-gen-validate/com_github_envoyproxy_protoc_gen_validate-v1.2.1.zip",
         ],
     )
     go_repository(
@@ -2553,19 +2631,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_fogleman_gg",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/fogleman/gg",
-        sha256 = "792f7a3ea9eea31b7947dabaf9d5a307389245069078e4bf435d76cb0505439c",
-        strip_prefix = "github.com/fogleman/gg@v1.3.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/fogleman/gg/com_github_fogleman_gg-v1.3.0.zip",
-            "http://ats.apps.svc/gomod/github.com/fogleman/gg/com_github_fogleman_gg-v1.3.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/fogleman/gg/com_github_fogleman_gg-v1.3.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/fogleman/gg/com_github_fogleman_gg-v1.3.0.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_frankban_quicktest",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/frankban/quicktest",
@@ -2615,19 +2680,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/fzipp/gocyclo/com_github_fzipp_gocyclo-v0.6.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/fzipp/gocyclo/com_github_fzipp_gocyclo-v0.6.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/fzipp/gocyclo/com_github_fzipp_gocyclo-v0.6.0.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_gaijinentertainment_go_exhaustruct_v3",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/GaijinEntertainment/go-exhaustruct/v3",
-        sha256 = "05d3f5c0ee05460749ed615d3444c55e9b1e6eb62437951c6e21ec0ad3c62cc1",
-        strip_prefix = "github.com/GaijinEntertainment/go-exhaustruct/v3@v3.3.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/GaijinEntertainment/go-exhaustruct/v3/com_github_gaijinentertainment_go_exhaustruct_v3-v3.3.1.zip",
-            "http://ats.apps.svc/gomod/github.com/GaijinEntertainment/go-exhaustruct/v3/com_github_gaijinentertainment_go_exhaustruct_v3-v3.3.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/GaijinEntertainment/go-exhaustruct/v3/com_github_gaijinentertainment_go_exhaustruct_v3-v3.3.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/GaijinEntertainment/go-exhaustruct/v3/com_github_gaijinentertainment_go_exhaustruct_v3-v3.3.1.zip",
         ],
     )
     go_repository(
@@ -2748,58 +2800,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_go_fonts_dejavu",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/go-fonts/dejavu",
-        sha256 = "c2094ce49cfc24b7b7a041e54d924e311322b73a8e56db28ff179fcd403b4111",
-        strip_prefix = "github.com/go-fonts/dejavu@v0.1.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-fonts/dejavu/com_github_go_fonts_dejavu-v0.1.0.zip",
-            "http://ats.apps.svc/gomod/github.com/go-fonts/dejavu/com_github_go_fonts_dejavu-v0.1.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-fonts/dejavu/com_github_go_fonts_dejavu-v0.1.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-fonts/dejavu/com_github_go_fonts_dejavu-v0.1.0.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_go_fonts_latin_modern",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/go-fonts/latin-modern",
-        sha256 = "037085a80ad108287e772d064d64bb72deb62514de84ef610506bc079f330ec0",
-        strip_prefix = "github.com/go-fonts/latin-modern@v0.2.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-fonts/latin-modern/com_github_go_fonts_latin_modern-v0.2.0.zip",
-            "http://ats.apps.svc/gomod/github.com/go-fonts/latin-modern/com_github_go_fonts_latin_modern-v0.2.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-fonts/latin-modern/com_github_go_fonts_latin_modern-v0.2.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-fonts/latin-modern/com_github_go_fonts_latin_modern-v0.2.0.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_go_fonts_liberation",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/go-fonts/liberation",
-        sha256 = "bd7561251c221fe0fd8cd4c361b062a5796f6f3a1096968b8fecdd61eb82d8fe",
-        strip_prefix = "github.com/go-fonts/liberation@v0.2.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-fonts/liberation/com_github_go_fonts_liberation-v0.2.0.zip",
-            "http://ats.apps.svc/gomod/github.com/go-fonts/liberation/com_github_go_fonts_liberation-v0.2.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-fonts/liberation/com_github_go_fonts_liberation-v0.2.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-fonts/liberation/com_github_go_fonts_liberation-v0.2.0.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_go_fonts_stix",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/go-fonts/stix",
-        sha256 = "51ea5a38b9fda7854af60f280dbd8b40a3e5b5a48eb00d3f8d4e43de3f514ecf",
-        strip_prefix = "github.com/go-fonts/stix@v0.1.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-fonts/stix/com_github_go_fonts_stix-v0.1.0.zip",
-            "http://ats.apps.svc/gomod/github.com/go-fonts/stix/com_github_go_fonts_stix-v0.1.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-fonts/stix/com_github_go_fonts_stix-v0.1.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-fonts/stix/com_github_go_fonts_stix-v0.1.0.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_go_gl_glfw",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-gl/glfw",
@@ -2826,6 +2826,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_go_jose_go_jose_v4",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/go-jose/go-jose/v4",
+        sha256 = "7bb0205c235a4bc2bbca729a08d2d86f31ac0199cfc1c70b2d780f7594366407",
+        strip_prefix = "github.com/go-jose/go-jose/v4@v4.0.5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-jose/go-jose/v4/com_github_go_jose_go_jose_v4-v4.0.5.zip",
+            "http://ats.apps.svc/gomod/github.com/go-jose/go-jose/v4/com_github_go_jose_go_jose_v4-v4.0.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/go-jose/go-jose/v4/com_github_go_jose_go_jose_v4-v4.0.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-jose/go-jose/v4/com_github_go_jose_go_jose_v4-v4.0.5.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_go_kit_kit",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-kit/kit",
@@ -2849,19 +2862,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/go-kit/log/com_github_go_kit_log-v0.2.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/go-kit/log/com_github_go_kit_log-v0.2.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-kit/log/com_github_go_kit_log-v0.2.1.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_go_latex_latex",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/go-latex/latex",
-        sha256 = "c58be686b31679ad0a51a5d70e60df92fb4bb50a16727caa58b4a67b33f16509",
-        strip_prefix = "github.com/go-latex/latex@v0.0.0-20210823091927-c0d11ff05a81",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-latex/latex/com_github_go_latex_latex-v0.0.0-20210823091927-c0d11ff05a81.zip",
-            "http://ats.apps.svc/gomod/github.com/go-latex/latex/com_github_go_latex_latex-v0.0.0-20210823091927-c0d11ff05a81.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-latex/latex/com_github_go_latex_latex-v0.0.0-20210823091927-c0d11ff05a81.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-latex/latex/com_github_go_latex_latex-v0.0.0-20210823091927-c0d11ff05a81.zip",
         ],
     )
     go_repository(
@@ -2894,13 +2894,13 @@ def go_deps():
         name = "com_github_go_logr_logr",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/go-logr/logr",
-        sha256 = "27d1c8d411fd8e42dc6202991d70afa630089700f1d002de5454d6c26f93674c",
-        strip_prefix = "github.com/go-logr/logr@v1.4.1",
+        sha256 = "9f8926fda6dee61e68522421963d5804baeb10024aa02b318d9bd50fdcfdd7d1",
+        strip_prefix = "github.com/go-logr/logr@v1.4.2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.1.zip",
-            "http://ats.apps.svc/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.2.zip",
+            "http://ats.apps.svc/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-logr/logr/com_github_go_logr_logr-v1.4.2.zip",
         ],
     )
     go_repository(
@@ -3057,19 +3057,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/go-openapi/validate/com_github_go_openapi_validate-v0.22.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/go-openapi/validate/com_github_go_openapi_validate-v0.22.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-openapi/validate/com_github_go_openapi_validate-v0.22.1.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_go_pdf_fpdf",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/go-pdf/fpdf",
-        sha256 = "03a6909fc346ac972b008b77585ac3954d76b416c33b4b64dc22c5f35f0e1edb",
-        strip_prefix = "github.com/go-pdf/fpdf@v0.6.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/go-pdf/fpdf/com_github_go_pdf_fpdf-v0.6.0.zip",
-            "http://ats.apps.svc/gomod/github.com/go-pdf/fpdf/com_github_go_pdf_fpdf-v0.6.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/go-pdf/fpdf/com_github_go_pdf_fpdf-v0.6.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/go-pdf/fpdf/com_github_go_pdf_fpdf-v0.6.0.zip",
         ],
     )
     go_repository(
@@ -3310,26 +3297,26 @@ def go_deps():
         name = "com_github_goccy_go_json",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/goccy/go-json",
-        sha256 = "ed9043ee01cc46557c74bcecc625db37ffe3a5c7af219f390a287f44a40c2520",
-        strip_prefix = "github.com/goccy/go-json@v0.10.2",
+        sha256 = "d89fa5215f5c2e0077b67dbc6e043db1b6427e93bdf5faacb7c536afca95e454",
+        strip_prefix = "github.com/goccy/go-json@v0.10.4",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.2.zip",
-            "http://ats.apps.svc/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.4.zip",
+            "http://ats.apps.svc/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/goccy/go-json/com_github_goccy_go_json-v0.10.4.zip",
         ],
     )
     go_repository(
-        name = "com_github_goccy_go_reflect",
+        name = "com_github_goccy_go_yaml",
         build_file_proto_mode = "disable_global",
-        importpath = "github.com/goccy/go-reflect",
-        sha256 = "d5d5b55be60c40d1ecfbd13a7e89c3fb5363e8b7cd07e2827f7e987944c41458",
-        strip_prefix = "github.com/goccy/go-reflect@v1.2.0",
+        importpath = "github.com/goccy/go-yaml",
+        sha256 = "d696eddbab891896b3a70334d04cfb0208cdc0e18544bebdf95926e1f64df310",
+        strip_prefix = "github.com/goccy/go-yaml@v1.17.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/goccy/go-reflect/com_github_goccy_go_reflect-v1.2.0.zip",
-            "http://ats.apps.svc/gomod/github.com/goccy/go-reflect/com_github_goccy_go_reflect-v1.2.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/goccy/go-reflect/com_github_goccy_go_reflect-v1.2.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/goccy/go-reflect/com_github_goccy_go_reflect-v1.2.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/goccy/go-yaml/com_github_goccy_go_yaml-v1.17.1.zip",
+            "http://ats.apps.svc/gomod/github.com/goccy/go-yaml/com_github_goccy_go_yaml-v1.17.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/goccy/go-yaml/com_github_goccy_go_yaml-v1.17.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/goccy/go-yaml/com_github_goccy_go_yaml-v1.17.1.zip",
         ],
     )
     go_repository(
@@ -3408,19 +3395,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/goji/httpauth/com_github_goji_httpauth-v0.0.0-20160601135302-2da839ab0f4d.zip",
             "https://cache.hawkingrei.com/gomod/github.com/goji/httpauth/com_github_goji_httpauth-v0.0.0-20160601135302-2da839ab0f4d.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/goji/httpauth/com_github_goji_httpauth-v0.0.0-20160601135302-2da839ab0f4d.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_golang_freetype",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/golang/freetype",
-        sha256 = "cdcb9e6a14933dcbf167b44dcd5083fc6a2e52c4fae8fb79747c691efeb7d84e",
-        strip_prefix = "github.com/golang/freetype@v0.0.0-20170609003504-e2365dfdc4a0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golang/freetype/com_github_golang_freetype-v0.0.0-20170609003504-e2365dfdc4a0.zip",
-            "http://ats.apps.svc/gomod/github.com/golang/freetype/com_github_golang_freetype-v0.0.0-20170609003504-e2365dfdc4a0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golang/freetype/com_github_golang_freetype-v0.0.0-20170609003504-e2365dfdc4a0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golang/freetype/com_github_golang_freetype-v0.0.0-20170609003504-e2365dfdc4a0.zip",
         ],
     )
     go_repository(
@@ -3570,13 +3544,13 @@ def go_deps():
         name = "com_github_golangci_golangci_lint_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/golangci/golangci-lint/v2",
-        sha256 = "0e088d503fad994e1dd8883e6e3ea3dc2c8132ba326e7f1eb0fced5cf0effd0d",
-        strip_prefix = "github.com/golangci/golangci-lint/v2@v2.3.0",
+        sha256 = "89bdc80bd2c577a08749210d07c0867210c0bffa29352c7d63411de22468f5c3",
+        strip_prefix = "github.com/golangci/golangci-lint/v2@v2.4.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.3.0.zip",
-            "http://ats.apps.svc/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.3.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.3.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.3.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.4.0.zip",
+            "http://ats.apps.svc/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.4.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.4.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/golangci-lint/v2/com_github_golangci_golangci_lint_v2-v2.4.0.zip",
         ],
     )
     go_repository(
@@ -3616,19 +3590,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/golangci/misspell/com_github_golangci_misspell-v0.7.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/golangci/misspell/com_github_golangci_misspell-v0.7.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/misspell/com_github_golangci_misspell-v0.7.0.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_golangci_modinfo",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/golangci/modinfo",
-        sha256 = "6aea19260e77204bc573b4e9f362e616e27a8caef4afbf7e22ada544037009aa",
-        strip_prefix = "github.com/golangci/modinfo@v0.3.3",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/golangci/modinfo/com_github_golangci_modinfo-v0.3.3.zip",
-            "http://ats.apps.svc/gomod/github.com/golangci/modinfo/com_github_golangci_modinfo-v0.3.3.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/golangci/modinfo/com_github_golangci_modinfo-v0.3.3.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/golangci/modinfo/com_github_golangci_modinfo-v0.3.3.zip",
         ],
     )
     go_repository(
@@ -3713,13 +3674,13 @@ def go_deps():
         name = "com_github_google_flatbuffers",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/google/flatbuffers",
-        sha256 = "0c0a4aab1c6029141d655bc7fdc07e22dd06f3f64ebbf7a2250b870ef7aac7ee",
-        strip_prefix = "github.com/google/flatbuffers@v2.0.8+incompatible",
+        sha256 = "d067355c553528de4ca6e75a64013ee7336a48c2e98d9eb2d4c7803cc6051dac",
+        strip_prefix = "github.com/google/flatbuffers@v24.3.25+incompatible",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v2.0.8+incompatible.zip",
-            "http://ats.apps.svc/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v2.0.8+incompatible.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v2.0.8+incompatible.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v2.0.8+incompatible.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v24.3.25+incompatible.zip",
+            "http://ats.apps.svc/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v24.3.25+incompatible.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v24.3.25+incompatible.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/flatbuffers/com_github_google_flatbuffers-v24.3.25+incompatible.zip",
         ],
     )
     go_repository(
@@ -3843,13 +3804,13 @@ def go_deps():
         name = "com_github_google_pprof",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/google/pprof",
-        sha256 = "06752f6d2f5626adaa18120fb1ae2f96f6501f05c23022b64fc1a79f832b3c4d",
-        strip_prefix = "github.com/google/pprof@v0.0.0-20241001023024-f4c0cfd0cf1d",
+        sha256 = "bd94fcf28fc36463316c4af35d93052f4862978d03ed545978d6b3f5037ed3a0",
+        strip_prefix = "github.com/google/pprof@v0.0.0-20250903194437-c28834ac2320",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20241001023024-f4c0cfd0cf1d.zip",
-            "http://ats.apps.svc/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20241001023024-f4c0cfd0cf1d.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20241001023024-f4c0cfd0cf1d.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20241001023024-f4c0cfd0cf1d.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20250903194437-c28834ac2320.zip",
+            "http://ats.apps.svc/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20250903194437-c28834ac2320.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20250903194437-c28834ac2320.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/pprof/com_github_google_pprof-v0.0.0-20250903194437-c28834ac2320.zip",
         ],
     )
     go_repository(
@@ -3908,13 +3869,13 @@ def go_deps():
         name = "com_github_google_uuid",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/google/uuid",
-        sha256 = "d0f02f377217f42702e259684e06441edbf5140dddcc34ba9bea56038b38a6ed",
-        strip_prefix = "github.com/google/uuid@v1.6.0",
+        sha256 = "d955c9e160041902f710b737f6ebd3ac562541c56821c299327f57abff831b10",
+        strip_prefix = "github.com/google/uuid@v1.6.1-0.20241114170450-2d3c2a9cc518",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
-            "http://ats.apps.svc/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
+            "http://ats.apps.svc/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/google/uuid/com_github_google_uuid-v1.6.1-0.20241114170450-2d3c2a9cc518.zip",
         ],
     )
     go_repository(
@@ -3941,6 +3902,32 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/googleapis/gax-go/v2/com_github_googleapis_gax_go_v2-v2.12.3.zip",
             "https://cache.hawkingrei.com/gomod/github.com/googleapis/gax-go/v2/com_github_googleapis_gax_go_v2-v2.12.3.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/googleapis/gax-go/v2/com_github_googleapis_gax_go_v2-v2.12.3.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp",
+        sha256 = "fb5db1323479c768591ac41f364b55ec9c40696d53708e97bd7eba70a8ddd304",
+        strip_prefix = "github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp@v1.27.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp/com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp-v1.27.0.zip",
+            "http://ats.apps.svc/gomod/github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp/com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp-v1.27.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp/com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp-v1.27.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp/com_github_googlecloudplatform_opentelemetry_operations_go_detectors_gcp-v1.27.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_gookit_color",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/gookit/color",
+        sha256 = "c5295c810538f77bebb2cf9e34cdfa92adfdec75486234358956ebe877e685f9",
+        strip_prefix = "github.com/gookit/color@v1.5.4",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/gookit/color/com_github_gookit_color-v1.5.4.zip",
+            "http://ats.apps.svc/gomod/github.com/gookit/color/com_github_gookit_color-v1.5.4.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/gookit/color/com_github_gookit_color-v1.5.4.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/gookit/color/com_github_gookit_color-v1.5.4.zip",
         ],
     )
     go_repository(
@@ -4209,6 +4196,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_hamba_avro_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/hamba/avro/v2",
+        sha256 = "43e5bb66c63e312431112307c7e40dd4ae772819169a48dfacb725fd737d46d2",
+        strip_prefix = "github.com/hamba/avro/v2@v2.27.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/hamba/avro/v2/com_github_hamba_avro_v2-v2.27.0.zip",
+            "http://ats.apps.svc/gomod/github.com/hamba/avro/v2/com_github_hamba_avro_v2-v2.27.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/hamba/avro/v2/com_github_hamba_avro_v2-v2.27.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/hamba/avro/v2/com_github_hamba_avro_v2-v2.27.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_hashicorp_consul_api",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/hashicorp/consul/api",
@@ -4339,29 +4339,16 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_hashicorp_go_uuid",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/hashicorp/go-uuid",
-        sha256 = "4b8a152aba5b6db8093f240f11f6999c4401c01e13458228ee023c0682cc5c1d",
-        strip_prefix = "github.com/hashicorp/go-uuid@v0.0.0-20180228145832-27454136f036",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/hashicorp/go-uuid/com_github_hashicorp_go_uuid-v0.0.0-20180228145832-27454136f036.zip",
-            "http://ats.apps.svc/gomod/github.com/hashicorp/go-uuid/com_github_hashicorp_go_uuid-v0.0.0-20180228145832-27454136f036.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/hashicorp/go-uuid/com_github_hashicorp_go_uuid-v0.0.0-20180228145832-27454136f036.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/hashicorp/go-uuid/com_github_hashicorp_go_uuid-v0.0.0-20180228145832-27454136f036.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_hashicorp_go_version",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/hashicorp/go-version",
-        sha256 = "341bd10080b7f7e0754bab07afb09f9a37e997b5fdb1a528266972a890309053",
-        strip_prefix = "github.com/hashicorp/go-version@v1.7.0",
+        sha256 = "1edce7bf2cd763e2a02ebd44db8c806c50b38570e41c994f2e756bba19caf84c",
+        strip_prefix = "github.com/hashicorp/go-version@v1.8.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.7.0.zip",
-            "http://ats.apps.svc/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.7.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.7.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.7.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.8.0.zip",
+            "http://ats.apps.svc/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.8.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.8.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/hashicorp/go-version/com_github_hashicorp_go_version-v1.8.0.zip",
         ],
     )
     go_repository(
@@ -4498,13 +4485,13 @@ def go_deps():
         name = "com_github_ianlancetaylor_demangle",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ianlancetaylor/demangle",
-        sha256 = "fce8f9022445dfed0afd86e09efd896fc48d491f6059b32a71fe887de5d437a6",
-        strip_prefix = "github.com/ianlancetaylor/demangle@v0.0.0-20240312041847-bd984b5ce465",
+        sha256 = "6467e5e87aa4f695058399b2fa030b6cdd6d69568d640fae0c6050b4e0f9dae3",
+        strip_prefix = "github.com/ianlancetaylor/demangle@v0.0.0-20250417193237-f615e6bd150b",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20240312041847-bd984b5ce465.zip",
-            "http://ats.apps.svc/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20240312041847-bd984b5ce465.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20240312041847-bd984b5ce465.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20240312041847-bd984b5ce465.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20250417193237-f615e6bd150b.zip",
+            "http://ats.apps.svc/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20250417193237-f615e6bd150b.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20250417193237-f615e6bd150b.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ianlancetaylor/demangle/com_github_ianlancetaylor_demangle-v0.0.0-20250417193237-f615e6bd150b.zip",
         ],
     )
     go_repository(
@@ -4570,19 +4557,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/iris-contrib/schema/com_github_iris_contrib_schema-v0.0.6.zip",
             "https://cache.hawkingrei.com/gomod/github.com/iris-contrib/schema/com_github_iris_contrib_schema-v0.0.6.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/iris-contrib/schema/com_github_iris_contrib_schema-v0.0.6.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_jcmturner_gofork",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/jcmturner/gofork",
-        sha256 = "dd93724b2bb93705db6f5c8a86f48802cbb4a831883cb82c4ce5b50f5d7fc854",
-        strip_prefix = "github.com/jcmturner/gofork@v0.0.0-20180107083740-2aebee971930",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jcmturner/gofork/com_github_jcmturner_gofork-v0.0.0-20180107083740-2aebee971930.zip",
-            "http://ats.apps.svc/gomod/github.com/jcmturner/gofork/com_github_jcmturner_gofork-v0.0.0-20180107083740-2aebee971930.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/jcmturner/gofork/com_github_jcmturner_gofork-v0.0.0-20180107083740-2aebee971930.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jcmturner/gofork/com_github_jcmturner_gofork-v0.0.0-20180107083740-2aebee971930.zip",
         ],
     )
     go_repository(
@@ -4768,19 +4742,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_johncgriffin_overflow",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/JohnCGriffin/overflow",
-        sha256 = "8ad4da840214861386d243127290666cc54eb914d1f4a8856523481876af2a09",
-        strip_prefix = "github.com/JohnCGriffin/overflow@v0.0.0-20211019200055-46fa312c352c",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/JohnCGriffin/overflow/com_github_johncgriffin_overflow-v0.0.0-20211019200055-46fa312c352c.zip",
-            "http://ats.apps.svc/gomod/github.com/JohnCGriffin/overflow/com_github_johncgriffin_overflow-v0.0.0-20211019200055-46fa312c352c.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/JohnCGriffin/overflow/com_github_johncgriffin_overflow-v0.0.0-20211019200055-46fa312c352c.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/JohnCGriffin/overflow/com_github_johncgriffin_overflow-v0.0.0-20211019200055-46fa312c352c.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_joho_sqltocsv",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/joho/sqltocsv",
@@ -4911,19 +4872,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_jung_kurt_gofpdf",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/jung-kurt/gofpdf",
-        sha256 = "f0fa70ade137185bbff2f016831a2a456eaadc8d14bc7bf24f0229211820c078",
-        strip_prefix = "github.com/jung-kurt/gofpdf@v1.0.3-0.20190309125859-24315acbbda5",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/jung-kurt/gofpdf/com_github_jung_kurt_gofpdf-v1.0.3-0.20190309125859-24315acbbda5.zip",
-            "http://ats.apps.svc/gomod/github.com/jung-kurt/gofpdf/com_github_jung_kurt_gofpdf-v1.0.3-0.20190309125859-24315acbbda5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/jung-kurt/gofpdf/com_github_jung_kurt_gofpdf-v1.0.3-0.20190309125859-24315acbbda5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/jung-kurt/gofpdf/com_github_jung_kurt_gofpdf-v1.0.3-0.20190309125859-24315acbbda5.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_karamaru_alpha_copyloopvar",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/karamaru-alpha/copyloopvar",
@@ -5012,19 +4960,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/kataras/tunnel/com_github_kataras_tunnel-v0.0.4.zip",
             "https://cache.hawkingrei.com/gomod/github.com/kataras/tunnel/com_github_kataras_tunnel-v0.0.4.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/kataras/tunnel/com_github_kataras_tunnel-v0.0.4.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_kballard_go_shellquote",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/kballard/go-shellquote",
-        sha256 = "ae4cb7b097dc4eb0c248dff00ed3bbf0f36984c4162ad1d615266084e58bd6cc",
-        strip_prefix = "github.com/kballard/go-shellquote@v0.0.0-20180428030007-95032a82bc51",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/kballard/go-shellquote/com_github_kballard_go_shellquote-v0.0.0-20180428030007-95032a82bc51.zip",
-            "http://ats.apps.svc/gomod/github.com/kballard/go-shellquote/com_github_kballard_go_shellquote-v0.0.0-20180428030007-95032a82bc51.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/kballard/go-shellquote/com_github_kballard_go_shellquote-v0.0.0-20180428030007-95032a82bc51.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/kballard/go-shellquote/com_github_kballard_go_shellquote-v0.0.0-20180428030007-95032a82bc51.zip",
         ],
     )
     go_repository(
@@ -5126,13 +5061,13 @@ def go_deps():
         name = "com_github_klauspost_cpuid_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/klauspost/cpuid/v2",
-        sha256 = "415f9c5ed79ee9b123cf13923a9ab86a34d1f7d417c02b2e00db0d8e34fda037",
-        strip_prefix = "github.com/klauspost/cpuid/v2@v2.2.7",
+        sha256 = "59cd12e9094495dda4ce5f344bcbaa4238dfa7bb0eba66f514ec0bacd5ce99e5",
+        strip_prefix = "github.com/klauspost/cpuid/v2@v2.2.9",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.7.zip",
-            "http://ats.apps.svc/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.7.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.7.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.7.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.9.zip",
+            "http://ats.apps.svc/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.9.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.9.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/klauspost/cpuid/v2/com_github_klauspost_cpuid_v2-v2.2.9.zip",
         ],
     )
     go_repository(
@@ -5295,13 +5230,13 @@ def go_deps():
         name = "com_github_ldez_exptostd",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ldez/exptostd",
-        sha256 = "3c18b8ab3c2b8487153bd21d8b541f065750414bd4d681c3ed65fd2dc1785dae",
-        strip_prefix = "github.com/ldez/exptostd@v0.4.4",
+        sha256 = "f5f8d529610e799731b07e0639c8340262d088286cbd882025acba571265139a",
+        strip_prefix = "github.com/ldez/exptostd@v0.4.5",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
-            "http://ats.apps.svc/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
+            "http://ats.apps.svc/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ldez/exptostd/com_github_ldez_exptostd-v0.4.5.zip",
         ],
     )
     go_repository(
@@ -5321,13 +5256,13 @@ def go_deps():
         name = "com_github_ldez_grignotin",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ldez/grignotin",
-        sha256 = "b3cc33179be60f40b81f5032d61643474ebb12bdf10b4ac052e293e01ca8744e",
-        strip_prefix = "github.com/ldez/grignotin@v0.9.0",
+        sha256 = "847edc20d3cd3aa9f8e1e40a3dd5cb95ef919e41508a5bc8afbdd81bb1196090",
+        strip_prefix = "github.com/ldez/grignotin@v0.10.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.9.0.zip",
-            "http://ats.apps.svc/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.9.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.9.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.9.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.10.0.zip",
+            "http://ats.apps.svc/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.10.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.10.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ldez/grignotin/com_github_ldez_grignotin-v0.10.0.zip",
         ],
     )
     go_repository(
@@ -5604,6 +5539,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_marvinjwendt_testza",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/MarvinJWendt/testza",
+        sha256 = "fd9b3bca02ff1677bf933a2dafa50b4a9eb5118fe793de704af6e1b4b57162e1",
+        strip_prefix = "github.com/MarvinJWendt/testza@v0.4.2",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/MarvinJWendt/testza/com_github_marvinjwendt_testza-v0.4.2.zip",
+            "http://ats.apps.svc/gomod/github.com/MarvinJWendt/testza/com_github_marvinjwendt_testza-v0.4.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/MarvinJWendt/testza/com_github_marvinjwendt_testza-v0.4.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/MarvinJWendt/testza/com_github_marvinjwendt_testza-v0.4.2.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_masterminds_goutils",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/Masterminds/goutils",
@@ -5708,19 +5656,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_mattn_go_sqlite3",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/mattn/go-sqlite3",
-        sha256 = "0114d2df439ddeb03eef49a4bf2cc8fb69665c0d76494463cafa7d189a16e0f9",
-        strip_prefix = "github.com/mattn/go-sqlite3@v1.14.15",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/mattn/go-sqlite3/com_github_mattn_go_sqlite3-v1.14.15.zip",
-            "http://ats.apps.svc/gomod/github.com/mattn/go-sqlite3/com_github_mattn_go_sqlite3-v1.14.15.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/mattn/go-sqlite3/com_github_mattn_go_sqlite3-v1.14.15.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mattn/go-sqlite3/com_github_mattn_go_sqlite3-v1.14.15.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_matttproud_golang_protobuf_extensions",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/matttproud/golang_protobuf_extensions",
@@ -5750,13 +5685,13 @@ def go_deps():
         name = "com_github_mgechev_revive",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/mgechev/revive",
-        sha256 = "fdd3cb85a75d3278df0bfaad99067b75e3984825473f0af76dcd36f3f922ca77",
-        strip_prefix = "github.com/mgechev/revive@v1.11.0",
+        sha256 = "5aceb44572e349fc887ed8364036d7e516a795f1543868c539fd8717931074fc",
+        strip_prefix = "github.com/mgechev/revive@v1.13.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
-            "http://ats.apps.svc/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.11.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.13.0.zip",
+            "http://ats.apps.svc/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.13.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.13.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/mgechev/revive/com_github_mgechev_revive-v1.13.0.zip",
         ],
     )
     go_repository(
@@ -6043,6 +5978,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/nbutton23/zxcvbn-go/com_github_nbutton23_zxcvbn_go-v0.0.0-20210217022336-fa2cb2858354.zip",
             "https://cache.hawkingrei.com/gomod/github.com/nbutton23/zxcvbn-go/com_github_nbutton23_zxcvbn_go-v0.0.0-20210217022336-fa2cb2858354.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/nbutton23/zxcvbn-go/com_github_nbutton23_zxcvbn_go-v0.0.0-20210217022336-fa2cb2858354.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_ncruces_go_strftime",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/ncruces/go-strftime",
+        sha256 = "3c46ee9c9db8fde8ce93c768a8701fa01f630bab0cfff338481cde768fe561ac",
+        strip_prefix = "github.com/ncruces/go-strftime@v0.1.9",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ncruces/go-strftime/com_github_ncruces_go_strftime-v0.1.9.zip",
+            "http://ats.apps.svc/gomod/github.com/ncruces/go-strftime/com_github_ncruces_go_strftime-v0.1.9.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/ncruces/go-strftime/com_github_ncruces_go_strftime-v0.1.9.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ncruces/go-strftime/com_github_ncruces_go_strftime-v0.1.9.zip",
         ],
     )
     go_repository(
@@ -6384,19 +6332,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_pborman_getopt",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/pborman/getopt",
-        sha256 = "2c7e5c93709a3b3302d63f8239679d5b0c33f1dc0e1a18ce8167fb97df09f90a",
-        strip_prefix = "github.com/pborman/getopt@v0.0.0-20180729010549-6fdd0a2c7117",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pborman/getopt/com_github_pborman_getopt-v0.0.0-20180729010549-6fdd0a2c7117.zip",
-            "http://ats.apps.svc/gomod/github.com/pborman/getopt/com_github_pborman_getopt-v0.0.0-20180729010549-6fdd0a2c7117.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pborman/getopt/com_github_pborman_getopt-v0.0.0-20180729010549-6fdd0a2c7117.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pborman/getopt/com_github_pborman_getopt-v0.0.0-20180729010549-6fdd0a2c7117.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_pelletier_go_toml",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pelletier/go-toml",
@@ -6449,42 +6384,16 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_phpdave11_gofpdf",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/phpdave11/gofpdf",
-        sha256 = "4db05258f281b40d8a17392fd71648779ea758a9aa506a8d1346ded737ede43f",
-        strip_prefix = "github.com/phpdave11/gofpdf@v1.4.2",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/phpdave11/gofpdf/com_github_phpdave11_gofpdf-v1.4.2.zip",
-            "http://ats.apps.svc/gomod/github.com/phpdave11/gofpdf/com_github_phpdave11_gofpdf-v1.4.2.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/phpdave11/gofpdf/com_github_phpdave11_gofpdf-v1.4.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/phpdave11/gofpdf/com_github_phpdave11_gofpdf-v1.4.2.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_phpdave11_gofpdi",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/phpdave11/gofpdi",
-        sha256 = "09b728136cf290f4ee87aa47b60f2f9df2b3f4f64119ff10f12319bc3438b58d",
-        strip_prefix = "github.com/phpdave11/gofpdi@v1.0.13",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/phpdave11/gofpdi/com_github_phpdave11_gofpdi-v1.0.13.zip",
-            "http://ats.apps.svc/gomod/github.com/phpdave11/gofpdi/com_github_phpdave11_gofpdi-v1.0.13.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/phpdave11/gofpdi/com_github_phpdave11_gofpdi-v1.0.13.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/phpdave11/gofpdi/com_github_phpdave11_gofpdi-v1.0.13.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_pierrec_lz4_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pierrec/lz4/v4",
-        sha256 = "5dadfc447d593c4a8a75520b9f048142d725e4d966d48883ece2380c16081900",
-        strip_prefix = "github.com/pierrec/lz4/v4@v4.1.15",
+        sha256 = "bd2e8ef13800ca42205b0d4085a927a6d012b82cfa831769be4830036e953bec",
+        strip_prefix = "github.com/pierrec/lz4/v4@v4.1.21",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.15.zip",
-            "http://ats.apps.svc/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.15.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.15.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.15.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.21.zip",
+            "http://ats.apps.svc/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.21.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.21.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pierrec/lz4/v4/com_github_pierrec_lz4_v4-v4.1.21.zip",
         ],
     )
     go_repository(
@@ -6556,13 +6465,13 @@ def go_deps():
         name = "com_github_pingcap_kvproto",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/kvproto",
-        sha256 = "944c84a0347ba1d154c473941a8820324226757f79be328acc5eb02c78d804c1",
-        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20251023055424-e9d10f5dcd23",
+        sha256 = "2b37487706191ef32481ce9d60a5f7d959e2dd68a8879146761d80f568f348dd",
+        strip_prefix = "github.com/pingcap/kvproto@v0.0.0-20260120063856-d09230288811",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251023055424-e9d10f5dcd23.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251023055424-e9d10f5dcd23.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251023055424-e9d10f5dcd23.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20251023055424-e9d10f5dcd23.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260120063856-d09230288811.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260120063856-d09230288811.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260120063856-d09230288811.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/kvproto/com_github_pingcap_kvproto-v0.0.0-20260120063856-d09230288811.zip",
         ],
     )
     go_repository(
@@ -6582,13 +6491,13 @@ def go_deps():
         name = "com_github_pingcap_metering_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/metering_sdk",
-        sha256 = "699b1484bca7e1f1315a05863f0ef6010705487728aad843c1fef01e573871d3",
-        strip_prefix = "github.com/pingcap/metering_sdk@v0.0.0-20250918015914-468cd6feb1dc",
+        sha256 = "1684d393425f4b1307b7f5f9d12b902c9c4eebe8630c628d725faac8e3e5ea38",
+        strip_prefix = "github.com/pingcap/metering_sdk@v0.0.0-20251110022152-dac449ac5389",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250918015914-468cd6feb1dc.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250918015914-468cd6feb1dc.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250918015914-468cd6feb1dc.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20250918015914-468cd6feb1dc.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20251110022152-dac449ac5389.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20251110022152-dac449ac5389.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20251110022152-dac449ac5389.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/metering_sdk/com_github_pingcap_metering_sdk-v0.0.0-20251110022152-dac449ac5389.zip",
         ],
     )
     go_repository(
@@ -6608,13 +6517,13 @@ def go_deps():
         name = "com_github_pingcap_tipb",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/pingcap/tipb",
-        sha256 = "ef0cd4e10898c3f6f871bc5bbfe8c3db1cfda6d59fd10772f54eb682796c98ad",
-        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20250928030846-9fd33ded6f2c",
+        sha256 = "ca742c2e3af84872c0543f058069082b5b25a819373b0e3169b72594ab5cc5f6",
+        strip_prefix = "github.com/pingcap/tipb@v0.0.0-20251230094608-1374320b4bd8",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250928030846-9fd33ded6f2c.zip",
-            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250928030846-9fd33ded6f2c.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250928030846-9fd33ded6f2c.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20250928030846-9fd33ded6f2c.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20251230094608-1374320b4bd8.zip",
+            "http://ats.apps.svc/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20251230094608-1374320b4bd8.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20251230094608-1374320b4bd8.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pingcap/tipb/com_github_pingcap_tipb-v0.0.0-20251230094608-1374320b4bd8.zip",
         ],
     )
     go_repository(
@@ -6680,6 +6589,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/pkg/xattr/com_github_pkg_xattr-v0.4.9.zip",
             "https://cache.hawkingrei.com/gomod/github.com/pkg/xattr/com_github_pkg_xattr-v0.4.9.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pkg/xattr/com_github_pkg_xattr-v0.4.9.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_planetscale_vtprotobuf",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/planetscale/vtprotobuf",
+        sha256 = "6fdbac53c6ace58d732be8ec29c1aae928639eb12960cc4c52a9f7a25395ca05",
+        strip_prefix = "github.com/planetscale/vtprotobuf@v0.6.1-0.20240319094008-0393e58bdf10",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
+            "http://ats.apps.svc/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/planetscale/vtprotobuf/com_github_planetscale_vtprotobuf-v0.6.1-0.20240319094008-0393e58bdf10.zip",
         ],
     )
     go_repository(
@@ -6751,13 +6673,13 @@ def go_deps():
         name = "com_github_prometheus_client_golang",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/client_golang",
-        sha256 = "ab84ebfcbae87a0cbecc01b537f73eec6047d4f016c29719feb922470f086aa2",
-        strip_prefix = "github.com/prometheus/client_golang@v1.22.0",
+        sha256 = "f104d43e35b9217845792ec8eabbde59e31a11aaba64c47408cff8bafde2aa9e",
+        strip_prefix = "github.com/prometheus/client_golang@v1.23.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.22.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/client_golang/com_github_prometheus_client_golang-v1.23.0.zip",
         ],
     )
     go_repository(
@@ -6777,13 +6699,13 @@ def go_deps():
         name = "com_github_prometheus_common",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/common",
-        sha256 = "8f7ceb4d12a165e6b4533dc994937b936717daa3c2b231a499f8189372cfc843",
-        strip_prefix = "github.com/prometheus/common@v0.63.0",
+        sha256 = "c97b1ab4d2c723923b367dbe48c283eafc0b94eb14faf8c98d81746b015242a9",
+        strip_prefix = "github.com/prometheus/common@v0.65.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.63.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/common/com_github_prometheus_common-v0.65.0.zip",
         ],
     )
     go_repository(
@@ -6829,13 +6751,13 @@ def go_deps():
         name = "com_github_prometheus_procfs",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/prometheus/procfs",
-        sha256 = "e4b74815566cbf5aa372d23e1de32f16ac5c3c4c80bc94a31fdee60a1de6074a",
-        strip_prefix = "github.com/prometheus/procfs@v0.16.1",
+        sha256 = "354e627c196c228369c9e97bca5ff59d8ce2b338756de249d8d343226424c76f",
+        strip_prefix = "github.com/prometheus/procfs@v0.19.2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.16.1.zip",
-            "http://ats.apps.svc/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.16.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.16.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.16.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
+            "http://ats.apps.svc/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/procfs/com_github_prometheus_procfs-v0.19.2.zip",
         ],
     )
     go_repository(
@@ -6849,6 +6771,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.50.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.50.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/prometheus/prometheus/com_github_prometheus_prometheus-v0.50.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_pterm_pterm",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/pterm/pterm",
+        sha256 = "846d01170c0383aceaf576d9ed864b6c27998a0e2ba5e09d046e56b921bb735d",
+        strip_prefix = "github.com/pterm/pterm@v0.12.40",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/pterm/pterm/com_github_pterm_pterm-v0.12.40.zip",
+            "http://ats.apps.svc/gomod/github.com/pterm/pterm/com_github_pterm_pterm-v0.12.40.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/pterm/pterm/com_github_pterm_pterm-v0.12.40.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/pterm/pterm/com_github_pterm_pterm-v0.12.40.zip",
         ],
     )
     go_repository(
@@ -7047,19 +6982,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_ruudk_golang_pdf417",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/ruudk/golang-pdf417",
-        sha256 = "f0006c0f60789da76c1b3fef73bb63f5581744fbe3ab5973ec718b40c6822f69",
-        strip_prefix = "github.com/ruudk/golang-pdf417@v0.0.0-20201230142125-a7e3863a1245",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/ruudk/golang-pdf417/com_github_ruudk_golang_pdf417-v0.0.0-20201230142125-a7e3863a1245.zip",
-            "http://ats.apps.svc/gomod/github.com/ruudk/golang-pdf417/com_github_ruudk_golang_pdf417-v0.0.0-20201230142125-a7e3863a1245.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/ruudk/golang-pdf417/com_github_ruudk_golang_pdf417-v0.0.0-20201230142125-a7e3863a1245.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/ruudk/golang-pdf417/com_github_ruudk_golang_pdf417-v0.0.0-20201230142125-a7e3863a1245.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_ryancurrah_gomodguard",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/ryancurrah/gomodguard",
@@ -7128,13 +7050,13 @@ def go_deps():
         name = "com_github_sasha_s_go_deadlock",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sasha-s/go-deadlock",
-        sha256 = "b927f67dd9a6dc183bac7249c019775e689aee67dc52bfa53354137139d722a1",
-        strip_prefix = "github.com/sasha-s/go-deadlock@v0.3.5",
+        sha256 = "3fc61a5bf78d5d069069dc3d531dfff4ac90406bdf28943d11cb5a3faaf77fc8",
+        strip_prefix = "github.com/sasha-s/go-deadlock@v0.3.6",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "http://ats.apps.svc/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
+            "http://ats.apps.svc/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sasha-s/go-deadlock/com_github_sasha_s_go_deadlock-v0.3.6.zip",
         ],
     )
     go_repository(
@@ -7193,13 +7115,13 @@ def go_deps():
         name = "com_github_securego_gosec_v2",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/securego/gosec/v2",
-        sha256 = "51a3313653b0795a2f708555d947308368e90daec0fa743f74960f75727a7958",
-        strip_prefix = "github.com/securego/gosec/v2@v2.22.6",
+        sha256 = "bfdeeb0b146eb47361346aedd2f9f802afccecea815e0e7d8aa95cba727ea83a",
+        strip_prefix = "github.com/securego/gosec/v2@v2.22.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.6.zip",
-            "http://ats.apps.svc/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.6.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.6.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.7.zip",
+            "http://ats.apps.svc/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/securego/gosec/v2/com_github_securego_gosec_v2-v2.22.7.zip",
         ],
     )
     go_repository(
@@ -7271,39 +7193,39 @@ def go_deps():
         name = "com_github_shirou_gopsutil_v4",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shirou/gopsutil/v4",
-        sha256 = "a613e729daf8af002067ab02a6159aa53c00f659919e71e28fec78f373cad3c0",
-        strip_prefix = "github.com/shirou/gopsutil/v4@v4.25.6",
+        sha256 = "43bb083da884b5cea6de057edc0beef92abe47063c2146f7d3b0c74c25ba8796",
+        strip_prefix = "github.com/shirou/gopsutil/v4@v4.25.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.6.zip",
-            "http://ats.apps.svc/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.6.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.6.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.7.zip",
+            "http://ats.apps.svc/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shirou/gopsutil/v4/com_github_shirou_gopsutil_v4-v4.25.7.zip",
         ],
     )
     go_repository(
         name = "com_github_shoenig_go_m1cpu",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shoenig/go-m1cpu",
-        sha256 = "0ceab2ec73ef7d1291bd7663dd39203ee7037ee9dccb6fc3381ad819bd8550d1",
-        strip_prefix = "github.com/shoenig/go-m1cpu@v0.1.6",
+        sha256 = "fc7a3ee160a892788fa143559d9157cbee663273484d9a23e4a6093bc35c5b9e",
+        strip_prefix = "github.com/shoenig/go-m1cpu@v0.1.7",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.6.zip",
-            "http://ats.apps.svc/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.6.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.6.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.7.zip",
+            "http://ats.apps.svc/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.7.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.7.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shoenig/go-m1cpu/com_github_shoenig_go_m1cpu-v0.1.7.zip",
         ],
     )
     go_repository(
         name = "com_github_shoenig_test",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/shoenig/test",
-        sha256 = "c2f3912a0f4bb15e24d2c61beb63bd3093aafafb033c1ab71c0918c352df0781",
-        strip_prefix = "github.com/shoenig/test@v0.6.4",
+        sha256 = "943689de6556f7870a400b44735cf6fe98c5dc4fbae1c5dd4c96ca9011171b1f",
+        strip_prefix = "github.com/shoenig/test@v1.7.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shoenig/test/com_github_shoenig_test-v0.6.4.zip",
-            "http://ats.apps.svc/gomod/github.com/shoenig/test/com_github_shoenig_test-v0.6.4.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/shoenig/test/com_github_shoenig_test-v0.6.4.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shoenig/test/com_github_shoenig_test-v0.6.4.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/shoenig/test/com_github_shoenig_test-v1.7.0.zip",
+            "http://ats.apps.svc/gomod/github.com/shoenig/test/com_github_shoenig_test-v1.7.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/shoenig/test/com_github_shoenig_test-v1.7.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/shoenig/test/com_github_shoenig_test-v1.7.0.zip",
         ],
     )
     go_repository(
@@ -7440,13 +7362,13 @@ def go_deps():
         name = "com_github_sonatard_noctx",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/sonatard/noctx",
-        sha256 = "1858eac7c4ed82396bf2fd63ae9862317e9ecf80d2d28bb75f730564199d37dd",
-        strip_prefix = "github.com/sonatard/noctx@v0.3.5",
+        sha256 = "4abeedfef758580d57764d2dcc71134bdb6d36a2cebbddc1008d86fdd0a00d8c",
+        strip_prefix = "github.com/sonatard/noctx@v0.4.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.3.5.zip",
-            "http://ats.apps.svc/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.3.5.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.3.5.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.3.5.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.4.0.zip",
+            "http://ats.apps.svc/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.4.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.4.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/sonatard/noctx/com_github_sonatard_noctx-v0.4.0.zip",
         ],
     )
     go_repository(
@@ -7466,13 +7388,13 @@ def go_deps():
         name = "com_github_spf13_afero",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/spf13/afero",
-        sha256 = "eec827dee35b23df42f757c5f73841d388951ee6cd49cc14d724e48c4e04d140",
-        strip_prefix = "github.com/spf13/afero@v1.14.0",
+        sha256 = "d03a0bbce87eeaa1c23f0c0276707bb2d59f46efee875d7d7f1d570201be6e1f",
+        strip_prefix = "github.com/spf13/afero@v1.15.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
-            "http://ats.apps.svc/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.14.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.15.0.zip",
+            "http://ats.apps.svc/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.15.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.15.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/spf13/afero/com_github_spf13_afero-v1.15.0.zip",
         ],
     )
     go_repository(
@@ -7541,6 +7463,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_spiffe_go_spiffe_v2",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/spiffe/go-spiffe/v2",
+        sha256 = "3b96ee2cef9a550ec779125216a03225fff44d3d702d51b6ef21e2202d2517d6",
+        strip_prefix = "github.com/spiffe/go-spiffe/v2@v2.5.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/spiffe/go-spiffe/v2/com_github_spiffe_go_spiffe_v2-v2.5.0.zip",
+            "http://ats.apps.svc/gomod/github.com/spiffe/go-spiffe/v2/com_github_spiffe_go_spiffe_v2-v2.5.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/spiffe/go-spiffe/v2/com_github_spiffe_go_spiffe_v2-v2.5.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/spiffe/go-spiffe/v2/com_github_spiffe_go_spiffe_v2-v2.5.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_spkg_bom",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/spkg/bom",
@@ -7593,6 +7528,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_stoewer_go_strcase",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/stoewer/go-strcase",
+        sha256 = "42448455706d43dc6b51dc007ceb9726f2b928cb3137c82dc4cfce4e4c565d83",
+        strip_prefix = "github.com/stoewer/go-strcase@v1.3.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/stoewer/go-strcase/com_github_stoewer_go_strcase-v1.3.0.zip",
+            "http://ats.apps.svc/gomod/github.com/stoewer/go-strcase/com_github_stoewer_go_strcase-v1.3.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/stoewer/go-strcase/com_github_stoewer_go_strcase-v1.3.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/stoewer/go-strcase/com_github_stoewer_go_strcase-v1.3.0.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_stretchr_objx",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/stretchr/objx",
@@ -7629,6 +7577,32 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/subosito/gotenv/com_github_subosito_gotenv-v1.4.1.zip",
             "https://cache.hawkingrei.com/gomod/github.com/subosito/gotenv/com_github_subosito_gotenv-v1.4.1.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/subosito/gotenv/com_github_subosito_gotenv-v1.4.1.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_substrait_io_substrait",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/substrait-io/substrait",
+        sha256 = "fbc11abf7516a4650fb3fdc4f1fd2314dfa92260885022f96d7a3f69cf708b13",
+        strip_prefix = "github.com/substrait-io/substrait@v0.69.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/substrait-io/substrait/com_github_substrait_io_substrait-v0.69.0.zip",
+            "http://ats.apps.svc/gomod/github.com/substrait-io/substrait/com_github_substrait_io_substrait-v0.69.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/substrait-io/substrait/com_github_substrait_io_substrait-v0.69.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/substrait-io/substrait/com_github_substrait_io_substrait-v0.69.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_substrait_io_substrait_go_v3",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/substrait-io/substrait-go/v3",
+        sha256 = "e24bdbfea7ee3147f7f21d9cca6ce0fca0faeebec320e3c1d58055a58a953b01",
+        strip_prefix = "github.com/substrait-io/substrait-go/v3@v3.3.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/substrait-io/substrait-go/v3/com_github_substrait_io_substrait_go_v3-v3.3.0.zip",
+            "http://ats.apps.svc/gomod/github.com/substrait-io/substrait-go/v3/com_github_substrait_io_substrait_go_v3-v3.3.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/substrait-io/substrait-go/v3/com_github_substrait_io_substrait_go_v3-v3.3.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/substrait-io/substrait-go/v3/com_github_substrait_io_substrait_go_v3-v3.3.0.zip",
         ],
     )
     go_repository(
@@ -7792,13 +7766,13 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/client-go/v2",
-        sha256 = "fa11c83fe209e61cafe818e89b3085b70ab62ebc1b74fc37a263c178ad3afefe",
-        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20251028065425-b7d4dfd8520e",
+        sha256 = "d36d09d12c583900b4842857ae40aa8d863433dfacadba3150bd7054b138b6a2",
+        strip_prefix = "github.com/tikv/client-go/v2@v2.0.8-0.20260128013340-9610073f20ae",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251028065425-b7d4dfd8520e.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251028065425-b7d4dfd8520e.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251028065425-b7d4dfd8520e.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20251028065425-b7d4dfd8520e.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260128013340-9610073f20ae.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260128013340-9610073f20ae.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260128013340-9610073f20ae.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/client-go/v2/com_github_tikv_client_go_v2-v2.0.8-0.20260128013340-9610073f20ae.zip",
         ],
     )
     go_repository(
@@ -7806,13 +7780,13 @@ def go_deps():
         build_tags = ["nextgen", "intest"],
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tikv/pd/client",
-        sha256 = "f5e502897005e01f77da34f6a687a584bf11bad405a2d6ff94e1fe0225925bd1",
-        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20250703091733-dfd345b89500",
+        sha256 = "7cb1e288a6e08e8c23e793cd5c770d9fd74aeba1823388f2fcd9291917148067",
+        strip_prefix = "github.com/tikv/pd/client@v0.0.0-20260119083144-b273ae0421dd",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20250703091733-dfd345b89500.zip",
-            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20250703091733-dfd345b89500.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20250703091733-dfd345b89500.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20250703091733-dfd345b89500.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260119083144-b273ae0421dd.zip",
+            "http://ats.apps.svc/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260119083144-b273ae0421dd.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260119083144-b273ae0421dd.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tikv/pd/client/com_github_tikv_pd_client-v0.0.0-20260119083144-b273ae0421dd.zip",
         ],
     )
     go_repository(
@@ -7858,26 +7832,26 @@ def go_deps():
         name = "com_github_tklauser_go_sysconf",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tklauser/go-sysconf",
-        sha256 = "95a4a24b6f5fc5af05d94bbab39ff847a220d30c5adb4fb0a09f9c7926a2ffe8",
-        strip_prefix = "github.com/tklauser/go-sysconf@v0.3.12",
+        sha256 = "caa29c6df6c316969c9f2559186bd1ca8f8aceafbef236233e415c1d974f0383",
+        strip_prefix = "github.com/tklauser/go-sysconf@v0.3.15",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.12.zip",
-            "http://ats.apps.svc/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.12.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.12.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.12.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.15.zip",
+            "http://ats.apps.svc/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.15.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.15.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tklauser/go-sysconf/com_github_tklauser_go_sysconf-v0.3.15.zip",
         ],
     )
     go_repository(
         name = "com_github_tklauser_numcpus",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/tklauser/numcpus",
-        sha256 = "267c7f91c5be3f1d091ee215825f91c315196f45e1fd6c4e8abb447f38549e03",
-        strip_prefix = "github.com/tklauser/numcpus@v0.6.1",
+        sha256 = "b2526d47517ccff481cc7baad7f450bdde58ddb9b65d53e3eec7c3504f94e853",
+        strip_prefix = "github.com/tklauser/numcpus@v0.10.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.6.1.zip",
-            "http://ats.apps.svc/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.6.1.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.6.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.6.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.10.0.zip",
+            "http://ats.apps.svc/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.10.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.10.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/tklauser/numcpus/com_github_tklauser_numcpus-v0.10.0.zip",
         ],
     )
     go_repository(
@@ -8206,32 +8180,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_github_xitongsys_parquet_go",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/xitongsys/parquet-go",
-        sha256 = "5b9473cce95cf094d398348fd394002b656ae1363bb5c33c1338fcdcd57e1b33",
-        strip_prefix = "github.com/xitongsys/parquet-go@v1.6.3-0.20240520233950-75e935fc3e17",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/xitongsys/parquet-go/com_github_xitongsys_parquet_go-v1.6.3-0.20240520233950-75e935fc3e17.zip",
-            "http://ats.apps.svc/gomod/github.com/xitongsys/parquet-go/com_github_xitongsys_parquet_go-v1.6.3-0.20240520233950-75e935fc3e17.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/xitongsys/parquet-go/com_github_xitongsys_parquet_go-v1.6.3-0.20240520233950-75e935fc3e17.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/xitongsys/parquet-go/com_github_xitongsys_parquet_go-v1.6.3-0.20240520233950-75e935fc3e17.zip",
-        ],
-    )
-    go_repository(
-        name = "com_github_xitongsys_parquet_go_source",
-        build_file_proto_mode = "disable_global",
-        importpath = "github.com/xitongsys/parquet-go-source",
-        sha256 = "9fa786105465c7da0b4d0a3f334b5d284cce486229a0631e5bd962e4dc67cd50",
-        strip_prefix = "github.com/xitongsys/parquet-go-source@v0.0.0-20200817004010-026bad9b25d0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/xitongsys/parquet-go-source/com_github_xitongsys_parquet_go_source-v0.0.0-20200817004010-026bad9b25d0.zip",
-            "http://ats.apps.svc/gomod/github.com/xitongsys/parquet-go-source/com_github_xitongsys_parquet_go_source-v0.0.0-20200817004010-026bad9b25d0.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/xitongsys/parquet-go-source/com_github_xitongsys_parquet_go_source-v0.0.0-20200817004010-026bad9b25d0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/xitongsys/parquet-go-source/com_github_xitongsys_parquet_go_source-v0.0.0-20200817004010-026bad9b25d0.zip",
-        ],
-    )
-    go_repository(
         name = "com_github_xo_terminfo",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/xo/terminfo",
@@ -8255,6 +8203,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/xordataexchange/crypt/com_github_xordataexchange_crypt-v0.0.3-0.20170626215501-b2862e3d0a77.zip",
             "https://cache.hawkingrei.com/gomod/github.com/xordataexchange/crypt/com_github_xordataexchange_crypt-v0.0.3-0.20170626215501-b2862e3d0a77.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/xordataexchange/crypt/com_github_xordataexchange_crypt-v0.0.3-0.20170626215501-b2862e3d0a77.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_xyproto_randomstring",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/xyproto/randomstring",
+        sha256 = "58ea0c70496fc698c4597625395b3f35321df09be013ee880a6ce10e94969261",
+        strip_prefix = "github.com/xyproto/randomstring@v1.0.5",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/xyproto/randomstring/com_github_xyproto_randomstring-v1.0.5.zip",
+            "http://ats.apps.svc/gomod/github.com/xyproto/randomstring/com_github_xyproto_randomstring-v1.0.5.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/xyproto/randomstring/com_github_xyproto_randomstring-v1.0.5.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/xyproto/randomstring/com_github_xyproto_randomstring-v1.0.5.zip",
         ],
     )
     go_repository(
@@ -8326,13 +8287,13 @@ def go_deps():
         name = "com_github_yuin_goldmark",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/yuin/goldmark",
-        sha256 = "bb41a602b174345fda392c8ad83fcc93217c285c763699677630be90feb7a5e3",
-        strip_prefix = "github.com/yuin/goldmark@v1.4.13",
+        sha256 = "88a6178916d7196838692fc41facc5429ab3bcc75d6270c180dfee36e14e6a94",
+        strip_prefix = "github.com/yuin/goldmark@v1.7.13",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.4.13.zip",
-            "http://ats.apps.svc/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.4.13.zip",
-            "https://cache.hawkingrei.com/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.4.13.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.4.13.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.7.13.zip",
+            "http://ats.apps.svc/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.7.13.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.7.13.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/yuin/goldmark/com_github_yuin_goldmark-v1.7.13.zip",
         ],
     )
     go_repository(
@@ -8359,6 +8320,19 @@ def go_deps():
             "http://ats.apps.svc/gomod/github.com/zeebo/assert/com_github_zeebo_assert-v1.3.0.zip",
             "https://cache.hawkingrei.com/gomod/github.com/zeebo/assert/com_github_zeebo_assert-v1.3.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/github.com/zeebo/assert/com_github_zeebo_assert-v1.3.0.zip",
+        ],
+    )
+    go_repository(
+        name = "com_github_zeebo_errs",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/zeebo/errs",
+        sha256 = "5b7fb5cbe6bbd36933e8c98572f85121994e9842aefc90986f8d3a192cb69257",
+        strip_prefix = "github.com/zeebo/errs@v1.4.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/zeebo/errs/com_github_zeebo_errs-v1.4.0.zip",
+            "http://ats.apps.svc/gomod/github.com/zeebo/errs/com_github_zeebo_errs-v1.4.0.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/zeebo/errs/com_github_zeebo_errs-v1.4.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/zeebo/errs/com_github_zeebo_errs-v1.4.0.zip",
         ],
     )
     go_repository(
@@ -8742,13 +8716,13 @@ def go_deps():
         name = "com_google_cloud_go_compute_metadata",
         build_file_proto_mode = "disable_global",
         importpath = "cloud.google.com/go/compute/metadata",
-        sha256 = "c0ab79c30870c1aa9912fb0fdcb043e0044782825988e40f59401d227976b677",
-        strip_prefix = "cloud.google.com/go/compute/metadata@v0.3.0",
+        sha256 = "45ddcff8fe63fc16b0f0e2fcf8d1e5b3cedf046a76a353ffe7756bea1b1bc9ee",
+        strip_prefix = "cloud.google.com/go/compute/metadata@v0.6.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
-            "http://ats.apps.svc/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
-            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.3.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.6.0.zip",
+            "http://ats.apps.svc/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.6.0.zip",
+            "https://cache.hawkingrei.com/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.6.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cloud.google.com/go/compute/metadata/com_google_cloud_go_compute_metadata-v0.6.0.zip",
         ],
     )
     go_repository(
@@ -9935,19 +9909,6 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "com_lukechampine_uint128",
-        build_file_proto_mode = "disable_global",
-        importpath = "lukechampine.com/uint128",
-        sha256 = "9ff6e9ad553a69fdb961ab2d92f92cda183ef616a6709c15972c2d4bedf33de5",
-        strip_prefix = "lukechampine.com/uint128@v1.2.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/lukechampine.com/uint128/com_lukechampine_uint128-v1.2.0.zip",
-            "http://ats.apps.svc/gomod/lukechampine.com/uint128/com_lukechampine_uint128-v1.2.0.zip",
-            "https://cache.hawkingrei.com/gomod/lukechampine.com/uint128/com_lukechampine_uint128-v1.2.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/lukechampine.com/uint128/com_lukechampine_uint128-v1.2.0.zip",
-        ],
-    )
-    go_repository(
         name = "com_shuralyov_dmitri_gpu_mtl",
         build_file_proto_mode = "disable_global",
         importpath = "dmitri.shuralyov.com/gpu/mtl",
@@ -10000,16 +9961,16 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "ht_sr_git_~sbinet_gg",
+        name = "dev_cel_expr",
         build_file_proto_mode = "disable_global",
-        importpath = "git.sr.ht/~sbinet/gg",
-        sha256 = "435103529c4f24aecf7e4550bc816db2482dda4ee0123d337daba99971a8c498",
-        strip_prefix = "git.sr.ht/~sbinet/gg@v0.3.1",
+        importpath = "cel.dev/expr",
+        sha256 = "486a0371ff46d7d8da184cc9e200f8798d32e1ab38029eef3420d80fafdad6cd",
+        strip_prefix = "cel.dev/expr@v0.23.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/git.sr.ht/~sbinet/gg/ht_sr_git_~sbinet_gg-v0.3.1.zip",
-            "http://ats.apps.svc/gomod/git.sr.ht/~sbinet/gg/ht_sr_git_~sbinet_gg-v0.3.1.zip",
-            "https://cache.hawkingrei.com/gomod/git.sr.ht/~sbinet/gg/ht_sr_git_~sbinet_gg-v0.3.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/git.sr.ht/~sbinet/gg/ht_sr_git_~sbinet_gg-v0.3.1.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/cel.dev/expr/dev_cel_expr-v0.23.0.zip",
+            "http://ats.apps.svc/gomod/cel.dev/expr/dev_cel_expr-v0.23.0.zip",
+            "https://cache.hawkingrei.com/gomod/cel.dev/expr/dev_cel_expr-v0.23.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/cel.dev/expr/dev_cel_expr-v0.23.0.zip",
         ],
     )
     go_repository(
@@ -10062,71 +10023,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/gopkg.in/ini.v1/in_gopkg_ini_v1-v1.67.0.zip",
             "https://cache.hawkingrei.com/gomod/gopkg.in/ini.v1/in_gopkg_ini_v1-v1.67.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/gopkg.in/ini.v1/in_gopkg_ini_v1-v1.67.0.zip",
-        ],
-    )
-    go_repository(
-        name = "in_gopkg_jcmturner_aescts_v1",
-        build_file_proto_mode = "disable_global",
-        importpath = "gopkg.in/jcmturner/aescts.v1",
-        sha256 = "8bfd83c7204032fb16946202d5d643bd9a7e618005bd39578f29030a7d51dcf9",
-        strip_prefix = "gopkg.in/jcmturner/aescts.v1@v1.0.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gopkg.in/jcmturner/aescts.v1/in_gopkg_jcmturner_aescts_v1-v1.0.1.zip",
-            "http://ats.apps.svc/gomod/gopkg.in/jcmturner/aescts.v1/in_gopkg_jcmturner_aescts_v1-v1.0.1.zip",
-            "https://cache.hawkingrei.com/gomod/gopkg.in/jcmturner/aescts.v1/in_gopkg_jcmturner_aescts_v1-v1.0.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gopkg.in/jcmturner/aescts.v1/in_gopkg_jcmturner_aescts_v1-v1.0.1.zip",
-        ],
-    )
-    go_repository(
-        name = "in_gopkg_jcmturner_dnsutils_v1",
-        build_file_proto_mode = "disable_global",
-        importpath = "gopkg.in/jcmturner/dnsutils.v1",
-        sha256 = "4fb8b6a5471cb6dda1d0aabd1e01e4d54cb5ee83c395849916392b19153f5203",
-        strip_prefix = "gopkg.in/jcmturner/dnsutils.v1@v1.0.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gopkg.in/jcmturner/dnsutils.v1/in_gopkg_jcmturner_dnsutils_v1-v1.0.1.zip",
-            "http://ats.apps.svc/gomod/gopkg.in/jcmturner/dnsutils.v1/in_gopkg_jcmturner_dnsutils_v1-v1.0.1.zip",
-            "https://cache.hawkingrei.com/gomod/gopkg.in/jcmturner/dnsutils.v1/in_gopkg_jcmturner_dnsutils_v1-v1.0.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gopkg.in/jcmturner/dnsutils.v1/in_gopkg_jcmturner_dnsutils_v1-v1.0.1.zip",
-        ],
-    )
-    go_repository(
-        name = "in_gopkg_jcmturner_goidentity_v3",
-        build_file_proto_mode = "disable_global",
-        importpath = "gopkg.in/jcmturner/goidentity.v3",
-        sha256 = "1be44bee93d9080ce89f40827c57e8a396b7c801e2d19a1f5446a4325afa755e",
-        strip_prefix = "gopkg.in/jcmturner/goidentity.v3@v3.0.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gopkg.in/jcmturner/goidentity.v3/in_gopkg_jcmturner_goidentity_v3-v3.0.0.zip",
-            "http://ats.apps.svc/gomod/gopkg.in/jcmturner/goidentity.v3/in_gopkg_jcmturner_goidentity_v3-v3.0.0.zip",
-            "https://cache.hawkingrei.com/gomod/gopkg.in/jcmturner/goidentity.v3/in_gopkg_jcmturner_goidentity_v3-v3.0.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gopkg.in/jcmturner/goidentity.v3/in_gopkg_jcmturner_goidentity_v3-v3.0.0.zip",
-        ],
-    )
-    go_repository(
-        name = "in_gopkg_jcmturner_gokrb5_v7",
-        build_file_proto_mode = "disable_global",
-        importpath = "gopkg.in/jcmturner/gokrb5.v7",
-        sha256 = "f7e772eaadb923044924cb86b7a6ed34a3386df831705bb62b6a47dc0819a94b",
-        strip_prefix = "gopkg.in/jcmturner/gokrb5.v7@v7.3.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gopkg.in/jcmturner/gokrb5.v7/in_gopkg_jcmturner_gokrb5_v7-v7.3.0.zip",
-            "http://ats.apps.svc/gomod/gopkg.in/jcmturner/gokrb5.v7/in_gopkg_jcmturner_gokrb5_v7-v7.3.0.zip",
-            "https://cache.hawkingrei.com/gomod/gopkg.in/jcmturner/gokrb5.v7/in_gopkg_jcmturner_gokrb5_v7-v7.3.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gopkg.in/jcmturner/gokrb5.v7/in_gopkg_jcmturner_gokrb5_v7-v7.3.0.zip",
-        ],
-    )
-    go_repository(
-        name = "in_gopkg_jcmturner_rpc_v1",
-        build_file_proto_mode = "disable_global",
-        importpath = "gopkg.in/jcmturner/rpc.v1",
-        sha256 = "83d897b60ecb5a66d25232b775ed04c182ca8e02431f351b3768d4d2876d07ae",
-        strip_prefix = "gopkg.in/jcmturner/rpc.v1@v1.1.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gopkg.in/jcmturner/rpc.v1/in_gopkg_jcmturner_rpc_v1-v1.1.0.zip",
-            "http://ats.apps.svc/gomod/gopkg.in/jcmturner/rpc.v1/in_gopkg_jcmturner_rpc_v1-v1.1.0.zip",
-            "https://cache.hawkingrei.com/gomod/gopkg.in/jcmturner/rpc.v1/in_gopkg_jcmturner_rpc_v1-v1.1.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gopkg.in/jcmturner/rpc.v1/in_gopkg_jcmturner_rpc_v1-v1.1.0.zip",
         ],
     )
     go_repository(
@@ -10546,6 +10442,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "io_opentelemetry_go_auto_sdk",
+        build_file_proto_mode = "disable_global",
+        importpath = "go.opentelemetry.io/auto/sdk",
+        sha256 = "006d3a5a7292d11f093ce65fcd5a15d15fb7bd11d0e066503f91bd64c4bffe2c",
+        strip_prefix = "go.opentelemetry.io/auto/sdk@v1.1.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/auto/sdk/io_opentelemetry_go_auto_sdk-v1.1.0.zip",
+            "http://ats.apps.svc/gomod/go.opentelemetry.io/auto/sdk/io_opentelemetry_go_auto_sdk-v1.1.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/auto/sdk/io_opentelemetry_go_auto_sdk-v1.1.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/auto/sdk/io_opentelemetry_go_auto_sdk-v1.1.0.zip",
+        ],
+    )
+    go_repository(
         name = "io_opentelemetry_go_collector_featuregate",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/collector/featuregate",
@@ -10585,6 +10494,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "io_opentelemetry_go_contrib_detectors_gcp",
+        build_file_proto_mode = "disable_global",
+        importpath = "go.opentelemetry.io/contrib/detectors/gcp",
+        sha256 = "47a4cbc7a1a9f3d3f41019309d9eda11b093876c5399c319870e47b81d07add4",
+        strip_prefix = "go.opentelemetry.io/contrib/detectors/gcp@v1.35.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/contrib/detectors/gcp/io_opentelemetry_go_contrib_detectors_gcp-v1.35.0.zip",
+            "http://ats.apps.svc/gomod/go.opentelemetry.io/contrib/detectors/gcp/io_opentelemetry_go_contrib_detectors_gcp-v1.35.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/contrib/detectors/gcp/io_opentelemetry_go_contrib_detectors_gcp-v1.35.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/contrib/detectors/gcp/io_opentelemetry_go_contrib_detectors_gcp-v1.35.0.zip",
+        ],
+    )
+    go_repository(
         name = "io_opentelemetry_go_contrib_instrumentation_google_golang_org_grpc_otelgrpc",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc",
@@ -10614,13 +10536,13 @@ def go_deps():
         name = "io_opentelemetry_go_otel",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel",
-        sha256 = "4aebfe22b33a77bfab346224c3cd0d2da6cb8992318b104f33e9bf5e533effa5",
-        strip_prefix = "go.opentelemetry.io/otel@v1.24.0",
+        sha256 = "db49129d417338ed3517e7ec6f3e894e6828152488731fe832690041892d341d",
+        strip_prefix = "go.opentelemetry.io/otel@v1.35.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.24.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.24.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.24.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.24.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.35.0.zip",
+            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.35.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.35.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/io_opentelemetry_go_otel-v1.35.0.zip",
         ],
     )
     go_repository(
@@ -10666,39 +10588,52 @@ def go_deps():
         name = "io_opentelemetry_go_otel_metric",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/metric",
-        sha256 = "bbe9ee9443b924d0a9f58a9e2a4a7b1c1ab1274f7d41d0db2a243d9c33eca93c",
-        strip_prefix = "go.opentelemetry.io/otel/metric@v1.24.0",
+        sha256 = "c30a5fadd4eb1a801561199ef7da0012102ac87be12964f708472e919e2ef29c",
+        strip_prefix = "go.opentelemetry.io/otel/metric@v1.35.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.24.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.24.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.24.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.24.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.35.0.zip",
+            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.35.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.35.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/metric/io_opentelemetry_go_otel_metric-v1.35.0.zip",
         ],
     )
     go_repository(
         name = "io_opentelemetry_go_otel_sdk",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/sdk",
-        sha256 = "60b78206b3b5d44c3f9069ac24e87f90e5474b52bbbbf5a0f454cc7e5f5f409a",
-        strip_prefix = "go.opentelemetry.io/otel/sdk@v1.24.0",
+        sha256 = "b6915b523a175f1954bcb69e17237852d0b647b4987a0131815b880ac114e812",
+        strip_prefix = "go.opentelemetry.io/otel/sdk@v1.35.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.24.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.24.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.24.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.24.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.35.0.zip",
+            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.35.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.35.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/sdk/io_opentelemetry_go_otel_sdk-v1.35.0.zip",
+        ],
+    )
+    go_repository(
+        name = "io_opentelemetry_go_otel_sdk_metric",
+        build_file_proto_mode = "disable_global",
+        importpath = "go.opentelemetry.io/otel/sdk/metric",
+        sha256 = "0b006162ef707289019451f941cb34db0cc1e85014c1b832f76e7ca9013d2c9d",
+        strip_prefix = "go.opentelemetry.io/otel/sdk/metric@v1.35.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v1.35.0.zip",
+            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v1.35.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v1.35.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/sdk/metric/io_opentelemetry_go_otel_sdk_metric-v1.35.0.zip",
         ],
     )
     go_repository(
         name = "io_opentelemetry_go_otel_trace",
         build_file_proto_mode = "disable_global",
         importpath = "go.opentelemetry.io/otel/trace",
-        sha256 = "4d561c375a78a5404d154add753f9ee24b30307a233d346bdecdb4adb83ff408",
-        strip_prefix = "go.opentelemetry.io/otel/trace@v1.24.0",
+        sha256 = "24f3abd562a9c2d18208b9716a7ff65d4b56567a13ce7d3a4fe6666251375e6a",
+        strip_prefix = "go.opentelemetry.io/otel/trace@v1.35.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.24.0.zip",
-            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.24.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.24.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.24.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.35.0.zip",
+            "http://ats.apps.svc/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.35.0.zip",
+            "https://cache.hawkingrei.com/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.35.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.opentelemetry.io/otel/trace/io_opentelemetry_go_otel_trace-v1.35.0.zip",
         ],
     )
     go_repository(
@@ -10725,19 +10660,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/rsc.io/binaryregexp/io_rsc_binaryregexp-v0.2.0.zip",
             "https://cache.hawkingrei.com/gomod/rsc.io/binaryregexp/io_rsc_binaryregexp-v0.2.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/rsc.io/binaryregexp/io_rsc_binaryregexp-v0.2.0.zip",
-        ],
-    )
-    go_repository(
-        name = "io_rsc_pdf",
-        build_file_proto_mode = "disable_global",
-        importpath = "rsc.io/pdf",
-        sha256 = "79bf310e399cf0e2d8aa61536750d2a6999c5ca884e7a27faf88d3701cd5ba8f",
-        strip_prefix = "rsc.io/pdf@v0.1.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/rsc.io/pdf/io_rsc_pdf-v0.1.1.zip",
-            "http://ats.apps.svc/gomod/rsc.io/pdf/io_rsc_pdf-v0.1.1.zip",
-            "https://cache.hawkingrei.com/gomod/rsc.io/pdf/io_rsc_pdf-v0.1.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/rsc.io/pdf/io_rsc_pdf-v0.1.1.zip",
         ],
     )
     go_repository(
@@ -10790,19 +10712,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/codeberg.org/chavacava/garif/org_codeberg_chavacava_garif-v0.2.0.zip",
             "https://cache.hawkingrei.com/gomod/codeberg.org/chavacava/garif/org_codeberg_chavacava_garif-v0.2.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/codeberg.org/chavacava/garif/org_codeberg_chavacava_garif-v0.2.0.zip",
-        ],
-    )
-    go_repository(
-        name = "org_gioui",
-        build_file_proto_mode = "disable_global",
-        importpath = "gioui.org",
-        sha256 = "fcbab2a0ea09ff775c1ff4fa99299d95b94aad496b1ac329e3c7389119168fc0",
-        strip_prefix = "gioui.org@v0.0.0-20210308172011-57750fc8a0a6",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gioui.org/org_gioui-v0.0.0-20210308172011-57750fc8a0a6.zip",
-            "http://ats.apps.svc/gomod/gioui.org/org_gioui-v0.0.0-20210308172011-57750fc8a0a6.zip",
-            "https://cache.hawkingrei.com/gomod/gioui.org/org_gioui-v0.0.0-20210308172011-57750fc8a0a6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gioui.org/org_gioui-v0.0.0-20210308172011-57750fc8a0a6.zip",
         ],
     )
     go_repository(
@@ -10874,13 +10783,13 @@ def go_deps():
         name = "org_golang_google_genproto_googleapis_api",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/api",
-        sha256 = "956715d2f83c3ac6ba23c0e85494973c3d66ac375719655864cb5351746856f4",
-        strip_prefix = "google.golang.org/genproto/googleapis/api@v0.0.0-20240401170217-c3f982113cda",
+        sha256 = "4b058639e4327a2d74f4d0ca1cdb447f01090a0902ff5862eeb61a9b9c0f016f",
+        strip_prefix = "google.golang.org/genproto/googleapis/api@v0.0.0-20250324211829-b45e905df463",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20240401170217-c3f982113cda.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20240401170217-c3f982113cda.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20240401170217-c3f982113cda.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20240401170217-c3f982113cda.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20250324211829-b45e905df463.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20250324211829-b45e905df463.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20250324211829-b45e905df463.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/genproto/googleapis/api/org_golang_google_genproto_googleapis_api-v0.0.0-20250324211829-b45e905df463.zip",
         ],
     )
     go_repository(
@@ -10900,26 +10809,26 @@ def go_deps():
         name = "org_golang_google_genproto_googleapis_rpc",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/genproto/googleapis/rpc",
-        sha256 = "53ce5ee04a9fd853c81fdd00cd06b426ec3212e57ae6d591153ad823243bae8a",
-        strip_prefix = "google.golang.org/genproto/googleapis/rpc@v0.0.0-20240515191416-fc5f0ca64291",
+        sha256 = "038240b4d232cd89297c81c05553912a5205d034cd2d807d7448b9482c6e7843",
+        strip_prefix = "google.golang.org/genproto/googleapis/rpc@v0.0.0-20250425173222-7b384671a197",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20240515191416-fc5f0ca64291.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20240515191416-fc5f0ca64291.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20240515191416-fc5f0ca64291.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20240515191416-fc5f0ca64291.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20250425173222-7b384671a197.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20250425173222-7b384671a197.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20250425173222-7b384671a197.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/genproto/googleapis/rpc/org_golang_google_genproto_googleapis_rpc-v0.0.0-20250425173222-7b384671a197.zip",
         ],
     )
     go_repository(
         name = "org_golang_google_grpc",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/grpc",
-        sha256 = "1d49288986efd05a7b4ac6cee078f84e29e464678c776f25e09efddfba852fd1",
-        strip_prefix = "google.golang.org/grpc@v1.63.2",
+        sha256 = "7d628abd6c4c133205db6b72e374bbd2f438b12a2a5f838f34fd8d95d91f8c0b",
+        strip_prefix = "google.golang.org/grpc@v1.73.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.63.2.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.63.2.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.63.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.63.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.73.0.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.73.0.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.73.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/grpc/org_golang_google_grpc-v1.73.0.zip",
         ],
     )
     go_repository(
@@ -10939,26 +10848,26 @@ def go_deps():
         name = "org_golang_google_protobuf",
         build_file_proto_mode = "disable_global",
         importpath = "google.golang.org/protobuf",
-        sha256 = "3294ac8ea5089b3c231351afaea4f012e8027a9beeb523bbf31dcb383cc0ab99",
-        strip_prefix = "google.golang.org/protobuf@v1.36.6",
+        sha256 = "9265fbe7d073ca8571f1a9c4b8e8f20b244c35ad913346892d688e58fe4b1f22",
+        strip_prefix = "google.golang.org/protobuf@v1.36.10",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
-            "http://ats.apps.svc/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
-            "https://cache.hawkingrei.com/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.6.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.10.zip",
+            "http://ats.apps.svc/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.10.zip",
+            "https://cache.hawkingrei.com/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.10.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/google.golang.org/protobuf/org_golang_google_protobuf-v1.36.10.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_crypto",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/crypto",
-        sha256 = "7da981b09d79d021f79ea2953637a85e3c72e43fc88b6a3230e7976fbbeec2de",
-        strip_prefix = "golang.org/x/crypto@v0.41.0",
+        sha256 = "8745746a80c1ebff91e1d773b6c28c4aa4f074d6aa938b7a51330d52ed22a0c0",
+        strip_prefix = "golang.org/x/crypto@v0.47.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.41.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/crypto/org_golang_x_crypto-v0.47.0.zip",
         ],
     )
     go_repository(
@@ -10991,13 +10900,13 @@ def go_deps():
         name = "org_golang_x_image",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/image",
-        sha256 = "56176a4d4d47910d61df9a77aa66a8469ae79fa18b7f5821c43bef1ef212116d",
-        strip_prefix = "golang.org/x/image@v0.0.0-20220302094943-723b81ca9867",
+        sha256 = "4a44b498934a95e8f84e8374530de0cab38d81fcd558898d4880c3c5ce1efe47",
+        strip_prefix = "golang.org/x/image@v0.0.0-20190802002840-cff245a6509b",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20220302094943-723b81ca9867.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20220302094943-723b81ca9867.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20220302094943-723b81ca9867.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20220302094943-723b81ca9867.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/image/org_golang_x_image-v0.0.0-20190802002840-cff245a6509b.zip",
         ],
     )
     go_repository(
@@ -11030,39 +10939,39 @@ def go_deps():
         name = "org_golang_x_mod",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/mod",
-        sha256 = "19fb241d46e4397d3193b5fa899e2a9d62bb5d1c41f73d09d29c17c3c0d3953c",
-        strip_prefix = "golang.org/x/mod@v0.27.0",
+        sha256 = "9b43daca51525bd50289c742999fe66336a653c90a23d2c55561b6fffd656e46",
+        strip_prefix = "golang.org/x/mod@v0.31.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/mod/org_golang_x_mod-v0.27.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/mod/org_golang_x_mod-v0.31.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/mod/org_golang_x_mod-v0.31.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/mod/org_golang_x_mod-v0.31.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/mod/org_golang_x_mod-v0.31.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_net",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/net",
-        sha256 = "cc9f79d1c8a796c756b636cee007b4ac5eba7b1f3276cd42658f4ac4a28cfbc1",
-        strip_prefix = "golang.org/x/net@v0.42.0",
+        sha256 = "c07a4d56c3db52dc2b29c65b134f96c2cb071e8a50e4f488ac7facb46005cc85",
+        strip_prefix = "golang.org/x/net@v0.49.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/net/org_golang_x_net-v0.42.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/net/org_golang_x_net-v0.42.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/net/org_golang_x_net-v0.42.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/net/org_golang_x_net-v0.42.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/net/org_golang_x_net-v0.49.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_oauth2",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/oauth2",
-        sha256 = "1e1028d0b190948f0cd44229bfa298440cb2481f601f992e12424bc6fa1f183c",
-        strip_prefix = "golang.org/x/oauth2@v0.30.0",
+        sha256 = "8e7f40820982ac95900c4d44888f68d97c979d162219f6f8713c3516fabcca31",
+        strip_prefix = "golang.org/x/oauth2@v0.33.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.30.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.33.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.33.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.33.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/oauth2/org_golang_x_oauth2-v0.33.0.zip",
         ],
     )
     go_repository(
@@ -11082,91 +10991,91 @@ def go_deps():
         name = "org_golang_x_sync",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sync",
-        sha256 = "ca43984183eb14f7f50d33da350312fed1c42e106dceac2437bfd5084b497dcd",
-        strip_prefix = "golang.org/x/sync@v0.16.0",
+        sha256 = "25211fe2cffd8020bb405b9adb7a90f5e06760f2818b8fb2e74aaaa21a66ed9e",
+        strip_prefix = "golang.org/x/sync@v0.19.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/sync/org_golang_x_sync-v0.16.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/sync/org_golang_x_sync-v0.16.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/sync/org_golang_x_sync-v0.16.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sync/org_golang_x_sync-v0.16.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/sync/org_golang_x_sync-v0.19.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/sync/org_golang_x_sync-v0.19.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/sync/org_golang_x_sync-v0.19.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sync/org_golang_x_sync-v0.19.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_sys",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/sys",
-        sha256 = "dc3c20611168aaa8fda0d71999be1a5222a0ba57bc767c978a590e41ff2ede35",
-        strip_prefix = "golang.org/x/sys@v0.35.0",
+        sha256 = "d7f9fe44300fc8d47b30d06cd001d9c62c54c6119818a19a2e33a93538971669",
+        strip_prefix = "golang.org/x/sys@v0.40.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.35.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/sys/org_golang_x_sys-v0.40.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/sys/org_golang_x_sys-v0.40.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/sys/org_golang_x_sys-v0.40.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/sys/org_golang_x_sys-v0.40.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_telemetry",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/telemetry",
-        sha256 = "05ec70dbe6ef46c881f7d7ebe70ff61d9e998d2b4bbdbe6ff968870ef86c67b9",
-        strip_prefix = "golang.org/x/telemetry@v0.0.0-20250710130107-8d8967aff50b",
+        sha256 = "ff59a6762bd395bd220fbd444a85ae293c23f9223abb63339b8e231346f9d730",
+        strip_prefix = "golang.org/x/telemetry@v0.0.0-20251222180846-3f2a21fb04ff",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20250710130107-8d8967aff50b.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20250710130107-8d8967aff50b.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20250710130107-8d8967aff50b.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20250710130107-8d8967aff50b.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20251222180846-3f2a21fb04ff.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20251222180846-3f2a21fb04ff.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20251222180846-3f2a21fb04ff.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/telemetry/org_golang_x_telemetry-v0.0.0-20251222180846-3f2a21fb04ff.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_term",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/term",
-        sha256 = "22281cbf30560433d57de8d72c1151f9cac2917795dc6e9f694f7a525bb5309c",
-        strip_prefix = "golang.org/x/term@v0.34.0",
+        sha256 = "443bb1f87ad11a7d2da8fea4e58272e86f3d70895f38e13a992536dc431fc52d",
+        strip_prefix = "golang.org/x/term@v0.39.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/term/org_golang_x_term-v0.34.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/term/org_golang_x_term-v0.39.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_text",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/text",
-        sha256 = "46259e1416ae7ec6adf1867c5f9fab32af0476a148e3c95f1dfbb134f4acf48d",
-        strip_prefix = "golang.org/x/text@v0.28.0",
+        sha256 = "f01cdf85f6a597aa4526d68b5c2e5a3470a6f162b96bb9867af37f059b96db5a",
+        strip_prefix = "golang.org/x/text@v0.33.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/text/org_golang_x_text-v0.28.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/text/org_golang_x_text-v0.33.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_time",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/time",
-        sha256 = "cdcb04c43b112919c5e0d0fa1d90769124ad56918a44e6cb0747876ed7e5015c",
-        strip_prefix = "golang.org/x/time@v0.12.0",
+        sha256 = "0e2d2e47d107859130c7088346966d99a14ec0f7a42290c4acc0e2cc568e7a81",
+        strip_prefix = "golang.org/x/time@v0.14.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/time/org_golang_x_time-v0.12.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/time/org_golang_x_time-v0.12.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/time/org_golang_x_time-v0.12.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/time/org_golang_x_time-v0.12.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/time/org_golang_x_time-v0.14.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/time/org_golang_x_time-v0.14.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/time/org_golang_x_time-v0.14.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/time/org_golang_x_time-v0.14.0.zip",
         ],
     )
     go_repository(
         name = "org_golang_x_tools",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/tools",
-        sha256 = "6d2391d8a9a89e54c79cdeaf5e776dfc079838c90c3ac49e97fd91cf20606e9a",
-        strip_prefix = "golang.org/x/tools@v0.35.0",
+        sha256 = "5b8ea096f9184a9df7a4852818ea35d9f9a8f50b68a5558f5078f23a39459780",
+        strip_prefix = "golang.org/x/tools@v0.40.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/tools/org_golang_x_tools-v0.35.0.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/tools/org_golang_x_tools-v0.35.0.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/tools/org_golang_x_tools-v0.35.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/tools/org_golang_x_tools-v0.35.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/tools/org_golang_x_tools-v0.40.0.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/tools/org_golang_x_tools-v0.40.0.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/tools/org_golang_x_tools-v0.40.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/tools/org_golang_x_tools-v0.40.0.zip",
         ],
     )
     go_repository(
@@ -11196,94 +11105,68 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "org_golang_x_tools_godoc",
+        build_file_proto_mode = "disable_global",
+        importpath = "golang.org/x/tools/godoc",
+        sha256 = "70ba09baef991067b3eb8f36df3e6e9b25417349295f5d475cdcf049b8343cff",
+        strip_prefix = "golang.org/x/tools/godoc@v0.1.0-deprecated",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/tools/godoc/org_golang_x_tools_godoc-v0.1.0-deprecated.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/tools/godoc/org_golang_x_tools_godoc-v0.1.0-deprecated.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/tools/godoc/org_golang_x_tools_godoc-v0.1.0-deprecated.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/tools/godoc/org_golang_x_tools_godoc-v0.1.0-deprecated.zip",
+        ],
+    )
+    go_repository(
         name = "org_golang_x_xerrors",
         build_file_proto_mode = "disable_global",
         importpath = "golang.org/x/xerrors",
-        sha256 = "df5dd109153c94d2f5c9601d28f558871094e37c42f8e3875f36db858d8be9f9",
-        strip_prefix = "golang.org/x/xerrors@v0.0.0-20231012003039-104605ab7028",
+        sha256 = "07ee9f680118861ee732ce0df4553b834383b87e0519fb9a0990c51d7abd6885",
+        strip_prefix = "golang.org/x/xerrors@v0.0.0-20240903120638-7835f813f4da",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20231012003039-104605ab7028.zip",
-            "http://ats.apps.svc/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20231012003039-104605ab7028.zip",
-            "https://cache.hawkingrei.com/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20231012003039-104605ab7028.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20231012003039-104605ab7028.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20240903120638-7835f813f4da.zip",
+            "http://ats.apps.svc/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20240903120638-7835f813f4da.zip",
+            "https://cache.hawkingrei.com/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20240903120638-7835f813f4da.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/golang.org/x/xerrors/org_golang_x_xerrors-v0.0.0-20240903120638-7835f813f4da.zip",
         ],
     )
     go_repository(
         name = "org_gonum_v1_gonum",
         build_file_proto_mode = "disable_global",
         importpath = "gonum.org/v1/gonum",
-        sha256 = "abdfee15ce7c9d2cd96b66468d3ae28d6054add4efbfc1b15fadfe3613f3d362",
-        strip_prefix = "gonum.org/v1/gonum@v0.11.0",
+        sha256 = "7a1b124a144b2c97a29829464d4b7258e04235c1fb14bbcea902086618414a43",
+        strip_prefix = "gonum.org/v1/gonum@v0.15.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.11.0.zip",
-            "http://ats.apps.svc/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.11.0.zip",
-            "https://cache.hawkingrei.com/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.11.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.11.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.15.1.zip",
+            "http://ats.apps.svc/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.15.1.zip",
+            "https://cache.hawkingrei.com/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.15.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/gonum.org/v1/gonum/org_gonum_v1_gonum-v0.15.1.zip",
         ],
     )
     go_repository(
         name = "org_gonum_v1_netlib",
         build_file_proto_mode = "disable_global",
         importpath = "gonum.org/v1/netlib",
-        sha256 = "eeaeb60f410b86f59d97f15c5ef89096dc72aeb42bae55141738bf9866893938",
-        strip_prefix = "gonum.org/v1/netlib@v0.0.0-20190313105609-8cb42192e0e0",
+        sha256 = "35405098d5c2e9ac83607b51a59d9f4e2947166cc7d42aa8fc4bb6dc7be3fb1c",
+        strip_prefix = "gonum.org/v1/netlib@v0.0.0-20181029234149-ec6d1f5cefe6",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20190313105609-8cb42192e0e0.zip",
-            "http://ats.apps.svc/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20190313105609-8cb42192e0e0.zip",
-            "https://cache.hawkingrei.com/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20190313105609-8cb42192e0e0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20190313105609-8cb42192e0e0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20181029234149-ec6d1f5cefe6.zip",
+            "http://ats.apps.svc/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20181029234149-ec6d1f5cefe6.zip",
+            "https://cache.hawkingrei.com/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20181029234149-ec6d1f5cefe6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/gonum.org/v1/netlib/org_gonum_v1_netlib-v0.0.0-20181029234149-ec6d1f5cefe6.zip",
         ],
     )
     go_repository(
-        name = "org_gonum_v1_plot",
+        name = "org_modernc_gc_v3",
         build_file_proto_mode = "disable_global",
-        importpath = "gonum.org/v1/plot",
-        sha256 = "eaa47ad966b3b67325c1f3ae704d566332c573b7cca79016cb4ffe82155aab39",
-        strip_prefix = "gonum.org/v1/plot@v0.10.1",
+        importpath = "modernc.org/gc/v3",
+        sha256 = "d533e65369fe0dfcd19c725226a30e47b184092603ec7ee38dd5d056a2ad1474",
+        strip_prefix = "modernc.org/gc/v3@v3.0.0-20240107210532-573471604cb6",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/gonum.org/v1/plot/org_gonum_v1_plot-v0.10.1.zip",
-            "http://ats.apps.svc/gomod/gonum.org/v1/plot/org_gonum_v1_plot-v0.10.1.zip",
-            "https://cache.hawkingrei.com/gomod/gonum.org/v1/plot/org_gonum_v1_plot-v0.10.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/gonum.org/v1/plot/org_gonum_v1_plot-v0.10.1.zip",
-        ],
-    )
-    go_repository(
-        name = "org_modernc_cc_v3",
-        build_file_proto_mode = "disable_global",
-        importpath = "modernc.org/cc/v3",
-        sha256 = "fe3aeb761e55ce77a95b297321a122b4273aeffe1c08f48fc99310e065211f74",
-        strip_prefix = "modernc.org/cc/v3@v3.40.0",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/cc/v3/org_modernc_cc_v3-v3.40.0.zip",
-            "http://ats.apps.svc/gomod/modernc.org/cc/v3/org_modernc_cc_v3-v3.40.0.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/cc/v3/org_modernc_cc_v3-v3.40.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/cc/v3/org_modernc_cc_v3-v3.40.0.zip",
-        ],
-    )
-    go_repository(
-        name = "org_modernc_ccgo_v3",
-        build_file_proto_mode = "disable_global",
-        importpath = "modernc.org/ccgo/v3",
-        sha256 = "bfc293300cd1ce656ba0ce0cee1f508afec2518bc4214a6b10ccfad6e8e6046e",
-        strip_prefix = "modernc.org/ccgo/v3@v3.16.13",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/ccgo/v3/org_modernc_ccgo_v3-v3.16.13.zip",
-            "http://ats.apps.svc/gomod/modernc.org/ccgo/v3/org_modernc_ccgo_v3-v3.16.13.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/ccgo/v3/org_modernc_ccgo_v3-v3.16.13.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/ccgo/v3/org_modernc_ccgo_v3-v3.16.13.zip",
-        ],
-    )
-    go_repository(
-        name = "org_modernc_ccorpus",
-        build_file_proto_mode = "disable_global",
-        importpath = "modernc.org/ccorpus",
-        sha256 = "3831b62a73a379b81ac927e17e3e9ffe2d44ad07c934505e1ae24eea8a26a6d3",
-        strip_prefix = "modernc.org/ccorpus@v1.11.6",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/ccorpus/org_modernc_ccorpus-v1.11.6.zip",
-            "http://ats.apps.svc/gomod/modernc.org/ccorpus/org_modernc_ccorpus-v1.11.6.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/ccorpus/org_modernc_ccorpus-v1.11.6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/ccorpus/org_modernc_ccorpus-v1.11.6.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/gc/v3/org_modernc_gc_v3-v3.0.0-20240107210532-573471604cb6.zip",
+            "http://ats.apps.svc/gomod/modernc.org/gc/v3/org_modernc_gc_v3-v3.0.0-20240107210532-573471604cb6.zip",
+            "https://cache.hawkingrei.com/gomod/modernc.org/gc/v3/org_modernc_gc_v3-v3.0.0-20240107210532-573471604cb6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/gc/v3/org_modernc_gc_v3-v3.0.0-20240107210532-573471604cb6.zip",
         ],
     )
     go_repository(
@@ -11300,29 +11183,16 @@ def go_deps():
         ],
     )
     go_repository(
-        name = "org_modernc_httpfs",
-        build_file_proto_mode = "disable_global",
-        importpath = "modernc.org/httpfs",
-        sha256 = "0b5314649c1327a199397eb6fd52b3ce41c9d3bc6dd2a4dea565b5fb87c13f41",
-        strip_prefix = "modernc.org/httpfs@v1.0.6",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/httpfs/org_modernc_httpfs-v1.0.6.zip",
-            "http://ats.apps.svc/gomod/modernc.org/httpfs/org_modernc_httpfs-v1.0.6.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/httpfs/org_modernc_httpfs-v1.0.6.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/httpfs/org_modernc_httpfs-v1.0.6.zip",
-        ],
-    )
-    go_repository(
         name = "org_modernc_libc",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/libc",
-        sha256 = "5f98bedf9f0663b3b87555904ee41b82fe9d8e9ac5c47c9fac9a42a7fe232313",
-        strip_prefix = "modernc.org/libc@v1.22.2",
+        sha256 = "e7857dd7ac722f43be7f13a43db632f53b67067010416f330b8b80664af9b619",
+        strip_prefix = "modernc.org/libc@v1.41.0",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/libc/org_modernc_libc-v1.22.2.zip",
-            "http://ats.apps.svc/gomod/modernc.org/libc/org_modernc_libc-v1.22.2.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/libc/org_modernc_libc-v1.22.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/libc/org_modernc_libc-v1.22.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/libc/org_modernc_libc-v1.41.0.zip",
+            "http://ats.apps.svc/gomod/modernc.org/libc/org_modernc_libc-v1.41.0.zip",
+            "https://cache.hawkingrei.com/gomod/modernc.org/libc/org_modernc_libc-v1.41.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/libc/org_modernc_libc-v1.41.0.zip",
         ],
     )
     go_repository(
@@ -11342,26 +11212,13 @@ def go_deps():
         name = "org_modernc_memory",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/memory",
-        sha256 = "f79e8ada14c36d08817ee2bf6b2103f65c1a61a91b042b59016465869624043c",
-        strip_prefix = "modernc.org/memory@v1.5.0",
+        sha256 = "fb640d04a514b88f7d988e8b79b41f46e7958da5ea3e69505199c4059138d189",
+        strip_prefix = "modernc.org/memory@v1.7.2",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/memory/org_modernc_memory-v1.5.0.zip",
-            "http://ats.apps.svc/gomod/modernc.org/memory/org_modernc_memory-v1.5.0.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/memory/org_modernc_memory-v1.5.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/memory/org_modernc_memory-v1.5.0.zip",
-        ],
-    )
-    go_repository(
-        name = "org_modernc_opt",
-        build_file_proto_mode = "disable_global",
-        importpath = "modernc.org/opt",
-        sha256 = "294b1b80137cb86292c8893481d545eee90b17b84b6ad1dcb2e6c9bb523a2d9e",
-        strip_prefix = "modernc.org/opt@v0.1.3",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/opt/org_modernc_opt-v0.1.3.zip",
-            "http://ats.apps.svc/gomod/modernc.org/opt/org_modernc_opt-v0.1.3.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/opt/org_modernc_opt-v0.1.3.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/opt/org_modernc_opt-v0.1.3.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/memory/org_modernc_memory-v1.7.2.zip",
+            "http://ats.apps.svc/gomod/modernc.org/memory/org_modernc_memory-v1.7.2.zip",
+            "https://cache.hawkingrei.com/gomod/modernc.org/memory/org_modernc_memory-v1.7.2.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/memory/org_modernc_memory-v1.7.2.zip",
         ],
     )
     go_repository(
@@ -11394,13 +11251,13 @@ def go_deps():
         name = "org_modernc_sqlite",
         build_file_proto_mode = "disable_global",
         importpath = "modernc.org/sqlite",
-        sha256 = "be0501f87458962a00c8fb07d1f131af010a534cd6ffb654c570be35b9b608d5",
-        strip_prefix = "modernc.org/sqlite@v1.18.2",
+        sha256 = "3add9bde5a932e2a52cd2b50a1be276332d91f196767a5be740afa3ee037afad",
+        strip_prefix = "modernc.org/sqlite@v1.29.6",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.18.2.zip",
-            "http://ats.apps.svc/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.18.2.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.18.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.18.2.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.29.6.zip",
+            "http://ats.apps.svc/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.29.6.zip",
+            "https://cache.hawkingrei.com/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.29.6.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/sqlite/org_modernc_sqlite-v1.29.6.zip",
         ],
     )
     go_repository(
@@ -11414,19 +11271,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/modernc.org/strutil/org_modernc_strutil-v1.2.0.zip",
             "https://cache.hawkingrei.com/gomod/modernc.org/strutil/org_modernc_strutil-v1.2.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/strutil/org_modernc_strutil-v1.2.0.zip",
-        ],
-    )
-    go_repository(
-        name = "org_modernc_tcl",
-        build_file_proto_mode = "disable_global",
-        importpath = "modernc.org/tcl",
-        sha256 = "f966db0dd1ccbc7f8d5ac2e752b64c3be343aa3f92215ed98b6f2a51b7abbb64",
-        strip_prefix = "modernc.org/tcl@v1.13.2",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/tcl/org_modernc_tcl-v1.13.2.zip",
-            "http://ats.apps.svc/gomod/modernc.org/tcl/org_modernc_tcl-v1.13.2.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/tcl/org_modernc_tcl-v1.13.2.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/tcl/org_modernc_tcl-v1.13.2.zip",
         ],
     )
     go_repository(
@@ -11453,19 +11297,6 @@ def go_deps():
             "http://ats.apps.svc/gomod/modernc.org/y/org_modernc_y-v1.1.0.zip",
             "https://cache.hawkingrei.com/gomod/modernc.org/y/org_modernc_y-v1.1.0.zip",
             "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/y/org_modernc_y-v1.1.0.zip",
-        ],
-    )
-    go_repository(
-        name = "org_modernc_z",
-        build_file_proto_mode = "disable_global",
-        importpath = "modernc.org/z",
-        sha256 = "5be23ef96669963e52d25b787d71028fff4fe1c468dec20aac59c9512caa2eb7",
-        strip_prefix = "modernc.org/z@v1.5.1",
-        urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/modernc.org/z/org_modernc_z-v1.5.1.zip",
-            "http://ats.apps.svc/gomod/modernc.org/z/org_modernc_z-v1.5.1.zip",
-            "https://cache.hawkingrei.com/gomod/modernc.org/z/org_modernc_z-v1.5.1.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/modernc.org/z/org_modernc_z-v1.5.1.zip",
         ],
     )
     go_repository(
@@ -11563,13 +11394,39 @@ def go_deps():
         name = "org_uber_go_zap",
         build_file_proto_mode = "disable_global",
         importpath = "go.uber.org/zap",
-        sha256 = "b994b96ff0bb504a3d58288ab88b9f3c6604689ea1afb69d25b509769705a6c2",
-        strip_prefix = "go.uber.org/zap@v1.27.0",
+        sha256 = "38760227142d38369069374c005707bc6b3c270a75f34fa3f17c48c863143cdc",
+        strip_prefix = "go.uber.org/zap@v1.27.1",
         urls = [
-            "http://bazel-cache.pingcap.net:8080/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.0.zip",
-            "http://ats.apps.svc/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.0.zip",
-            "https://cache.hawkingrei.com/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.0.zip",
-            "https://storage.googleapis.com/pingcapmirror/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.0.zip",
+            "http://bazel-cache.pingcap.net:8080/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
+            "http://ats.apps.svc/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
+            "https://cache.hawkingrei.com/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/go.uber.org/zap/org_uber_go_zap-v1.27.1.zip",
+        ],
+    )
+    go_repository(
+        name = "team_gaijin_dev_go_exhaustruct_v4",
+        build_file_proto_mode = "disable_global",
+        importpath = "dev.gaijin.team/go/exhaustruct/v4",
+        sha256 = "d4b6cca11fe197bffdb1ef437558e64335f157e1075621b71366cdb9d24880d3",
+        strip_prefix = "dev.gaijin.team/go/exhaustruct/v4@v4.0.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/dev.gaijin.team/go/exhaustruct/v4/team_gaijin_dev_go_exhaustruct_v4-v4.0.0.zip",
+            "http://ats.apps.svc/gomod/dev.gaijin.team/go/exhaustruct/v4/team_gaijin_dev_go_exhaustruct_v4-v4.0.0.zip",
+            "https://cache.hawkingrei.com/gomod/dev.gaijin.team/go/exhaustruct/v4/team_gaijin_dev_go_exhaustruct_v4-v4.0.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/dev.gaijin.team/go/exhaustruct/v4/team_gaijin_dev_go_exhaustruct_v4-v4.0.0.zip",
+        ],
+    )
+    go_repository(
+        name = "team_gaijin_dev_go_golib",
+        build_file_proto_mode = "disable_global",
+        importpath = "dev.gaijin.team/go/golib",
+        sha256 = "6711283f347d15b5ef75f45c01701547b375a36df67478c944da3c491ab1faf4",
+        strip_prefix = "dev.gaijin.team/go/golib@v0.6.0",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/dev.gaijin.team/go/golib/team_gaijin_dev_go_golib-v0.6.0.zip",
+            "http://ats.apps.svc/gomod/dev.gaijin.team/go/golib/team_gaijin_dev_go_golib-v0.6.0.zip",
+            "https://cache.hawkingrei.com/gomod/dev.gaijin.team/go/golib/team_gaijin_dev_go_golib-v0.6.0.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/dev.gaijin.team/go/golib/team_gaijin_dev_go_golib-v0.6.0.zip",
         ],
     )
     go_repository(

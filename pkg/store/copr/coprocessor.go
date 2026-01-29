@@ -15,6 +15,7 @@
 package copr
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"math"
@@ -53,7 +54,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
+	"github.com/pingcap/tidb/pkg/util/redact"
 	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tidb/pkg/util/trxevents"
 	"github.com/pingcap/tipb/go-tipb"
@@ -136,7 +139,16 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		req.StoreBatchSize = 0
 	}
 
-	bo := backoff.NewBackofferWithVars(ctx, copBuildTaskMaxBackoff, vars)
+	boCtx := ctx
+	if req.MaxExecutionTime > 0 {
+		// If the request has a MaxExecutionTime, we need to set the deadline of the context.
+		var cancel context.CancelFunc
+		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(req.MaxExecutionTime)*time.Millisecond)
+		defer func() {
+			cancel()
+		}()
+	}
+	bo := backoff.NewBackofferWithVars(boCtx, copBuildTaskMaxBackoff, vars)
 	var (
 		tasks []*copTask
 		err   error
@@ -287,6 +299,10 @@ type copTask struct {
 	tikvClientReadTimeout uint64
 	// firstReadType is used to indicate the type of first read when retrying.
 	firstReadType string
+	// skipBuckets indicates this task was built without bucket-level splitting.
+	// If "Request range exceeds bound" error occurs on such a task, we fail fast
+	// instead of retrying, since buckets aren't the cause.
+	skipBuckets bool
 }
 
 type batchedCopTask struct {
@@ -332,12 +348,164 @@ type buildCopTaskOpt struct {
 	elapsed  *time.Duration
 	// ignoreTiKVClientReadTimeout is used to ignore tikv_client_read_timeout configuration, use default timeout instead.
 	ignoreTiKVClientReadTimeout bool
+	// skipBuckets skips bucket-level splitting, only splitting by region.
+	// Used when retrying after bucket-related errors.
+	skipBuckets bool
+}
+
+const (
+	rangeIssueDuplicate    = "duplicate"
+	rangeIssueOverlap      = "overlap"
+	rangeIssueContain      = "contain"
+	rangeIssueOutOfOrder   = "outOfOrder"
+	rangeIssueInvalidBound = "invalidBounds"
+	rangeIssueInfiniteTail = "infiniteTail"
+)
+
+type rangeIssueStats struct {
+	Duplicate    int `json:"duplicate,omitempty"`
+	Overlap      int `json:"overlap,omitempty"`
+	Contain      int `json:"contain,omitempty"`
+	OutOfOrder   int `json:"outOfOrder,omitempty"`
+	InvalidBound int `json:"invalidBounds,omitempty"`
+	InfiniteTail int `json:"infiniteTail,omitempty"`
+}
+
+func (s *rangeIssueStats) add(category string) {
+	switch category {
+	case rangeIssueDuplicate:
+		s.Duplicate++
+	case rangeIssueOverlap:
+		s.Overlap++
+	case rangeIssueContain:
+		s.Contain++
+	case rangeIssueOutOfOrder:
+		s.OutOfOrder++
+	case rangeIssueInvalidBound:
+		s.InvalidBound++
+	case rangeIssueInfiniteTail:
+		s.InfiniteTail++
+	}
+}
+
+func (s rangeIssueStats) empty() bool {
+	return s == (rangeIssueStats{})
+}
+
+func compareRangeEnd(a, b []byte) int {
+	if len(a) == 0 {
+		if len(b) == 0 {
+			return 0
+		}
+		return 1
+	}
+	if len(b) == 0 {
+		return -1
+	}
+	return bytes.Compare(a, b)
+}
+
+func rangeContains(a, b kv.KeyRange) bool {
+	if bytes.Compare(a.StartKey, b.StartKey) > 0 {
+		return false
+	}
+	return compareRangeEnd(a.EndKey, b.EndKey) >= 0
+}
+
+func rangesOverlap(a, b kv.KeyRange) bool {
+	if len(a.EndKey) > 0 && bytes.Compare(a.EndKey, b.StartKey) <= 0 {
+		return false
+	}
+	if len(b.EndKey) > 0 && bytes.Compare(b.EndKey, a.StartKey) <= 0 {
+		return false
+	}
+	return true
+}
+
+func classifyRangePair(prev, curr kv.KeyRange) string {
+	switch {
+	case bytes.Equal(prev.StartKey, curr.StartKey) && bytes.Equal(prev.EndKey, curr.EndKey):
+		return rangeIssueDuplicate
+	case rangeContains(prev, curr):
+		return rangeIssueContain
+	case rangeContains(curr, prev):
+		return rangeIssueContain
+	case rangesOverlap(prev, curr):
+		return rangeIssueOverlap
+	default:
+		return rangeIssueOutOfOrder
+	}
+}
+
+func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
+	if ranges == nil || ranges.Len() == 0 {
+		return false
+	}
+	total := ranges.Len()
+	prev := ranges.At(0)
+	var stats rangeIssueStats
+	validateRange := func(idx int, r kv.KeyRange) bool {
+		if len(r.EndKey) > 0 && bytes.Compare(r.StartKey, r.EndKey) > 0 {
+			logutil.Logger(ctx).Error("invalid key range start > end",
+				zap.String("start", redact.Key(r.StartKey)),
+				zap.String("end", redact.Key(r.EndKey)))
+			stats.add(rangeIssueInvalidBound)
+			return false
+		}
+		return true
+	}
+	valid := validateRange(0, prev)
+	sorted := true
+	for i := 1; i < total; i++ {
+		curr := ranges.At(i)
+		valid = validateRange(i, curr) && valid
+		switch {
+		case len(prev.EndKey) == 0:
+			sorted = false
+			stats.add(rangeIssueInfiniteTail)
+		case bytes.Compare(prev.EndKey, curr.StartKey) > 0:
+			sorted = false
+			stats.add(classifyRangePair(prev, curr))
+		}
+		prev = curr
+	}
+	if sorted && valid {
+		return false
+	}
+	flat := ranges.ToRanges()
+	fields := []zap.Field{
+		zap.Int("rangeCount", ranges.Len()),
+		formatRanges(NewKeyRanges(flat)),
+		zap.Stack("stack"),
+	}
+	if !stats.empty() {
+		fields = append(fields, zap.Any("rangeIssues", stats))
+	}
+	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges", fields...)
+	sortedRanges := append([]kv.KeyRange(nil), flat...)
+	slices.SortFunc(sortedRanges, func(a, b kv.KeyRange) int {
+		if cmp := bytes.Compare(a.StartKey, b.StartKey); cmp != 0 {
+			return cmp
+		}
+		return bytes.Compare(a.EndKey, b.EndKey)
+	})
+	ranges.Reset(sortedRanges)
+	return true
 }
 
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
-	defer tracing.StartRegion(bo.GetCtx(), "copr.buildCopTasks").End()
+	ctx := bo.GetCtx()
+	defer tracing.StartRegion(ctx, "copr.buildCopTasks").End()
+	if traceevent.IsEnabled(traceevent.KvRequest) {
+		traceevent.TraceEvent(ctx, traceevent.KvRequest, "copr.build_ranges",
+			zap.Uint64("connID", req.ConnID),
+			zap.String("connAlias", req.ConnAlias),
+			zap.Int("rangeCount", ranges.Len()),
+			formatRanges(ranges))
+	}
+	reordered := ensureMonotonicKeyRanges(ctx, ranges)
 	cmdType := tikvrpc.CmdCop
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -345,6 +513,8 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 	rangesLen := ranges.Len()
 	// something went wrong, disable hints to avoid out of range index.
 	if len(hints) != rangesLen {
+		hints = nil
+	} else if reordered {
 		hints = nil
 	}
 
@@ -355,15 +525,17 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		}
 	})
 
-	if req.MaxExecutionTime > 0 {
-		// If the request has a MaxExecutionTime, we need to set the deadline of the context.
-		ctxWithTimeout, cancel := context.WithTimeout(bo.GetCtx(), time.Duration(req.MaxExecutionTime)*time.Millisecond)
-		defer cancel()
-		bo.TiKVBackoffer().SetCtx(ctxWithTimeout)
-	}
-
 	// TODO(youjiali1995): is there any request type that needn't be split by buckets?
-	locs, err := cache.SplitKeyRangesByBuckets(bo, ranges)
+	var locs []*LocationKeyRanges
+	var err error
+	if opt.skipBuckets {
+		// Skip bucket splitting - only split by region.
+		// Used when retrying after "Request range exceeds bound" error,
+		// which may be caused by stale bucket metadata.
+		locs, err = cache.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, false)
+	} else {
+		locs, err = cache.SplitKeyRangesByBuckets(bo, ranges)
+	}
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -429,6 +601,7 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 				requestSource: req.RequestSource,
 				RowCountHint:  hint,
 				busyThreshold: req.StoreBusyThreshold,
+				skipBuckets:   opt.skipBuckets,
 			}
 			if !opt.ignoreTiKVClientReadTimeout {
 				task.tikvClientReadTimeout = req.TiKVClientReadTimeout
@@ -1210,9 +1383,18 @@ func (w *liteCopIteratorWorker) liteSendReq(ctx context.Context, it *copIterator
 		return resp
 	}
 	backoffermap := make(map[uint64]*Backoffer)
+	cancelFuncs := make([]context.CancelFunc, 0)
+	defer func() {
+		for _, cancel := range cancelFuncs {
+			cancel()
+		}
+	}()
 	for len(it.tasks) > 0 {
 		curTask := it.tasks[0]
-		bo := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		bo, cancel := chooseBackoffer(w.ctx, backoffermap, curTask, worker)
+		if cancel != nil {
+			cancelFuncs = append(cancelFuncs, cancel)
+		}
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp = &copResponse{err: errors.Trace(err)}
@@ -1287,11 +1469,12 @@ func (it *copIterator) CollectUnconsumedCopRuntimeStats() []*CopRuntimeStats {
 }
 
 // Associate each region with an independent backoffer. In this way, when multiple regions are
-// unavailable, TiDB can execute very quickly without blocking
-func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) *Backoffer {
+// unavailable, TiDB can execute very quickly without blocking, if the returned CancelFunc is not nil,
+// the caller must call it to avoid context leak.
+func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, task *copTask, worker *copIteratorWorker) (*Backoffer, context.CancelFunc) {
 	bo, ok := backoffermap[task.region.GetID()]
 	if ok {
-		return bo
+		return bo, nil
 	}
 	boMaxSleep := CopNextMaxBackoff
 	failpoint.Inject("ReduceCopNextMaxBackoff", func(value failpoint.Value) {
@@ -1299,9 +1482,14 @@ func chooseBackoffer(ctx context.Context, backoffermap map[uint64]*Backoffer, ta
 			boMaxSleep = 2
 		}
 	})
-	newbo := backoff.NewBackofferWithVars(ctx, boMaxSleep, worker.vars)
+	var cancel context.CancelFunc
+	boCtx := ctx
+	if worker.req.MaxExecutionTime > 0 {
+		boCtx, cancel = context.WithTimeout(boCtx, time.Duration(worker.req.MaxExecutionTime)*time.Millisecond)
+	}
+	newbo := backoff.NewBackofferWithVars(boCtx, boMaxSleep, worker.vars)
 	backoffermap[task.region.GetID()] = newbo
-	return newbo
+	return newbo, cancel
 }
 
 // handleTask handles single copTask, sends the result to channel, retry automatically on error.
@@ -1319,9 +1507,18 @@ func (worker *copIteratorWorker) handleTask(ctx context.Context, task *copTask, 
 	}()
 	remainTasks := []*copTask{task}
 	backoffermap := make(map[uint64]*Backoffer)
+	cancelFuncs := make([]context.CancelFunc, 0)
+	defer func() {
+		for _, cancel := range cancelFuncs {
+			cancel()
+		}
+	}()
 	for len(remainTasks) > 0 {
 		curTask := remainTasks[0]
-		bo := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		bo, cancel := chooseBackoffer(ctx, backoffermap, curTask, worker)
+		if cancel != nil {
+			cancelFuncs = append(cancelFuncs, cancel)
+		}
 		result, err := worker.handleTaskOnce(bo, curTask)
 		if err != nil {
 			resp := &copResponse{err: errors.Trace(err)}
@@ -1500,7 +1697,7 @@ func (worker *copIteratorWorker) logTimeCopTask(costTime time.Duration, task *co
 		backoffTypes := strings.ReplaceAll(fmt.Sprintf("%v", bo.TiKVBackoffer().GetTypes()), " ", ",")
 		logStr += fmt.Sprintf(" backoff_ms:%d backoff_types:%s", bo.GetTotalSleep(), backoffTypes)
 	}
-	if regionErr := resp.GetRegionError(); regionErr != nil {
+	if regionErr := getRegionError(bo.GetCtx(), resp); regionErr != nil {
 		logStr += fmt.Sprintf(" region_err:%s", regionErr.String())
 	}
 	// resp might be nil, but it is safe to call resp.GetXXX here.
@@ -1584,7 +1781,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 	if ver := resp.pbResp.GetLatestBucketsVersion(); task.bucketsVer < ver {
 		worker.store.GetRegionCache().UpdateBucketsIfNeeded(task.region, ver)
 	}
-	if regionErr := resp.pbResp.GetRegionError(); regionErr != nil {
+	if regionErr := getRegionError(bo.GetCtx(), resp.pbResp); regionErr != nil {
 		if rpcCtx != nil && task.storeType == kv.TiDB {
 			resp.err = errors.Errorf("error: %v", regionErr)
 			worker.checkRespOOM(resp)
@@ -1633,6 +1830,54 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			zap.ByteString("lastRangeEndKey", lastRangeEndKey),
 			zap.String("storeAddr", task.storeAddr),
 			zap.String("error", otherErr))
+
+		// Handle "Request range exceeds bound" error from TiKV.
+		// This can happen when bucket metadata is stale and causes TiDB to send
+		// ranges outside the region boundary. Invalidate cache and retry.
+		if strings.Contains(otherErr, "Request range exceeds bound") {
+			// If this task was already built without bucket splitting and still got this error,
+			// the problem isn't stale bucket metadata - fail fast instead of retrying indefinitely.
+			// This likely indicates stale region metadata from PD.
+			if task.skipBuckets {
+				return nil, errors.Errorf(
+					"request range exceeds bound persists after bucket-less retry, "+
+						"region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s. "+
+						"This likely indicates stale region metadata from PD",
+					task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, otherErr)
+			}
+
+			logutil.Logger(bo.GetCtx()).Warn("Request range exceeds bound - invalidating cache and retrying without buckets",
+				zap.Uint64("regionID", task.region.GetID()),
+				zap.Uint64("bucketsVer", task.bucketsVer),
+				zap.Uint64("latestBucketsVer", resp.pbResp.GetLatestBucketsVersion()))
+
+			// Invalidate the cached region to force refresh from PD
+			worker.store.GetRegionCache().InvalidateCachedRegion(task.region)
+
+			// Backoff before retry
+			errStr := fmt.Sprintf("Request range exceeds bound: region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
+				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, otherErr)
+			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
+				return nil, errors.Trace(err)
+			}
+
+			// Rebuild cop tasks with fresh region info, skipping bucket splitting
+			// since buckets are suspected to be the cause of this error.
+			// The new tasks will have skipBuckets=true set during construction.
+			remains, err := buildCopTasks(bo, task.ranges, &buildCopTaskOpt{
+				req:                         worker.req,
+				cache:                       worker.store.GetRegionCache(),
+				respChan:                    false,
+				eventCb:                     task.eventCb,
+				ignoreTiKVClientReadTimeout: true,
+				skipBuckets:                 true,
+			})
+			if err != nil {
+				return nil, err
+			}
+			return worker.handleBatchRemainsOnErr(bo, rpcCtx, remains, resp.pbResp, task)
+		}
+
 		if strings.Contains(err.Error(), "write conflict") {
 			return nil, kv.ErrWriteConflict.FastGen("%s", otherErr)
 		}
@@ -1678,6 +1923,19 @@ func (worker *copIteratorWorker) handleBatchRemainsOnErr(bo *Backoffer, rpcCtx *
 		batchRespList: batchRespList,
 		remains:       append(remains, remainTasks...),
 	}, nil
+}
+
+func regionErrorDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "region_error"
+}
+
+func getRegionError(ctx context.Context, resp interface{ GetRegionError() *errorpb.Error }) *errorpb.Error {
+	err := resp.GetRegionError()
+	if err != nil {
+		traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.suspicious_event", regionErrorDumpTriggerCheck)
+		return err
+	}
+	return nil
 }
 
 // handle the batched cop response.
@@ -1731,7 +1989,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		failpoint.Inject("batchCopRegionError", func() {
 			batchResp.RegionError = &errorpb.Error{}
 		})
-		if regionErr := batchResp.GetRegionError(); regionErr != nil {
+		if regionErr := getRegionError(bo.GetCtx(), batchResp); regionErr != nil {
 			errStr := fmt.Sprintf("region_id:%v, region_ver:%v, store_type:%s, peer_addr:%s, error:%s",
 				task.region.GetID(), task.region.GetVer(), task.storeType.Name(), task.storeAddr, regionErr.String())
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
@@ -1810,7 +2068,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 		}
 		appendRemainTasks(t.task)
 	}
-	if regionErr := resp.GetRegionError(); regionErr != nil && regionErr.ServerIsBusy != nil &&
+	if regionErr := getRegionError(bo.GetCtx(), resp); regionErr != nil && regionErr.ServerIsBusy != nil &&
 		regionErr.ServerIsBusy.EstimatedWaitMs > 0 && len(remainTasks) != 0 {
 		if len(batchResps) != 0 {
 			return batchRespList, nil, errors.New("store batched coprocessor with server is busy error shouldn't contain responses")

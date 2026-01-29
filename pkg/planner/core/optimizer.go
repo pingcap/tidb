@@ -15,7 +15,6 @@
 package core
 
 import (
-	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -46,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
-	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
 	"github.com/pingcap/tidb/pkg/privilege"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
@@ -59,7 +57,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/set"
 	"github.com/pingcap/tidb/pkg/util/size"
-	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -94,7 +91,7 @@ var optRuleList = []base.LogicalOptRule{
 	&AggregationEliminator{},
 	&SkewDistinctAggRewriter{},
 	&ProjectionEliminator{},
-	&MaxMinEliminator{},
+	&rule.MaxMinEliminator{},
 	&rule.ConstantPropagationSolver{},
 	&ConvertOuterToInnerJoin{},
 	&PPDSolver{},
@@ -107,6 +104,7 @@ var optRuleList = []base.LogicalOptRule{
 	&PushDownTopNOptimizer{},
 	&rule.SyncWaitStatsLoadPoint{},
 	&JoinReOrderSolver{},
+	&rule.OuterJoinToSemiJoin{},
 	&rule.ColumnPruner{}, // column pruning again at last, note it will mess up the results of buildKeySolver
 	&PushDownSequenceSolver{},
 	&EliminateUnionAllDualItem{},
@@ -295,7 +293,6 @@ func doOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic b
 
 // CascadesOptimize includes: normalization, cascadesOptimize, and physicalOptimize.
 func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := normalizeOptimize(ctx, flag, logic)
 	if err != nil {
@@ -324,15 +321,11 @@ func CascadesOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, l
 	}
 
 	finalPlan := postOptimize(ctx, sctx, physical)
-	if sessVars.StmtCtx.EnableOptimizerCETrace {
-		refineCETrace(sctx)
-	}
 	return logic, finalPlan, cost, nil
 }
 
 // VolcanoOptimize includes: logicalOptimize, physicalOptimize
 func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, base.PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
 	flag = adjustOptimizationFlags(flag, logic)
 	logic, err := logicalOptimize(ctx, flag, logic)
 	if err != nil {
@@ -341,15 +334,12 @@ func VolcanoOptimize(ctx context.Context, sctx base.PlanContext, flag uint64, lo
 	if !AllowCartesianProduct.Load() && existsCartesianProduct(logic) {
 		return nil, nil, 0, errors.Trace(plannererrors.ErrCartesianProductUnsupported)
 	}
+	failpoint.Inject("ConsumeVolcanoOptimizePanic", nil)
 	physical, cost, err := physicalOptimize(logic)
 	if err != nil {
 		return nil, nil, 0, err
 	}
 	finalPlan := postOptimize(ctx, sctx, physical)
-
-	if sessVars.StmtCtx.EnableOptimizerCETrace {
-		refineCETrace(sctx)
-	}
 	return logic, finalPlan, cost, nil
 }
 
@@ -383,50 +373,8 @@ func DoOptimize(
 	flag uint64,
 	logic base.LogicalPlan,
 ) (base.PhysicalPlan, float64, error) {
-	sessVars := sctx.GetSessionVars()
-	if sessVars.StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(sctx)
-		defer debugtrace.LeaveContextCommon(sctx)
-	}
 	_, finalPlan, cost, err := doOptimize(ctx, sctx, flag, logic)
 	return finalPlan, cost, err
-}
-
-// refineCETrace will adjust the content of CETrace.
-// Currently, it will (1) deduplicate trace records, (2) sort the trace records (to make it easier in the tests) and (3) fill in the table name.
-func refineCETrace(sctx base.PlanContext) {
-	stmtCtx := sctx.GetSessionVars().StmtCtx
-	stmtCtx.OptimizerCETrace = tracing.DedupCETrace(stmtCtx.OptimizerCETrace)
-	slices.SortFunc(stmtCtx.OptimizerCETrace, func(i, j *tracing.CETraceRecord) int {
-		if i == nil && j != nil {
-			return -1
-		}
-		if i == nil || j == nil {
-			return 1
-		}
-
-		if c := cmp.Compare(i.TableID, j.TableID); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(i.Type, j.Type); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(i.Expr, j.Expr); c != 0 {
-			return c
-		}
-		return cmp.Compare(i.RowCount, j.RowCount)
-	})
-	traceRecords := stmtCtx.OptimizerCETrace
-	is := sctx.GetLatestInfoSchema().(infoschema.InfoSchema)
-	for _, rec := range traceRecords {
-		tbl, _ := infoschema.FindTableByTblOrPartID(is, rec.TableID)
-		if tbl != nil {
-			rec.TableName = tbl.Meta().Name.O
-			continue
-		}
-		logutil.BgLogger().Warn("Failed to find table in infoschema", zap.String("category", "OptimizerTrace"),
-			zap.Int64("table id", rec.TableID))
-	}
 }
 
 // mergeContinuousSelections merge continuous selections which may occur after changing plans.
@@ -686,6 +634,10 @@ func getTiFlashServerMinLogicalCores(ctx context.Context, sctx base.PlanContext,
 			failpoint.Return(false, 0)
 		}
 	})
+	defer func(begin time.Time) {
+		// if there are any network jitters, this could take a long time.
+		sctx.GetSessionVars().DurationOptimizer.TiFlashInfoFetch = time.Since(begin)
+	}(time.Now())
 	rows, err := infoschema.FetchClusterServerInfoWithoutPrivilegeCheck(ctx, sctx.GetSessionVars(), serversInfo, diagnosticspb.ServerInfoType_HardwareInfo, false)
 	if err != nil {
 		return false, 0
@@ -1014,10 +966,6 @@ func LogicalOptimizeTest(ctx context.Context, flag uint64, logic base.LogicalPla
 }
 
 func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
 	var err error
 	// todo: the normalization rule driven way will be changed as stack-driven.
 	for i, rule := range normalizeRuleList {
@@ -1036,10 +984,10 @@ func normalizeOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan)
 }
 
 func logicalOptimize(ctx context.Context, flag uint64, logic base.LogicalPlan) (base.LogicalPlan, error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
+	defer func(begin time.Time) {
+		logic.SCtx().GetSessionVars().DurationOptimizer.LogicalOpt = time.Since(begin)
+	}(time.Now())
+
 	var err error
 	var againRuleList []base.LogicalOptRule
 	for i, rule := range logicalRuleList {
@@ -1078,13 +1026,15 @@ func isLogicalRuleDisabled(r base.LogicalOptRule) bool {
 }
 
 func physicalOptimize(logic base.LogicalPlan) (plan base.PhysicalPlan, cost float64, err error) {
-	if logic.SCtx().GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
-		debugtrace.EnterContextCommon(logic.SCtx())
-		defer debugtrace.LeaveContextCommon(logic.SCtx())
-	}
+	begin := time.Now()
+	defer func() {
+		logic.SCtx().GetSessionVars().DurationOptimizer.PhysicalOpt = time.Since(begin)
+	}()
 	if _, _, err := logic.RecursiveDeriveStats(nil); err != nil {
 		return nil, 0, err
 	}
+	// if there are too many indexes, this process might take a relatively long time, track its time cost.
+	logic.SCtx().GetSessionVars().DurationOptimizer.StatsDerive = time.Since(begin)
 
 	preparePossibleProperties(logic)
 

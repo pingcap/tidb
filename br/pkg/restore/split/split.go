@@ -152,7 +152,10 @@ func (rs *RegionSplitter) WaitForScatterRegionsTimeout(ctx context.Context, regi
 	return leftRegions
 }
 
-func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) error {
+// checkRegionConsistency checks the readiness and continuity of regions.
+// if the argument `limitted` is true, regions are regarded as limitted scanned result.
+// so it will not compare `endKey` with the last region's `EndKey`.
+func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo, limitted bool) error {
 	// current pd can't guarantee the consistency of returned regions
 	if len(regions) == 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion, "scan region return empty result, startKey: %s, endKey: %s",
@@ -165,7 +168,7 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 			regions[0].Region.Id,
 			redact.Key(regions[0].Region.StartKey), redact.Key(startKey),
 			regions[0].Region.RegionEpoch.String())
-	} else if len(regions[len(regions)-1].Region.EndKey) != 0 &&
+	} else if !limitted && len(regions[len(regions)-1].Region.EndKey) != 0 &&
 		bytes.Compare(regions[len(regions)-1].Region.EndKey, endKey) < 0 {
 		return errors.Annotatef(berrors.ErrPDBatchScanRegion,
 			"last region %d's endKey(%s) < endKey(%s), region epoch: %s",
@@ -205,6 +208,34 @@ func checkRegionConsistency(startKey, endKey []byte, regions []*RegionInfo) erro
 	return nil
 }
 
+func scanRegionsLimitWithRetry(
+	ctx context.Context, client SplitClient, startKey, endKey []byte, limit int, mustLeader bool,
+) ([]*RegionInfo, bool, error) {
+	var (
+		batch []*RegionInfo
+		err   error
+	)
+	_ = utils.WithRetry(ctx, func() error {
+		defer func() { mustLeader = mustLeader || err != nil }()
+		if mustLeader {
+			batch, err = client.ScanRegions(ctx, startKey, endKey, limit)
+		} else {
+			batch, err = client.ScanRegions(ctx, startKey, endKey, limit, opt.WithAllowFollowerHandle())
+		}
+		if err != nil {
+			return err
+		}
+		if err = checkRegionConsistency(startKey, endKey, batch, true); err != nil {
+			log.Warn("failed to scan region, retrying",
+				logutil.ShortError(err),
+				zap.Int("regionLength", len(batch)))
+			return err
+		}
+		return nil
+	}, NewWaitRegionOnlineBackoffer())
+	return batch, mustLeader, err
+}
+
 // PaginateScanRegion scan regions with a limit pagination and return all regions
 // at once. The returned regions are continuous and cover the key range. If not,
 // or meet errors, it will retry internally.
@@ -219,19 +250,16 @@ func PaginateScanRegion(
 	var (
 		lastRegions []*RegionInfo
 		err         error
+		mustLeader  = false
 		backoffer   = NewWaitRegionOnlineBackoffer()
 	)
 	_ = utils.WithRetry(ctx, func() error {
+		defer func() { mustLeader = true }()
 		regions := make([]*RegionInfo, 0, 16)
 		scanStartKey := startKey
 		for {
 			var batch []*RegionInfo
-			if err != nil {
-				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit)
-			} else {
-				batch, err = client.ScanRegions(ctx, scanStartKey, endKey, limit, opt.WithAllowFollowerHandle())
-			}
-
+			batch, mustLeader, err = scanRegionsLimitWithRetry(ctx, client, scanStartKey, endKey, limit, mustLeader)
 			if err != nil {
 				err = errors.Annotatef(berrors.ErrPDBatchScanRegion.Wrap(err), "scan regions from start-key:%s, err: %s",
 					redact.Key(scanStartKey), err.Error())
@@ -256,7 +284,7 @@ func PaginateScanRegion(
 		}
 		lastRegions = regions
 
-		if err = checkRegionConsistency(startKey, endKey, regions); err != nil {
+		if err = checkRegionConsistency(startKey, endKey, regions, false); err != nil {
 			log.Warn("failed to scan region, retrying",
 				logutil.ShortError(err),
 				zap.Int("regionLength", len(regions)))

@@ -1,0 +1,17 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "testutil",
+    srcs = ["indexcheck.go"],
+    importpath = "github.com/pingcap/tidb/pkg/table/tables/testutil",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/domain",
+        "//pkg/parser/ast",
+        "//pkg/sessiontxn",
+        "//pkg/table",
+        "//pkg/tablecodec",
+        "//pkg/testkit",
+        "@com_github_stretchr_testify//require",
+    ],
+)

@@ -682,7 +682,21 @@ func ColumnSubstituteImpl(ctx BuildContext, expr Expression, schema *Schema, new
 			}
 		}
 		if substituted {
-			newFunc, err := NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			var newFunc Expression
+			var err error
+			switch v.FuncName.L {
+			case ast.EQ:
+				// keep order as col=value to avoid flaky test.
+				args := refExprArr.Result()
+				switch args[0].(type) {
+				case *Constant:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[1], args[0])
+				default:
+					newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, args[0], args[1])
+				}
+			default:
+				newFunc, err = NewFunction(ctx, v.FuncName.L, v.RetType, refExprArr.Result()...)
+			}
 			if err != nil {
 				return true, true, v
 			}
@@ -876,6 +890,18 @@ var symmetricOp = map[opcode.Op]opcode.Op{
 	opcode.EQ:     opcode.EQ,
 	opcode.NE:     opcode.NE,
 	opcode.NullEQ: opcode.NullEQ,
+}
+
+// CompareOpMap records all comparison operators.
+var CompareOpMap = map[string]struct{}{
+	ast.LT:     {},
+	ast.GE:     {},
+	ast.GT:     {},
+	ast.LE:     {},
+	ast.EQ:     {},
+	ast.NE:     {},
+	ast.NullEQ: {},
+	ast.In:     {},
 }
 
 func pushNotAcrossArgs(ctx BuildContext, exprs []Expression, not bool) ([]Expression, bool) {
@@ -2321,4 +2347,26 @@ func IsConstNull(expr Expression) bool {
 		}
 	}
 	return false
+}
+
+// IsColOpCol is to whether ScalarFunction meets col op col condition.
+func IsColOpCol(sf *ScalarFunction) (_, _ *Column, _ bool) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2, ok2 := args[1].(*Column)
+		col1, ok1 := args[0].(*Column)
+		return col1, col2, ok1 && ok2
+	}
+	return nil, nil, false
+}
+
+// ExtractColumnsFromColOpCol is to extract columns from col op col condition.
+func ExtractColumnsFromColOpCol(sf *ScalarFunction) (_, _ *Column) {
+	args := sf.GetArgs()
+	if len(args) == 2 {
+		col2 := args[1].(*Column)
+		col1 := args[0].(*Column)
+		return col1, col2
+	}
+	return nil, nil
 }

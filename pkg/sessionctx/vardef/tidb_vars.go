@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -170,6 +171,9 @@ const (
 	// TiDBOptimizerSelectivityLevel is used to control the selectivity estimation level.
 	TiDBOptimizerSelectivityLevel = "tidb_optimizer_selectivity_level"
 
+	// TiDBOptIndexPruneThreshold is used to control the threshold for index pruning optimization.
+	TiDBOptIndexPruneThreshold = "tidb_opt_index_prune_threshold"
+
 	// TiDBOptimizerEnableNewOnlyFullGroupByCheck is used to open the newly only_full_group_by check by maintaining functional dependency.
 	TiDBOptimizerEnableNewOnlyFullGroupByCheck = "tidb_enable_new_only_full_group_by_check"
 
@@ -233,6 +237,10 @@ const (
 
 	// TiDBSlowLogRules defines multi-dimensional trigger rules for flexible slow log control.
 	TiDBSlowLogRules = "tidb_slow_log_rules"
+
+	// TiDBSlowLogMaxPerSec is the maximum number of slow logs that can be recorded per second in the server.
+	// The default value is 0, which means no rate limiting is applied.
+	TiDBSlowLogMaxPerSec = "tidb_slow_log_max_per_sec"
 
 	// TiDBSlowTxnLogThreshold is used to set the slow transaction log threshold in the server.
 	TiDBSlowTxnLogThreshold = "tidb_slow_txn_log_threshold"
@@ -658,6 +666,10 @@ const (
 	// we'll choose a rather time-consuming algorithm to calculate the join order.
 	TiDBOptJoinReorderThreshold = "tidb_opt_join_reorder_threshold"
 
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel = "tidb_opt_join_reorder_through_sel"
+
 	// TiDBSlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	TiDBSlowQueryFile = "tidb_slow_query_file"
 
@@ -978,6 +990,11 @@ const (
 	// TiDBOptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	TiDBOptPrefixIndexSingleScan = "tidb_opt_prefix_index_single_scan"
+	// TiDBOptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	// Examples of queries that can benefit from this optimization:
+	// 1. index a -> order by a, b limit
+	// 2. index a, prefix(b) -> order by a, b limit
+	TiDBOptPartialOrderedIndexForTopN = "tidb_opt_partial_ordered_index_for_topn"
 
 	// TiDBEnableExternalTSRead indicates whether to enable read through an external ts
 	TiDBEnableExternalTSRead = "tidb_enable_external_ts_read"
@@ -1159,7 +1176,7 @@ const (
 	// TiDBGenerateBinaryPlan indicates whether binary plan should be generated in slow log and statements summary.
 	TiDBGenerateBinaryPlan = "tidb_generate_binary_plan"
 	// TiDBEnableDDLAnalyze indicates whether ddl(create/reorg index) is with embedded index analyze.
-	TiDBEnableDDLAnalyze = "tidb_enable_ddl_analyze"
+	TiDBEnableDDLAnalyze = "tidb_stats_update_during_ddl"
 	// TiDBEnableGCAwareMemoryTrack indicates whether to turn-on GC-aware memory track.
 	TiDBEnableGCAwareMemoryTrack = "tidb_enable_gc_aware_memory_track"
 	// TiDBEnableTmpStorageOnOOM controls whether to enable the temporary storage for some operators
@@ -1336,6 +1353,9 @@ const (
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
+	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
 )
 
 // TiDB intentional limits, can be raised in the future.
@@ -1452,7 +1472,7 @@ const (
 	DefTiDBMemQuotaApplyCache               = 32 << 20 // 32MB.
 	DefTiDBMemQuotaBindingCache             = 64 << 20 // 64MB.
 	DefTiDBGeneralLog                       = false
-	DefTiDBTraceEvent                       = Off
+	DefTiDBTraceEvent                       = ""
 	DefTiDBPProfSQLCPU                      = 0
 	DefTiDBRetryLimit                       = 10
 	DefTiDBDisableTxnAutoRetry              = true
@@ -1463,6 +1483,7 @@ const (
 	DefBroadcastJoinThresholdCount          = 10 * 1024
 	DefPreferBCJByExchangeDataSize          = false
 	DefTiDBOptimizerSelectivityLevel        = 0
+	DefTiDBOptIndexPruneThreshold           = 20
 	DefTiDBOptimizerEnableNewOFGB           = false
 	DefTiDBEnableOuterJoinReorder           = true
 	DefTiDBEnableNAAJ                       = true
@@ -1505,6 +1526,7 @@ const (
 	DefEnableStrictDoubleTypeCheck          = true
 	DefEnableVectorizedExpression           = true
 	DefTiDBOptJoinReorderThreshold          = 0
+	DefTiDBOptJoinReorderThroughSel         = false
 	DefTiDBDDLSlowOprThreshold              = 300
 	DefTiDBUseFastAnalyze                   = false
 	DefTiDBSkipIsolationLevelCheck          = false
@@ -1601,7 +1623,7 @@ const (
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
-	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
@@ -1663,6 +1685,7 @@ const (
 	DefTiDBGOGCMaxValue                               = 500
 	DefTiDBGOGCMinValue                               = 100
 	DefTiDBOptPrefixIndexSingleScan                   = true
+	DefTiDBOptPartialOrderedIndexForTopN              = false
 	DefTiDBEnableAsyncMergeGlobalStats                = true
 	DefTiDBExternalTS                                 = 0
 	DefTiDBEnableExternalTSRead                       = false
@@ -1751,6 +1774,7 @@ const (
 	DefTiDBMemArbitratorModeText                      = memory.ArbitratorModeDisableName
 	DefTiDBMemArbitratorQueryReservedText             = "0"
 	DefTiDBMemArbitratorWaitAverse                    = "0"
+	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 )
 
 // Process global variables.
@@ -1766,19 +1790,20 @@ var (
 	//    the value of `tidb_analyze_column_options` determines the behavior of the analyze operation.
 	// 2. If `tidb_persist_analyze_options` is disabled, `tidb_analyze_column_options` is used directly to decide
 	//    whether to analyze all columns or just the predicate columns.
-	AnalyzeColumnOptions          = atomic.NewString(DefTiDBAnalyzeColumnOptions)
-	GlobalLogMaxDays              = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
-	QueryLogMaxLen                = atomic.NewInt32(DefTiDBQueryLogMaxLen)
-	EnablePProfSQLCPU             = atomic.NewBool(false)
-	EnableBatchDML                = atomic.NewBool(false)
-	EnableTmpStorageOnOOM         = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
-	DDLReorgWorkerCounter   int32 = DefTiDBDDLReorgWorkerCount
-	DDLReorgBatchSize       int32 = DefTiDBDDLReorgBatchSize
-	DDLFlashbackConcurrency int32 = DefTiDBDDLFlashbackConcurrency
-	DDLErrorCountLimit      int64 = DefTiDBDDLErrorCountLimit
-	DDLReorgRowFormat       int64 = DefTiDBRowFormatV2
-	DDLReorgMaxWriteSpeed         = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
-	MaxDeltaSchemaCount     int64 = DefTiDBMaxDeltaSchemaCount
+	AnalyzeColumnOptions           = atomic.NewString(DefTiDBAnalyzeColumnOptions)
+	GlobalLogMaxDays               = atomic.NewInt32(int32(config.GetGlobalConfig().Log.File.MaxDays))
+	QueryLogMaxLen                 = atomic.NewInt32(DefTiDBQueryLogMaxLen)
+	EnablePProfSQLCPU              = atomic.NewBool(false)
+	EnableBatchDML                 = atomic.NewBool(false)
+	EnableTmpStorageOnOOM          = atomic.NewBool(DefTiDBEnableTmpStorageOnOOM)
+	DDLReorgWorkerCounter    int32 = DefTiDBDDLReorgWorkerCount
+	DDLReorgBatchSize        int32 = DefTiDBDDLReorgBatchSize
+	DDLFlashbackConcurrency  int32 = DefTiDBDDLFlashbackConcurrency
+	DDLErrorCountLimit       int64 = DefTiDBDDLErrorCountLimit
+	DDLReorgRowFormat        int64 = DefTiDBRowFormatV2
+	DDLReorgMaxWriteSpeed          = atomic.NewInt64(DefTiDBDDLReorgMaxWriteSpeed)
+	MaxDeltaSchemaCount      int64 = DefTiDBMaxDeltaSchemaCount
+	GlobalSlowLogRateLimiter       = rate.NewLimiter(rate.Inf, 1)
 	// DDLSlowOprThreshold is the threshold for ddl slow operations, uint is millisecond.
 	DDLSlowOprThreshold = config.GetGlobalConfig().Instance.DDLSlowOprThreshold
 	GlobalSlowLogRules  = atomic.NewPointer[slowlogrule.GlobalSlowLogRules](
@@ -2072,6 +2097,13 @@ const (
 	StrategyConservative = "conservative"
 	// StrategyCustom is a choice of variable TiDBPipelinedDmlResourcePolicy,
 	StrategyCustom = "custom"
+
+	// IndexLookUpPushDownPolicyHintOnly indicates only use the hint to decide whether to push down the index lookup or not.
+	IndexLookUpPushDownPolicyHintOnly = "hint-only"
+	// IndexLookUpPushDownPolicyAffinityForce indicates to force push down the index lookup for table with affinity options.
+	IndexLookUpPushDownPolicyAffinityForce = "affinity-force"
+	// IndexLookUpPushDownPolicyForce indicates to force push down the index lookup for all tables.
+	IndexLookUpPushDownPolicyForce = "force"
 )
 
 // Global config name list.

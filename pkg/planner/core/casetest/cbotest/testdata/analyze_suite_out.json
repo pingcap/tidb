@@ -45,9 +45,9 @@
       {
         "SQL": "explain format = 'brief' select count(*) from t group by a",
         "Plan": [
-          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#4)->Column#3",
+          "HashAgg 2.00 root  group by:test.t.a, funcs:count(Column#5)->Column#4",
           "└─TableReader 2.00 root  data:HashAgg",
-          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#4",
+          "  └─HashAgg 2.00 cop[tikv]  group by:test.t.a, funcs:count(1)->Column#5",
           "    └─TableFullScan 8.00 cop[tikv] table:t keep order:false"
         ]
       }
@@ -238,8 +238,8 @@
           "TopN 1.00 root  test.t.a, offset:0, count:1",
           "└─IndexReader 1.00 root  index:TopN",
           "  └─TopN 1.00 cop[tikv]  test.t.a, offset:0, count:1",
-          "    └─Selection 6.00 cop[tikv]  gt(test.t.c, 0)",
-          "      └─IndexRangeScan 6.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
+          "    └─Selection 7.00 cop[tikv]  gt(test.t.c, 0)",
+          "      └─IndexRangeScan 7.00 cop[tikv] table:t, index:idx(b, d, a, c) range:[2,2], keep order:false"
         ]
       }
     ]
@@ -378,11 +378,11 @@
     "Name": "TestCorrelatedEstimation",
     "Cases": [
       [
-        "Projection 10.00 root  Column#22",
-        "└─Apply 10.00 root  CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(test.t.c, Column#21)",
+        "Projection 10.00 root  Column#27",
+        "└─Apply 10.00 root  CARTESIAN left outer semi join, left side:IndexReader, other cond:eq(test.t.c, Column#26)",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
-        "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#21",
+        "  └─StreamAgg(Probe) 10.00 root  funcs:count(1)->Column#26",
         "    └─HashJoin 10.00 root  inner join, equal:[eq(test.t.a, test.t.a)]",
         "      ├─IndexReader(Build) 10.00 root  index:Selection",
         "      │ └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a), not(isnull(test.t.a))",
@@ -392,12 +392,12 @@
         "          └─IndexFullScan 100.00 cop[tikv] table:s, index:idx(c, b, a) keep order:false"
       ],
       [
-        "Projection 10.00 root  Column#13",
+        "Projection 10.00 root  Column#16",
         "└─Apply 10.00 root  CARTESIAN left outer join, left side:IndexReader",
         "  ├─IndexReader(Build) 10.00 root  index:IndexFullScan",
         "  │ └─IndexFullScan 10.00 cop[tikv] table:t, index:idx(c, b, a) keep order:false",
         "  └─MaxOneRow(Probe) 10.00 root  ",
-        "    └─Projection 10.00 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#13",
+        "    └─Projection 10.00 root  concat(cast(test.t.a, var_string(20)), ,, cast(test.t.b, var_string(20)))->Column#16",
         "      └─IndexReader 10.00 root  index:Selection",
         "        └─Selection 10.00 cop[tikv]  eq(test.t.a, test.t.a)",
         "          └─IndexRangeScan 10.00 cop[tikv] table:t1, index:idx(c, b, a) range: decided by [eq(test.t.c, test.t.c)], keep order:false"
@@ -410,13 +410,12 @@
       {
         "SQL": "explain format = 'brief' select max(e) from t where a='T3382' and b='ECO' and c='TOPIC' and d='23660fa1ace9455cb7f3ee831e14a342'",
         "Plan": [
-          "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#7",
-          "└─Limit 1.00 root  offset:0, count:1",
-          "  └─Projection 1.00 root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e",
-          "    └─IndexLookUp 1.00 root  ",
-          "      ├─IndexFullScan(Build) 8540341.00 cop[tikv] table:t, index:idx4(e) keep order:true, desc",
-          "      └─Selection(Probe) 1.00 cop[tikv]  eq(test.t.a, \"T3382\"), eq(test.t.b, \"ECO\"), eq(test.t.c, \"TOPIC\"), eq(test.t.d, \"23660fa1ace9455cb7f3ee831e14a342\")",
-          "        └─TableRowIDScan 8540341.00 cop[tikv] table:t keep order:false"
+          "StreamAgg 1.00 root  funcs:max(test.t.e)->Column#8",
+          "└─TopN 1.00 root  test.t.e:desc, offset:0, count:1",
+          "  └─IndexLookUp 1.00 root  ",
+          "    ├─IndexRangeScan(Build) 1.25 cop[tikv] table:t, index:idx1(d, a) range:[\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\",\"23660fa1ace9455cb7f3ee831e14a342\" \"T3382\"], keep order:false",
+          "    └─Selection(Probe) 1.00 cop[tikv]  eq(test.t.b, \"ECO\"), eq(test.t.c, \"TOPIC\"), not(isnull(test.t.e))",
+          "      └─TableRowIDScan 1.25 cop[tikv] table:t keep order:false"
         ]
       }
     ]
@@ -459,7 +458,7 @@
   {
     "Name": "TestAnalyze",
     "Cases": [
-      "Analyze{Table(_tidb_rowid, a, _tidb_rowid)}",
+      "Analyze{Table(_tidb_rowid, a, b, _tidb_rowid)}",
       "TableReader(Table(t)->Sel([le(test.t.a, 2)]))",
       "IndexReader(Index(t.b)[[-inf,2)])",
       "TableReader(Table(t)->Sel([eq(test.t.a, 1) le(test.t.b, 2)]))",
@@ -526,12 +525,14 @@
         "SQL": "EXPLAIN format = 'verbose' SELECT * FROM  `tbl_cardcore_transaction` `transactio0_` WHERE `transactio0_`.`period` = '202502' AND `transactio0_`.`account_number` = '1901040107462200' ORDER BY `transactio0_`.`transaction_status`, `transactio0_`.`account_number`, `transactio0_`.`entry_date` ASC, `transactio0_`.`id` ASC;",
         "Plan": [
           "Sort_5 1.00 39640.65 root  cardcore_issuing.tbl_cardcore_transaction.transaction_status, cardcore_issuing.tbl_cardcore_transaction.account_number, cardcore_issuing.tbl_cardcore_transaction.entry_date, cardcore_issuing.tbl_cardcore_transaction.id",
-          "└─IndexLookUp_15 1.00 39619.45 root  ",
-          "  ├─IndexRangeScan_12(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
-          "  └─Selection_14(Probe) 1.00 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
-          "    └─TableRowIDScan_13 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
+          "└─IndexLookUp_12 1.00 39619.45 root  ",
+          "  ├─IndexRangeScan_9(Build) 16.16 4094.52 cop[tikv] table:transactio0_, index:tbl_cardcore_transaction_ix10(account_number, entry_date, value_date) range:[\"1901040107462200\",\"1901040107462200\"], keep order:false",
+          "  └─Selection_11(Probe) 1.00 5431.27 cop[tikv]  eq(cardcore_issuing.tbl_cardcore_transaction.period, \"202502\")",
+          "    └─TableRowIDScan_10 16.16 4624.68 cop[tikv] table:transactio0_ keep order:false"
         ],
-        "Warn": null
+        "Warn": [
+          "Note 1105 [tbl_cardcore_transaction_ix10,tbl_cardcore_transaction_ix17] remain after pruning paths for transactio0_ given Prop{SortItems: [], TaskTp: rootTask}"
+        ]
       }
     ]
   },
@@ -559,6 +560,7 @@
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
+          "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'.",
           "Warning 1105 Aggregation can not be pushed to tiflash because arguments of AggFunc `firstrow` contains unsupported exprs",
           "Warning 1105 Expression about 'test.t19f3e4f1.colc864' can not be pushed to TiFlash because it contains unsupported calculation of type 'enum'."
         ]
@@ -576,9 +578,9 @@
       {
         "SQL": "explain select * from tbl_cardcore_statement s where  s.latest_stmt_print_date = '2024-10-16';",
         "Plan": [
-          "IndexLookUp_11 169960.89 root  ",
-          "├─IndexRangeScan_9(Build) 169960.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
-          "└─TableRowIDScan_10(Probe) 169960.89 cop[tikv] table:s keep order:false"
+          "IndexLookUp_11 53778.89 root  ",
+          "├─IndexRangeScan_9(Build) 53778.89 cop[tikv] table:s, index:tbl_cardcore_statement_ix7(latest_stmt_print_date) range:[2024-10-16,2024-10-16], keep order:false",
+          "└─TableRowIDScan_10(Probe) 53778.89 cop[tikv] table:s keep order:false"
         ],
         "Warn": null
       }

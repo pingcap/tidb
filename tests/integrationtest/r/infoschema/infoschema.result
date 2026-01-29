@@ -54,11 +54,11 @@ count(*)
 3
 explain format='plan_tree' SELECT count(*) FROM information_schema.TABLES WHERE (TABLE_SCHEMA= 'mysql' or TABLE_SCHEMA = 'test') and (TABLE_NAME = 't1' or TABLE_NAME = 't2');
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#27
+HashAgg	root		funcs:count(1)->Column
 └─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 explain format='plan_tree' SELECT count(*) FROM information_schema.TABLES WHERE TABLE_SCHEMA in ('mysql', 'test') and TABLE_NAME in ('t1', 't2');
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#27
+HashAgg	root		funcs:count(1)->Column
 └─MemTableScan	root	table:TABLES	table_name:["t1","t2"], table_schema:["mysql","test"]
 SELECT count(*) FROM information_schema.TABLES WHERE TABLE_NAME in ('t1', 't2') and TABLE_SCHEMA = 'mysql';
 count(*)
@@ -505,3 +505,11 @@ sequence_schema	sequence_name
 Db1	s1
 drop database db1;
 drop database db2;
+create database test_db_080;
+select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';
+SCHEMA_NAME
+test_db_080
+desc format=brief select SCHEMA_NAME from information_schema.schemata where schema_name rlike 'test_db_0[0-8][0-7]';
+id	estRows	task	access object	operator info
+Projection	10000.00	root		Column#2
+└─MemTableScan	10000.00	root	table:SCHEMATA	schema_name_pattern:[test_db_0[0-8][0-7]]

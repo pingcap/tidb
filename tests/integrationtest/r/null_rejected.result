@@ -7,7 +7,7 @@ Level	Code	Message
 EXPLAIN FORMAT='plan_tree' SELECT * FROM t1 JOIN (SELECT ((v0.c0) LIKE (((v0.c0) + (v0.c0)))) AS col_0 FROM v0) as subQuery1 ON (subQuery1.col_0);
 id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
-├─Projection(Build)	root		like(<nil>, cast(plus(cast(<nil>, double BINARY), cast(<nil>, double BINARY)), var_string(370)), 92)->Column#6
+├─Projection(Build)	root		like(<nil>, cast(plus(cast(<nil>, double BINARY), cast(<nil>, double BINARY)), var_string(370)), 92)->Column
 │ └─TableReader	root		data:Selection
 │   └─Selection	cop[tikv]		like(NULL, cast(plus(cast(NULL, double BINARY), cast(NULL, double BINARY)), var_string(370)), 92), null_rejected.t1.c0
 │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo

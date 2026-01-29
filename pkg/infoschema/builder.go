@@ -549,7 +549,9 @@ func dropTableForUpdate(b *Builder, newTableID, oldTableID int64, dbInfo *model.
 			// So here skip to reserve the allocators when repairing table.
 			diff.Type != model.ActionRepairTable &&
 			// Alter sequence will change the sequence info in the allocator, so the old allocator is not valid any more.
-			diff.Type != model.ActionAlterSequence {
+			diff.Type != model.ActionAlterSequence &&
+			// Exchange partition updates auto IDs in meta store, so we need to reload allocators to pick up the new values.
+			diff.Type != model.ActionExchangeTablePartition {
 			// TODO: Check how this would work with ADD/REMOVE Partitioning,
 			// which may have AutoID not connected to tableID
 			// TODO: can there be _tidb_rowid AutoID per partition?
@@ -1112,7 +1114,7 @@ func (b *Builder) createSchemaTablesForDB(di *model.DBInfo, tableFromMeta tableF
 		schTbls.tables[t.Name.L] = tbl
 		b.addTable(schemaVersion, di, t, tbl)
 		if len(di.TableName2ID) > 0 {
-			delete(di.TableName2ID, t.Name.L)
+			delete(di.TableName2ID, t.Name.O)
 		}
 
 		if tblInfo := tbl.Meta(); tblInfo.TempTableType != model.TempTableNone {

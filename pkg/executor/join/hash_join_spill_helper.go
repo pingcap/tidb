@@ -298,7 +298,11 @@ func (h *hashJoinSpillHelper) choosePartitionsToSpill(hashTableMemUsage []int64)
 
 func (h *hashJoinSpillHelper) generateSpilledValidJoinKey(seg *rowTableSegment, validJoinKeys []byte) []byte {
 	rowLen := len(seg.rowStartOffset)
-	validJoinKeys = validJoinKeys[:rowLen]
+	if cap(validJoinKeys) < rowLen {
+		validJoinKeys = make([]byte, rowLen)
+	} else {
+		validJoinKeys = validJoinKeys[:rowLen]
+	}
 	for i := range rowLen {
 		validJoinKeys[i] = byte(0)
 	}
@@ -330,9 +334,6 @@ func (h *hashJoinSpillHelper) spillBuildSegmentToDisk(workerID int, partID int, 
 }
 
 func (h *hashJoinSpillHelper) spillSegmentsToDiskImpl(workerID int, disk *chunk.DataInDiskByChunks, segments []*rowTableSegment) error {
-	if cap(h.validJoinKeysBuffer[workerID]) == 0 {
-		h.validJoinKeysBuffer[workerID] = make([]byte, 0, maxRowTableSegmentSize)
-	}
 	h.validJoinKeysBuffer[workerID] = h.validJoinKeysBuffer[workerID][:0]
 	h.tmpSpillBuildSideChunks[workerID].Reset()
 
@@ -446,11 +447,6 @@ func (h *hashJoinSpillHelper) spillRowTableImpl(partitionsNeedSpill []int, total
 				for _, partID := range partitionsNeedSpill {
 					// finalize current segment of every partition in the worker
 					worker := h.hashJoinExec.BuildWorkers[workerID]
-					builder := worker.builder
-
-					if builder.rowNumberInCurrentRowTableSeg[partID] > 0 {
-						worker.HashJoinCtx.hashTableContext.finalizeCurrentSeg(workerID, partID, worker.builder, false)
-					}
 					spilledSegments := worker.getSegmentsInRowTable(partID)
 					worker.clearSegmentsInRowTable(partID)
 

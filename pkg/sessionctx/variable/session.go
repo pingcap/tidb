@@ -1140,6 +1140,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
+	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
+	OptIndexPruneThreshold int
+
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
@@ -1208,6 +1211,10 @@ type SessionVars struct {
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
 
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel bool
+
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
 
@@ -1261,8 +1268,16 @@ type SessionVars struct {
 	// RewritePhaseInfo records all information about the rewriting phase.
 	RewritePhaseInfo
 
-	// DurationOptimization is the duration of optimizing a query.
-	DurationOptimization time.Duration
+	// DurationOptimizer aggregates timing metrics used by the optimizer.
+	DurationOptimizer struct {
+		Total            time.Duration // total time spent in query optimization
+		BindingMatch     time.Duration // time spent matching plan bindings
+		StatsSyncWait    time.Duration // time spent waiting for stats load to complete
+		LogicalOpt       time.Duration // time spent in logical optimization
+		PhysicalOpt      time.Duration // time spent in physical optimization
+		StatsDerive      time.Duration // time spent deriving/estimating statistics
+		TiFlashInfoFetch time.Duration // time spent fetching TiFlash replica information
+	}
 
 	// DurationWaitTS is the duration of waiting for a snapshot TS
 	DurationWaitTS time.Duration
@@ -1619,6 +1634,8 @@ type SessionVars struct {
 	// OptPrefixIndexSingleScan indicates whether to do some optimizations to avoid double scan for prefix index.
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
+	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
+	OptPartialOrderedIndexForTopN bool
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -1793,6 +1810,15 @@ type SessionVars struct {
 		WaitAverse    MemArbitratorWaitAverseMode
 		QueryReserved int64
 	}
+
+	// InPacketBytes records the total incoming packet bytes from clients for current session.
+	InPacketBytes atomic.Uint64
+
+	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
+	OutPacketBytes atomic.Uint64
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
 }
 
 // ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
@@ -2118,7 +2144,7 @@ func (p *PlanCacheParamList) String() string {
 		p.forNonPrepCache { // hide non-prep parameter values by default
 		return ""
 	}
-	return " [arguments: " + types.DatumsToStrNoErr(p.paramValues) + "]"
+	return " [arguments: " + types.DatumsToStrNoErrSmart(p.paramValues) + "]"
 }
 
 // Append appends a parameter value to the PlanCacheParams.
@@ -2244,6 +2270,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
+		OptIndexPruneThreshold:        vardef.DefTiDBOptIndexPruneThreshold,
 		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
 		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
@@ -2295,6 +2322,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   vardef.DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThroughSel:  vardef.DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:         vardef.DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:        vardef.DefWaitSplitRegionTimeout,
@@ -2361,6 +2389,8 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
+		IndexLookUpPushDownPolicy:     vardef.DefTiDBIndexLookUpPushDownPolicy,
+		OptPartialOrderedIndexForTopN: vardef.DefTiDBOptPartialOrderedIndexForTopN,
 	}
 	vars.TiFlashFineGrainedShuffleBatchSize = vardef.DefTiFlashFineGrainedShuffleBatchSize
 	vars.status.Store(uint32(mysql.ServerStatusAutocommit))
@@ -3554,8 +3584,13 @@ func (s *SessionVars) GetRuntimeFilterMode() RuntimeFilterMode {
 	return s.runtimeFilterMode
 }
 
-// GetMaxExecutionTime get the max execution timeout value.
+// GetMaxExecutionTime get the max execution timeout value for select statement.
+// Make sure this function is called after s.StmtCtx is already set, otherwise it will always return 0
 func (s *SessionVars) GetMaxExecutionTime() uint64 {
+	// Since maxExecutionTime is used only for SELECT statements, here we limit its scope.
+	if !s.StmtCtx.InSelectStmt {
+		return 0
+	}
 	if s.StmtCtx.HasMaxExecutionTime {
 		return s.StmtCtx.MaxExecutionTime
 	}
