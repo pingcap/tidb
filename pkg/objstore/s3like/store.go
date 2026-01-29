@@ -407,14 +407,14 @@ func (rs *Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn fun
 
 	var (
 		continuationToken *string
-		startAfter        *string
+		initialStartAfter *string
 		cliPrefix         = rs.bucketPrefix.PrefixStr()
 	)
 	if len(opt.StartAfter) > 0 {
-		startAfter = &opt.StartAfter
+		initialStartAfter = &opt.StartAfter
 	}
 	for {
-		res, err := rs.s3Cli.ListObjects(ctx, prefix, continuationToken, startAfter, maxKeys)
+		res, err := rs.s3Cli.ListObjects(ctx, prefix, continuationToken, initialStartAfter, maxKeys)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -437,7 +437,7 @@ func (rs *Storage) WalkDir(ctx context.Context, opt *storeapi.WalkOption, fn fun
 			}
 		}
 		continuationToken = res.NextContinuationToken
-		startAfter = nil
+		initialStartAfter = nil
 		if !res.IsTruncated {
 			break
 		}
