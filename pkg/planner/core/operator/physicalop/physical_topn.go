@@ -41,6 +41,18 @@ type PhysicalTopN struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// Fields for partial order TopN optimization
+	// PartialOrderedLimit is the special limit value (Count + Offset) for partial order optimization.
+	// When > 0, this TopN uses partial order optimization with prefix index.
+	PartialOrderedLimit uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	// Used for both execution (via UniqueID) and explain (via column name).
+	PrefixCol *expression.Column
+
+	// PrefixLen is the prefix index length (in bytes) for TiDB-side short-circuiting.
+	PrefixLen int
 }
 
 // ExhaustPhysicalPlans4LogicalTopN exhausts PhysicalTopN plans from LogicalTopN.
@@ -104,7 +116,11 @@ func (p *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice +
+		int64(cap(p.ByItems))*size.SizeOfPointer +
+		size.SizeOfUint64*3 + // Offset, Count, PartialOrderedLimit
+		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfInt // PrefixLen
 	for _, byItem := range p.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -133,10 +149,23 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	switch p.SCtx().GetSessionVars().EnableRedactLog {
 	case perrors.RedactLogDisable:
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				prefixColName, p.PrefixLen)
+		}
 	case perrors.RedactLogMarker:
 		fmt.Fprintf(buffer, ", offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				prefixColName, p.PrefixLen)
+		}
 	case perrors.RedactLogEnable:
 		fmt.Fprintf(buffer, ", offset:?, count:?")
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
+		}
 	}
 	return buffer.String()
 }

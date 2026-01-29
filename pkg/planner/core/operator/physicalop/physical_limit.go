@@ -37,6 +37,18 @@ type PhysicalLimit struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// Fields for partial order optimization on TiKV side.
+	// PartialOrderedLimit is the special Limit value (Count + Offset).
+	// When > 0, this Limit uses partial order short-circuiting with prefix index.
+	PartialOrderedLimit uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	// Used for both execution (via UniqueID) and explain (via column name).
+	PrefixCol *expression.Column
+
+	// PrefixLen is the prefix index length (in bytes) for TiKV-side short-circuiting.
+	PrefixLen int
 }
 
 // ExhaustPhysicalPlans4LogicalLimit will be called by LogicalLimit in logicalOp pkg.
@@ -101,7 +113,10 @@ func (p *PhysicalLimit) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.PhysicalSchemaProducer.MemoryUsage() + size.SizeOfUint64*2
+	sum = p.PhysicalSchemaProducer.MemoryUsage() +
+		size.SizeOfUint64*3 + // Offset, Count, PartialOrderedLimit
+		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfInt // PrefixLen
 	return
 }
 
@@ -116,10 +131,23 @@ func (p *PhysicalLimit) ExplainInfo() string {
 	}
 	if redact == perrors.RedactLogDisable {
 		fmt.Fprintf(buffer, "offset:%v, count:%v", p.Offset, p.Count)
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				prefixColName, p.PrefixLen)
+		}
 	} else if redact == perrors.RedactLogMarker {
 		fmt.Fprintf(buffer, "offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				prefixColName, p.PrefixLen)
+		}
 	} else if redact == perrors.RedactLogEnable {
 		fmt.Fprintf(buffer, "offset:?, count:?")
+		if p.PartialOrderedLimit > 0 && p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
+		}
 	}
 	return buffer.String()
 }
