@@ -23,7 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -86,7 +86,7 @@ func TestPruneIndexesByWhereAndOrder(t *testing.T) {
 	// InterestingColumns might not be populated, extract from PushedDownConds
 	interestingColumns := dsBaseline.InterestingColumns
 	if len(interestingColumns) == 0 && len(dsBaseline.PushedDownConds) > 0 {
-		interestingColumns = expression.ExtractColumnsFromExpressions(dsBaseline.PushedDownConds, nil)
+		interestingColumns = expression.ExtractColumnsFromExpressions(nil, dsBaseline.PushedDownConds, nil)
 	}
 
 	t.Logf("Interesting columns: %d (from PushedDownConds: %d), paths: %d", len(interestingColumns), len(dsBaseline.PushedDownConds), len(dsBaseline.AllPossibleAccessPaths))
@@ -260,7 +260,7 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se types.Session, 
 		}
 		return true, warning
 	}
-	hypoIndexChecker := func(db, tbl, col ast.CIStr) (colOffset int, err error) {
+	hypoIndexChecker := func(db, tbl, col model.CIStr) (colOffset int, err error) {
 		tblInfo, err := dom.InfoSchema().TableByName(ctx, db, tbl)
 		if err != nil {
 			return 0, err
@@ -282,7 +282,7 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se types.Session, 
 
 	// Apply SET_VAR hints to session variables
 	for name, val := range se.GetSessionVars().StmtCtx.StmtHints.SetVars {
-		oldV, err := se.GetSessionVars().SetSystemVarWithOldStateAsRet(name, val)
+		oldV, err := se.GetSessionVars().SetSystemVarWithOldValAsRet(name, val)
 		if err != nil {
 			se.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
@@ -321,7 +321,7 @@ func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se types.Session, 
 
 	// Trigger stats derivation
 	lp := logicalPlan
-	_, _, err = lp.RecursiveDeriveStats(nil)
+	_, err = lp.RecursiveDeriveStats(nil)
 	require.NoError(t, err)
 
 	// Find DataSource in the optimized plan with derived stats
