@@ -1774,15 +1774,25 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			if !(hasCreateUserPriv || hasSystemSchemaPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("CREATE USER")
 			}
-			if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, spec.User) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+			hasSystemUser, err := userHasDynamicPrivilegeInternal(ctx, sqlExecutor, spec.User, "SYSTEM_USER")
+			if err != nil {
+				return err
+			}
+			if hasSystemUser && !(hasSystemUserPriv || hasRestrictedUserPriv) {
 				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SYSTEM_USER or SUPER")
 			}
-			if sem.IsEnabled() && checker.RequestDynamicVerificationWithUser("RESTRICTED_USER_ADMIN", false, spec.User) && !hasRestrictedUserPriv {
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
+			if sem.IsEnabled() {
+				hasRestrictedUser, err := userHasDynamicPrivilegeInternal(ctx, sqlExecutor, spec.User, "RESTRICTED_USER_ADMIN")
+				if err != nil {
+					return err
+				}
+				if hasRestrictedUser && !hasRestrictedUserPriv {
+					return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_USER_ADMIN")
+				}
 			}
 		}
 
-		exists, _, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
+		exists, currentAuthPlugin, err := userExistsInternal(ctx, sqlExecutor, spec.User.Username, spec.User.Hostname)
 		if err != nil {
 			return err
 		}
@@ -1790,10 +1800,6 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 			user := fmt.Sprintf(`'%s'@'%s'`, spec.User.Username, spec.User.Hostname)
 			failedUsers = append(failedUsers, user)
 			continue
-		}
-		currentAuthPlugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(spec.User.Username, spec.User.Hostname)
-		if err != nil {
-			return err
 		}
 
 		type AuthTokenOptionHandler int
@@ -2307,7 +2313,14 @@ func (e *SimpleExec) executeDropUser(ctx context.Context, s *ast.DropUserStmt) e
 		// Because in TiDB SUPER can be used as a substitute for any dynamic privilege, this effectively means that
 		// any user with SUPER requires a user with SUPER to be able to DROP the user.
 		// We also allow RESTRICTED_USER_ADMIN to count for simplicity.
-		if checker.RequestDynamicVerificationWithUser("SYSTEM_USER", false, user) && !(hasSystemUserPriv || hasRestrictedUserPriv) {
+		hasSystemUser, err := userHasDynamicPrivilegeInternal(internalCtx, sqlExecutor, user, "SYSTEM_USER")
+		if err != nil {
+			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
+				return err
+			}
+			return err
+		}
+		if hasSystemUser && !(hasSystemUserPriv || hasRestrictedUserPriv) {
 			if _, err := sqlExecutor.ExecuteInternal(internalCtx, "rollback"); err != nil {
 				return err
 			}
@@ -2484,6 +2497,28 @@ func userExistsInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, na
 	return rows > 0, authPlugin, err
 }
 
+// userHasDynamicPrivilegeInternal checks if a user has a specific dynamic privilege by querying the database directly.
+// This avoids loading the user into memory through ensureActiveUser.
+func userHasDynamicPrivilegeInternal(ctx context.Context, sqlExecutor sqlexec.SQLExecutor, user *auth.UserIdentity, privName string) (bool, error) {
+	sql := new(strings.Builder)
+	sqlescape.MustFormatSQL(sql, `SELECT * FROM %n.%n WHERE User=%? AND Host=%? AND Priv=%?;`, mysql.SystemDB, "global_grants", user.Username, strings.ToLower(user.Hostname), privName)
+	recordSet, err := sqlExecutor.ExecuteInternal(ctx, sql.String())
+	if err != nil {
+		return false, err
+	}
+	req := recordSet.NewChunk(nil)
+	err = recordSet.Next(ctx, req)
+	var rows = 0
+	if err == nil {
+		rows = req.NumRows()
+	}
+	errClose := recordSet.Close()
+	if errClose != nil {
+		return false, errClose
+	}
+	return rows > 0, nil
+}
+
 func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error {
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnPrivilege)
 	sysSession, err := e.GetSysSession()
@@ -2525,7 +2560,7 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			return exeerrors.ErrDBaccessDenied.GenWithStackByArgs(currUser.Username, currUser.Hostname, "mysql")
 		}
 	}
-	exists, _, err := userExistsInternal(ctx, sqlExecutor, u, h)
+	exists, authplugin, err := userExistsInternal(ctx, sqlExecutor, u, h)
 	if err != nil {
 		return err
 	}
@@ -2538,11 +2573,6 @@ func (e *SimpleExec) executeSetPwd(ctx context.Context, s *ast.SetPwdStmt) error
 			return exeerrors.ErrMustChangePassword.GenWithStackByArgs()
 		}
 		disableSandboxMode = true
-	}
-
-	authplugin, err := privilege.GetPrivilegeManager(e.Ctx()).GetAuthPlugin(u, h)
-	if err != nil {
-		return err
 	}
 	if e.isValidatePasswordEnabled() {
 		if err := pwdValidator.ValidatePassword(e.Ctx().GetSessionVars(), s.Password); err != nil {
