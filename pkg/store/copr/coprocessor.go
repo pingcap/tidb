@@ -128,7 +128,7 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 		// coprocessor request but type is not DAG
 		req.Paging.Enable = false
 	}
-	if req.KeyRanges.GetRangeVersionMap() != nil {
+	if req.KeyRanges.HasVersionedRanges() {
 		// disable paging for TiCI lookup request
 		req.Paging.Enable = false
 	}
@@ -151,18 +151,24 @@ func (c *CopClient) BuildCopIterator(ctx context.Context, req *kv.Request, vars 
 	tryRowHint := optRowHint(req)
 	elapsed := time.Duration(0)
 	buildOpt := &buildCopTaskOpt{
-		req:             req,
-		cache:           c.store.GetRegionCache(),
-		eventCb:         eventCb,
-		respChan:        req.KeepOrder,
-		elapsed:         &elapsed,
-		rangeVersionMap: req.KeyRanges.GetRangeVersionMap(),
+		req:      req,
+		cache:    c.store.GetRegionCache(),
+		eventCb:  eventCb,
+		respChan: req.KeepOrder,
+		elapsed:  &elapsed,
 	}
+	partitionIdx := 0
 	buildTaskFunc := func(ranges []kv.KeyRange, hints []int) error {
 		keyRanges := NewKeyRanges(ranges)
 		if tryRowHint {
 			buildOpt.rowHints = hints
 		}
+		if req.KeyRanges.HasVersionedRanges() {
+			buildOpt.versionedRanges = req.KeyRanges.GetVersionedRangesByPartition(partitionIdx)
+		} else {
+			buildOpt.versionedRanges = nil
+		}
+		partitionIdx++
 		tasksFromRanges, err := buildCopTasks(bo, keyRanges, buildOpt)
 		if err != nil {
 			return err
@@ -349,9 +355,9 @@ type buildCopTaskOpt struct {
 	elapsed  *time.Duration
 	// ignoreTiKVClientReadTimeout is used to ignore tikv_client_read_timeout configuration, use default timeout instead.
 	ignoreTiKVClientReadTimeout bool
-	// rangeVersionMap is used to store the version of each range, key is the start key of the range, used only in TiCI lookup
-	// if rangeVersionMap is not nil, the caller should ensure that all the range in ranges is PointRange
-	rangeVersionMap map[string]uint64
+	// versionedRanges stores per-range read_ts for TiCI versioned lookup.
+	// When non-nil, it must align with `ranges` (same order/length), and all ranges must be point ranges.
+	versionedRanges []kv.VersionedKeyRange
 }
 
 const (
@@ -494,6 +500,66 @@ func ensureMonotonicKeyRanges(ctx context.Context, ranges *KeyRanges) bool {
 	return true
 }
 
+func ensureMonotonicVersionedKeyRanges(ctx context.Context, ranges *KeyRanges, versionedRanges []kv.VersionedKeyRange) (bool, error) {
+	if ranges == nil || ranges.Len() == 0 {
+		return false, nil
+	}
+	if len(versionedRanges) != ranges.Len() {
+		return false, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", ranges.Len(), len(versionedRanges))
+	}
+	for i := range ranges.Len() {
+		r := ranges.At(i)
+		vr := versionedRanges[i].Range
+		if !bytes.Equal(r.StartKey, vr.StartKey) || !bytes.Equal(r.EndKey, vr.EndKey) {
+			return false, errors.Errorf("versionedRanges not aligned with ranges: idx=%d", i)
+		}
+	}
+
+	total := ranges.Len()
+	prev := ranges.At(0)
+	validateRange := func(r kv.KeyRange) bool {
+		return len(r.EndKey) == 0 || bytes.Compare(r.StartKey, r.EndKey) <= 0
+	}
+	valid := validateRange(prev)
+	sorted := true
+	for i := 1; i < total; i++ {
+		curr := ranges.At(i)
+		valid = validateRange(curr) && valid
+		switch {
+		case len(prev.EndKey) == 0:
+			sorted = false
+		case bytes.Compare(prev.EndKey, curr.StartKey) > 0:
+			sorted = false
+		}
+		prev = curr
+	}
+	if sorted && valid {
+		return false, nil
+	}
+
+	flat := ranges.ToRanges()
+	logutil.Logger(ctx).Error("key ranges not monotonic, reorder before BatchLocateKeyRanges",
+		zap.Int("rangeCount", ranges.Len()),
+		formatRanges(NewKeyRanges(flat)),
+		zap.Stack("stack"))
+
+	sortedVersionedRanges := append([]kv.VersionedKeyRange(nil), versionedRanges...)
+	slices.SortFunc(sortedVersionedRanges, func(a, b kv.VersionedKeyRange) int {
+		if cmp := bytes.Compare(a.Range.StartKey, b.Range.StartKey); cmp != 0 {
+			return cmp
+		}
+		return bytes.Compare(a.Range.EndKey, b.Range.EndKey)
+	})
+	copy(versionedRanges, sortedVersionedRanges)
+
+	sortedRanges := make([]kv.KeyRange, 0, len(sortedVersionedRanges))
+	for _, v := range sortedVersionedRanges {
+		sortedRanges = append(sortedRanges, v.Range)
+	}
+	ranges.Reset(sortedRanges)
+	return true, nil
+}
+
 func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*copTask, error) {
 	req, cache, eventCb, hints := opt.req, opt.cache, opt.eventCb, opt.rowHints
 	start := time.Now()
@@ -506,10 +572,17 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			zap.Int("rangeCount", ranges.Len()),
 			formatRanges(ranges))
 	}
-	reordered := ensureMonotonicKeyRanges(ctx, ranges)
 	cmdType := tikvrpc.CmdCop
-	if opt.rangeVersionMap != nil {
+	reordered := false
+	if opt.versionedRanges != nil {
 		cmdType = tikvrpc.CmdVersionedCop
+		var err error
+		reordered, err = ensureMonotonicVersionedKeyRanges(ctx, ranges, opt.versionedRanges)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		reordered = ensureMonotonicKeyRanges(ctx, ranges)
 	}
 	if req.StoreType == kv.TiDB {
 		return buildTiDBMemCopTasks(ranges, req)
@@ -558,10 +631,19 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 		builder = newLegacyTaskBuilder(len(locs))
 	}
 	origRangeIdx := 0
+	versionedRangeIdx := 0
 	for _, loc := range locs {
 		// TiKV will return gRPC error if the message is too large. So we need to limit the length of the ranges slice
 		// to make sure the message can be sent successfully.
 		rLen := loc.Ranges.Len()
+		var locVersionedRanges []kv.VersionedKeyRange
+		if opt.versionedRanges != nil {
+			if versionedRangeIdx+rLen > len(opt.versionedRanges) {
+				return nil, errors.Errorf("versionedRanges out of range: idx=%d len=%d need=%d", versionedRangeIdx, len(opt.versionedRanges), rLen)
+			}
+			locVersionedRanges = opt.versionedRanges[versionedRangeIdx : versionedRangeIdx+rLen]
+			versionedRangeIdx += rLen
+		}
 		// If this is a paging request, we set the paging size to minPagingSize,
 		// the size will grow every round.
 		pagingSize := uint64(0)
@@ -594,29 +676,21 @@ func buildCopTasks(bo *Backoffer, ranges *KeyRanges, opt *buildCopTaskOpt) ([]*c
 			}
 			ranges := loc.Ranges.Slice(i, nextI)
 			var versionedRanges []*coprocessor.VersionedKeyRange
-			if opt.rangeVersionMap != nil {
+			if locVersionedRanges != nil {
 				versionedRanges = make([]*coprocessor.VersionedKeyRange, 0, ranges.Len())
-				// If the rangeVersionMap is not nil, we need to get the version of each range.
-				ranges.Do(func(ran *kv.KeyRange) {
+				for j := i; j < nextI; j++ {
+					ran := loc.Ranges.RefAt(j)
 					if !ran.IsPoint() {
-						if err == nil {
-							err = errors.Errorf("rangeVersionMap is not nil, but range is not point: %v", ran)
-						}
-						return
+						return nil, errors.Errorf("versionedRanges requires point range: %v", ran)
 					}
-					if ver, ok := opt.rangeVersionMap[ran.StartKey.AsString()]; ok {
-						versionedRanges = append(versionedRanges, &coprocessor.VersionedKeyRange{
-							Range:  (*coprocessor.KeyRange)(unsafe.Pointer(ran)),
-							ReadTs: ver,
-						})
-					} else {
-						if err == nil {
-							err = errors.Errorf("rangeVersionMap is not nil, but no version found for range %v", ran)
-						}
+					vr := locVersionedRanges[j]
+					if !bytes.Equal(vr.Range.StartKey, ran.StartKey) || !bytes.Equal(vr.Range.EndKey, ran.EndKey) {
+						return nil, errors.Errorf("versionedRanges not aligned with ranges: idx=%d", j)
 					}
-				})
-				if err != nil {
-					return nil, err
+					versionedRanges = append(versionedRanges, &coprocessor.VersionedKeyRange{
+						Range:  (*coprocessor.KeyRange)(unsafe.Pointer(ran)),
+						ReadTs: vr.ReadTS,
+					})
 				}
 			}
 			task := &copTask{
@@ -1809,16 +1883,18 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			return nil, errors.Trace(err)
 		}
 		// We may meet RegionError at the first packet, but not during visiting the stream.
-		var rangeVersionMap map[string]uint64
+		var versionedKVRanges []kv.VersionedKeyRange
 		if task.versionedRanges != nil {
-			// construct the range version map
 			if len(task.versionedRanges) != task.ranges.Len() {
 				return nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
 			}
-			rangeVersionMap = make(map[string]uint64, task.ranges.Len())
+			versionedKVRanges = make([]kv.VersionedKeyRange, 0, task.ranges.Len())
 			i := 0
 			task.ranges.Do(func(r *kv.KeyRange) {
-				rangeVersionMap[r.StartKey.AsString()] = task.versionedRanges[i].ReadTs
+				versionedKVRanges = append(versionedKVRanges, kv.VersionedKeyRange{
+					Range:  *r,
+					ReadTS: task.versionedRanges[i].ReadTs,
+				})
 				i++
 			})
 		}
@@ -1828,7 +1904,7 @@ func (worker *copIteratorWorker) handleCopResponse(bo *Backoffer, rpcCtx *tikv.R
 			respChan:                    false,
 			eventCb:                     task.eventCb,
 			ignoreTiKVClientReadTimeout: true,
-			rangeVersionMap:             rangeVersionMap,
+			versionedRanges:             versionedKVRanges,
 		})
 		if err != nil {
 			return nil, err
@@ -1977,16 +2053,18 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 			if err := bo.Backoff(tikv.BoRegionMiss(), errors.New(errStr)); err != nil {
 				return batchRespList, nil, errors.Trace(err)
 			}
-			var rangeVersionMap map[string]uint64
+			var versionedKVRanges []kv.VersionedKeyRange
 			if task.versionedRanges != nil {
-				// construct the range version map
 				if len(task.versionedRanges) != task.ranges.Len() {
 					return batchRespList, nil, errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", task.ranges.Len(), len(task.versionedRanges))
 				}
-				rangeVersionMap = make(map[string]uint64, task.ranges.Len())
+				versionedKVRanges = make([]kv.VersionedKeyRange, 0, task.ranges.Len())
 				i := 0
 				task.ranges.Do(func(r *kv.KeyRange) {
-					rangeVersionMap[r.StartKey.AsString()] = task.versionedRanges[i].ReadTs
+					versionedKVRanges = append(versionedKVRanges, kv.VersionedKeyRange{
+						Range:  *r,
+						ReadTS: task.versionedRanges[i].ReadTs,
+					})
 					i++
 				})
 			}
@@ -1996,7 +2074,7 @@ func (worker *copIteratorWorker) handleBatchCopResponse(bo *Backoffer, rpcCtx *t
 				respChan:                    false,
 				eventCb:                     task.eventCb,
 				ignoreTiKVClientReadTimeout: true,
-				rangeVersionMap:             rangeVersionMap,
+				versionedRanges:             versionedKVRanges,
 			})
 			if err != nil {
 				return batchRespList, nil, err

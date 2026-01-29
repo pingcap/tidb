@@ -665,7 +665,7 @@ func TestBuildPagingTasksDisablePagingForSmallLimit(t *testing.T) {
 	require.Equal(t, tasks[0].pagingSize, uint64(0))
 }
 
-func TestBuildCopTasksWithRangeVersionMapRequiresPointRanges(t *testing.T) {
+func TestBuildCopTasksWithVersionedRangesRequiresPointRanges(t *testing.T) {
 	// nil --- 'g' --- 'n' --- 't' --- nil
 	// <-  0  -> <- 1 -> <- 2 -> <- 3 ->
 	mockClient, cluster, pdClient, err := testutils.NewMockTiKV("", nil)
@@ -685,15 +685,13 @@ func TestBuildCopTasksWithRangeVersionMapRequiresPointRanges(t *testing.T) {
 
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 	ranges := buildCopRanges("a", "c") // non-point range
-	rangeVersionMap := map[string]uint64{
-		ranges.At(0).StartKey.AsString(): 1,
-	}
+	versionedRanges := []kv.VersionedKeyRange{{Range: ranges.At(0), ReadTS: 1}}
 	req := &kv.Request{}
 	_, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
 		req:             req,
 		cache:           cache,
 		respChan:        true,
-		rangeVersionMap: rangeVersionMap,
+		versionedRanges: versionedRanges,
 	})
 	require.Error(t, err)
 }

@@ -384,9 +384,15 @@ func (t StoreType) Name() string {
 // KeyRanges wrap the ranges for partitioned table cases.
 // We might send ranges from different in the one request.
 type KeyRanges struct {
-	ranges          [][]KeyRange
-	rowCountHints   [][]int
-	rangeVersionMap map[string]uint64 // map from range key to version, used for tici lookup.
+	ranges        [][]KeyRange
+	rowCountHints [][]int
+	// rangeVersionMap is the legacy representation for TiCI versioned lookup.
+	// It is kept for compatibility but should not be used by new code.
+	rangeVersionMap map[string]uint64 // map from range key to version, key is the start key of the range.
+
+	// versionedRanges stores per-range read_ts for TiCI versioned lookup.
+	// When non-empty, it must align with `ranges` (same shape/order), and all ranges must be point ranges.
+	versionedRanges [][]VersionedKeyRange
 
 	isPartitioned bool
 }
@@ -538,6 +544,28 @@ func (rr *KeyRanges) TotalRangeNum() int {
 // GetRangeVersionMap returns range version map
 func (rr *KeyRanges) GetRangeVersionMap() map[string]uint64 {
 	return rr.rangeVersionMap
+}
+
+func (rr *KeyRanges) HasVersionedRanges() bool {
+	return rr != nil && rr.versionedRanges != nil
+}
+
+func (rr *KeyRanges) GetVersionedRangesByPartition(partitionIdx int) []VersionedKeyRange {
+	if rr == nil || rr.versionedRanges == nil || partitionIdx < 0 || partitionIdx >= len(rr.versionedRanges) {
+		return nil
+	}
+	return rr.versionedRanges[partitionIdx]
+}
+
+// SetVersionedRangesNonPartitioned attaches versioned ranges for non-partitioned requests.
+func (rr *KeyRanges) SetVersionedRangesNonPartitioned(v []VersionedKeyRange) {
+	if rr == nil {
+		return
+	}
+	if len(rr.ranges) != 1 || len(rr.ranges[0]) != len(v) {
+		panic(errors.Errorf("versionedRanges length mismatch: ranges=%d versionedRanges=%d", rr.TotalRangeNum(), len(v)))
+	}
+	rr.versionedRanges = [][]VersionedKeyRange{v}
 }
 
 // Request represents a kv request.
