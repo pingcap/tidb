@@ -1386,6 +1386,8 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 	//   - Not an IndexMerge.
 	//   - IndexPlan is not finished (IndexPlanFinished == false).
 	//   - No root task conditions.
+	// Since the output of the table plan is not ordered. So if limit can be pushed down, it must be pushed down to the index plan.
+	// Therefore, we performed this related check here.
 	canPushLimit := false
 	if len(copTask.IdxMergePartPlans) == 0 &&
 		!copTask.IndexPlanFinished &&

@@ -756,8 +756,7 @@ type candidatePath struct {
 	// partialOrderMatch records the partial order match result for TopN optimization.
 	// When the matched is true, it means this path can provide partial order using prefix index.
 	partialOrderMatchResult property.PartialOrderMatchResult // Result of matching partial order property
-
-	indexJoinCols int // how many index columns are used in access conditions in this IndexJoin.
+	indexJoinCols           int                              // how many index columns are used in access conditions in this IndexJoin.
 }
 
 func compareBool(l, r bool) int {

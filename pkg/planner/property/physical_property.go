@@ -542,10 +542,10 @@ func (p *PhysicalProperty) NeedKeepOrder() bool {
 	return !p.IsSortItemEmpty() || p.PartialOrderInfo != nil
 }
 
-// GetSortDesc returns the sort direction (descending or not).
+// GetSortDescForKeepOrder returns the sort direction (descending or not).
 // It prioritizes PartialOrderInfo over SortItems.
 // This method reuses the existing AllSameOrder methods.
-func (p *PhysicalProperty) GetSortDesc() bool {
+func (p *PhysicalProperty) GetSortDescForKeepOrder() bool {
 	if p.PartialOrderInfo != nil && len(p.PartialOrderInfo.SortItems) > 0 {
 		_, desc := p.PartialOrderInfo.AllSameOrder()
 		return desc
