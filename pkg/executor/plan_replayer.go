@@ -30,6 +30,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/extstore"
+	"github.com/pingcap/tidb/pkg/parser/format"
+	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -183,6 +185,9 @@ func (e *PlanReplayerExec) createFile(ctx context.Context) error {
 }
 
 func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
+	if err := e.resolveExecuteStmt(); err != nil {
+		return err
+	}
 	fileName := e.FileName
 	zf := e.File
 	task := &domain.PlanReplayerDumpTask{
@@ -200,6 +205,32 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 		return err
 	}
 	e.ctx.GetSessionVars().LastPlanReplayerToken = e.FileName
+	return nil
+}
+
+func (e *PlanReplayerDumpInfo) resolveExecuteStmt() error {
+	for i, stmt := range e.ExecStmts {
+		execStmt, ok := stmt.(*ast.ExecuteStmt)
+		if !ok {
+			continue
+		}
+		prepStmt, err := plannercore.GetPreparedStmt(execStmt, e.ctx.GetSessionVars())
+		if err != nil {
+			return err
+		}
+		if prepStmt == nil || prepStmt.PreparedAst == nil || prepStmt.PreparedAst.Stmt == nil {
+			return errors.New("plan replayer: prepared statement not found")
+		}
+		preparedStmt := prepStmt.PreparedAst.Stmt
+		if preparedStmt.Text() == "" {
+			var sb strings.Builder
+			restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+			if err := preparedStmt.Restore(restoreCtx); err == nil {
+				preparedStmt.SetText(nil, sb.String())
+			}
+		}
+		e.ExecStmts[i] = preparedStmt
+	}
 	return nil
 }
 

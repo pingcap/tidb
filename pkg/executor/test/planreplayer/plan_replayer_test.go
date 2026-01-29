@@ -92,6 +92,12 @@ func TestPlanReplayer(t *testing.T) {
 	tk.MustQuery("plan replayer dump explain select * from v2")
 	require.True(t, len(tk.Session().GetSessionVars().LastPlanReplayerToken) > 0)
 
+	tk.MustExec("prepare stmt_dump from 'select * from t where a = ?'")
+	tk.MustExec("set @a = 1")
+	dumpRows := tk.MustQuery("plan replayer dump execute stmt_dump using @a").Rows()
+	require.Len(t, dumpRows, 1)
+	require.NotEmpty(t, dumpRows[0][0])
+
 	// clear the status table and assert
 	tk.MustExec("delete from mysql.plan_replayer_status")
 	tk.MustQuery("plan replayer dump explain select * from v2")
