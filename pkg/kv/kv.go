@@ -543,6 +543,9 @@ type Request struct {
 	// KeyRanges makes sure that the request is sent first by partition then by region.
 	// When the table is small, it's possible that multiple partitions are in the same region.
 	KeyRanges *KeyRanges
+	// HandleVersionMap stores per-handle read_ts for TiCI versioned lookup.
+	// When non-nil, the request is sent using `CmdVersionedCop` with `versioned_ranges`.
+	HandleVersionMap *HandleMap
 
 	// For PartitionTableScan used by tiflash.
 	PartitionIDAndRanges []PartitionIDAndRanges
