@@ -966,6 +966,7 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 
 		data, err := handler.nextRaw(ctx)
 		if err != nil {
+			err = normalizeAnalyzeCtxErr(ctx, err)
 			if intest.InTest {
 				cause := context.Cause(ctx)
 				ctxErr := ctx.Err()

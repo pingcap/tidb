@@ -252,6 +252,7 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, resul
 		})
 		data, err := result.NextRaw(killerCtx)
 		if err != nil {
+			err = normalizeAnalyzeCtxErr(killerCtx, err)
 			if intest.InTest && stderrors.Is(err, context.Canceled) {
 				cause := context.Cause(killerCtx)
 				ctxErr := killerCtx.Err()

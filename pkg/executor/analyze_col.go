@@ -239,7 +239,7 @@ func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Ra
 		})
 		data, err1 := e.resultHandler.nextRaw(ctx)
 		if err1 != nil {
-			return nil, nil, nil, nil, nil, err1
+			return nil, nil, nil, nil, nil, normalizeAnalyzeCtxErr(ctx, err1)
 		}
 		if data == nil {
 			break

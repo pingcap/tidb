@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	stderrors "github.com/pingcap/tidb/pkg/util/stderrors"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
@@ -106,6 +107,18 @@ func getAnalyzePanicErr(r any) error {
 		return err
 	}
 	return errors.Trace(errAnalyzeWorkerPanic)
+}
+
+func normalizeAnalyzeCtxErr(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
+		if cause := context.Cause(ctx); cause != nil {
+			return cause
+		}
+	}
+	return err
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
