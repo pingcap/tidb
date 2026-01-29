@@ -713,17 +713,17 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	iw.wg = &sync.WaitGroup{}
 	iw.wg.Add(1)
 	iw.lookup.WorkerWg.Add(1)
+	var buildHashTableErr error
 	// TODO(XuHuaiyu): we may always use the smaller side to build the hashtable.
 	go util.WithRecovery(
 		func() {
 			iw.buildHashTableForOuterResult(task, h)
 		},
 		func(r any) {
-			var err error
 			if r != nil {
-				err = errors.Errorf("%v", r)
+				buildHashTableErr = errors.Errorf("%v", r)
 			}
-			iw.handleHashJoinInnerWorkerPanic(resultCh, err)
+			iw.handleHashJoinInnerWorkerPanic(resultCh, buildHashTableErr)
 		},
 	)
 	lookUpContents, err := iw.constructLookupContent(task.lookUpJoinTask)
@@ -739,6 +739,10 @@ func (iw *indexHashJoinInnerWorker) handleTask(ctx context.Context, task *indexH
 	failpoint.Inject("ConsumeRandomPanic", nil)
 	if err != nil {
 		return err
+	}
+
+	if buildHashTableErr != nil {
+		return buildHashTableErr
 	}
 
 	if !task.keepOuterOrder {

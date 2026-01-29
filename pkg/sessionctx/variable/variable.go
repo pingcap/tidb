@@ -95,6 +95,13 @@ const (
 	// keep approximately 4 batched TSO requests running in parallel. This option tries to reduce the batch-waiting time
 	// by 3/4, at the expense of about 4 times the amount of TSO RPC calls.
 	TSOClientRPCModeParallelFast = "PARALLEL-FAST"
+
+	// IndexLookUpPushDownPolicyHintOnly indicates only use the hint to decide whether to push down the index lookup or not.
+	IndexLookUpPushDownPolicyHintOnly = "hint-only"
+	// IndexLookUpPushDownPolicyAffinityForce indicates to force push down the index lookup for table with affinity options.
+	IndexLookUpPushDownPolicyAffinityForce = "affinity-force"
+	// IndexLookUpPushDownPolicyForce indicates to force push down the index lookup for all tables.
+	IndexLookUpPushDownPolicyForce = "force"
 )
 
 // Global config name list.

@@ -113,6 +113,8 @@ const (
 	ActionAddVectorIndex         ActionType = 73
 	ActionAlterTableMode         ActionType = 75
 	ActionRefreshMeta            ActionType = 76
+	_                            ActionType = 77 // reserve for database read-only feature
+	ActionAlterTableAffinity     ActionType = 78
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -187,6 +189,7 @@ var ActionMap = map[ActionType]string{
 	ActionAddVectorIndex:                "add vector index",
 	ActionAlterTableMode:                "alter table mode",
 	ActionRefreshMeta:                   "refresh meta",
+	ActionAlterTableAffinity:            "alter table affinity",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.

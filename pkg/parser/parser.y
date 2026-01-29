@@ -320,6 +320,7 @@ import (
 	account               "ACCOUNT"
 	action                "ACTION"
 	advise                "ADVISE"
+	affinity              "AFFINITY"
 	after                 "AFTER"
 	against               "AGAINST"
 	ago                   "AGO"
@@ -6847,6 +6848,7 @@ UnReservedKeyword:
 |	"STATS_COL_LIST"
 |	"AUTO_ID_CACHE"
 |	"AUTO_INCREMENT"
+|	"AFFINITY"
 |	"AFTER"
 |	"ALWAYS"
 |	"AVG"
@@ -12213,6 +12215,10 @@ ShowTargetFilterable:
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowColumnStatsUsage}
 	}
+|	"AFFINITY"
+	{
+		$$ = &ast.ShowStmt{Tp: ast.ShowAffinity}
+	}
 |	"ANALYZE" "STATUS"
 	{
 		$$ = &ast.ShowStmt{Tp: ast.ShowAnalyzeStatus}
@@ -12957,6 +12963,10 @@ TableOption:
 			return 1
 		}
 		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
+	}
+|	"AFFINITY" EqOpt StringName
+	{
+		$$ = &ast.TableOption{Tp: ast.TableOptionAffinity, StrValue: $3}
 	}
 
 ForceOpt:

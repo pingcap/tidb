@@ -3141,6 +3141,7 @@ const (
 	ShowReplicaStatus
 	ShowDistributionJobs
 	ShowDistributions
+	ShowAffinity
 )
 
 const (

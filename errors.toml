@@ -1596,6 +1596,11 @@ error = '''
 Auto analyze is not effective for index '%-.192s', need analyze manually
 '''
 
+["ddl:8266"]
+error = '''
+Invalid AFFINITY %s
+'''
+
 ["ddl:9014"]
 error = '''
 TiFlash backfill index failed: %s

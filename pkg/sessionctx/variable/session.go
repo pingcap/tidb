@@ -1735,6 +1735,10 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
+
 	// database name +"."+procedure_name as key , *RoutineCacahe as value.
 	ProcedurePlanCache map[string]any
 	// LastProcedureErrorStr is used to save last handler command.
@@ -2290,6 +2294,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
 		inCallProcedure: struct {
 			inCall bool
 			num    int
