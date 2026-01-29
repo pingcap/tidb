@@ -28,7 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
+	"github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
@@ -237,7 +237,7 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 }
 
 // getDataSourceFromQuery is a helper to extract DataSource from a query for testing
-func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se sessionapi.Session, sql string) *logicalop.DataSource {
+func getDataSourceFromQuery(t *testing.T, dom *domain.Domain, se types.Session, sql string) *logicalop.DataSource {
 	p := parser.New()
 	stmt, err := p.ParseOneStmt(sql, "", "")
 	require.NoError(t, err)
