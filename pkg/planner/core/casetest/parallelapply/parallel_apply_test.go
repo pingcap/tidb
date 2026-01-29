@@ -33,12 +33,12 @@ func TestParallelApplyWarnning(t *testing.T) {
 		testKit.MustExec("create table t(a int, b int, index idx(a));")
 		testKit.MustQuery(`explain format='brief' select  t3.a from t t3 where (select /*+ inl_join(t1) */  count(*) from t t1 join t t2 on t1.a=t2.a and t1.b>t3.b);`).
 			Check(testkit.Rows(
-				`Projection 10000.00 root  test.t.a`,
-				`└─Apply 10000.00 root  CARTESIAN inner join`,
-				`  ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
-				`  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`,
-				`  └─Selection(Probe) 8000.00 root  Column#13`,
-				`    └─HashAgg 10000.00 root  funcs:count(1)->Column#13`,
+				`Projection 8000.00 root  test.t.a`,
+				`└─Selection 8000.00 root  Column#13`,
+				`  └─Apply 10000.00 root  CARTESIAN left outer join, left side:TableReader`,
+				`    ├─TableReader(Build) 10000.00 root  data:TableFullScan`,
+				`    │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`,
+				`    └─HashAgg(Probe) 10000.00 root  funcs:count(1)->Column#13`,
 				"      └─IndexJoin 99900000.00 root  inner join, inner:IndexLookUp, outer key:test.t.a, inner key:test.t.a, equal cond:eq(test.t.a, test.t.a)",
 				"        ├─IndexReader(Build) 99900000.00 root  index:IndexFullScan",
 				"        │ └─IndexFullScan 99900000.00 cop[tikv] table:t2, index:idx(a) keep order:false, stats:pseudo",

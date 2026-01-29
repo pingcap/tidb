@@ -3617,12 +3617,12 @@ a
 {"id": "ish"}
 explain format='plan_tree' select * from t t1 left join t t2 on t1.a=t2.a where t2.a->'$.id'='ish';
 id	task	access object	operator info
-Selection	root		eq(json_extract(planner__core__integration.t.a, "$.id"), cast("ish", json BINARY))
-└─HashJoin	root		left outer join, left side:TableReader, equal:[eq(planner__core__integration.t.a, planner__core__integration.t.a)]
-  ├─TableReader(Build)	root		data:Selection
-  │ └─Selection	cop[tikv]		not(isnull(cast(planner__core__integration.t.a, var_string(4294967295))))
-  │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
-  └─TableReader(Probe)	root		data:TableFullScan
+HashJoin	root		inner join, equal:[eq(planner__core__integration.t.a, planner__core__integration.t.a)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		eq(json_extract(planner__core__integration.t.a, "$.id"), cast("ish", json BINARY)), not(isnull(cast(planner__core__integration.t.a, var_string(4294967295))))
+│   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:Selection
+  └─Selection	cop[tikv]		eq(json_extract(planner__core__integration.t.a, "$.id"), cast("ish", json BINARY)), not(isnull(cast(planner__core__integration.t.a, var_string(4294967295))))
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
 drop table if exists t, t2;
 set @@tidb_partition_prune_mode='static';
