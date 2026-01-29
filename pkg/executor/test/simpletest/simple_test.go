@@ -829,5 +829,4 @@ func TestFlushStatsDelta(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(7), modifyCnt, "modify_count should be 7 after inserting 2 more rows and flushing")
 
-	tk.MustGetErrMsg("flush stats_delta cluster", "FLUSH STATS_DELTA CLUSTER is not supported yet")
 }
