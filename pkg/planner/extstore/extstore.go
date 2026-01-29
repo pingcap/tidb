@@ -62,7 +62,7 @@ func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 
 	storage, err := NewExtStorage(ctx, uri, keyspaceName)
 	if err != nil {
-		logutil.BgLogger().Error("failed to create global ext storage",
+		logutil.BgLogger().Warn("failed to create global ext storage",
 			zap.String("category", "extstore"),
 			zap.String("uri", uri),
 			zap.Error(err))
