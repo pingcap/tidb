@@ -105,5 +105,15 @@
       "select /*+ leading(t3, t1, t2) */ t1.a, t2.b from t1 join t2 on t1.a=t2.a join (select a, a+1 as a1 from t3) g on g.a=t1.a;",
       "select /*+ leading(t3, t1, t2) */ t1.a, t2.b from t1 join t2 on t1.a=t2.a join (select a, count(*) as c, sum(a+1) as s from t3 group by a) g on g.a=t1.a"
     ]
+  },
+  {
+    "name": "TestJoinOrderHint4NestedLeadingPK",
+    "cases": [
+      "select /*+ leading(t4, t3, t1, t2) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+      "select /*+ leading(t4, t3, t2, t1) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+      "select /*+ leading(t3, t1, t4, t2) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+      "select /*+ leading(t2, t4, t3, t1) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+      "select /*+ leading(t2, t4, t1, t3) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))"
+    ]
   }
 ]

@@ -1896,5 +1896,115 @@
         ]
       }
     ]
+  },
+  {
+    "Name": "TestJoinOrderHint4NestedLeadingPK",
+    "Cases": [
+      {
+        "SQL": "select /*+ leading(t4, t3, t1, t2) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+        "Plan": [
+          "IndexHashJoin 488.28 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─IndexHashJoin(Build) 390.62 root  inner join, inner:IndexReader, outer key:test.t3.a, inner key:test.t1.a, equal cond:eq(test.t3.a, test.t1.a)",
+          "│ ├─HashJoin(Build) 312.50 root  inner join, equal:[eq(test.t4.b, test.t3.b)]",
+          "│ │ ├─TableReader(Build) 250.00 root  data:Selection",
+          "│ │ │ └─Selection 250.00 cop[tikv]  ge(test.t4.a, 1), lt(test.t4.a, 10)",
+          "│ │ │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "│ │ └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "│ └─IndexReader(Probe) 390.62 root  index:IndexRangeScan",
+          "│   └─IndexRangeScan 390.62 cop[tikv] table:t1, index:a(a) range: decided by [eq(test.t1.a, test.t3.a)], keep order:false, stats:pseudo",
+          "└─IndexLookUp(Probe) 488.28 root  ",
+          "  ├─IndexRangeScan(Build) 488.28 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 488.28 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t4, t3, t1, t2) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t4, t3, t2, t1) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+        "Plan": [
+          "Projection 3906250.00 root  test.t1.a, test.t2.b",
+          "└─HashJoin 3906250.00 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.a, test.t1.a)]",
+          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 3125000.00 root  CARTESIAN inner join",
+          "    ├─HashJoin(Build) 312.50 root  inner join, equal:[eq(test.t4.b, test.t3.b)]",
+          "    │ ├─TableReader(Build) 250.00 root  data:Selection",
+          "    │ │ └─Selection 250.00 cop[tikv]  ge(test.t4.a, 1), lt(test.t4.a, 10)",
+          "    │ │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "    │ └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "    │   └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "      └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t4, t3, t2, t1) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t3, t1, t4, t2) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+        "Plan": [
+          "IndexHashJoin 488.28 root  inner join, inner:IndexLookUp, outer key:test.t1.a, inner key:test.t2.a, equal cond:eq(test.t1.a, test.t2.a)",
+          "├─HashJoin(Build) 390.62 root  inner join, equal:[eq(test.t3.b, test.t4.b)]",
+          "│ ├─TableReader(Build) 250.00 root  data:Selection",
+          "│ │ └─Selection 250.00 cop[tikv]  ge(test.t4.a, 1), lt(test.t4.a, 10)",
+          "│ │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "│ └─MergeJoin(Probe) 12500.00 root  inner join, left key:test.t3.a, right key:test.t1.a",
+          "│   ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "│   │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:true, stats:pseudo",
+          "│   └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "│     └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:true, stats:pseudo",
+          "└─IndexLookUp(Probe) 488.28 root  ",
+          "  ├─IndexRangeScan(Build) 488.28 cop[tikv] table:t2, index:a(a) range: decided by [eq(test.t2.a, test.t1.a)], keep order:false, stats:pseudo",
+          "  └─TableRowIDScan(Probe) 488.28 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t3, t4) in optimizer hint /*+ LEADING(t3, t1, t4, t2) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t4, t3, t1) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+        "Plan": [
+          "Projection 3906250.00 root  test.t1.a, test.t2.b",
+          "└─HashJoin 3906250.00 root  inner join, equal:[eq(test.t2.a, test.t1.a) eq(test.t3.a, test.t1.a)]",
+          "  ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "  │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 3125000.00 root  inner join, equal:[eq(test.t4.b, test.t3.b)]",
+          "    ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "    │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 2500000.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 250.00 root  data:Selection",
+          "      │ └─Selection 250.00 cop[tikv]  ge(test.t4.a, 1), lt(test.t4.a, 10)",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t2, t4, t3, t1) */. Maybe you can use the table alias name"
+        ]
+      },
+      {
+        "SQL": "select /*+ leading(t2, t4, t1, t3) */ t1.a, t2.b from t1 join t2 on t1.a = t2.a where exists (select /*+ semi_join_rewrite() */ 1 from t3 where t3.a = t1.a and t3.b in (select /*+ semi_join_rewrite() */ b from t4 where t4.a >= 1 and t4.a < 10))",
+        "Plan": [
+          "Projection 3906250.00 root  test.t1.a, test.t2.b",
+          "└─HashJoin 3906250.00 root  inner join, equal:[eq(test.t4.b, test.t3.b) eq(test.t1.a, test.t3.a)]",
+          "  ├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "  │ └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo",
+          "  └─HashJoin(Probe) 3125000.00 root  inner join, equal:[eq(test.t2.a, test.t1.a)]",
+          "    ├─IndexReader(Build) 10000.00 root  index:IndexFullScan",
+          "    │ └─IndexFullScan 10000.00 cop[tikv] table:t1, index:a(a) keep order:false, stats:pseudo",
+          "    └─HashJoin(Probe) 2500000.00 root  CARTESIAN inner join",
+          "      ├─TableReader(Build) 250.00 root  data:Selection",
+          "      │ └─Selection 250.00 cop[tikv]  ge(test.t4.a, 1), lt(test.t4.a, 10)",
+          "      │   └─TableFullScan 10000.00 cop[tikv] table:t4 keep order:false, stats:pseudo",
+          "      └─TableReader(Probe) 10000.00 root  data:TableFullScan",
+          "        └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo"
+        ],
+        "Warning": [
+          "Warning 1815 There are no matching table names for (t4, t3) in optimizer hint /*+ LEADING(t2, t4, t1, t3) */. Maybe you can use the table alias name"
+        ]
+      }
+    ]
   }
 ]
