@@ -20,16 +20,6 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-// cteOverrideEvalExprCtx overrides EvalCtx while delegating all other ExprContext methods.
-type cteOverrideEvalExprCtx struct {
-	exprctx.ExprContext
-	evalCtx exprctx.EvalContext
-}
-
-func (c *cteOverrideEvalExprCtx) GetEvalCtx() exprctx.EvalContext {
-	return c.evalCtx
-}
-
 // cteOverrideExprSessionCtx is a thin wrapper to override ExprCtx without mutating the original session.
 type cteOverrideExprSessionCtx struct {
 	sessionctx.Context
@@ -45,10 +35,9 @@ func (c *cteOverrideExprSessionCtx) GetExprCtx() exprctx.ExprContext {
 func makeCTEStrictTruncateErrSessionCtx(sctx sessionctx.Context) sessionctx.Context {
 	origExprCtx := sctx.GetExprCtx()
 	// Recursive CTE in MySQL behaves like writing into an internal worktable, so truncation is handled like INSERT.
-	overrideBuildCtx := exprctx.CtxWithHandleTruncateErrLevel(origExprCtx, errctx.LevelError)
-	overrideExprCtx := &cteOverrideEvalExprCtx{
-		ExprContext: origExprCtx,
-		evalCtx:     overrideBuildCtx.GetEvalCtx(),
+	overrideExprCtx := exprctx.ExprCtxWithHandleTruncateErrLevel(origExprCtx, errctx.LevelError)
+	if overrideExprCtx == origExprCtx {
+		return sctx
 	}
 	return &cteOverrideExprSessionCtx{
 		Context: sctx,

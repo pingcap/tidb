@@ -6982,17 +6982,12 @@ func (b *PlanBuilder) buildCte(ctx context.Context, cte *ast.CommonTableExpressi
 	}()
 
 	if isRecursive {
+		origCtx := b.ctx
 		// Recursive CTE materializes rows into an internal worktable. In strict SQL mode, truncation should be an error
-		// (INSERT semantics), so temporarily disable TruncateAsWarning while building the recursive CTE to prevent
-		// planning-time constant folding/eval from silently truncating values.
-		sessVars := b.ctx.GetSessionVars()
-		sc := sessVars.StmtCtx
-		originalFlags := sc.TypeFlags()
-		if sessVars.SQLMode.HasStrictMode() && originalFlags.TruncateAsWarning() {
-			sc.SetTypeFlags(originalFlags.WithTruncateAsWarning(false))
-			defer func() {
-				sc.SetTypeFlags(originalFlags)
-			}()
+		// (INSERT semantics). Use a stricter ExprCtx while building the seed/recursive sub-plan to scope the behavior.
+		if b.ctx.GetSessionVars().SQLMode.HasStrictMode() {
+			b.ctx = logicalop.MakeCTEStrictTruncateErrPlanCtx(origCtx)
+			defer func() { b.ctx = origCtx }()
 		}
 
 		// buildingRecursivePartForCTE likes a stack. We save it before building a recursive CTE and restore it after building.
