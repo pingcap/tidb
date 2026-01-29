@@ -1918,3 +1918,397 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 		tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
+
+// https://github.com/pingcap/tidb/issues/62499
+// https://github.com/pingcap/tidb/issues/63487
+func TestHashJoinWhenSeekNumHigh(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+
+	tk.MustExec(`create table t1 (
+		a int,
+		b int,
+		c int,
+		d int,
+		e varchar(256),
+		f int,
+		primary key(a, b, c),
+		key idx_abdef(a, b, d, e, f)
+	)`)
+
+	tk.MustExec(`create table t2 (
+		a int,
+		b int,
+		c int,
+		d int,
+		e int,
+		primary key(a, b, c, d, e)
+	)`)
+
+	// Insert rows using recursive CTE
+	tk.MustExec("set @@cte_max_recursion_depth=20000")
+	tk.MustExec(`insert into t1 select * from (
+		with recursive cte as (
+			select 1 as a, 1 as b, 1 as c, 1 as d, '' as e, 0 as f
+			union all
+			select a+1, b+1, c+1, d+1, e, f+1 from cte where a < 4000
+		)
+		select * from cte
+	) tmp`)
+
+	tk.MustExec(`insert into t2 select * from (
+		with recursive cte as (
+			select 1 as a, 1 as b, 1 as c, 1 as d, 0 as e
+			union all
+			select a+1, b+1, c+1, d+1, e from cte where a < 20000
+		)
+		select * from cte
+	) tmp`)
+	tk.MustExec("analyze table t1, t2")
+
+	// Query with large IN list
+	query := `select tab.c, tab.e
+		from t1 as tab
+		where exists (
+			select 1 from t2
+			where a = 1
+				and b = 1
+				and c = tab.c
+				and d in (1, 2, 3, 4, 5)
+				and e = ''
+		)
+		order by a, b, d, e, f
+		limit 4000
+		`
+
+	// Helper function to format plan output
+	formatPlan := func(rows [][]any) string {
+		var planBuilder strings.Builder
+		for _, row := range rows {
+			s := fmt.Sprintf("%v", row)
+			// Trim the leftmost `[` and rightmost `]`
+			s = s[1 : len(s)-1]
+			planBuilder.WriteString(s)
+			planBuilder.WriteString("\n")
+		}
+		return planBuilder.String()
+	}
+
+	// Test 1: Default behavior. HashJoin should be used instead of IndexJoin
+	rows := tk.MustQuery("explain format='brief' " + query).Rows()
+	plan := formatPlan(rows)
+
+	hasHashJoin := strings.Contains(plan, "HashJoin")
+	hasIndexJoin := strings.Contains(plan, "IndexJoin") ||
+		strings.Contains(plan, "IndexHashJoin") ||
+		strings.Contains(plan, "IndexMergeJoin")
+
+	require.True(t, hasHashJoin && !hasIndexJoin,
+		"Default behavior: optimizer should prefer HashJoin (seek cost considered).\nPlan:\n%s",
+		plan)
+
+	// Test 2: Enable optimizer fix 63487 explicitly. HashJoin should still be used (no regression)
+	tk.MustExec(`set @@tidb_opt_fix_control = '63487:on'`)
+	rows = tk.MustQuery("explain format='brief' " + query).Rows()
+	plan = formatPlan(rows)
+
+	hasHashJoin = strings.Contains(plan, "HashJoin")
+	hasIndexJoin = strings.Contains(plan, "IndexJoin") ||
+		strings.Contains(plan, "IndexHashJoin") ||
+		strings.Contains(plan, "IndexMergeJoin")
+
+	require.True(t, hasHashJoin && !hasIndexJoin,
+		"With fix 63487 enabled explicitly, optimizer should prefer HashJoin (no regression).\nPlan:\n%s",
+		plan)
+}
+
+func TestOptimalIndexWhenSeekNumHigh(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+
+	tk.MustExec(`create table t1 (
+		a int,
+		b int,
+		c int,
+		d int,
+		e int,
+		primary key(a, b, c, d, e) /*T![clustered_index] NONCLUSTERED */,
+		index idx_abdec (a, b, d, e, c)
+	)`)
+
+	// Insert 9K rows: a=1, b=1, c=1-60, d=1-150, e=0
+	tk.MustExec("set @@cte_max_recursion_depth=9000")
+	tk.MustExec(`insert into t1 (a, b, c, d, e)
+		select * from (
+			with recursive tt as (
+				select 1 as a, 1 as b, 1 as c, 1 as d, 0 as e
+				union all
+				select
+					a,
+					b,
+					case when d = 150 then c + 1 else c end,
+					case when d = 150 then 1 else d + 1 end,
+					e
+				from tt
+				where c < 60 or (c = 60 and d < 150)
+			)
+			select * from tt
+		) t
+	`)
+	tk.MustExec("analyze table t1")
+
+	// c values: 1-60
+	var cValues []string
+	for i := 1; i <= 60; i++ {
+		cValues = append(cValues, fmt.Sprintf("%d", i))
+	}
+
+	// d values: 1, 151-169
+	dValues := []string{"1"}
+	for i := 151; i <= 169; i++ {
+		dValues = append(dValues, fmt.Sprintf("%d", i))
+	}
+
+	query := fmt.Sprintf(`select c, d, e from t1
+		where a = 1
+		and b = 1
+		and c in (%s)
+		and d in (%s)`, strings.Join(cValues, ","), strings.Join(dValues, ","))
+
+	// Build ranges on (a, b, c, d) - cartesian product
+	var rangesWithoutOptimizerFix []string
+	for _, c := range cValues {
+		for _, d := range dValues {
+			rangesWithoutOptimizerFix = append(rangesWithoutOptimizerFix, fmt.Sprintf("[1 1 %s %s,1 1 %s %s]", c, d, c, d))
+		}
+	}
+	rangesWithoutOptimizerFixStr := strings.Join(rangesWithoutOptimizerFix, ", ")
+
+	// Test without optimizer fix 63487 (default behavior)
+	tk.MustExec("set @@tidb_opt_fix_control = ''")
+	expectedPlanWithout := []string{
+		"IndexReader 1604.76 root  index:Projection",
+		"└─Projection 1604.76 cop[tikv]  test.t1.c, test.t1.d, test.t1.e",
+		fmt.Sprintf("  └─IndexRangeScan 1604.76 cop[tikv] table:t1, index:PRIMARY(a, b, c, d, e) range:%s, keep order:false", rangesWithoutOptimizerFixStr),
+	}
+	tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows(expectedPlanWithout...))
+
+	var rangesWithOptimizerFix []string
+	for _, d := range dValues {
+		rangesWithOptimizerFix = append(rangesWithOptimizerFix, fmt.Sprintf("[1 1 %s,1 1 %s]", d, d))
+	}
+	rangesWithOptimizerFixStr := strings.Join(rangesWithOptimizerFix, ", ")
+	cValuesStr := strings.Join(cValues, ", ")
+
+	// Test that with optimizer fix 63487 enabled, idx_abdec is used instead with ranges on
+	// [a, b, d]. Assuming that a seek is 30x as expensive as a next operation, the cost is
+	// roughly as follows:
+	// - Ranges on PRIMARY[a, b, c, d]: 1,200 x 30 + 60 = 36,060
+	// - Ranges on PRIMARY[a, b, c]: 60 x 30 + 9,000 = 10,800
+	// - Ranges on PRIMARY[a, b]: 1 x 30 + 9,000 = 9,030
+	// - Ranges on idx_abdec[a, b, d]: 20 x 30 + 60 = 660
+	// - Ranges on idx_abdec[a, b]: 1 x 30 + 9,000 = 9,030
+	tk.MustExec("set @@tidb_opt_fix_control = '63487:on'")
+	expectedPlanWith := []string{
+		"IndexReader 98.00 root  index:Projection",
+		"└─Projection 98.00 cop[tikv]  test.t1.c, test.t1.d, test.t1.e",
+		fmt.Sprintf("  └─Selection 98.00 cop[tikv]  in(test.t1.c, %s)", cValuesStr),
+		fmt.Sprintf("    └─IndexRangeScan 98.00 cop[tikv] table:t1, index:idx_abdec(a, b, d, e, c) range:%s, keep order:false", rangesWithOptimizerFixStr),
+	}
+	tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows(expectedPlanWith...))
+}
+
+// https://github.com/pingcap/tidb/issues/63487
+func TestINListMatchPruning(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_cost_model_version=2")
+
+	tk.MustExec(`create table t1 (
+		a int,
+		b int,
+		c int,
+		d int,
+		e int,
+		primary key(a, b, c, d, e) /*T![clustered_index] NONCLUSTERED */,
+		index idx_abdec (a, b, d, e, c)
+	)`)
+
+	// Insert 9K rows: a=1, b=1, c=1-60, d=1-150, e=0
+	tk.MustExec("set @@cte_max_recursion_depth=9000")
+	tk.MustExec(`insert into t1 (a, b, c, d, e)
+		select * from (
+			with recursive tt as (
+				select 1 as a, 1 as b, 1 as c, 1 as d, 0 as e
+				union all
+				select
+					a,
+					b,
+					case when d = 150 then c + 1 else c end,
+					case when d = 150 then 1 else d + 1 end,
+					e
+				from tt
+				where c < 60 or (c = 60 and d < 150)
+			)
+			select * from tt
+		) t
+	`)
+	tk.MustExec("analyze table t1")
+
+	// Helper function to build the query using different in conditions for c and d
+	buildQuery := func(cValues, dValues []string, forceIndex string) string {
+		selectClause := "select c, d, e from t1 "
+		forceIndexClause := ""
+		if forceIndex != "" {
+			forceIndexClause = forceIndex + " "
+		}
+		whereClause := fmt.Sprintf(`where a = 1
+			and b = 1
+			and c in (%s)
+			and d in (%s)`, strings.Join(cValues, ","), strings.Join(dValues, ","))
+		return selectClause + forceIndexClause + whereClause
+	}
+
+	tests := []struct {
+		name                string
+		forceIndex          string
+		cValuesFunc         func() []string
+		dValuesFunc         func() []string
+		expectedPlanWithout func(cValues, dValues []string) []string
+		expectedPlanWith    func(cValues, dValues []string) []string
+	}{
+		// all_c_exist_all_d_exist tests that after the optimizer fix is enabled
+		// and PRIMARY index is forced, the ranges constructed are on
+		// [a, b, c] rather than [a, b, c, d]. Assuming that a seek is 30x as expensive as a next
+		// operation, the cost is roughly as follows:
+		// - Ranges on [a, b, c, d]: 1,200 x 30 + 1,200 = 37,200
+		// - Ranges [a, b, c]: 60 x 30 + 9,000 = 10,800
+		// - Ranges [a, b]: 1 x 30 + 9,000 = 9,030
+		{
+			name:       "all_c_exist_all_d_exist",
+			forceIndex: "FORCE INDEX(PRIMARY)",
+			cValuesFunc: func() []string {
+				var values []string
+				for i := 1; i <= 60; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			dValuesFunc: func() []string {
+				var values []string
+				for i := 1; i <= 20; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			expectedPlanWithout: func(cValues, dValues []string) []string {
+				// Build ranges on (a, b, c, d) - cartesian product
+				var ranges []string
+				for _, c := range cValues {
+					for _, d := range dValues {
+						ranges = append(ranges, fmt.Sprintf("[1 1 %s %s,1 1 %s %s]", c, d, c, d))
+					}
+				}
+				rangesStr := strings.Join(ranges, ", ")
+				return []string{
+					"IndexReader 9000.00 root  index:Projection",
+					"└─Projection 9000.00 cop[tikv]  test.t1.c, test.t1.d, test.t1.e",
+					fmt.Sprintf("  └─IndexRangeScan 9000.00 cop[tikv] table:t1, index:PRIMARY(a, b, c, d, e) range:%s, keep order:false", rangesStr),
+				}
+			},
+			expectedPlanWith: func(cValues, dValues []string) []string {
+				cValuesStr := strings.Join(cValues, ", ")
+				dValuesStr := strings.Join(dValues, ", ")
+				return []string{
+					"IndexReader 1200.00 root  index:Projection",
+					"└─Projection 1200.00 cop[tikv]  test.t1.c, test.t1.d, test.t1.e",
+					fmt.Sprintf("  └─Selection 1200.00 cop[tikv]  in(test.t1.c, %s), in(test.t1.d, %s)", cValuesStr, dValuesStr),
+					"    └─IndexRangeScan 9000.00 cop[tikv] table:t1, index:PRIMARY(a, b, c, d, e) range:[1 1,1 1], keep order:false",
+				}
+			},
+		},
+		// 10pct_c_exist_all_d_exist tests that after the optimizer fix is enabled
+		// and no index is forced, the ranges constructed are on PRIMARY[a, b, c]
+		// rather than PRIMARY[a, b, c, d]. Assuming that a seek is 30x as expensive as a next
+		// operation, the cost is roughly as follows:
+		// - Ranges on PRIMARY[a, b, c, d]: 1,200 × 30 + 60 = 36,060
+		// - Ranges on PRIMARY[a, b, c]: 60 × 30 + 450 = 2,250
+		// - Ranges on PRIMARY[a, b]: 1 × 30 + 9,000 = 9,030
+		// - Ranges on idx_abdec[a, b, d]: 20 x 30 + 1,200 = 1,800
+		// - Ranges on idx_abdec[a, b]: 1 x 30 + 9,000 = 9,030
+		{
+			name:       "10pct_c_exist_all_d_exist",
+			forceIndex: "",
+			cValuesFunc: func() []string {
+				var values []string
+				// 1-3: exist
+				for i := 1; i <= 3; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				// 61-117: don't exist
+				for i := 61; i <= 117; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			dValuesFunc: func() []string {
+				var values []string
+				for i := 1; i <= 20; i++ {
+					values = append(values, fmt.Sprintf("%d", i))
+				}
+				return values
+			},
+			expectedPlanWithout: func(cValues, dValues []string) []string {
+				// Build ranges on (a, b, c, d) - cartesian product
+				var ranges []string
+				for _, c := range cValues {
+					for _, d := range dValues {
+						ranges = append(ranges, fmt.Sprintf("[1 1 %s %s,1 1 %s %s]", c, d, c, d))
+					}
+				}
+				rangesStr := strings.Join(ranges, ", ")
+				return []string{
+					"IndexReader 1604.76 root  index:Projection",
+					"└─Projection 1604.76 cop[tikv]  test.t1.c, test.t1.d, test.t1.e",
+					fmt.Sprintf("  └─IndexRangeScan 1604.76 cop[tikv] table:t1, index:PRIMARY(a, b, c, d, e) range:%s, keep order:false", rangesStr),
+				}
+			},
+			expectedPlanWith: func(cValues, dValues []string) []string {
+				// Build ranges on (a, b, d) using idx_abd
+				var ranges []string
+				for _, d := range dValues {
+					ranges = append(ranges, fmt.Sprintf("[1 1 %s,1 1 %s]", d, d))
+				}
+				rangesStr := strings.Join(ranges, ", ")
+				cValuesStr := strings.Join(cValues, ", ")
+				return []string{
+					"Projection 75.20 root  test.t1.c, test.t1.d, test.t1.e",
+					"└─IndexReader 75.20 root  index:Selection",
+					fmt.Sprintf("  └─Selection 75.20 cop[tikv]  in(test.t1.c, %s)", cValuesStr),
+					fmt.Sprintf("    └─IndexRangeScan 1200.00 cop[tikv] table:t1, index:idx_abdec(a, b, d, e, c) range:%s, keep order:false", rangesStr),
+				}
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cValues := tt.cValuesFunc()
+			dValues := tt.dValuesFunc()
+			query := buildQuery(cValues, dValues, tt.forceIndex)
+
+			// Test without optimizer fix 63487 (default behavior)
+			tk.MustExec("set @@tidb_opt_fix_control = ''")
+			tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows(tt.expectedPlanWithout(cValues, dValues)...))
+
+			// Test with optimizer fix 63487 enabled
+			tk.MustExec("set @@tidb_opt_fix_control = '63487:on'")
+			tk.MustQuery("explain format='brief' " + query).Check(testkit.Rows(tt.expectedPlanWith(cValues, dValues)...))
+		})
+	}
+}

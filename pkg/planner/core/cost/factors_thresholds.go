@@ -28,6 +28,14 @@ const (
 	// ToleranceFactor is an arbitrary value used in (some) floating point
 	// comparisons to account for precision errors
 	ToleranceFactor = 0.00001
+
+	// SeekFactor is a simplified cost factor for a single seek operation.
+	// We model a seek as equivalent to scanning 10 rows with 8-byte width, based on
+	// experimental results. See https://github.com/pingcap/tidb/issues/62499#issuecomment-3301796153
+	// for the methodology behind this value.
+	// This value is also used in the cost model for seek cost in IndexJoin, PhysicalIndexScan,
+	// and PhysicalTableScan. SeekFactor = 10 * math.Log2(8) = 30 so we use 30 directly here
+	SeekFactor = 30
 )
 
 // AggFuncFactor is the basic factor for aggregation.
@@ -55,4 +63,10 @@ const (
 	// than the limit count, the unordered scan may cost much more than keep order.
 	// So when a limit exists, we don't apply the DescScanFactor.
 	SmallScanThreshold = 10000
+
+	// SkylinePruningSeekRatioThreshold means: If the seek ratio between two
+	// candidate paths differs significantly, skyline pruning via heuristics like
+	// covering index or access columns may be inaccurate so let the cost model
+	// decide instead. See issue #63487.
+	SkylinePruningSeekRatioThreshold = 10.0
 )

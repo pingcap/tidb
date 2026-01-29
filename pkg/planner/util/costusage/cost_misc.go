@@ -146,6 +146,22 @@ func SumCostVer2(costs ...CostVer2) (ret CostVer2) {
 	return ret
 }
 
+// SubCostVer2 is subtraction utility func of CostVer2.
+func SubCostVer2(cost1, cost2 CostVer2) (ret CostVer2) {
+	ret.cost = cost1.cost - cost2.cost
+	if cost1.trace != nil && cost2.trace != nil {
+		ret.trace = &CostTrace{make(map[string]float64), ""}
+		for factor, factorCost := range cost1.trace.factorCosts {
+			ret.trace.factorCosts[factor] = factorCost
+		}
+		for factor, factorCost := range cost2.trace.factorCosts {
+			ret.trace.factorCosts[factor] -= factorCost
+		}
+		ret.trace.formula = "(" + cost1.trace.formula + ") - (" + cost2.trace.formula + ")"
+	}
+	return ret
+}
+
 // DivCostVer2 is div utility func of CostVer2.
 func DivCostVer2(cost CostVer2, denominator float64) (ret CostVer2) {
 	ret.cost = cost.cost / denominator

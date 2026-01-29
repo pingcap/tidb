@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
+	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -302,6 +303,15 @@ func getPlanCostVer24PhysicalIndexReader(pp base.PhysicalPlan, taskType property
 	}
 
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
+
+	// Note: seek cost should not be divided by concurrency
+	if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+		numRanges := getNumberOfRanges(p.IndexPlan)
+		scanFactor := getTaskScanFactorVer2(p, kv.TiKV, property.CopSingleReadTaskType)
+		seekingCost := readerSeekingCostVer2(option, float64(numRanges), scanFactor)
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, seekingCost)
+	}
+
 	p.PlanCostInit = true
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexReaderCostFactor)
@@ -335,6 +345,15 @@ func getPlanCostVer24PhysicalTableReader(pp base.PhysicalPlan, taskType property
 	}
 
 	p.PlanCostVer2 = costusage.DivCostVer2(costusage.SumCostVer2(childCost, netCost), concurrency)
+
+	// Note: seek cost should not be divided by concurrency
+	if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+		numRanges := getNumberOfRanges(p.TablePlan)
+		scanFactor := getTaskScanFactorVer2(p, p.StoreType, childType)
+		seekingCost := readerSeekingCostVer2(option, float64(numRanges), scanFactor)
+		p.PlanCostVer2 = costusage.SumCostVer2(p.PlanCostVer2, seekingCost)
+	}
+
 	p.PlanCostInit = true
 
 	// consider tidb_enforce_mpp
@@ -386,6 +405,14 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 	}
 	indexSideCost := costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency)
 
+	// Note: seek cost should not be divided by concurrency
+	if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+		numIndexRanges := getNumberOfRanges(p.IndexPlan)
+		indexScanFactor := getTaskScanFactorVer2(p, kv.TiKV, property.CopMultiReadTaskType)
+		indexSeekingCost := readerSeekingCostVer2(option, float64(numIndexRanges), indexScanFactor)
+		indexSideCost = costusage.SumCostVer2(indexSideCost, indexSeekingCost)
+	}
+
 	// table-side
 	tableNetCost := netCostVer2(option, tableRows, tableRowSize, netFactor)
 	// set the isChildOfINL signal.
@@ -394,6 +421,14 @@ func getPlanCostVer24PhysicalIndexLookUpReader(pp base.PhysicalPlan, taskType pr
 		return costusage.ZeroCostVer2, err
 	}
 	tableSideCost := costusage.DivCostVer2(costusage.SumCostVer2(tableNetCost, tableChildCost), distConcurrency)
+
+	// Note: seek cost should not be divided by concurrency
+	if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+		numTableRanges := getNumberOfRanges(p.TablePlan)
+		tableScanFactor := getTaskScanFactorVer2(p, kv.TiKV, property.CopMultiReadTaskType)
+		tableSeekingCost := readerSeekingCostVer2(option, float64(numTableRanges), tableScanFactor)
+		tableSideCost = costusage.SumCostVer2(tableSideCost, tableSeekingCost)
+	}
 
 	doubleReadRows := indexRows
 	doubleReadCPUCost := costusage.NewCostVer2(option, cpuFactor,
@@ -449,6 +484,14 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 			return costusage.ZeroCostVer2, err
 		}
 		tableSideCost = costusage.DivCostVer2(costusage.SumCostVer2(tableNetCost, tableChildCost), distConcurrency)
+
+		// Note: seek cost should not be divided by concurrency
+		if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+			numTableRanges := getNumberOfRanges(tablePath)
+			tableScanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
+			tableSeekingCost := readerSeekingCostVer2(option, float64(numTableRanges), tableScanFactor)
+			tableSideCost = costusage.SumCostVer2(tableSideCost, tableSeekingCost)
+		}
 	}
 
 	indexSideCost := make([]costusage.CostVer2, 0, len(p.PartialPlansRaw))
@@ -461,8 +504,17 @@ func GetPlanCostVer24PhysicalIndexMergeReader(pp base.PhysicalPlan, taskType pro
 		if err != nil {
 			return costusage.ZeroCostVer2, err
 		}
-		indexSideCost = append(indexSideCost,
-			costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency))
+		partialCost := costusage.DivCostVer2(costusage.SumCostVer2(indexNetCost, indexChildCost), distConcurrency)
+
+		// Note: seek cost should not be divided by concurrency
+		if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+			numIndexRanges := getNumberOfRanges(indexPath)
+			indexScanFactor := getTaskScanFactorVer2(p, kv.TiKV, taskType)
+			indexSeekingCost := readerSeekingCostVer2(option, float64(numIndexRanges), indexScanFactor)
+			partialCost = costusage.SumCostVer2(partialCost, indexSeekingCost)
+		}
+
+		indexSideCost = append(indexSideCost, partialCost)
 	}
 	sumIndexSideCost := costusage.SumCostVer2(indexSideCost...)
 
@@ -784,6 +836,15 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 		return costusage.ZeroCostVer2, err
 	}
 
+	// Fix63487 adds a separate seek cost to the IndexReader, TableReader, etc. operators
+	// To avoid double counting in the final seek cost below, we remove it from the
+	// probeChildCost
+	if fixcontrol.GetBoolWithDefault(p.SCtx().GetSessionVars().OptimizerFixControl, fixcontrol.Fix63487, false) {
+		numRanges := getNumberOfRanges(probe)
+		probeSeekCost := readerSeekingCostVer2(option, float64(numRanges), scanFactor)
+		probeChildCost = costusage.SubCostVer2(probeChildCost, probeSeekCost)
+	}
+
 	var hashTableCost costusage.CostVer2
 	switch indexJoinType {
 	case 1: // IndexHashJoin
@@ -812,7 +873,10 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	}
 
 	// consider the seeking cost of the probe side of index join,
-	// since this part of cost might be magnified by index join, see #62499.
+	// since this part of cost might be magnified by index join, see #62499 and #63487.
+	// Note: When Fix63487 is enabled, we remove the seek cost at the Reader level from probeChildCost above.
+	// This is to avoid dividing the seek cost by batchRatio and probeConcurrency, which will make
+	// the value too small. We now add back the full seek cost as a separate term.
 	numRanges := getNumberOfRanges(probe)
 	seekingCost := indexJoinSeekingCostVer2(option, buildRows, float64(numRanges), scanFactor)
 
@@ -834,6 +898,15 @@ func getNumberOfRanges(pp base.PhysicalPlan) (totNumRanges int) {
 		return getNumberOfRanges(p.IndexPlan)
 	case *physicalop.PhysicalIndexLookUpReader:
 		return getNumberOfRanges(p.IndexPlan) + getNumberOfRanges(p.TablePlan)
+	case *physicalop.PhysicalIndexMergeReader:
+		totNumRanges := 0
+		if p.TablePlan != nil {
+			totNumRanges += getNumberOfRanges(p.TablePlan)
+		}
+		for _, partialPlan := range p.PartialPlansRaw {
+			totNumRanges += getNumberOfRanges(partialPlan)
+		}
+		return totNumRanges
 	case *physicalop.PhysicalTableScan:
 		return len(p.Ranges)
 	case *physicalop.PhysicalIndexScan:
@@ -995,11 +1068,24 @@ func indexJoinSeekingCostVer2(option *costusage.PlanCostOption, buildRows, numRa
 	}
 	// Large IN lists like `a in (1, 2, 3...)` could generate a large number of ranges and seeking operations, which could be magnified by IndexJoin
 	// and slow down the query performance obviously, we need to consider this part of cost. Please see a case in issue #62499.
-	// To simplify the calculation of seeking cost, we treat a seeking operation as a scan of 10 rows with 8 row-width.
+	// To simplify the calculation of seeking cost, we treat a seeking operation as a scan of 10 rows with 8-byte width.
 	// 10 is based on a simple experiment, please see https://github.com/pingcap/tidb/issues/62499#issuecomment-3301796153.
 	return costusage.NewCostVer2(option, scanFactor,
 		buildRows*10*math.Log2(8)*numRanges*scanFactor.Value,
 		func() string { return fmt.Sprintf("seeking(%v*%v*10*log2(8)*%v)", buildRows, numRanges, scanFactor) })
+}
+
+func readerSeekingCostVer2(option *costusage.PlanCostOption, numRanges float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
+	if numRanges < 1 {
+		numRanges = 1
+	}
+	// Large IN lists like `a in (1, 2, 3...)` could generate a large number of ranges and seeking operations, which could
+	// slow down the query performance obviously, we need to consider this part of cost. Please see a case in issue #63487.
+	// To simplify the calculation of seeking cost, we treat a seeking operation as a scan of 10 rows with 8-byte width.
+	// 10 is based on a simple experiment, please see https://github.com/pingcap/tidb/issues/62499#issuecomment-3301796153.
+	return costusage.NewCostVer2(option, scanFactor,
+		numRanges*10*math.Log2(8)*scanFactor.Value,
+		func() string { return fmt.Sprintf("seek(%v*10*log2(8)*%v)", numRanges, scanFactor) })
 }
 
 func scanCostVer2(option *costusage.PlanCostOption, rows, rowSize float64, scanFactor costusage.CostVer2Factor) costusage.CostVer2 {
