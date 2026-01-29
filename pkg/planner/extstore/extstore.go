@@ -17,7 +17,6 @@ package extstore
 import (
 	"context"
 	"io"
-	"os"
 	"path/filepath"
 	"sync"
 
@@ -26,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -204,51 +202,29 @@ var (
 	globalExtStorageMu sync.Mutex
 )
 
-// SetGlobalExtStorage sets the global external storage instance.
-func SetGlobalExtStorage(storage storeapi.Storage) {
-	globalExtStorageMu.Lock()
-	defer globalExtStorageMu.Unlock()
-	globalExtStorage = storage
-}
-
 // GetGlobalExtStorage returns the global external storage instance.
-// If the storage is nil, it will create a new storage based on the cloud_storage_uri system variable.
-// If cloud_storage_uri is empty, it will create a default local storage using a temporary directory.
 func GetGlobalExtStorage() storeapi.Storage {
 	globalExtStorageMu.Lock()
 	defer globalExtStorageMu.Unlock()
 
-	if globalExtStorage != nil {
-		return globalExtStorage
-	}
-
-	// Try to create storage from cloud_storage_uri system variable
-	cloudStorageURI := vardef.CloudStorageURI.Load()
-	if cloudStorageURI != "" {
-		storage, err := NewExtStorage(cloudStorageURI, "", nil)
-		if err != nil {
-			logutil.BgLogger().Warn("failed to create global extstore from cloud_storage_uri, using default local storage",
-				zap.String("category", "extstore"),
-				zap.String("cloud_storage_uri", cloudStorageURI),
-				zap.Error(err))
-		} else {
-			globalExtStorage = storage
-			return globalExtStorage
-		}
-	}
-
-	// Create default local storage using temporary directory
-	tempDir := os.TempDir()
-	defaultPath := filepath.Join(tempDir, "tidb_extstore")
-	storage, err := NewExtStorage("file://"+defaultPath, "", nil)
-	if err != nil {
-		logutil.BgLogger().Error("failed to create default local extstore",
-			zap.String("category", "extstore"),
-			zap.String("path", defaultPath),
-			zap.Error(err))
-		// Return nil if we can't create storage, but this should rarely happen
-		return nil
-	}
-	globalExtStorage = storage
 	return globalExtStorage
+}
+
+func CreateGlobalExtStorage(uri string, namespace string) (storeapi.Storage, error) {
+	u, err := objstore.ParseRawURL(uri)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if namespace != "" {
+		u.Path = filepath.Join(u.Path, namespace)
+	}
+	backend, err := objstore.ParseBackendFromURL(u, nil)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return &extStorage{
+		backend:  backend,
+		opts:     nil,
+		basePath: u.Path,
+	}, nil
 }
