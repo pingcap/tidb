@@ -1289,6 +1289,9 @@ func (rs *S3Storage) Create(ctx context.Context, name string, option *WriterOpti
 			u.PartSize = option.PartSize
 			u.Concurrency = option.Concurrency
 			u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(option.Concurrency * hardcodedS3ChunkSize)
+			if rs.s3Compatible {
+				u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
+			}
 		})
 		rd, wd := io.Pipe()
 		upParams := &s3.PutObjectInput{
