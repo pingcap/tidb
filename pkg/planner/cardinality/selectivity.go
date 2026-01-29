@@ -55,12 +55,11 @@ func Selectivity(
 	filledPaths []*planutil.AccessPath,
 ) (
 	result float64,
-	retStatsNodes []*StatsNode,
 	err error,
 ) {
 	// If the table's count is zero or conditions are empty, we should return 100% selectivity.
 	if coll.RealtimeCount == 0 || len(exprs) == 0 {
-		return 1, nil, nil
+		return 1, nil
 	}
 	ret := 1.0
 	sc := ctx.GetSessionVars().StmtCtx
@@ -70,7 +69,7 @@ func Selectivity(
 	if len(exprs) > 63 || (coll.ColNum() == 0 && coll.IdxNum() == 0) {
 		ret = pseudoSelectivity(ctx, coll, exprs)
 		ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptSelectivityFactor)
-		return ret, nil, nil
+		return ret, nil
 	}
 
 	var nodes []*StatsNode
@@ -115,7 +114,7 @@ func Selectivity(
 			maskCovered, ranges, _, _, err :=
 				getMaskAndRanges(ctx, remainedExprs, ranger.ColumnRangeType, nil, nil, col)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			nodes = append(nodes, &StatsNode{Tp: ColType, ID: id, mask: maskCovered, Ranges: ranges, numCols: 1})
 			var cnt float64
@@ -124,7 +123,7 @@ func Selectivity(
 				nodes[len(nodes)-1].Tp = PkType
 				cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges, true)
 				if err != nil {
-					return 0, nil, errors.Trace(err)
+					return 0, errors.Trace(err)
 				}
 				cnt = cntEst.Est
 				nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
@@ -132,7 +131,7 @@ func Selectivity(
 			}
 			cntEst, err = GetRowCountByColumnRanges(ctx, coll, id, ranges, false)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			cnt = cntEst.Est
 			nodes[len(nodes)-1].Selectivity = cnt / float64(coll.RealtimeCount)
@@ -188,11 +187,11 @@ func Selectivity(
 			maskCovered, ranges, partCover, minAccessCondsForDNFCond, err :=
 				getMaskAndRanges(ctx, remainedExprs, ranger.IndexRangeType, lengths, id2Paths[idxStats.ID], idxCols...)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			countResult, err := GetRowCountByIndexRanges(ctx, coll, id, ranges, nil)
 			if err != nil {
-				return 0, nil, errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
 			countResult.DivideAll(float64(coll.RealtimeCount))
 			selectivity, minSelectivity, maxSelectivity := countResult.Est, countResult.MinEst, countResult.MaxEst
@@ -323,7 +322,7 @@ OUTER:
 				cnfItems = append(cnfItems, cond)
 			}
 
-			curSelectivity, _, err := Selectivity(ctx, coll, cnfItems, nil)
+			curSelectivity, err := Selectivity(ctx, coll, cnfItems, nil)
 			if err != nil {
 				logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 				curSelectivity = ctx.GetSessionVars().SelectivityFactor
@@ -388,7 +387,7 @@ OUTER:
 
 	// Don't allow the result to be less than 1 row
 	ret = max(ret, 1.0/float64(coll.RealtimeCount))
-	return ret, nodes, nil
+	return ret, nil
 }
 
 // CalcTotalSelectivityForMVIdxPath calculates the total selectivity for the given partial paths of an MV index merge path.
