@@ -30,11 +30,9 @@ import (
 func TestPlanReplayerDifferentGC(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 

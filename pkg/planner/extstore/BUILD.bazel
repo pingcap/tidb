@@ -9,7 +9,6 @@ go_library(
         "//pkg/objstore",
         "//pkg/objstore/objectio",
         "//pkg/objstore/storeapi",
-        "//pkg/sessionctx/vardef",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",

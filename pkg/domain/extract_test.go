@@ -32,11 +32,9 @@ import (
 
 func TestExtractPlanWithoutHistoryView(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 
@@ -50,11 +48,9 @@ func TestExtractPlanWithoutHistoryView(t *testing.T) {
 
 func TestExtractWithoutStmtSummaryPersistedEnabled(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 
@@ -70,11 +66,9 @@ func TestExtractWithoutStmtSummaryPersistedEnabled(t *testing.T) {
 
 func TestExtractHandlePlanTask(t *testing.T) {
 	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(tempDir, "", nil)
+	storage, err := extstore.CreateGlobalExtStorage("file://"+tempDir, "")
 	require.NoError(t, err)
-	extstore.SetGlobalExtStorage(storage)
 	defer func() {
-		extstore.SetGlobalExtStorage(nil)
 		storage.Close()
 	}()
 
