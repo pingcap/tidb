@@ -310,7 +310,9 @@ func (e *AnalyzeColumnsExecV2) buildSamplingStats(
 			)
 		}
 		if err1 := mergeEg.Wait(); err1 != nil {
-			err = stderrors.Join(err, err1)
+			if !stderrors.Is(err1, err) && err1.Error() != err.Error() {
+				err = stderrors.Join(err, err1)
+			}
 		}
 		return 0, nil, nil, nil, nil, getAnalyzePanicErr(err)
 	}
