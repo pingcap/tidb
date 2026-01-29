@@ -186,9 +186,14 @@ func (f *AnalysisJobFactory) CalculateChangePercentage(tblStats *statistics.Tabl
 // CalculateTableSize calculates the size of the table.
 func (*AnalysisJobFactory) CalculateTableSize(tblStats *statistics.Table) float64 {
 	tblCnt := float64(tblStats.RealtimeCount)
+	intest.Assert(tblCnt >= 0, "Table count should not be negative")
+	intest.Assert(tblStats.ColAndIdxExistenceMap != nil, "ColAndIdxExistenceMap should not be nil")
+	// Defensive check.
 	if tblStats.ColAndIdxExistenceMap == nil {
 		return tblCnt
 	}
+	// Column metadata can be missing if a DDL event was missed or not yet processed.
+	// Fall back to row count only in that case.
 	colCnt := tblStats.ColAndIdxExistenceMap.ColNum()
 	if colCnt == 0 {
 		return tblCnt
