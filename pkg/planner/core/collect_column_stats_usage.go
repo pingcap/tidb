@@ -268,11 +268,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 		switch x := lp.(type) {
 		case *logicalop.LogicalJoin:
 			// Extract join columns from EqualConditions and OtherConditions
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(nil, expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(nil, x.OtherConditions, nil)...)
 		case *logicalop.LogicalApply:
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
-			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(nil, expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+			currentJoinCols = append(currentJoinCols, expression.ExtractColumnsFromExpressions(nil, x.OtherConditions, nil)...)
 		case *logicalop.LogicalSort:
 			for _, item := range x.ByItems {
 				currentOrderingCols = append(currentOrderingCols, expression.ExtractColumns(item.Expr)...)
@@ -287,11 +287,11 @@ func (c *columnStatsUsageCollector) collectFromPlan(askedColGroups [][]*expressi
 			}
 		case *logicalop.LogicalAggregation:
 			// GROUP BY columns benefit from indexes (similar to ordering)
-			currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(x.GroupByItems, nil)...)
+			currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(nil, x.GroupByItems, nil)...)
 			// MIN/MAX aggregates can benefit from ordered indexes
 			for _, aggFunc := range x.AggFuncs {
 				if aggFunc.Name == ast.AggFuncMin || aggFunc.Name == ast.AggFuncMax {
-					currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(aggFunc.Args, nil)...)
+					currentOrderingCols = append(currentOrderingCols, expression.ExtractColumnsFromExpressions(nil, aggFunc.Args, nil)...)
 				}
 			}
 		}
