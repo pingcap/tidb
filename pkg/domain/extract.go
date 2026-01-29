@@ -20,8 +20,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/rand"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -34,9 +34,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
 )
 
@@ -154,7 +156,7 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 		logutil.BgLogger().Error("package stmt summary records failed for extract plan task", zap.Error(err))
 		return "", err
 	}
-	return w.dumpExtractPlanPackage(task, p)
+	return w.dumpExtractPlanPackage(ctx, task, p)
 }
 
 func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (map[stmtSummaryHistoryKey]*stmtSummaryHistoryRecord, error) {
@@ -341,8 +343,8 @@ func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (str
  |	 |-digest1.sql
  |	 |-...
 */
-func (w *extractWorker) dumpExtractPlanPackage(task *ExtractTask, p *extractPlanPackage) (name string, err error) {
-	f, name, err := GenerateExtractFile()
+func (w *extractWorker) dumpExtractPlanPackage(ctx context.Context, task *ExtractTask, p *extractPlanPackage) (name string, err error) {
+	f, name, err := GenerateExtractFile(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -493,21 +495,19 @@ type stmtSummaryHistoryRecord struct {
 }
 
 // GenerateExtractFile generates extract stmt file
-func GenerateExtractFile() (*os.File, string, error) {
+func GenerateExtractFile(ctx context.Context) (io.WriteCloser, string, error) {
 	path := GetExtractTaskDirName()
-	err := os.MkdirAll(path, os.ModePerm)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
 	fileName, err := generateExtractStmtFile()
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	zf, err := os.Create(filepath.Join(path, fileName))
+	storage := extstore.GetGlobalExtStorage()
+	writer, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	return zf, fileName, err
+	zf := replayer.NewFileWriter(ctx, writer)
+	return zf, fileName, nil
 }
 
 func generateExtractStmtFile() (string, error) {
@@ -525,6 +525,5 @@ func generateExtractStmtFile() (string, error) {
 
 // GetExtractTaskDirName get extract dir name
 func GetExtractTaskDirName() string {
-	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
-	return filepath.Join(tidbLogDir, "extract")
+	return "extract"
 }

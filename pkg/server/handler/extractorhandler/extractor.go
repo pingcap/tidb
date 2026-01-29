@@ -19,7 +19,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -28,6 +27,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -81,7 +81,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		}
 		return
 	}
-	content, err := loadExtractResponse(name)
+	content, err := loadExtractResponse(req.Context(), name)
 	if err != nil {
 		logutil.BgLogger().Error("load extract task failed", zap.Error(err))
 		handler.WriteError(w, err)
@@ -96,15 +96,15 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", name))
 }
 
-func loadExtractResponse(name string) ([]byte, error) {
+func loadExtractResponse(ctx context.Context, name string) ([]byte, error) {
 	path := filepath.Join(domain.GetExtractTaskDirName(), name)
-	//nolint: gosec
-	file, err := os.Open(path)
+	storage := extstore.GetGlobalExtStorage()
+	fileReader, err := storage.Open(ctx, path, nil)
 	if err != nil {
 		return nil, err
 	}
-	defer file.Close()
-	content, err := io.ReadAll(file)
+	defer fileReader.Close()
+	content, err := io.ReadAll(fileReader)
 	if err != nil {
 		return nil, err
 	}

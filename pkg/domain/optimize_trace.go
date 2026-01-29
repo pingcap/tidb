@@ -21,7 +21,7 @@ import (
 )
 
 // GetOptimizerTraceDirName returns optimizer trace directory path.
-// The path is related to the process id.
+// The path is a relative path for external storage.
 func GetOptimizerTraceDirName() string {
-	return filepath.Join(os.TempDir(), "optimizer_trace", strconv.Itoa(os.Getpid()))
+	return filepath.Join("optimizer_trace", strconv.Itoa(os.Getpid()))
 }

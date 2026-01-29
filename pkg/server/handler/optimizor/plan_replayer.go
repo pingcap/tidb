@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	util2 "github.com/pingcap/tidb/pkg/statistics/util"
@@ -90,30 +91,32 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 	path := dfHandler.filePath
 	isForwarded := len(req.URL.Query().Get("forward")) > 0
 	localAddr := net.JoinHostPort(dfHandler.address, strconv.Itoa(int(dfHandler.statusPort)))
-	exist, err := isExists(path)
+
+	storage := extstore.GetGlobalExtStorage()
+	ctx := req.Context()
+	exist, err := storage.FileExists(ctx, path)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
 	if exist {
-		//nolint: gosec
-		file, err := os.Open(path)
+		fileReader, err := storage.Open(ctx, path, nil)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		content, err := io.ReadAll(file)
+		content, err := io.ReadAll(fileReader)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		err = file.Close()
+		err = fileReader.Close()
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
 		if dfHandler.downloadedFilename == "plan_replayer" {
-			content, err = handlePlanReplayerCaptureFile(content, path, dfHandler)
+			content, err = handlePlanReplayerCaptureFile(ctx, content, path, dfHandler)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -219,7 +222,7 @@ func isExists(path string) (bool, error) {
 	return true, nil
 }
 
-func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
+func handlePlanReplayerCaptureFile(ctx context.Context, content []byte, path string, handler downloadFileHandler) ([]byte, error) {
 	if !strings.HasPrefix(handler.filePath, "capture_replayer") {
 		return content, nil
 	}
