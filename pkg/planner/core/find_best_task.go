@@ -1403,13 +1403,24 @@ func matchPropForIndexMergeAlternatives(ds *logicalop.DataSource, path *util.Acc
 		// if all partial path are using a same index, meaningless and fail over.
 		return nil, property.PropNotMatched
 	}
+
+	// check if any of the partial paths is not cacheable.
+	notCachableReason := ""
+	for _, p := range determinedIndexPartialPaths {
+		if p.NoncacheableReason != "" {
+			notCachableReason = p.NoncacheableReason
+			break
+		}
+	}
+
 	// step2: gen a new **concrete** index merge path.
 	indexMergePath := &util.AccessPath{
 		IndexMergeAccessMVIndex:  useMVIndex,
 		PartialIndexPaths:        determinedIndexPartialPaths,
 		IndexMergeIsIntersection: false,
 		// inherit those determined can't pushed-down table filters.
-		TableFilters: path.TableFilters,
+		TableFilters:       path.TableFilters,
+		NoncacheableReason: notCachableReason,
 	}
 	// path.ShouldBeKeptCurrentFilter record that whether there are some part of the cnf item couldn't be pushed down to tikv already.
 	shouldKeepCurrentFilter := path.KeepIndexMergeORSourceFilter
@@ -2701,6 +2712,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		}
 	} else {
 		pointGetPlan.IndexInfo = candidate.path.Index
+		pointGetPlan.SetNoncacheableReason(candidate.path.NoncacheableReason)
 		pointGetPlan.IdxCols = candidate.path.IdxCols
 		pointGetPlan.IdxColLens = candidate.path.IdxColLens
 		pointGetPlan.IndexValues = candidate.path.Ranges[0].LowVal
@@ -2779,6 +2791,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		}
 	} else {
 		batchPointGetPlan.IndexInfo = candidate.path.Index
+		batchPointGetPlan.SetNoncacheableReason(candidate.path.NoncacheableReason)
 		batchPointGetPlan.IdxCols = candidate.path.IdxCols
 		batchPointGetPlan.IdxColLens = candidate.path.IdxColLens
 		for _, ran := range candidate.path.Ranges {

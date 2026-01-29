@@ -659,6 +659,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		Prop:             prop,
 		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+
+	is.SetNoncacheableReason(path.NoncacheableReason)
+
 	rowCount := path.CountAfterAccess
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
 

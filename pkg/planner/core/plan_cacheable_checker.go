@@ -543,6 +543,10 @@ func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
 func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	if reason := p.GetNoncacheableReason(); reason != "" {
+		return false, reason
+	}
+
 	var subPlans []base.PhysicalPlan
 	switch x := p.(type) {
 	case *physicalop.PhysicalTableDual:
