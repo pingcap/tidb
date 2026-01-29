@@ -217,6 +217,7 @@ type LogClient struct {
 
 	upstreamClusterID uint64
 	restoreID         uint64
+	lastRestore       bool
 
 	// the query to insert rows into table `gc_delete_range`, lack of ts.
 	deleteRangeQuery          []*stream.PreDelRangeQuery
@@ -232,6 +233,14 @@ type LogClient struct {
 
 func (rc *LogClient) SetRestoreID(restoreID uint64) {
 	rc.restoreID = restoreID
+}
+
+func (rc *LogClient) SetRestoreToLast(restoreToLast bool) {
+	rc.lastRestore = restoreToLast
+}
+
+func (rc *LogClient) LastOne() bool {
+	return rc.lastRestore
 }
 
 type restoreStatistics struct {
@@ -1046,7 +1055,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
+		dbMaps, err = rc.loadSchemasMapFromLastTask(ctx, rc.startTS)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -2146,22 +2155,23 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 					return errors.Errorf("the deleted table(upstream ID: %d) has no record in replace map", upstreamTableID)
 				}
 
+				involvedDB, involvedTable := rc.resolveInvolvingNames(ctx, dbReplace, tableReplace)
 				args := &model.RefreshMetaArgs{
 					SchemaID:      dbReplace.DbID,
 					TableID:       tableReplace.TableID,
-					InvolvedDB:    dbReplace.Name,
-					InvolvedTable: tableReplace.Name,
+					InvolvedDB:    involvedDB,
+					InvolvedTable: involvedTable,
 				}
 
 				log.Info("refreshing deleted table meta",
 					zap.Int64("schemaID", dbReplace.DbID),
-					zap.String("dbName", dbReplace.Name),
+					zap.String("dbName", involvedDB),
 					zap.Any("tableID", tableReplace.TableID),
-					zap.String("tableName", tableReplace.Name))
+					zap.String("tableName", involvedTable))
 				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 					return errors.Annotatef(err,
 						"failed to refresh meta for deleted table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
-						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+						dbReplace.DbID, tableReplace.TableID, involvedDB, involvedTable)
 				}
 				deletedTableCount++
 			}
@@ -2242,20 +2252,21 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 					}
 				}
 
+				involvedDB, involvedTable := rc.resolveInvolvingNames(ctx, dbReplace, tableReplace)
 				args := &model.RefreshMetaArgs{
 					SchemaID:      dbReplace.DbID,
 					TableID:       tableReplace.TableID,
-					InvolvedDB:    dbReplace.Name,
-					InvolvedTable: tableReplace.Name,
+					InvolvedDB:    involvedDB,
+					InvolvedTable: involvedTable,
 				}
 				log.Info("refreshing regular table meta",
 					zap.Int64("schemaID", dbReplace.DbID),
-					zap.String("dbName", dbReplace.Name),
+					zap.String("dbName", involvedDB),
 					zap.Any("tableID", tableReplace.TableID),
-					zap.String("tableName", tableReplace.Name))
+					zap.String("tableName", involvedTable))
 				if err := rc.unsafeSession.RefreshMeta(ctx, args); err != nil {
 					return errors.Annotatef(err, "failed to refresh meta for table with schemaID=%d, tableID=%d, dbName=%s, tableName=%s",
-						dbReplace.DbID, tableReplace.TableID, dbReplace.Name, tableReplace.Name)
+						dbReplace.DbID, tableReplace.TableID, involvedDB, involvedTable)
 				}
 				regularCount++
 			}
@@ -2265,4 +2276,42 @@ func (rc *LogClient) RefreshMetaForTables(ctx context.Context, schemasReplace *s
 	log.Info("refreshed metadata for add/update operations",
 		zap.Int("regularTableCount", regularCount))
 	return nil
+}
+
+func (rc *LogClient) resolveInvolvingNames(
+	ctx context.Context,
+	dbReplace *stream.DBReplace,
+	tableReplace *stream.TableReplace,
+) (string, string) {
+	dbName := ""
+	if dbReplace != nil {
+		dbName = dbReplace.Name
+	}
+	tableName := ""
+	if tableReplace != nil {
+		tableName = tableReplace.Name
+	}
+
+	infoSchema := rc.dom.InfoSchema()
+	if dbName == "" && dbReplace != nil {
+		if dbInfo, ok := infoSchema.SchemaByID(dbReplace.DbID); ok {
+			dbName = dbInfo.Name.O
+		}
+	}
+	if tableName == "" && tableReplace != nil && tableReplace.TableID != 0 {
+		if tbl, ok := infoSchema.TableByID(ctx, tableReplace.TableID); ok {
+			tableName = tbl.Meta().Name.O
+		}
+	}
+
+	if dbName == "" {
+		dbName = model.InvolvingAll
+	}
+	if tableName == "" {
+		tableName = model.InvolvingAll
+	}
+	if dbName == model.InvolvingAll && tableName != model.InvolvingAll {
+		tableName = model.InvolvingAll
+	}
+	return dbName, tableName
 }

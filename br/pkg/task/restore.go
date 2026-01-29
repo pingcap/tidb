@@ -105,6 +105,8 @@ const (
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
+	// FlagStreamLast is used for log restore, represents restore to the last available TS.
+	FlagStreamLast = "last"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
 	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
@@ -278,6 +280,10 @@ type RestoreConfig struct {
 	RestoreTS uint64 `json:"restore-ts" toml:"restore-ts"`
 	// whether RestoreTS was explicitly specified by user vs auto-detected
 	IsRestoredTSUserSpecified bool `json:"-" toml:"-"`
+	// LastRestore represents whether restore is the last one.
+	LastRestore bool `json:"last" toml:"last"`
+	// whether LastRestore was explicitly specified by user vs default
+	IsLastRestoreUserSpecified bool `json:"-" toml:"-"`
 	// rewriteTS is the rewritten timestamp of meta kvs.
 	RewriteTS       uint64                      `json:"-" toml:"-"`
 	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
@@ -383,6 +389,7 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
+	command.Flags().Bool(FlagStreamLast, true, "restore to the last available commit timestamp")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
@@ -409,6 +416,13 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 
 	// check if RestoreTS was explicitly specified by user
 	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
+
+	// check if LastRestore was explicitly specified by user
+	cfg.IsLastRestoreUserSpecified = flags.Changed(FlagStreamLast)
+	cfg.LastRestore, err = flags.GetBool(FlagStreamLast)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	if cfg.FullBackupStorage, err = flags.GetString(FlagStreamFullBackupStorage); err != nil {
 		return errors.Trace(err)

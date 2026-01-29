@@ -23,6 +23,7 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/stream"
@@ -164,12 +165,19 @@ func (rc *LogClient) loadSchemasMap(
 		return dbMaps, errors.Trace(err)
 	}
 	if rc.pitrIDMapTableExists() {
-		dbMaps, err := rc.loadSchemasMapFromTable(ctx, restoredTS)
+		dbMaps, err := rc.loadSchemasMapFromTable(ctx, restoredTS, true)
 		return dbMaps, errors.Trace(err)
 	}
 	log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
 	dbMaps, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
 	return dbMaps, errors.Trace(err)
+}
+
+func (rc *LogClient) loadSchemasMapFromLastTask(ctx context.Context, lastRestoredTS uint64) ([]*backuppb.PitrDBMap, error) {
+	if !rc.pitrIDMapTableExists() {
+		return nil, errors.Annotatef(berrors.ErrPiTRIDMapTableNotFound, "segmented restore is impossible")
+	}
+	return rc.loadSchemasMapFromTable(ctx, lastRestoredTS, false)
 }
 
 func (rc *LogClient) loadSchemasMapFromStorage(
@@ -202,19 +210,18 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 func (rc *LogClient) loadSchemasMapFromTable(
 	ctx context.Context,
 	restoredTS uint64,
+	onlyThisRestore bool,
 ) ([]*backuppb.PitrDBMap, error) {
-	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
+	useRestoreIDFilter := onlyThisRestore && rc.pitrIDMapHasRestoreIDColumn()
 
 	var getPitrIDMapSQL string
 	var args []any
 
-	if hasRestoreIDColumn {
+	if useRestoreIDFilter {
 		// new version with restore_id column
 		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
 		args = []any{rc.restoreID, restoredTS, rc.upstreamClusterID}
 	} else {
-		// old version without restore_id column
-		log.Info("mysql.tidb_pitr_id_map table does not have restore_id column, using backward compatible mode")
 		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
 		args = []any{restoredTS, rc.upstreamClusterID}
 	}
