@@ -71,34 +71,28 @@ type AnalyzeColumnsExec struct {
 func analyzeColumnsPushDownEntry(ctx context.Context, gp *gp.Pool, e *AnalyzeColumnsExec) *statistics.AnalyzeResults {
 	if e.AnalyzeInfo.StatsVersion >= statistics.Version2 {
 		res := e.toV2().analyzeColumnsPushDownV2(ctx, gp)
-		if intest.InTest && res.Err != nil && stderrors.Is(res.Err, context.Canceled) {
-			cause := context.Cause(ctx)
-			ctxErr := ctx.Err()
-			statslogutil.StatsLogger().Info("analyze columns canceled",
-				zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-				zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-				zap.Error(res.Err),
-				zap.Error(cause),
-				zap.Error(ctxErr),
-				zap.Stack("stack"),
-			)
-		}
+		e.logAnalyzeColumnsCanceledInTest(ctx, res.Err)
 		return res
 	}
 	res := e.toV1().analyzeColumnsPushDownV1(ctx)
-	if intest.InTest && res.Err != nil && stderrors.Is(res.Err, context.Canceled) {
-		cause := context.Cause(ctx)
-		ctxErr := ctx.Err()
-		statslogutil.StatsLogger().Info("analyze columns canceled",
-			zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
-			zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
-			zap.Error(res.Err),
-			zap.Error(cause),
-			zap.Error(ctxErr),
-			zap.Stack("stack"),
-		)
-	}
+	e.logAnalyzeColumnsCanceledInTest(ctx, res.Err)
 	return res
+}
+
+func (e *AnalyzeColumnsExec) logAnalyzeColumnsCanceledInTest(ctx context.Context, err error) {
+	if !intest.InTest || err == nil || !stderrors.Is(err, context.Canceled) {
+		return
+	}
+	cause := context.Cause(ctx)
+	ctxErr := ctx.Err()
+	statslogutil.StatsLogger().Info("analyze columns canceled",
+		zap.Uint32("killSignal", e.ctx.GetSessionVars().SQLKiller.GetKillSignal()),
+		zap.Uint64("connID", e.ctx.GetSessionVars().ConnectionID),
+		zap.Error(err),
+		zap.Error(cause),
+		zap.Error(ctxErr),
+		zap.Stack("stack"),
+	)
 }
 
 func (e *AnalyzeColumnsExec) toV1() *AnalyzeColumnsExecV1 {
