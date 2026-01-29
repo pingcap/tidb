@@ -16,6 +16,7 @@ package executor
 
 import (
 	"context"
+	stderrors "errors"
 	"strconv"
 	"sync"
 
@@ -27,7 +28,6 @@ import (
 	"github.com/pingcap/tidb/pkg/store/helper"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
-	stderrors "github.com/pingcap/tidb/pkg/util/stderrors"
 	"github.com/tiancaiamao/gp"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
