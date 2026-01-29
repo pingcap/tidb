@@ -85,6 +85,21 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroup {
 		return makeSingleGroup(p)
 	}
 
+	// Due to the limited search space of the greedy algorithm and our currently rudimentary cost model, suboptimal join orders may occasionally be generated.
+	// For example:
+	// Original Order: (R1 INNER R2 ON P12) LEFT JOIN (R3 INNER R4 ON P34) ON P23 (Pxy denotes a join condition using Rx and Ry as inputs.)
+	//   The LEFT JOIN condition P23 contains only otherCond (non-equi conditions) without any eqCond.
+	// Potential Suboptimal Order: R1 INNER (R2 LEFT JOIN (R3 INNER R4 ON P34) ON P23) ON P12
+	//   This implies that the edge P23 (lacking an eqCond) is applied earlier than in the original order.
+	//   Since edges without equi-conditions perform poorly (as the executor cannot utilize Hash Join),
+	//   and the current single-sequence greedy algorithm cannot explore enough alternative sequences, it may return this poor-performing order directly.
+	// So We have temporarily disabled reordering for non INNER JOIN that without eqCond.
+	// For INNER JOINs, we introduced a penalty factor. If the factor is set less equal to 0,
+	// Cartesian products will only be applied at the final step(which will generate a bushy tree).
+	if join.JoinType != base.InnerJoin && len(join.EqualConditions) == 0 {
+		return makeSingleGroup(p)
+	}
+
 	var leftHasHint, rightHasHint bool
 	var vertexHints map[int]*vertexJoinMethodHint
 	if p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.PreferJoinType > uint(0) {
@@ -326,7 +341,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 
 	var curJoinIdx int
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
-	// var disableCartesian = cartesianFactor <= 0 // gjt todo handle cartesian
+	var disableCartesian = cartesianFactor <= 0 // gjt todo handle cartesian
 	for curJoinIdx < len(nodes)-1 {
 		var bestNode *Node
 		var bestIdx int
@@ -352,7 +367,11 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			if newNode == nil {
 				continue
 			}
-			if cartesianFactor > 0 && checkResult.NoEQEdge() {
+			if checkResult.NoEQEdge() {
+				// todo we dont support reorder non INNER JOIN without eqCond now.
+				if disableCartesian {
+					continue
+				}
 				newNode.cumCost = newNode.cumCost * cartesianFactor
 			}
 			if bestNode == nil || newNode.cumCost < bestNode.cumCost {
