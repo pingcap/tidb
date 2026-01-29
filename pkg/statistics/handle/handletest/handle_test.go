@@ -1430,16 +1430,12 @@ func TestInitStatsLite(t *testing.T) {
 	require.True(t, colBStats1.IsFullLoad())
 	idxBStats1 := statsTbl2.GetIdx(idxBID)
 	require.True(t, idxBStats1.IsFullLoad())
-<<<<<<< HEAD
-	require.True(t, colCStats.IsAllEvicted())
-=======
 	// Column c stats and idxc(c) index stats should be nil because idxc(c) is pruned (column c is not in the WHERE clause,
 	// so it's not an interesting column). With index pruning enabled, pruned indexes don't trigger
 	// column or index stats loading.
 	require.Nil(t, colCStats)
 	idxCStats := statsTbl2.GetIdx(idxCID)
 	require.Nil(t, idxCStats)
->>>>>>> 79b2debe2a9 (planner: index pruning using existing infra (#64999))
 
 	// sync stats load
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
