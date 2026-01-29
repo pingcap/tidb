@@ -139,7 +139,7 @@ func TestNonPreparedPlanTypeRandomly(t *testing.T) {
 		tk.MustExec(fmt.Sprintf(`insert into t3 values (%v, %v)`, randNonPrepTypeVal(t, n, "double"), randNonPrepTypeVal(t, n, "double")))
 		tk.MustExec(fmt.Sprintf(`insert into t4 values (%v, %v)`, randNonPrepTypeVal(t, n, "decimal"), randNonPrepTypeVal(t, n, "decimal")))
 		// TODO: fix it later
-		//tk.MustExec(fmt.Sprintf(`insert into t5 values (%v, %v)`, randNonPrepTypeVal(t, n, "year"), randNonPrepTypeVal(t, n, "year")))
+		// tk.MustExec(fmt.Sprintf(`insert into t5 values (%v, %v)`, randNonPrepTypeVal(t, n, "year"), randNonPrepTypeVal(t, n, "year")))
 		tk.MustExec(fmt.Sprintf(`insert into t6 values (%v, %v)`, randNonPrepTypeVal(t, n, "date"), randNonPrepTypeVal(t, n, "date")))
 		tk.MustExec(fmt.Sprintf(`insert into t7 values (%v, %v)`, randNonPrepTypeVal(t, n, "datetime"), randNonPrepTypeVal(t, n, "datetime")))
 	}
@@ -170,8 +170,10 @@ func randNonPrepFilter(t *testing.T, scale int) string {
 }
 
 func randNonPrepVal(t *testing.T, scale int) string {
-	return randNonPrepTypeVal(t, scale, [7]string{"int", "varchar", "double",
-		"decimal", "year", "datetime", "date"}[rand.Intn(7)])
+	return randNonPrepTypeVal(t, scale, [7]string{
+		"int", "varchar", "double",
+		"decimal", "year", "datetime", "date",
+	}[rand.Intn(7)])
 }
 
 func randNonPrepTypeVal(t *testing.T, scale int, typ string) string {
@@ -419,10 +421,18 @@ func runPreparedPlanCacheLeftJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 			{"    └─Selection_33"},
 			{"      └─TableFullScan_32"},
 		})
+	tk.MustExec("set @b=null")
 
 	tk.MustExec("execute st using @b")
 	tk.MustExec("execute st using @b")
+
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	tk.MustExec("set @b=2")
+
+	tk.MustExec("execute st using @b")
+	tk.MustExec("execute st using @b")
+
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustExec("deallocate prepare st")
 }
 
@@ -460,6 +470,10 @@ func runPreparedPlanCacheInlJoinRangeScan(t *testing.T, tk *testkit.TestKit) {
 			{"    └─IndexRangeScan"},
 		})
 
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustExec("execute stmt using @a, @b, @c")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+	tk.MustExec("set @a=null, @b=null, @c=null")
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustExec("execute stmt using @a, @b, @c")
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -914,7 +928,8 @@ func TestPlanCacheRandomCases(t *testing.T) {
 
 func testRandomPlanCacheCases(t *testing.T,
 	prepFunc func(tk *testkit.TestKit),
-	queryFunc func(isNonPrep bool) []string) {
+	queryFunc func(isNonPrep bool) []string,
+) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	prepFunc(tk)
@@ -1174,7 +1189,7 @@ func TestNonPreparedPlanExplainWarning(t *testing.T) {
 	for _, format := range explainFormats {
 		for _, q := range all {
 			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
-			//tk.MustQuery("show warnings").Check(testkit.Rows())
+			// tk.MustQuery("show warnings").Check(testkit.Rows())
 			tk.MustQuery("show warnings").CheckNotContain("plan cache")
 			tk.MustExec(fmt.Sprintf("explain format = '%v' %v", format, q))
 			tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
@@ -1377,11 +1392,13 @@ func TestBuiltinFuncFlen(t *testing.T) {
 	tk.MustExec(`CREATE TABLE t1(c1 INT)`)
 	tk.MustExec(`INSERT INTO t1 VALUES (1)`)
 
-	funcs := []string{ast.Abs, ast.Acos, ast.Asin, ast.Atan, ast.Ceil, ast.Ceiling, ast.Cos,
+	funcs := []string{
+		ast.Abs, ast.Acos, ast.Asin, ast.Atan, ast.Ceil, ast.Ceiling, ast.Cos,
 		ast.CRC32, ast.Degrees, ast.Floor, ast.Ln, ast.Log, ast.Log2, ast.Log10, ast.Unhex,
 		ast.Radians, ast.Rand, ast.Round, ast.Sign, ast.Sin, ast.Sqrt, ast.Tan, ast.SM3,
 		ast.Quote, ast.RTrim, ast.ToBase64, ast.Trim, ast.Upper, ast.Ucase, ast.Hex,
-		ast.BitLength, ast.CharLength, ast.Compress, ast.MD5, ast.SHA1, ast.SHA}
+		ast.BitLength, ast.CharLength, ast.Compress, ast.MD5, ast.SHA1, ast.SHA,
+	}
 	args := []string{"2038330881", "'2038330881'", "'牵'", "-1", "''", "0"}
 
 	for _, f := range funcs {
