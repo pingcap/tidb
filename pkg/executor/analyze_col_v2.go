@@ -947,7 +947,15 @@ func readDataAndSendTask(ctx context.Context, sctx sessionctx.Context, handler *
 			return err
 		}
 		failpoint.Inject("mockSlowAnalyzeV2", func() {
-			time.Sleep(1000 * time.Second)
+			select {
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				if err == nil {
+					err = ctx.Err()
+				}
+				failpoint.Return(err)
+			case <-time.After(1000 * time.Second):
+			}
 		})
 
 		data, err := handler.nextRaw(ctx)

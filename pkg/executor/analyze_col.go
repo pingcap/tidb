@@ -227,7 +227,15 @@ func (e *AnalyzeColumnsExec) buildStats(ctx context.Context, ranges []*ranger.Ra
 			return nil, nil, nil, nil, nil, err
 		}
 		failpoint.Inject("mockSlowAnalyzeV1", func() {
-			time.Sleep(1000 * time.Second)
+			select {
+			case <-ctx.Done():
+				err := context.Cause(ctx)
+				if err == nil {
+					err = ctx.Err()
+				}
+				failpoint.Return(nil, nil, nil, nil, nil, err)
+			case <-time.After(1000 * time.Second):
+			}
 		})
 		data, err1 := e.resultHandler.nextRaw(ctx)
 		if err1 != nil {

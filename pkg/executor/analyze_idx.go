@@ -240,7 +240,15 @@ func (e *AnalyzeIndexExec) buildStatsFromResult(killerCtx context.Context, resul
 		default:
 		}
 		failpoint.Inject("mockSlowAnalyzeIndex", func() {
-			time.Sleep(1000 * time.Second)
+			select {
+			case <-killerCtx.Done():
+				err := context.Cause(killerCtx)
+				if err == nil {
+					err = killerCtx.Err()
+				}
+				failpoint.Return(nil, nil, nil, nil, err)
+			case <-time.After(1000 * time.Second):
+			}
 		})
 		data, err := result.NextRaw(killerCtx)
 		if err != nil {
