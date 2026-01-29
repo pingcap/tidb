@@ -677,6 +677,7 @@ func (e *AnalyzeColumnsExecV2) subMergeWorker(ctx context.Context, parentCtx con
 		retCollector.Base().FMSketches = append(retCollector.Base().FMSketches, statistics.NewFMSketch(statistics.MaxSketchSize))
 	}
 	cleanupCollector := func() {
+		// Ensure collector resources are released on early exit paths.
 		retCollector.DestroyAndPutToPool()
 	}
 	statsHandle := domain.GetDomain(e.ctx).StatsHandle()
