@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/types"
@@ -85,20 +86,22 @@ type VectorIndexInfo struct {
 // It corresponds to the statement `CREATE INDEX Name ON Table (Column);`
 // See https://dev.mysql.com/doc/refman/5.7/en/create-index.html
 type IndexInfo struct {
-	ID            int64            `json:"id"`
-	Name          model.CIStr      `json:"idx_name"` // Index name.
-	Table         model.CIStr      `json:"tbl_name"` // Table name.
-	Columns       []*IndexColumn   `json:"idx_cols"` // Index columns.
-	State         SchemaState      `json:"state"`
-	BackfillState BackfillState    `json:"backfill_state"`
-	Comment       string           `json:"comment"`      // Comment
-	Tp            model.IndexType  `json:"index_type"`   // Index type: Btree, Hash, Rtree or HNSW
-	Unique        bool             `json:"is_unique"`    // Whether the index is unique.
-	Primary       bool             `json:"is_primary"`   // Whether the index is primary key.
-	Invisible     bool             `json:"is_invisible"` // Whether the index is invisible.
-	Global        bool             `json:"is_global"`    // Whether the index is global.
-	MVIndex       bool             `json:"mv_index"`     // Whether the index is multivalued index.
-	VectorInfo    *VectorIndexInfo `json:"vector_index"` // VectorInfo is the vector index information.
+	ID                  int64            `json:"id"`
+	Name                model.CIStr      `json:"idx_name"` // Index name.
+	Table               model.CIStr      `json:"tbl_name"` // Table name.
+	Columns             []*IndexColumn   `json:"idx_cols"` // Index columns.
+	State               SchemaState      `json:"state"`
+	BackfillState       BackfillState    `json:"backfill_state"`
+	Comment             string           `json:"comment"`                       // Comment
+	Tp                  model.IndexType  `json:"index_type"`                    // Index type: Btree, Hash, Rtree, Vector, Inverted, Fulltext
+	Unique              bool             `json:"is_unique"`                     // Whether the index is unique.
+	Primary             bool             `json:"is_primary"`                    // Whether the index is primary key.
+	Invisible           bool             `json:"is_invisible"`                  // Whether the index is invisible.
+	Global              bool             `json:"is_global"`                     // Whether the index is global.
+	MVIndex             bool             `json:"mv_index"`                      // Whether the index is multivalued index.
+	VectorInfo          *VectorIndexInfo `json:"vector_index"`                  // VectorInfo is the vector index information.
+	ConditionExprString string           `json:"partial_condition_expr_string"` // ConditionExprString is the string representation of the partial index condition.
+	AffectColumn        []*IndexColumn   `json:"affect_column,omitempty"`       // AffectColumn is the columns related to the index.
 }
 
 // Clone clones IndexInfo.
@@ -110,6 +113,12 @@ func (index *IndexInfo) Clone() *IndexInfo {
 	ni.Columns = make([]*IndexColumn, len(index.Columns))
 	for i := range index.Columns {
 		ni.Columns[i] = index.Columns[i].Clone()
+	}
+	if index.AffectColumn != nil {
+		ni.AffectColumn = make([]*IndexColumn, len(index.AffectColumn))
+		for i := range index.AffectColumn {
+			ni.AffectColumn[i] = index.AffectColumn[i].Clone()
+		}
 	}
 	return &ni
 }
@@ -175,6 +184,21 @@ func (index *IndexInfo) IsPublic() bool {
 // For a TiFlash local index, no actual index data need to be written to KV layer.
 func (index *IndexInfo) IsTiFlashLocalIndex() bool {
 	return index.VectorInfo != nil
+}
+
+// HasCondition checks whether the index has a partial index condition.
+func (index *IndexInfo) HasCondition() bool {
+	return len(index.ConditionExprString) > 0
+}
+
+// ConditionExpr parses and returns the condition expression of the partial index.
+func (index *IndexInfo) ConditionExpr() (ast.ExprNode, error) {
+	stmtStr := "select " + index.ConditionExprString
+	stmts, _, err := parser.New().ParseSQL(stmtStr)
+	if err != nil {
+		return nil, err
+	}
+	return stmts[0].(*ast.SelectStmt).Fields.Fields[0].Expr, nil
 }
 
 // FindIndexByColumns find IndexInfo in indices which is cover the specified columns.
