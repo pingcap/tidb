@@ -240,32 +240,46 @@ func GetMaxSortPrefix(sortCols, allCols []*expression.Column) []int {
 // ExtractTableAlias returns table alias of the base.LogicalPlan's columns.
 // It will return nil when there are multiple table alias, because the alias is only used to check if
 // the base.LogicalPlan Match some optimizer hints, and hints are not expected to take effect in this case.
+// Columns with empty table names are ignored when determining the alias.
 func ExtractTableAlias(p base.Plan, parentOffset int) *h.HintedTable {
-	if len(p.OutputNames()) > 0 && p.OutputNames()[0].TblName.L != "" {
-		firstName := p.OutputNames()[0]
-		for _, name := range p.OutputNames() {
-			if name.TblName.L != firstName.TblName.L ||
-				(name.DBName.L != "" && firstName.DBName.L != "" &&
-					name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
-				return nil
-			}
-		}
-		qbOffset := p.QueryBlockOffset()
-		var blockAsNames []ast.HintTable
-		if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-			blockAsNames = *p
-		}
-		// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
-		if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
-			qbOffset = parentOffset
-		}
-		dbName := firstName.DBName
-		if dbName.L == "" {
-			dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
-		}
-		return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
+	names := p.OutputNames()
+	if len(names) == 0 {
+		return nil
 	}
-	return nil
+	var firstName *types.FieldName
+	for _, name := range names {
+		if name.TblName.L != "" {
+			firstName = name
+			break
+		}
+	}
+	if firstName == nil {
+		return nil
+	}
+	for _, name := range names {
+		if name.TblName.L == "" {
+			continue
+		}
+		if name.TblName.L != firstName.TblName.L ||
+			(name.DBName.L != "" && firstName.DBName.L != "" &&
+				name.DBName.L != firstName.DBName.L) { // DBName can be nil, see #46160
+			return nil
+		}
+	}
+	qbOffset := p.QueryBlockOffset()
+	var blockAsNames []ast.HintTable
+	if p := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
+		blockAsNames = *p
+	}
+	// For sub-queries like `(select * from t) t1`, t1 should belong to its surrounding select block.
+	if qbOffset != parentOffset && blockAsNames != nil && blockAsNames[qbOffset].TableName.L != "" {
+		qbOffset = parentOffset
+	}
+	dbName := firstName.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(p.SCtx().GetSessionVars().CurrentDB)
+	}
+	return &h.HintedTable{DBName: dbName, TblName: firstName.TblName, SelectOffset: qbOffset}
 }
 
 // GetPushDownCtx creates a PushDownContext from PlanContext
