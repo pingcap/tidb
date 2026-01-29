@@ -2235,7 +2235,7 @@ func (m *MemArbitrator) refreshRuntimeMemStats() {
 	atomic.AddInt64(&m.execMetrics.Action.UpdateRuntimeMemStats, 1)
 }
 
-func (m *MemArbitrator) trySetRuntimeMemStats(s RuntimeMemStats) bool {
+func (m *MemArbitrator) trySetRuntimeMemStats(s memStats) bool {
 	if m.heapController.TryLock() {
 		m.doSetRuntimeMemStats(s)
 		m.heapController.Unlock()
@@ -2244,14 +2244,13 @@ func (m *MemArbitrator) trySetRuntimeMemStats(s RuntimeMemStats) bool {
 	return false
 }
 
-// SetRuntimeMemStats sets the runtime memory statistics. It may be invoked by `refreshRuntimeMemStats` -> `actions.UpdateRuntimeMemStats`
-func (m *MemArbitrator) SetRuntimeMemStats(s RuntimeMemStats) {
+func (m *MemArbitrator) setRuntimeMemStats(s memStats) {
 	m.heapController.Lock()
 	m.doSetRuntimeMemStats(s)
 	m.heapController.Unlock()
 }
 
-func (m *MemArbitrator) doSetRuntimeMemStats(s RuntimeMemStats) {
+func (m *MemArbitrator) doSetRuntimeMemStats(s memStats) {
 	m.heapController.heapAlloc.Store(s.HeapAlloc)
 	m.heapController.heapInuse.Store(s.HeapInuse)
 	m.heapController.heapTotalFree.Store(s.TotalFree)
@@ -2627,8 +2626,12 @@ func (m *MemArbitrator) recordDebugProfile() (f DebugFields) {
 	return
 }
 
+type memStats struct {
+	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, LastGC int64
+}
+
 // HandleRuntimeStats handles the runtime memory statistics
-func (m *MemArbitrator) HandleRuntimeStats(s RuntimeMemStats) {
+func (m *MemArbitrator) HandleRuntimeStats(s memStats) {
 	// shrink fast alloc pool
 	m.tryShrinkAwaitFreePool(defPoolReservedQuota, nowUnixMilli())
 	// update tracked mem stats

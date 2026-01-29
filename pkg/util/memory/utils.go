@@ -19,7 +19,6 @@ import (
 	"math/bits"
 	"runtime"
 	"runtime/metrics"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -256,53 +255,21 @@ type cpuCacheLinePad cpu.CacheLinePad
 
 // RuntimeMemStats represents the runtime memory statistics
 type RuntimeMemStats struct {
-	HeapAlloc, HeapInuse, TotalFree, MemOffHeap,
-	LastGC int64
+	HeapAlloc, HeapInuse, TotalFree, MemOffHeap, NumGC uint64
 }
 
-var metricsMemStats struct {
-	heapSample []metrics.Sample
-	sync.Mutex
+var gcTracker struct {
+	lastGCTime atomic.Int64 // approximate time of last GC in unix nano
+	lastNumGC  atomic.Uint64
+}
+
+func approxLastGCTime() int64 {
+	return gcTracker.lastGCTime.Load()
 }
 
 // SampleRuntimeMemStats samples the runtime memory statistics efficiently without STW
 func SampleRuntimeMemStats() (s RuntimeMemStats) {
-	{
-		metricsMemStats.Lock()
-
-		metrics.Read(metricsMemStats.heapSample)
-		s = RuntimeMemStats{
-			HeapAlloc: int64(metricsMemStats.heapSample[0].Value.Uint64()),
-			HeapInuse: int64(metricsMemStats.heapSample[0].Value.Uint64() + metricsMemStats.heapSample[1].Value.Uint64()), // inuse = alloc + unused
-			TotalFree: int64(metricsMemStats.heapSample[5].Value.Uint64()),
-			MemOffHeap: int64(metricsMemStats.heapSample[4].Value.Uint64()) -
-				int64(metricsMemStats.heapSample[0].Value.Uint64()) -
-				int64(metricsMemStats.heapSample[1].Value.Uint64()) -
-				int64(metricsMemStats.heapSample[2].Value.Uint64()) -
-				int64(metricsMemStats.heapSample[3].Value.Uint64()),
-		}
-
-		metricsMemStats.Unlock()
-	}
-
-	s.LastGC = int64(ReadMemStats().LastGC)
-
-	return s
-}
-
-// IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
-func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
-	return RuntimeMemStats{
-		HeapAlloc:  int64(s.HeapAlloc),
-		HeapInuse:  int64(s.HeapInuse),
-		TotalFree:  int64(s.TotalAlloc - s.Alloc),
-		MemOffHeap: int64(s.Sys - s.HeapSys),
-		LastGC:     int64(s.LastGC),
-	}
-}
-
-func init() {
-	metricsMemStats.heapSample = []metrics.Sample{
+	heapSample := [7]metrics.Sample{
 		// heap alloc
 		{Name: "/memory/classes/heap/objects:bytes"},
 		// heap available
@@ -313,5 +280,38 @@ func init() {
 		{Name: "/memory/classes/total:bytes"},
 		// total free
 		{Name: "/gc/heap/frees:bytes"},
+		// total GC cycles
+		{Name: "/gc/cycles/total:gc-cycles"},
+	}
+	metrics.Read(heapSample[:])
+	s = RuntimeMemStats{
+		HeapAlloc: heapSample[0].Value.Uint64(),
+		HeapInuse: heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64(), // inuse = alloc + unused
+		TotalFree: heapSample[5].Value.Uint64(),
+		NumGC:     heapSample[6].Value.Uint64(),
+	}
+
+	total := heapSample[4].Value.Uint64()
+	heap := heapSample[0].Value.Uint64() + heapSample[1].Value.Uint64() + heapSample[2].Value.Uint64() + heapSample[3].Value.Uint64()
+	if total > heap {
+		s.MemOffHeap = total - heap
+	}
+
+	if s.NumGC > gcTracker.lastNumGC.Load() {
+		gcTracker.lastGCTime.Store(now().UnixNano())
+		gcTracker.lastNumGC.Store(s.NumGC)
+	}
+
+	return s
+}
+
+// IntoRuntimeMemStats converts runtime.MemStats to RuntimeMemStats
+func IntoRuntimeMemStats(s *runtime.MemStats) RuntimeMemStats {
+	return RuntimeMemStats{
+		HeapAlloc:  s.HeapAlloc,
+		HeapInuse:  s.HeapInuse,
+		TotalFree:  s.TotalAlloc - s.Alloc,
+		MemOffHeap: s.Sys - s.HeapSys,
+		NumGC:      uint64(s.NumGC),
 	}
 }

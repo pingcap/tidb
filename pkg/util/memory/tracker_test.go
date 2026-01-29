@@ -655,7 +655,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		require.True(t, m.SoftLimit() == uint64(0.88*float64(ServerMemoryLimit.Load())))
 		require.True(t, SetGlobalMemArbitratorWorkMode(ArbitratorModeDisableName))
 		m.actions.UpdateRuntimeMemStats = func() {
-			m.SetRuntimeMemStats(RuntimeMemStats{})
+			m.setRuntimeMemStats(memStats{})
 		}
 		m.refreshRuntimeMemStats()
 		require.True(t, m.execMetrics.Action.UpdateRuntimeMemStats == 2)
@@ -994,11 +994,11 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		m.resetExecMetricsForTest()
 
 		require.True(t, m.allocated() == m.limit()/4+m.limit()/2)
-		var mockRuntimeMemStats RuntimeMemStats
+		var mockRuntimeMemStats memStats
 		m.actions.UpdateRuntimeMemStats = func() {
-			m.SetRuntimeMemStats(mockRuntimeMemStats)
+			m.setRuntimeMemStats(mockRuntimeMemStats)
 		}
-		mockRuntimeMemStats = RuntimeMemStats{
+		mockRuntimeMemStats = memStats{
 			HeapAlloc:  m.limit(),
 			HeapInuse:  m.limit(),
 			TotalFree:  0,
@@ -1019,7 +1019,7 @@ func TestGlobalMemArbitrator(t *testing.T) {
 		mockNow = func() time.Time {
 			return m.heapController.memRisk.startTime.t.Add(time.Second)
 		}
-		mockRuntimeMemStats = RuntimeMemStats{
+		mockRuntimeMemStats = memStats{
 			HeapAlloc:  m.limit(),
 			HeapInuse:  m.limit(),
 			TotalFree:  1,

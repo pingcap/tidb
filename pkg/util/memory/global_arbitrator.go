@@ -198,6 +198,17 @@ func doReportGlobalMemArbitratorCounter(oriExecMetrics, newExecMetrics *execMetr
 	addEventCount("shrink-digest-cache", (newExecMetrics.ShrinkDigest - oriExecMetrics.ShrinkDigest))
 }
 
+func readRuntimeMemStats() memStats {
+	s := SampleRuntimeMemStats()
+	return memStats{
+		HeapAlloc:  int64(s.HeapAlloc),
+		HeapInuse:  int64(s.HeapInuse),
+		MemOffHeap: int64(s.MemOffHeap),
+		TotalFree:  int64(s.TotalFree),
+		LastGC:     approxLastGCTime(),
+	}
+}
+
 // HandleGlobalMemArbitratorRuntime is used to handle runtime memory stats.
 func HandleGlobalMemArbitratorRuntime() {
 	m := GlobalMemArbitrator()
@@ -207,7 +218,7 @@ func HandleGlobalMemArbitratorRuntime() {
 		}
 		return
 	}
-	m.HandleRuntimeStats(SampleRuntimeMemStats())
+	m.HandleRuntimeStats(readRuntimeMemStats())
 	reportGlobalMemArbitratorMetrics()
 }
 
@@ -491,7 +502,7 @@ func initGlobalMemArbitrator() (m *MemArbitrator) {
 			Warn:  logutil.BgLogger().Warn,
 			Error: logutil.BgLogger().Error,
 			UpdateRuntimeMemStats: func() {
-				m.SetRuntimeMemStats(SampleRuntimeMemStats())
+				m.setRuntimeMemStats(readRuntimeMemStats())
 			},
 			GC: func() {
 				runtime.GC() //nolint: revive

@@ -464,14 +464,14 @@ func (t *Tracker) Consume(bs int64) {
 					}
 				} else { // fast path for small budget
 					if m.addSmallBudget(bs) > m.budget.smallLimit {
-						m.smallBudgetToBig()
+						m.intoBigBudget()
 					} else {
 						b := m.smallBudget()
 						if t := m.approxUnixTimeSec(); b.getLastUsedTimeSec() != t {
 							b.setLastUsedTimeSec(t)
 						}
 						if b.Used.Load() > b.approxCapacity() && b.PullFromUpstream() != nil {
-							m.smallBudgetToBig()
+							m.intoBigBudget()
 						}
 					}
 				}
@@ -1090,36 +1090,12 @@ func (m *memArbitrator) growBigBudget() {
 	}
 }
 
-func (m *memArbitrator) smallBudgetToBig() {
-	if m.intoBigBudget() {
-		return
-	}
-	// transfer small budget used to big budget for concurrent
-	if d := m.cleanSmallBudget(); d != 0 {
-		if m.addBigBudgetUsed(d) > m.bigBudgetGrowThreshold() {
-			m.growBigBudget()
-		}
-	}
-}
-
 func (m *memArbitrator) intoBigBudget() bool {
 	m.budget.useBig.Lock()
 	defer m.budget.useBig.Unlock()
 
 	if m.useBigBudget() {
 		return false
-	}
-
-	if smallUsed := m.smallBudgetUsed(); smallUsed > 0 {
-		m.addBigBudgetUsed(smallUsed)
-		defer func() {
-			// clean small budget again in case of concurrent consume/release
-			if m.useBigBudget() {
-				m.addBigBudgetUsed(m.cleanSmallBudget() - smallUsed)
-			} else {
-				m.addBigBudgetUsed(-smallUsed)
-			}
-		}()
 	}
 
 	root, err := m.EmplaceRootPool(m.uid)
@@ -1157,6 +1133,9 @@ func (m *memArbitrator) intoBigBudget() bool {
 		}
 	}
 
+	smallUsed := max(0, m.smallBudgetUsed())
+	m.addBigBudgetUsed(smallUsed)
+
 	m.bigBudget().Pool = root.entry.pool
 
 	if m.reserveSize > 0 {
@@ -1180,6 +1159,7 @@ func (m *memArbitrator) intoBigBudget() bool {
 		m.growBigBudget()
 	}
 
+	m.addBigBudgetUsed(m.cleanSmallBudget() - smallUsed)
 	m.budget.useBig.Store(true)
 
 	if m.state.CompareAndSwap(memArbitratorStateIntoBigBudget, memArbitratorStateBigBudget) {

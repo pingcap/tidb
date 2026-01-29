@@ -441,7 +441,7 @@ func (m *MemArbitrator) checkTaskExec(task pairSuccessFail, cancelByStandardMode
 
 func (m *MemArbitrator) setMemStatsForTest(alloc, heapInuse, totalAlloc, memOffHeap int64) {
 	lastGC := now().UnixNano()
-	m.SetRuntimeMemStats(RuntimeMemStats{alloc, heapInuse, totalAlloc - alloc, memOffHeap, lastGC})
+	m.setRuntimeMemStats(memStats{alloc, heapInuse, totalAlloc - alloc, memOffHeap, lastGC})
 }
 
 type memStateRecorderForTest struct {
@@ -1758,7 +1758,7 @@ func TestMemArbitrator(t *testing.T) {
 		}
 		gcUT := now().UnixNano()
 		m.actions.UpdateRuntimeMemStats = func() {
-			m.SetRuntimeMemStats(RuntimeMemStats{
+			m.setRuntimeMemStats(memStats{
 				HeapAlloc:  heap,
 				HeapInuse:  heap + 100,
 				MemOffHeap: 3,
