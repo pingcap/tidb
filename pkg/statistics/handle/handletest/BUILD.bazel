@@ -13,6 +13,7 @@ go_test(
     deps = [
         "//pkg/config",
         "//pkg/domain",
+        "//pkg/parser/ast",
         "//pkg/parser/model",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx/variable",
