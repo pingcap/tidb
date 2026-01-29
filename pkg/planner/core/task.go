@@ -1234,6 +1234,10 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 	if !ok {
 		return nil, false
 	}
+	// For cluster tables, HandleCols may be nil. Skip this optimization if HandleCols is not available.
+	if tblScan.HandleCols == nil {
+		return nil, false
+	}
 	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), tblScan.HandleCols.GetCol(0)) {
 		return nil, false
 	}

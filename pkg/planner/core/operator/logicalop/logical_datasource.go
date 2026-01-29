@@ -586,10 +586,32 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
-	if dataSource.Table.Type().IsClusterTable() && len(originColumns) > 0 {
-		// use the first column.
-		resultColumnInfo = originSchemaColumns[0]
-		resultColumn = originColumns[0]
+	if dataSource.Table.Type().IsClusterTable() {
+		// For cluster tables, ExtraHandleID is not valid as they are memory tables.
+		// Use the first column from originColumns if available, otherwise fall back
+		// to the first column from table metadata.
+		if len(originColumns) > 0 {
+			resultColumnInfo = originSchemaColumns[0]
+			resultColumn = originColumns[0]
+		} else {
+			cols := dataSource.Table.Meta().Columns
+			if len(cols) > 0 {
+				col := cols[0]
+				resultColumnInfo = col
+				resultColumn = &expression.Column{
+					RetType:  col.FieldType.Clone(),
+					UniqueID: dataSource.SCtx().GetSessionVars().AllocPlanColumnID(),
+					ID:       col.ID,
+					OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
+				}
+			} else {
+				// Defensive fallback: in the unexpected case where a cluster table reports
+				// no metadata columns, synthesize a handle-like column to avoid nil pointer
+				// dereferences in callers that assume a non-nil result.
+				resultColumn = dataSource.NewExtraHandleSchemaCol()
+				resultColumnInfo = model.NewExtraHandleColInfo()
+			}
+		}
 	} else {
 		if dataSource.HandleCols != nil {
 			resultColumn = dataSource.HandleCols.GetCol(0)
