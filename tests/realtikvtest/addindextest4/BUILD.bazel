@@ -10,7 +10,6 @@ go_test(
         "partial_index_test.go",
     ],
     flaky = True,
-    shard_count = 5,
     deps = [
         "//pkg/config",
         "//pkg/ddl",

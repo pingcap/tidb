@@ -31,6 +31,7 @@ func write(path string, f *build.File) error {
 func skipFlaky(path string) bool {
 	var pmap = set.NewStringSet()
 	pmap.Insert("tests/realtikvtest/addindextest/BUILD.bazel")
+	pmap.Insert("tests/realtikvtest/addindextest4/BUILD.bazel")
 	return pmap.Exist(path)
 }
 
