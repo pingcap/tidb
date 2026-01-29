@@ -978,7 +978,7 @@ func ensureInternalColumnsForTableOptions(tbInfo *model.TableInfo, dbInfo *model
 
 	// Add internal columns if they are required and not already present.
 	if tbInfo.IsActiveActive {
-		if model.FindColumnInfo(tbInfo.Columns, model.ExtraOriginTSName.L) == nil {
+		if col := model.FindColumnInfo(tbInfo.Columns, model.ExtraOriginTSName.L); col == nil {
 			originTSCol := model.NewExtraOriginTSColInfo()
 			originTSCol.ID = AllocateColumnID(tbInfo)
 			originTSCol.State = model.StatePublic
@@ -987,14 +987,13 @@ func ensureInternalColumnsForTableOptions(tbInfo *model.TableInfo, dbInfo *model
 		} else {
 			// User-defined internal column must match expected type.
 			expected := model.NewExtraOriginTSColInfo().FieldType
-			col := model.FindColumnInfo(tbInfo.Columns, model.ExtraOriginTSName.L)
-			if col.FieldType.GetType() != expected.GetType() || col.FieldType.GetFlen() != expected.GetFlen() || col.FieldType.GetDecimal() != expected.GetDecimal() {
-				return types.ErrWrongFieldSpec.GenWithStackByArgs(model.ExtraOriginTSName.L)
+			if err := checkInternalColumnFieldTypeMatch(col.Name, &col.FieldType, &expected); err != nil {
+				return err
 			}
 		}
 	}
 	if tbInfo.SoftdeleteInfo != nil {
-		if model.FindColumnInfo(tbInfo.Columns, model.ExtraSoftDeleteTimeName.L) == nil {
+		if col := model.FindColumnInfo(tbInfo.Columns, model.ExtraSoftDeleteTimeName.L); col == nil {
 			softDeleteCol := model.NewExtraSoftDeleteTimeColInfo()
 			softDeleteCol.ID = AllocateColumnID(tbInfo)
 			softDeleteCol.State = model.StatePublic
@@ -1003,9 +1002,8 @@ func ensureInternalColumnsForTableOptions(tbInfo *model.TableInfo, dbInfo *model
 		} else {
 			// User-defined internal column must match expected type.
 			expected := model.NewExtraSoftDeleteTimeColInfo().FieldType
-			col := model.FindColumnInfo(tbInfo.Columns, model.ExtraSoftDeleteTimeName.L)
-			if col.FieldType.GetType() != expected.GetType() || col.FieldType.GetFlen() != expected.GetFlen() || col.FieldType.GetDecimal() != expected.GetDecimal() {
-				return types.ErrWrongFieldSpec.GenWithStackByArgs(model.ExtraSoftDeleteTimeName.L)
+			if err := checkInternalColumnFieldTypeMatch(col.Name, &col.FieldType, &expected); err != nil {
+				return err
 			}
 		}
 	}
