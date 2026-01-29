@@ -1325,14 +1325,15 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 		},
 	}
 	firstCall := s3API.EXPECT().
-		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.ToString(input.Bucket))
 			require.Equal(t, "", aws.ToString(input.Prefix))
-			require.Equal(t, "", aws.ToString(input.Marker))
+			require.Equal(t, "", aws.ToString(input.ContinuationToken))
 			require.Equal(t, int32(2), aws.ToInt32(input.MaxKeys))
 			require.Equal(t, "", aws.ToString(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			require.Equal(t, "", aws.ToString(input.StartAfter))
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents: []types.Object{
 					*contents[0],
@@ -1341,14 +1342,15 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 			}, nil
 		})
 	s3API.EXPECT().
-		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "bucket", aws.ToString(input.Bucket))
 			require.Equal(t, "sp/", aws.ToString(input.Prefix))
-			require.Equal(t, "", aws.ToString(input.Marker))
+			require.Equal(t, "", aws.ToString(input.ContinuationToken))
 			require.Equal(t, int32(2), aws.ToInt32(input.MaxKeys))
 			require.Equal(t, "", aws.ToString(input.Delimiter))
-			return &s3.ListObjectsOutput{
+			require.Equal(t, "", aws.ToString(input.StartAfter))
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(false),
 				Contents: []types.Object{
 					*contents[0],
