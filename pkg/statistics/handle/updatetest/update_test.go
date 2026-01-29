@@ -263,14 +263,14 @@ func TestTxnWithFailure(t *testing.T) {
 	for i := range rowCount1 {
 		testKit.MustExec("insert into t1 values(?, 2)", i)
 	}
-	testKit.MustExec("flush stats_delta")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 := h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	// have not commit
 	require.Equal(t, int64(0), stats1.RealtimeCount)
 	testKit.MustExec("commit")
 
-	testKit.MustExec("flush stats_delta")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
@@ -278,7 +278,7 @@ func TestTxnWithFailure(t *testing.T) {
 	_, err = testKit.Exec("insert into t1 values(0, 2)")
 	require.Error(t, err)
 
-	testKit.MustExec("flush stats_delta")
+	require.NoError(t, h.DumpStatsDeltaToKV(true))
 	require.NoError(t, h.Update(context.Background(), is))
 	stats1 = h.GetPhysicalTableStats(tableInfo1.ID, tableInfo1)
 	require.Equal(t, int64(rowCount1), stats1.RealtimeCount)
