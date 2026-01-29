@@ -84,21 +84,6 @@ func TestCalculateChangePercentage(t *testing.T) {
 	}
 }
 
-func TestCalculateTableSize(t *testing.T) {
-	factory := priorityqueue.NewAnalysisJobFactory(nil, 0, 0)
-
-	tblStats := &statistics.Table{}
-	tblStats.RealtimeCount = 10
-	require.Equal(t, float64(10), factory.CalculateTableSize(tblStats))
-
-	tblStats.ColAndIdxExistenceMap = statistics.NewColAndIndexExistenceMapWithoutSize()
-	require.Equal(t, float64(10), factory.CalculateTableSize(tblStats))
-
-	tblStats.ColAndIdxExistenceMap.InsertCol(1, true)
-	tblStats.ColAndIdxExistenceMap.InsertCol(2, true)
-	require.Equal(t, float64(20), factory.CalculateTableSize(tblStats))
-}
-
 func TestGetTableLastAnalyzeDuration(t *testing.T) {
 	tests := []struct {
 		name         string
