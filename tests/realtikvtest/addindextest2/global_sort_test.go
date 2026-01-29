@@ -52,6 +52,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/util"
@@ -643,22 +644,52 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 		pipeClosed = true
 		reader, writer := pipe.GetReaderAndWriter()
 		// Global sort uses equal reader and writer count.
-		require.EqualValues(t, 8, reader.GetWorkerPoolSize())
-		require.EqualValues(t, 8, writer.GetWorkerPoolSize())
+		assert.EqualValues(t, 8, reader.GetWorkerPoolSize())
+		assert.EqualValues(t, 8, writer.GetWorkerPoolSize())
 	})
 
 	// Change the batch size and concurrency during table scanning and check the modified parameters.
 	var onceScan sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/scanRecordExec", func(reorgMeta *model.DDLReorgMeta) {
 		onceScan.Do(func() {
+			execSQL := func(tk *testkit.TestKit, sql string, args ...any) error {
+				rs, err := tk.Exec(sql, args...)
+				if rs != nil {
+					closeErr := rs.Close()
+					if err == nil {
+						err = closeErr
+					}
+				}
+				return err
+			}
+			queryRows := func(tk *testkit.TestKit, sql string, args ...any) ([][]string, error) {
+				rs, err := tk.Exec(sql, args...)
+				if err != nil {
+					if rs != nil {
+						_ = rs.Close()
+					}
+					return nil, err
+				}
+				return session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+			}
+
 			tk1 := testkit.NewTestKit(t, store)
-			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-			require.Len(t, rows, 1)
-			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))
-			require.Eventually(t, func() bool {
+			rows, err := queryRows(tk1, "select job_id from mysql.tidb_ddl_job")
+			if !assert.NoError(t, err) {
+				return
+			}
+			if !assert.Len(t, rows, 1) {
+				return
+			}
+			if !assert.NoError(t, execSQL(tk1, fmt.Sprintf("admin alter ddl jobs %s thread = 8, batch_size = 256", rows[0][0]))) {
+				return
+			}
+			if !assert.Eventually(t, func() bool {
 				return modifiedReadIndex.Load()
-			}, 30*time.Second, 100*time.Millisecond)
-			require.Equal(t, 256, reorgMeta.GetBatchSize())
+			}, 30*time.Second, 100*time.Millisecond) {
+				return
+			}
+			assert.Equal(t, 256, reorgMeta.GetBatchSize())
 		})
 	})
 
@@ -666,14 +697,44 @@ func TestAlterJobOnDXFWithGlobalSort(t *testing.T) {
 	var onceMerge sync.Once
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mergeOverlappingFiles", func(op *external.MergeOperator) {
 		onceMerge.Do(func() {
+			execSQL := func(tk *testkit.TestKit, sql string, args ...any) error {
+				rs, err := tk.Exec(sql, args...)
+				if rs != nil {
+					closeErr := rs.Close()
+					if err == nil {
+						err = closeErr
+					}
+				}
+				return err
+			}
+			queryRows := func(tk *testkit.TestKit, sql string, args ...any) ([][]string, error) {
+				rs, err := tk.Exec(sql, args...)
+				if err != nil {
+					if rs != nil {
+						_ = rs.Close()
+					}
+					return nil, err
+				}
+				return session.ResultSetToStringSlice(context.Background(), tk.Session(), rs)
+			}
+
 			tk1 := testkit.NewTestKit(t, store)
-			rows := tk1.MustQuery("select job_id from mysql.tidb_ddl_job").Rows()
-			require.Len(t, rows, 1)
-			tk1.MustExec(fmt.Sprintf("admin alter ddl jobs %s thread = 2", rows[0][0]))
-			require.Eventually(t, func() bool {
+			rows, err := queryRows(tk1, "select job_id from mysql.tidb_ddl_job")
+			if !assert.NoError(t, err) {
+				return
+			}
+			if !assert.Len(t, rows, 1) {
+				return
+			}
+			if !assert.NoError(t, execSQL(tk1, fmt.Sprintf("admin alter ddl jobs %s thread = 2", rows[0][0]))) {
+				return
+			}
+			if !assert.Eventually(t, func() bool {
 				return modifiedMerge.Load()
-			}, 30*time.Second, 100*time.Millisecond)
-			require.EqualValues(t, 2, op.GetWorkerPoolSize())
+			}, 30*time.Second, 100*time.Millisecond) {
+				return
+			}
+			assert.EqualValues(t, 2, op.GetWorkerPoolSize())
 		})
 	})
 
