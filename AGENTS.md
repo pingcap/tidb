@@ -261,6 +261,11 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 - When submitting an issue, follow the GitHub templates under `.github/ISSUE_TEMPLATE/` and fill in all required fields.
 - Bug reports should include minimal reproduction steps, expected/actual behavior, and the TiDB version (for example: the output of `SELECT tidb_version()`).
 - Search existing issues/PRs first to avoid duplicates, and include any relevant logs/configuration/SQL plans to help diagnosis.
+- Apply labels to help triage:
+  - `type/*` is usually applied by the issue template; add `type/regression` when applicable.
+  - Add at least one `component/*` label (for example: `component/ddl`, `component/br`, `component/parser`).
+  - For bug/regression issues, `severity/*` and affected-version label(s) are required (for example: `affects-8.5`; use `may-affects-*` if unsure).
+  - If you don't have permission to add labels, include a `Suggested labels: ...` line in the issue body.
 
 ## Pull Request Instructions
 
