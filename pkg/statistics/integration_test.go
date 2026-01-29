@@ -356,7 +356,7 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 19)) // 20 rows
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	// To pass the stats.Pseudo check in autoAnalyzeTable
@@ -373,12 +373,12 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	}
 
 	tk.MustExec("insert into t values (1)" + strings.Repeat(", (1)", 13)) // 34 rows
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 30)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
 	tk.MustExec("insert into t values (1)") // 35 rows
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 25)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
@@ -386,13 +386,12 @@ func TestOutdatedStatsCheck(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	tk.MustExec("delete from t limit 24") // 11 rows
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 31)
 	require.False(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
-
 	tk.MustExec("delete from t limit 1") // 10 rows
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	require.Equal(t, getStatsHealthy(), 28)
 	require.True(t, hasPseudoStats(tk.MustQuery("explain select * from t where a = 1").Rows()))
@@ -419,7 +418,7 @@ func TestShowHistogramsLoadStatus(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1,2,3), (4,5,6)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t")
 	require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
 	rows := tk.MustQuery("show stats_histograms where db_name = 'test' and table_name = 't'").Rows()
@@ -515,7 +514,7 @@ func TestIssue44369(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t value(1,1);")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t;")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
@@ -563,10 +562,9 @@ func TestTableLastAnalyzeVersion(t *testing.T) {
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
 	require.Equal(t, uint64(0), statsTbl.LastAnalyzeVersion)
-
 	// INSERT and updating the modify_count should not set the last_analyze_version
 	tk.MustExec("insert into t values(1, 1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	statsTbl, found = h.Get(tbl.Meta().ID)
 	require.True(t, found)
@@ -618,8 +616,7 @@ func TestLastAnalyzeVersionNotChangedWithAsyncStatsLoad(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, dom.StatsHandle().Update(context.Background(), dom.InfoSchema()))
 	tk.MustExec("insert into t values (1, 1);")
-	err = dom.StatsHandle().DumpStatsDeltaToKV(true)
-	require.NoError(t, err)
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("alter table t add column c int default 1;")
 	err = statstestutil.HandleNextDDLEventWithTxn(dom.StatsHandle())
 	require.NoError(t, err)

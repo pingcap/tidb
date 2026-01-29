@@ -225,7 +225,7 @@ func TestLoadHist(t *testing.T) {
 	for range rowCount {
 		testKit.MustExec("insert into t values('bb','sdfga')")
 	}
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	err = h.Update(context.Background(), do.InfoSchema())
 	require.NoError(t, err)
 	newStatsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
@@ -1144,7 +1144,7 @@ func TestStatsCacheUpdateSkip(t *testing.T) {
 	testKit.MustExec("create table t (c1 int, c2 int)")
 	statstestutil.HandleNextDDLEventWithTxn(h)
 	testKit.MustExec("insert into t values(1, 2)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1179,7 +1179,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		tid := tblInfo.ID
 
 		tk.MustExec("insert into t values(1),(2),(3)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta")
 		err = h.Update(context.Background(), dom.InfoSchema())
 		require.NoError(t, err)
 		tk.MustExec("analyze table t")
@@ -1194,7 +1194,7 @@ func testIncrementalModifyCountUpdateHelper(analyzeSnapshot bool) func(*testing.
 		tk.MustExec("commit")
 
 		tk.MustExec("insert into t values(4),(5),(6)")
-		require.NoError(t, h.DumpStatsDeltaToKV(true))
+		tk.MustExec("flush stats_delta")
 		err = h.Update(context.Background(), dom.InfoSchema())
 		require.NoError(t, err)
 
@@ -1302,7 +1302,7 @@ func TestUninitializedStatsStatus(t *testing.T) {
 	err := statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values (1,2,2), (3,4,4), (5,6,6), (7,8,8), (9,10,10)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	is := dom.InfoSchema()
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1472,7 +1472,7 @@ func TestInitStatsLiteRecordsSynthesizedColumnStats(t *testing.T) {
 
 	h := dom.StatsHandle()
 	tk.MustExec("insert into t values (1),(2),(3)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t all columns with 2 topn, 2 buckets")
 	ctx := context.Background()
 	tk.MustExec("alter table t add column b int default 10")
@@ -1528,7 +1528,7 @@ func TestSkipMissingPartitionStats(t *testing.T) {
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t partition p0, p1")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -1556,7 +1556,7 @@ func TestStatsCacheUpdateTimeout(t *testing.T) {
 	tk.MustExec("insert into t values (1,1,1), (2,2,2), (101,101,101), (102,102,102), (201,201,201), (202,202,202)")
 	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "a", "b", "c")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t partition p0, p1")
 	tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)

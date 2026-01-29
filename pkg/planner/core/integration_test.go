@@ -32,9 +32,12 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/auth"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/partitionpruning"
 	"github.com/pingcap/tidb/pkg/session/sessmgr"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -1846,6 +1849,170 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 }
 
 // https://github.com/pingcap/tidb/issues/41458
+func TestIssue41458(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk.MustExec("create database special")
+	tk.MustExec("use special")
+	tk.MustExec(`create table t (a int, b int, c int, index ia(a));`)
+	tk.MustExec("select  * from t t1 join t t2 on t1.b = t2.b join t t3 on t2.b=t3.b join t t4 on t3.b=t4.b where t3.a=1 and t2.a=2;")
+	rawRows := tk.MustQuery("select plan from information_schema.statements_summary where SCHEMA_NAME = 'special' and STMT_TYPE = 'Select';").Sort().Rows()
+	plan := rawRows[0][0].(string)
+	rows := strings.Split(plan, "\n")
+	rows = rows[1:]
+	expectedRes := []string{
+		"Projection",
+		"└─HashJoin",
+		"  ├─HashJoin",
+		"  │ ├─HashJoin",
+		"  │ │ ├─IndexLookUp",
+		"  │ │ │ ├─IndexRangeScan",
+		"  │ │ │ └─Selection",
+		"  │ │ │   └─TableRowIDScan",
+		"  │ │ └─IndexLookUp",
+		"  │ │   ├─IndexRangeScan",
+		"  │ │   └─Selection",
+		"  │ │     └─TableRowIDScan",
+		"  │ └─TableReader",
+		"  │   └─Selection",
+		"  │     └─TableFullScan",
+		"  └─TableReader",
+		"    └─Selection",
+		"      └─TableFullScan",
+	}
+	for i, row := range rows {
+		fields := strings.Split(row, "\t")
+		fields = strings.Split(fields[1], "_")
+		op := fields[0]
+		require.Equalf(t, expectedRes[i], op, fmt.Sprintf("Mismatch at index %d.", i))
+	}
+}
+
+func TestIssue48257(t *testing.T) {
+	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
+		h := dom.StatsHandle()
+		oriLease := h.Lease()
+		h.SetLease(1)
+		defer func() {
+			h.SetLease(oriLease)
+		}()
+		tk.MustExec("use test")
+
+		// 1. test sync load
+		tk.MustExec("create table t(a int)")
+		testutil.HandleNextDDLEventWithTxn(h)
+		tk.MustExec("insert into t value(1)")
+		tk.MustExec("flush stats_delta")
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		tk.MustExec("analyze table t all columns")
+		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+			"TableReader 1.00 root  data:TableFullScan",
+			"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+		))
+		tk.MustExec("insert into t value(1)")
+		tk.MustExec("flush stats_delta")
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+			"TableReader 2.00 root  data:TableFullScan",
+			"└─TableFullScan 2.00 cop[tikv] table:t keep order:false",
+		))
+		tk.MustExec("set tidb_opt_objective='determinate'")
+		tk.MustQuery("explain format = brief select * from t").Check(testkit.Rows(
+			"TableReader 1.00 root  data:TableFullScan",
+			"└─TableFullScan 1.00 cop[tikv] table:t keep order:false",
+		))
+		tk.MustExec("set tidb_opt_objective='moderate'")
+
+		// 2. test async load
+		tk.MustExec("set tidb_stats_load_sync_wait = 0")
+		tk.MustExec("create table t1(a int)")
+		testutil.HandleNextDDLEventWithTxn(h)
+		tk.MustExec("insert into t1 value(1)")
+		tk.MustExec("flush stats_delta")
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		tk.MustExec("analyze table t1 all columns")
+		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+			"TableReader 1.00 root  data:TableFullScan",
+			"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		))
+		tk.MustExec("insert into t1 value(1)")
+		tk.MustExec("flush stats_delta")
+		require.NoError(t, h.Update(context.Background(), dom.InfoSchema()))
+		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+			"TableReader 2.00 root  data:TableFullScan",
+			"└─TableFullScan 2.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		))
+		tk.MustExec("set tidb_opt_objective='determinate'")
+		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+			"TableReader 10000.00 root  data:TableFullScan",
+			"└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo",
+		))
+		require.NoError(t, h.LoadNeededHistograms(dom.InfoSchema()))
+		tk.MustQuery("explain format = brief select * from t1").Check(testkit.Rows(
+			"TableReader 1.00 root  data:TableFullScan",
+			"└─TableFullScan 1.00 cop[tikv] table:t1 keep order:false",
+		))
+	})
+}
+
+func TestIssue54213(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`CREATE TABLE tb (
+  object_id bigint(20),
+  a bigint(20) ,
+  b bigint(20) ,
+  c bigint(20) ,
+  PRIMARY KEY (object_id),
+  KEY ab (a,b))`)
+		tk.MustQuery(`explain format='brief' select count(1) from (select /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+			testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#7",
+				"└─Limit 1.00 root  offset:0, count:100",
+				"  └─IndexReader 1.25 root  index:Limit",
+				"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+				"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+	})
+}
+
+func TestIssue54870(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec(`create table t (id int,
+deleted_at datetime(3) NOT NULL DEFAULT '1970-01-01 01:00:01.000',
+is_deleted tinyint(1) GENERATED ALWAYS AS ((deleted_at > _utf8mb4'1970-01-01 01:00:01.000')) VIRTUAL NOT NULL,
+key k(id, is_deleted))`)
+		tk.MustExec(`begin`)
+		tk.MustExec(`insert into t (id, deleted_at) values (1, now())`)
+		tk.MustHavePlan(`select 1 from t where id=1 and is_deleted=true`, "IndexRangeScan")
+	})
+}
+
+func TestIssue52472(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("CREATE TABLE t1 ( c1 int);")
+		tk.MustExec("CREATE TABLE t2 ( c1 int unsigned);")
+		tk.MustExec("CREATE TABLE t3 ( c1 bigint unsigned);")
+		tk.MustExec("INSERT INTO t1 (c1) VALUES (8);")
+		tk.MustExec("INSERT INTO t2 (c1) VALUES (2454396638);")
+
+		// union int and unsigned int will be promoted to long long
+		rs, err := tk.Exec("SELECT c1 FROM t1 UNION ALL SELECT c1 FROM t2")
+		require.NoError(t, err)
+		require.Len(t, rs.Fields(), 1)
+		require.Equal(t, mysql.TypeLonglong, rs.Fields()[0].Column.FieldType.GetType())
+		require.NoError(t, rs.Close())
+
+		// union int (even literal) and unsigned bigint will be promoted to decimal
+		rs, err = tk.Exec("SELECT 0 UNION ALL SELECT c1 FROM t3")
+		require.NoError(t, err)
+		require.Len(t, rs.Fields(), 1)
+		require.Equal(t, mysql.TypeNewDecimal, rs.Fields()[0].Column.FieldType.GetType())
+		require.NoError(t, rs.Close())
+	})
+}
 
 func TestTiFlashHashAggPreAggMode(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {

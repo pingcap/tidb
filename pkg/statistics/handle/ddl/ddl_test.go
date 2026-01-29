@@ -1103,7 +1103,7 @@ func TestExchangeAPartition(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	h.DumpStatsDeltaToKV(true)
+	testKit.MustExec("flush stats_delta")
 
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -1122,8 +1122,7 @@ func TestExchangeAPartition(t *testing.T) {
 	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
 	// Insert some data which meets the condition of the partition p0.
 	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
-	err = h.DumpStatsDeltaToKV(true)
-	require.NoError(t, err)
+	testKit.MustExec("flush stats_delta")
 
 	testKit.MustExec("analyze table t1")
 	is = do.InfoSchema()
@@ -1175,8 +1174,7 @@ func TestExchangeAPartition(t *testing.T) {
 
 	// Insert some data to partition p1 before exchange partition.
 	testKit.MustExec("insert into t values (7,2),(8,2),(9,2),(10,2)")
-	err = h.DumpStatsDeltaToKV(true)
-	require.NoError(t, err)
+	testKit.MustExec("flush stats_delta")
 	testKit.MustQuery(
 		fmt.Sprintf("select count, modify_count from mysql.stats_meta where table_id = %d", tableInfo.ID),
 	).Check(
@@ -1255,7 +1253,7 @@ func TestExchangeAPartitionAndDropTableImmediately(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	h.DumpStatsDeltaToKV(true)
+	testKit.MustExec("flush stats_delta")
 
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -1274,8 +1272,7 @@ func TestExchangeAPartitionAndDropTableImmediately(t *testing.T) {
 	testKit.MustExec("create table t1 (a int, b int, primary key(a), index idx(b))")
 	// Insert some data which meets the condition of the partition p0.
 	testKit.MustExec("insert into t1 values (1,2),(2,2),(3,2),(4,2),(5,2)")
-	err = h.DumpStatsDeltaToKV(true)
-	require.NoError(t, err)
+	testKit.MustExec("flush stats_delta")
 
 	testKit.MustExec("analyze table t1")
 	is = do.InfoSchema()
@@ -1335,7 +1332,7 @@ func TestRemovePartitioning(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	h.DumpStatsDeltaToKV(true)
+	testKit.MustExec("flush stats_delta")
 
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
@@ -1414,7 +1411,7 @@ func TestAddPartitioning(t *testing.T) {
 		)
 	`)
 	testKit.MustExec("insert into t values (1,2),(2,2),(6,2),(11,2),(16,2)")
-	h.DumpStatsDeltaToKV(true)
+	testKit.MustExec("flush stats_delta")
 	testKit.MustExec("analyze table t")
 	is := do.InfoSchema()
 	tbl, err := is.TableByName(context.Background(),
@@ -1458,7 +1455,7 @@ func TestDropSchema(t *testing.T) {
 	tk.MustExec("create table t (c1 int)")
 	h := dom.StatsHandle()
 	tk.MustExec("insert into t values (1)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
@@ -1522,7 +1519,7 @@ func TestDumpStatsDeltaBeforeHandleDDLEvent(t *testing.T) {
 	// Insert some data.
 	tk.MustExec("insert into t values (1), (2), (3)")
 	h := dom.StatsHandle()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	// Also manually insert a histogram record.
 	is := dom.InfoSchema()
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
