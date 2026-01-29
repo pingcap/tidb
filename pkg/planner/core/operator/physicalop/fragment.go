@@ -50,7 +50,11 @@ type Fragment struct {
 	// following field are filled during getPlanFragment.
 	TableScan         *PhysicalTableScan          // result physical table scan
 	ExchangeReceivers []*PhysicalExchangeReceiver // data receivers
-	CTEReaders        []*PhysicalCTE
+	// CTEReaders records PhysicalCTE nodes in this fragment.
+	// Each reader will be attached with a real leaf (CTESource or Projection(CTESource)) in
+	// generateTasksForCTEReader, and the placeholder PhysicalCTE node will then be pruned from the
+	// MPP DAG by flipCTEReader.
+	CTEReaders []*PhysicalCTE
 
 	// following fields are filled after scheduling.
 	Sink base.MPPSink // data exporter
@@ -215,6 +219,9 @@ func (e *mppTaskGenerator) generateMPPTasks(s *PhysicalExchangeSender) ([]*Fragm
 		frag.Sink.SetTargetTasks([]*kv.MPPTask{tidbTask})
 		frag.IsRoot = true
 	}
+	// CteSinkNum/CteSourceNum are required fields in tipb.CTESink/CTESource. After we "untwist" UNION ALL
+	// and split the plan into fragments, the same CTE sink/source can appear multiple times in the final
+	// MPP DAG. Count them here and fill the numbers into each node.
 	e.fixDuplicatedTimesForCTE(e.frags)
 	return e.frags, nil
 }
@@ -248,6 +255,7 @@ func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, cteMap map[in
 		group.sources = append(group.sources, x)
 		return
 	case *PhysicalExchangeReceiver, *PhysicalTableScan:
+		// Don't recurse into lower fragments (ExchangeReceiver) or physical storage leaves (TableScan).
 		return
 	}
 	for _, child := range p.Children() {
@@ -256,6 +264,13 @@ func (e *mppTaskGenerator) traverseFragForCTE(p base.PhysicalPlan, cteMap map[in
 }
 
 func (e *mppTaskGenerator) fixDuplicatedTimesForCTE(frags []*Fragment) {
+	// Count sinks/sources by cte_id in the split MPP DAG forest and assign the numbers to each node.
+	//
+	// Why this is needed:
+	// - A shared CTE can be referenced from multiple fragments.
+	// - UNION ALL is handled by "untwist" which copies plans above UNION ALL. That can duplicate
+	//   CTESink/CTESource nodes in the final fragment forest.
+	// - TiFlash needs the total sink/source numbers to coordinate the shared CTE pipeline.
 	cteMap := make(map[int]*cteInMPPTasks)
 	for _, f := range frags {
 		e.traverseFragForCTE(f.Sink, cteMap)
@@ -275,8 +290,8 @@ func (e *mppTaskGenerator) fixDuplicatedTimesForCTE(frags []*Fragment) {
 	}
 }
 
-// for the task without table scan, we construct tasks according to the children's tasks.
-// That's for avoiding assigning to the failed node repeatly. We assumes that the chilren node must be workable.
+// For fragments without a TableScan, construct tasks based on the children's tasks.
+// This avoids repeatedly assigning tasks to known-failed nodes and keeps task placement aligned with children.
 func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask, cteProducerTasks []*kv.MPPTask) []*kv.MPPTask {
 	addressMap := make(map[string]struct{})
 	newTasks := make([]*kv.MPPTask, 0, len(tasks))
@@ -329,7 +344,7 @@ func (e *mppTaskGenerator) constructMPPTasksByChildrenTasks(tasks []*kv.MPPTask,
 func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPlan, forest *[]base.MPPSink) error {
 	cur := stack[len(stack)-1]
 	switch x := cur.(type) {
-	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leave node.
+	case *PhysicalTableScan, *PhysicalExchangeReceiver, *PhysicalCTE: // This should be the leaf node.
 		p, err := stack[0].Clone(e.ctx.GetPlanCtx())
 		if err != nil {
 			return errors.Trace(err)
@@ -373,7 +388,7 @@ func (e *mppTaskGenerator) untwistPlanAndRemoveUnionAll(stack []base.PhysicalPla
 		}
 	case *PhysicalSequence:
 		lastChildIdx := len(x.Children()) - 1
-		// except the last child, those previous ones are all cte producer.
+		// For PhysicalSequence, except the last child, all previous children are CTE producers.
 		for i := range lastChildIdx {
 			if e.CTEGroups == nil {
 				e.CTEGroups = make(map[int]*cteGroupInFragment)
@@ -453,6 +468,8 @@ func (e *mppTaskGenerator) generateMPPTasksForExchangeSender(s *PhysicalExchange
 }
 
 func (e *mppTaskGenerator) generateMPPTasksForFragment(f *Fragment) (tasks []*kv.MPPTask, err error) {
+	// CTE reader fragments depend on the corresponding CTE producer tasks. Generate producer tasks first
+	// so that task placement for this fragment can be constrained to producer addresses if needed.
 	for _, cteReader := range f.CTEReaders {
 		err := e.generateTasksForCTEReader(cteReader)
 		if err != nil {
@@ -521,6 +538,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 		return errors.Trace(errors.New("cte group not found for id " + strconv.Itoa(cteReader.CTE.IDForStorage)))
 	}
 	if group.StorageFragments == nil {
+		// Storage fragments/tasks are shared among all readers of the same CTE storage. Generate them once.
 		if group.StorageSink == nil {
 			if len(group.CTEStorage.Children()) != 1 {
 				return errors.Trace(errors.New("unexpected cte producer plan " + group.CTEStorage.ExplainID().String()))
@@ -535,6 +553,7 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 	}
 
 	storageSchema := group.CTEStorage.Children()[0].Schema()
+	// CTESource is a schema producer, so we clone the schema from the CTE producer's output.
 	source := PhysicalCTESource{IDForStorage: group.CTEStorage.CTE.IDForStorage}.Init(cteReader.SCtx(), cteReader.StatsInfo(), storageSchema.Clone())
 	inconsistenceNullable := false
 	for i, col := range cteReader.Schema().Columns {
@@ -544,6 +563,8 @@ func (e *mppTaskGenerator) generateTasksForCTEReader(cteReader *PhysicalCTE) (er
 		}
 	}
 	if inconsistenceNullable {
+		// CTE storage output schema may differ in NULLability from the consumer side due to optimization.
+		// Use a projection to rewrite the schema so that the downstream plan sees the expected types.
 		cols := storageSchema.Clone().Columns
 		for i, col := range cols {
 			col.Index = i

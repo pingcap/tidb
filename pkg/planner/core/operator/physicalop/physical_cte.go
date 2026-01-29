@@ -301,15 +301,21 @@ func checkOpSelfSatisfyPropTaskTypeRequirement(p base.LogicalPlan, prop *propert
 type PhysicalCTESink struct {
 	BasePhysicalPlan
 
+	// IDForStorage is the CTE storage id (logicalop.CTEClass.IDForStorage).
 	IDForStorage int
 
 	// TargetTasks are kept for base.MPPSink interface compatibility.
+	// Unlike ExchangeSender, CTESink doesn't establish MPP tunnels between tasks.
 	TargetTasks []*kv.MPPTask
 	Tasks       []*kv.MPPTask
 
 	CompressionMode vardef.ExchangeCompressionMode
 
-	CteSinkNum   uint32
+	// CteSinkNum is required by tipb.CTESink and is filled after fragment split.
+	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
+	CteSinkNum uint32
+	// CteSourceNum is required by tipb.CTESink and is filled after fragment split.
+	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
 	CteSourceNum uint32
 }
 
@@ -407,9 +413,14 @@ func (p *PhysicalCTESink) ToPB(ctx *base.BuildPBContext, storeType kv.StoreType)
 type PhysicalCTESource struct {
 	PhysicalSchemaProducer
 
+	// IDForStorage is the CTE storage id (logicalop.CTEClass.IDForStorage).
 	IDForStorage int
 
-	CteSinkNum   uint32
+	// CteSinkNum is required by tipb.CTESource and is filled after fragment split.
+	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
+	CteSinkNum uint32
+	// CteSourceNum is required by tipb.CTESource and is filled after fragment split.
+	// See mppTaskGenerator.fixDuplicatedTimesForCTE.
 	CteSourceNum uint32
 }
 
