@@ -406,6 +406,8 @@ func testGlobalStatsAndSQLBinding(tk *testkit.TestKit) {
 	tk.MustExec("set @@tidb_partition_prune_mode = 'dynamic'")
 	// Disable auto analyze to ensure that stats are not automatically collected
 	tk.MustExec("set @@global.tidb_enable_auto_analyze='OFF'")
+	// Avoid non-prepared plan cache masking session binding changes (flaky plans).
+	tk.MustExec("set @@tidb_enable_non_prepared_plan_cache=0")
 
 	// hash and range and list partition
 	tk.MustExec("create table thash(a int, b int, key(a)) partition by hash(a) partitions 4")
