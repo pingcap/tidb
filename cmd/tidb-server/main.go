@@ -388,10 +388,10 @@ func main() {
 	printInfo()
 	setupMetrics()
 
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	executor.Start()
 	resourcemanager.InstanceResourceManager.Start()
-	keyspaceNameStr := keyspace.GetKeyspaceNameBySettings()
-	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceNameStr)
+	storage, dom, err := createStoreDDLOwnerMgrAndDomain(keyspaceName)
 	terror.MustNil(err)
 	repository.SetupRepository(dom)
 	svr := createServer(storage, dom)

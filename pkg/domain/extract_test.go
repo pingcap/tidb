@@ -45,7 +45,7 @@ func TestExtractPlanWithoutHistoryView(t *testing.T) {
 	extractHandler := dom.GetExtractHandle()
 	task := domain.NewExtractPlanTask(time.Now(), time.Now())
 	task.UseHistoryView = false
-	_, err = extractHandler.ExtractTask(context.Background(), task)
+	_, err = extractHandler.ExtractTask(ctx, task)
 	require.NoError(t, err)
 }
 
@@ -66,7 +66,7 @@ func TestExtractWithoutStmtSummaryPersistedEnabled(t *testing.T) {
 	extractHandler := dom.GetExtractHandle()
 	task := domain.NewExtractPlanTask(time.Now(), time.Now())
 	task.UseHistoryView = true
-	_, err = extractHandler.ExtractTask(context.Background(), task)
+	_, err = extractHandler.ExtractTask(ctx, task)
 	require.Error(t, err)
 }
 
