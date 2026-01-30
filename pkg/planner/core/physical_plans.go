@@ -820,6 +820,10 @@ type PhysicalIndexScan struct {
 	// If the query requires the columns that don't belong to index, DoubleRead will be true.
 	DoubleRead bool
 
+	// NotAlwaysValid indicates that this plan uses a partial index but the partial index condition
+	// is not guaranteed to be satisfied for all parameter values (used by plan cache).
+	NotAlwaysValid bool
+
 	NeedCommonHandle bool
 
 	// required by cost model

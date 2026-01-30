@@ -135,6 +135,7 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
+	ds.CheckPartialIndexes()
 	for _, path := range ds.PossibleAccessPaths {
 		if path.IsTablePath() {
 			continue

@@ -107,6 +107,13 @@ type AccessPath struct {
 	IsUkShardIndexPath bool
 	// IndexLookUpPushDownBy indicates whether to use index lookup push down optimization and where it is from.
 	IndexLookUpPushDownBy IndexLookUpPushDownByType
+
+	// PartIdxCondNotAlwaysValid indicates that this index path is not guaranteed to be valid
+	// for all parameter values when a partial index condition is involved.
+	// It's designed for partial indexes with a WHERE condition (for example, idx(b) WHERE a IS NOT NULL)
+	// and tracks whether that condition is always satisfied by the current filter.
+	// We add this field to make the plan cache usable for partial indexes in limited cases.
+	PartIdxCondNotAlwaysValid bool
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -142,6 +149,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		IndexLookUpPushDownBy:        path.IndexLookUpPushDownBy,
+		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -391,4 +399,20 @@ func (path *AccessPath) GetCol2LenFromAccessConds(ctx planctx.PlanContext) Col2L
 		return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, nil, nil)
 	}
 	return ExtractCol2Len(ctx.GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. multi-valued indexes or partial indexes.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	return path.Index.MVIndex || path.Index.ConditionExprString != ""
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// For MV indexes and partial indexes, we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
 }
