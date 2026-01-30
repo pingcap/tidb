@@ -690,17 +690,19 @@ workLoop:
 			if !ok {
 				break workLoop
 			}
-			bufferedMemSize := int64(0)
+			// Track per-task allocations: curBufferedMemSize is pending charges to the tracker,
+			// totalBuffered accumulates bytes that become part of collector.MemSize.
+			curBufferedMemSize := int64(0)
 			totalBuffered := int64(0)
 
 			consumeBuffered := func(bytes int64) {
 				totalBuffered += bytes
-				e.memTracker.BufferedConsume(&bufferedMemSize, bytes)
+				e.memTracker.BufferedConsume(&curBufferedMemSize, bytes)
 			}
 			flushBuffered := func(cum *int64) {
-				if bufferedMemSize != 0 {
-					e.memTracker.Consume(bufferedMemSize)
-					bufferedMemSize = 0
+				if curBufferedMemSize != 0 {
+					e.memTracker.Consume(curBufferedMemSize)
+					curBufferedMemSize = 0
 				}
 				*cum += totalBuffered
 				totalBuffered = 0
@@ -797,10 +799,10 @@ workLoop:
 							continue workLoop
 						}
 					}
-					if len(b) > 8 {
+					if cap(b) > 8 {
 						// We already accounted 8 bytes before the loop started,
 						// here we need to account the remaining bytes.
-						consumeBuffered(int64(len(b) - 8))
+						consumeBuffered(int64(cap(b) - 8))
 					}
 					tmp := types.NewBytesDatum(b)
 					sampleItems = append(sampleItems, &statistics.SampleItem{
