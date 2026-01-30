@@ -1359,10 +1359,11 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
 	matchResult := copTask.PartialOrderMatchResult
 
-	// PartialOrderedLimit = Count + Offset. Executor will handle "read X more rows"
-	// internally based on this value and PrefixCol/PrefixLen.
+	// Init partial order params PrefixCol and PrefixLen.
+	// PartialOrderedLimit = Count + Offset.
+	// TopN(with partial order) executor will short-cut read when it already handle "p.Count + p.Offset" rows.
+	// Also it need to read X more rows (which prefix value is same as the last line prefix value) to ensure correctness.
 	partialOrderedLimit := p.Count + p.Offset
-	p.PartialOrderedLimit = partialOrderedLimit
 	p.PrefixLen = matchResult.PrefixLen
 	// Find the corresponding prefix column in TopN's schema.
 	// matchResult.PrefixCol is from IndexScan's schema, but
@@ -1409,10 +1410,9 @@ func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopT
 		limitStats := property.DeriveLimitStats(childProfile, estimatedRows)
 
 		pushedDownLimit := physicalop.PhysicalLimit{
-			Count:               partialOrderedLimit,
-			PartialOrderedLimit: partialOrderedLimit,
-			PrefixCol:           p.PrefixCol,
-			PrefixLen:           matchResult.PrefixLen,
+			Count:     partialOrderedLimit,
+			PrefixCol: p.PrefixCol,
+			PrefixLen: matchResult.PrefixLen,
 		}.Init(p.SCtx(), limitStats, p.QueryBlockOffset())
 		pushedDownLimit.SetChildren(copTask.IndexPlan)
 		pushedDownLimit.SetSchema(copTask.IndexPlan.Schema())
