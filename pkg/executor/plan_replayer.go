@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
 )
@@ -405,24 +406,34 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 		return errors.AddStack(err)
 	}
 	originText := buf.String()
-	index1 := strings.Index(originText, ";")
-	createDatabaseSQL := originText[:index1+1]
-	index2 := strings.Index(originText[index1+1:], ";")
-	useDatabaseSQL := originText[index1+1:][:index2+1]
-	createTableSQL := originText[index1+1:][index2+1:]
 	c := context.Background()
-	// create database if not exists
-	_, err = ctx.GetSQLExecutor().Execute(c, createDatabaseSQL)
-	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
-	// use database
-	_, err = ctx.GetSQLExecutor().Execute(c, useDatabaseSQL)
+	p := parserutil.GetParser()
+	defer parserutil.DestroyParser(p)
+	vars := ctx.GetSessionVars()
+	p.SetSQLMode(vars.SQLMode)
+	p.SetParserConfig(vars.BuildParserConfig())
+	stmts, _, err := p.ParseSQL(originText, vars.GetParseParams()...)
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
-	// create table or view
-	_, err = ctx.GetSQLExecutor().Execute(c, createTableSQL)
-	if err != nil {
-		return err
+	if len(stmts) == 0 {
+		return errors.New("plan replayer: empty schema file")
+	}
+	for i, stmt := range stmts {
+		sqlText := stmt.Text()
+		if len(strings.TrimSpace(sqlText)) == 0 {
+			continue
+		}
+		if i == 0 {
+			// create database if not exists
+			_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
+			logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+			continue
+		}
+		_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
