@@ -36,15 +36,14 @@ func TestKeywords(t *testing.T) {
 }
 
 func TestKeywordsLength(t *testing.T) {
-	require.Equal(t, 660, len(parser.Keywords))
-
+	require.Equal(t, 682, len(parser.Keywords))
 	reservedNr := 0
 	for _, kw := range parser.Keywords {
 		if kw.Reserved {
 			reservedNr += 1
 		}
 	}
-	require.Equal(t, 232, reservedNr)
+	require.Equal(t, 237, reservedNr)
 }
 
 func TestKeywordsSorting(t *testing.T) {

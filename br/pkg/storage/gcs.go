@@ -169,6 +169,12 @@ func (s *GCSStorage) GetOptions() *backuppb.GCS {
 func (s *GCSStorage) DeleteFile(ctx context.Context, name string) error {
 	object := s.objectName(name)
 	err := s.GetBucketHandle().Object(object).Delete(ctx)
+	// for delete single file, files are deleted should be considered
+	if err != nil {
+		if goerrors.Is(err, storage.ErrObjectNotExist) {
+			return nil
+		}
+	}
 	return errors.Trace(err)
 }
 

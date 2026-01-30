@@ -159,6 +159,9 @@ type PhysicalTableReader struct {
 	PlanPartInfo *PhysPlanPartInfo
 	// Used by MPP, because MPP plan may contain join/union/union all, it is possible that a physical table reader contains more than 1 table scan
 	TableScanAndPartitionInfos []tableScanAndPartitionInfo `plan-cache-clone:"must-nil"`
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 }
 
 // LoadTableStats loads the stats of the table read by this plan.
@@ -289,6 +292,7 @@ func GetPhysicalTableReader(sg *logicalop.TiKVSingleGather, schema *expression.S
 		Columns:        sg.Source.TblCols,
 		ColumnNames:    sg.Source.OutputNames(),
 	}
+	reader.TableSplit = sg.Source.TableSplit
 	reader.SetStats(stats)
 	reader.SetSchema(schema)
 	reader.SetChildrenReqProps(props)
@@ -1021,6 +1025,9 @@ type PhysicalTableScan struct {
 	maxWaitTimeMs     int
 
 	AnnIndexExtra *VectorIndexExtra `plan-cache-clone:"must-nil"` // MPP plan should not be cached.
+
+	// TableSplit is a split (range) of the table to read.
+	TableSplit *ast.TableSplit `plan-cache-clone:"must-nil"`
 }
 
 // VectorIndexExtra is the extra information for vector index.
@@ -3130,7 +3137,24 @@ func buildPushDownIndexLookUpPlan(
 		// - If common handle, we don't need to set the indexHandleOffsets to build the common handle key
 		// which can be read from the index value directly.
 		// - If int handle, it is the last column in the index schema.
-		indexHandleOffsets = []uint32{uint32(indexPlan.Schema().Len()) - 1}
+		//   - If the last column is ExtraHandleID, or a non-negative column ID, handle is the last column.
+		//   - Otherwise, we need to find the last column whose ID is not ExtraHandleID and is negative.
+		//     For example, when a partition table needs to append ExtraPhysTblID
+		//     to the end for the upper UnionScanExec.
+		offset := indexPlan.Schema().Len() - 1
+		for offset >= 0 {
+			col := indexPlan.Schema().Columns[offset]
+			if col.ID >= 0 || col.ID == model.ExtraHandleID {
+				break
+			}
+			offset--
+			intest.Assert(offset >= 0, "cannot find handle column in index schema")
+		}
+
+		if offset < 0 {
+			return nil, errors.New("cannot find handle column in index schema")
+		}
+		indexHandleOffsets = []uint32{uint32(offset)}
 	}
 
 	tableScanPlan, parentOfTableScan := detachRootTableScanPlan(tablePlan)

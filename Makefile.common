@@ -13,6 +13,8 @@
 # limitations under the License.
 
 PROJECT=tidb
+SECURITYDIR=tidb-security-advanced
+UTILILIESDIR=tidb-enterprise-utilities
 GOPATH ?= $(shell go env GOPATH)
 GOMODCACHE ?= $(shell go env GOMODCACHE)
 P=8
@@ -40,7 +42,7 @@ GOBUILDCOVERAGE := GOPATH=$(GOPATH) cd tidb-server; $(GO) test -coverpkg="../...
 GOTEST          := $(GO) test -p $(P)
 OVERALLS        := GO111MODULE=on overalls
 STATICCHECK     := GO111MODULE=on staticcheck
-TIDB_EDITION    ?= Community
+TIDB_EDITION    ?= Enterprise
 
 # Ensure TIDB_EDITION is set to Community or Enterprise before running build process.
 ifneq "$(TIDB_EDITION)" "Community"
@@ -133,5 +135,6 @@ ifneq ("$(CI)", "")
 	BAZEL_SYNC_CONFIG := --repository_cache=/home/jenkins/.tidb/tmp
 endif
 BAZEL_INSTRUMENTATION_FILTER := --instrument_test_targets --instrumentation_filter=//pkg/...,//br/...,//dumpling/...
-
+TIDB_SERVER_PATH := ./bazel-bin/cmd/tidb-server/tidb-server_/tidb-server
+IMPORTER_PATH := ./bazel-bin/cmd/importer/importer_/importer
 NOGO_FLAG=true

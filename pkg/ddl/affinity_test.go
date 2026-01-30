@@ -174,9 +174,12 @@ func checkAffinityGroupsInPD(t *testing.T, do *domain.Domain, dbName, tbName str
 func TestAffinityPDInteraction(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, tp1, tp2")
+	dropTable := func() {
+		tk.MustExec("drop table if exists t1, t2, t3, tp1, tp2, tp3")
+	}
+	dropTable()
+	defer dropTable()
 
 	// Test 1: Create table with affinity='table'
 	tk.MustExec("create table t1(a int) affinity = 'table'")
@@ -238,8 +241,19 @@ func TestAffinityPDInteraction(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, groups, "old partition's affinity group should be deleted after truncate partition")
 
-	// Cleanup
-	tk.MustExec("drop table if exists t2, tp1, tp2")
+	// Test 8: ALTER TABLE AFFINITY idempotency - partition -> partition
+	tk.MustExec("create table tp3(a int) affinity = 'partition' partition by hash(a) partitions 3")
+	checkAffinityGroupsInPD(t, dom, "test", "tp3", true)
+	// Set affinity to partition again (idempotent operation)
+	tk.MustExec("alter table tp3 affinity = 'partition'")
+	checkAffinityGroupsInPD(t, dom, "test", "tp3", true)
+
+	// Test 9: ALTER TABLE AFFINITY idempotency - table -> table
+	tk.MustExec("create table t3(a int) affinity = 'table'")
+	checkAffinityGroupsInPD(t, dom, "test", "t3", true)
+	// Set affinity to table again (idempotent operation)
+	tk.MustExec("alter table t3 affinity = 'table'")
+	checkAffinityGroupsInPD(t, dom, "test", "t3", true)
 }
 
 func TestAffinityDropDatabase(t *testing.T) {
