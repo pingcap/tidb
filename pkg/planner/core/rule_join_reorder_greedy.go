@@ -63,23 +63,25 @@ func (s *joinReorderGreedySolver) solve(joinNodePlans []base.LogicalPlan) (base.
 			return nil, err
 		}
 	}
-	// Sort plans by cost
-	slices.SortStableFunc(s.curJoinGroup, func(i, j *jrNode) int {
-		return cmp.Compare(i.cumCost, j.cumCost)
-	})
-
-	// If there's an ORDER BY and a table has a matching index, prioritize it as the starting table.
-	// This enables index join to preserve order and avoid a separate sort operation.
+	// If there's an ORDER BY and a table has a matching index, apply discount to its initial cumCost.
+	// This lets the greedy algorithm naturally prefer the order-preserving table when beneficial,
+	// rather than forcibly moving it to front. Both ordered and regular join orders compete on cost.
 	// Only apply when tidb_opt_order_preserving_join_discount < 1.0 (feature enabled)
 	discount := s.ctx.GetSessionVars().OrderPreservingJoinDiscount
 	if discount > 0 && discount < 1.0 {
-		if orderIdx := s.findOrderPreservingTableIndex(); orderIdx > 0 {
-			// Move the order-preserving table to the front
-			orderingNode := s.curJoinGroup[orderIdx]
-			s.curJoinGroup = slices.Delete(s.curJoinGroup, orderIdx, orderIdx+1)
-			s.curJoinGroup = slices.Insert(s.curJoinGroup, 0, orderingNode)
+		orderIdx := s.findOrderPreservingTableIndex()
+		if orderIdx >= 0 {
+			// Mark the order-preserving table and apply discount to initial cumCost
+			s.curJoinGroup[orderIdx].isOrderPreserving = true
+			s.curJoinGroup[orderIdx].cumCost = s.curJoinGroup[orderIdx].cumCost * discount
 		}
 	}
+
+	// Sort plans by cost - order-preserving tables will naturally sort to front
+	// if their discounted cost is lower than other tables
+	slices.SortStableFunc(s.curJoinGroup, func(i, j *jrNode) int {
+		return cmp.Compare(i.cumCost, j.cumCost)
+	})
 
 	// joinNodeNum indicates the number of join nodes except leading join nodes in the current join group
 	joinNodeNum := len(s.curJoinGroup)
@@ -171,8 +173,9 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 			finalRemainOthers = remainOthersOfWhateverValidOne
 		}
 		curJoinTree = &jrNode{
-			p:       bestJoin,
-			cumCost: bestCost,
+			p:                 bestJoin,
+			cumCost:           bestCost,
+			isOrderPreserving: curJoinTree.isOrderPreserving, // Propagate the flag from the left child
 		}
 		s.curJoinGroup = slices.Delete(s.curJoinGroup, bestIdx, bestIdx+1)
 		s.otherConds = finalRemainOthers
@@ -219,7 +222,7 @@ func (s *joinReorderGreedySolver) findOrderPreservingTableIndex() int {
 				orderingColIDs[col.ID] = true
 			}
 		}
-		
+
 		if len(orderingColUniqueIDs) == 0 {
 			continue
 		}
@@ -230,6 +233,7 @@ func (s *joinReorderGreedySolver) findOrderPreservingTableIndex() int {
 			if !s.schemaContainsOrderingColumn(node.p, orderingColUniqueIDs) {
 				continue
 			}
+
 			// Then check if it has a matching index
 			if s.tableHasIndexMatchingOrdering(node.p, orderingColIDs) {
 				return i
@@ -251,17 +255,14 @@ func (s *joinReorderGreedySolver) schemaContainsOrderingColumn(plan base.Logical
 	return false
 }
 
-
 // tableHasIndexMatchingOrdering checks if a plan contains a DataSource with an index
 // that can provide the ordering specified by orderingColIDs.
-// targetTableName is the expected table name from the ORDER BY column's OrigName.
 // It also considers that equality predicates on prefix columns allow ordering on subsequent columns.
 func (s *joinReorderGreedySolver) tableHasIndexMatchingOrdering(plan base.LogicalPlan, orderingColIDs map[int64]bool) bool {
 	ds := s.findDataSource(plan)
 	if ds == nil {
 		return false
 	}
-	
 
 	// Get equality predicate columns from the plan's conditions
 	eqColIDs := s.getEqualityPredicateColumnIDs(plan)
@@ -271,14 +272,13 @@ func (s *joinReorderGreedySolver) tableHasIndexMatchingOrdering(plan base.Logica
 		if idx.State != model.StatePublic || idx.Invisible {
 			continue
 		}
-		
-		
+
 		// Check if index can provide ordering:
 		// Pattern: [equality predicate columns...] + [ORDER BY columns...]
 		// All prefix columns must have equality predicates, then ORDER BY column(s) follow
 		foundOrderingCol := false
 		allPrefixHaveEq := true
-		
+
 		for _, idxCol := range idx.Columns {
 			// Get the table column for this index column
 			if idxCol.Offset >= len(ds.TableInfo.Columns) {
@@ -286,25 +286,23 @@ func (s *joinReorderGreedySolver) tableHasIndexMatchingOrdering(plan base.Logica
 			}
 			tblCol := ds.TableInfo.Columns[idxCol.Offset]
 			colID := tblCol.ID
-			
-			
+
 			// Is this the ordering column?
 			if orderingColIDs[colID] {
 				if allPrefixHaveEq {
 					foundOrderingCol = true
-					break
-				} else {
-					break
 				}
+				break
 			}
-			
+
 			// Is this column covered by an equality predicate?
 			// If not, this index can't provide ordering
 			if !eqColIDs[colID] {
+				allPrefixHaveEq = false
 				break
 			}
 		}
-		
+
 		if foundOrderingCol {
 			return true
 		}
@@ -313,10 +311,9 @@ func (s *joinReorderGreedySolver) tableHasIndexMatchingOrdering(plan base.Logica
 }
 
 // getEqualityPredicateColumnIDs extracts column IDs that have equality predicates
-// from the plan's pushed-down conditions
+// from the plan's pushed-down conditions and from s.otherConds (for single-table predicates)
 func (s *joinReorderGreedySolver) getEqualityPredicateColumnIDs(plan base.LogicalPlan) map[int64]bool {
 	result := make(map[int64]bool)
-	
 	// Check if it's a Selection with conditions
 	if sel, ok := plan.(*logicalop.LogicalSelection); ok {
 		for _, cond := range sel.Conditions {
@@ -330,14 +327,56 @@ func (s *joinReorderGreedySolver) getEqualityPredicateColumnIDs(plan base.Logica
 			}
 		}
 	}
-	
 	// Check if it's a DataSource with pushed conditions
 	if ds, ok := plan.(*logicalop.DataSource); ok {
 		for _, cond := range ds.AllConds {
 			s.extractEqualityColumns(cond, result)
 		}
 	}
-	
+
+	// Also check s.otherConds for single-table predicates that apply to this plan.
+	// During join reordering, filter predicates like "t.col = value" are stored in
+	// s.otherConds, not pushed down to DataSource yet.
+	schema := plan.Schema()
+	schemaColUniqueIDs := make(map[int64]bool, len(schema.Columns))
+	for _, col := range schema.Columns {
+		schemaColUniqueIDs[col.UniqueID] = true
+	}
+
+	for _, cond := range s.otherConds {
+		// Check if this condition only references columns from this plan's schema
+		cols := expression.ExtractColumns(cond)
+		allColsFromThisPlan := true
+		for _, col := range cols {
+			if !schemaColUniqueIDs[col.UniqueID] {
+				allColsFromThisPlan = false
+				break
+			}
+		}
+		if allColsFromThisPlan && len(cols) > 0 {
+			s.extractEqualityColumns(cond, result)
+		}
+	}
+
+	// Also check s.parentFilterConds for filter predicates from parent Selection.
+	// When TiDBOptJoinReorderThroughSel is false (default), Selection conditions like
+	// "workspace_id = 'ws1'" are not in otherConds. They are captured separately
+	// from the parent Selection and passed to the solver.
+	for _, cond := range s.parentFilterConds {
+		// Check if this condition only references columns from this plan's schema
+		cols := expression.ExtractColumns(cond)
+		allColsFromThisPlan := true
+		for _, col := range cols {
+			if !schemaColUniqueIDs[col.UniqueID] {
+				allColsFromThisPlan = false
+				break
+			}
+		}
+		if allColsFromThisPlan && len(cols) > 0 {
+			s.extractEqualityColumns(cond, result)
+		}
+	}
+
 	return result
 }
 
@@ -347,7 +386,7 @@ func (s *joinReorderGreedySolver) extractEqualityColumns(expr expression.Express
 	if !ok {
 		return
 	}
-	
+
 	// Check for EQ function: col = value
 	if sf.FuncName.L == "eq" && len(sf.GetArgs()) == 2 {
 		// Check if one side is a column and other is a constant
@@ -359,7 +398,7 @@ func (s *joinReorderGreedySolver) extractEqualityColumns(expr expression.Express
 			}
 		}
 	}
-	
+
 	// Check for IN function: col IN (values)
 	if sf.FuncName.L == "in" && len(sf.GetArgs()) > 0 {
 		if col, ok := sf.GetArgs()[0].(*expression.Column); ok {
@@ -368,7 +407,7 @@ func (s *joinReorderGreedySolver) extractEqualityColumns(expr expression.Express
 			}
 		}
 	}
-	
+
 	// Recursively check AND conditions
 	if sf.FuncName.L == "and" || sf.FuncName.L == "or" {
 		for _, arg := range sf.GetArgs() {

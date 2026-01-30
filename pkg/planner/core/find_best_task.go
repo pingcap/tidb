@@ -144,6 +144,8 @@ func enumeratePhysicalPlans4TaskHelper(
 ) (base.Task, bool, error) {
 	var err error
 	var normalIterTask, normalPreferTask, hintTask = base.InvalidTask, base.InvalidTask, base.InvalidTask
+	// Track whether each accumulated best task is order-preserving for fair discount comparison
+	var hintTaskIsOrderPreserving, normalPreferTaskIsOrderPreserving, normalIterTaskIsOrderPreserving bool
 	initState := &enumerateState{}
 	_, baseLP, childLen, iteration, iterObj := prepareIterationDownElems(super)
 	childTasks := make([]base.Task, 0, childLen)
@@ -195,33 +197,42 @@ func enumeratePhysicalPlans4TaskHelper(
 			curTask = optimizeByShuffle(curTask, baseLP.Plan.SCtx())
 		}
 
+		// Check if current plan is order-preserving (for discount comparison)
+		curIsOrderPreserving := isOrderPreservingPlan(pp)
+
 		if hintApplicable {
 			if hintTask.Invalid() {
 				hintTask = curTask
-			} else if curIsBetter, err := compareTaskCost(curTask, hintTask); err != nil {
+				hintTaskIsOrderPreserving = curIsOrderPreserving
+			} else if curIsBetter, err := compareTaskCostWithOrderPreservingDiscount(baseLP.SCtx(), curTask, hintTask, curIsOrderPreserving, hintTaskIsOrderPreserving, prop, 0); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
 				hintTask = curTask
+				hintTaskIsOrderPreserving = curIsOrderPreserving
 			}
 		}
 
 		if hintTask.Invalid() && hasNormalPreferTask(baseLP.Self(), initState, pp, childTasks) {
 			if normalPreferTask.Invalid() {
 				normalPreferTask = curTask
-			} else if curIsBetter, err := compareTaskCost(curTask, normalPreferTask); err != nil {
+				normalPreferTaskIsOrderPreserving = curIsOrderPreserving
+			} else if curIsBetter, err := compareTaskCostWithOrderPreservingDiscount(baseLP.SCtx(), curTask, normalPreferTask, curIsOrderPreserving, normalPreferTaskIsOrderPreserving, prop, 0); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
 				normalPreferTask = curTask
+				normalPreferTaskIsOrderPreserving = curIsOrderPreserving
 			}
 		}
 
 		if hintTask.Invalid() && normalPreferTask.Invalid() {
 			if normalIterTask.Invalid() {
 				normalIterTask = curTask
-			} else if curIsBetter, err := compareTaskCost(curTask, normalIterTask); err != nil {
+				normalIterTaskIsOrderPreserving = curIsOrderPreserving
+			} else if curIsBetter, err := compareTaskCostWithOrderPreservingDiscount(baseLP.SCtx(), curTask, normalIterTask, curIsOrderPreserving, normalIterTaskIsOrderPreserving, prop, 0); err != nil {
 				return nil, false, err
 			} else if curIsBetter {
 				normalIterTask = curTask
+				normalIterTaskIsOrderPreserving = curIsOrderPreserving
 			}
 		}
 	}
@@ -473,6 +484,81 @@ func compareTaskCost(curTask, bestTask base.Task) (curIsBetter bool, err error) 
 	}
 	if bestInvalid {
 		return true, nil
+	}
+	return curCost < bestCost, nil
+}
+
+// isOrderPreservingPlan checks if a physical plan is an order-preserving join.
+// Currently this checks for PhysicalIndexJoin with IsOrderPreserving=true.
+func isOrderPreservingPlan(pp base.PhysicalPlan) bool {
+	if indexJoin, ok := pp.(*physicalop.PhysicalIndexJoin); ok {
+		return indexJoin.IsOrderPreserving
+	}
+	return false
+}
+
+// compareTaskCostWithOrderPreservingDiscount compares cost of curTask and bestTask,
+// applying the order-preserving discount to whichever task(s) match the required ordering.
+// This helps the optimizer prefer access paths that can provide ordering when there's
+// an ORDER BY clause with LIMIT.
+// debugTableID is optional - pass 0 to skip debug filtering, or a specific table ID to only log for that table.
+func compareTaskCostWithOrderPreservingDiscount(sctx base.PlanContext, curTask, bestTask base.Task, curMatchesProp, bestMatchesProp bool, prop *property.PhysicalProperty, debugTableID int64) (curIsBetter bool, err error) {
+	curCost, curInvalid, err := getTaskPlanCost(curTask)
+	if err != nil {
+		return false, err
+	}
+	bestCost, bestInvalid, err := getTaskPlanCost(bestTask)
+	if err != nil {
+		return false, err
+	}
+	if curInvalid {
+		return false, nil
+	}
+	if bestInvalid {
+		return true, nil
+	}
+
+	// DEBUG: Log comparison details - only for specific table IDs (127, 129) when debugTableID is provided
+	discount := sctx.GetSessionVars().OrderPreservingJoinDiscount
+	shouldLog := debugTableID == 127 || debugTableID == 129
+	if shouldLog {
+		logutil.BgLogger().Info("[DEBUG-ORDER-PRESERVE] compareTaskCost",
+			zap.Int64("tableID", debugTableID),
+			zap.Bool("propSortItemsEmpty", prop.IsSortItemEmpty()),
+			zap.Int("propSortItemsLen", len(prop.SortItems)),
+			zap.Float64("propExpectedCnt", prop.ExpectedCnt),
+			zap.Float64("discount", discount),
+			zap.Bool("curMatchesProp", curMatchesProp),
+			zap.Bool("bestMatchesProp", bestMatchesProp),
+			zap.Float64("curCost", curCost),
+			zap.Float64("bestCost", bestCost))
+	}
+
+	// Apply order-preserving discount if:
+	// 1. There is a non-empty ordering requirement (ORDER BY)
+	// 2. The discount is enabled (< 1.0)
+	// 3. Apply discount to each task that matches the ordering requirement
+	if !prop.IsSortItemEmpty() {
+		if discount < 1.0 {
+			if curMatchesProp {
+				if shouldLog {
+					logutil.BgLogger().Info("[DEBUG-ORDER-PRESERVE] Applying discount to curTask",
+						zap.Int64("tableID", debugTableID),
+						zap.Float64("beforeCost", curCost),
+						zap.Float64("afterCost", curCost*discount))
+				}
+				curCost = curCost * discount
+			}
+			if bestMatchesProp {
+				if shouldLog {
+					logutil.BgLogger().Info("[DEBUG-ORDER-PRESERVE] Applying discount to bestTask",
+						zap.Int64("tableID", debugTableID),
+						zap.Float64("beforeCost", bestCost),
+						zap.Float64("afterCost", bestCost*discount))
+				}
+				bestCost = bestCost * discount
+			}
+		}
 	}
 	return curCost < bestCost, nil
 }
@@ -1067,6 +1153,18 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
 	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
+		if !prop.IsSortItemEmpty() {
+			sortItemStrs := make([]string, 0, len(prop.SortItems))
+			for _, item := range prop.SortItems {
+				sortItemStrs = append(sortItemStrs, fmt.Sprintf("%s(desc=%v)", item.Col.OrigName, item.Desc))
+			}
+			idxColStrs := make([]string, 0, len(path.IdxCols))
+			for _, col := range path.IdxCols {
+				if col != nil {
+					idxColStrs = append(idxColStrs, col.OrigName)
+				}
+			}
+		}
 		return property.PropNotMatched
 	}
 
@@ -1137,6 +1235,16 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 			break
 		}
 		if !found {
+			sortItemStrs := make([]string, 0, len(prop.SortItems))
+			for _, item := range prop.SortItems {
+				sortItemStrs = append(sortItemStrs, fmt.Sprintf("%s(desc=%v)", item.Col.OrigName, item.Desc))
+			}
+			idxColStrs := make([]string, 0, len(path.IdxCols))
+			for _, col := range path.IdxCols {
+				if col != nil {
+					idxColStrs = append(idxColStrs, col.OrigName)
+				}
+			}
 			matchResult = property.PropNotMatched
 			break
 		}
@@ -1858,6 +1966,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 	}
 
 	t = base.InvalidTask
+	tMatchesProp := false // Track whether the accumulated best task matches the property
 	candidates := skylinePruning(ds, prop)
 	pruningInfo := getPruningInfo(ds, candidates, prop)
 	defer func() {
@@ -1886,7 +1995,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if err != nil {
 				return nil, err
 			}
-			curIsBetter, err := compareTaskCost(idxMergeTask, t)
+			curIsBetter, err := compareTaskCostWithOrderPreservingDiscount(ds.SCtx(), idxMergeTask, t, candidate.matchPropResult.Matched(), tMatchesProp, prop, ds.TableInfo.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -1984,7 +2093,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 					ds.SCtx().GetSessionVars().StmtCtx.SetSkipPlanCache("Batch/PointGet plans may be over-optimized")
 				}
 
-				curIsBetter, cerr := compareTaskCost(pointGetTask, t)
+				curIsBetter, cerr := compareTaskCostWithOrderPreservingDiscount(ds.SCtx(), pointGetTask, t, candidate.matchPropResult.Matched(), tMatchesProp, prop, ds.TableInfo.ID)
 				if cerr != nil {
 					return nil, cerr
 				}
@@ -2012,7 +2121,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 			if err != nil {
 				return nil, err
 			}
-			curIsBetter, err := compareTaskCost(tblTask, t)
+			curIsBetter, err := compareTaskCostWithOrderPreservingDiscount(ds.SCtx(), tblTask, t, candidate.matchPropResult.Matched(), tMatchesProp, prop, ds.TableInfo.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -2033,7 +2142,7 @@ func findBestTask4LogicalDataSource(super base.LogicalPlan, prop *property.Physi
 		if err != nil {
 			return nil, err
 		}
-		curIsBetter, err := compareTaskCost(idxTask, t)
+		curIsBetter, err := compareTaskCostWithOrderPreservingDiscount(ds.SCtx(), idxTask, t, candidate.matchPropResult.Matched(), tMatchesProp, prop, ds.TableInfo.ID)
 		if err != nil {
 			return nil, err
 		}
