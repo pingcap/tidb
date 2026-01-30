@@ -260,3 +260,42 @@ func TestDumpColStatsUsageWriter_ConcurrentMultiTables(t *testing.T) {
 	tc.mu.Unlock()
 	t.Logf("DumpColStatsUsage concurrent: goroutines=%d tables=%d cols/table=%d per-g: avg=%s min=%s max=%s; updated=%d/%d; batches=%d per-batch: avg=%s min=%s max=%s", goroutines, tableCount, numCols, avg, minVal, maxVal, totalUpdated, tableCount*numCols, batches, colAvg, colMinVal, colMaxVal)
 }
+
+func TestDumpStatsDeltaPersistsInitTime(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("insert into t values (1),(2),(3),(4),(5),(6),(7),(8),(9),(10)")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(true))
+	tk.MustExec("analyze table t")
+
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tbl.Meta().ID
+
+	// Ensure stats cache is up-to-date so GetNonPseudoPhysicalTableStats returns a real table.
+	require.NoError(t, dom.StatsHandle().Update(context.Background(), is))
+
+	origMaxDuration := usage.GetDumpStatsMaxDurationForTest()
+	origRatio := usage.DumpStatsDeltaRatio
+	usage.SetDumpStatsMaxDurationForTest(50 * time.Millisecond)
+	usage.DumpStatsDeltaRatio = 0.5
+	t.Cleanup(func() {
+		usage.SetDumpStatsMaxDurationForTest(origMaxDuration)
+		usage.DumpStatsDeltaRatio = origRatio
+	})
+
+	tk.MustExec("insert into t values (11)")
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	tk.MustQuery(fmt.Sprintf("select modify_count from mysql.stats_meta where table_id = %d", tableID)).
+		Check(testkit.Rows("0"))
+
+	time.Sleep(usage.GetDumpStatsMaxDurationForTest() + 100*time.Millisecond)
+
+	require.NoError(t, dom.StatsHandle().DumpStatsDeltaToKV(false))
+	tk.MustQuery(fmt.Sprintf("select modify_count from mysql.stats_meta where table_id = %d", tableID)).
+		Check(testkit.Rows("1"))
+}
