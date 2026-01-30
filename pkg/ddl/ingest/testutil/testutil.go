@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 )
@@ -56,6 +57,11 @@ func CheckIngestLeakageForTest(exitCode int) {
 			leakObj = "disk usage tracker"
 		} else if ingest.BackendCounterForTest.Load() != 0 {
 			leakObj = "backend context"
+		}
+		if len(leakObj) == 0 {
+			if registeredJob := metrics.GetRegisteredJob(); len(registeredJob) > 0 {
+				leakObj = "metrics"
+			}
 		}
 		if len(leakObj) > 0 {
 			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
