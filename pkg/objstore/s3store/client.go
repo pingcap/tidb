@@ -66,12 +66,12 @@ func (c *s3Client) CheckBucketExistence(ctx context.Context) error {
 }
 
 func (c *s3Client) CheckListObjects(ctx context.Context) error {
-	input := &s3.ListObjectsInput{
+	input := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(c.Bucket),
 		Prefix:  aws.String(c.PrefixStr()),
 		MaxKeys: aws.Int32(1),
 	}
-	_, err := c.svc.ListObjects(ctx, input)
+	_, err := c.svc.ListObjectsV2(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
 	}
