@@ -16,7 +16,6 @@ package extstore
 
 import (
 	"context"
-	"path/filepath"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -38,13 +37,13 @@ func TestExtStorage(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	s, err := NewExtStorage(tempDir, "test_namespace", nil)
+	s, err := NewExtStorage(ctx, "file://"+tempDir, "test_namespace")
 	require.NoError(t, err)
 	require.NotNil(t, s)
 
-	es, ok := s.(*extStorage)
-	require.True(t, ok)
-	require.Equal(t, filepath.Join(tempDir, "test_namespace"), es.basePath)
+	uri := s.URI()
+	require.Contains(t, uri, tempDir)
+	require.Contains(t, uri, "test_namespace")
 
 	// Test WriteFile and ReadFile
 	fileName := "test_file.txt"
@@ -128,41 +127,10 @@ func TestExtStorage(t *testing.T) {
 	require.False(t, exists)
 
 	// Test URI
-	// The URI() method on the wrapper calls the underlying storage's URI().
-	// For local storage, it should be the path.
-	// The underlying storage is created lazily. Let's trigger it.
-	_, err = s.FileExists(ctx, "anyfile")
-	require.NoError(t, err)
-	uri := s.URI()
+	uri = s.URI()
 	require.Contains(t, uri, tempDir)
 	require.Contains(t, uri, "test_namespace")
 
 	// Test Close
-	es.Close()
-	require.Nil(t, es.storage)
-}
-
-func TestNewFileWriter(t *testing.T) {
-	ctx := context.Background()
-	tempDir := t.TempDir()
-
-	s, err := NewExtStorage(tempDir, "", nil)
-	require.NoError(t, err)
-
-	writer, err := s.Create(ctx, "test_writer.txt", nil)
-	require.NoError(t, err)
-
-	fileWriter := NewFileWriter(ctx, writer)
-	require.NotNil(t, fileWriter)
-
-	_, err = fileWriter.Write([]byte("test content"))
-	require.NoError(t, err)
-
-	err = fileWriter.Close()
-	require.NoError(t, err)
-
-	// Verify the file was written
-	content, err := s.ReadFile(ctx, "test_writer.txt")
-	require.NoError(t, err)
-	require.Equal(t, []byte("test content"), content)
+	s.Close()
 }

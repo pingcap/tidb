@@ -16,6 +16,7 @@ package replayer
 
 import (
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -24,15 +25,23 @@ import (
 )
 
 func TestPlanReplayerPathWithoutWritePrem(t *testing.T) {
+	// Reset PlanReplayerPathOnce to allow re-initialization in tests
+	PlanReplayerPathOnce = sync.Once{}
+	PlanReplayerPath = ""
+
 	fs := afero.NewMemMapFs()
 	basePathFsMem := afero.NewReadOnlyFs(fs)
-	path := GetPlanReplayerDirName(basePathFsMem)
+	path := GetPlanReplayerFullPathDirName(basePathFsMem)
 	require.Equal(t, filepath.Join(config.GetGlobalConfig().TempDir, "replayer"), path)
 }
 
 func TestPlanReplayerPathWithWritePrem(t *testing.T) {
+	// Reset PlanReplayerPathOnce to allow re-initialization in tests
+	PlanReplayerPathOnce = sync.Once{}
+	PlanReplayerPath = ""
+
 	fs := afero.NewMemMapFs()
 	basePathFsMem := afero.NewBasePathFs(fs, "/")
-	path := GetPlanReplayerDirName(basePathFsMem)
+	path := GetPlanReplayerFullPathDirName(basePathFsMem)
 	require.Equal(t, filepath.Join(config.GetGlobalConfig().Log.File.Filename, "replayer"), path)
 }

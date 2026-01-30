@@ -36,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/server/handler"
 	"github.com/pingcap/tidb/pkg/statistics/handle"
 	util2 "github.com/pingcap/tidb/pkg/statistics/util"
@@ -90,24 +91,30 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 	path := dfHandler.filePath
 	isForwarded := len(req.URL.Query().Get("forward")) > 0
 	localAddr := net.JoinHostPort(dfHandler.address, strconv.Itoa(int(dfHandler.statusPort)))
-	exist, err := isExists(path)
+
+	ctx := req.Context()
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	exist, err := storage.FileExists(ctx, path)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
 	if exist {
-		//nolint: gosec
-		file, err := os.Open(path)
+		fileReader, err := storage.Open(ctx, path, nil)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		content, err := io.ReadAll(file)
+		content, err := io.ReadAll(fileReader)
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
-		err = file.Close()
+		err = fileReader.Close()
 		if err != nil {
 			handler.WriteError(w, err)
 			return

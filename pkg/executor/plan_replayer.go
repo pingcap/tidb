@@ -20,7 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -65,7 +66,7 @@ type PlanReplayerDumpInfo struct {
 	HistoricalStatsTS uint64
 	StartTS           uint64
 	Path              string
-	File              *os.File
+	File              io.WriteCloser
 	FileName          string
 	ctx               sessionctx.Context
 }
@@ -82,7 +83,7 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return e.registerCaptureTask(ctx)
 	}
-	err := e.createFile()
+	err := e.createFile(ctx)
 	if err != nil {
 		return err
 	}
@@ -162,9 +163,12 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	return nil
 }
 
-func (e *PlanReplayerExec) createFile() error {
-	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false, false, false)
+func (e *PlanReplayerExec) createFile(ctx context.Context) error {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
 	if err != nil {
 		return err
 	}
