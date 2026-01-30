@@ -86,7 +86,6 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 }
 
 func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, gcDurationDefault, gcDurationForCapture time.Duration) {
-
 	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
 	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
 
@@ -98,7 +97,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 	opt := &storeapi.WalkOption{
 		SubDir: path,
 	}
-	err = storage.WalkDir(ctx, opt, func(fileName string, size int64) error {
+	err = storage.WalkDir(ctx, opt, func(fileName string, _ int64) error {
 		createTime, err := parseTime(fileName)
 		if err != nil {
 			logutil.BgLogger().Error("parseTime failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
