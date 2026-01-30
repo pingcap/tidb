@@ -308,7 +308,7 @@ tools/bin/xprog: tools/check/xprog/xprog.go
 
 .PHONY: tools/bin/revive
 tools/bin/revive:
-	GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
+	@test -x $@ || GOBIN=$(shell pwd)/tools/bin $(GO) install github.com/mgechev/revive@v1.2.1
 
 .PHONY: tools/bin/failpoint-ctl
 tools/bin/failpoint-ctl:
