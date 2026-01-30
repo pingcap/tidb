@@ -1538,7 +1538,7 @@ func GetModifiableColumnJob(
 		// TODO: If user explicitly set NULL, we should throw error ErrPrimaryCantHaveNull.
 	}
 
-	if err = processModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
+	if err = ProcessModifyColumnOptions(sctx, newCol, specNewColumn.Options); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1988,8 +1988,9 @@ func checkModifyTypes(from, to *model.ColumnInfo, needRewriteCollationData bool)
 	return errors.Trace(err)
 }
 
-// processModifyColumnOptions process column options.
-func processModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
+// ProcessModifyColumnOptions process column options.
+// Export for tiflow.
+func ProcessModifyColumnOptions(ctx sessionctx.Context, col *table.Column, options []*ast.ColumnOption) error {
 	var sb strings.Builder
 	restoreFlags := format.RestoreStringSingleQuotes | format.RestoreKeyWordLowercase | format.RestoreNameBackQuotes |
 		format.RestoreSpacesAroundBinaryOperation | format.RestoreWithoutSchemaName | format.RestoreWithoutSchemaName
