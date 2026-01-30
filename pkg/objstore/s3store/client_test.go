@@ -205,7 +205,7 @@ func TestClientListObjects(t *testing.T) {
 			}, nil
 		},
 	)
-	resp, err := cli.ListObjects(ctx, "target", nil, nil, 100)
+	resp, err := cli.ListObjects(ctx, "target", "", nil, 100)
 	require.NoError(t, err)
 	require.True(t, resp.IsTruncated)
 	require.EqualValues(t, "prefix/target/sub/object2", *resp.NextContinuationToken)
@@ -217,7 +217,7 @@ func TestClientListObjects(t *testing.T) {
 	require.True(t, s.Controller.Satisfied())
 
 	s.MockS3.EXPECT().ListObjects(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock list error"))
-	_, err = cli.ListObjects(ctx, "target", nil, nil, 100)
+	_, err = cli.ListObjects(ctx, "target", "", nil, 100)
 	require.ErrorContains(t, err, "mock list error")
 	require.True(t, s.Controller.Satisfied())
 }

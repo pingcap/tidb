@@ -98,7 +98,7 @@ type PrefixClient interface {
 	// maxKeys is the maximum number of keys to return.
 	// Note: the extraPrefix is directly appended to the storeapi.Prefix of the
 	// PrefixClient, caller should make sure the input extraPrefix correct.
-	ListObjects(ctx context.Context, extraPrefix string, continuationToken, startAfter *string, maxKeys int) (*ListResp, error)
+	ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*ListResp, error)
 	// CopyObject copies an object from the source to the destination.
 	CopyObject(ctx context.Context, params *CopyInput) error
 	// MultipartWriter creates a multipart writer for the object with the given

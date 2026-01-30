@@ -1283,7 +1283,7 @@ func TestWalkDirWithStartAfter(t *testing.T) {
 	i := 3
 	err := s.Storage.WalkDir(
 		ctx,
-		&storeapi.WalkOption{SubDir: "sp", ListCount: 2, StartAfter: "prefix/sp/test_10"},
+		&storeapi.WalkOption{SubDir: "sp", ListCount: 2, StartAfter: "sp/test_10"},
 		func(path string, size int64) error {
 			require.Equal(t, *contents[i].Key, "prefix/"+path, "index = %d", i)
 			require.Equal(t, *contents[i].Size, size, "index = %d", i)

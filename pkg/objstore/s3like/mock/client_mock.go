@@ -175,7 +175,7 @@ func (mr *MockPrefixClientMockRecorder) IsObjectExists(arg0, arg1 any) *gomock.C
 }
 
 // ListObjects mocks base method.
-func (m *MockPrefixClient) ListObjects(arg0 context.Context, arg1 string, arg2, arg3 *string, arg4 int) (*s3like.ListResp, error) {
+func (m *MockPrefixClient) ListObjects(arg0 context.Context, arg1, arg2 string, arg3 *string, arg4 int) (*s3like.ListResp, error) {
 	m.ctrl.T.Helper()
 	ret := m.ctrl.Call(m, "ListObjects", arg0, arg1, arg2, arg3, arg4)
 	ret0, _ := ret[0].(*s3like.ListResp)

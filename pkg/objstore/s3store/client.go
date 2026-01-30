@@ -253,14 +253,18 @@ func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error
 	return true, nil
 }
 
-func (c *s3Client) ListObjects(ctx context.Context, extraPrefix string, continuationToken, startAfter *string, maxKeys int) (*s3like.ListResp, error) {
+func (c *s3Client) ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*s3like.ListResp, error) {
 	prefix := c.ObjectKey(extraPrefix)
+	var startAfterKey *string
+	if len(startAfter) > 0 {
+		startAfterKey = aws.String(c.ObjectKey(startAfter))
+	}
 	req := &s3.ListObjectsV2Input{
 		Bucket:            aws.String(c.Bucket),
 		Prefix:            aws.String(prefix),
 		MaxKeys:           aws.Int32(int32(maxKeys)),
 		ContinuationToken: continuationToken,
-		StartAfter:        startAfter,
+		StartAfter:        startAfterKey,
 	}
 	res, err := c.svc.ListObjectsV2(ctx, req)
 	if err != nil {
