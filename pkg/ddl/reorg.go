@@ -557,7 +557,7 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			idxNames = getIdxNamesFromArgs(args)
 		}
-		metrics.GetBackfillProgressByLabel(label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
+		metrics.GetBackfillProgressByTableID(reorgInfo.PhysicalTableID, label, reorgInfo.SchemaName, tblInfo.Name.String(), idxNames).Set(progress * 100)
 	case model.ActionModifyColumn:
 		colName := ""
 		args, err := model.GetModifyColumnArgs(reorgInfo.Job)
@@ -566,10 +566,10 @@ func updateBackfillProgress(w *worker, reorgInfo *reorgInfo, tblInfo *model.Tabl
 		} else {
 			colName = args.OldColumnName.O
 		}
-		metrics.GetBackfillProgressByLabel(metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
+		metrics.GetBackfillProgressByTableID(reorgInfo.PhysicalTableID, metrics.LblModifyColumn, reorgInfo.SchemaName, tblInfo.Name.String(), colName).Set(progress * 100)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
-		metrics.GetBackfillProgressByLabel(metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
+		metrics.GetBackfillProgressByTableID(reorgInfo.PhysicalTableID, metrics.LblReorgPartition, reorgInfo.SchemaName, tblInfo.Name.String(), "").Set(progress * 100)
 	}
 }
 
