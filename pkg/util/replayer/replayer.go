@@ -112,7 +112,7 @@ var (
 
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is a relative path for external storage.
-func GetPlanReplayerDirName(vfs ...afero.Fs) string {
+func GetPlanReplayerDirName() string {
 	return "replayer"
 }
 
