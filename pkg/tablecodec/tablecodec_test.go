@@ -24,6 +24,8 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
@@ -813,4 +815,169 @@ func TestDecodeIndexHandleWithPartitionIDInKeyAndValue(t *testing.T) {
 
 	// Verify the inner handle is the expected IntHandle
 	require.Equal(t, kv.IntHandle(handleID), ph.Handle, "inner handle should be IntHandle")
+}
+
+// TestUniqueGlobalIndexKeyWithNullValues tests that for unique global indexes on
+// non-clustered tables:
+// - Non-NULL values do NOT have partition ID in the key (distinct = true)
+// - NULL values DO have partition ID in the key (distinct = false)
+// - Partition ID is always in the value for global indexes
+// This is critical after EXCHANGE PARTITION where duplicate _tidb_rowid values can exist.
+func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
+	tableID := int64(100)
+	partitionID := int64(42)
+	handleID := int64(999)
+
+	// Build a simple TableInfo and IndexInfo for a unique global index
+	// on a non-clustered table (no clustered index)
+	tblInfo := &model.TableInfo{
+		ID:   tableID,
+		Name: ast.NewCIStr("test_table"),
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLong),
+			},
+			{
+				ID:        2,
+				Name:      ast.NewCIStr("b"),
+				Offset:    1,
+				FieldType: *types.NewFieldType(mysql.TypeLong),
+			},
+		},
+		// Non-clustered table (PKIsHandle = false, IsCommonHandle = false)
+		PKIsHandle:     false,
+		IsCommonHandle: false,
+	}
+
+	idxInfo := &model.IndexInfo{
+		ID:   1,
+		Name: ast.NewCIStr("idx_b"),
+		Columns: []*model.IndexColumn{
+			{
+				Name:   ast.NewCIStr("b"),
+				Offset: 1,
+				Length: types.UnspecifiedLength,
+			},
+		},
+		Unique:             true,
+		Global:             true,
+		GlobalIndexVersion: model.GlobalIndexVersionV1,
+		State:              model.StatePublic,
+	}
+
+	loc := time.UTC
+
+	t.Run("non-NULL value should NOT have partition ID in key", func(t *testing.T) {
+		// For unique index with non-NULL values, distinct = true,
+		// so the handle is NOT encoded in the key at all.
+		indexedValues := []types.Datum{types.NewIntDatum(123)}
+		handle := kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
+
+		key, distinct, err := GenIndexKey(loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
+		require.NoError(t, err)
+		require.True(t, distinct, "unique index with non-NULL value should be distinct")
+
+		// The key should NOT contain the partition ID flag since distinct = true
+		// means no handle (and thus no partition ID) is encoded in the key
+		require.NotContains(t, key, []byte{PartitionIDFlag},
+			"unique index key with non-NULL value should NOT contain partition ID")
+
+		// Verify key structure: tablePrefix + tableID + indexPrefixSep + indexID + encodedValues
+		// No handle suffix expected
+		require.True(t, len(key) > 0, "key should not be empty")
+	})
+
+	t.Run("NULL value should have partition ID in key", func(t *testing.T) {
+		// For unique index with NULL values, distinct = false,
+		// so the handle IS encoded in the key, including partition ID for V1+.
+		indexedValues := []types.Datum{types.NewDatum(nil)} // NULL value
+		handle := kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
+
+		key, distinct, err := GenIndexKey(loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
+		require.NoError(t, err)
+		require.False(t, distinct, "unique index with NULL value should NOT be distinct")
+
+		// The key SHOULD contain the partition ID since distinct = false
+		// and GlobalIndexVersion >= V1
+		containsPartitionIDFlag := false
+		for i := 0; i < len(key)-1; i++ {
+			if key[i] == PartitionIDFlag {
+				containsPartitionIDFlag = true
+				// Verify the partition ID is correctly encoded after the flag
+				if i+9 <= len(key) {
+					decodedPartID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(key[i+1 : i+9]))
+					require.Equal(t, partitionID, decodedPartID,
+						"partition ID in key should match expected value")
+				}
+				break
+			}
+		}
+		require.True(t, containsPartitionIDFlag,
+			"unique index key with NULL value should contain partition ID flag")
+	})
+
+	t.Run("partition ID should be in value for global index", func(t *testing.T) {
+		// For both distinct and non-distinct global indexes, partition ID
+		// should be encoded in the value.
+		indexedValues := []types.Datum{types.NewIntDatum(123)}
+		handle := kv.IntHandle(handleID)
+
+		// Generate the index value
+		value, err := genIndexValueVersion0(loc, tblInfo, idxInfo, false, true, false,
+			indexedValues, handle, partitionID, nil)
+		require.NoError(t, err)
+
+		// The value should contain the partition ID
+		containsPartitionIDFlag := false
+		for i := 0; i < len(value)-1; i++ {
+			if value[i] == PartitionIDFlag {
+				containsPartitionIDFlag = true
+				// Verify the partition ID is correctly encoded after the flag
+				if i+9 <= len(value) {
+					decodedPartID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(value[i+1 : i+9]))
+					require.Equal(t, partitionID, decodedPartID,
+						"partition ID in value should match expected value")
+				}
+				break
+			}
+		}
+		require.True(t, containsPartitionIDFlag,
+			"global index value should contain partition ID flag")
+	})
+
+	t.Run("version 0 unique index with NULL should NOT have partition ID in key", func(t *testing.T) {
+		// Test that legacy (version 0) unique indexes do NOT have partition ID in key
+		// even with NULL values - this verifies backward compatibility
+		idxInfoV0 := &model.IndexInfo{
+			ID:   1,
+			Name: ast.NewCIStr("idx_b_v0"),
+			Columns: []*model.IndexColumn{
+				{
+					Name:   ast.NewCIStr("b"),
+					Offset: 1,
+					Length: types.UnspecifiedLength,
+				},
+			},
+			Unique:             true,
+			Global:             true,
+			GlobalIndexVersion: 0, // Legacy version
+			State:              model.StatePublic,
+		}
+
+		indexedValues := []types.Datum{types.NewDatum(nil)} // NULL value
+		handle := kv.IntHandle(handleID)
+
+		key, distinct, err := GenIndexKey(loc, tblInfo, idxInfoV0, tableID, indexedValues, handle, nil)
+		require.NoError(t, err)
+		require.False(t, distinct, "unique index with NULL value should NOT be distinct")
+
+		// The key should NOT contain partition ID flag for version 0
+		for i := 0; i < len(key)-1; i++ {
+			require.NotEqual(t, PartitionIDFlag, key[i],
+				"legacy (v0) global index key should NOT contain partition ID flag")
+		}
+	})
 }
