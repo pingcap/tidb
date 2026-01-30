@@ -379,7 +379,6 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 		}
 	}
 	p.NeedCommonHandle = p.Table.IsCommonHandle
-
 	if p.NeedCommonHandle {
 		for i := len(p.Index.Columns); i < len(idxExprCols); i++ {
 			indexCols = append(indexCols, idxExprCols[i])
@@ -387,9 +386,17 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	}
 	setHandle := len(indexCols) > len(p.Index.Columns)
 	if !setHandle {
-		for i, col := range p.Columns {
+		for _, col := range p.Columns {
 			if (mysql.HasPriKeyFlag(col.GetFlag()) && p.Table.PKIsHandle) || col.ID == model.ExtraHandleID {
-				indexCols = append(indexCols, p.DataSourceSchema.Columns[i])
+				handleCol := expression.ColInfo2Col(p.DataSourceSchema.Columns, col)
+				if handleCol == nil {
+					handleCol = &expression.Column{
+						ID:       col.ID,
+						RetType:  &col.FieldType,
+						UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
+					}
+				}
+				indexCols = append(indexCols, handleCol)
 				setHandle = true
 				break
 			}
@@ -406,7 +413,7 @@ func (p *PhysicalIndexScan) InitSchema(idxExprCols []*expression.Column, isDoubl
 	}
 
 	if isDoubleRead || p.Index.Global {
-		// If it's double read case, the first index must return handle. So we should add extra handle column
+		// If it's double read case, the first index must return handle. So we should add handle column
 		// if there isn't a handle column.
 		if !setHandle {
 			if !p.Table.IsCommonHandle {
@@ -626,7 +633,7 @@ func GetPhysicalIndexScan4LogicalIndexScan(s *logicalop.LogicalIndexScan, _ *exp
 		IdxColLens:       s.IdxColLens,
 		AccessCondition:  s.AccessConds,
 		Ranges:           s.Ranges,
-		DataSourceSchema: ds.Schema(),
+		DataSourceSchema: ds.Schema().Clone(),
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,
@@ -650,7 +657,7 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		IdxColLens:       path.IdxColLens,
 		AccessCondition:  path.AccessConds,
 		Ranges:           path.Ranges,
-		DataSourceSchema: ds.Schema(),
+		DataSourceSchema: ds.Schema().Clone(),
 		IsPartition:      ds.PartitionDefIdx != nil,
 		PhysicalTableID:  ds.PhysicalTableID,
 		TblColHists:      ds.TblColHists,

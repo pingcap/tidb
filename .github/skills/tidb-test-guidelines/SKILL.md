@@ -21,6 +21,8 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - Prefer table-driven tests for related scenarios in the same behavior area.
 - Reuse existing helper setups and test fixtures; avoid re-creating schemas unless required.
 - Prefer one `store` + one `testkit` per test; when a single test covers multiple scenarios, use distinct table names and restore any session/system variables to their original values.
+- Use `tk` as the testkit variable name and avoid `testKit` to keep style consistent.
+- When using `tk.MustQuery`, always call `Check(...)` on the result to assert expected rows.
 - If a test must use multiple sessions or domains (for example, cross-session cache behavior), keep the extra stores/testkits but document why in the test.
 - Keep per-test runtime short; consolidate similar checks only if runtime stays reasonable.
 - Use behavior-based test names; never use issue-id-only names.
