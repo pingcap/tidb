@@ -231,8 +231,7 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	// in the output schema. Even if they are not needed by DataSource's parent operator. Thus add a projection here to prune useless columns
 	// Limit to MPP tasks, because TiKV can't benefit from this now(projection can't be pushed down to TiKV now).
 	// If the parent operator need no columns from the DataSource, we return the smallest column. Don't add the empty proj.
-	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() &&
-		(ds.TableInfo.TiFlashReplica != nil || UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)) {
+	if !addOneHandle && ds.Schema().Len() > len(parentUsedCols) && len(parentUsedCols) > 0 && ds.SCtx().GetSessionVars().IsMPPEnforced() && ds.HasTiflash() {
 		proj := LogicalProjection{
 			Exprs: expression.Column2Exprs(parentUsedCols),
 		}.Init(ds.SCtx(), ds.QueryBlockOffset())
@@ -242,6 +241,14 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 		return proj, nil
 	}
 	return ds, nil
+}
+
+// HasTiflash is to check whether the table has tiflash replica. It is used before PreparePossibleProperties.
+// After PreparePossibleProperties, you should use ds.hasTiflash directly.
+func (ds *DataSource) HasTiflash() bool {
+	return (ds.TableInfo.TiFlashReplica != nil && ds.TableInfo.TiFlashReplica.Available &&
+		ds.TableInfo.TiFlashReplica.Count > 0) ||
+		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
 }
 
 // BuildKeyInfo implements base.LogicalPlan.<4th> interface.
@@ -802,7 +809,7 @@ func (ds *DataSource) CheckPartialIndexes() {
 	}
 }
 
-// UsedHypoTiFlashReplicas is to use wether this table will use HypoTiFlashReplicas
+// UsedHypoTiFlashReplicas is to use whether this table will use HypoTiFlashReplicas
 func UsedHypoTiFlashReplicas(ctx *variable.SessionVars, dbName ast.CIStr, tblInfo *model.TableInfo) bool {
 	if ctx.StmtCtx.InExplainStmt && ctx.HypoTiFlashReplicas != nil {
 		hypoReplicas := ctx.HypoTiFlashReplicas
