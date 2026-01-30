@@ -97,7 +97,7 @@ explain format='brief' select * from tt where a+1 = 5 and b=3;
 id	estRows	task	access object	operator info
 Projection	0.10	root		planner__core__plan.tt.a, planner__core__plan.tt.b
 └─IndexLookUp	0.10	root		
-  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:tt, index:k1(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
+  ├─IndexRangeScan(Build)	0.10	cop[tikv]	table:tt, index:k2(`a` + 1, b)	range:[5 3,5 3], keep order:false, stats:pseudo
   └─TableRowIDScan(Probe)	0.10	cop[tikv]	table:tt	keep order:false, stats:pseudo
 explain format='brief' select * from tt where a+1 = 5 and b=3;
 id	estRows	task	access object	operator info
