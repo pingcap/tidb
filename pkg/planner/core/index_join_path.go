@@ -743,6 +743,7 @@ func getBestIndexJoinPathResultByProp(
 	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
+
 	keyOff2IdxOff := make([]int, len(indexJoinProp.InnerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1
@@ -790,6 +791,7 @@ func getBestIndexJoinPathResult(
 	if bestResult == nil || bestResult.chosenPath == nil {
 		return nil, nil
 	}
+
 	keyOff2IdxOff := make([]int, len(innerJoinKeys))
 	for i := range keyOff2IdxOff {
 		keyOff2IdxOff[i] = -1

@@ -1447,6 +1447,9 @@ func constructDS2IndexScanTask(
 		TblColHists:      ds.TblColHists,
 		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+
+	is.SetNoncacheableReason(path.NoncacheableReason)
+
 	cop := &physicalop.CopTask{
 		IndexPlan:   is,
 		TblColHists: ds.TblColHists,

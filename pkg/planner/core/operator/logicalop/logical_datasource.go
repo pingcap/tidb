@@ -502,6 +502,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	is.SetNoncacheableReason(path.NoncacheableReason)
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -513,6 +514,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IsIndexGather: true,
 		Index:         path.Index,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	sg.SetNoncacheableReason(path.NoncacheableReason)
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg
