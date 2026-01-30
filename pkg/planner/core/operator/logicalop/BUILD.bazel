@@ -67,6 +67,7 @@ go_library(
         "//pkg/planner/util/tablesampler",
         "//pkg/planner/util/utilfuncp",
         "//pkg/sessionctx",
+        "//pkg/sessionctx/variable",
         "//pkg/statistics",
         "//pkg/table",
         "//pkg/types",
