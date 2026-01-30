@@ -43,7 +43,7 @@ type TopSQLReporter interface {
 	// Start uses to start the reporter.
 	Start()
 
-	// RegisterSQL registers a normalizedSQL with SQLDigest.
+	// RegisterSQL registers a normalizedSQL with RedactedText.
 	//
 	// Note that the normalized SQL string can be of >1M long.
 	// This function should be thread-safe, which means concurrently calling it

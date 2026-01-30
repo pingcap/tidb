@@ -162,7 +162,7 @@ func TestTetchAllSchemasWithTables(t *testing.T) {
 	require.Equal(t, len(dbs), 5)
 }
 
-func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
+func TestFetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	lease := 100 * time.Millisecond
 	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
@@ -194,7 +194,7 @@ func TestTetchAllSchemasWithTablesWithFailpoint(t *testing.T) {
 	require.Equal(t, len(dbs), 1003)
 
 	// inject the failpoint
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "1*return()"))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables", "return()"))
 	defer func() {
 		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/failed-fetch-schemas-with-tables"))
 	}()
