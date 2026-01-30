@@ -45,6 +45,9 @@ const ExtraPhysTblID = -3
 // ExtraRowChecksumID is the column ID of column which holds the row checksum info.
 const ExtraRowChecksumID = -4
 
+// ExtraCommitTSID is the column ID of column which holds the commit timestamp.
+const ExtraCommitTSID = -5
+
 const (
 	// TableInfoVersion0 means the table info version is 0.
 	// Upgrade from v2.1.1 or v2.1.2 to v2.1.3 and later, and then execute a "change/modify column" statement
@@ -195,6 +198,11 @@ type TableInfo struct {
 	// Affinity stores the affinity info for the table
 	// If it is nil, it means no affinity
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
+
+	// IsActiveActive means the table is active-active table.
+	IsActiveActive bool `json:"is_active_active,omitempty"`
+	// SoftdeleteInfo is softdelete TTL. It is required if IsActiveActive == true.
+	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
@@ -1445,6 +1453,20 @@ func NewTableAffinityInfoWithLevel(level string) (*TableAffinityInfo, error) {
 
 // Clone clones TableAffinityInfo
 func (t *TableAffinityInfo) Clone() *TableAffinityInfo {
+	cloned := *t
+	return &cloned
+}
+
+// SoftdeleteInfo records the Softdelete config.
+type SoftdeleteInfo struct {
+	Retention string `json:"retention,omitempty"`
+	// JobEnable is used to control the cleanup JobEnable
+	JobEnable   bool   `json:"job_enable,omitempty"`
+	JobInterval string `json:"job_interval,omitempty"`
+}
+
+// Clone clones TTLInfo
+func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
 	cloned := *t
 	return &cloned
 }

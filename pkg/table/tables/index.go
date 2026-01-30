@@ -248,7 +248,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 			// should not overwrite the key with un-commit flag.
 			// So if the key exists, just do nothing and return.
-			v, err := txn.GetMemBuffer().Get(ctx, key)
+			v, err := kv.GetValue(ctx, txn.GetMemBuffer(), key)
 			if err == nil {
 				if len(v) != 0 {
 					continue
@@ -332,7 +332,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			// In DeleteReorganization, overwrite Global Index keys pointing to
 			// old dropped/truncated partitions.
 			// Note that a partitioned table cannot be temporary table
-			value, err = txn.Get(ctx, key)
+			value, err = kv.GetValue(ctx, txn, key)
 			if err == nil && len(value) != 0 {
 				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
 				if errPart != nil {
@@ -354,7 +354,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 		} else if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			value, err = txn.Get(ctx, key)
+			value, err = kv.GetValue(ctx, txn, key)
 		} else if hasTempKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
@@ -380,7 +380,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy {
 			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
 		} else {
-			value, err = txn.Get(ctx, key)
+			value, err = kv.GetValue(ctx, txn, key)
 		}
 		if err != nil && !kv.IsErrNotFound(err) {
 			return nil, err
@@ -708,7 +708,7 @@ func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, d
 
 // getKeyInTxn gets the value of the key in the transaction, and ignore the ErrNotExist error.
 func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
-	val, err := txn.Get(ctx, key)
+	val, err := kv.GetValue(ctx, txn, key)
 	if err != nil {
 		if kv.IsErrNotFound(err) {
 			return nil, nil

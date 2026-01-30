@@ -983,7 +983,7 @@ func TestSkipWriteUntouchedIndices(t *testing.T) {
 			key, distinct, err := tbl.Indices()[idx].GenIndexKey(ec, time.UTC, []types.Datum{val}, h, nil)
 			require.NoError(t, err)
 			require.False(t, distinct)
-			indexVal, err := memBuffer.Get(context.TODO(), key)
+			indexVal, err := kv.GetValue(context.TODO(), memBuffer, key)
 			if !exists {
 				require.True(t, kv.ErrNotExist.Equal(err))
 				return
