@@ -29,9 +29,10 @@ type batchFlusher[K comparable, V any] struct {
 	timer     *time.Timer
 	interval  time.Duration
 	threshold int
-	fired     bool
-	mergeFn   func(map[K]V, K, V)
-	flushFn   func(map[K]V)
+	// Used to reset the timer lazily with the first `add` operation after the flush.
+	flushed bool
+	mergeFn func(map[K]V, K, V)
+	flushFn func(map[K]V)
 }
 
 func newBatchFlusher[K comparable, V any](
@@ -51,12 +52,16 @@ func newBatchFlusher[K comparable, V any](
 		mergeFn:   mergeFn,
 	}
 	f.flushFn = func(buffer map[K]V) {
+		count := len(buffer)
+		if count == 0 {
+			return
+		}
 		sql, params := genSQL(buffer)
 		if _, err := ExecRCRestrictedSQL(pool, sql, params); err != nil {
 			logutil.BgLogger().Error("batch flush failed",
 				zap.String("name", name),
-				zap.Error(err),
-				zap.Int("count", len(buffer)))
+				zap.Int("count", count),
+				zap.Error(err))
 		}
 	}
 	return f
@@ -66,20 +71,17 @@ func (f *batchFlusher[K, V]) timerChan() <-chan time.Time {
 	return f.timer.C
 }
 
-func (f *batchFlusher[K, V]) onTimer() {
-	f.flush()
-	f.fired = true
-}
-
 func (f *batchFlusher[K, V]) add(key K, value V) {
 	f.mergeFn(f.buffer, key, value)
+	shouldFlush := len(f.buffer) >= f.threshold
 	failpoint.Inject("FastRunawayGC", func() {
-		f.flush()
+		shouldFlush = true
 	})
-	if len(f.buffer) >= f.threshold {
+	if shouldFlush {
 		f.flush()
-	} else if f.fired {
-		f.fired = false
+	} else if f.flushed {
+		f.flushed = false
+		// Reset the timer to restart the flush cycle.
 		f.timer.Reset(f.interval)
 	}
 }
@@ -92,5 +94,7 @@ func (f *batchFlusher[K, V]) flush() {
 		return
 	}
 	f.flushFn(f.buffer)
+	// Mark the flushed flag.
+	f.flushed = true
 	f.buffer = make(map[K]V, f.threshold)
 }
