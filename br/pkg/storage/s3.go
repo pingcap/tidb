@@ -1008,6 +1008,19 @@ func (r *s3ObjectReader) Read(p []byte) (n int, err error) {
 		n, err = r.reader.Read(p[:maxCnt])
 	}
 
+	if errors.Cause(err) == io.EOF && r.pos+int64(n) < r.rangeInfo.End+1 {
+		log.L().Warn(
+			"read s3 object got EOF before expected range end",
+			zap.String("file", r.name),
+			zap.Int("n", n),
+			zap.Int64("pos", r.pos),
+			zap.Int64("nextPos", r.pos+int64(n)),
+			zap.Int64("rangeStart", r.rangeInfo.Start),
+			zap.Int64("rangeEnd", r.rangeInfo.End),
+			zap.Int64("rangeSize", r.rangeInfo.Size),
+		)
+	}
+
 	r.pos += int64(n)
 	return
 }
