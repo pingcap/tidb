@@ -268,40 +268,39 @@ func (r *Runner) runParallelTick(
 	var firstErr error
 
 	for _, spec := range selected {
-		spec := spec
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(
+			func() {
+				defer wg.Done()
 
-			mu.Lock()
-			state, ok := states[spec.Name]
-			mu.Unlock()
-			if !ok {
-				once.Do(func() {
-					firstErr = fmt.Errorf("workload: case %q not found in state store; run Prepare first", spec.Name)
-					cancel()
-				})
-				return
-			}
-			rng := rngs[spec.Name]
+				mu.Lock()
+				state, ok := states[spec.Name]
+				mu.Unlock()
+				if !ok {
+					once.Do(func() {
+						firstErr = fmt.Errorf("workload: case %q not found in state store; run Prepare first", spec.Name)
+						cancel()
+					})
+					return
+				}
+				rng := rngs[spec.Name]
 
-			tickCtx := TickContext{
-				Context: Context{Context: runCtx, DB: r.db},
-				RNG:     rng,
-				UpdateStateFn: func(updated json.RawMessage) {
-					mu.Lock()
-					states[spec.Name] = updated
-					mu.Unlock()
-				},
-			}
-			if err := spec.Case.Tick(tickCtx, state); err != nil {
-				once.Do(func() {
-					firstErr = err
-					cancel()
-				})
-				return
-			}
-		}()
+				tickCtx := TickContext{
+					Context: Context{Context: runCtx, DB: r.db},
+					RNG:     rng,
+					UpdateStateFn: func(updated json.RawMessage) {
+						mu.Lock()
+						states[spec.Name] = updated
+						mu.Unlock()
+					},
+				}
+				if err := spec.Case.Tick(tickCtx, state); err != nil {
+					once.Do(func() {
+						firstErr = err
+						cancel()
+					})
+					return
+				}
+			})
 	}
 	wg.Wait()
 	return firstErr
