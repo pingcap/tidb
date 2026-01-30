@@ -1450,7 +1450,7 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	// when prop has PartialOrderInfo physical property,
 	// So here we just need to record the partial order match result(prefixCol, prefixLen).
 	// The partialOrderMatchResult.Matched() will be always true after skyline pruning.
-	if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN == "COST" && prop.PartialOrderInfo != nil {
+	if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() && prop.PartialOrderInfo != nil {
 		candidate.partialOrderMatchResult = matchPartialOrderProperty(path, prop.PartialOrderInfo)
 	}
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
@@ -1528,7 +1528,7 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		} else {
 			// Check if this path can be used for partial order optimization
 			var matchPartialOrderIndex bool
-			if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN == "COST" &&
+			if ds.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() &&
 				prop.PartialOrderInfo != nil {
 				if !matchPartialOrderProperty(path, prop.PartialOrderInfo).Matched {
 					// skyline pruning all indexes that cannot provide partial order when we are looking for

@@ -2074,6 +2074,12 @@ func (s *SessionVars) GetExecuteDuration() time.Duration {
 	return time.Since(s.StartTime) - s.DurationCompile
 }
 
+// IsPartialOrderedIndexForTopNEnabled indicates whether the partial ordered index optimization for TOPN queries is enabled.
+// TODO: consider more options other than "COST" in the future.
+func (s *SessionVars) IsPartialOrderedIndexForTopNEnabled() bool {
+	return s.OptPartialOrderedIndexForTopN == "COST"
+}
+
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
 
