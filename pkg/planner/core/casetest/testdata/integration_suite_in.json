@@ -1,13 +1,5 @@
 [
   {
-    "name": "TestIssue31240",
-    "cases": [
-      "explain format = 'plan_tree' select count(*) from t31240;",
-      "set @@tidb_isolation_read_engines=\"tiflash,tidb\";",
-      "explain format = 'plan_tree' select count(*) from t31240;"
-    ]
-  },
-  {
     "name": "TestVerboseExplain",
     "cases": [
       "explain format = 'verbose' select count(*) from t3",
@@ -24,7 +16,10 @@
       "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
       "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
       "explain format = 'verbose' select (2) in (select /*+ read_from_storage(tiflash[t1]) */ count(*) from t1) from (select t.b < (select /*+ read_from_storage(tiflash[t2]) */ t.b from t2 limit 1 )  from t3 t) t; -- we do generate the agg pushed-down plan of mpp, but cost-cmp failed",
-      "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a"
+      "explain format = 'verbose' select /*+ merge_join(t1), read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a",
+      "explain format = 'plan_tree' /*+ set_var(tidb_allow_mpp=0), set_var(tidb_allow_tiflash_cop=1) */ select count(*) from t31240;",
+      "explain format = 'plan_tree' /*+ set_var(tidb_isolation_read_engines='tiflash,tidb'), set_var(tidb_allow_mpp=0), set_var(tidb_allow_tiflash_cop=1) */ select count(*) from t31240;",
+      "explain format = 'plan_tree' /*+ set_var(tidb_allow_mpp=1), set_var(tidb_enforce_mpp=1) */ select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;"
     ]
   },
   {
@@ -94,12 +89,6 @@
       "explain format = 'plan_tree' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by id<10) from ts group by col_1",
       "explain format = 'plan_tree' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0>10 order by id<10) from ts group by col_1",
       "explain format = 'plan_tree' select /*+ hash_agg(),agg_to_cop() */ group_concat(distinct col_0 order by col_0<=>null) from ts"
-    ]
-  },
-  {
-    "name": "TestIssue32632",
-    "cases": [
-      "explain format = 'plan_tree' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;"
     ]
   },
   {
