@@ -156,9 +156,11 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		}
 	})
 TASKLOOP:
+	sentTasks := 0
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
+			sentTasks++
 		case <-e.errExitCh:
 			break TASKLOOP
 		case <-gctx.Done():
@@ -180,6 +182,12 @@ TASKLOOP:
 			if cause := context.Cause(ctx); cause != nil {
 				err = cause
 			}
+		}
+		for task := range taskCh {
+			finishJobWithLog(statsHandle, task.job, err)
+		}
+		for i := sentTasks; i < len(tasks); i++ {
+			finishJobWithLog(statsHandle, tasks[i].job, err)
 		}
 		return err
 	}
