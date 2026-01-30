@@ -128,3 +128,49 @@ func SubTestFMSketchCoding() func(*testing.T) {
 		require.Equal(t, fmsketch.NDV(), pkSketch.NDV())
 	}
 }
+
+// generateTestData creates test data with various types for benchmarking
+func generateTestData(numBatch, batchSize int) [][]types.Datum {
+	data := make([][]types.Datum, numBatch)
+	for i := 0; i < numBatch; i++ {
+		data[i] = make([]types.Datum, batchSize)
+		for j := 0; j < batchSize; j++ {
+			data[i][j] = types.NewStringDatum(string(rune('a' + i%26)))
+		}
+	}
+	return data
+}
+
+// BenchmarkFMSketch_InsertValue benchmarks the traditional FMSketch.InsertValue
+// method called in a loop for multiple values.
+func BenchmarkFMSketch_InsertValue(b *testing.B) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
+	testData := generateTestData(1000, 1000)
+	sketch := NewFMSketch(1000)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		batch := testData[i%len(testData)]
+		for _, value := range batch {
+			_ = sketch.InsertValue(sc, value)
+		}
+	}
+}
+
+// BenchmarkFMSketchVec_InsertValueVec benchmarks the vectorized FMSketchVec.InsertValueVec
+// method that processes multiple values in batch.
+func BenchmarkFMSketchVec_InsertValueVec(b *testing.B) {
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
+	testData := generateTestData(1000, 1000)
+	sketchVec := NewFMSketchVec(1000)
+
+	b.ResetTimer()
+	b.ReportAllocs()
+
+	for i := 0; i < b.N; i++ {
+		batch := testData[i%len(testData)]
+		_ = sketchVec.InsertValueVec(sc, batch)
+	}
+}
