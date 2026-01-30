@@ -56,6 +56,28 @@ func TestCTEIssue49096(t *testing.T) {
 	tk.MustExec(sql) // No deadlock
 }
 
+func TestCTEValuesRow(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test;")
+	tk.MustQuery("with data as (values row(1), row(2)) select * from data order by column_0;").
+		Check(testkit.Rows("1", "2"))
+	tk.MustQuery("with data(a, b) as (values row(1, 2), row(3, 4)) select a, b from data order by a;").
+		Check(testkit.Rows("1 2", "3 4"))
+
+	tk.MustExec("drop table if exists cte_values_t;")
+	tk.MustExec("create table cte_values_t(a int primary key);")
+	tk.MustExec("insert into cte_values_t with data as (values row(1), row(2)) select * from data;")
+	tk.MustQuery("select a from cte_values_t order by a;").Check(testkit.Rows("1", "2"))
+
+	tk.MustExec("with data as (values row(1)) update cte_values_t set a = a + 10 where a in (select column_0 from data);")
+	tk.MustQuery("select a from cte_values_t order by a;").Check(testkit.Rows("2", "11"))
+
+	tk.MustExec("with data as (values row(2), row(11)) delete from cte_values_t where a in (select column_0 from data);")
+	tk.MustQuery("select a from cte_values_t;").Check(testkit.Rows())
+}
+
 func TestSpillToDisk(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
