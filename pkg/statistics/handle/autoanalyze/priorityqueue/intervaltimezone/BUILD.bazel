@@ -1,23 +1,21 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_test")
 
 go_test(
-    name = "windows_test",
+    name = "intervaltimezone_test",
     timeout = "short",
     srcs = [
+        "interval_timezone_test.go",
         "main_test.go",
-        "widow_with_exist_subquery_test.go",
-        "window_push_down_test.go",
     ],
-    data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 4,
     deps = [
-        "//pkg/domain",
+        "//pkg/sessionctx",
+        "//pkg/statistics",
+        "//pkg/statistics/handle/autoanalyze/priorityqueue",
+        "//pkg/statistics/handle/util",
         "//pkg/testkit",
-        "//pkg/testkit/testdata",
-        "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
-        "@com_github_pingcap_failpoint//:failpoint",
+        "//pkg/util/timeutil",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

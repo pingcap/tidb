@@ -692,7 +692,7 @@ func planCachePointGetPrepareData(tk *testkit.TestKit) {
 	tk.MustExec(fmt.Sprintf(`insert into t2 values %v`, strings.Join(vals, ",")))
 }
 
-func planCachePointGetQueries(isNonPrep bool) []string {
+func planCachePointGetQueries(isNonPrep bool, rounds int) []string {
 	v := func() string {
 		var vStr string
 		switch rand.Intn(3) {
@@ -720,8 +720,8 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 		}
 		return fmt.Sprintf("%v %v %v", col, op, v())
 	}
-	queries := make([]string, 0, 50*12)
-	for range 50 {
+	queries := make([]string, 0, rounds*12)
+	for range rounds {
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v", f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v", f(), f()))
 		queries = append(queries, fmt.Sprintf("select * from t1 where %v and %v and %v", f(), f(), f()))
@@ -738,7 +738,7 @@ func planCachePointGetQueries(isNonPrep bool) []string {
 	return queries
 }
 
-func planCacheIntConvertQueries(isNonPrep bool) []string {
+func planCacheIntConvertQueries(isNonPrep bool, rounds int) []string {
 	cols := []string{"a", "b", "c", "d"}
 	ops := []string{"=", ">", "<", ">=", "<=", "in", "is null"}
 	v := func() string {
@@ -782,8 +782,8 @@ func planCacheIntConvertQueries(isNonPrep bool) []string {
 		}
 		return strings.Join(fs, ", ")
 	}
-	queries := make([]string, 0, 50*6)
-	for range 50 {
+	queries := make([]string, 0, rounds*6)
+	for range rounds {
 		queries = append(queries, fmt.Sprintf("select %v from t where %v", fields(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v", fields(), f(), f()))
 		queries = append(queries, fmt.Sprintf("select %v from t where %v and %v and %v", fields(), f(), f(), f()))
@@ -821,7 +821,7 @@ func planCacheIntConvertPrepareData(tk *testkit.TestKit) {
 	tk.MustExec("insert into t values " + strings.Join(vals, ","))
 }
 
-func planCacheIndexMergeQueries(isNonPrep bool) []string {
+func planCacheIndexMergeQueries(isNonPrep bool, rounds int) []string {
 	ops := []string{"=", ">", "<", ">=", "<=", "in", "mod", "is null"}
 	f := func(col string) string {
 		n := rand.Intn(20) - 10
@@ -865,8 +865,8 @@ func planCacheIndexMergeQueries(isNonPrep bool) []string {
 			return "*"
 		}
 	}
-	queries := make([]string, 0, 50*12)
-	for range 50 {
+	queries := make([]string, 0, rounds*12)
+	for range rounds {
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b) */ %s from t where %s and %s", fields(), f("a"), f("b")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, c) */ %s from t where %s and %s", fields(), f("a"), f("c")))
 		queries = append(queries, fmt.Sprintf("select /*+ use_index_merge(t, a, b, c) */ %s from t where %s and %s and %s", fields(), f("a"), f("b"), f("c")))
@@ -901,39 +901,48 @@ func planCacheIndexMergePrepareData(tk *testkit.TestKit) {
 }
 
 func TestPlanCacheRandomCases(t *testing.T) {
+	rounds := 20
+	if testing.Short() {
+		rounds = 10
+	}
+	store := testkit.CreateMockStore(t)
 	t.Run("1", func(t *testing.T) {
-		testRandomPlanCacheCases(t, planCacheIndexMergePrepareData, planCacheIndexMergeQueries)
+		testRandomPlanCacheCases(t, store, planCacheIndexMergePrepareData, planCacheIndexMergeQueries, rounds)
 	})
 	t.Run("2", func(t *testing.T) {
-		testRandomPlanCacheCases(t, planCacheIntConvertPrepareData, planCacheIntConvertQueries)
+		testRandomPlanCacheCases(t, store, planCacheIntConvertPrepareData, planCacheIntConvertQueries, rounds)
 	})
 	t.Run("3", func(t *testing.T) {
-		testRandomPlanCacheCases(t, planCachePointGetPrepareData, planCachePointGetQueries)
+		testRandomPlanCacheCases(t, store, planCachePointGetPrepareData, planCachePointGetQueries, rounds)
 	})
 }
 
 func testRandomPlanCacheCases(t *testing.T,
+	store kv.Storage,
 	prepFunc func(tk *testkit.TestKit),
-	queryFunc func(isNonPrep bool) []string) {
-	store := testkit.CreateMockStore(t)
+	queryFunc func(isNonPrep bool, rounds int) []string,
+	rounds int) {
 	tk := testkit.NewTestKit(t, store)
 	prepFunc(tk)
 
-	// nonprepared plan cache
-	for _, q := range queryFunc(true) {
-		tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
-		result1 := tk.MustQuery(q).Sort()
-		tk.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+	tkNonPrepCache := testkit.NewTestKit(t, store)
+	tkNonPrepCache.MustExec("use test")
 
-		result2 := tk.MustQuery(q).Sort()
+	tk.MustExec("set tidb_enable_non_prepared_plan_cache=0")
+	tkNonPrepCache.MustExec("set tidb_enable_non_prepared_plan_cache=1")
+
+	// nonprepared plan cache
+	for _, q := range queryFunc(true, rounds) {
+		result1 := tk.MustQuery(q).Sort()
+		result2 := tkNonPrepCache.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 
-		result2 = tk.MustQuery(q).Sort()
+		result2 = tkNonPrepCache.MustQuery(q).Sort()
 		require.True(t, result1.Equal(result2.Rows()))
 	}
 
 	// prepared plan cache
-	for _, q := range queryFunc(false) {
+	for _, q := range queryFunc(false, rounds) {
 		q, prepStmt, parameters := convertQueryToPrepExecStmt(q)
 		result1 := tk.MustQuery(q).Sort()
 		tk.MustExec(prepStmt)

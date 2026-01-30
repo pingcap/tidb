@@ -1390,6 +1390,40 @@ func TestWalkDirWithEmptyPrefix(t *testing.T) {
 	require.Equal(t, 1, i)
 }
 
+func TestTryLockRemoteRootPathPrefix(t *testing.T) {
+	controller := gomock.NewController(t)
+	s3API := mock.NewMockS3API(controller)
+	storage := NewS3StorageForTest(
+		s3API,
+		&backuppb.S3{
+			Region:       "us-west-2",
+			Bucket:       "bucket",
+			Prefix:       "",
+			Acl:          "acl",
+			Sse:          "sse",
+			StorageClass: "sc",
+		},
+		nil,
+	)
+	defer controller.Finish()
+
+	s3API.EXPECT().
+		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+			require.Equal(t, "truncating.lock", aws.ToString(input.Prefix))
+			return nil, errors.New("stop")
+		})
+	s3API.EXPECT().
+		GetObject(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, _ *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+			return nil, errors.New("no such key")
+		})
+
+	_, err := TryLockRemote(context.Background(), storage, "truncating.lock", "hint")
+	require.Error(t, err)
+	require.ErrorContains(t, err, "during initial check")
+}
+
 func TestSendCreds(t *testing.T) {
 	accessKey := "ab"
 	secretAccessKey := "cd"
