@@ -1408,8 +1408,8 @@ func TestTryLockRemoteRootPathPrefix(t *testing.T) {
 	defer controller.Finish()
 
 	s3API.EXPECT().
-		ListObjects(gomock.Any(), gomock.Any(), gomock.Any()).
-		DoAndReturn(func(_ context.Context, input *s3.ListObjectsInput, _ ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+		ListObjectsV2(gomock.Any(), gomock.Any(), gomock.Any()).
+		DoAndReturn(func(_ context.Context, input *s3.ListObjectsV2Input, _ ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "truncating.lock", aws.ToString(input.Prefix))
 			return nil, errors.New("stop")
 		})
