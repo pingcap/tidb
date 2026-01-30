@@ -5371,8 +5371,21 @@ func pruneAndBuildColPositionInfoForDelete(
 		tblInfo := tbl.Meta()
 		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
+<<<<<<< HEAD
 		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo)
+=======
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil
+		for _, idx := range tblInfo.Indices {
+			if len(idx.ConditionExprString) > 0 {
+				// If the index has a partial index condition, we can't prune the columns.
+				skipPruning = true
+				break
+			}
+		}
+		if skipPruning {
+			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
+>>>>>>> 5fcd054a622 (planner: fix incorrect `TblColPosInfo` calculation in `buildDelete` after column pruning (#64698))
 			if err != nil {
 				return nil, nil, err
 			}
@@ -5403,12 +5416,20 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 
 // buildSingleTableColPosInfoForDelete builds columns mapping for delete without pruning any columns.
 // It's temp code path for partition table, foreign key and point get plan.
+<<<<<<< HEAD
 func buildSingleTableColPosInfoForDelete(
 	tbl table.Table,
 	colPosInfo *TblColPosInfo,
 ) error {
+=======
+func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop.TblColPosInfo, prePrunedCount int) error {
+>>>>>>> 5fcd054a622 (planner: fix incorrect `TblColPosInfo` calculation in `buildDelete` after column pruning (#64698))
 	tblLen := len(tbl.DeletableCols())
+	colPosInfo.Start -= prePrunedCount
 	colPosInfo.End = colPosInfo.Start + tblLen
+	for col := range colPosInfo.HandleCols.IterColumns() {
+		col.Index -= prePrunedCount
+	}
 	return nil
 }
 
