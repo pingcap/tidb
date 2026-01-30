@@ -44,6 +44,10 @@ go_test(
     timeout = "short",
     srcs = ["util_test.go"],
     flaky = True,
+<<<<<<< HEAD
+=======
+    shard_count = 3,
+>>>>>>> 32d5e26ab2e (statistics: sync stats session time_zone with global value (#65821))
     deps = [
         ":util",
         "//pkg/domain/infosync",
