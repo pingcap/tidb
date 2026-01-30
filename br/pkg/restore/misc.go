@@ -225,9 +225,10 @@ func CheckTableTrackerContainsTableIDsFromBlocklistFiles(
 		for _, tableId := range tableIds {
 			if tracker.ContainsTableId(tableId) || tracker.ContainsPartitionId(tableId) {
 				return errors.Errorf(
-					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) before snapshot backup(at %d). "+
-						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup.",
-					tableId, tableNameByTableId(tableId), restoredTs, restoreCommitTs, startTs)
+					"cannot restore the table(Id=%d, name=%s at %d) because it is log restored(at %d) after snapshot backup(at %d). "+
+						"Please respecify the filter that does not contain the table or replace with a newer snapshot backup(BackupTS > %d) "+
+						"or older restored ts(RestoreTS < %d).",
+					tableId, tableNameByTableId(tableId), restoredTs, restoreCommitTs, startTs, restoreCommitTs, restoreStartTs)
 			}
 			// the meta kv may not be backed by log restore
 			if checkTableIdLost(tableId) {
@@ -497,6 +498,9 @@ func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.S
 			}
 			if !inOneRegion && len(thisBatchBackupFileSet) > 0 {
 				// not in the same region, so this batch backup file set can be output
+				log.Info("generating one batch.", zap.Int("size", len(thisBatchBackupFileSet)),
+					zap.Binary("from", lastEndKey),
+					zap.Binary("to", file.startKey))
 				fn(thisBatchBackupFileSet)
 				thisBatchBackupFileSet = make([]BackupFileSet, 0)
 			}
@@ -527,6 +531,9 @@ func GroupOverlappedBackupFileSetsIter(ctx context.Context, regionClient split.S
 	}
 	// output the last batch backup file set
 	if len(thisBatchBackupFileSet) > 0 {
+		log.Info("generating one batch.", zap.Int("size", len(thisBatchBackupFileSet)),
+			zap.Binary("from", lastEndKey),
+			zap.Binary("to", []byte{}))
 		fn(thisBatchBackupFileSet)
 	}
 	return nil

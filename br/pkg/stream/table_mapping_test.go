@@ -1106,6 +1106,16 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 		require.Contains(t, collector.dbInfos, dbID)
 		require.Equal(t, dbName, collector.dbInfos[dbID].Name.O)
 
+		// Test write cf kvs are more than default cf kvs
+		err = tc.ParseMetaKvAndUpdateIdMapping(writeCFEntry, consts.WriteCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap, dbID)
+		// With WriteCF, the database name should now be set in DBReplace
+		require.Equal(t, dbName, tc.DBReplaceMap[dbID].Name)
+		// Collector should now be called
+		require.Contains(t, collector.dbInfos, dbID)
+		require.Equal(t, dbName, collector.dbInfos[dbID].Name.O)
+
 		// Test table key with DefaultCF
 		pi := model.PartitionInfo{
 			Enable:      true,
@@ -1155,6 +1165,21 @@ func TestParseMetaKvAndUpdateIdMapping(t *testing.T) {
 			Value: tableWriteCFData,
 		}
 
+		err = tc.ParseMetaKvAndUpdateIdMapping(tableWriteCFEntry, consts.WriteCF, ts, collector)
+		require.NoError(t, err)
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)
+		// With WriteCF, the table name should now be set in TableReplace
+		require.Equal(t, tableName, tc.DBReplaceMap[dbID].TableMap[tableID].Name)
+		// Collector should now be called
+		require.Contains(t, collector.tableInfos, dbID)
+		require.Contains(t, collector.tableInfos[dbID], tableID)
+		require.Equal(t, tableName, collector.tableInfos[dbID][tableID].Name.O)
+
+		// Verify partition IDs are mapped
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt1ID)
+		require.Contains(t, tc.DBReplaceMap[dbID].TableMap[tableID].PartitionMap, pt2ID)
+
+		// Test write cf kvs are more than default cf kvs
 		err = tc.ParseMetaKvAndUpdateIdMapping(tableWriteCFEntry, consts.WriteCF, ts, collector)
 		require.NoError(t, err)
 		require.Contains(t, tc.DBReplaceMap[dbID].TableMap, tableID)

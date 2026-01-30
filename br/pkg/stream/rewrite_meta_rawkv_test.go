@@ -31,6 +31,7 @@ func MockEmptySchemasReplace(midr *mockInsertDeleteRange, dbMap map[UpstreamID]*
 	}
 	return NewSchemasReplace(
 		dbMap,
+		false,
 		nil,
 		9527,
 		midr.mockRecordDeleteRange,
@@ -293,6 +294,7 @@ func TestRewriteTableInfoForPartitionTable(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		dbMap,
+		false,
 		nil,
 		0,
 		nil,
@@ -446,6 +448,7 @@ func TestRewriteTableInfoForExchangePartition(t *testing.T) {
 
 	sr := NewSchemasReplace(
 		tm.DBReplaceMap,
+		false,
 		nil,
 		0,
 		nil,
@@ -549,6 +552,41 @@ func TestRewriteTableInfoForTTLTable(t *testing.T) {
 	require.Equal(t, "1", tableInfo.TTLInfo.IntervalExprStr)
 	require.Equal(t, int(ast.TimeUnitDay), tableInfo.TTLInfo.IntervalTimeUnit)
 	require.False(t, tableInfo.TTLInfo.Enable)
+}
+
+func TestFromPitrIdMap(t *testing.T) {
+	dbReplace := map[int64]*DBReplace{
+		1: {
+			DbID: 1,
+			Name: "test_db",
+			TableMap: map[int64]*TableReplace{
+				100: {
+					TableID: 100,
+					Name:    "test_table",
+				},
+			},
+		},
+	}
+	dbInfo := &model.DBInfo{
+		ID:   2,
+		Name: pmodel.NewCIStr("test_db2"),
+	}
+	dbInfoValue, err := json.Marshal(dbInfo)
+	require.Nil(t, err)
+	tableInfo := &model.TableInfo{
+		ID:   101,
+		Name: pmodel.NewCIStr("test_table2"),
+	}
+	tableInfoValue, err := json.Marshal(tableInfo)
+	require.Nil(t, err)
+
+	sr := NewSchemasReplace(dbReplace, true, nil, 0, nil, false)
+	_, err = sr.rewriteDBInfo(dbInfoValue)
+	require.Nil(t, err)
+	_, err = sr.rewriteTableInfo(tableInfoValue, 1)
+	require.Nil(t, err)
+	_, err = sr.rewriteTableInfo(tableInfoValue, 2)
+	require.Nil(t, err)
 }
 
 // db:70->80 -

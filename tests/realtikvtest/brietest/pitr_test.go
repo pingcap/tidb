@@ -133,6 +133,22 @@ type LogBackupKit struct {
 	checkerF func(err error)
 }
 
+// getTestTempDir returns a temporary directory for tests.
+// If BRIETEST_TMPDIR is set, it creates a subdirectory there (useful for CI environments
+// where TiKV and test processes need to share the same filesystem).
+// Otherwise, it falls back to t.TempDir().
+func getTestTempDir(t *testing.T) string {
+	if baseDir := os.Getenv("BRIETEST_TMPDIR"); baseDir != "" {
+		dir := filepath.Join(baseDir, t.Name())
+		require.NoError(t, os.MkdirAll(dir, 0755))
+		t.Cleanup(func() {
+			os.RemoveAll(dir)
+		})
+		return dir
+	}
+	return t.TempDir()
+}
+
 func NewLogBackupKit(t *testing.T) *LogBackupKit {
 	tk := initTestKit(t)
 	metaCli := streamhelper.NewMetaDataClient(domain.GetDomain(tk.Session()).EtcdClient())
@@ -148,7 +164,7 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 		tk:      tk,
 		t:       t,
 		metaCli: metaCli,
-		base:    t.TempDir(),
+		base:    getTestTempDir(t),
 		checkerF: func(err error) {
 			require.NoError(t, err)
 		},
@@ -156,7 +172,7 @@ func NewLogBackupKit(t *testing.T) *LogBackupKit {
 }
 
 func (kit *LogBackupKit) tempFile(name string, content []byte) string {
-	path := filepath.Join(kit.t.TempDir(), name)
+	path := filepath.Join(kit.base, name)
 	require.NoError(kit.t, os.WriteFile(path, content, 0o666))
 	return path
 }

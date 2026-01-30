@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -135,118 +136,36 @@ func (t *SchemaVersionPairT) DownstreamVersion() string {
 	return fmt.Sprintf("%d.%d", t.DownstreamVersionMajor, t.DownstreamVersionMinor)
 }
 
-type schemaUpdateSQL struct {
-	schemaName string
-	tableName  string
-	sql        string
-}
-
-type versionSchemaUpdateSQL struct {
-	versionMajor int64
-	versionMinor int64
-	updateSQLs   []schemaUpdateSQL
-}
-
-var upgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
-	// upgrade from v8.1.0 to v8.5.0, update stats table schema
-	{versionMajor: 8, versionMinor: 1, updateSQLs: []schemaUpdateSQL{
-		{
-			schemaName: "mysql",
-			tableName:  "stats_meta",
-			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta ADD COLUMN IF NOT EXISTS last_stats_histograms_version bigint unsigned DEFAULT NULL",
-		},
-	}},
-	// TODO: add new update here if version > 8.1.0
-}
-
-var downgradeStatsTableSchemaList = []versionSchemaUpdateSQL{
-	// TODO: add new update here if version > 8.5.0
-	// downgrade from v8.5.0 to v8.1.0, update stats table schema
-	{versionMajor: 8, versionMinor: 5, updateSQLs: []schemaUpdateSQL{
-		{
-			schemaName: "mysql",
-			tableName:  "stats_meta",
-			sql:        "ALTER TABLE __TiDB_BR_Temporary_mysql.stats_meta DROP COLUMN IF EXISTS last_stats_histograms_version",
-		},
-	}},
-}
-
-func upgradeStatsTableSchema(
-	ctx context.Context,
-	renamedTables map[string]map[string]struct{},
-	fromMajor, fromMinor, toMajor, toMinor int64,
-	execution func(context.Context, string) error,
-) error {
-	for _, updateSQL := range upgradeStatsTableSchemaList {
-		if fromMajor > updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor > updateSQL.versionMinor) {
-			continue
-		}
-		if toMajor < updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor <= updateSQL.versionMinor) {
-			break
-		}
-		for _, sql := range updateSQL.updateSQLs {
-			if tables, ok := renamedTables[sql.schemaName]; ok {
-				if _, ok := tables[sql.tableName]; ok {
-					if err := execution(ctx, sql.sql); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func downgradeStatsTableSchema(
-	ctx context.Context,
-	statisticTables map[string]map[string]struct{},
-	fromMajor, fromMinor, toMajor, toMinor int64,
-	execution func(context.Context, string) error,
-) error {
-	for _, updateSQL := range downgradeStatsTableSchemaList {
-		if fromMajor < updateSQL.versionMajor || (fromMajor == updateSQL.versionMajor && fromMinor < updateSQL.versionMinor) {
-			continue
-		}
-		if toMajor > updateSQL.versionMajor || (toMajor == updateSQL.versionMajor && toMinor >= updateSQL.versionMinor) {
-			break
-		}
-		for _, sql := range updateSQL.updateSQLs {
-			if tables, ok := statisticTables[sql.schemaName]; ok {
-				if _, ok := tables[sql.tableName]; ok {
-					if err := execution(ctx, sql.sql); err != nil {
-						return errors.Trace(err)
-					}
-				}
-			}
-		}
-	}
-	return nil
-}
-
 func updateStatsTableSchema(
 	ctx context.Context,
 	renamedTables map[string]map[string]struct{},
-	versionPair SchemaVersionPairT,
+	infoSchema infoschema.InfoSchema,
 	execution func(context.Context, string) error,
 ) error {
-	if versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
-		versionPair.DownstreamVersionMinor == versionPair.UpstreamVersionMinor {
-		return nil
+	for schemaName, tableNames := range renamedTables {
+		for tableName := range tableNames {
+			tableFunctions, ok := updateStatsMetaSchemaFunctionMap[schemaName]
+			if !ok {
+				continue
+			}
+			updateFunction, ok := tableFunctions[tableName]
+			if !ok {
+				continue
+			}
+			downstreamTableInfo, err := infoSchema.TableInfoByName(pmodel.NewCIStr(schemaName), pmodel.NewCIStr(tableName))
+			if err != nil {
+				return errors.Annotatef(err, "failed to get downstream table info, schema: %s, table: %s", schemaName, tableName)
+			}
+			upstreamTableInfo, err := infoSchema.TableInfoByName(utils.TemporaryDBName(schemaName), pmodel.NewCIStr(tableName))
+			if err != nil {
+				return errors.Annotatef(err, "failed to get upstream table info, schema: %s, table: %s", utils.TemporaryDBName(schemaName).O, tableName)
+			}
+			if err := updateFunction(ctx, downstreamTableInfo, upstreamTableInfo, execution); err != nil {
+				return errors.Annotatef(err, "failed to update stats table schema, schema: %s, table: %s", schemaName, tableName)
+			}
+		}
 	}
-	if versionPair.DownstreamVersionMajor > versionPair.UpstreamVersionMajor ||
-		(versionPair.DownstreamVersionMajor == versionPair.UpstreamVersionMajor &&
-			versionPair.DownstreamVersionMinor > versionPair.UpstreamVersionMinor) {
-		return upgradeStatsTableSchema(ctx, renamedTables,
-			versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
-			versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
-			execution,
-		)
-	}
-	return downgradeStatsTableSchema(ctx, renamedTables,
-		versionPair.UpstreamVersionMajor, versionPair.UpstreamVersionMinor,
-		versionPair.DownstreamVersionMajor, versionPair.DownstreamVersionMinor,
-		execution,
-	)
+	return nil
 }
 
 func notifyUpdateAllUsersPrivilege(renamedTables map[string]map[string]struct{}, notifier func() error) error {
