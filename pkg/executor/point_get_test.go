@@ -17,6 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -26,8 +27,12 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/executor"
+	"github.com/pingcap/tidb/pkg/lightning/mydump"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
+	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
@@ -37,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -558,4 +565,68 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 	// check the goroutine logic is block
 	require.Never(t, func() bool { return done.Load() }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
+}
+
+func TestSoftDeleteImplicitDeleteRowsMetricsBySQLType(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	sctx := tk.Session().(sessionctx.Context)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int) softdelete retention 7 day")
+	tk.MustExec("set @@tidb_translate_softdelete_sql = 1")
+
+	readHist := func(label string) (count uint64, sum float64) {
+		obs, err := metrics.SoftDeleteImplicitDeleteRows.GetMetricWithLabelValues(label)
+		require.NoError(t, err)
+		h, ok := obs.(prometheus.Histogram)
+		require.True(t, ok)
+		m := &dto.Metric{}
+		require.NoError(t, h.Write(m))
+		return m.GetHistogram().GetSampleCount(), m.GetHistogram().GetSampleSum()
+	}
+
+	cases := []struct {
+		name  string
+		label string
+		exec  func()
+	}{
+		{
+			name:  "insert",
+			label: "Insert",
+			exec: func() {
+				tk.MustExec("insert into t values (1, 2), (3, 4), (4, 5)")
+			},
+		},
+		{
+			name:  "load data",
+			label: "LoadData",
+			exec: func() {
+				readerBuilder := executor.LoadDataReaderBuilder(func(_ string) (io.ReadCloser, error) {
+					return mydump.NewStringReader("1 2\n3 4\n4 5\n"), nil
+				})
+				sctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
+				defer sctx.SetValue(executor.LoadDataReaderBuilderKey, nil)
+				tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE t fields terminated by ' ' lines terminated by '\\n' (id, v)")
+			},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tk.MustExec("set @@tidb_translate_softdelete_sql = 'OFF'")
+			tk.MustExec("delete from t")
+			tk.MustExec("set @@tidb_translate_softdelete_sql = 1")
+			tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+			tk.MustExec("delete from t")
+
+			beforeCount, beforeSum := readHist(c.label)
+			c.exec()
+			afterCount, afterSum := readHist(c.label)
+
+			require.Equal(t, beforeCount+1, afterCount)
+			require.Equal(t, beforeSum+2, afterSum)
+			tk.MustQuery("select * from t").Sort().Check(testkit.Rows("1 2", "3 4", "4 5"))
+		})
+	}
 }
