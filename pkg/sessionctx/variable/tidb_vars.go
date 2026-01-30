@@ -119,6 +119,11 @@ const (
 	// TiDBConfig is a read-only variable that shows the config of the current server.
 	TiDBConfig = "tidb_config"
 
+	// TiDBMViewRefreshHistTime controls the retention time (in hours) of information_schema.tidb_mview_refresh_hist.
+	TiDBMViewRefreshHistTime = "tidb_mview_refresh_hist_time"
+	// TiDBMLogPurgeHistTime controls the retention time (in hours) of information_schema.tidb_mlog_purge_hist.
+	TiDBMLogPurgeHistTime = "tidb_mlog_purge_hist_time"
+
 	// TiDBBatchInsert is used to enable/disable auto-split insert data. If set this option on, insert executor will automatically
 	// insert data into multiple batches and use a single txn for each batch. This will be helpful when inserting large data.
 	TiDBBatchInsert = "tidb_batch_insert"

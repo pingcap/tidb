@@ -231,6 +231,14 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableTiDBMViews:
+			err = e.setDataFromTiDBMViews(ctx, sctx)
+		case infoschema.TableTiDBMLogs:
+			err = e.setDataFromTiDBMLogs(ctx, sctx)
+		case infoschema.TableTiDBMViewRefreshHist:
+			err = e.setDataFromTiDBMViewRefreshHist(ctx, sctx)
+		case infoschema.TableTiDBMLogPurgeHist:
+			err = e.setDataFromTiDBMLogPurgeHist(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -371,6 +379,250 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		rows = append(rows, row)
 	}
 
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
+	const sql = `SELECT TABLE_CATALOG, TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_OWNER, MVIEW_DEFINITION, MVIEW_COMMENT, MVIEW_TIFLASH_REPLICAS,
+		CONVERT_TZ(MVIEW_MODIFY_TIME, @@TIME_ZONE, '+00:00'),
+		REFRESH_METHOD, REFRESH_MODE, LAST_REFRESH_METHOD,
+		CONVERT_TZ(LAST_REFRESH_TIME, @@TIME_ZONE, '+00:00'),
+		CONVERT_TZ(LAST_REFRESH_ENDTIME, @@TIME_ZONE, '+00:00'),
+		STALENESS
+		FROM mysql.tidb_mviews`
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
+	if err != nil {
+		return err
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	tz := sctx.GetSessionVars().TimeZone
+	for _, chunkRow := range chunkRows {
+		var comment any
+		if !chunkRow.IsNull(6) {
+			comment = chunkRow.GetString(6)
+		}
+		// MVIEW_TIFLASH_REPLICAS is nullable in spec; default to 0 when NULL.
+		tiflashReplicas := int64(0)
+		if !chunkRow.IsNull(7) {
+			tiflashReplicas = chunkRow.GetInt64(7)
+		}
+		var modifyTime any
+		if !chunkRow.IsNull(8) {
+			t, err := chunkRow.GetTime(8).GoTime(time.UTC)
+			if err != nil {
+				return err
+			}
+			modifyTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+		}
+		var refreshMethod any
+		if !chunkRow.IsNull(9) {
+			refreshMethod = chunkRow.GetString(9)
+		}
+		var refreshMode any
+		if !chunkRow.IsNull(10) {
+			refreshMode = chunkRow.GetString(10)
+		}
+		var lastRefreshMethod any
+		if !chunkRow.IsNull(11) {
+			lastRefreshMethod = chunkRow.GetString(11)
+		}
+		var lastRefreshTime any
+		if !chunkRow.IsNull(12) {
+			t, err := chunkRow.GetTime(12).GoTime(time.UTC)
+			if err != nil {
+				return err
+			}
+			lastRefreshTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+		}
+		var lastRefreshEndTime any
+		if !chunkRow.IsNull(13) {
+			t, err := chunkRow.GetTime(13).GoTime(time.UTC)
+			if err != nil {
+				return err
+			}
+			lastRefreshEndTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+		}
+		var staleness any
+		if !chunkRow.IsNull(14) {
+			staleness = chunkRow.GetString(14)
+		}
+
+		row := types.MakeDatums(
+			chunkRow.GetString(0), // TABLE_CATALOG
+			chunkRow.GetString(1), // TABLE_SCHEMA
+			chunkRow.GetString(2), // MVIEW_ID
+			chunkRow.GetString(3), // MVIEW_NAME
+			chunkRow.GetString(4), // MVIEW_OWNER
+			chunkRow.GetString(5), // MVIEW_DEFINITION
+			comment,               // MVIEW_COMMENT
+			tiflashReplicas,       // MVIEW_TIFLASH_REPLICAS
+			modifyTime,            // MVIEW_MODIFY_TIME
+			refreshMethod,         // REFRESH_METHOD
+			refreshMode,           // REFRESH_MODE
+			lastRefreshMethod,     // LAST_REFRESH_METHOD
+			lastRefreshTime,       // LAST_REFRESH_TIME
+			lastRefreshEndTime,    // LAST_REFRESH_ENDTIME
+			staleness,             // STALENESS
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessionctx.Context) error {
+	const sql = `SELECT TABLE_CATALOG, TABLE_SCHEMA, MLOG_ID, MLOG_NAME, MLOG_OWNER, MLOG_COLUMNS, BASE_TABLE_CATALOG, BASE_TABLE_SCHEMA, BASE_TABLE_ID, BASE_TABLE_NAME,
+		PURGE_METHOD,
+		CONVERT_TZ(PURGE_START, @@TIME_ZONE, '+00:00'),
+		PURGE_INTERVAL,
+		CONVERT_TZ(LAST_PURGE_TIME, @@TIME_ZONE, '+00:00'),
+		LAST_PURGE_ROWS,
+		LAST_PURGE_DURATION
+		FROM mysql.tidb_mlogs`
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
+	if err != nil {
+		return err
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	tz := sctx.GetSessionVars().TimeZone
+	for _, chunkRow := range chunkRows {
+		purgeStart, err := chunkRow.GetTime(11).GoTime(time.UTC)
+		if err != nil {
+			return err
+		}
+		lastPurgeTime, err := chunkRow.GetTime(13).GoTime(time.UTC)
+		if err != nil {
+			return err
+		}
+		row := types.MakeDatums(
+			chunkRow.GetString(0),  // TABLE_CATALOG
+			chunkRow.GetString(1),  // TABLE_SCHEMA
+			chunkRow.GetString(2),  // MLOG_ID
+			chunkRow.GetString(3),  // MLOG_NAME
+			chunkRow.GetString(4),  // MLOG_OWNER
+			chunkRow.GetString(5),  // MLOG_COLUMNS
+			chunkRow.GetString(6),  // BASE_TABLE_CATALOG
+			chunkRow.GetString(7),  // BASE_TABLE_SCHEMA
+			chunkRow.GetString(8),  // BASE_TABLE_ID
+			chunkRow.GetString(9),  // BASE_TABLE_NAME
+			chunkRow.GetString(10), // PURGE_METHOD
+			types.NewTime(types.FromGoTime(purgeStart.In(tz)), mysql.TypeDatetime, 0), // PURGE_START
+			chunkRow.GetInt64(12), // PURGE_INTERVAL
+			types.NewTime(types.FromGoTime(lastPurgeTime.In(tz)), mysql.TypeDatetime, 0), // LAST_PURGE_TIME
+			chunkRow.GetInt64(14), // LAST_PURGE_ROWS
+			chunkRow.GetInt64(15), // LAST_PURGE_DURATION
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context, sctx sessionctx.Context) error {
+	const sql = `SELECT MVIEW_ID, MVIEW_NAME, CAST(REFRESH_JOB_ID AS CHAR), IS_NEWEST_REFRESH, REFRESH_METHOD,
+		CONVERT_TZ(REFRESH_TIME, @@TIME_ZONE, '+00:00'),
+		CONVERT_TZ(REFRESH_ENDTIME, @@TIME_ZONE, '+00:00'),
+		REFRESH_STATUS
+		FROM mysql.tidb_mview_refresh_hist`
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
+	if err != nil {
+		return err
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	tz := sctx.GetSessionVars().TimeZone
+	for _, chunkRow := range chunkRows {
+		var refreshTime any
+		if !chunkRow.IsNull(5) {
+			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
+			if err != nil {
+				return err
+			}
+			refreshTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+		}
+		var refreshEndTime any
+		if !chunkRow.IsNull(6) {
+			t, err := chunkRow.GetTime(6).GoTime(time.UTC)
+			if err != nil {
+				return err
+			}
+			refreshEndTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+		}
+		var refreshStatus any
+		if !chunkRow.IsNull(7) {
+			refreshStatus = chunkRow.GetString(7)
+		}
+		row := types.MakeDatums(
+			chunkRow.GetString(0), // MVIEW_ID
+			chunkRow.GetString(1), // MVIEW_NAME
+			chunkRow.GetString(2), // REFRESH_JOB_ID
+			chunkRow.GetString(3), // IS_NEWEST_REFRESH
+			chunkRow.GetString(4), // REFRESH_METHOD
+			refreshTime,           // REFRESH_TIME
+			refreshEndTime,        // REFRESH_ENDTIME
+			refreshStatus,         // REFRESH_STATUS
+		)
+		rows = append(rows, row)
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMLogPurgeHist(ctx context.Context, sctx sessionctx.Context) error {
+	const sql = `SELECT MLOG_ID, MLOG_NAME, CAST(PURGE_JOB_ID AS CHAR), IS_NEWEST_PURGE, PURGE_METHOD,
+		CONVERT_TZ(PURGE_TIME, @@TIME_ZONE, '+00:00'),
+		CONVERT_TZ(PURGE_ENDTIME, @@TIME_ZONE, '+00:00'),
+		PURGE_ROWS,
+		PURGE_STATUS
+		FROM mysql.tidb_mlog_purge_hist`
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
+	if err != nil {
+		return err
+	}
+	rows := make([][]types.Datum, 0, len(chunkRows))
+	tz := sctx.GetSessionVars().TimeZone
+	for _, chunkRow := range chunkRows {
+		var purgeTime any
+		if !chunkRow.IsNull(5) {
+			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
+			if err != nil {
+				return err
+			}
+			purgeTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+		}
+		var purgeEndTime any
+		if !chunkRow.IsNull(6) {
+			t, err := chunkRow.GetTime(6).GoTime(time.UTC)
+			if err != nil {
+				return err
+			}
+			purgeEndTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+		}
+		var purgeStatus any
+		if !chunkRow.IsNull(8) {
+			purgeStatus = chunkRow.GetString(8)
+		}
+		row := types.MakeDatums(
+			chunkRow.GetString(0), // MLOG_ID
+			chunkRow.GetString(1), // MLOG_NAME
+			chunkRow.GetString(2), // PURGE_JOB_ID
+			chunkRow.GetString(3), // IS_NEWEST_PURGE
+			chunkRow.GetString(4), // PURGE_METHOD
+			purgeTime,             // PURGE_TIME
+			purgeEndTime,          // PURGE_ENDTIME
+			chunkRow.GetInt64(7),  // PURGE_ROWS
+			purgeStatus,           // PURGE_STATUS
+		)
+		rows = append(rows, row)
+	}
 	e.rows = rows
 	return nil
 }

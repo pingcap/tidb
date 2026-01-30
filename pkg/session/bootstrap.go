@@ -754,13 +754,99 @@ const (
 
 	// CreateKernelOptionsTable is a table to store kernel options for tidb.
 	CreateKernelOptionsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_kernel_options (
-        module varchar(128),
-        name varchar(128),
-        value varchar(128),
-        updated_at datetime,
-        status varchar(128),
-        description text,
-        primary key(module, name))`
+	        module varchar(128),
+	        name varchar(128),
+	        value varchar(128),
+	        updated_at datetime,
+	        status varchar(128),
+	        description text,
+	        primary key(module, name))`
+
+	// CreateTiDBMViewsTable is a table to store materialized view metadata.
+	CreateTiDBMViewsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mviews (
+		TABLE_CATALOG varchar(512) NOT NULL,
+		TABLE_SCHEMA varchar(64) NOT NULL,
+		MVIEW_ID varchar(64) NOT NULL,
+		MVIEW_NAME varchar(64) NOT NULL,
+		MVIEW_OWNER varchar(64) NOT NULL,
+		MVIEW_DEFINITION longtext NOT NULL,
+		MVIEW_COMMENT varchar(128) DEFAULT NULL,
+		MVIEW_TIFLASH_REPLICAS int DEFAULT 0,
+		MVIEW_MODIFY_TIME datetime NOT NULL,
+		REFRESH_METHOD varchar(32) DEFAULT NULL,
+		REFRESH_MODE varchar(256) DEFAULT NULL,
+		LAST_REFRESH_METHOD varchar(32) DEFAULT NULL,
+		LAST_REFRESH_TIME datetime DEFAULT NULL,
+		LAST_REFRESH_ENDTIME datetime DEFAULT NULL,
+		STALENESS varchar(32) DEFAULT NULL,
+		PRIMARY KEY(MVIEW_ID),
+		UNIQUE KEY uniq_mview_name(TABLE_SCHEMA, MVIEW_NAME))`
+
+	// CreateTiDBMLogsTable is a table to store materialized view log metadata.
+	CreateTiDBMLogsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlogs (
+		TABLE_CATALOG varchar(512) NOT NULL,
+		TABLE_SCHEMA varchar(64) NOT NULL,
+		MLOG_ID varchar(64) NOT NULL,
+		MLOG_NAME varchar(64) NOT NULL,
+		MLOG_OWNER varchar(64) NOT NULL,
+		MLOG_COLUMNS longtext NOT NULL,
+		BASE_TABLE_CATALOG varchar(512) NOT NULL,
+		BASE_TABLE_SCHEMA varchar(64) NOT NULL,
+		BASE_TABLE_ID varchar(64) NOT NULL,
+		BASE_TABLE_NAME varchar(64) NOT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_START datetime NOT NULL,
+		PURGE_INTERVAL bigint NOT NULL,
+		LAST_PURGE_TIME datetime NOT NULL,
+		LAST_PURGE_ROWS bigint NOT NULL,
+		LAST_PURGE_DURATION bigint NOT NULL,
+		PRIMARY KEY(MLOG_ID),
+		UNIQUE KEY uniq_base_table(BASE_TABLE_ID),
+		UNIQUE KEY uniq_mlog_name(TABLE_SCHEMA, MLOG_NAME))`
+
+	// CreateTiDBMViewRefreshHistTable is a table to store mview refresh history.
+	// Note: REFRESH_JOB_ID is auto-increment BIGINT (internal), while information_schema expects varchar.
+	CreateTiDBMViewRefreshHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh_hist (
+		MVIEW_ID varchar(64) NOT NULL,
+		MVIEW_NAME varchar(64) NOT NULL,
+		REFRESH_JOB_ID bigint NOT NULL AUTO_INCREMENT,
+		IS_NEWEST_REFRESH varchar(3) NOT NULL,
+		REFRESH_METHOD varchar(32) NOT NULL,
+		REFRESH_TIME datetime DEFAULT NULL,
+		REFRESH_ENDTIME datetime DEFAULT NULL,
+		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		PRIMARY KEY(REFRESH_JOB_ID),
+		KEY idx_mview_newest(MVIEW_ID, IS_NEWEST_REFRESH))`
+
+	// CreateTiDBMLogPurgeHistTable is a table to store mlog purge history.
+	// Note: PURGE_JOB_ID is auto-increment BIGINT (internal), while information_schema expects varchar.
+	CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge_hist (
+		MLOG_ID varchar(64) NOT NULL,
+		MLOG_NAME varchar(64) NOT NULL,
+		PURGE_JOB_ID bigint NOT NULL AUTO_INCREMENT,
+		IS_NEWEST_PURGE varchar(3) NOT NULL,
+		PURGE_METHOD varchar(32) NOT NULL,
+		PURGE_TIME datetime DEFAULT NULL,
+		PURGE_ENDTIME datetime DEFAULT NULL,
+		PURGE_ROWS bigint NOT NULL,
+		PURGE_STATUS varchar(16) DEFAULT NULL,
+		PRIMARY KEY(PURGE_JOB_ID),
+		KEY idx_mlog_newest(MLOG_ID, IS_NEWEST_PURGE))`
+
+	// CreateTiDBMLogJobTable is a table for scheme2 worker coordination (one row per base table / mlog).
+	// It's an internal table and not exposed via information_schema.
+	CreateTiDBMLogJobTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_job (
+		MLOG_ID varchar(64) NOT NULL,
+		BASE_TABLE_ID varchar(64) NOT NULL,
+		NEXT_RUN_TIME datetime DEFAULT NULL,
+		LEASE_OWNER varchar(64) DEFAULT NULL,
+		LEASE_EXPIRE datetime DEFAULT NULL,
+		STATE varchar(32) NOT NULL DEFAULT 'idle',
+		LAST_RUN_TIME datetime DEFAULT NULL,
+		LAST_ERR longtext DEFAULT NULL,
+		HEARTBEAT datetime DEFAULT NULL,
+		PRIMARY KEY(MLOG_ID),
+		UNIQUE KEY uniq_job_base_table(BASE_TABLE_ID))`
 )
 
 // CreateTimers is a table to store all timers for tidb
@@ -1206,12 +1292,16 @@ const (
 	// Add last_stats_histograms_version to mysql.stats_meta.
 	version220 = 220
 
+	// version 221
+	// Create system tables for materialized views / materialized view logs.
+	version221 = 221
+
 	// next version should start with 239
 )
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version220
+var currentBootstrapVersion int64 = version221
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1387,6 +1477,7 @@ var (
 		upgradeToVer218,
 		upgradeToVer219,
 		upgradeToVer220,
+		upgradeToVer221,
 	}
 )
 
@@ -3263,6 +3354,17 @@ func upgradeToVer220(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.stats_meta ADD COLUMN last_stats_histograms_version bigint unsigned DEFAULT NULL", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer221(s sessiontypes.Session, ver int64) {
+	if ver >= version221 {
+		return
+	}
+	doReentrantDDL(s, CreateTiDBMViewsTable)
+	doReentrantDDL(s, CreateTiDBMLogsTable)
+	doReentrantDDL(s, CreateTiDBMViewRefreshHistTable)
+	doReentrantDDL(s, CreateTiDBMLogPurgeHistTable)
+	doReentrantDDL(s, CreateTiDBMLogJobTable)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3413,6 +3515,12 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateIndexAdvisorTable)
 	// create mysql.tidb_kernel_options
 	mustExecute(s, CreateKernelOptionsTable)
+	// create mysql.tidb_mviews/mysql.tidb_mlogs/mysql.tidb_mview_refresh_hist/mysql.tidb_mlog_purge_hist/mysql.tidb_mlog_job
+	mustExecute(s, CreateTiDBMViewsTable)
+	mustExecute(s, CreateTiDBMLogsTable)
+	mustExecute(s, CreateTiDBMViewRefreshHistTable)
+	mustExecute(s, CreateTiDBMLogPurgeHistTable)
+	mustExecute(s, CreateTiDBMLogJobTable)
 }
 
 // doBootstrapSQLFile executes SQL commands in a file as the last stage of bootstrap.

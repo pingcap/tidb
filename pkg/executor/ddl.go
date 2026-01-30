@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ddl"
@@ -28,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -163,6 +165,20 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
+	case *ast.CreateMaterializedViewStmt:
+		err = e.executeCreateMaterializedView(ctx, x)
+	case *ast.CreateMaterializedViewLogStmt:
+		err = e.executeCreateMaterializedViewLog(ctx, x)
+	case *ast.AlterMaterializedViewStmt:
+		err = e.executeAlterMaterializedView(ctx, x)
+	case *ast.AlterMaterializedViewLogStmt:
+		err = e.executeAlterMaterializedViewLog(ctx, x)
+	case *ast.DropMaterializedViewStmt:
+		err = e.executeDropMaterializedView(ctx, x)
+	case *ast.DropMaterializedViewLogStmt:
+		err = e.executeDropMaterializedViewLog(ctx, x)
+	case *ast.RefreshMaterializedViewStmt:
+		err = e.executeRefreshMaterializedView(ctx, x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -318,6 +334,385 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
 }
 
+func restoreToString(node ast.Node) (string, error) {
+	var sb strings.Builder
+	restoreCtx := format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)
+	if err := node.Restore(restoreCtx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
+}
+
+func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.CreateMaterializedViewStmt) error {
+	dbName := s.ViewName.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+		if dbName == "" {
+			return plannererrors.ErrNoDB
+		}
+		s.ViewName.Schema = pmodel.NewCIStr(dbName)
+	}
+
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=? LIMIT 1",
+		dbName, s.ViewName.Name.O)
+	if err != nil {
+		return err
+	}
+	if len(existsRows) > 0 {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(dbName), Name: s.ViewName.Name})
+	}
+
+	definition, err := restoreToString(s)
+	if err != nil {
+		return err
+	}
+	mviewID := uuid.NewString()
+
+	var owner string
+	if user := e.Ctx().GetSessionVars().User; user != nil {
+		owner = user.AuthUsername
+	}
+	var comment any
+	if s.Comment != "" {
+		comment = s.Comment
+	}
+
+	refresh := s.Refresh
+	if refresh == nil {
+		refresh = &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast, OnDemand: true}
+	}
+	refreshMethod := refresh.Method.String()
+	var refreshMode any
+	if refresh.Method == ast.MViewRefreshMethodFast {
+		const defaultNextSeconds = 300
+		parts := make([]string, 0, 3)
+		if refresh.OnDemand {
+			parts = append(parts, "ON DEMAND")
+		}
+		startWith := "NOW()"
+		if refresh.StartWith != nil {
+			startWith, err = restoreToString(refresh.StartWith)
+			if err != nil {
+				return err
+			}
+		}
+		parts = append(parts, "START WITH "+startWith)
+
+		next := fmt.Sprintf("%d", defaultNextSeconds)
+		if refresh.Next != nil {
+			next, err = restoreToString(refresh.Next)
+			if err != nil {
+				return err
+			}
+		}
+		parts = append(parts, "NEXT "+next)
+		refreshMode = strings.Join(parts, " ")
+	}
+
+	_, _, err = exec.ExecRestrictedSQL(kctx, nil,
+		`INSERT INTO mysql.tidb_mviews (
+			TABLE_CATALOG, TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_OWNER, MVIEW_DEFINITION, MVIEW_COMMENT, MVIEW_TIFLASH_REPLICAS,
+			MVIEW_MODIFY_TIME, REFRESH_METHOD, REFRESH_MODE, LAST_REFRESH_METHOD, LAST_REFRESH_TIME, LAST_REFRESH_ENDTIME, STALENESS
+		) VALUES (
+			'def', ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NULL, NULL, NULL, 'FRESH'
+		)`,
+		dbName, mviewID, s.ViewName.Name.O, owner, definition, comment, s.TiFlashReplicas, refreshMethod, refreshMode,
+	)
+	return err
+}
+
+func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.CreateMaterializedViewLogStmt) error {
+	dbName := s.Table.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+		if dbName == "" {
+			return plannererrors.ErrNoDB
+		}
+		s.Table.Schema = pmodel.NewCIStr(dbName)
+	}
+
+	dom := domain.GetDomain(e.Ctx())
+	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(dbName), s.Table.Name)
+	if err != nil {
+		return err
+	}
+	baseTableID := fmt.Sprintf("%d", tbl.Meta().ID)
+
+	colMap := make(map[string]struct{}, len(tbl.Meta().Columns))
+	for _, col := range tbl.Meta().Columns {
+		colMap[col.Name.L] = struct{}{}
+	}
+	for _, col := range s.Cols {
+		if _, ok := colMap[col.L]; !ok {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(col.O, s.Table.Name)
+		}
+	}
+
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+		baseTableID)
+	if err != nil {
+		return err
+	}
+	if len(existsRows) > 0 {
+		return infoschema.ErrTableExists.GenWithStackByArgs("materialized view log on " + fmt.Sprintf("%s.%s", dbName, s.Table.Name.O))
+	}
+
+	mlogID := uuid.NewString()
+	mlogName := fmt.Sprintf("__tidb_mlog_%s", baseTableID)
+	var owner string
+	if user := e.Ctx().GetSessionVars().User; user != nil {
+		owner = user.AuthUsername
+	}
+
+	colNames := make([]string, 0, len(s.Cols))
+	for _, c := range s.Cols {
+		colNames = append(colNames, c.O)
+	}
+	mlogColumns := strings.Join(colNames, ",")
+
+	purgeMethod := "IMMEDIATE"
+	purgeStartExpr := "NOW()"
+	purgeIntervalExpr := "0"
+	if s.Purge != nil {
+		if s.Purge.Immediate {
+			purgeMethod = "IMMEDIATE"
+			purgeStartExpr = "NOW()"
+			purgeIntervalExpr = "0"
+		} else {
+			purgeMethod = "DEFERRED"
+			nextExpr, err := restoreToString(s.Purge.Next)
+			if err != nil {
+				return err
+			}
+			purgeIntervalExpr = fmt.Sprintf("CAST((%s) AS SIGNED)", nextExpr)
+			if s.Purge.StartWith != nil {
+				startExpr, err := restoreToString(s.Purge.StartWith)
+				if err != nil {
+					return err
+				}
+				purgeStartExpr = fmt.Sprintf("CAST((%s) AS DATETIME)", startExpr)
+			} else {
+				purgeStartExpr = fmt.Sprintf("DATE_ADD(NOW(), INTERVAL %s SECOND)", purgeIntervalExpr)
+			}
+		}
+	}
+
+	sql := fmt.Sprintf(
+		`INSERT INTO mysql.tidb_mlogs (
+			TABLE_CATALOG, TABLE_SCHEMA, MLOG_ID, MLOG_NAME, MLOG_OWNER, MLOG_COLUMNS,
+			BASE_TABLE_CATALOG, BASE_TABLE_SCHEMA, BASE_TABLE_ID, BASE_TABLE_NAME,
+			PURGE_METHOD, PURGE_START, PURGE_INTERVAL, LAST_PURGE_TIME, LAST_PURGE_ROWS, LAST_PURGE_DURATION
+		) VALUES (
+			'def', ?, ?, ?, ?, ?, 'def', ?, ?, ?, ?, %s, %s, NOW(), 0, 0
+		)`,
+		purgeStartExpr, purgeIntervalExpr,
+	)
+	_, _, err = exec.ExecRestrictedSQL(kctx, nil, sql,
+		dbName, mlogID, mlogName, owner, mlogColumns,
+		dbName, baseTableID, s.Table.Name.O,
+		purgeMethod,
+	)
+	return err
+}
+
+func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.AlterMaterializedViewStmt) error {
+	dbName := s.ViewName.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+		if dbName == "" {
+			return plannererrors.ErrNoDB
+		}
+		s.ViewName.Schema = pmodel.NewCIStr(dbName)
+	}
+
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=? LIMIT 1",
+		dbName, s.ViewName.Name.O)
+	if err != nil {
+		return err
+	}
+	if len(existsRows) == 0 {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(dbName), Name: s.ViewName.Name})
+	}
+
+	sets := make([]string, 0, 3)
+	args := make([]any, 0, 5)
+	for _, action := range s.Actions {
+		switch action.Tp {
+		case ast.AlterMaterializedViewActionComment:
+			sets = append(sets, "MVIEW_COMMENT=?")
+			args = append(args, action.Comment)
+		case ast.AlterMaterializedViewActionRefresh:
+			var refreshMode any
+			if action.Refresh != nil {
+				parts := make([]string, 0, 2)
+				if action.Refresh.StartWith != nil {
+					startWith, err := restoreToString(action.Refresh.StartWith)
+					if err != nil {
+						return err
+					}
+					parts = append(parts, "START WITH "+startWith)
+				}
+				if action.Refresh.Next != nil {
+					next, err := restoreToString(action.Refresh.Next)
+					if err != nil {
+						return err
+					}
+					parts = append(parts, "NEXT "+next)
+				}
+				if len(parts) > 0 {
+					refreshMode = strings.Join(parts, " ")
+				}
+			}
+			sets = append(sets, "REFRESH_METHOD='REFRESH FAST'", "REFRESH_MODE=?")
+			args = append(args, refreshMode)
+		}
+	}
+	sets = append(sets, "MVIEW_MODIFY_TIME=NOW()")
+	if len(sets) == 0 {
+		return nil
+	}
+
+	args = append(args, dbName, s.ViewName.Name.O)
+	sql := fmt.Sprintf("UPDATE mysql.tidb_mviews SET %s WHERE TABLE_SCHEMA=? AND MVIEW_NAME=?", strings.Join(sets, ", "))
+	_, _, err = exec.ExecRestrictedSQL(kctx, nil, sql, args...)
+	return err
+}
+
+func (e *DDLExec) executeAlterMaterializedViewLog(ctx context.Context, s *ast.AlterMaterializedViewLogStmt) error {
+	dbName := s.Table.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+		if dbName == "" {
+			return plannererrors.ErrNoDB
+		}
+		s.Table.Schema = pmodel.NewCIStr(dbName)
+	}
+
+	dom := domain.GetDomain(e.Ctx())
+	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(dbName), s.Table.Name)
+	if err != nil {
+		return err
+	}
+	baseTableID := fmt.Sprintf("%d", tbl.Meta().ID)
+
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+		baseTableID)
+	if err != nil {
+		return err
+	}
+	if len(existsRows) == 0 {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs("materialized view log on " + fmt.Sprintf("%s.%s", dbName, s.Table.Name.O))
+	}
+
+	for _, action := range s.Actions {
+		if action.Purge == nil {
+			continue
+		}
+		purgeMethod := "IMMEDIATE"
+		purgeStartExpr := "NOW()"
+		purgeIntervalExpr := "0"
+		if action.Purge.Immediate {
+			purgeMethod = "IMMEDIATE"
+		} else {
+			purgeMethod = "DEFERRED"
+			nextExpr, err := restoreToString(action.Purge.Next)
+			if err != nil {
+				return err
+			}
+			purgeIntervalExpr = fmt.Sprintf("CAST((%s) AS SIGNED)", nextExpr)
+			if action.Purge.StartWith != nil {
+				startExpr, err := restoreToString(action.Purge.StartWith)
+				if err != nil {
+					return err
+				}
+				purgeStartExpr = fmt.Sprintf("CAST((%s) AS DATETIME)", startExpr)
+			} else {
+				purgeStartExpr = fmt.Sprintf("DATE_ADD(NOW(), INTERVAL %s SECOND)", purgeIntervalExpr)
+			}
+		}
+		sql := fmt.Sprintf("UPDATE mysql.tidb_mlogs SET PURGE_METHOD=?, PURGE_START=%s, PURGE_INTERVAL=%s WHERE BASE_TABLE_ID=?", purgeStartExpr, purgeIntervalExpr)
+		_, _, err = exec.ExecRestrictedSQL(kctx, nil, sql, purgeMethod, baseTableID)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (e *DDLExec) executeDropMaterializedView(ctx context.Context, s *ast.DropMaterializedViewStmt) error {
+	dbName := s.ViewName.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+		if dbName == "" {
+			return plannererrors.ErrNoDB
+		}
+		s.ViewName.Schema = pmodel.NewCIStr(dbName)
+	}
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=? LIMIT 1",
+		dbName, s.ViewName.Name.O)
+	if err != nil {
+		return err
+	}
+	if len(existsRows) == 0 {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(dbName), Name: s.ViewName.Name})
+	}
+	_, _, err = exec.ExecRestrictedSQL(kctx, nil,
+		"DELETE FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=?",
+		dbName, s.ViewName.Name.O)
+	return err
+}
+
+func (e *DDLExec) executeDropMaterializedViewLog(ctx context.Context, s *ast.DropMaterializedViewLogStmt) error {
+	dbName := s.Table.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+		if dbName == "" {
+			return plannererrors.ErrNoDB
+		}
+		s.Table.Schema = pmodel.NewCIStr(dbName)
+	}
+	dom := domain.GetDomain(e.Ctx())
+	tbl, err := dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(dbName), s.Table.Name)
+	if err != nil {
+		return err
+	}
+	baseTableID := fmt.Sprintf("%d", tbl.Meta().ID)
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
+	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+		baseTableID)
+	if err != nil {
+		return err
+	}
+	if len(existsRows) == 0 {
+		return infoschema.ErrTableNotExists.GenWithStackByArgs("materialized view log on " + fmt.Sprintf("%s.%s", dbName, s.Table.Name.O))
+	}
+	_, _, err = exec.ExecRestrictedSQL(kctx, nil,
+		"DELETE FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=?",
+		baseTableID)
+	return err
+}
+
+func (*DDLExec) executeRefreshMaterializedView(context.Context, *ast.RefreshMaterializedViewStmt) error {
+	return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("REFRESH MATERIALIZED VIEW is not supported")
+}
+
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
@@ -352,6 +747,39 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 }
 
 func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
+	// It's mandatory to drop materialized view logs before dropping a base table.
+	// See spec: "It is mandatory that dropping materialized view log before dropping a base table."
+	dom := domain.GetDomain(e.Ctx())
+	is := dom.InfoSchema()
+	exec := e.Ctx().GetRestrictedSQLExecutor()
+	kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+	for _, tableName := range s.Tables {
+		dbName := tableName.Schema.O
+		if dbName == "" {
+			dbName = e.Ctx().GetSessionVars().CurrentDB
+		}
+		if dbName == "" {
+			continue
+		}
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), tableName.Name)
+		if err != nil {
+			// If it's a DROP TABLE IF EXISTS and the table doesn't exist, skip it.
+			if s.IfExists && infoschema.ErrTableNotExists.Equal(err) {
+				continue
+			}
+			continue
+		}
+		baseTableID := fmt.Sprintf("%d", tbl.Meta().ID)
+		rows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+			"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+			baseTableID)
+		if err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			return errors.Errorf("can't drop table %s.%s: materialized view log exists, drop it first", dbName, tableName.Name.O)
+		}
+	}
 	return e.ddlExecutor.DropTable(e.Ctx(), s)
 }
 
