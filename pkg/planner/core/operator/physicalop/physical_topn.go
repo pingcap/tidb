@@ -352,7 +352,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 // The actual check of whether PartialOrderInfo can pass through Projection
 // is done in LogicalProjection.TryToGetChildProp during physical optimization.
 func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
-	if !lt.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN {
+	if lt.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN != "COST" {
 		return false
 	}
 	// Must have ORDER BY columns

@@ -1631,7 +1631,8 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
-	OptPartialOrderedIndexForTopN bool
+	// Valid values: "DISABLE" (no optimization), "COST" (enable optimization with cost-based selection)
+	OptPartialOrderedIndexForTopN string
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator

@@ -1450,7 +1450,7 @@ func getIndexCandidate(ds *logicalop.DataSource, path *util.AccessPath, prop *pr
 	// when prop has PartialOrderInfo physical property,
 	// So here we just need to record the partial order match result(prefixCol, prefixLen).
 	// The partialOrderMatchResult.Matched() will be always true after skyline pruning.
-	if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN && prop.PartialOrderInfo != nil {
+	if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN == "COST" && prop.PartialOrderInfo != nil {
 		candidate.partialOrderMatchResult = matchPartialOrderProperty(path, prop.PartialOrderInfo)
 	}
 	candidate.accessCondsColMap = util.ExtractCol2Len(ds.SCtx().GetExprCtx().GetEvalCtx(), path.AccessConds, path.IdxCols, path.IdxColLens)
@@ -1528,13 +1528,19 @@ func skylinePruning(ds *logicalop.DataSource, prop *property.PhysicalProperty) [
 		} else {
 			// Check if this path can be used for partial order optimization
 			var matchPartialOrderIndex bool
-			if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN &&
+			if ds.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN == "COST" &&
 				prop.PartialOrderInfo != nil {
 				if !matchPartialOrderProperty(path, prop.PartialOrderInfo).Matched {
 					// skyline pruning all indexes that cannot provide partial order when we are looking for
 					continue
 				}
 				matchPartialOrderIndex = true
+				// If the index can match partial order requirement and user use "use/force index" in hint.
+				// If the index can't match partial order requirement and use use "use/force index" and enable partial order optimization together,
+				// the behavior will degenerate into normal index use behavior without considering partial order optimization.
+				if path.Forced {
+					path.ForcePartialOrder = true
+				}
 			}
 
 			// We will use index to generate physical plan if any of the following conditions is satisfied:
@@ -2245,6 +2251,10 @@ func convertToIndexScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 	}
 	// If we don't need to keep order for the index scan, we should forbid the non-keep-order index scan when we try to generate the path.
 	if prop.NeedKeepOrder() && candidate.path.ForceNoKeepOrder {
+		return base.InvalidTask, nil
+	}
+	// If we want to force partial order, then we should remove all others property candidate path such as: full order and no order.
+	if candidate.path.ForcePartialOrder && prop.PartialOrderInfo == nil {
 		return base.InvalidTask, nil
 	}
 	// For partial order property
