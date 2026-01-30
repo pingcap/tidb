@@ -155,8 +155,8 @@ func (e *AnalyzeExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 			dom.SysProcTracker().KillSysProcess(id)
 		}
 	})
-TASKLOOP:
 	sentTasks := 0
+TASKLOOP:
 	for _, task := range tasks {
 		select {
 		case taskCh <- task:
