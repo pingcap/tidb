@@ -630,9 +630,8 @@ type MemArbitrator struct {
 }
 
 type buffer struct {
-	size       atomic.Int64 // approximate max quota usage of root pool
-	quotaLimit atomic.Int64
-	timedMap   [2 + defRedundancy]struct {
+	size     atomic.Int64 // approximate max quota usage of root pool
+	timedMap [2 + defRedundancy]struct {
 		sync.RWMutex
 		wrapTimeSizeQuota
 	}
@@ -640,10 +639,6 @@ type buffer struct {
 
 func (m *MemArbitrator) setBufferSize(v int64) {
 	m.buffer.size.Store(v)
-}
-
-func (m *MemArbitrator) setQuotaLimit(v int64) {
-	m.buffer.quotaLimit.Store(v)
 }
 
 type digestProfileShard struct {
@@ -1126,7 +1121,7 @@ func (m *MemArbitrator) recordMemConsumed(memConsumed, utimeSec int64) {
 	}
 }
 
-func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, memQuotaLimit, utimeSec int64) {
+func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, utimeSec int64) {
 	const maxNum = int64(len(m.buffer.timedMap))
 	const maxDur = maxNum - defRedundancy
 
@@ -1142,52 +1137,41 @@ func (m *MemArbitrator) tryToUpdateBuffer(memConsumed, memQuotaLimit, utimeSec i
 
 		tar.Unlock()
 	}
-
-	tar.RLock()
-
-	updateSize := false
-	updateQuota := false
 	cleanNext := false
+	{
+		tar.RLock()
 
-	if ts := tar.ts.Load(); ts == 0 {
-		if tar.ts.CompareAndSwap(0, tsAlign) {
-			cleanNext = true
-		}
-	}
+		updateSize := false
 
-	for oldVal := tar.size.Load(); oldVal < memConsumed; oldVal = tar.size.Load() {
-		if tar.size.CompareAndSwap(oldVal, memConsumed) {
-			updateSize = true
-			break
-		}
-	}
-
-	for oldVal := tar.quota.Load(); oldVal < memQuotaLimit; oldVal = tar.quota.Load() {
-		if tar.quota.CompareAndSwap(oldVal, memQuotaLimit) {
-			updateQuota = true
-			break
-		}
-	}
-
-	if updateSize || updateQuota {
-		// tsAlign-1, tsAlign
-		for i := range maxDur {
-			d := &m.buffer.timedMap[(maxNum+tsAlign-i)%maxNum]
-
-			if ts := d.ts.Load(); ts > tsAlign-maxDur && ts <= tsAlign {
-				memConsumed = max(memConsumed, d.size.Load())
-				memQuotaLimit = max(memQuotaLimit, d.quota.Load())
+		if ts := tar.ts.Load(); ts == 0 {
+			if tar.ts.CompareAndSwap(0, tsAlign) {
+				cleanNext = true
 			}
 		}
-		if updateSize && m.buffer.size.Load() != memConsumed {
-			m.setBufferSize(memConsumed)
-		}
-		if updateQuota && m.buffer.quotaLimit.Load() != memQuotaLimit {
-			m.setQuotaLimit(memQuotaLimit)
-		}
-	}
 
-	tar.RUnlock()
+		for oldVal := tar.size.Load(); oldVal < memConsumed; oldVal = tar.size.Load() {
+			if tar.size.CompareAndSwap(oldVal, memConsumed) {
+				updateSize = true
+				break
+			}
+		}
+
+		if updateSize {
+			// tsAlign-1, tsAlign
+			for i := range maxDur {
+				d := &m.buffer.timedMap[(maxNum+tsAlign-i)%maxNum]
+
+				if ts := d.ts.Load(); ts > tsAlign-maxDur && ts <= tsAlign {
+					memConsumed = max(memConsumed, d.size.Load())
+				}
+			}
+			if updateSize && m.buffer.size.Load() != memConsumed {
+				m.setBufferSize(memConsumed)
+			}
+		}
+
+		tar.RUnlock()
+	}
 
 	if cleanNext {
 		d := &m.buffer.timedMap[(tsAlign+1)%maxNum]
@@ -1229,17 +1213,11 @@ func (m *MemArbitrator) ResetRootPoolByID(uid uint64, maxMemConsumed int64, tune
 		return
 	}
 
+	m.tryToUpdateBuffer(
+		maxMemConsumed,
+		m.approxUnixTimeSec())
+
 	if tune {
-		memQuotaLimit := int64(0)
-		if ctx := entry.ctx.Load(); ctx != nil {
-			memQuotaLimit = ctx.memQuotaLimit
-		}
-
-		m.tryToUpdateBuffer(
-			maxMemConsumed,
-			memQuotaLimit,
-			m.approxUnixTimeSec())
-
 		if maxMemConsumed > m.poolAllocStats.SmallPoolLimit {
 			m.recordMemConsumed(
 				maxMemConsumed,
@@ -2078,13 +2056,6 @@ func (m *MemArbitrator) RestartEntryByContext(p rootPoolWrap, ctx *ArbitrationCo
 	defer entry.pool.mu.Unlock()
 
 	if ctx != nil {
-		if ctx.PrevMaxMem > m.buffer.size.Load() {
-			m.setBufferSize(ctx.PrevMaxMem)
-		} else if ctx.memQuotaLimit > m.buffer.quotaLimit.Load() {
-			m.setBufferSize(ctx.memQuotaLimit)
-			m.setQuotaLimit(ctx.memQuotaLimit)
-		}
-
 		if ctx.waitAverse {
 			entry.ctx.preferPrivilege = false
 			entry.ctx.memPriority = ArbitrationPriorityHigh
@@ -2668,7 +2639,7 @@ func (m *MemArbitrator) updateTrackedHeapStats() {
 			return true
 		})
 		if m.buffer.size.Load() < maxMemUsed {
-			m.tryToUpdateBuffer(maxMemUsed, 0, m.approxUnixTimeSec())
+			m.tryToUpdateBuffer(maxMemUsed, m.approxUnixTimeSec())
 		}
 	}
 
@@ -3117,8 +3088,6 @@ type ArbitrateHelper interface {
 type ArbitrationContext struct {
 	arbitrateHelper ArbitrateHelper
 	cancelCh        <-chan struct{}
-	PrevMaxMem      int64
-	memQuotaLimit   int64
 	memPriority     ArbitrationPriority
 	stopped         atomic.Bool
 	waitAverse      bool
@@ -3142,15 +3111,12 @@ func (ctx *ArbitrationContext) stop(reason ArbitratorStopReason) {
 // NewArbitrationContext creates a new arbitration context
 func NewArbitrationContext(
 	cancelCh <-chan struct{},
-	prevMaxMem, memQuotaLimit int64,
 	arbitrateHelper ArbitrateHelper,
 	memPriority ArbitrationPriority,
 	waitAverse bool,
 	preferPrivilege bool,
 ) *ArbitrationContext {
 	return &ArbitrationContext{
-		PrevMaxMem:      prevMaxMem,
-		memQuotaLimit:   memQuotaLimit,
 		cancelCh:        cancelCh,
 		arbitrateHelper: arbitrateHelper,
 		memPriority:     memPriority,

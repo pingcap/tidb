@@ -2613,7 +2613,6 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 		tracker := sessVars.StmtCtx.MemTracker
 		if !tracker.InitMemArbitrator(
 			globalMemArbitrator,
-			sessVars.MemQuotaQuery,
 			sessVars.MemTracker.Killer,
 			digestKey,
 			memPriority,

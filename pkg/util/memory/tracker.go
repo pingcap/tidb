@@ -970,6 +970,7 @@ type memArbitrator struct {
 	reserveSize int64
 	isInternal  bool
 	state       atomic.Int32 // states: the current state of memArbitrator
+	prevMaxMem  int64
 
 	AwaitAlloc struct {
 		TotalDur   atomic.Int64 // total time spent waiting for memory allocation in nanoseconds
@@ -1118,8 +1119,14 @@ func (m *memArbitrator) intoBigBudget() bool {
 		}
 	}
 
+	smallUsed := max(0, m.smallBudgetUsed())
+
 	if !m.RestartEntryByContext(root, m.ctx) || !m.state.CompareAndSwap(memArbitratorStateSmallBudget, memArbitratorStateIntoBigBudget) {
 		panic("failed to init mem pool")
+	}
+
+	if maxMemHint := max(m.prevMaxMem, smallUsed); maxMemHint > m.buffer.size.Load() {
+		m.tryToUpdateBuffer(maxMemHint, m.approxUnixTimeSec())
 	}
 
 	{
@@ -1133,7 +1140,6 @@ func (m *memArbitrator) intoBigBudget() bool {
 		}
 	}
 
-	smallUsed := max(0, m.smallBudgetUsed())
 	m.addBigBudgetUsed(smallUsed)
 
 	m.bigBudget().Pool = root.entry.pool
@@ -1141,9 +1147,9 @@ func (m *memArbitrator) intoBigBudget() bool {
 	if m.reserveSize > 0 {
 		m.reserveBigBudget(m.reserveSize)
 		metrics.GlobalMemArbitratorSubEvents.PoolInitReserve.Inc()
-	} else if m.ctx.PrevMaxMem > 0 {
+	} else if m.prevMaxMem > 0 {
 		metrics.GlobalMemArbitratorSubEvents.PoolInitHitDigest.Inc()
-		m.reserveBigBudget(m.ctx.PrevMaxMem)
+		m.reserveBigBudget(m.prevMaxMem)
 	} else if m.bigBudgetUsed() > m.poolAllocStats.SmallPoolLimit {
 		if initCap := m.SuggestPoolInitCap(); initCap != 0 {
 			m.reserveBigBudget(initCap)
@@ -1252,12 +1258,11 @@ func (m *memArbitrator) reset(exception bool, maxConsumed int64) bool {
 
 // InitMemArbitratorForTest is a simplified version of InitMemArbitrator for test usage.
 func (t *Tracker) InitMemArbitratorForTest() bool {
-	return t.InitMemArbitrator(GlobalMemArbitrator(), 0, nil, "", ArbitrationPriorityMedium, false, 0, false)
+	return t.InitMemArbitrator(GlobalMemArbitrator(), nil, "", ArbitrationPriorityMedium, false, 0, false)
 }
 
 // InitMemArbitrator attaches (not thread-safe) to the mem arbitrator and initializes the context
 // "m" is the mem-arbitrator.
-// "memQuotaQuery" is the maximum memory quota for query.
 // "killer" is the sql killer.
 // "digestKey" is the digest key.
 // "memPriority" is the memory priority for arbitration.
@@ -1266,7 +1271,6 @@ func (t *Tracker) InitMemArbitratorForTest() bool {
 // "isInternal" indicates whether the tracker is for internal session.
 func (t *Tracker) InitMemArbitrator(
 	g *MemArbitrator,
-	memQuotaQuery int64,
 	killer *sqlkiller.SQLKiller,
 	digestKey string,
 	memPriority ArbitrationPriority,
@@ -1284,13 +1288,6 @@ func (t *Tracker) InitMemArbitrator(
 
 	uid := t.SessionID.Load()
 	digestID := HashStr(digestKey)
-	prevMaxMem := int64(0)
-
-	if explicitReserveSize == 0 && len(digestKey) > 0 {
-		if maxMem, found := g.GetDigestProfileCache(digestID, g.approxUnixTimeSec()); found {
-			prevMaxMem = maxMem
-		}
-	}
 
 	var cancelChan <-chan struct{}
 	if killer != nil {
@@ -1298,8 +1295,6 @@ func (t *Tracker) InitMemArbitrator(
 	}
 	ctx := NewArbitrationContext(
 		cancelChan,
-		prevMaxMem,
-		memQuotaQuery,
 		nil,
 		memPriority,
 		waitAverse,
@@ -1318,12 +1313,18 @@ func (t *Tracker) InitMemArbitrator(
 	t.MemArbitrator = m
 	ctx.arbitrateHelper = m
 
+	if explicitReserveSize == 0 && len(digestKey) > 0 {
+		if maxMem, found := g.GetDigestProfileCache(digestID, g.approxUnixTimeSec()); found {
+			m.prevMaxMem = maxMem
+		}
+	}
+
 	globalArbitrator.metrics.pools.small.Add(1)
 	if m.isInternal {
 		globalArbitrator.metrics.pools.internal.Add(1)
 	}
 
-	if explicitReserveSize > 0 || prevMaxMem > g.poolAllocStats.SmallPoolLimit {
+	if explicitReserveSize > 0 || m.prevMaxMem > g.poolAllocStats.SmallPoolLimit {
 		m.intoBigBudget()
 	} else {
 		m.budget.smallB = g.GetAwaitFreeBudgets(uid)

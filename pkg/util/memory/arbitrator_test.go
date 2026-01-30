@@ -355,7 +355,7 @@ func (m *MemArbitrator) tasksCountForTest() (sz int64) {
 }
 
 func newCtxForTest(ch <-chan struct{}, h ArbitrateHelper, memPriority ArbitrationPriority, waitAverse bool, preferPrivilege bool) *ArbitrationContext {
-	return NewArbitrationContext(ch, 0, 0, h, memPriority, waitAverse, preferPrivilege)
+	return NewArbitrationContext(ch, h, memPriority, waitAverse, preferPrivilege)
 }
 
 func newDefCtxForTest(memPriority ArbitrationPriority) *ArbitrationContext {
@@ -1609,36 +1609,28 @@ func TestMemArbitrator(t *testing.T) {
 
 	{ // test calc buffer
 		m.resetExecMetricsForTest()
-		m.tryToUpdateBuffer(2, 3, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(2, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(2))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(3))
 
-		m.tryToUpdateBuffer(1, 1, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(2))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(3))
 
-		m.tryToUpdateBuffer(4, 1, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(4, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(4))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(3))
 
-		m.tryToUpdateBuffer(1, 6, defUpdateBufferTimeAlignSec)
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec)
 		require.Equal(t, m.buffer.size.Load(), int64(4))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(6))
 
-		m.tryToUpdateBuffer(1, 1, defUpdateBufferTimeAlignSec*(defRedundancy))
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec*(defRedundancy))
 		require.Equal(t, m.buffer.size.Load(), int64(4))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(6))
 
-		m.tryToUpdateBuffer(3, 4, defUpdateBufferTimeAlignSec*(defRedundancy+1))
+		m.tryToUpdateBuffer(3, defUpdateBufferTimeAlignSec*(defRedundancy+1))
 		require.Equal(t, m.buffer.size.Load(), int64(3))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(4))
 
-		m.tryToUpdateBuffer(1, 1, defUpdateBufferTimeAlignSec*(defRedundancy+1))
+		m.tryToUpdateBuffer(1, defUpdateBufferTimeAlignSec*(defRedundancy+1))
 		require.Equal(t, m.buffer.size.Load(), int64(3))
-		require.Equal(t, m.buffer.quotaLimit.Load(), int64(4))
 
 		m.setBufferSize(0)
-		m.buffer.quotaLimit.Store(0)
 
 		m.SetLimit(10000)
 		require.Equal(t, PoolAllocProfile{10, 20, 100}, m.poolAllocStats.PoolAllocProfile)
@@ -2207,23 +2199,18 @@ func TestMemArbitrator(t *testing.T) {
 		debugTime = time.Unix(defUpdateMemMagnifUtimeAlign, 0)
 		m.setUnixTimeSec(debugTime.Unix())
 
+		m.tryToUpdateBuffer(23, m.approxUnixTimeSec())
+		require.True(t, m.buffer.size.Load() == 23)
 		e1ctx := m.newCtxWithHelperForTest(ArbitrationPriorityMedium, NoWaitAverse, RequirePrivilege)
-		e1ctx.PrevMaxMem = 23
-		e1ctx.memQuotaLimit = 29
 		e1ctx.arbitrateHelper.(*arbitrateHelperForTest).heapUsedCB = func() int64 {
 			return 31
 		}
 		e1 := m.addEntryForTest(e1ctx)
-
-		require.True(t, m.buffer.size.Load() == 23)
-		require.True(t, m.buffer.quotaLimit.Load() == 0)
 		m.updateTrackedHeapStats()
 		require.True(t, m.buffer.size.Load() == 31)
-		require.True(t, m.buffer.quotaLimit.Load() == 0)
 
 		m.ResetRootPoolByID(e1.pool.uid, 19, true) // tune
 		require.True(t, m.buffer.size.Load() == 31)
-		require.True(t, m.buffer.quotaLimit.Load() == 29)
 
 		m.ResetRootPoolByID(e1.pool.uid, 389, true) // tune
 		require.True(t, m.buffer.size.Load() == 389)
@@ -2730,8 +2717,6 @@ func TestBench(t *testing.T) {
 				killed := false
 				ctx := NewArbitrationContext(
 					cancelCh,
-					0,
-					0,
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
@@ -2818,8 +2803,6 @@ func TestBench(t *testing.T) {
 
 				ctx := NewArbitrationContext(
 					cancelCh,
-					0,
-					0,
 					&arbitrateHelperForTest{
 						cancelCh: cancelCh,
 						heapUsedCB: func() int64 {
