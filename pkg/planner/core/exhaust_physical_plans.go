@@ -329,7 +329,8 @@ func constructIndexJoinStatic(
 		//
 		// for static enumeration here, we just pass down the original equal condition for condition adjustment rather
 		// depend on the original logical join node.
-		EqualConditions: p.EqualConditions,
+		EqualConditions:   p.EqualConditions,
+		IsOrderPreserving: len(prop.SortItems) > 0, // Mark as order-preserving if satisfying ORDER BY
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	join.SetSchema(p.Schema())
 	return []base.PhysicalPlan{join}
@@ -555,13 +556,14 @@ func constructIndexJoin(
 	}
 
 	join := physicalop.PhysicalIndexJoin{
-		BasePhysicalJoin: baseJoin,
-		InnerPlan:        innerTask.Plan(),
-		KeyOff2IdxOff:    newKeyOff,
-		Ranges:           ranges,
-		CompareFilters:   compareFilters,
-		OuterHashKeys:    outerHashKeys,
-		InnerHashKeys:    innerHashKeys,
+		BasePhysicalJoin:  baseJoin,
+		InnerPlan:         innerTask.Plan(),
+		KeyOff2IdxOff:     newKeyOff,
+		Ranges:            ranges,
+		CompareFilters:    compareFilters,
+		OuterHashKeys:     outerHashKeys,
+		InnerHashKeys:     innerHashKeys,
+		IsOrderPreserving: len(prop.SortItems) > 0, // Mark as order-preserving if satisfying ORDER BY
 	}.Init(p.SCtx(), p.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), prop.ExpectedCnt), p.QueryBlockOffset(), chReqProps...)
 	if path != nil {
 		join.IdxColLens = path.IdxColLens

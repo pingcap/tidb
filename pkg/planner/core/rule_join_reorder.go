@@ -241,8 +241,9 @@ type JoinReOrderSolver struct {
 }
 
 type jrNode struct {
-	p       base.LogicalPlan
-	cumCost float64
+	p                 base.LogicalPlan
+	cumCost           float64
+	isOrderPreserving bool // true if this node contains/is the order-preserving table
 }
 
 type joinTypeWithExtMsg struct {
@@ -861,8 +862,18 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *logicalop.L
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
-func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lNode, rNode *jrNode) float64 {
-	return join.StatsInfo().RowCount + lNode.cumCost + rNode.cumCost
+// When the left node is order-preserving and the discount is enabled, we apply
+// the discount factor to make the optimizer prefer keeping the order-preserving
+// table on the left (probe) side of the join.
+func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lNode, rNode *jrNode) float64 {
+	cost := join.StatsInfo().RowCount + lNode.cumCost + rNode.cumCost
+	if lNode.isOrderPreserving {
+		discount := s.ctx.GetSessionVars().OrderPreservingJoinDiscount
+		if discount > 0 && discount < 1.0 {
+			cost = cost * discount
+		}
+	}
+	return cost
 }
 
 // Name implements the base.LogicalOptRule.<1st> interface.

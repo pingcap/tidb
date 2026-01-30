@@ -66,6 +66,9 @@ type PhysicalIndexJoin struct {
 	InnerHashKeys []*expression.Column
 	// EqualConditions stores the equal conditions for logical join's original EqualConditions.
 	EqualConditions []*expression.ScalarFunction `plan-cache-clone:"shallow"`
+	// IsOrderPreserving indicates whether this IndexJoin is being used to satisfy an ORDER BY requirement.
+	// When true, the optimizer may apply OrderPreservingJoinDiscount to make this plan more attractive.
+	IsOrderPreserving bool
 }
 
 // Init initializes PhysicalIndexJoin.
@@ -99,6 +102,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.CompareFilters = p.CompareFilters.cloneForPlanCache()
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
+	cloned.IsOrderPreserving = p.IsOrderPreserving
 	return cloned, nil
 }
 
