@@ -25,7 +25,7 @@ const (
 	HashJoinVersionOptimized = "optimized"
 )
 
-// IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized
+// IsOptimizedVersion returns true if hashJoinVersion equals to HashJoinVersionOptimized 
 func IsOptimizedVersion(hashJoinVersion string) bool {
 	return strings.ToLower(hashJoinVersion) == HashJoinVersionOptimized
 }
