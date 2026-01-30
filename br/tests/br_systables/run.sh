@@ -94,7 +94,14 @@ add_test_data
 run_br backup full -s "local://${backup_dir}1"
 delete_user
 delete_test_data
-run_br restore full -f "mysql*.*" -f "usertest.*" -s "local://${backup_dir}1"
+restore_fail=0
+run_br restore full -f "mysql*.*" -f "usertest.*" -s "local://${backup_dir}1" || restore_fail=1
+# TODO: debug here to check the checksum mismatch error
+if [ $restore_fail -ne 0 ]; then
+    echo "TEST: [$TEST_NAME] test restore failed!"
+    run_sql "SELECT * FROM mysql.analyze_jobs"
+    exit 1
+fi
 check2
 
 delete_user 

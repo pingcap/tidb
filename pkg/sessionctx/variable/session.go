@@ -1739,6 +1739,10 @@ type SessionVars struct {
 
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
+
+	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
+	IndexLookUpPushDownPolicy string
+
 	// database name +"."+procedure_name as key , *RoutineCacahe as value.
 	ProcedurePlanCache map[string]any
 	// LastProcedureErrorStr is used to save last handler command.
@@ -2295,6 +2299,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		OptimizerEnableNAAJ:           DefTiDBEnableNAAJ,
 		RegardNULLAsPoint:             DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       DefOptEnableProjectionPushDown,
+		IndexLookUpPushDownPolicy:     DefTiDBIndexLookUpPushDownPolicy,
 		inCallProcedure: struct {
 			inCall bool
 			num    int
@@ -3440,6 +3445,10 @@ const (
 	SlowLogTidbCPUUsageDuration = "Tidb_cpu_time"
 	// SlowLogTikvCPUUsageDuration is the total tikv cpu usages.
 	SlowLogTikvCPUUsageDuration = "Tikv_cpu_time"
+	// SlowLogStorageFromKV is used to indicate whether the statement read data from TiKV.
+	SlowLogStorageFromKV = "Storage_from_kv"
+	// SlowLogStorageFromMPP is used to indicate whether the statement read data from TiFlash.
+	SlowLogStorageFromMPP = "Storage_from_mpp"
 )
 
 // GenerateBinaryPlan decides whether we should record binary plan in slow log and stmt summary.
@@ -3500,6 +3509,8 @@ type SlowQueryLogItems struct {
 	WRU               float64
 	WaitRUDuration    time.Duration
 	CPUUsages         ppcpuusage.CPUUsages
+	StorageKV         bool // query read from TiKV
+	StorageMPP        bool // query read from TiFlash
 }
 
 // SlowLogFormat uses for formatting slow log.
@@ -3716,6 +3727,8 @@ func (s *SessionVars) SlowLogFormat(logItems *SlowQueryLogItems) string {
 	if logItems.CPUUsages.TikvCPUTime > time.Duration(0) {
 		writeSlowLogItem(&buf, SlowLogTikvCPUUsageDuration, strconv.FormatFloat(logItems.CPUUsages.TikvCPUTime.Seconds(), 'f', -1, 64))
 	}
+	writeSlowLogItem(&buf, SlowLogStorageFromKV, strconv.FormatBool(logItems.StorageKV))
+	writeSlowLogItem(&buf, SlowLogStorageFromMPP, strconv.FormatBool(logItems.StorageMPP))
 	if logItems.PrevStmt != "" {
 		writeSlowLogItem(&buf, SlowLogPrevStmt, logItems.PrevStmt)
 	}

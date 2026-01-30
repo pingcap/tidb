@@ -297,6 +297,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowImportJobs(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -1436,9 +1438,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		fmt.Fprintf(buf, " /* CACHED ON */")
 	}
 
-	// add partition info here.
-	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
-
 	if tableInfo.TTLInfo != nil {
 		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
 		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
@@ -1490,6 +1489,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			return err
 		}
 	}
+
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
+	}
+
+	// add partition info here.
+	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
 }
 
@@ -2423,7 +2429,15 @@ func FillOneImportJobInfo(info *importer.JobInfo, result *chunk.Chunk, importedR
 	} else {
 		result.AppendNull(7)
 	}
-	result.AppendString(8, info.ErrorMessage)
+	if info.IsSuccess() {
+		var msg string
+		if info.Summary.ConflictedRows > 0 {
+			msg = fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictedRows)
+		}
+		result.AppendString(8, msg)
+	} else {
+		result.AppendString(8, info.ErrorMessage)
+	}
 	result.AppendTime(9, info.CreateTime)
 	if info.StartTime.IsZero() {
 		result.AppendNull(10)

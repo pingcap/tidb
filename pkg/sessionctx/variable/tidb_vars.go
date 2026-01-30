@@ -1274,6 +1274,16 @@ const (
 	TiDBProcedureLastErrorSQL = "sp_last_error_sql"
 	// TiDBEnableDutySeparationMode indicates if enable the mode of duty separation.
 	TiDBEnableDutySeparationMode = "tidb_enable_duty_separation_mode"
+	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
+	// The log backup task will be paused if the checkpoint lag is larger than it.
+	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
+	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
+
+	// TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio variable is used to set ratio of errors to trip the circuit breaker for get region calls to PD
+	// https://github.com/tikv/rfcs/blob/master/text/0115-circuit-breaker.md
+	TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio = "tidb_cb_pd_metadata_error_rate_threshold_ratio"
 )
 
 // TiDB intentional limits
@@ -1511,7 +1521,7 @@ const (
 	DefTiDBMemQuotaAnalyze                            = -1
 	DefTiDBEnableAutoAnalyze                          = true
 	DefTiDBEnableAutoAnalyzePriorityQueue             = true
-	DefTiDBAnalyzeColumnOptions                       = "PREDICATE"
+	DefTiDBAnalyzeColumnOptions                       = "ALL"
 	DefTiDBMemOOMAction                               = "CANCEL"
 	DefTiDBMaxAutoAnalyzeTime                         = 12 * 60 * 60
 	DefTiDBAutoAnalyzeConcurrency                     = 1
@@ -1648,6 +1658,9 @@ const (
 	DefTiDBTSOClientRPCMode                           = TSOClientRPCModeDefault
 	DefTiDBPlanCacheMaxDecimalParamNums               = -1
 	DefTiDBLoadBindingTimeout                         = 200
+	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
+	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
+	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
 )
 
 // Process global variables.
@@ -1771,6 +1784,9 @@ var (
 
 	SchemaCacheSize           = atomic.NewUint64(DefTiDBSchemaCacheSize)
 	SchemaCacheSizeOriginText = atomic.NewString(strconv.Itoa(DefTiDBSchemaCacheSize))
+
+	AdvancerCheckPointLagLimit                      = atomic.NewDuration(DefTiDBAdvancerCheckPointLagLimit)
+	CircuitBreakerPDMetadataErrorRateThresholdRatio = atomic.NewFloat64(0.0)
 )
 
 var (
@@ -1806,6 +1822,8 @@ var (
 	EnableStatsOwner func() error = nil
 	// DisableStatsOwner is the func registered by stats to disable running stats in this instance.
 	DisableStatsOwner func() error = nil
+	// ChangePDMetadataCircuitBreakerErrorRateThresholdRatio changes the error rate threshold of the PD metadata circuit breaker.
+	ChangePDMetadataCircuitBreakerErrorRateThresholdRatio func(uint32) = nil
 )
 
 // Hooks functions for Cluster Resource Control.

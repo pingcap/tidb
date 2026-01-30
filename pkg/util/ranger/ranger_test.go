@@ -2126,17 +2126,17 @@ func TestRangeFallbackForDetachCondAndBuildRangeForIndex(t *testing.T) {
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, 0)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
-		"[[\"aa\",\"aa\"] [\"cc\",\"cc\"]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb" "ee","aa" "bb" "ee"] ["cc" "dd" "ee","cc" "dd" "ee"]]`)
 	checkRangeFallbackAndReset(t, sctx, false)
 	quota = res.Ranges.MemUsage() - 1
 	res, err = ranger.DetachCondAndBuildRangeForIndex(rctx, conds, cols, lengths, quota)
 	require.NoError(t, err)
 	checkDetachRangeResult(t, res,
-		"[]",
-		"[eq(test.t2.c, eee) or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) or(eq(test.t2.a, aaa), eq(test.t2.a, ccc))]",
-		"[[NULL,+inf]]")
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd)))]",
+		"[or(and(eq(test.t2.a, aaa), eq(test.t2.b, bbb)), and(eq(test.t2.a, ccc), eq(test.t2.b, ddd))) eq(test.t2.c, eee)]",
+		`[["aa" "bb","aa" "bb"] ["cc" "dd","cc" "dd"]]`)
 	checkRangeFallbackAndReset(t, sctx, true)
 }
 

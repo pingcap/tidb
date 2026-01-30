@@ -3655,6 +3655,57 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
+	{
+		Scope:    ScopeGlobal,
+		Name:     TiDBAdvancerCheckPointLagLimit,
+		Value:    DefTiDBAdvancerCheckPointLagLimit.String(),
+		Type:     TypeDuration,
+		MinValue: int64(time.Second), MaxValue: uint64(time.Hour * 24 * 365),
+		SetGlobal: func(_ context.Context, sv *SessionVars, s string) error {
+			d, err := time.ParseDuration(s)
+			if err != nil {
+				return err
+			}
+			AdvancerCheckPointLagLimit.Store(d)
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
+			return AdvancerCheckPointLagLimit.Load().String(), nil
+		},
+	},
+	{
+		Scope: ScopeGlobal | ScopeSession,
+		Name:  TiDBIndexLookUpPushDownPolicy,
+		Value: DefTiDBIndexLookUpPushDownPolicy,
+		Type:  TypeEnum,
+		PossibleValues: []string{
+			IndexLookUpPushDownPolicyHintOnly,
+			IndexLookUpPushDownPolicyAffinityForce,
+			IndexLookUpPushDownPolicyForce,
+		},
+		IsHintUpdatableVerified: true,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexLookUpPushDownPolicy = s
+			return nil
+		},
+	},
+	{Scope: ScopeGlobal, Name: TiDBCircuitBreakerPDMetadataErrorRateThresholdRatio, Value: strconv.FormatFloat(DefTiDBCircuitBreakerPDMetaErrorRateRatio, 'f', -1, 64),
+		Type: TypeFloat, MinValue: 0, MaxValue: 1,
+		GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
+			return strconv.FormatFloat(CircuitBreakerPDMetadataErrorRateThresholdRatio.Load(), 'f', -1, 64), nil
+		},
+		SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
+			v := tidbOptFloat64(val, DefTiDBCircuitBreakerPDMetaErrorRateRatio)
+			if v < 0 || v > 1 {
+				return errors.Errorf("invalid tidb_cb_pd_metadata_error_rate_threshold_ratio value %s", val)
+			}
+			CircuitBreakerPDMetadataErrorRateThresholdRatio.Store(v)
+			if ChangePDMetadataCircuitBreakerErrorRateThresholdRatio != nil {
+				ChangePDMetadataCircuitBreakerErrorRateThresholdRatio(uint32(v * 100))
+			}
+			return nil
+		},
+	},
 }
 
 // GlobalSystemVariableInitialValue gets the default value for a system variable including ones that are dynamically set (e.g. based on the store)

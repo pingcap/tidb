@@ -28,7 +28,7 @@ func runBackupCommand(command *cobra.Command, cmdName string) error {
 	}
 	overrideDefaultBackupConfigIfNeeded(&cfg, command)
 
-	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.TLS, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
 	}
 

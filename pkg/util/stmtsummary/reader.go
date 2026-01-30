@@ -324,6 +324,8 @@ const (
 	AvgQueuedRcTimeStr                = "AVG_QUEUED_RC_TIME"
 	MaxQueuedRcTimeStr                = "MAX_QUEUED_RC_TIME"
 	ResourceGroupName                 = "RESOURCE_GROUP"
+	StorageKVStr                      = "STORAGE_KV"
+	StorageMPPStr                     = "STORAGE_MPP"
 )
 
 type columnValueFactory func(reader *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, ssbd *stmtSummaryByDigest) any
@@ -675,5 +677,11 @@ var columnValueFactoryMap = map[string]columnValueFactory{
 	},
 	PlanCacheUnqualifiedLastReasonStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
 		return ssElement.lastPlanCacheUnqualified
+	},
+	StorageKVStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.storageKV
+	},
+	StorageMPPStr: func(_ *stmtSummaryReader, ssElement *stmtSummaryByDigestElement, _ *stmtSummaryByDigest) any {
+		return ssElement.storageMPP
 	},
 }

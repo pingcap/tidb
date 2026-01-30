@@ -1221,6 +1221,53 @@ func isTiKVIndexByName(idxName pmodel.CIStr, indexInfo *model.IndexInfo, tblInfo
 	return indexInfo != nil && !indexInfo.IsTiFlashLocalIndex()
 }
 
+func checkIndexLookUpPushDownSupported(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo, suppressWarning bool) bool {
+	unSupportedReason := ""
+	sessionVars := ctx.GetSessionVars()
+	if tblInfo.IsCommonHandle && tblInfo.CommonHandleVersion < 1 {
+		unSupportedReason = "common handle table with old encoding version is not supported"
+	} else if index.Global {
+		unSupportedReason = "the global index in partition table is not supported"
+	} else if tblInfo.TempTableType != model.TempTableNone {
+		unSupportedReason = "temporary table is not supported"
+	} else if tblInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+		unSupportedReason = "cached table is not supported"
+	} else if index.MVIndex {
+		unSupportedReason = "multi-valued index is not supported"
+	} else if !sessionVars.IsIsolation(ast.RepeatableRead) {
+		unSupportedReason = "transaction isolation level is not REPEATABLE-READ"
+	} else if sessionVars.GetReplicaRead() != kv.ReplicaReadLeader {
+		unSupportedReason = "only leader read is supported"
+	} else if sessionVars.TxnCtx.IsStaleness {
+		unSupportedReason = "stale read is not supported"
+	} else if sessionVars.SnapshotTS != 0 {
+		unSupportedReason = "historical read is not supported"
+	}
+
+	if unSupportedReason != "" {
+		if !suppressWarning {
+			ctx.GetSessionVars().StmtCtx.SetHintWarning(fmt.Sprintf("hint INDEX_LOOKUP_PUSHDOWN is inapplicable, %s", unSupportedReason))
+		}
+		return false
+	}
+	return true
+}
+
+func checkAutoForceIndexLookUpPushDown(ctx base.PlanContext, tblInfo *model.TableInfo, index *model.IndexInfo) bool {
+	policy := ctx.GetSessionVars().IndexLookUpPushDownPolicy
+	switch policy {
+	case variable.IndexLookUpPushDownPolicyForce:
+	case variable.IndexLookUpPushDownPolicyAffinityForce:
+		if tblInfo.Affinity == nil {
+			// No affinity info, should not auto push down the index look up.
+			return false
+		}
+	default:
+		return false
+	}
+	return checkIndexLookUpPushDownSupported(ctx, tblInfo, index, true)
+}
+
 func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, indexHints []*ast.IndexHint, tbl table.Table, dbName, tblName pmodel.CIStr, check bool, hasFlagPartitionProcessor bool) ([]*util.AccessPath, error) {
 	tblInfo := tbl.Meta()
 	publicPaths := make([]*util.AccessPath, 0, len(tblInfo.Indices)+2)
@@ -1258,6 +1305,19 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	var latestIndexes map[int64]*model.IndexInfo
 	var err error
 
+	// When NO_INDEX_LOOKUP_PUSHDOWN hint is specified, we should set `forceNoIndexLookUpPushDown = true` to avoid
+	// using index look up push down even if other hint or system variable `tidb_index_lookup_pushdown_policy`
+	// tries to enable it.
+	forceNoIndexLookUpPushDown := false
+	if len(tableHints.NoIndexLookUpPushDown) > 0 {
+		if tableHints.IfNoIndexLookUpPushDown(&hint.HintedTable{
+			DBName:  dbName,
+			TblName: tblName,
+		}) {
+			forceNoIndexLookUpPushDown = true
+		}
+	}
+
 	for _, index := range tblInfo.Indices {
 		if index.State == model.StatePublic {
 			// Filter out invisible index, because they are not visible for optimizer
@@ -1291,6 +1351,9 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 				continue
 			}
 			path := &util.AccessPath{Index: index}
+			if !forceNoIndexLookUpPushDown && checkAutoForceIndexLookUpPushDown(ctx, tblInfo, index) {
+				path.IndexLookUpPushDownBy = util.IndexLookUpPushDownBySysVar
+			}
 			publicPaths = append(publicPaths, path)
 		}
 	}
@@ -1325,11 +1388,18 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 
 	// Extract comment-style index hint like /*+ INDEX(t, idx1, idx2) */.
 	indexHintsLen := len(indexHints)
+	var indexLookUpPushDownHints map[int]struct{}
 	if tableHints != nil {
 		for i, hint := range tableHints.IndexHintList {
 			if hint.Match(dbName, tblName) {
 				indexHints = append(indexHints, hint.IndexHint)
 				tableHints.IndexHintList[i].Matched = true
+				if hint.ShouldPushDownIndexLookUp() {
+					if indexLookUpPushDownHints == nil {
+						indexLookUpPushDownHints = make(map[int]struct{}, 1)
+					}
+					indexLookUpPushDownHints[len(indexHints)-1] = struct{}{}
+				}
 			}
 		}
 	}
@@ -1389,6 +1459,23 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 			}
 			if hint.HintType == ast.HintNoOrderIndex {
 				path.ForceNoKeepOrder = true
+			}
+			if i >= indexHintsLen {
+				// Currently we only support to hint the index look up push down for comment-style sql hints.
+				// So only i >= indexHintsLen may have the hints here.
+				if _, ok := indexLookUpPushDownHints[i]; ok {
+					if forceNoIndexLookUpPushDown {
+						ctx.GetSessionVars().StmtCtx.SetHintWarning(
+							"hint INDEX_LOOKUP_PUSHDOWN cannot be inapplicable, NO_INDEX_LOOKUP_PUSHDOWN is specified",
+						)
+						continue
+					}
+
+					if !checkIndexLookUpPushDownSupported(ctx, tblInfo, path.Index, false) {
+						continue
+					}
+					path.IndexLookUpPushDownBy = util.IndexLookUpPushDownByHint
+				}
 			}
 			available = append(available, path)
 		}
@@ -3611,7 +3698,7 @@ func (b *PlanBuilder) buildShow(ctx context.Context, show *ast.ShowStmt) (base.P
 	buildPattern := true
 
 	switch show.Tp {
-	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowProcedureStatus, ast.ShowFunctionStatus:
+	case ast.ShowDatabases, ast.ShowVariables, ast.ShowTables, ast.ShowColumns, ast.ShowTableStatus, ast.ShowCollation, ast.ShowProcedureStatus, ast.ShowFunctionStatus, ast.ShowAffinity:
 		if (show.Tp == ast.ShowTables || show.Tp == ast.ShowTableStatus) && p.DBName == "" {
 			return nil, plannererrors.ErrNoDB
 		}
@@ -6155,6 +6242,9 @@ func buildShowSchema(s *ast.ShowStmt, isView bool, isSequence bool) (schema *exp
 	case ast.ShowDistributionJobs:
 		names = distributionJobsSchemaNames
 		ftypes = distributionJobsSchedulerFTypes
+	case ast.ShowAffinity:
+		names = []string{"Db_name", "Table_name", "Partition_name", "Leader_store_id", "Voter_store_ids", "Status", "Region_count", "Affinity_region_count"}
+		ftypes = []byte{mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeVarchar, mysql.TypeVarchar, mysql.TypeLonglong, mysql.TypeLonglong}
 	}
 	return convert2OutputSchemasAndNames(names, ftypes, flags)
 }

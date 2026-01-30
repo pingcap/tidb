@@ -537,6 +537,16 @@ func (*Domain) fetchSchemasWithTables(ctx context.Context, schemas []*model.DBIn
 			}
 			di.TableName2ID = name2ID
 			tables = specialTableInfos
+			if domainutil.RepairInfo.InRepairMode() && len(domainutil.RepairInfo.GetRepairTableList()) > 0 {
+				mustLoadReapirTableIDs := domainutil.RepairInfo.GetMustLoadRepairTableListByDB(di.Name.L, name2ID)
+				for _, id := range mustLoadReapirTableIDs {
+					tblInfo, err := m.GetTable(di.ID, id)
+					if err != nil {
+						return err
+					}
+					tables = append(tables, tblInfo)
+				}
+			}
 		} else {
 			tables, err = m.ListTables(ctx, di.ID)
 			if err != nil {
@@ -1620,7 +1630,8 @@ func NewDomain(store kv.Storage, schemaLease time.Duration, statsLease time.Dura
 	do.wg = util.NewWaitGroupEnhancedWrapper("domain", do.exit, config.GetGlobalConfig().TiDBEnableExitCheck)
 	do.SchemaValidator = NewSchemaValidator(schemaLease, do)
 	do.expensiveQueryHandle = expensivequery.NewExpensiveQueryHandle(do.exit)
-	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit)
+	do.memoryUsageAlarmHandle = memoryusagealarm.NewMemoryUsageAlarmHandle(do.exit,
+		&memoryusagealarm.TiDBConfigProvider{})
 	do.serverMemoryLimitHandle = servermemorylimit.NewServerMemoryLimitHandle(do.exit)
 	do.sysProcesses = SysProcesses{mu: &sync.RWMutex{}, procMap: make(map[uint64]sysproctrack.TrackProc)}
 	do.initDomainSysVars()
@@ -1858,9 +1869,9 @@ func (do *Domain) initLogBackup(ctx context.Context, pdClient pd.Client) error {
 	if err != nil {
 		return err
 	}
-	adv := streamhelper.NewCheckpointAdvancer(env)
+	adv := streamhelper.NewTiDBCheckpointAdvancer(env)
 	do.brOwnerMgr = streamhelper.OwnerManagerForLogBackup(ctx, do.etcdClient)
-	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickDuration)
+	do.logBackupAdvancer = daemon.New(adv, do.brOwnerMgr, adv.Config().TickTimeout())
 	loop, err := do.logBackupAdvancer.Begin(ctx)
 	if err != nil {
 		return err
@@ -2706,7 +2717,7 @@ func (do *Domain) UpdateTableStatsLoop(initStatsCtx sessionctx.Context) error {
 	variable.EnableStatsOwner = do.enableStatsOwner
 	variable.DisableStatsOwner = do.disableStatsOwner
 	do.statsOwner = do.newOwnerManager(handle.StatsPrompt, handle.StatsOwnerKey)
-	do.statsOwner.SetListener(owner.NewListenersWrapper(statsHandle, do.ddlNotifier))
+	do.statsOwner.SetListener(owner.NewListenersWrapper(do.ddlNotifier))
 	if config.GetGlobalConfig().Instance.TiDBEnableStatsOwner.Load() {
 		err := do.statsOwner.CampaignOwner()
 		if err != nil {
@@ -3008,8 +3019,10 @@ func (do *Domain) gcStatsWorker() {
 
 func (do *Domain) dumpColStatsUsageWorker() {
 	logutil.BgLogger().Info("dumpColStatsUsageWorker started.")
-	lease := do.statsLease
-	dumpColStatsUsageTicker := time.NewTicker(100 * lease)
+	// We need to have different nodes trigger tasks at different times to avoid the herd effect.
+	randDuration := time.Duration(rand.Int63n(int64(time.Minute)))
+	dumpDuration := 100*do.statsLease + randDuration
+	dumpColStatsUsageTicker := time.NewTicker(dumpDuration)
 	statsHandle := do.StatsHandle()
 	defer func() {
 		dumpColStatsUsageTicker.Stop()
@@ -3065,6 +3078,12 @@ func (do *Domain) autoAnalyzeWorker() {
 		case <-analyzeTicker.C:
 			if variable.RunAutoAnalyze.Load() && !do.stopAutoAnalyze.Load() && do.statsOwner.IsOwner() {
 				statsHandle.HandleAutoAnalyze()
+			} else if !variable.RunAutoAnalyze.Load() || !do.statsOwner.IsOwner() {
+				// Once the auto analyze is disabled or this instance is not the owner,
+				// we close the priority queue to release resources.
+				// This would guarantee that when auto analyze is re-enabled or this instance becomes the owner again,
+				// the priority queue would be re-initialized.
+				statsHandle.ClosePriorityQueue()
 			}
 		case <-do.exit:
 			return

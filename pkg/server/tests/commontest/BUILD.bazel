@@ -31,6 +31,7 @@ go_test(
         "//pkg/sessionctx/variable",
         "//pkg/store/mockstore/unistore",
         "//pkg/testkit",
+        "//pkg/testkit/testfailpoint",
         "//pkg/testkit/testsetup",
         "//pkg/util",
         "//pkg/util/plancodec",

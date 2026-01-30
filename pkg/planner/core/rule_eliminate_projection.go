@@ -103,7 +103,7 @@ func doPhysicalProjectionElimination(p base.PhysicalPlan) base.PhysicalPlan {
 	tableReader, isTableReader := p.(*PhysicalTableReader)
 	if isTableReader && tableReader.StoreType == kv.TiFlash {
 		tableReader.tablePlan = eliminatePhysicalProjection(tableReader.tablePlan)
-		tableReader.TablePlans = flattenPushDownPlan(tableReader.tablePlan)
+		tableReader.TablePlans = flattenListPushDownPlan(tableReader.tablePlan)
 		return p
 	}
 
@@ -183,12 +183,28 @@ func (pe *ProjectionEliminator) eliminate(p base.LogicalPlan, replace map[string
 	case *logicalop.LogicalApply:
 		x.SetSchema(logicalop.BuildLogicalJoinSchema(x.JoinType, x))
 	default:
-		for _, dst := range p.Schema().Columns {
-			ruleutil.ResolveColumnAndReplace(dst, replace)
+		for i, dst := range p.Schema().Columns {
+			p.Schema().Columns[i] = ruleutil.ResolveColumnAndReplace(dst, replace)
 		}
 	}
-	// replace all of exprs in logical plan
-	p.ReplaceExprColumns(replace)
+
+	// Filter replace map first to make sure the replaced columns
+	// exist in the child output.
+	newReplace := make(map[string]*expression.Column, len(replace))
+	for code, expr := range replace {
+	childloop:
+		for _, child := range p.Children() {
+			for _, schemaCol := range child.Schema().Columns {
+				if schemaCol.Equal(nil, expr) {
+					newReplace[code] = expr
+					break childloop
+				}
+			}
+		}
+	}
+	if len(newReplace) > 0 {
+		p.ReplaceExprColumns(newReplace)
+	}
 
 	// eliminate duplicate projection: projection with child projection
 	if isProj {

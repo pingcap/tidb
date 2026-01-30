@@ -114,6 +114,10 @@ func (w *worker) onAddTablePartition(jobCtx *jobContext, job *model.Job) (ver in
 	// So here using `job.SchemaState` to judge what the stage of this job is.
 	switch job.SchemaState {
 	case model.StateNone:
+		if tblInfo.Affinity != nil {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("ADD PARTITION of a table with AFFINITY option")
+		}
 		// job.SchemaState == model.StateNone means the job is in the initial state of add partition.
 		// Here should use partInfo from job directly and do some check action.
 		err = checkAddPartitionTooManyPartitions(uint64(len(tblInfo.Partition.Definitions) + len(partInfo.Definitions)))
@@ -2020,6 +2024,10 @@ func CheckDropTablePartition(meta *model.TableInfo, partLowerNames []string) err
 		return dbterror.ErrOnlyOnRangeListPartition.GenWithStackByArgs("DROP")
 	}
 
+	if meta.Affinity != nil {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("DROP PARTITION of a table with AFFINITY option")
+	}
+
 	// To be error compatible with MySQL, we need to do this first!
 	// see https://github.com/pingcap/tidb/issues/31681#issuecomment-1015536214
 	oldDefs := pi.Definitions
@@ -2626,6 +2634,21 @@ func (w *worker) onTruncateTablePartition(jobCtx *jobContext, job *model.Job) (i
 		pi.DDLState = model.StateNone
 		pi.DDLAction = model.ActionNone
 
+		// Create new affinity groups first (critical operation - must succeed)
+		if tblInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tblInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return ver, errors.Trace(err)
+			}
+		}
+
+		// Delete old affinity groups (best-effort cleanup - ignore errors)
+		if tblInfo.Affinity != nil {
+			if err := deleteTableAffinityGroupsInPD(jobCtx, tblInfo, oldDefinitions); err != nil {
+				logutil.DDLLogger().Error("failed to delete old partition affinity groups from PD", zap.Error(err), zap.Int64("tableID", tblInfo.ID))
+			}
+		}
+
 		failpoint.Inject("truncatePartFail3", func(val failpoint.Value) {
 			if val.(bool) {
 				job.ErrorCount += variable.GetDDLErrorCountLimit() / 2
@@ -3169,6 +3192,11 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 	metaMut := jobCtx.metaMut
 	switch job.SchemaState {
 	case model.StateNone:
+		if tblInfo.Affinity != nil {
+			job.State = model.JobStateCancelled
+			return ver, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("REORGANIZE PARTITION of a table with AFFINITY option")
+		}
+
 		// job.SchemaState == model.StateNone means the job is in the initial state of reorg partition.
 		// Here should use partInfo from job directly and do some check action.
 		// In case there was a race for queueing different schema changes on the same
@@ -3732,7 +3760,7 @@ func doPartitionReorgWork(w *worker, jobCtx *jobContext, job *model.Job, tbl tab
 			func() {
 				reorgErr = dbterror.ErrCancelledDDLJob.GenWithStack("reorganize partition for table `%v` panic", tbl.Meta().Name)
 			}, false)
-		return w.reorgPartitionDataAndIndex(jobCtx.stepCtx, reorgTbl, reorgInfo)
+		return w.reorgPartitionDataAndIndex(jobCtx, reorgTbl, reorgInfo)
 	})
 	if err != nil {
 		if dbterror.ErrPausedDDLJob.Equal(err) {
@@ -4012,7 +4040,7 @@ func (w *reorgPartitionWorker) GetCtx() *backfillCtx {
 }
 
 func (w *worker) reorgPartitionDataAndIndex(
-	ctx context.Context,
+	jobCtx *jobContext,
 	t table.Table,
 	reorgInfo *reorgInfo,
 ) (err error) {
@@ -4027,7 +4055,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 
 	// Copy the data from the DroppingDefinitions to the AddingDefinitions
 	if bytes.Equal(reorgInfo.currElement.TypeKey, meta.ColumnElementKey) {
-		err = w.updatePhysicalTableRow(ctx, t, reorgInfo)
+		err = w.updatePhysicalTableRow(jobCtx.stepCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4086,7 +4114,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 	pi := t.Meta().GetPartitionInfo()
 	if _, err = findNextPartitionID(reorgInfo.PhysicalTableID, pi.AddingDefinitions); err == nil {
 		// Now build all the indexes in the new partitions.
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -4150,7 +4178,7 @@ func (w *worker) reorgPartitionDataAndIndex(
 		}
 	}
 	if _, err = findNextNonTouchedPartitionID(reorgInfo.PhysicalTableID, pi); err == nil {
-		err = w.addTableIndex(ctx, t, reorgInfo)
+		err = w.addTableIndex(jobCtx, t, reorgInfo)
 		if err != nil {
 			return errors.Trace(err)
 		}

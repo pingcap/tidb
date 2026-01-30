@@ -4336,6 +4336,25 @@ func TestOptimizerHints(t *testing.T) {
 	require.Len(t, hints[1].Indexes, 1)
 	require.Equal(t, "t4", hints[1].Indexes[0].L)
 
+	// Test INDEX_LOOKUP_PUSHDOWN
+	stmt, _, err = p.Parse("select /*+ INDEX_LOOKUP_PUSHDOWN(T1,T2), index_lookup_pushdown(t3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
+	require.NoError(t, err)
+	selectStmt = stmt[0].(*ast.SelectStmt)
+
+	hints = selectStmt.TableHints
+	require.Len(t, hints, 2)
+	require.Equal(t, "index_lookup_pushdown", hints[0].HintName.L)
+	require.Len(t, hints[0].Tables, 1)
+	require.Equal(t, "t1", hints[0].Tables[0].TableName.L)
+	require.Len(t, hints[0].Indexes, 1)
+	require.Equal(t, "t2", hints[0].Indexes[0].L)
+
+	require.Equal(t, "index_lookup_pushdown", hints[1].HintName.L)
+	require.Len(t, hints[1].Tables, 1)
+	require.Equal(t, "t3", hints[1].Tables[0].TableName.L)
+	require.Len(t, hints[1].Indexes, 1)
+	require.Equal(t, "t4", hints[1].Indexes[0].L)
+
 	// Test TIDB_SMJ
 	stmt, _, err = p.Parse("select /*+ TIDB_SMJ(T1,t2), tidb_smj(T3,t4) */ c1, c2 from t1, t2 where t1.c1 = t2.c1", "", "")
 	require.NoError(t, err)
@@ -7755,6 +7774,32 @@ func TestTableSplitStmt(t *testing.T) {
 		{"SELECT * FROM t TABLESPLIT 'a', 'b'", false, ""},
 		{"SELECT * FROM t TABLESPLIT (a, b)", false, ""},
 		{"SELECT * FROM t TABLESPLIT (1, 2)", false, ""},
+	}
+
+	RunTest(t, table, false)
+}
+
+func TestTableAffinityOption(t *testing.T) {
+	table := []testCase{
+		// create table with affinity option
+		{"create table t (a int) AFFINITY = 'table'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) affinity 'TABLE'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'TABLE'"},
+		{"create table t (a int) affinity 'partition'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'partition'"},
+		{"create table t (a int) AFFINITY = ''", true, "CREATE TABLE `t` (`a` INT) AFFINITY = ''"},
+		{"create table t (a int) AFFINITY 'none'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'none'"},
+		{"create table t (a int) AFFINITY 'PARTITION' partition by hash ( a ) PARTITIONS 1", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'PARTITION' PARTITION BY HASH (`a`) PARTITIONS 1"},
+		{"create table t (a int) /*T![affinity] AFFINITY = 'table'*/", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'table'"},
+		{"create table t (a int) AFFINITY 'abcd'", true, "CREATE TABLE `t` (`a` INT) AFFINITY = 'abcd'"},
+
+		// alter table with affinity option
+		{"alter table t AFFINITY = 'table'", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+		{"alter table t affinity 'TABLE'", true, "ALTER TABLE `t` AFFINITY = 'TABLE'"},
+		{"alter table t /*T![affinity] affinity 'table'*/", true, "ALTER TABLE `t` AFFINITY = 'table'"},
+
+		// invalid option
+		{"create table t (a int) AFFINITY 1", false, ""},
+		{"create table t (a int) AFFINITY = 1", false, ""},
+		{"create table t (a int) AFFINITY", false, ""},
 	}
 
 	RunTest(t, table, false)

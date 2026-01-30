@@ -24,10 +24,37 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/disttask/framework/mock"
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
+	mockScheduler "github.com/pingcap/tidb/pkg/disttask/framework/scheduler/mock"
+	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
+
+// GetTestSchedulerExt return scheduler.Extension for testing.
+func GetTestSchedulerExt(ctrl *gomock.Controller) Extension {
+	mockScheduler := mockScheduler.NewMockExtension(ctrl)
+	mockScheduler.EXPECT().OnTick(gomock.Any(), gomock.Any()).Return().AnyTimes()
+	mockScheduler.EXPECT().GetEligibleInstances(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ *proto.Task) ([]string, error) {
+			return nil, nil
+		},
+	).AnyTimes()
+	mockScheduler.EXPECT().IsRetryableErr(gomock.Any()).Return(true).AnyTimes()
+	mockScheduler.EXPECT().GetNextStep(gomock.Any()).DoAndReturn(
+		func(_ *proto.Task) proto.Step {
+			return proto.StepDone
+		},
+	).AnyTimes()
+	mockScheduler.EXPECT().OnNextSubtasksBatch(gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any(), gomock.Any()).DoAndReturn(
+		func(_ context.Context, _ storage.TaskHandle, _ *proto.Task, _ []string, _ proto.Step) (metas [][]byte, err error) {
+			return nil, nil
+		},
+	).AnyTimes()
+
+	mockScheduler.EXPECT().OnDone(gomock.Any(), gomock.Any(), gomock.Any()).Return(nil).AnyTimes()
+	return mockScheduler
+}
 
 func TestManagerSchedulersOrdered(t *testing.T) {
 	ctrl := gomock.NewController(t)
@@ -92,7 +119,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	require.True(t, ctrl.Satisfied())
 
 	// fail in transfer
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished", "1*return()"))
 	mockErr := errors.New("transfer err")
 	taskMgr.EXPECT().GetTasksInStates(
 		mgr.ctx,
@@ -111,8 +137,6 @@ func TestSchedulerCleanupTask(t *testing.T) {
 	taskMgr.EXPECT().TransferTasks2History(mgr.ctx, tasks).Return(nil)
 	mgr.doCleanupTask()
 	require.True(t, ctrl.Satisfied())
-
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/disttask/framework/scheduler/WaitCleanUpFinished"))
 }
 
 func TestManagerSchedulerNotAllocateSlots(t *testing.T) {

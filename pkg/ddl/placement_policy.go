@@ -425,7 +425,7 @@ func getPlacementPolicyDependedObjectsIDs(t *meta.Mutator, policy *model.PolicyI
 		}
 		tables, err := meta.GetTableInfoWithAttributes(
 			t, dbInfo.ID,
-			`"partition":null"`,
+			`"partition":null`,
 			`"policy_ref_info":null`)
 		if err != nil {
 			return nil, nil, nil, err
