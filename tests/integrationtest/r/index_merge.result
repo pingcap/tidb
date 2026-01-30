@@ -68,7 +68,7 @@ id	estRows	task	access object	operator info
 Sort_9	4433.77	root		index_merge.t1.c1
 └─Projection_11	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
   └─Selection_12	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
-    └─HashJoin_23	5542.21	root		left outer semi join, left side:IndexMerge_27, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
+    └─HashJoin_23	5542.21	root		left outer semi join, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
       ├─IndexReader_31(Build)	10000.00	root		index:IndexFullScan_30
       │ └─IndexFullScan_30	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
       └─IndexMerge_27(Probe)	5542.21	root		type: union
@@ -88,7 +88,7 @@ id	estRows	task	access object	operator info
 Sort_9	4433.77	root		index_merge.t1.c1
 └─Projection_11	4433.77	root		index_merge.t1.c1, index_merge.t1.c2, index_merge.t1.c3
   └─Selection_12	4433.77	root		or(lt(index_merge.t1.c1, 10), and(lt(index_merge.t1.c2, 10), Column#10))
-    └─HashJoin_23	5542.21	root		anti left outer semi join, left side:IndexMerge_27, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
+    └─HashJoin_23	5542.21	root		anti left outer semi join, equal:[eq(index_merge.t1.c1, index_merge.t2.c1)]
       ├─IndexReader_31(Build)	10000.00	root		index:IndexFullScan_30
       │ └─IndexFullScan_30	10000.00	cop[tikv]	table:t2, index:c1(c1)	keep order:false, stats:pseudo
       └─IndexMerge_27(Probe)	5542.21	root		type: union
