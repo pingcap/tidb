@@ -704,8 +704,7 @@ func TestAutoAnalyzeAfterAnalyzeVersionChange(t *testing.T) {
 	tableInfo := tbl.Meta()
 	statsTbl := h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
 	require.NotZero(t, statsTbl.LastAnalyzeVersion)
-	// FIXME: https://github.com/pingcap/tidb/issues/64400
-	require.Equal(t, statistics.Version0, statsTbl.StatsVer)
+	require.Equal(t, statistics.Version1, statsTbl.StatsVer)
 	tk.MustExec("set @@tidb_stats_load_sync_wait = 60000")
 	tk.MustQuery("select * from t force index(idx) where a = 1;").Check(testkit.Rows("1 2"))
 	statsTbl = h.GetPhysicalTableStats(tableInfo.ID, tableInfo)
