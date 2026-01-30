@@ -49,10 +49,10 @@ func TestClientPermission(t *testing.T) {
 	})
 
 	t.Run("test list objects", func(t *testing.T) {
-		s.MockS3.EXPECT().ListObjects(gomock.Any(), gomock.Any()).Return(&s3.ListObjectsOutput{}, nil)
+		s.MockS3.EXPECT().ListObjectsV2(gomock.Any(), gomock.Any()).Return(&s3.ListObjectsV2Output{}, nil)
 		require.NoError(t, s3like.CheckPermissions(ctx, cli, []storeapi.Permission{storeapi.ListObjects}))
 
-		s.MockS3.EXPECT().ListObjects(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock list error"))
+		s.MockS3.EXPECT().ListObjectsV2(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock list error"))
 		require.ErrorContains(t, s3like.CheckPermissions(ctx, cli, []storeapi.Permission{storeapi.ListObjects}), "mock list error")
 		require.True(t, s.Controller.Satisfied())
 	})
@@ -190,25 +190,26 @@ func TestClientListObjects(t *testing.T) {
 		BucketPrefix: storeapi.NewBucketPrefix("bucket", "prefix/"),
 	}
 
-	s.MockS3.EXPECT().ListObjects(gomock.Any(), gomock.Any()).DoAndReturn(
-		func(ctx context.Context, input *s3.ListObjectsInput, optFns ...func(*s3.Options)) (*s3.ListObjectsOutput, error) {
+	s.MockS3.EXPECT().ListObjectsV2(gomock.Any(), gomock.Any()).DoAndReturn(
+		func(ctx context.Context, input *s3.ListObjectsV2Input, optFns ...func(*s3.Options)) (*s3.ListObjectsV2Output, error) {
 			require.Equal(t, "prefix/target", *input.Prefix)
-			require.Nil(t, input.Marker)
+			require.Nil(t, input.ContinuationToken)
 			require.Equal(t, int32(100), aws.ToInt32(input.MaxKeys))
-			return &s3.ListObjectsOutput{
+			return &s3.ListObjectsV2Output{
 				IsTruncated: aws.Bool(true),
 				Contents: []types.Object{
 					{Key: aws.String("prefix/target/object1"), Size: aws.Int64(10)},
 					{Key: aws.String("prefix/target/sub/"), Size: aws.Int64(0)},
 					{Key: aws.String("prefix/target/sub/object2"), Size: aws.Int64(20)},
 				},
+				NextContinuationToken: aws.String("prefix/target/sub/object2"),
 			}, nil
 		},
 	)
-	resp, err := cli.ListObjects(ctx, "target", nil, 100)
+	resp, err := cli.ListObjects(ctx, "target", "", nil, 100)
 	require.NoError(t, err)
 	require.True(t, resp.IsTruncated)
-	require.EqualValues(t, "prefix/target/sub/object2", *resp.NextMarker)
+	require.EqualValues(t, "prefix/target/sub/object2", *resp.NextContinuationToken)
 	require.Equal(t, []s3like.Object{
 		{Key: "prefix/target/object1", Size: 10},
 		{Key: "prefix/target/sub/", Size: 0},
@@ -216,8 +217,8 @@ func TestClientListObjects(t *testing.T) {
 	}, resp.Objects)
 	require.True(t, s.Controller.Satisfied())
 
-	s.MockS3.EXPECT().ListObjects(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock list error"))
-	_, err = cli.ListObjects(ctx, "target", nil, 100)
+	s.MockS3.EXPECT().ListObjectsV2(gomock.Any(), gomock.Any()).Return(nil, errors.New("mock list error"))
+	_, err = cli.ListObjects(ctx, "target", "", nil, 100)
 	require.ErrorContains(t, err, "mock list error")
 	require.True(t, s.Controller.Satisfied())
 }
