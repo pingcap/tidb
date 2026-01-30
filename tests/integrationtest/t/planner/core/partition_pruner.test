@@ -859,8 +859,8 @@ set @@tidb_partition_prune_mode='dynamic';
 DROP TABLE IF EXISTS t;
 create table t (a int primary key, b int, key (b)) partition by hash(a) (partition P0, partition p1, partition P2);
 insert into t values (1, 1),(2, 2),(3, 3);
-explain select * from t where a IN (1, 2);
-explain select * from t where a IN (1, 2, 1);
+explain format = 'brief' select * from t where a IN (1, 2);
+explain format = 'brief' select * from t where a IN (1, 2, 1);
 
 
 # TestIssue32007
@@ -965,12 +965,12 @@ CREATE TABLE test1 (ID varchar(50) NOT NULL,
 		PARTITION 2023p2 VALUES LESS THAN (300000,'2023-01-01 00:00:00')) ;
 insert into test1 values("1", 200000, "2022-12-29 12:00:00"), ("2",200000,"2023-01-01");
 analyze table test1;
-explain select * from test1 where partition_no > 199999;
-explain select * from test1 where partition_no = 200000;
-explain select * from test1 where partition_no >= 200000;
-explain select * from test1 where partition_no < 200000;
-explain select * from test1 where partition_no <= 200000;
-explain select * from test1 where partition_no > 200000;
+explain format = 'brief' select * from test1 where partition_no > 199999;
+explain format = 'brief' select * from test1 where partition_no = 200000;
+explain format = 'brief' select * from test1 where partition_no >= 200000;
+explain format = 'brief' select * from test1 where partition_no < 200000;
+explain format = 'brief' select * from test1 where partition_no <= 200000;
+explain format = 'brief' select * from test1 where partition_no > 200000;
 --sorted_result
 select * from test1 partition (2023p1);
 --sorted_result
@@ -992,12 +992,12 @@ CREATE TABLE test1 (ID varchar(50) NOT NULL,
 		PARTITION 2023p2 VALUES LESS THAN (300000,'2023-01-01 00:00:00')) ;
 insert into test1 values("1", 200000, "2022-12-29 12:00:00"), ("2",200000,"2023-01-01");
 analyze table test1;
-explain select * from test1 where partition_no > 199999;
-explain select * from test1 where partition_no = 200000;
-explain select * from test1 where partition_no >= 200000;
-explain select * from test1 where partition_no < 200000;
-explain select * from test1 where partition_no <= 200000;
-explain select * from test1 where partition_no > 200000;
+explain format = 'brief' select * from test1 where partition_no > 199999;
+explain format = 'brief' select * from test1 where partition_no = 200000;
+explain format = 'brief' select * from test1 where partition_no >= 200000;
+explain format = 'brief' select * from test1 where partition_no < 200000;
+explain format = 'brief' select * from test1 where partition_no <= 200000;
+explain format = 'brief' select * from test1 where partition_no > 200000;
 --sorted_result
 select * from test1 partition (2023p1);
 --sorted_result
