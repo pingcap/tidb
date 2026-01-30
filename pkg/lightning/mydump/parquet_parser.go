@@ -24,6 +24,7 @@ import (
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -40,7 +41,7 @@ const (
 	// between the current read position and the last read position, these
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
-	defaultBufSize = 64 * 1024
+	defaultBufSize = 32 * units.KiB
 )
 
 var (
@@ -57,6 +58,28 @@ var (
 	// from parquet column reader. Modified in test.
 	readBatchSize = 128
 )
+
+func openParquetReaderInternal(
+	ctx context.Context,
+	store storage.ExternalStorage,
+	path string,
+) (*parquetFileWrapper, error) {
+	reader, err := store.Open(ctx, path, &storage.ReaderOption{
+		PrefetchSize: defaultBufSize,
+	})
+
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return &parquetFileWrapper{
+		ctx:            ctx,
+		ReadSeekCloser: reader,
+		store:          store,
+		path:           path,
+		skipBuf:        make([]byte, defaultBufSize),
+	}, nil
+}
 
 func estimateRowSize(row []types.Datum) int {
 	length := 0
@@ -272,19 +295,7 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 }
 
 func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
-	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	newPf := &parquetFileWrapper{
-		ReadSeekCloser: reader,
-		store:          pf.store,
-		ctx:            pf.ctx,
-		path:           pf.path,
-		skipBuf:        make([]byte, defaultBufSize),
-	}
-	return newPf, nil
+	return openParquetReaderInternal(pf.ctx, pf.store, pf.path)
 }
 
 // ParquetParser parses a parquet file for import
@@ -498,19 +509,7 @@ func OpenParquetReader(
 	store storage.ExternalStorage,
 	path string,
 ) (storage.ReadSeekCloser, error) {
-	r, err := store.Open(ctx, path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	pf := &parquetFileWrapper{
-		ReadSeekCloser: r,
-		store:          store,
-		ctx:            ctx,
-		path:           path,
-		skipBuf:        make([]byte, defaultBufSize),
-	}
-	return pf, nil
+	return openParquetReaderInternal(ctx, store, path)
 }
 
 // ReadParquetFileRowCountByFile reads the parquet file row count through fileMeta.
@@ -519,7 +518,9 @@ func ReadParquetFileRowCountByFile(
 	store storage.ExternalStorage,
 	fileMeta SourceFileMeta,
 ) (int64, error) {
-	r, err := store.Open(ctx, fileMeta.Path, nil)
+	r, err := store.Open(ctx, fileMeta.Path, &storage.ReaderOption{
+		PrefetchSize: defaultBufSize,
+	})
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -640,7 +641,7 @@ func SampleStatisticsFromParquet(
 	avgRowSize float64,
 	err error,
 ) {
-	r, err := store.Open(ctx, path, nil)
+	r, err := openParquetReaderInternal(ctx, store, path)
 	if err != nil {
 		return 0, 0, err
 	}
