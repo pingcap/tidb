@@ -333,7 +333,7 @@ func (t *MppTask) ConvertToRootTaskImpl(ctx base.PlanContext) (rt *RootTask) {
 			logutil.BgLogger().Error("expect Selection or TableScan for mppTask.p", zap.String("mppTask.p", t.p.TP()))
 			return base.InvalidTask.(*RootTask)
 		}
-		selectivity, _, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
+		selectivity, err := cardinality.Selectivity(ctx, t.tblColHists, t.RootTaskConds, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
