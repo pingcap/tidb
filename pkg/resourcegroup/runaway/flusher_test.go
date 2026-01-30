@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newTestBatchFlusher[K comparable, V any](
@@ -39,24 +39,36 @@ func newTestBatchFlusher[K comparable, V any](
 }
 
 func TestBatchFlusherAdd(t *testing.T) {
+	re := require.New(t)
+
 	var flushCount atomic.Int32
 	flusher := newTestBatchFlusher(
 		3,
 		func(m map[string]int, k string, v int) { m[k] = v },
 		func(m map[string]int) { flushCount.Add(1) },
 	)
+	re.Empty(flusher.buffer)
 
 	flusher.add("a", 1)
 	flusher.add("b", 2)
-	assert.Len(t, flusher.buffer, 2)
-	assert.Equal(t, int32(0), flushCount.Load())
+	re.Len(flusher.buffer, 2)
+	re.False(flusher.flushed)
+	re.Equal(int32(0), flushCount.Load())
 
 	flusher.add("c", 3)
-	assert.Len(t, flusher.buffer, 0)
-	assert.Equal(t, int32(1), flushCount.Load())
+	re.Len(flusher.buffer, 0)
+	re.True(flusher.flushed)
+	re.Equal(int32(1), flushCount.Load())
+
+	flusher.add("d", 4)
+	re.Len(flusher.buffer, 1)
+	re.False(flusher.flushed)
+	re.Equal(int32(1), flushCount.Load())
 }
 
 func TestBatchFlusherMergeFn(t *testing.T) {
+	re := require.New(t)
+
 	var lastBuffer map[string]*Record
 	flusher := newTestBatchFlusher(
 		10,
@@ -75,48 +87,45 @@ func TestBatchFlusherMergeFn(t *testing.T) {
 	flusher.add("key1", &Record{SQLDigest: "d1", Repeats: 1})
 	flusher.add("key2", &Record{SQLDigest: "d2", Repeats: 1})
 
-	assert.Len(t, flusher.buffer, 2)
-	assert.Equal(t, 3, flusher.buffer["key1"].Repeats)
-	assert.Equal(t, 1, flusher.buffer["key2"].Repeats)
+	re.Len(flusher.buffer, 2)
+	re.Equal(3, flusher.buffer["key1"].Repeats)
+	re.Equal(1, flusher.buffer["key2"].Repeats)
 
 	flusher.flush()
-	assert.Len(t, flusher.buffer, 0)
-	assert.Equal(t, 3, lastBuffer["key1"].Repeats)
+	re.Len(flusher.buffer, 0)
+	re.Equal(3, lastBuffer["key1"].Repeats)
 }
 
-func TestBatchFlusherOnTimer(t *testing.T) {
+func TestBatchFlusherFlush(t *testing.T) {
+	re := require.New(t)
+
 	var flushCount atomic.Int32
 	flusher := newTestBatchFlusher(
 		100,
 		func(m map[string]int, k string, v int) { m[k] = v },
 		func(m map[string]int) { flushCount.Add(1) },
 	)
+	re.Empty(flusher.buffer)
 
 	flusher.add("a", 1)
-	assert.Equal(t, int32(0), flushCount.Load())
-	assert.False(t, flusher.fired)
+	re.Len(flusher.buffer, 1)
+	re.False(flusher.flushed)
+	re.Equal(int32(0), flushCount.Load())
 
-	flusher.onTimer()
-	assert.Equal(t, int32(1), flushCount.Load())
-	assert.True(t, flusher.fired)
-	assert.Len(t, flusher.buffer, 0)
-}
+	flusher.flush()
+	re.Len(flusher.buffer, 0)
+	re.True(flusher.flushed)
+	re.Equal(int32(1), flushCount.Load())
 
-func TestBatchFlusherTimerReset(t *testing.T) {
-	flusher := newTestBatchFlusher(
-		100,
-		func(m map[string]int, k string, v int) { m[k] = v },
-		func(m map[string]int) {},
-	)
-
-	flusher.onTimer()
-	assert.True(t, flusher.fired)
-
-	flusher.add("a", 1)
-	assert.False(t, flusher.fired)
+	flusher.add("b", 2)
+	re.Len(flusher.buffer, 1)
+	re.False(flusher.flushed)
+	re.Equal(int32(1), flushCount.Load())
 }
 
 func TestBatchFlusherFlushEmpty(t *testing.T) {
+	re := require.New(t)
+
 	var flushCount atomic.Int32
 	flusher := newTestBatchFlusher(
 		10,
@@ -125,12 +134,12 @@ func TestBatchFlusherFlushEmpty(t *testing.T) {
 	)
 
 	flusher.flush()
-	assert.Equal(t, int32(0), flushCount.Load())
+	re.Equal(int32(0), flushCount.Load())
 
 	flusher.add("a", 1)
 	flusher.flush()
-	assert.Equal(t, int32(1), flushCount.Load())
+	re.Equal(int32(1), flushCount.Load())
 
 	flusher.flush()
-	assert.Equal(t, int32(1), flushCount.Load())
+	re.Equal(int32(1), flushCount.Load())
 }
