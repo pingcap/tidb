@@ -890,7 +890,8 @@ MemTableScan	root	table:TABLES	table_name:["t"], table_schema:["plan_cache"]
 explain format='plan_tree' SELECT * FROM information_schema.referential_constraints rc JOIN information_schema.key_column_usage fk USING (constraint_schema, constraint_name) WHERE fk.referenced_column_name != 't' AND fk.table_schema = DATABASE () AND fk.table_name = 't' AND rc.constraint_schema = DATABASE () AND rc.table_name = 't';
 id	task	access object	operator info
 Projection	root		Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column
-└─HashJoin	root		inner join, equal:[eq(Column, Column) eq(Column, Column)]
-  ├─Selection(Build)	root		ne(Column, "t")
-  │ └─MemTableScan	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
-  └─MemTableScan(Probe)	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]
+└─Projection	root		Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column, Column
+  └─HashJoin	root		inner join, equal:[eq(Column, Column) eq(Column, Column)]
+    ├─Selection(Build)	root		ne(Column, "t")
+    │ └─MemTableScan	root	table:KEY_COLUMN_USAGE	constraint_schema:["plan_cache"], table_name:["t"], table_schema:["plan_cache"]
+    └─MemTableScan(Probe)	root	table:REFERENTIAL_CONSTRAINTS	constraint_schema:["plan_cache"], table_name:["t"]

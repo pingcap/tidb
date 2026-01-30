@@ -1707,6 +1707,10 @@ type SessionVars struct {
 	// 0 > value <= 1 applies that percentage as the estimate when rows are found. For example 0.1 = 10%.
 	OptOrderingIdxSelRatio float64
 
+	// OptJoinReorderBlockingPenaltyRatio controls the penalty ratio for blocking operators in join reorder.
+	// Range: [0,1]. 0 disables the penalty; 1 applies the full penalty.
+	OptJoinReorderBlockingPenaltyRatio float64
+
 	// RecordRelevantOptVarsAndFixes indicates whether to record optimizer variables/fixes relevant to this query.
 	RecordRelevantOptVarsAndFixes bool
 
@@ -2381,6 +2385,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		CostModelVersion:              vardef.DefTiDBCostModelVer,
 		OptimizerEnableNAAJ:           vardef.DefTiDBEnableNAAJ,
 		OptOrderingIdxSelRatio:        vardef.DefTiDBOptOrderingIdxSelRatio,
+		OptJoinReorderBlockingPenaltyRatio: vardef.DefTiDBOptJoinReorderBlockingPenaltyRatio,
 		RegardNULLAsPoint:             vardef.DefTiDBRegardNULLAsPoint,
 		AllowProjectionPushDown:       vardef.DefOptEnableProjectionPushDown,
 		SkipMissingPartitionStats:     vardef.DefTiDBSkipMissingPartitionStats,
