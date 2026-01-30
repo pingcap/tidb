@@ -43,7 +43,6 @@ type rankTopNCase struct {
 	cols                        []*expression.Column
 	orderByIdx                  []int
 	truncateKeyExprs            []expression.Expression
-	truncateKeyColIdxs          []int
 	truncateKeyPrefixCharCounts []int
 }
 
@@ -135,7 +134,7 @@ func buildRankTopNExec(rankTopNCase *rankTopNCase, dataSource *testutil.MockData
 		Concurrency: 5,
 	}
 
-	topNexec.SetTruncateKeyMetasForTest(rankTopNCase.truncateKeyExprs, rankTopNCase.truncateKeyColIdxs, rankTopNCase.truncateKeyPrefixCharCounts)
+	topNexec.SetTruncateKeyMetasForTest(rankTopNCase.truncateKeyExprs, rankTopNCase.truncateKeyPrefixCharCounts)
 	return topNexec
 }
 
@@ -171,7 +170,6 @@ func TestRankTopN(t *testing.T) {
 					RetType: truncateKeyField,
 					Index:   0,
 				}},
-			truncateKeyColIdxs:          []int{0},
 			truncateKeyPrefixCharCounts: []int{14},
 			cols: []*expression.Column{
 				{Index: 0, RetType: truncateKeyField},
@@ -190,7 +188,6 @@ func TestRankTopN(t *testing.T) {
 					RetType: truncateKeyField,
 					Index:   1,
 				}},
-			truncateKeyColIdxs:          []int{0, 1},
 			truncateKeyPrefixCharCounts: []int{-1, 12},
 			cols: []*expression.Column{
 				{Index: 0, RetType: truncateKeyField},

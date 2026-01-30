@@ -323,8 +323,10 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		return err
 	}
 
-	e.truncateFieldCollators = make([]collate.Collator, 0, len(e.truncateKeyExprs))
-	e.truncateFieldTypes = make([]*types.FieldType, 0, len(e.truncateKeyExprs))
+	e.truncateKeyCount = len(e.truncateKeyExprs)
+	e.truncateFieldCollators = make([]collate.Collator, 0, e.truncateKeyCount)
+	e.truncateFieldTypes = make([]*types.FieldType, 0, e.truncateKeyCount)
+	e.truncateKeyColIdxs = make([]int, 0, e.truncateKeyCount)
 	for i := range e.truncateKeyExprs {
 		fieldType := e.truncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
 		e.truncateFieldTypes = append(e.truncateFieldTypes, fieldType)
@@ -335,9 +337,14 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		default:
 			e.truncateFieldCollators = append(e.truncateFieldCollators, nil)
 		}
-	}
 
-	e.truncateKeyCount = len(e.truncateKeyExprs)
+		switch col := e.truncateKeyExprs[i].(type) {
+		case *expression.Column:
+			e.truncateKeyColIdxs = append(e.truncateKeyColIdxs, col.Index)
+		default:
+			return errors.NewNoStackError("Get unexpected expression")
+		}
+	}
 
 	e.chkHeap.init(e, e.memTracker, e.Limit.Offset+e.Limit.Count, int(e.Limit.Offset), e.greaterRow, e.RetFieldTypes())
 	return nil
@@ -880,8 +887,7 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 }
 
 // SetTruncateKeyMetasForTest sets truncate key fields for testing the RankTopN path.
-func (e *TopNExec) SetTruncateKeyMetasForTest(truncateKeyExprs []expression.Expression, truncateKeyColIdxs []int, truncateKeyCharCounts []int) {
+func (e *TopNExec) SetTruncateKeyMetasForTest(truncateKeyExprs []expression.Expression, truncateKeyCharCounts []int) {
 	e.truncateKeyExprs = truncateKeyExprs
-	e.truncateKeyColIdxs = truncateKeyColIdxs
 	e.truncateKeyPrefixCharCounts = truncateKeyCharCounts
 }
