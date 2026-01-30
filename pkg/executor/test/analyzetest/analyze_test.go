@@ -141,6 +141,43 @@ func TestAnalyzeRestrict(t *testing.T) {
 	rs, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
 	require.Nil(t, err)
 	require.Nil(t, rs)
+	tk.MustExec("truncate table mysql.analyze_jobs")
+	t.Run("cancel_on_ctx", func(t *testing.T) {
+		tk.MustExec("drop table if exists t")
+		tk.MustExec("create table t(a int)")
+		tk.MustExec("insert into t values (1), (2)")
+		tk.MustExec("set @@tidb_analyze_version = 2")
+
+		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel", "return(true)"))
+		defer func() {
+			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockAnalyzeRequestWaitForCancel"))
+		}()
+
+		baseCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnStats)
+		ctx, cancel := context.WithCancel(baseCtx)
+		done := make(chan error, 1)
+		go func() {
+			_, err := tk.Session().ExecuteInternal(ctx, "analyze table t")
+			done <- err
+		}()
+
+		select {
+		case err := <-done:
+			t.Fatalf("analyze finished before cancel, err=%v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+		cancel()
+
+		select {
+		case <-done:
+			rows := tk.MustQuery("select state, fail_reason from mysql.analyze_jobs where table_name = 't' order by end_time desc limit 1").Rows()
+			require.Len(t, rows, 1)
+			require.Equal(t, "failed", strings.ToLower(rows[0][0].(string)))
+			require.Contains(t, rows[0][1].(string), "context canceled")
+		case <-time.After(5 * time.Second):
+			t.Fatal("analyze does not stop after context canceled")
+		}
+	})
 }
 
 func TestAnalyzeParameters(t *testing.T) {
@@ -1958,6 +1995,7 @@ func testKillAutoAnalyze(t *testing.T, ver int) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tableInfo.ID, tableInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the table stats are updated.
@@ -2034,6 +2072,7 @@ func TestKillAutoAnalyzeIndex(t *testing.T) {
 				}()
 			}
 			require.True(t, h.HandleAutoAnalyze(), comment)
+			require.NoError(t, h.Update(context.Background(), is))
 			currentVersion := h.GetPhysicalTableStats(tblInfo.ID, tblInfo).Version
 			if status == "finished" {
 				// If we kill a finished job, after kill command the status is still finished and the index stats are updated.
