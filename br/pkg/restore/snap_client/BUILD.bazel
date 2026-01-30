@@ -108,6 +108,7 @@ go_test(
         "//br/pkg/storage",
         "//br/pkg/stream",
         "//br/pkg/utils",
+        "//pkg/config/kerneltype",
         "//pkg/domain",
         "//pkg/kv",
         "//pkg/meta",

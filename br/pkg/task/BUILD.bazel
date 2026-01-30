@@ -53,6 +53,7 @@ go_library(
         "//br/pkg/utils/iter",
         "//br/pkg/version",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/domain",
         "//pkg/infoschema",
@@ -116,12 +117,17 @@ go_test(
         "common_test.go",
         "config_test.go",
         "encryption_test.go",
+        "restore_nokit_test.go",
         "restore_test.go",
         "stream_test.go",
     ],
     embed = [":task"],
     flaky = True,
+<<<<<<< HEAD
     shard_count = 42,
+=======
+    shard_count = 44,
+>>>>>>> fad8e671542 (ddl: forbid drop/rename on system tables in nextgen and change BR to never physical restore system tables (#65756))
     deps = [
         "//br/pkg/backup",
         "//br/pkg/config",
@@ -139,6 +145,7 @@ go_test(
         "//br/pkg/utils",
         "//br/pkg/utiltest",
         "//pkg/config",
+        "//pkg/config/kerneltype",
         "//pkg/ddl",
         "//pkg/meta/model",
         "//pkg/parser/ast",
