@@ -865,13 +865,13 @@ func TestTiDBOptPartialOrderedIndexForTopN(t *testing.T) {
 	require.Contains(t, err.Error(), "can't be set to the value of")
 
 	// Test SetSession function
-	err = sv.SetSessionFromHook(vars, "ON")
+	err = sv.SetSessionFromHook(vars, "COST")
 	require.NoError(t, err)
-	require.True(t, vars.OptPartialOrderedIndexForTopN)
+	require.True(t, vars.IsPartialOrderedIndexForTopNEnabled())
 
-	err = sv.SetSessionFromHook(vars, "OFF")
+	err = sv.SetSessionFromHook(vars, "DISABLE")
 	require.NoError(t, err)
-	require.False(t, vars.OptPartialOrderedIndexForTopN)
+	require.False(t, vars.IsPartialOrderedIndexForTopNEnabled())
 }
 
 func TestSetTiDBCloudStorageURI(t *testing.T) {
