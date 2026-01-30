@@ -98,13 +98,14 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 		SubDir: path,
 	}
 	err = storage.WalkDir(ctx, opt, func(fileName string, _ int64) error {
-		createTime, err := parseTime(fileName)
+		baseName := filepath.Base(fileName)
+		createTime, err := parseTime(baseName)
 		if err != nil {
 			logutil.BgLogger().Error("parseTime failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
 			return nil
 		}
-		isPlanReplayer := strings.Contains(fileName, "replayer")
-		isPlanReplayerCapture := strings.Contains(fileName, "capture")
+		isPlanReplayer := strings.Contains(baseName, "replayer")
+		isPlanReplayerCapture := strings.Contains(baseName, "capture")
 		canGC := false
 		if isPlanReplayer && isPlanReplayerCapture {
 			canGC = !createTime.After(gcTargetTimeForCapture)
@@ -112,7 +113,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 			canGC = !createTime.After(gcTargetTimeDefault)
 		}
 		if canGC {
-			err := storage.DeleteFile(ctx, filepath.Join(path, fileName))
+			err := storage.DeleteFile(ctx, fileName)
 			if err != nil {
 				logutil.BgLogger().Warn("remove file failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
 				return nil
