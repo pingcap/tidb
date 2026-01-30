@@ -135,7 +135,7 @@ func TestConnHandleWhiteList(t *testing.T) {
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
 
-	tk.MustExec("set global pkdb_enable_whitelist = on")
+	tk.MustExec("set global pkdb_whitelist = on")
 
 	cases := []struct {
 		ipList  []string
@@ -314,7 +314,7 @@ func TestConnHandleWhiteList_ActionNull(t *testing.T) {
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
 
-	tk.MustExec("set global pkdb_enable_whitelist = on")
+	tk.MustExec("set global pkdb_whitelist = on")
 	tk.MustExec("delete from mysql.whitelist")
 	// action=NULL (or invalid) is treated as default action "accept" in code.
 	tk.MustExec("insert into mysql.whitelist(list) values('172.16.0.0/16')")
@@ -332,7 +332,7 @@ func TestConnHandleWhiteList_IPv6(t *testing.T) {
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
 
-	tk.MustExec("set global pkdb_enable_whitelist = on")
+	tk.MustExec("set global pkdb_whitelist = on")
 
 	// whitelist only
 	tk.MustExec("delete from mysql.whitelist")
@@ -378,7 +378,7 @@ func TestConnHandleWhiteList_LocalhostMultiAddress(t *testing.T) {
 	}
 	list := strings.Join(cidrs, ",")
 
-	tk.MustExec("set global pkdb_enable_whitelist = on")
+	tk.MustExec("set global pkdb_whitelist = on")
 
 	// whitelist: allow localhost (covers 127.0.0.1 and/or ::1 depending on resolver).
 	tk.MustExec("delete from mysql.whitelist")
@@ -401,7 +401,7 @@ func TestConnHandleWhiteList_PureIPNoMask(t *testing.T) {
 	srv := server.CreateMockServer(t, store)
 	defer srv.Close()
 
-	tk.MustExec("set global pkdb_enable_whitelist = on")
+	tk.MustExec("set global pkdb_whitelist = on")
 
 	// Compatibility strategy (current behavior): pure IP without CIDR mask is invalid and ignored.
 	// If the only rows are invalid, it is treated as "no rules" => allow all.
