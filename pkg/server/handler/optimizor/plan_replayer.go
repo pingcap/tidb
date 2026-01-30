@@ -120,7 +120,7 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 			return
 		}
 		if dfHandler.downloadedFilename == "plan_replayer" {
-			content, err = handlePlanReplayerCaptureFile(ctx, content, path, dfHandler)
+			content, err = handlePlanReplayerCaptureFile(content, path, dfHandler)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
@@ -226,7 +226,7 @@ func isExists(path string) (bool, error) {
 	return true, nil
 }
 
-func handlePlanReplayerCaptureFile(ctx context.Context, content []byte, path string, handler downloadFileHandler) ([]byte, error) {
+func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
 	if !strings.HasPrefix(handler.filePath, "capture_replayer") {
 		return content, nil
 	}
