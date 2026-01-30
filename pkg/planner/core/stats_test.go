@@ -219,7 +219,7 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_index_prune_threshold=-1")
 	plansAtNegative := make([][][]any, len(queries))
 	for i, sql := range queries {
-		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
 		plansAtNegative[i] = rows
 	}
 
@@ -227,7 +227,7 @@ func TestIndexChoiceFromPruning(t *testing.T) {
 	tk.MustExec("set @@tidb_opt_index_prune_threshold=10")
 	plansAt10 := make([][][]any, len(queries))
 	for i, sql := range queries {
-		rows := tk.MustQuery("explain format='plan_tree' " + sql).Rows()
+		rows := tk.MustQuery("explain format='brief' " + sql).Rows()
 		plansAt10[i] = rows
 	}
 
