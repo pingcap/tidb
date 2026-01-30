@@ -69,8 +69,6 @@ type DataSource struct {
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
-	// AllPossibleAccessPaths stores all the possible access path from build datasource phase.
-	AllPossibleAccessPaths []*util.AccessPath
 	// PossibleAccessPaths stores all the possible access path for one specific logical alternative.
 	// because different logical alternative may have different filter condition, so the possible access path may be different.
 	// like:
