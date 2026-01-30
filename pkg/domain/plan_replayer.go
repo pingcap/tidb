@@ -120,7 +120,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 			if isPlanReplayer && p.sctx != nil {
-				deletePlanReplayerStatus(context.Background(), p.sctx, fileName)
+				deletePlanReplayerStatus(context.Background(), p.sctx, baseName)
 				p.planReplayerTaskStatus.clearFinishedTask()
 			}
 		}
