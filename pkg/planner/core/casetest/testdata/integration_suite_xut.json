@@ -166,24 +166,30 @@
         ]
       },
       {
-        "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_allow_mpp=0), set_var(tidb_allow_tiflash_cop=1) */ select count(*) from t31240;",
+        "SQL": "set @@session.tidb_allow_tiflash_cop=ON",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_allow_mpp=0) */ select count(*) from t31240;",
         "Plan": [
-          "HashAgg root  funcs:count(Column)->Column",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
-          "      └─TableFullScan mpp[tiflash] table:t31240 keep order:false, stats:pseudo"
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─TableReader root  data:StreamAgg",
+          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
+          "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
         ]
       },
       {
-        "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_isolation_read_engines='tiflash,tidb'), set_var(tidb_allow_mpp=0), set_var(tidb_allow_tiflash_cop=1) */ select count(*) from t31240;",
+        "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_isolation_read_engines='tiflash,tidb'), set_var(tidb_allow_mpp=0) */ select count(*) from t31240;",
         "Plan": [
-          "HashAgg root  funcs:count(Column)->Column",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
-          "      └─TableFullScan mpp[tiflash] table:t31240 keep order:false, stats:pseudo"
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─TableReader root  data:StreamAgg",
+          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
+          "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
         ]
+      },
+      {
+        "SQL": "set @@session.tidb_allow_tiflash_cop=OFF",
+        "Plan": null
       },
       {
         "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_allow_mpp=1), set_var(tidb_enforce_mpp=1) */ select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",

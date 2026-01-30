@@ -100,12 +100,19 @@ func TestVerboseExplain(t *testing.T) {
 		statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 		statsTbl2.RealtimeCount = 10000
 
-		integrationSuiteData.LoadTestCasesByName("TestVerboseExplain", t, &input, &output, cascades, caller)
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
 		for i, tt := range input {
+			setStmt := strings.HasPrefix(tt, "set")
 			testdata.OnRecord(func() {
 				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				if !setStmt {
+					output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
 			})
+			if setStmt {
+				tk.MustExec(tt)
+				continue
+			}
 			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
 
