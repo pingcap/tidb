@@ -846,7 +846,7 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 		ts.Schema().Append(ts.HandleCols.GetCol(0))
 		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 		columnAdded = true
-	} else if infoschema.IsClusterTableByName(ts.DBName.L, ts.Table.Name.L) {
+	} else if ds.Table.Type().IsClusterTable() {
 		// For cluster tables without HandleCols, use the first column like preferKeyColumnFromTable does.
 		// This handles the case when column-prune-logical rule is blocked and cluster tables don't have
 		// their handle cols set up through the normal column pruning path.

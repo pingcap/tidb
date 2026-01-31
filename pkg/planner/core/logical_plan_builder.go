@@ -4655,16 +4655,19 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	// Append extra commit ts column to the schema.
-	commitTSCol := ds.NewExtraCommitTSSchemaCol()
-	ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
-	schema.Append(commitTSCol)
-	names = append(names, &types.FieldName{
-		DBName:      dbName,
-		TblName:     tableInfo.Name,
-		ColName:     model.ExtraCommitTSName,
-		OrigColName: model.ExtraCommitTSName,
-	})
-	ds.AppendTableCol(commitTSCol)
+	// Cluster tables are memory tables that don't support extra column IDs.
+	if !tbl.Type().IsClusterTable() {
+		commitTSCol := ds.NewExtraCommitTSSchemaCol()
+		ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
+		schema.Append(commitTSCol)
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraCommitTSName,
+			OrigColName: model.ExtraCommitTSName,
+		})
+		ds.AppendTableCol(commitTSCol)
+	}
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)

@@ -40,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -605,9 +607,11 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 					OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
 				}
 			} else {
-				// Defensive fallback: in the unexpected case where a cluster table reports
-				// no metadata columns, synthesize a handle-like column to avoid nil pointer
-				// dereferences in callers that assume a non-nil result.
+				// All cluster tables must have at least one column in their metadata.
+				// If this is ever reached, it indicates a bug in table registration.
+				logutil.BgLogger().Error("cluster table has no metadata columns",
+					zap.String("db", dataSource.DBName.L),
+					zap.String("table", dataSource.TableInfo.Name.L))
 				resultColumn = dataSource.NewExtraHandleSchemaCol()
 				resultColumnInfo = model.NewExtraHandleColInfo()
 			}
