@@ -1964,7 +1964,21 @@ func (e *SimpleExec) executeAlterUser(ctx context.Context, s *ast.AlterUserStmt)
 		if passwordLockingStr != "" {
 			newAttributes = append(newAttributes, passwordLockingStr)
 		}
-		if length := len(newAttributes); length > 0 {
+
+		// Check if the user only specified ATTRIBUTE '{}' to clear all general attributes.
+		// We ensure no other attribute-modifying options were specified.
+		isFullAttributeClear := false
+		if s.CommentOrAttributeOption != nil && s.ResourceGroupNameOption == nil && passwordLockingStr == "" {
+			if s.CommentOrAttributeOption.Type == ast.UserAttributeType && s.CommentOrAttributeOption.Value == "{}" {
+				isFullAttributeClear = true
+			}
+		}
+
+		if isFullAttributeClear {
+			// Overwrite the existing JSON with an empty string/NULL instead of using JSON_MERGE_PATCH,
+			// which incorrectly preserves the original attributes when given an empty patch.
+			fields = append(fields, alterField{"user_attributes=NULL", nil})
+		} else if length := len(newAttributes); length > 0 {
 			if length > 1 || passwordLockingStr == "" {
 				passwordLockingInfo.containsNoOthers = false
 			}
