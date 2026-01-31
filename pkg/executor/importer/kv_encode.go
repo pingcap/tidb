@@ -273,12 +273,16 @@ func (en *TableKVEncoder) fillRow(row []types.Datum, hasValue []bool, rowID int6
 			theDatum = &row[i]
 			doCast = false
 		}
-		value, err = en.ProcessColDatum(col, rowID, theDatum, doCast)
+		value, err = en.GetActualDatum(col, rowID, theDatum, doCast)
 		if err != nil {
 			return nil, en.LogKVConvertFailed(row, i, col.ToInfo(), err)
 		}
 
 		record = append(record, value)
+	}
+
+	if err := en.HandleAutoColumn(record); err != nil {
+		return nil, err
 	}
 
 	if common.TableHasAutoRowID(en.TableMeta()) {
