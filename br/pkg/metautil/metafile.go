@@ -166,6 +166,7 @@ type Table struct {
 	TotalKvs         uint64
 	TotalBytes       uint64
 	Files            []*backuppb.File
+	TotalKvsMap      map[int64]uint64
 	TiFlashReplicas  int
 	Stats            *util.JSONTable
 	StatsFileIndexes []*backuppb.StatsFileIndex
@@ -254,6 +255,14 @@ func (stats ChecksumStats) ChecksumExists() bool {
 		return false
 	}
 	return true
+}
+
+func CalculateTotalKvsOnFiles(files []*backuppb.File) uint64 {
+	totalKvs := uint64(0)
+	for _, file := range files {
+		totalKvs += file.TotalKvs
+	}
+	return totalKvs
 }
 
 // CalculateChecksumStatsOnFiles returns the ChecksumStats for the given files
@@ -441,12 +450,14 @@ func (reader *MetaReader) ReadSchemasFiles(ctx context.Context, output chan<- *T
 			if table.Info != nil {
 				if fileMap != nil {
 					if files, ok := fileMap[table.Info.ID]; ok {
+						table.TotalKvsMap[table.Info.ID] = CalculateTotalKvsOnFiles(files)
 						table.Files = append(table.Files, files...)
 					}
 					if table.Info.Partition != nil {
 						// Partition table can have many table IDs (partition IDs).
 						for _, p := range table.Info.Partition.Definitions {
 							if files, ok := fileMap[p.ID]; ok {
+								table.TotalKvsMap[p.ID] = CalculateTotalKvsOnFiles(files)
 								table.Files = append(table.Files, files...)
 							}
 						}
@@ -503,6 +514,7 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 		Crc64Xor:         s.Crc64Xor,
 		TotalKvs:         s.TotalKvs,
 		TotalBytes:       s.TotalBytes,
+		TotalKvsMap:      make(map[int64]uint64),
 		TiFlashReplicas:  int(s.TiflashReplicas),
 		Stats:            stats,
 		StatsFileIndexes: statsFileIndexes,
