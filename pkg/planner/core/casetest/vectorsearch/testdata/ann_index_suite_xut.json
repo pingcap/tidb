@@ -520,9 +520,9 @@
         "SQL": "explain format = 'brief' select id, vec_cosine_distance(vec, '[1,1,1]') as d from t1 order by d",
         "Plan": [
           "Sort 6000.00 root  Column#8",
-          "└─TableReader 6000.00 root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender 6000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 6000.00 mpp[tiflash]  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "└─Projection 6000.00 root  test.t1.id, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
+          "  └─TableReader 6000.00 root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender 6000.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TableFullScan 6000.00 mpp[tiflash] table:t1 keep order:false"
         ],
         "Warn": null

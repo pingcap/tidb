@@ -81,10 +81,7 @@
           "└─TableReader(Probe) 10000.00 root  data:TableFullScan",
           "  └─TableFullScan 10000.00 cop[tikv] table:foo keep order:true, stats:pseudo"
         ],
-        "Warning": [
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now."
-        ]
+        "Warning": null
       },
       {
         "SQL": "select * from foo join bar on foo.a=bar.a where foo.a = rand();",

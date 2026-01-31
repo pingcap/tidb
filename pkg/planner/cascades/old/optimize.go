@@ -246,7 +246,7 @@ func (opt *Optimizer) onPhaseImplementation(_ base.PlanContext, g *memo.Group) (
 	prop := &property.PhysicalProperty{
 		ExpectedCnt: math.MaxFloat64,
 	}
-	preparePossibleProperties(g, make(map[*memo.Group][][]*expression.Column))
+	preparePossibleProperties(g, make(map[*memo.Group]*base.PossiblePropertiesInfo))
 	// TODO replace MaxFloat64 costLimit by variable from sctx, or other sources.
 	impl, err := opt.implGroup(g, prop, math.MaxFloat64)
 	if err != nil {
@@ -355,18 +355,18 @@ func (opt *Optimizer) implGroupExpr(cur *memo.GroupExpr, reqPhysProp *property.P
 // preparePossibleProperties recursively calls LogicalPlan PreparePossibleProperties
 // interface. It will fulfill the the possible properties fields of LogicalAggregation
 // and LogicalJoin.
-func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*expression.Column) [][]*expression.Column {
+func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group]*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	if prop, ok := propertyMap[g]; ok {
 		return prop
 	}
 	groupPropertyMap := make(map[string][]*expression.Column)
 	for elem := g.Equivalents.Front(); elem != nil; elem = elem.Next() {
 		expr := elem.Value.(*memo.GroupExpr)
-		childrenProperties := make([][][]*expression.Column, len(expr.Children))
+		childrenProperties := make([]*base.PossiblePropertiesInfo, len(expr.Children))
 		for i, child := range expr.Children {
 			childrenProperties[i] = preparePossibleProperties(child, propertyMap)
 		}
-		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...)
+		exprProperties := expr.ExprNode.PreparePossibleProperties(expr.Schema(), childrenProperties...).Order
 		for _, newPropCols := range exprProperties {
 			// Check if the prop has already been in `groupPropertyMap`.
 			newProp := property.PhysicalProperty{SortItems: property.SortItemsFromCols(newPropCols, true)}
@@ -380,6 +380,9 @@ func preparePossibleProperties(g *memo.Group, propertyMap map[*memo.Group][][]*e
 	for _, prop := range groupPropertyMap {
 		resultProps = append(resultProps, prop)
 	}
-	propertyMap[g] = resultProps
-	return resultProps
+	result := &base.PossiblePropertiesInfo{
+		Order: resultProps,
+	}
+	propertyMap[g] = result
+	return result
 }

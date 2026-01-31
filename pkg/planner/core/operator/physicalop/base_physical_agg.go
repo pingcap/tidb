@@ -959,11 +959,13 @@ func checkCanPushDownToMPP(la *logicalop.LogicalAggregation) bool {
 		if agg.HasDistinct {
 			if agg.Name != ast.AggFuncCount && agg.Name != ast.AggFuncGroupConcat {
 				hasUnsupportedDistinct = true
+				break
 			}
 		}
 		// MPP does not support AggFuncApproxCountDistinct now
 		if agg.Name == ast.AggFuncApproxCountDistinct {
 			hasUnsupportedDistinct = true
+			break
 		}
 	}
 	if hasUnsupportedDistinct {

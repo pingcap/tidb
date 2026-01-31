@@ -194,9 +194,9 @@ func runNonPreparedPlanCachePartitionIndex(t *testing.T, tk *testkit.TestKit, ta
 	tk.MustExec(fmt.Sprintf(`insert into %s values ('Ab', 1),('abc',2),('BC',3),('AC',4),('BA',5),('cda',6)`, tableName))
 	tk.MustExec(fmt.Sprintf(`analyze table %s`, tableName))
 	tk.MustQuery(fmt.Sprintf(`explain format='plan_cache' select * from %s where a IN (2,1,4,1,1,5,5)`, tableName)).Check(testkit.Rows(""+
-		"IndexLookUp_8 4.00 root partition:p1,p2 ",
-		"├─IndexRangeScan_6(Build) 4.00 cop[tikv] table:"+tableName+", index:PRIMARY(a) range:[1,1], [2,2], [4,4], [5,5], keep order:false",
-		"└─TableRowIDScan_7(Probe) 4.00 cop[tikv] table:"+tableName+" keep order:false"))
+		"IndexLookUp_7 4.00 root partition:p1,p2 ",
+		"├─IndexRangeScan_5(Build) 4.00 cop[tikv] table:"+tableName+", index:PRIMARY(a) range:[1,1], [2,2], [4,4], [5,5], keep order:false",
+		"└─TableRowIDScan_6(Probe) 4.00 cop[tikv] table:"+tableName+" keep order:false"))
 	require.False(t, tk.Session().GetSessionVars().FoundInPlanCache)
 	tk.MustQuery(fmt.Sprintf(`select * from %s where a IN (2,1,4,1,1,5,5)`, tableName)).Sort().Check(testkit.Rows("AC 4", "Ab 1", "BA 5", "abc 2"))
 	require.True(t, tk.Session().GetSessionVars().FoundInPlanCache)
