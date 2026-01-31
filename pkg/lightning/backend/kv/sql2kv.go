@@ -231,12 +231,16 @@ func (kvcodec *tableKVEncoder) Encode(row []types.Datum,
 			theDatum = &row[j]
 		}
 		// TODO: consider move the cast before calling ProcessColDatum. see https://github.com/pingcap/tidb/pull/60397/files#r2058032695
-		value, err = kvcodec.ProcessColDatum(col, rowID, theDatum, true)
+		value, err = kvcodec.GetActualDatum(col, rowID, theDatum, true)
 		if err != nil {
 			return nil, kvcodec.LogKVConvertFailed(row, j, col.ToInfo(), err)
 		}
 
 		record = append(record, value)
+	}
+
+	if err := kvcodec.HandleAutoColumn(record); err != nil {
+		return nil, err
 	}
 
 	if common.TableHasAutoRowID(kvcodec.table.Meta()) {
@@ -287,7 +291,7 @@ func GetEncoderSe(encoder encode.Encoder) *Session {
 // GetActualDatum export getActualDatum function.
 func GetActualDatum(encoder encode.Encoder, col *table.Column, rowID int64,
 	inputDatum *types.Datum) (types.Datum, error) {
-	return encoder.(*tableKVEncoder).getActualDatum(col, rowID, inputDatum, true)
+	return encoder.(*tableKVEncoder).GetActualDatum(col, rowID, inputDatum, true)
 }
 
 // GetAutoRecordID returns the record ID for an auto-increment field.
