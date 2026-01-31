@@ -1067,6 +1067,18 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 	// When the prop is empty or `all` is false, `matchProperty` is better to be `PropNotMatched` because
 	// it needs not to keep order for index scan.
 	if prop.IsSortItemEmpty() || !all || len(path.IdxCols) < len(prop.SortItems) {
+		if !prop.IsSortItemEmpty() {
+			sortItemStrs := make([]string, 0, len(prop.SortItems))
+			for _, item := range prop.SortItems {
+				sortItemStrs = append(sortItemStrs, fmt.Sprintf("%s(desc=%v)", item.Col.OrigName, item.Desc))
+			}
+			idxColStrs := make([]string, 0, len(path.IdxCols))
+			for _, col := range path.IdxCols {
+				if col != nil {
+					idxColStrs = append(idxColStrs, col.OrigName)
+				}
+			}
+		}
 		return property.PropNotMatched
 	}
 
@@ -1137,6 +1149,16 @@ func matchProperty(ds *logicalop.DataSource, path *util.AccessPath, prop *proper
 			break
 		}
 		if !found {
+			sortItemStrs := make([]string, 0, len(prop.SortItems))
+			for _, item := range prop.SortItems {
+				sortItemStrs = append(sortItemStrs, fmt.Sprintf("%s(desc=%v)", item.Col.OrigName, item.Desc))
+			}
+			idxColStrs := make([]string, 0, len(path.IdxCols))
+			for _, col := range path.IdxCols {
+				if col != nil {
+					idxColStrs = append(idxColStrs, col.OrigName)
+				}
+			}
 			matchResult = property.PropNotMatched
 			break
 		}

@@ -821,6 +821,13 @@ func getIndexJoinCostVer24PhysicalIndexJoin(pp base.PhysicalPlan, taskType prope
 	// Multiply by cost factor - defaults to 1, but can be increased/decreased to influence the cost model
 	p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, p.SCtx().GetSessionVars().IndexJoinCostFactor)
 	p.SCtx().GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptIndexJoinCostFactor)
+	// Apply order-preserving join discount if this IndexJoin is satisfying an ORDER BY requirement
+	if p.IsOrderPreserving {
+		discount := p.SCtx().GetSessionVars().OrderPreservingJoinDiscount
+		if discount > 0 && discount < 1 {
+			p.PlanCostVer2 = costusage.MulCostVer2(p.PlanCostVer2, discount)
+		}
+	}
 	return p.PlanCostVer2, nil
 }
 

@@ -251,7 +251,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)*2)
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
 			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
@@ -264,13 +264,6 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
-
-	// Generate additional candidate plans for partial order optimization using prefix index.
-	if canUsePartialOrder4TopN(lt) {
-		topNWithPartialOrderProperty := getPhysTopNWithPartialOrderProperty(lt, prop)
-		ret = append(ret, topNWithPartialOrderProperty...)
-	}
-
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
 	if mppAllowed {
