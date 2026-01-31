@@ -272,6 +272,8 @@ func (p *LogicalJoin) normalizeJoinConditionsForOuterJoin() {
 	if len(p.OtherConditions) == 0 {
 		return
 	}
+	// Outer join ON conditions are not simplified through predicate pushdown.
+	// Normalize only double NOT here to avoid cartesian joins caused by other conditions.
 	if !containsUnaryNot(p.OtherConditions) {
 		return
 	}
