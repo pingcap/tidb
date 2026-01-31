@@ -219,10 +219,14 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		}
 		otherConds = append(otherConds, tmpOtherConds...)
 	}
+	// Capture ordering properties from the join for index-preserving optimization
+	orderProperties := join.OrderProperties
+
 	return &joinGroupResult{
 		group:             group,
 		hasOuterJoin:      hasOuterJoin,
 		joinOrderHintInfo: joinOrderHintInfo,
+		orderProperties:   orderProperties,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
 			eqEdges:            eqEdges,
 			otherConds:         otherConds,
@@ -281,10 +285,11 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 				}
 			}
 
-			baseGroupSolver := &baseSingleGroupJoinOrderSolver{
-				ctx:                ctx,
-				basicJoinGroupInfo: result.basicJoinGroupInfo,
-			}
+		baseGroupSolver := &baseSingleGroupJoinOrderSolver{
+			ctx:                ctx,
+			basicJoinGroupInfo: result.basicJoinGroupInfo,
+			orderProperties:    result.orderProperties,
+		}
 
 			joinGroupNum := len(curJoinGroup)
 			useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
@@ -410,6 +415,7 @@ type joinGroupResult struct {
 	group             []base.LogicalPlan
 	hasOuterJoin      bool
 	joinOrderHintInfo []*h.PlanHints
+	orderProperties   [][]*expression.Column // ORDER BY columns that could benefit from index ordering
 	*basicJoinGroupInfo
 }
 
@@ -418,6 +424,7 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx              base.PlanContext
 	curJoinGroup     []*jrNode
 	leadingJoinGroup base.LogicalPlan
+	orderProperties  [][]*expression.Column // ORDER BY columns for index-preserving join selection
 	*basicJoinGroupInfo
 }
 
