@@ -93,6 +93,7 @@ const (
 func IsCheckpointDB(dbname string) bool {
 	// Check if the database name starts with any of the checkpoint database name prefixes
 	return strings.HasPrefix(dbname, LogRestoreCheckpointDatabaseName) ||
+		strings.HasPrefix(dbname, LogRestorePITRItemsDatabaseName) ||
 		strings.HasPrefix(dbname, SnapshotRestoreCheckpointDatabaseName) ||
 		strings.HasPrefix(dbname, CustomSSTRestoreCheckpointDatabaseName)
 }
