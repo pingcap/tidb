@@ -5177,6 +5177,40 @@ func TestParserErrMsg(t *testing.T) {
 	RunErrMsgTest(t, funcCallMsgCases)
 }
 
+func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
+	p := parser.New()
+	dupCases := []struct {
+		sql       string
+		substring string
+	}{
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' COMMENT = 'c2' AS SELECT 1",
+			substring: "Duplicate COMMENT specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) TIFLASH REPLICA 1 TIFLASH REPLICA 2 AS SELECT 1",
+			substring: "Duplicate TIFLASH REPLICA specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
+			substring: "Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) INCLUDING NEW VALUES INCLUDING NEW VALUES",
+			substring: "Duplicate INCLUDING NEW VALUES specified in CREATE MATERIALIZED VIEW LOG",
+		},
+		{
+			sql:       "CREATE MATERIALIZED VIEW LOG ON t (a) PURGE IMMEDIATE PURGE IMMEDIATE",
+			substring: "Duplicate PURGE clause specified in CREATE MATERIALIZED VIEW LOG",
+		},
+	}
+	for _, c := range dupCases {
+		_, err := p.ParseOneStmt(c.sql, "", "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), c.substring, c.sql)
+	}
+}
+
 type subqueryChecker struct {
 	text string
 	t    *testing.T
@@ -5246,6 +5280,97 @@ func TestSubquery(t *testing.T) {
 			t:    t,
 		})
 	}
+}
+
+func TestMaterializedViewStatements(t *testing.T) {
+	table := []testCase{
+		{
+			"CREATE MATERIALIZED VIEW mv (a) AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW mv (a) COMMENT = 'c1' AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) COMMENT = 'c1' AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW mv (a) TIFLASH REPLICA 1 AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) TIFLASH REPLICA 1 AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW mv (a) NEVER REFRESH AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) NEVER REFRESH AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST ON DEMAND AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() NEXT 300 AS SELECT 1",
+			true,
+			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST ON DEMAND START WITH NOW() NEXT 300 AS SELECT 1",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a,b)",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) INCLUDING NEW VALUES",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a,b) PURGE IMMEDIATE",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`, `b`) INCLUDING NEW VALUES PURGE IMMEDIATE",
+		},
+		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now() NEXT 300",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) INCLUDING NEW VALUES PURGE START WITH NOW() NEXT 300",
+		},
+		{
+			"ALTER MATERIALIZED VIEW mv COMMENT = 'c2'",
+			true,
+			"ALTER MATERIALIZED VIEW `mv` COMMENT = 'c2'",
+		},
+		{
+			"ALTER MATERIALIZED VIEW mv REFRESH START WITH now() NEXT 300",
+			true,
+			"ALTER MATERIALIZED VIEW `mv` REFRESH START WITH NOW() NEXT 300",
+		},
+		{
+			"ALTER MATERIALIZED VIEW LOG ON t PURGE IMMEDIATE",
+			true,
+			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE IMMEDIATE",
+		},
+		{
+			"ALTER MATERIALIZED VIEW LOG ON t PURGE START WITH now() NEXT 300",
+			true,
+			"ALTER MATERIALIZED VIEW LOG ON `t` PURGE START WITH NOW() NEXT 300",
+		},
+		{
+			"DROP MATERIALIZED VIEW mv",
+			true,
+			"DROP MATERIALIZED VIEW `mv`",
+		},
+		{
+			"DROP MATERIALIZED VIEW LOG ON t",
+			true,
+			"DROP MATERIALIZED VIEW LOG ON `t`",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv`",
+		},
+		{
+			"REFRESH MATERIALIZED VIEW mv WITH SYNC MODE",
+			true,
+			"REFRESH MATERIALIZED VIEW `mv` WITH SYNC MODE",
+		},
+	}
+	RunTest(t, table, false)
 }
 
 func TestSetOperator(t *testing.T) {

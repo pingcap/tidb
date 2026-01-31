@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "bootstrap_upgrade_test.go",  #keep
         "main_test.go",
+        "mview_systable_test.go",
     ],
     flaky = True,
     shard_count = 12,

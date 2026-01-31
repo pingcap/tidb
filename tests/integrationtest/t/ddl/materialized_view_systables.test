@@ -1,0 +1,74 @@
+# Materialized View (scheme2) systables + parser/DDL smoke test
+
+use ddl__materialized_view_systables;
+
+# MV DDL lifecycle
+create materialized view mv1 (a) as select 1;
+select table_schema, mview_name, length(mview_id) as mview_id_len, refresh_method, refresh_mode, staleness
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+
+alter materialized view mv1 comment = 'c1';
+select mview_comment
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+
+create materialized view mv2 (a) never refresh as select 1;
+select mview_name, refresh_method, refresh_mode
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name in ('mv1','mv2')
+order by mview_name;
+
+drop materialized view mv2;
+select count(*)
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv2';
+
+# MV LOG DDL lifecycle + DROP TABLE guard
+drop table if exists t;
+
+create table t (a int, b int);
+create materialized view log on t (a,b);
+select base_table_schema, base_table_name, mlog_name like '__tidb_mlog_%' as mlog_name_like, mlog_columns, purge_method, purge_interval
+from information_schema.tidb_mlogs
+where base_table_schema='ddl__materialized_view_systables' and base_table_name='t';
+
+--error 1105
+drop table t;
+
+drop materialized view log on t;
+drop table t;
+
+# REFRESH MATERIALIZED VIEW is not implemented in this PR.
+--error 8200
+refresh materialized view mv1;
+
+# infoschema hist exposure (refresh/purge runtime not implemented yet)
+delete from mysql.tidb_mview_refresh_hist where mview_id='mvid1';
+delete from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1';
+
+insert into mysql.tidb_mview_refresh_hist
+	(mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
+values
+	('mvid1', 'mvx', 123, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL);
+
+insert into mysql.tidb_mlog_purge_hist
+	(mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status)
+values
+	('mlogid1', 'mlogx', 456, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL);
+
+commit;
+
+select mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status
+from information_schema.tidb_mview_refresh_hist
+where mview_id='mvid1';
+
+select mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status
+from information_schema.tidb_mlog_purge_hist
+where mlog_id='mlogid1';
+
+# cleanup
+delete from mysql.tidb_mview_refresh_hist where mview_id='mvid1';
+delete from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1';
+
+drop materialized view mv1;
