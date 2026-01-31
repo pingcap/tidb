@@ -842,10 +842,41 @@ func BuildIndexMergeTableScan(ds *logicalop.DataSource, tableFilters []expressio
 				ts.Columns = append(ts.Columns, col.ToInfo())
 			}
 		}
-	} else if !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
+	} else if ts.HandleCols != nil && !ts.Schema().Contains(ts.HandleCols.GetCol(0)) {
 		ts.Schema().Append(ts.HandleCols.GetCol(0))
 		ts.Columns = append(ts.Columns, model.NewExtraHandleColInfo())
 		columnAdded = true
+	} else if ds.Table.Type().IsClusterTable() {
+		// For cluster tables without HandleCols, use the first column like preferKeyColumnFromTable does.
+		// This handles the case when column-prune-logical rule is blocked and cluster tables don't have
+		// their handle cols set up through the normal column pruning path.
+		if len(ts.TblCols) > 0 {
+			col := ts.TblCols[0]
+			if !ts.Schema().Contains(col) {
+				ts.Schema().Append(col)
+				// Find the corresponding ColumnInfo from table metadata
+				if colInfo := model.FindColumnInfoByID(ts.Table.Columns, col.ID); colInfo != nil {
+					ts.Columns = append(ts.Columns, colInfo)
+				} else {
+					ts.Columns = append(ts.Columns, col.ToInfo())
+				}
+				columnAdded = true
+			}
+		} else if len(ts.Table.Columns) > 0 {
+			// Fallback to table metadata columns
+			colMeta := ts.Table.Columns[0]
+			col := &expression.Column{
+				RetType:  colMeta.FieldType.Clone(),
+				UniqueID: ts.SCtx().GetSessionVars().AllocPlanColumnID(),
+				ID:       colMeta.ID,
+				OrigName: fmt.Sprintf("%v.%v.%v", ts.DBName, ts.Table.Name, colMeta.Name),
+			}
+			if !ts.Schema().Contains(col) {
+				ts.Schema().Append(col)
+				ts.Columns = append(ts.Columns, colMeta)
+				columnAdded = true
+			}
+		}
 	}
 
 	// For the global index of the partitioned table, we also need the PhysicalTblID to identify the rows from each partition.
@@ -883,6 +914,11 @@ func extractFiltersForIndexMerge(ctx expression.PushDownContext, filters []expre
 func setIndexMergeTableScanHandleCols(ds *logicalop.DataSource, ts *PhysicalTableScan) (err error) {
 	handleCols := ds.HandleCols
 	if handleCols == nil {
+		if ds.Table.Type().IsClusterTable() {
+			// For cluster tables without handles, ts.HandleCols remains nil.
+			// Cluster tables don't support ExtraHandleID (-1) as they are memory tables.
+			return nil
+		}
 		handleCols = util.NewIntHandleCols(ds.NewExtraHandleSchemaCol())
 	}
 	hdColNum := handleCols.NumCols()
