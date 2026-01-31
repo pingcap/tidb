@@ -1069,6 +1069,16 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 	if f, ok := expr.(*ScalarFunction); ok {
 		switch f.FuncName.L {
 		case ast.UnaryNot:
+			if childNot, ok := f.GetArgs()[0].(*ScalarFunction); ok && childNot.FuncName.L == ast.UnaryNot {
+				inner := childNot.GetArgs()[0]
+				if isLogicalExpression(inner) {
+					innerExpr, innerChanged := pushNotAcrossExpr(ctx, inner, not)
+					if !innerChanged {
+						return inner, true
+					}
+					return innerExpr, true
+				}
+			}
 			child, err := wrapWithIsTrue(ctx, true, f.GetArgs()[0], true)
 			if err != nil {
 				return expr, false
@@ -1111,6 +1121,15 @@ func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expressio
 		expr = NewFunctionInternal(ctx, ast.UnaryNot, types.NewFieldType(mysql.TypeTiny), expr)
 	}
 	return expr, not
+}
+
+func isLogicalExpression(expr Expression) bool {
+	sf, ok := expr.(*ScalarFunction)
+	if !ok {
+		return false
+	}
+	_, ok = logicalOps[sf.FuncName.L]
+	return ok
 }
 
 // GetExprInsideIsTruth get the expression inside the `istrue_with_null` and `istrue`.
