@@ -582,6 +582,7 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 	}
 
 	args = append(args, dbName, s.ViewName.Name.O)
+	/* #nosec G202: SQL string concatenation */
 	sql := "UPDATE mysql.tidb_mviews SET " + strings.Join(sets, ", ") + " WHERE TABLE_SCHEMA=%? AND MVIEW_NAME=%?"
 	_, _, err = exec.ExecRestrictedSQL(kctx, nil, sql, args...)
 	return err
