@@ -616,21 +616,19 @@ func (e *DDLExec) executeAlterMaterializedViewLog(ctx context.Context, s *ast.Al
 		return infoschema.ErrTableNotExists.GenWithStackByArgs("materialized view log on " + fmt.Sprintf("%s.%s", dbName, s.Table.Name.O))
 	}
 
-	for _, action := range s.Actions {
-		if action.Purge == nil {
-			continue
-		}
-		purgeMethod := "IMMEDIATE"
-		purgeStartExpr := "NOW()"
-		purgeIntervalExpr := "0"
-		if action.Purge.Immediate {
-			purgeMethod = "IMMEDIATE"
-		} else {
-			purgeMethod = "DEFERRED"
-			nextExpr, err := restoreToString(action.Purge.Next)
-			if err != nil {
-				return err
+		for _, action := range s.Actions {
+			if action.Purge == nil {
+				continue
 			}
+			purgeMethod := "IMMEDIATE"
+			purgeStartExpr := "NOW()"
+			purgeIntervalExpr := "0"
+			if !action.Purge.Immediate {
+				purgeMethod = "DEFERRED"
+				nextExpr, err := restoreToString(action.Purge.Next)
+				if err != nil {
+					return err
+				}
 			purgeIntervalExpr = fmt.Sprintf("CAST((%s) AS SIGNED)", nextExpr)
 			if action.Purge.StartWith != nil {
 				startExpr, err := restoreToString(action.Purge.StartWith)
