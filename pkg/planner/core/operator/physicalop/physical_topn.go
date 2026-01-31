@@ -41,6 +41,15 @@ type PhysicalTopN struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	// Used for both execution (via UniqueID) and explain (via column name).
+	// If prefix index optimization is not used, this field is nil.
+	PrefixCol *expression.Column
+
+	// PrefixLen is the prefix index length (in bytes) for TiDB-side short-circuiting.
+	// If prefix index optimization is not used, this field is 0.
+	PrefixLen int
 }
 
 // ExhaustPhysicalPlans4LogicalTopN exhausts PhysicalTopN plans from LogicalTopN.
@@ -104,7 +113,11 @@ func (p *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice +
+		int64(cap(p.ByItems))*size.SizeOfPointer +
+		size.SizeOfUint64*2 + // Offset, Count
+		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfInt // PrefixLen
 	for _, byItem := range p.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -133,10 +146,23 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	switch p.SCtx().GetSessionVars().EnableRedactLog {
 	case perrors.RedactLogDisable:
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				prefixColName, p.PrefixLen)
+		}
 	case perrors.RedactLogMarker:
 		fmt.Fprintf(buffer, ", offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				prefixColName, p.PrefixLen)
+		}
 	case perrors.RedactLogEnable:
 		fmt.Fprintf(buffer, ", offset:?, count:?")
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
+		}
 	}
 	return buffer.String()
 }
@@ -326,7 +352,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 // The actual check of whether PartialOrderInfo can pass through Projection
 // is done in LogicalProjection.TryToGetChildProp during physical optimization.
 func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
-	if !lt.SCtx().GetSessionVars().OptPartialOrderedIndexForTopN {
+	if !lt.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() {
 		return false
 	}
 	// Must have ORDER BY columns

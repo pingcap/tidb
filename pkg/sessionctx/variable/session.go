@@ -1631,7 +1631,8 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
-	OptPartialOrderedIndexForTopN bool
+	// Valid values: "DISABLE" (no optimization), "COST" (enable optimization with cost-based selection)
+	OptPartialOrderedIndexForTopN string
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -2071,6 +2072,12 @@ func (s *SessionVars) GetTotalCostDuration() time.Duration {
 // GetExecuteDuration returns the execute duration of the last statement in the current session.
 func (s *SessionVars) GetExecuteDuration() time.Duration {
 	return time.Since(s.StartTime) - s.DurationCompile
+}
+
+// IsPartialOrderedIndexForTopNEnabled indicates whether the partial ordered index optimization for TOPN queries is enabled.
+// TODO: consider more options other than "COST" in the future.
+func (s *SessionVars) IsPartialOrderedIndexForTopNEnabled() bool {
+	return s.OptPartialOrderedIndexForTopN == "COST"
 }
 
 // PartitionPruneMode presents the prune mode used.
