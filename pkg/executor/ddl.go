@@ -356,7 +356,7 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
-		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=? LIMIT 1",
+		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=%? AND MVIEW_NAME=%? LIMIT 1",
 		dbName, s.ViewName.Name.O)
 	if err != nil {
 		return err
@@ -414,11 +414,11 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 
 	_, _, err = exec.ExecRestrictedSQL(kctx, nil,
 		`INSERT INTO mysql.tidb_mviews (
-			TABLE_CATALOG, TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_OWNER, MVIEW_DEFINITION, MVIEW_COMMENT, MVIEW_TIFLASH_REPLICAS,
-			MVIEW_MODIFY_TIME, REFRESH_METHOD, REFRESH_MODE, LAST_REFRESH_METHOD, LAST_REFRESH_TIME, LAST_REFRESH_ENDTIME, STALENESS
-		) VALUES (
-			'def', ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?, NULL, NULL, NULL, 'FRESH'
-		)`,
+				TABLE_CATALOG, TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_OWNER, MVIEW_DEFINITION, MVIEW_COMMENT, MVIEW_TIFLASH_REPLICAS,
+				MVIEW_MODIFY_TIME, REFRESH_METHOD, REFRESH_MODE, LAST_REFRESH_METHOD, LAST_REFRESH_TIME, LAST_REFRESH_ENDTIME, STALENESS
+			) VALUES (
+				'def', %?, %?, %?, %?, %?, %?, %?, NOW(), %?, %?, NULL, NULL, NULL, 'FRESH'
+			)`,
 		dbName, mviewID, s.ViewName.Name.O, owner, definition, comment, s.TiFlashReplicas, refreshMethod, refreshMode,
 	)
 	return err
@@ -454,7 +454,7 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
-		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=%? LIMIT 1",
 		baseTableID)
 	if err != nil {
 		return err
@@ -505,12 +505,12 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 
 	sql := fmt.Sprintf(
 		`INSERT INTO mysql.tidb_mlogs (
-			TABLE_CATALOG, TABLE_SCHEMA, MLOG_ID, MLOG_NAME, MLOG_OWNER, MLOG_COLUMNS,
-			BASE_TABLE_CATALOG, BASE_TABLE_SCHEMA, BASE_TABLE_ID, BASE_TABLE_NAME,
-			PURGE_METHOD, PURGE_START, PURGE_INTERVAL, LAST_PURGE_TIME, LAST_PURGE_ROWS, LAST_PURGE_DURATION
-		) VALUES (
-			'def', ?, ?, ?, ?, ?, 'def', ?, ?, ?, ?, %s, %s, NOW(), 0, 0
-		)`,
+				TABLE_CATALOG, TABLE_SCHEMA, MLOG_ID, MLOG_NAME, MLOG_OWNER, MLOG_COLUMNS,
+				BASE_TABLE_CATALOG, BASE_TABLE_SCHEMA, BASE_TABLE_ID, BASE_TABLE_NAME,
+				PURGE_METHOD, PURGE_START, PURGE_INTERVAL, LAST_PURGE_TIME, LAST_PURGE_ROWS, LAST_PURGE_DURATION
+			) VALUES (
+				'def', %%?, %%?, %%?, %%?, %%?, 'def', %%?, %%?, %%?, %%?, %s, %s, NOW(), 0, 0
+			)`,
 		purgeStartExpr, purgeIntervalExpr,
 	)
 	_, _, err = exec.ExecRestrictedSQL(kctx, nil, sql,
@@ -534,7 +534,7 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
-		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=? LIMIT 1",
+		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=%? AND MVIEW_NAME=%? LIMIT 1",
 		dbName, s.ViewName.Name.O)
 	if err != nil {
 		return err
@@ -548,7 +548,7 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 	for _, action := range s.Actions {
 		switch action.Tp {
 		case ast.AlterMaterializedViewActionComment:
-			sets = append(sets, "MVIEW_COMMENT=?")
+			sets = append(sets, "MVIEW_COMMENT=%?")
 			args = append(args, action.Comment)
 		case ast.AlterMaterializedViewActionRefresh:
 			var refreshMode any
@@ -572,7 +572,7 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 					refreshMode = strings.Join(parts, " ")
 				}
 			}
-			sets = append(sets, "REFRESH_METHOD='REFRESH FAST'", "REFRESH_MODE=?")
+			sets = append(sets, "REFRESH_METHOD='REFRESH FAST'", "REFRESH_MODE=%?")
 			args = append(args, refreshMode)
 		}
 	}
@@ -582,7 +582,7 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 	}
 
 	args = append(args, dbName, s.ViewName.Name.O)
-	sql := fmt.Sprintf("UPDATE mysql.tidb_mviews SET %s WHERE TABLE_SCHEMA=? AND MVIEW_NAME=?", strings.Join(sets, ", "))
+	sql := "UPDATE mysql.tidb_mviews SET " + strings.Join(sets, ", ") + " WHERE TABLE_SCHEMA=%? AND MVIEW_NAME=%?"
 	_, _, err = exec.ExecRestrictedSQL(kctx, nil, sql, args...)
 	return err
 }
@@ -607,7 +607,7 @@ func (e *DDLExec) executeAlterMaterializedViewLog(ctx context.Context, s *ast.Al
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
-		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=%? LIMIT 1",
 		baseTableID)
 	if err != nil {
 		return err
@@ -640,7 +640,7 @@ func (e *DDLExec) executeAlterMaterializedViewLog(ctx context.Context, s *ast.Al
 				purgeStartExpr = fmt.Sprintf("DATE_ADD(NOW(), INTERVAL %s SECOND)", purgeIntervalExpr)
 			}
 		}
-		sql := fmt.Sprintf("UPDATE mysql.tidb_mlogs SET PURGE_METHOD=?, PURGE_START=%s, PURGE_INTERVAL=%s WHERE BASE_TABLE_ID=?", purgeStartExpr, purgeIntervalExpr)
+		sql := fmt.Sprintf("UPDATE mysql.tidb_mlogs SET PURGE_METHOD=%%?, PURGE_START=%s, PURGE_INTERVAL=%s WHERE BASE_TABLE_ID=%%?", purgeStartExpr, purgeIntervalExpr)
 		_, _, err = exec.ExecRestrictedSQL(kctx, nil, sql, purgeMethod, baseTableID)
 		if err != nil {
 			return err
@@ -661,7 +661,7 @@ func (e *DDLExec) executeDropMaterializedView(ctx context.Context, s *ast.DropMa
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
-		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=? LIMIT 1",
+		"SELECT 1 FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=%? AND MVIEW_NAME=%? LIMIT 1",
 		dbName, s.ViewName.Name.O)
 	if err != nil {
 		return err
@@ -670,7 +670,7 @@ func (e *DDLExec) executeDropMaterializedView(ctx context.Context, s *ast.DropMa
 		return infoschema.ErrTableNotExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(dbName), Name: s.ViewName.Name})
 	}
 	_, _, err = exec.ExecRestrictedSQL(kctx, nil,
-		"DELETE FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=? AND MVIEW_NAME=?",
+		"DELETE FROM mysql.tidb_mviews WHERE TABLE_SCHEMA=%? AND MVIEW_NAME=%?",
 		dbName, s.ViewName.Name.O)
 	return err
 }
@@ -693,7 +693,7 @@ func (e *DDLExec) executeDropMaterializedViewLog(ctx context.Context, s *ast.Dro
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
-		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+		"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=%? LIMIT 1",
 		baseTableID)
 	if err != nil {
 		return err
@@ -702,7 +702,7 @@ func (e *DDLExec) executeDropMaterializedViewLog(ctx context.Context, s *ast.Dro
 		return infoschema.ErrTableNotExists.GenWithStackByArgs("materialized view log on " + fmt.Sprintf("%s.%s", dbName, s.Table.Name.O))
 	}
 	_, _, err = exec.ExecRestrictedSQL(kctx, nil,
-		"DELETE FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=?",
+		"DELETE FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=%?",
 		baseTableID)
 	return err
 }
@@ -769,7 +769,7 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 		}
 		baseTableID := fmt.Sprintf("%d", tbl.Meta().ID)
 		rows, _, err := exec.ExecRestrictedSQL(kctx, nil,
-			"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=? LIMIT 1",
+			"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_ID=%? LIMIT 1",
 			baseTableID)
 		if err != nil {
 			return err
