@@ -13,6 +13,7 @@ go_library(
     srcs = [
         "add_column.go",
         "affinity.go",
+        "backfill_metrics.go",
         "backfilling.go",
         "backfilling_clean_s3.go",
         "backfilling_dist_executor.go",
@@ -233,6 +234,7 @@ go_test(
     srcs = [
         "affinity_test.go",
         "attributes_sql_test.go",
+        "backfill_metrics_test.go",
         "backfilling_dist_scheduler_test.go",
         "backfilling_test.go",
         "backfilling_txn_executor_test.go",
@@ -346,6 +348,7 @@ go_test(
         "//pkg/meta/metabuild",
         "//pkg/meta/metadef",
         "//pkg/meta/model",
+        "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/auth",
