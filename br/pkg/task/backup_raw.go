@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 
+	"github.com/docker/go-units"
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
@@ -218,7 +219,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		StartKey: backupRange.StartKey,
 		EndKey:   backupRange.EndKey,
 	}
-	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
+	metaWriter := metautil.NewMetaWriter(client.GetStorage(), int(cfg.MetaFileSize)*int(units.MiB), false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
 	_, err = client.BackupRanges(ctx, []rtree.KeyRange{rg}, req, 1, backup.RangesSentThreshold, nil, metaWriter, progressCallBack)
 	if err != nil {
