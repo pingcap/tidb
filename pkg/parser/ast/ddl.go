@@ -36,6 +36,13 @@ var (
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
+	_ DDLNode = &CreateMaterializedViewStmt{}
+	_ DDLNode = &CreateMaterializedViewLogStmt{}
+	_ DDLNode = &AlterMaterializedViewStmt{}
+	_ DDLNode = &AlterMaterializedViewLogStmt{}
+	_ DDLNode = &DropMaterializedViewStmt{}
+	_ DDLNode = &DropMaterializedViewLogStmt{}
+	_ DDLNode = &RefreshMaterializedViewStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
 	_ DDLNode = &CreateResourceGroupStmt{}
@@ -1623,6 +1630,556 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 		return n, false
 	}
 	n.Select = selnode.(StmtNode)
+	return v.Leave(n)
+}
+
+// MViewRefreshMethod is the refresh method of a materialized view.
+type MViewRefreshMethod int
+
+const (
+	MViewRefreshMethodNever MViewRefreshMethod = iota
+	MViewRefreshMethodFast
+)
+
+func (m MViewRefreshMethod) String() string {
+	switch m {
+	case MViewRefreshMethodNever:
+		return "NEVER REFRESH"
+	case MViewRefreshMethodFast:
+		return "REFRESH FAST"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// MViewRefreshClause is the refresh clause in CREATE/ALTER MATERIALIZED VIEW.
+type MViewRefreshClause struct {
+	Method    MViewRefreshMethod
+	OnDemand  bool
+	StartWith ExprNode
+	Next      ExprNode
+}
+
+// Restore implements Node interface.
+func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord(n.Method.String())
+	if n.Method == MViewRefreshMethodNever {
+		return nil
+	}
+
+	if n.OnDemand {
+		ctx.WriteKeyWord(" ON DEMAND")
+	}
+	if n.StartWith != nil {
+		ctx.WriteKeyWord(" START WITH ")
+		if err := n.StartWith.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MViewRefreshClause.StartWith")
+		}
+	}
+	if n.Next != nil {
+		ctx.WriteKeyWord(" NEXT ")
+		if err := n.Next.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MViewRefreshClause.Next")
+		}
+	}
+	return nil
+}
+
+// CreateMaterializedViewStmt is a statement to create a materialized view.
+type CreateMaterializedViewStmt struct {
+	ddlNode
+
+	ViewName        *TableName
+	Cols            []model.CIStr
+	Comment         string
+	TiFlashReplicas uint64
+	Refresh         *MViewRefreshClause
+	Select          ResultSetNode
+}
+
+// Restore implements Node interface.
+func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.ViewName")
+	}
+	ctx.WritePlain(" (")
+	for i, col := range n.Cols {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		ctx.WriteName(col.O)
+	}
+	ctx.WritePlain(")")
+	if n.Comment != "" {
+		ctx.WriteKeyWord(" COMMENT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Comment)
+	}
+	if n.TiFlashReplicas > 0 {
+		ctx.WriteKeyWord(" TIFLASH REPLICA ")
+		ctx.WritePlainf("%d", n.TiFlashReplicas)
+	}
+	if n.Refresh != nil {
+		ctx.WritePlain(" ")
+		if err := n.Refresh.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Refresh")
+		}
+	}
+	ctx.WriteKeyWord(" AS ")
+	if err := n.Select.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Select")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	if n.Refresh != nil {
+		if n.Refresh.StartWith != nil {
+			node, ok := n.Refresh.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.StartWith = node.(ExprNode)
+		}
+		if n.Refresh.Next != nil {
+			node, ok := n.Refresh.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.Next = node.(ExprNode)
+		}
+	}
+	if n.Select != nil {
+		node, ok := n.Select.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Select = node.(ResultSetNode)
+	}
+	return v.Leave(n)
+}
+
+// MLogPurgeClause is the purge clause in CREATE/ALTER MATERIALIZED VIEW LOG.
+type MLogPurgeClause struct {
+	Immediate bool
+	StartWith ExprNode
+	Next      ExprNode
+}
+
+// Restore implements Node interface.
+func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("PURGE ")
+	if n.Immediate {
+		ctx.WriteKeyWord("IMMEDIATE")
+		return nil
+	}
+	if n.StartWith != nil {
+		ctx.WriteKeyWord("START WITH ")
+		if err := n.StartWith.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.StartWith")
+		}
+		ctx.WritePlain(" ")
+	}
+	ctx.WriteKeyWord("NEXT ")
+	if err := n.Next.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.Next")
+	}
+	return nil
+}
+
+// CreateMaterializedViewLogStmt is a statement to create a materialized view log on a base table.
+type CreateMaterializedViewLogStmt struct {
+	ddlNode
+
+	Table            *TableName
+	Cols             []model.CIStr
+	IncludingNewVals bool
+	Purge            *MLogPurgeClause
+}
+
+// Restore implements Node interface.
+func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Table")
+	}
+	ctx.WritePlain(" (")
+	for i, col := range n.Cols {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		ctx.WriteName(col.O)
+	}
+	ctx.WritePlain(")")
+	if n.IncludingNewVals {
+		ctx.WriteKeyWord(" INCLUDING NEW VALUES")
+	}
+	if n.Purge != nil {
+		ctx.WritePlain(" ")
+		if err := n.Purge.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Purge")
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *CreateMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*CreateMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	if n.Purge != nil {
+		if n.Purge.StartWith != nil {
+			node, ok := n.Purge.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.StartWith = node.(ExprNode)
+		}
+		if n.Purge.Next != nil {
+			node, ok := n.Purge.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.Next = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewActionType is the type of ALTER MATERIALIZED VIEW action.
+type AlterMaterializedViewActionType int
+
+const (
+	AlterMaterializedViewActionComment AlterMaterializedViewActionType = iota
+	AlterMaterializedViewActionRefresh
+)
+
+// AlterMaterializedViewAction is one action in ALTER MATERIALIZED VIEW.
+type AlterMaterializedViewAction struct {
+	node
+	Tp      AlterMaterializedViewActionType
+	Comment string
+	Refresh *MViewRefreshClause
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
+	switch n.Tp {
+	case AlterMaterializedViewActionComment:
+		ctx.WriteKeyWord("COMMENT ")
+		ctx.WritePlain("= ")
+		ctx.WriteString(n.Comment)
+		return nil
+	case AlterMaterializedViewActionRefresh:
+		ctx.WriteKeyWord("REFRESH ")
+		if n.Refresh != nil {
+			// In ALTER MATERIALIZED VIEW, only the schedule part is allowed.
+			if n.Refresh.StartWith != nil {
+				ctx.WriteKeyWord("START WITH ")
+				if err := n.Refresh.StartWith.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewAction.Refresh.StartWith")
+				}
+				if n.Refresh.Next != nil {
+					ctx.WritePlain(" ")
+				}
+			}
+			if n.Refresh.Next != nil {
+				ctx.WriteKeyWord("NEXT ")
+				if err := n.Refresh.Next.Restore(ctx); err != nil {
+					return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewAction.Refresh.Next")
+				}
+			}
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewAction) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewAction)
+	if n.Refresh != nil {
+		if n.Refresh.StartWith != nil {
+			node, ok := n.Refresh.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.StartWith = node.(ExprNode)
+		}
+		if n.Refresh.Next != nil {
+			node, ok := n.Refresh.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Refresh.Next = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewStmt is a statement to alter a materialized view.
+type AlterMaterializedViewStmt struct {
+	ddlNode
+
+	ViewName *TableName
+	Actions  []*AlterMaterializedViewAction
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewStmt.ViewName")
+	}
+	ctx.WritePlain(" ")
+	for i, action := range n.Actions {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := action.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterMaterializedViewStmt.Actions[%d]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	for i, action := range n.Actions {
+		node, ok := action.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Actions[i] = node.(*AlterMaterializedViewAction)
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewLogAction is one action in ALTER MATERIALIZED VIEW LOG.
+type AlterMaterializedViewLogAction struct {
+	node
+	Purge *MLogPurgeClause
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewLogAction) Restore(ctx *format.RestoreCtx) error {
+	if n.Purge == nil {
+		return nil
+	}
+	return n.Purge.Restore(ctx)
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewLogAction) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewLogAction)
+	if n.Purge != nil {
+		if n.Purge.StartWith != nil {
+			node, ok := n.Purge.StartWith.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.StartWith = node.(ExprNode)
+		}
+		if n.Purge.Next != nil {
+			node, ok := n.Purge.Next.Accept(v)
+			if !ok {
+				return n, false
+			}
+			n.Purge.Next = node.(ExprNode)
+		}
+	}
+	return v.Leave(n)
+}
+
+// AlterMaterializedViewLogStmt is a statement to alter a materialized view log.
+type AlterMaterializedViewLogStmt struct {
+	ddlNode
+
+	Table   *TableName
+	Actions []*AlterMaterializedViewLogAction
+}
+
+// Restore implements Node interface.
+func (n *AlterMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("ALTER MATERIALIZED VIEW LOG ON ")
+	if err := n.Table.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewLogStmt.Table")
+	}
+	ctx.WritePlain(" ")
+	for i, action := range n.Actions {
+		if i > 0 {
+			ctx.WritePlain(", ")
+		}
+		if err := action.Restore(ctx); err != nil {
+			return errors.Annotatef(err, "An error occurred while restore AlterMaterializedViewLogStmt.Actions[%d]", i)
+		}
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *AlterMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*AlterMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	for i, action := range n.Actions {
+		node, ok := action.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Actions[i] = node.(*AlterMaterializedViewLogAction)
+	}
+	return v.Leave(n)
+}
+
+// DropMaterializedViewStmt is a statement to drop a materialized view.
+type DropMaterializedViewStmt struct {
+	ddlNode
+
+	ViewName *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP MATERIALIZED VIEW ")
+	return n.ViewName.Restore(ctx)
+}
+
+// Accept implements Node Accept interface.
+func (n *DropMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// DropMaterializedViewLogStmt is a statement to drop a materialized view log on a base table.
+type DropMaterializedViewLogStmt struct {
+	ddlNode
+
+	Table *TableName
+}
+
+// Restore implements Node interface.
+func (n *DropMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("DROP MATERIALIZED VIEW LOG ON ")
+	return n.Table.Restore(ctx)
+}
+
+// Accept implements Node Accept interface.
+func (n *DropMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*DropMaterializedViewLogStmt)
+	if n.Table != nil {
+		node, ok := n.Table.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.Table = node.(*TableName)
+	}
+	return v.Leave(n)
+}
+
+// RefreshMaterializedViewStmt is a statement to trigger a refresh on a materialized view.
+type RefreshMaterializedViewStmt struct {
+	ddlNode
+
+	ViewName     *TableName
+	WithSyncMode bool
+}
+
+// Restore implements Node interface.
+func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
+	ctx.WriteKeyWord("REFRESH MATERIALIZED VIEW ")
+	if err := n.ViewName.Restore(ctx); err != nil {
+		return errors.Annotate(err, "An error occurred while restore RefreshMaterializedViewStmt.ViewName")
+	}
+	if n.WithSyncMode {
+		ctx.WriteKeyWord(" WITH SYNC MODE")
+	}
+	return nil
+}
+
+// Accept implements Node Accept interface.
+func (n *RefreshMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
+	newNode, skipChildren := v.Enter(n)
+	if skipChildren {
+		return v.Leave(newNode)
+	}
+	n = newNode.(*RefreshMaterializedViewStmt)
+	if n.ViewName != nil {
+		node, ok := n.ViewName.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.ViewName = node.(*TableName)
+	}
 	return v.Leave(n)
 }
 

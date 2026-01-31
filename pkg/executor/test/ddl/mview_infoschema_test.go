@@ -1,0 +1,104 @@
+package ddl
+
+import (
+	"testing"
+
+	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
+)
+
+func TestInfoSchemaTiDBMViewsAndMLogs(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set time_zone = '+00:00'")
+
+	tk.MustExec("create database is_mview")
+	tk.MustExec("use is_mview")
+	tk.MustExec("create materialized view mv1 (a) as select 1")
+	tk.MustExec("update mysql.tidb_mviews set mview_modify_time='2026-01-01 00:00:00', mview_tiflash_replicas=NULL where table_schema='is_mview' and mview_name='mv1'")
+
+	tk.MustQuery(`
+		select table_schema, mview_name, length(mview_id), refresh_method, refresh_mode, staleness, mview_comment, mview_tiflash_replicas, mview_modify_time
+		from information_schema.tidb_mviews
+		where table_schema='is_mview' and mview_name='mv1'`,
+	).Check(testkit.Rows("is_mview mv1 36 REFRESH FAST ON DEMAND START WITH NOW() NEXT 300 FRESH <nil> 0 2026-01-01 00:00:00"))
+
+	// time_zone conversion should keep the displayed DATETIME stable.
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery(`
+		select mview_modify_time
+		from information_schema.tidb_mviews
+		where table_schema='is_mview' and mview_name='mv1'`,
+	).Check(testkit.Rows("2026-01-01 00:00:00"))
+
+	tk.MustExec("create database is_mlog")
+	tk.MustExec("use is_mlog")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("update mysql.tidb_mlogs set purge_start='2026-01-02 03:04:05', last_purge_time='2026-01-02 03:04:05', last_purge_rows=7, last_purge_duration=9 where base_table_schema='is_mlog' and base_table_name='t'")
+
+	rows := tk.MustQuery(`
+		select base_table_schema, base_table_name, purge_method, purge_start, purge_interval, last_purge_time, last_purge_rows, last_purge_duration
+		from information_schema.tidb_mlogs
+		where base_table_schema='is_mlog' and base_table_name='t'`,
+	).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "is_mlog", rows[0][0])
+	require.Equal(t, "t", rows[0][1])
+	require.Equal(t, "IMMEDIATE", rows[0][2])
+	require.Equal(t, "2026-01-02 03:04:05", rows[0][3])
+	require.Equal(t, "0", rows[0][4])
+	require.Equal(t, "2026-01-02 03:04:05", rows[0][5])
+	require.Equal(t, "7", rows[0][6])
+	require.Equal(t, "9", rows[0][7])
+}
+
+func TestInfoSchemaTiDBMViewRefreshHistAndMLogPurgeHist(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("set time_zone = '+00:00'")
+
+	tk.MustExec(`
+		insert into mysql.tidb_mview_refresh_hist
+			(mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
+		values
+			('mvid1', 'mv1', 123, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL)`)
+
+	tk.MustExec(`
+		insert into mysql.tidb_mlog_purge_hist
+			(mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status)
+		values
+			('mlogid1', 'mlog1', 456, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL)`)
+
+	// Make sure the rows are visible to restricted SQL (infoschema reader uses restricted SQL internally).
+	tk.MustExec("commit")
+	tk.MustQuery(`select count(*) from mysql.tidb_mview_refresh_hist where mview_id='mvid1'`).Check(testkit.Rows("1"))
+	tk.MustQuery(`select count(*) from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1'`).Check(testkit.Rows("1"))
+
+	tk.MustQuery(`
+		select mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status
+		from information_schema.tidb_mview_refresh_hist
+		where mview_id='mvid1'`,
+	).Check(testkit.Rows("mvid1 mv1 123 YES REFRESH FAST 2026-01-01 00:00:00 <nil> <nil>"))
+
+	tk.MustQuery(`
+		select mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status
+		from information_schema.tidb_mlog_purge_hist
+		where mlog_id='mlogid1'`,
+	).Check(testkit.Rows("mlogid1 mlog1 456 YES IMMEDIATE <nil> 2026-01-01 00:00:00 0 <nil>"))
+
+	// time_zone conversion should keep the displayed DATETIME stable.
+	tk.MustExec("set time_zone = '+08:00'")
+	tk.MustQuery(`
+		select refresh_time
+		from information_schema.tidb_mview_refresh_hist
+		where mview_id='mvid1'`,
+	).Check(testkit.Rows("2026-01-01 00:00:00"))
+	tk.MustQuery(`
+		select purge_endtime
+		from information_schema.tidb_mlog_purge_hist
+		where mlog_id='mlogid1'`,
+	).Check(testkit.Rows("2026-01-01 00:00:00"))
+}

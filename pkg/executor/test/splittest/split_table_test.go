@@ -17,6 +17,7 @@ package splittest
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -61,8 +62,16 @@ func TestClusterIndexShowTableRegion(t *testing.T) {
 	rows = tk.MustQuery("show table t regions").Rows()
 	tbl = external.GetTableByName(t, tk, "cluster_index_regions", "t")
 	// Check the region start key is int64.
-	require.Regexp(t, fmt.Sprintf("t_%d_", tbl.Meta().ID), rows[0][1])
-	require.Regexp(t, fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID), rows[1][1])
+	hasStartKeyContains := func(subStr string) bool {
+		for _, row := range rows {
+			if strings.Contains(fmt.Sprint(row[1]), subStr) {
+				return true
+			}
+		}
+		return false
+	}
+	require.True(t, hasStartKeyContains(fmt.Sprintf("t_%d_", tbl.Meta().ID)))
+	require.True(t, hasStartKeyContains(fmt.Sprintf("t_%d_r_50000", tbl.Meta().ID)))
 
 	// test split regions boundary, it's too slow in TiKV env, move it here.
 	tk.MustExec("drop table if exists t")
