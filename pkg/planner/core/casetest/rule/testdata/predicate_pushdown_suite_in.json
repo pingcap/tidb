@@ -11,7 +11,14 @@
       "select foo.a, foo.b, bar.c from foo left join bar on foo.a=bar.a where (foo.a,foo.b) in ((1,2),(3,4));",
       "select foo.a, foo.b, bar.c from foo left join bar on foo.a=bar.a where (foo.a,foo.b) in ((1,2),(3,4));",
       "select * from foo join bar on foo.a=bar.a where rand() > 0.5;",
-      "select * from foo join bar on foo.a=bar.a where foo.a = rand();"
+      "select * from foo join bar on foo.a=bar.a where foo.a = rand();",
+      "select 85.11 as c0, t0.p1 as c1, '2024-01-02 12:28:00' as c2 from t0 right join t1 on (t0.k0 = t1.k0) join t3 on (t0.k0 = t3.k0) left join t2 on not not (t0.k0 = t2.k0) left join t4 on (t0.k0 = t4.k0) where (t0.k0 <=> t3.k0) order by (t3.d0 - t2.k1) desc, t1.d0 desc limit 13",
+      "select /* double_not_left_join */ t0.k0 from t0 left join t2 on not not (t0.k0 = t2.k0)",
+      "select /* double_not_right_join */ t0.k0 from t0 right join t2 on not not (t0.k0 = t2.k0)",
+      "select /* double_not_semi_join */ t0.k0 from t0 where exists (select 1 from t2 where not not (t0.k0 = t2.k0))",
+      "select /* double_not_left_join_exec */ t0.k0, t2.k0 from t0 left join t2 on not not (t0.k0 = t2.k0) order by t0.k0, t2.k0",
+      "select /* double_not_right_join_exec */ t0.k0, t2.k0 from t0 right join t2 on not not (t0.k0 = t2.k0) order by t2.k0, t0.k0",
+      "select /* double_not_semi_join_exec */ t0.k0 from t0 where exists (select 1 from t2 where not not (t0.k0 = t2.k0)) order by t0.k0"
     ]
   }
 ]

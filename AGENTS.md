@@ -49,6 +49,10 @@ This file provides guidance to agents when working with code in this repository.
 
 - When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
 
+### Optimizer Notes
+
+- Record optimizer-related PR experience in `docs/note/planner/rule/optimizer_ai_notes.md`.
+
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
