@@ -5309,7 +5309,7 @@ MViewCreateOptionList:
 	}
 
 MViewCreateOption:
-	"COMMENT" '=' stringLit
+	"COMMENT" "=" stringLit
 	{
 		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
 	}
@@ -5358,7 +5358,8 @@ MViewRefreshOnClauseOpt:
 MViewStartWithOrNextOpt:
 	/* EMPTY */
 	{
-		$$ = (*ast.MViewRefreshClause)(nil)
+		// NOTE: don't use typed-nil here, otherwise `$3 != nil` checks may be wrong (Go interface nil gotcha).
+		$$ = nil
 	}
 |	MViewStartWithOrNext
 	{
@@ -5425,7 +5426,12 @@ MLogCreateOptionListOpt:
 MLogCreateOptionList:
 	MLogCreateOption
 	{
-		$$ = $1
+		opts := $1.(*mlogCreateOptions)
+		// Default INCLUDING NEW VALUES is true (unless explicitly overridden in the future).
+		if !opts.hasIncludingNewVals {
+			opts.includingNewVals = true
+		}
+		$$ = opts
 	}
 |	MLogCreateOptionList MLogCreateOption
 	{
@@ -5503,7 +5509,7 @@ AlterMaterializedViewActionList:
 	}
 
 AlterMaterializedViewAction:
-	"COMMENT" '=' stringLit
+	"COMMENT" "=" stringLit
 	{
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
 	}

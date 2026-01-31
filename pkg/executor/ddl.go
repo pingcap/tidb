@@ -352,6 +352,10 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 		}
 		s.ViewName.Schema = pmodel.NewCIStr(dbName)
 	}
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	if _, ok := is.SchemaByName(pmodel.NewCIStr(dbName)); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
 
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
@@ -530,6 +534,10 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 		}
 		s.ViewName.Schema = pmodel.NewCIStr(dbName)
 	}
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	if _, ok := is.SchemaByName(pmodel.NewCIStr(dbName)); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
+	}
 
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
@@ -658,6 +666,10 @@ func (e *DDLExec) executeDropMaterializedView(ctx context.Context, s *ast.DropMa
 			return plannererrors.ErrNoDB
 		}
 		s.ViewName.Schema = pmodel.NewCIStr(dbName)
+	}
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	if _, ok := is.SchemaByName(pmodel.NewCIStr(dbName)); !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)

@@ -385,10 +385,10 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 
 func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
 	const sql = `SELECT TABLE_CATALOG, TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_OWNER, MVIEW_DEFINITION, MVIEW_COMMENT, MVIEW_TIFLASH_REPLICAS,
-		CONVERT_TZ(MVIEW_MODIFY_TIME, @@TIME_ZONE, '+00:00'),
+		MVIEW_MODIFY_TIME,
 		REFRESH_METHOD, REFRESH_MODE, LAST_REFRESH_METHOD,
-		CONVERT_TZ(LAST_REFRESH_TIME, @@TIME_ZONE, '+00:00'),
-		CONVERT_TZ(LAST_REFRESH_ENDTIME, @@TIME_ZONE, '+00:00'),
+		LAST_REFRESH_TIME,
+		LAST_REFRESH_ENDTIME,
 		STALENESS
 		FROM mysql.tidb_mviews`
 	exec := sctx.GetRestrictedSQLExecutor()
@@ -398,7 +398,6 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 		return err
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
-	tz := sctx.GetSessionVars().TimeZone
 	for _, chunkRow := range chunkRows {
 		var comment any
 		if !chunkRow.IsNull(6) {
@@ -409,14 +408,7 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 		if !chunkRow.IsNull(7) {
 			tiflashReplicas = chunkRow.GetInt64(7)
 		}
-		var modifyTime any
-		if !chunkRow.IsNull(8) {
-			t, err := chunkRow.GetTime(8).GoTime(time.UTC)
-			if err != nil {
-				return err
-			}
-			modifyTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
-		}
+		modifyTime := chunkRow.GetTime(8)
 		var refreshMethod any
 		if !chunkRow.IsNull(9) {
 			refreshMethod = chunkRow.GetString(9)
@@ -431,19 +423,11 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 		}
 		var lastRefreshTime any
 		if !chunkRow.IsNull(12) {
-			t, err := chunkRow.GetTime(12).GoTime(time.UTC)
-			if err != nil {
-				return err
-			}
-			lastRefreshTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+			lastRefreshTime = chunkRow.GetTime(12)
 		}
 		var lastRefreshEndTime any
 		if !chunkRow.IsNull(13) {
-			t, err := chunkRow.GetTime(13).GoTime(time.UTC)
-			if err != nil {
-				return err
-			}
-			lastRefreshEndTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+			lastRefreshEndTime = chunkRow.GetTime(13)
 		}
 		var staleness any
 		if !chunkRow.IsNull(14) {
@@ -476,9 +460,9 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessionctx.Context) error {
 	const sql = `SELECT TABLE_CATALOG, TABLE_SCHEMA, MLOG_ID, MLOG_NAME, MLOG_OWNER, MLOG_COLUMNS, BASE_TABLE_CATALOG, BASE_TABLE_SCHEMA, BASE_TABLE_ID, BASE_TABLE_NAME,
 		PURGE_METHOD,
-		CONVERT_TZ(PURGE_START, @@TIME_ZONE, '+00:00'),
+		PURGE_START,
 		PURGE_INTERVAL,
-		CONVERT_TZ(LAST_PURGE_TIME, @@TIME_ZONE, '+00:00'),
+		LAST_PURGE_TIME,
 		LAST_PURGE_ROWS,
 		LAST_PURGE_DURATION
 		FROM mysql.tidb_mlogs`
@@ -489,16 +473,7 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 		return err
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
-	tz := sctx.GetSessionVars().TimeZone
 	for _, chunkRow := range chunkRows {
-		purgeStart, err := chunkRow.GetTime(11).GoTime(time.UTC)
-		if err != nil {
-			return err
-		}
-		lastPurgeTime, err := chunkRow.GetTime(13).GoTime(time.UTC)
-		if err != nil {
-			return err
-		}
 		row := types.MakeDatums(
 			chunkRow.GetString(0),  // TABLE_CATALOG
 			chunkRow.GetString(1),  // TABLE_SCHEMA
@@ -511,9 +486,9 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			chunkRow.GetString(8),  // BASE_TABLE_ID
 			chunkRow.GetString(9),  // BASE_TABLE_NAME
 			chunkRow.GetString(10), // PURGE_METHOD
-			types.NewTime(types.FromGoTime(purgeStart.In(tz)), mysql.TypeDatetime, 0), // PURGE_START
+			chunkRow.GetTime(11),  // PURGE_START
 			chunkRow.GetInt64(12), // PURGE_INTERVAL
-			types.NewTime(types.FromGoTime(lastPurgeTime.In(tz)), mysql.TypeDatetime, 0), // LAST_PURGE_TIME
+			chunkRow.GetTime(13),  // LAST_PURGE_TIME
 			chunkRow.GetInt64(14), // LAST_PURGE_ROWS
 			chunkRow.GetInt64(15), // LAST_PURGE_DURATION
 		)
@@ -525,8 +500,8 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 
 func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context, sctx sessionctx.Context) error {
 	const sql = `SELECT MVIEW_ID, MVIEW_NAME, CAST(REFRESH_JOB_ID AS CHAR), IS_NEWEST_REFRESH, REFRESH_METHOD,
-		CONVERT_TZ(REFRESH_TIME, @@TIME_ZONE, '+00:00'),
-		CONVERT_TZ(REFRESH_ENDTIME, @@TIME_ZONE, '+00:00'),
+		REFRESH_TIME,
+		REFRESH_ENDTIME,
 		REFRESH_STATUS
 		FROM mysql.tidb_mview_refresh_hist`
 	exec := sctx.GetRestrictedSQLExecutor()
@@ -536,23 +511,14 @@ func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context,
 		return err
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
-	tz := sctx.GetSessionVars().TimeZone
 	for _, chunkRow := range chunkRows {
 		var refreshTime any
 		if !chunkRow.IsNull(5) {
-			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
-			if err != nil {
-				return err
-			}
-			refreshTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+			refreshTime = chunkRow.GetTime(5)
 		}
 		var refreshEndTime any
 		if !chunkRow.IsNull(6) {
-			t, err := chunkRow.GetTime(6).GoTime(time.UTC)
-			if err != nil {
-				return err
-			}
-			refreshEndTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+			refreshEndTime = chunkRow.GetTime(6)
 		}
 		var refreshStatus any
 		if !chunkRow.IsNull(7) {
@@ -576,8 +542,8 @@ func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context,
 
 func (e *memtableRetriever) setDataFromTiDBMLogPurgeHist(ctx context.Context, sctx sessionctx.Context) error {
 	const sql = `SELECT MLOG_ID, MLOG_NAME, CAST(PURGE_JOB_ID AS CHAR), IS_NEWEST_PURGE, PURGE_METHOD,
-		CONVERT_TZ(PURGE_TIME, @@TIME_ZONE, '+00:00'),
-		CONVERT_TZ(PURGE_ENDTIME, @@TIME_ZONE, '+00:00'),
+		PURGE_TIME,
+		PURGE_ENDTIME,
 		PURGE_ROWS,
 		PURGE_STATUS
 		FROM mysql.tidb_mlog_purge_hist`
@@ -588,23 +554,14 @@ func (e *memtableRetriever) setDataFromTiDBMLogPurgeHist(ctx context.Context, sc
 		return err
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
-	tz := sctx.GetSessionVars().TimeZone
 	for _, chunkRow := range chunkRows {
 		var purgeTime any
 		if !chunkRow.IsNull(5) {
-			t, err := chunkRow.GetTime(5).GoTime(time.UTC)
-			if err != nil {
-				return err
-			}
-			purgeTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+			purgeTime = chunkRow.GetTime(5)
 		}
 		var purgeEndTime any
 		if !chunkRow.IsNull(6) {
-			t, err := chunkRow.GetTime(6).GoTime(time.UTC)
-			if err != nil {
-				return err
-			}
-			purgeEndTime = types.NewTime(types.FromGoTime(t.In(tz)), mysql.TypeDatetime, 0)
+			purgeEndTime = chunkRow.GetTime(6)
 		}
 		var purgeStatus any
 		if !chunkRow.IsNull(8) {
