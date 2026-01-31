@@ -24,6 +24,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -38,13 +39,34 @@ import (
 	"github.com/tikv/client-go/v2/trace"
 )
 
+const (
+	// eventChannelBufferSize is the buffer size for event channels.
+	// A larger buffer prevents event drops when multiple flushes happen quickly.
+	eventChannelBufferSize = 100
+)
+
+// drainEvents removes all pending events from the channel.
+// It keeps draining until the channel is empty, handling the case where
+// DiscardOrFlush sends events asynchronously.
 func drainEvents(eventCh <-chan []traceevent.Event) {
 	for {
 		select {
 		case <-eventCh:
+			// Continue draining
 		default:
 			return
 		}
+	}
+}
+
+// waitForEvent waits for an event to arrive on the channel with a timeout.
+// This provides explicit synchronization between DiscardOrFlush and event consumption.
+func waitForEvent(eventCh <-chan []traceevent.Event, timeout time.Duration) ([]traceevent.Event, bool) {
+	select {
+	case events := <-eventCh:
+		return events, true
+	case <-time.After(timeout):
+		return nil, false
 	}
 }
 
@@ -60,35 +82,26 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	se, err := session.CreateSession(store)
 	require.NoError(t, err)
 
-	// Enable trace events and install a recorder to capture events
-	prevMode := traceevent.CurrentMode()
-	_, err = traceevent.SetMode("full")
-	require.NoError(t, err)
-	defer func() {
-		_, _ = traceevent.SetMode(prevMode)
-	}()
-
 	// Enable all categories for this test
 	var conf traceevent.FlightRecorderConfig
 	conf.Initialize()
-	conf.EnabledCategories = []string{"*"}
-	err = traceevent.StartLogFlightRecorder(&conf)
+	conf.EnabledCategories = []string{"-", "general"}
+	eventCh := make(chan []traceevent.Event, eventChannelBufferSize)
+	fr, err := traceevent.StartHTTPFlightRecorder(eventCh, &conf)
 	require.NoError(t, err)
-	fr := traceevent.GetFlightRecorder()
 	defer fr.Close()
 
-	recorder := traceevent.NewRingBufferSink(100)
-	prevSink := traceevent.CurrentSink()
-	traceevent.SetSink(recorder)
-	defer traceevent.SetSink(prevSink)
+	traceBuf := traceevent.NewTraceBuf()
+	ctx := traceevent.WithTraceBuf(context.Background(), traceBuf)
 
 	// Create a test table
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	_, err = se.ExecuteInternal(ctx, "create table test.t2 (id int primary key, value varchar(100))")
 	require.NoError(t, err)
 
-	// Clear the recorder and reset prev trace ID
-	recorder.DiscardOrFlush()
+	// Clear the traceBuf and reset prev trace ID
+	traceBuf.DiscardOrFlush(ctx)
+	drainEvents(eventCh)
 	se.GetSessionVars().PrevTraceID = nil
 
 	// Execute first statement
@@ -105,8 +118,9 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	require.NotEmpty(t, firstTraceID, "First statement should generate a trace ID")
 	t.Logf("First statement trace ID: %s", hex.EncodeToString(firstTraceID))
 
-	// Clear the recorder to capture only the second statement's events
-	recorder.DiscardOrFlush()
+	// Clear the traceBuf to capture only the second statement's events
+	traceBuf.DiscardOrFlush(ctx)
+	drainEvents(eventCh)
 
 	// Execute second statement in the same session
 	stmt2, err := session.ParseWithParams4Test(ctx, se, "insert into test.t2 values (2, 'second')")
@@ -125,8 +139,13 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	// Verify that the trace IDs are different
 	require.NotEqual(t, firstTraceID, secondTraceID, "Each statement should have a unique trace ID")
 
+	// Flush the traceBuf to send the second statement's events to the channel
+	traceBuf.DiscardOrFlush(ctx)
+
 	// Check recorded events for prev_trace_id field
-	events := recorder.Snapshot()
+	// Use waitForEvent for explicit synchronization with timeout
+	events, ok := waitForEvent(eventCh, 5*time.Second)
+	require.True(t, ok, "Should receive events within timeout")
 	require.NotEmpty(t, events, "Should have recorded trace events")
 
 	// Look for stmt.start events and verify prev_trace_id matches first statement
@@ -164,10 +183,6 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 func TestTraceControlIntegration(t *testing.T) {
 	// Test that the extractor still propagates enabled categories even without a Trace sink.
 	// First, enable TiKVRequest category (since defaultEnabledCategories is now 0)
-	prevCategories := tracing.GetEnabledCategories()
-	tracing.Enable(tracing.TiKVRequest)
-	defer tracing.SetCategories(prevCategories)
-
 	var conf traceevent.FlightRecorderConfig
 	conf.Initialize()
 	conf.EnabledCategories = []string{"tikv_request"}
@@ -217,7 +232,7 @@ func TestTraceControlIntegration(t *testing.T) {
 }
 
 func TestFlightRecorder(t *testing.T) {
-	eventCh := make(chan []tracing.Event, 1024)
+	eventCh := make(chan []tracing.Event, eventChannelBufferSize)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -225,8 +240,8 @@ func TestFlightRecorder(t *testing.T) {
 	tk.MustExec("create table t (a varchar(10) primary key, b int, index idx(b))")
 
 	ctx := context.Background()
-	sink := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, sink)
+	sink := traceevent.NewTraceBuf()
+	ctx = tracing.WithTraceBuf(ctx, sink)
 
 	// Basic check to see if flight recorder can dump events
 	{
@@ -352,8 +367,8 @@ func TestTiDBTraceEventVariable(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	sink := traceevent.NewTrace()
-	ctx = tracing.WithFlightRecorder(ctx, sink)
+	sink := traceevent.NewTraceBuf()
+	ctx = tracing.WithTraceBuf(ctx, sink)
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExecWithContext(ctx, `set @@global.tidb_trace_event = json_object('enabled_categories', json_array('*'), 'dump_trigger', json_object('type', 'sampling', 'sampling', 1))`)

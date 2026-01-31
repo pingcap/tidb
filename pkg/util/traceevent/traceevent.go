@@ -32,7 +32,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/tracing"
-	"github.com/tikv/client-go/v2/trace"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -99,6 +98,7 @@ var flightRecorder = NewRingBufferSink(DefaultFlightRecorderCapacity)
 // init sets up the default sink configuration.
 // Default mode is "base" (flight recorder enabled, logging disabled).
 func init() {
+	tracing.IsEnabled = IsEnabled
 	defaultSink := &LogSink{}
 	eventSink.Store(sinkHolder{sink: defaultSink})
 	recorderEnabled.Store(true) // base mode: recorder enabled
@@ -107,10 +107,6 @@ func init() {
 	// Register TiDB's trace event handlers with client-go
 	RegisterWithClientGo()
 }
-
-// Enable enables trace events for the specified categories.
-// Multiple categories can be combined with bitwise OR.
-var Enable = tracing.Enable
 
 // IsEnabled returns whether the specified category is enabled.
 func IsEnabled(category tracing.TraceCategory) bool {
@@ -199,7 +195,9 @@ type Event = tracing.Event
 type TraceCategory = tracing.TraceCategory
 
 // Sink records trace events.
-type Sink = tracing.Sink
+type Sink interface {
+	Record(ctx context.Context, event Event)
+}
 
 // SetSink replaces the global sink. Passing nil restores the default sink.
 func SetSink(s Sink) {
@@ -236,6 +234,11 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		return
 	}
 
+	traceBuf := GetTraceBuf(ctx)
+	if traceBuf == nil {
+		return
+	}
+
 	// Defensive copy prevents corruption from caller's buffer reuse.
 	// Reserve extra capacity for LogSink to append metadata without allocation.
 	event := Event{
@@ -243,19 +246,16 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 		Name:      name,
 		Phase:     tracing.PhaseInstant,
 		Timestamp: time.Now(),
-		TraceID:   TraceIDFromContext(ctx),
+		TraceID:   traceBuf.GetTraceID(),
 		Fields:    copyFieldsWithCapacity(fields, 3),
 	}
+	traceBuf.Record(ctx, event)
 
 	// Record to flight recorder if enabled (base or full mode).
 	if recorderEnabled.Load() {
 		// TODO: clean up here
 		if recorder := FlightRecorder(); recorder != nil {
 			recorder.Record(ctx, event)
-		}
-		sink := tracing.GetSink(ctx)
-		if sink != nil {
-			sink.(Sink).Record(ctx, event)
 		}
 	}
 
@@ -265,39 +265,16 @@ func TraceEvent(ctx context.Context, category TraceCategory, name string, fields
 	}
 }
 
-// TraceIDFromContext returns the trace identifier from ctx if present.
-// It delegates to client-go's TraceIDFromContext implementation.
-func TraceIDFromContext(ctx context.Context) []byte {
-	return trace.TraceIDFromContext(ctx)
-}
-
-// ContextWithTraceID returns a new context with the given trace identifier.
-// It delegates to client-go's ContextWithTraceID implementation.
-func ContextWithTraceID(ctx context.Context, traceID []byte) context.Context {
-	return trace.ContextWithTraceID(ctx, traceID)
-}
-
 // GenerateTraceID creates a trace ID from transaction start timestamp and statement count.
 // The trace ID is 20 bytes: [start_ts (8 bytes)][stmt_count (8 bytes)][random (4 bytes)] in big-endian format.
 // The random suffix distinguishes different statement executions.
 // This function should be called ONCE per statement execution, not per retry.
 // If no transaction has started, start_ts will be 0.
-func GenerateTraceID(ctx context.Context, startTS uint64, stmtCount uint64) []byte {
+func GenerateTraceID(startTS uint64, stmtCount uint64) []byte {
 	traceID := make([]byte, 20)
 	binary.BigEndian.PutUint64(traceID[0:8], startTS)
 	binary.BigEndian.PutUint64(traceID[8:16], stmtCount)
-	var rand32 uint32
-	if sink := tracing.GetSink(ctx); sink != nil {
-		if t, ok := sink.(*Trace); ok {
-			t.mu.Lock()
-			rand32 = t.rand32
-			t.mu.Unlock()
-		}
-	}
-	if rand32 == 0 {
-		rand32 = rand.Uint32()
-	}
-	binary.BigEndian.PutUint32(traceID[16:20], rand32)
+	binary.BigEndian.PutUint32(traceID[16:20], rand.Uint32())
 	return traceID
 }
 
