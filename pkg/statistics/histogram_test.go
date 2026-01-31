@@ -436,7 +436,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			expBucketNumber: 3,
 		},
 	}
-	failpoint.Enable("github.com/pingcap/pkg/statistics/enableTopNNDV", `return(true)`)
+	failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/enableTopNNDV", `return(true)`)
 
 	for ii, tt := range tests {
 		var expTotColSize int64
@@ -473,7 +473,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		}
 		require.Equal(t, expTotColSize, globalHist.TotColSize, "failed at #%d case", ii)
 	}
-	failpoint.Disable("github.com/pingcap/pkg/statistics/enableTopNNDV")
+	failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/enableTopNNDV")
 }
 
 func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {

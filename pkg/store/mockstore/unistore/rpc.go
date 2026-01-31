@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -289,9 +290,15 @@ func (c *RPCClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.R
 			}
 		})
 
-		failpoint.Inject("BatchCopRpcErr"+addr, func(value failpoint.Value) {
-			if value.(string) == addr {
+		failpoint.Inject("BatchCopRpcErr", func(value failpoint.Value) {
+			targetAddrs, _ := value.(string)
+			if targetAddrs == "*" {
 				failpoint.Return(nil, errors.New("rpc error"))
+			}
+			for _, targetAddr := range strings.Split(targetAddrs, ",") {
+				if strings.TrimSpace(targetAddr) == addr {
+					failpoint.Return(nil, errors.New("rpc error"))
+				}
 			}
 		})
 		resp.Resp, err = c.handleBatchCop(ctx, req.BatchCop(), timeout)

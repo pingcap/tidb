@@ -387,9 +387,9 @@ func TestCoprocessorBlockIssues56916(t *testing.T) {
 }
 
 func TestIssue21441(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/union/issue21441", `return`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/unionexec/issue21441", `return`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/union/issue21441"))
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/unionexec/issue21441"))
 	}()
 
 	store := testkit.CreateMockStore(t)
