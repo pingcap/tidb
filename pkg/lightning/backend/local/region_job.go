@@ -18,10 +18,12 @@ import (
 	"bytes"
 	"container/heap"
 	"context"
+	"crypto/rand"
 	goerrors "errors"
 	"fmt"
 	"io"
 	"math"
+	"math/big"
 	"slices"
 	"sync"
 	"time"
@@ -664,6 +666,9 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 // if any underlying logic has error, ingest will return an error to let caller
 // handle it.
 func (local *Backend) ingest(ctx context.Context, j *regionJob) (err error) {
+	if n, err := rand.Int(rand.Reader, big.NewInt(5)); err == nil && n.Int64() == 0 {
+		return errors.New("injected random error")
+	}
 	failpoint.Inject("fakeRegionJobs", func() {
 		front := j.injected[0]
 		j.injected = j.injected[1:]
