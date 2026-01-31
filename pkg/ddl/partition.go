@@ -626,6 +626,7 @@ func buildTablePartitionInfo(ctx *metabuild.Context, s *ast.PartitionOptions, tb
 			dupCheck[strings.ToLower(idxUpdate.Name)] = struct{}{}
 			if idxUpdate.Option != nil && idxUpdate.Option.Global {
 				tbInfo.Indices[idxOffset].Global = true
+				setGlobalIndexVersion(tbInfo, tbInfo.Indices[idxOffset])
 			} else {
 				tbInfo.Indices[idxOffset].Global = false
 			}
@@ -3293,6 +3294,7 @@ func (w *worker) onReorganizePartition(jobCtx *jobContext, job *model.Job) (ver 
 			tblInfo.Partition.DDLChangedIndex[index.ID] = false
 			tblInfo.Partition.DDLChangedIndex[newIndex.ID] = true
 			newIndex.Global = newGlobal
+			setGlobalIndexVersion(tblInfo, newIndex)
 			tblInfo.Indices = append(tblInfo.Indices, newIndex)
 		}
 		failpoint.Inject("reorgPartCancel1", func(val failpoint.Value) {
