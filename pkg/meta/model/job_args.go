@@ -1842,3 +1842,23 @@ func (a *AlterTableAffinityArgs) decodeV1(job *Job) error {
 func GetAlterTableAffinityArgs(job *Job) (*AlterTableAffinityArgs, error) {
 	return getOrDecodeArgs[*AlterTableAffinityArgs](&AlterTableAffinityArgs{}, job)
 }
+
+// AlterTableSetRegionSplitPolicyArgs is the arguments for ActionAlterTableSetRegionSplitPolicy
+type AlterTableSetRegionSplitPolicyArgs struct {
+	// IndexName is the index name, empty string means table policy.
+	IndexName string
+	Policy    *RegionSplitPolicy
+}
+
+func (a *AlterTableSetRegionSplitPolicyArgs) getArgsV1(*Job) []any {
+	return []any{a.IndexName, a.Policy}
+}
+
+func (a *AlterTableSetRegionSplitPolicyArgs) decodeV1(job *Job) error {
+	return errors.Trace(job.decodeArgs(&a.IndexName, &a.Policy))
+}
+
+// GetAlterTableSetRegionSplitPolicyArgs gets the args for alter table set region split policy job
+func GetAlterTableSetRegionSplitPolicyArgs(job *Job) (*AlterTableSetRegionSplitPolicyArgs, error) {
+	return getOrDecodeArgs[*AlterTableSetRegionSplitPolicyArgs](&AlterTableSetRegionSplitPolicyArgs{}, job)
+}
