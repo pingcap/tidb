@@ -148,3 +148,51 @@ func (b *BuildPBContext) Detach(staticExprCtx exprctx.BuildContext) *BuildPBCont
 	newCtx.ExprCtx = staticExprCtx
 	return &newCtx
 }
+
+type overrideExprCtxPlanContext struct {
+	PlanContext
+	exprCtx             exprctx.ExprContext
+	nullRejectCheckExpr exprctx.ExprContext
+}
+
+// UnwrapPlanContext returns the underlying PlanContext.
+// It is used by callers that need to recover the original session-backed context.
+func (c *overrideExprCtxPlanContext) UnwrapPlanContext() PlanContext {
+	return c.PlanContext
+}
+
+func (c *overrideExprCtxPlanContext) GetExprCtx() exprctx.ExprContext {
+	return c.exprCtx
+}
+
+func (c *overrideExprCtxPlanContext) GetNullRejectCheckExprCtx() exprctx.ExprContext {
+	return c.nullRejectCheckExpr
+}
+
+func (c *overrideExprCtxPlanContext) GetBuildPBCtx() *BuildPBContext {
+	// BuildPBContext is a per-statement cache in StatementContext; detach it to avoid mutating the original.
+	return c.PlanContext.GetBuildPBCtx().Detach(c.exprCtx)
+}
+
+func (c *overrideExprCtxPlanContext) GetRangerCtx() *rangerctx.RangerContext {
+	// RangerContext is a per-statement cache in StatementContext; detach it to avoid mutating the original.
+	rctx := c.PlanContext.GetRangerCtx().Detach(c.exprCtx)
+	evalCtx := c.exprCtx.GetEvalCtx()
+	rctx.TypeCtx = evalCtx.TypeCtx()
+	rctx.ErrCtx = evalCtx.ErrCtx()
+	return rctx
+}
+
+// WithExprCtx wraps the PlanContext and overrides ExprCtx, without mutating the original context.
+//
+// The returned context is only guaranteed to implement `planctx.PlanContext`.
+func WithExprCtx(pctx PlanContext, exprCtx exprctx.ExprContext) PlanContext {
+	if exprCtx == nil || exprCtx == pctx.GetExprCtx() {
+		return pctx
+	}
+	return &overrideExprCtxPlanContext{
+		PlanContext:         pctx,
+		exprCtx:             exprCtx,
+		nullRejectCheckExpr: exprctx.WithNullRejectCheck(exprCtx),
+	}
+}
