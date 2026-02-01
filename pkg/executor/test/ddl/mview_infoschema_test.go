@@ -76,6 +76,22 @@ func TestInfoSchemaTiDBMViewRefreshHistAndMLogPurgeHist(t *testing.T) {
 
 	tk.MustExec("set time_zone = '+00:00'")
 
+	// The infoschema reader joins hist tables with tidb_mviews/tidb_mlogs to get the schema for privilege filtering.
+	tk.MustExec(`
+		insert into mysql.tidb_mviews
+			(table_catalog, table_schema, mview_id, mview_name, mview_owner, mview_definition, mview_modify_time, staleness)
+		values
+			('def', 'test', 'mvid1', 'mv1', '', 'create materialized view mv1 (a) as select 1', '2026-01-01 00:00:00', 'FRESH')`)
+	tk.MustExec(`
+		insert into mysql.tidb_mlogs
+			(table_catalog, table_schema, mlog_id, mlog_name, mlog_owner, mlog_columns,
+			 base_table_catalog, base_table_schema, base_table_id, base_table_name,
+			 purge_method, purge_start, purge_interval, last_purge_time, last_purge_rows, last_purge_duration)
+		values
+			('def', 'test', 'mlogid1', 'mlog1', '', 'a',
+			 'def', 'test', 'baseid1', 't',
+			 'IMMEDIATE', '2026-01-01 00:00:00', 0, '2026-01-01 00:00:00', 0, 0)`)
+
 	tk.MustExec(`
 		insert into mysql.tidb_mview_refresh_hist
 			(mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
