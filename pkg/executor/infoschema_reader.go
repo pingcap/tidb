@@ -486,11 +486,11 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			chunkRow.GetString(8),  // BASE_TABLE_ID
 			chunkRow.GetString(9),  // BASE_TABLE_NAME
 			chunkRow.GetString(10), // PURGE_METHOD
-			chunkRow.GetTime(11),  // PURGE_START
-			chunkRow.GetInt64(12), // PURGE_INTERVAL
-			chunkRow.GetTime(13),  // LAST_PURGE_TIME
-			chunkRow.GetInt64(14), // LAST_PURGE_ROWS
-			chunkRow.GetInt64(15), // LAST_PURGE_DURATION
+			chunkRow.GetTime(11),   // PURGE_START
+			chunkRow.GetInt64(12),  // PURGE_INTERVAL
+			chunkRow.GetTime(13),   // LAST_PURGE_TIME
+			chunkRow.GetInt64(14),  // LAST_PURGE_ROWS
+			chunkRow.GetInt64(15),  // LAST_PURGE_DURATION
 		)
 		rows = append(rows, row)
 	}
