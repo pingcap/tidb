@@ -357,6 +357,26 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName)
 	}
 
+	// Validate the view definition.
+	ret := &core.PreprocessorReturn{}
+	nodeW := resolve.NewNodeW(s.Select)
+	err := core.Preprocess(ctx, e.Ctx(), nodeW, core.WithPreprocessorReturn(ret))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if ret.IsStaleness {
+		return exeerrors.ErrViewInvalid.GenWithStackByArgs(s.ViewName.Schema.L, s.ViewName.Name.L)
+	}
+
+	// MV shares the same namespace with normal tables/views.
+	_, err = is.TableByName(ctx, pmodel.NewCIStr(dbName), s.ViewName.Name)
+	if err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(dbName), Name: s.ViewName.Name})
+	}
+	if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
 	exec := e.Ctx().GetRestrictedSQLExecutor()
 	kctx := kv.WithInternalSourceType(ctx, kv.InternalTxnDDL)
 	existsRows, _, err := exec.ExecRestrictedSQL(kctx, nil,
@@ -469,6 +489,16 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 
 	mlogID := uuid.NewString()
 	mlogName := fmt.Sprintf("__tidb_mlog_%s", baseTableID)
+
+	// MV LOG internal name shares the same namespace with normal tables/views.
+	_, err = dom.InfoSchema().TableByName(ctx, pmodel.NewCIStr(dbName), pmodel.NewCIStr(mlogName))
+	if err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(dbName), Name: pmodel.NewCIStr(mlogName)})
+	}
+	if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
 	var owner string
 	if user := e.Ctx().GetSessionVars().User; user != nil {
 		owner = user.AuthUsername
@@ -739,6 +769,24 @@ func (e *DDLExec) executeDropDatabase(s *ast.DropDatabaseStmt) error {
 	// I can hardly find a case that a user really need to do this.
 	if dbName.L == "mysql" {
 		return errors.New("Drop 'mysql' database is forbidden")
+	}
+
+	// It's mandatory to drop materialized view logs before dropping a base table.
+	// Dropping a database can drop base tables too, so we guard it here as well.
+	dom := domain.GetDomain(e.Ctx())
+	is := dom.InfoSchema()
+	if _, ok := is.SchemaByName(dbName); ok {
+		exec := e.Ctx().GetRestrictedSQLExecutor()
+		kctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
+		rows, _, err := exec.ExecRestrictedSQL(kctx, nil,
+			"SELECT 1 FROM mysql.tidb_mlogs WHERE BASE_TABLE_SCHEMA=%? LIMIT 1",
+			dbName.O)
+		if err != nil {
+			return err
+		}
+		if len(rows) > 0 {
+			return errors.Errorf("can't drop database %s: materialized view log exists, drop it first", dbName.O)
+		}
 	}
 
 	err := e.ddlExecutor.DropSchema(e.Ctx(), s)

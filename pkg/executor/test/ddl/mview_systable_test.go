@@ -15,10 +15,13 @@
 package ddl
 
 import (
+	"context"
 	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/errno"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -99,6 +102,13 @@ func TestMaterializedViewMetadataDDL(t *testing.T) {
 
 	// duplicate name in same schema
 	tk.MustGetErrCode("create materialized view mv1 (a) as select 1", errno.ErrTableExists)
+
+	// MV shares the same namespace with normal tables/views.
+	tk.MustExec("create table mv_conflict (a int)")
+	tk.MustGetErrCode("create materialized view mv_conflict (a) as select 1", errno.ErrTableExists)
+
+	// Column list length must match SELECT output column count.
+	tk.MustGetErrCode("create materialized view mv_wrong_cols (a,b) as select 1", errno.ErrViewWrongList)
 
 	// ALTER comment / refresh schedule
 	tk.MustExec("alter materialized view mv1 comment = 'c2'")
@@ -193,6 +203,15 @@ func TestMaterializedViewLogMetadataDDL(t *testing.T) {
 		"create materialized view log on t (a)",
 		"[schema:1050]Table 'materialized view log on mlog_meta.t' already exists",
 	)
+
+	// MV LOG internal name shares the same namespace with normal tables/views.
+	dom := domain.GetDomain(tk.Session())
+	tt, err := dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("mlog_meta"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	mlogName := fmt.Sprintf("__tidb_mlog_%d", tt.Meta().ID)
+	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", mlogName))
+	tk.MustGetErrCode("create materialized view log on t (a)", errno.ErrTableExists)
+	tk.MustExec(fmt.Sprintf("drop table `%s`", mlogName))
 
 	// columns must exist on base table
 	tk.MustExec("create table t2 (a int)") // ensure table exists for the next statement
@@ -305,4 +324,22 @@ func TestDropTableIfExistsBlockedByMaterializedViewLog(t *testing.T) {
 
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop table if exists not_exist, t")
+}
+
+func TestDropDatabaseBlockedByMaterializedViewLog(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database mlog_drop_db_guard")
+	tk.MustExec("use mlog_drop_db_guard")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create materialized view log on t (a)")
+
+	tk.MustGetErrMsg(
+		"drop database mlog_drop_db_guard",
+		"can't drop database mlog_drop_db_guard: materialized view log exists, drop it first",
+	)
+
+	tk.MustExec("drop materialized view log on t")
+	tk.MustExec("drop database mlog_drop_db_guard")
 }
