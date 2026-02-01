@@ -384,6 +384,7 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 }
 
 func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
 	const sql = `SELECT TABLE_CATALOG, TABLE_SCHEMA, MVIEW_ID, MVIEW_NAME, MVIEW_OWNER, MVIEW_DEFINITION, MVIEW_COMMENT, MVIEW_TIFLASH_REPLICAS,
 		MVIEW_MODIFY_TIME,
 		REFRESH_METHOD, REFRESH_MODE, LAST_REFRESH_METHOD,
@@ -399,6 +400,11 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
+		schema := chunkRow.GetString(1)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, strings.ToLower(schema), "", "", mysql.AllPrivMask) {
+			continue
+		}
+
 		var comment any
 		if !chunkRow.IsNull(6) {
 			comment = chunkRow.GetString(6)
@@ -436,7 +442,7 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 
 		row := types.MakeDatums(
 			chunkRow.GetString(0), // TABLE_CATALOG
-			chunkRow.GetString(1), // TABLE_SCHEMA
+			schema,                // TABLE_SCHEMA
 			chunkRow.GetString(2), // MVIEW_ID
 			chunkRow.GetString(3), // MVIEW_NAME
 			chunkRow.GetString(4), // MVIEW_OWNER
@@ -458,6 +464,7 @@ func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sess
 }
 
 func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
 	const sql = `SELECT TABLE_CATALOG, TABLE_SCHEMA, MLOG_ID, MLOG_NAME, MLOG_OWNER, MLOG_COLUMNS, BASE_TABLE_CATALOG, BASE_TABLE_SCHEMA, BASE_TABLE_ID, BASE_TABLE_NAME,
 		PURGE_METHOD,
 		PURGE_START,
@@ -474,9 +481,13 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
+		schema := chunkRow.GetString(1)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, strings.ToLower(schema), "", "", mysql.AllPrivMask) {
+			continue
+		}
 		row := types.MakeDatums(
 			chunkRow.GetString(0),  // TABLE_CATALOG
-			chunkRow.GetString(1),  // TABLE_SCHEMA
+			schema,                 // TABLE_SCHEMA
 			chunkRow.GetString(2),  // MLOG_ID
 			chunkRow.GetString(3),  // MLOG_NAME
 			chunkRow.GetString(4),  // MLOG_OWNER
@@ -499,11 +510,13 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 }
 
 func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context, sctx sessionctx.Context) error {
-	const sql = `SELECT MVIEW_ID, MVIEW_NAME, CAST(REFRESH_JOB_ID AS CHAR), IS_NEWEST_REFRESH, REFRESH_METHOD,
+	checker := privilege.GetPrivilegeManager(sctx)
+	const sql = `SELECT v.TABLE_SCHEMA, h.MVIEW_ID, h.MVIEW_NAME, CAST(h.REFRESH_JOB_ID AS CHAR), h.IS_NEWEST_REFRESH, h.REFRESH_METHOD,
 		REFRESH_TIME,
 		REFRESH_ENDTIME,
 		REFRESH_STATUS
-		FROM mysql.tidb_mview_refresh_hist`
+		FROM mysql.tidb_mview_refresh_hist h
+		JOIN mysql.tidb_mviews v ON h.MVIEW_ID=v.MVIEW_ID`
 	exec := sctx.GetRestrictedSQLExecutor()
 	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
@@ -512,24 +525,28 @@ func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context,
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
+		schema := chunkRow.GetString(0)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, strings.ToLower(schema), "", "", mysql.AllPrivMask) {
+			continue
+		}
 		var refreshTime any
-		if !chunkRow.IsNull(5) {
-			refreshTime = chunkRow.GetTime(5)
+		if !chunkRow.IsNull(6) {
+			refreshTime = chunkRow.GetTime(6)
 		}
 		var refreshEndTime any
-		if !chunkRow.IsNull(6) {
-			refreshEndTime = chunkRow.GetTime(6)
+		if !chunkRow.IsNull(7) {
+			refreshEndTime = chunkRow.GetTime(7)
 		}
 		var refreshStatus any
-		if !chunkRow.IsNull(7) {
-			refreshStatus = chunkRow.GetString(7)
+		if !chunkRow.IsNull(8) {
+			refreshStatus = chunkRow.GetString(8)
 		}
 		row := types.MakeDatums(
-			chunkRow.GetString(0), // MVIEW_ID
-			chunkRow.GetString(1), // MVIEW_NAME
-			chunkRow.GetString(2), // REFRESH_JOB_ID
-			chunkRow.GetString(3), // IS_NEWEST_REFRESH
-			chunkRow.GetString(4), // REFRESH_METHOD
+			chunkRow.GetString(1), // MVIEW_ID
+			chunkRow.GetString(2), // MVIEW_NAME
+			chunkRow.GetString(3), // REFRESH_JOB_ID
+			chunkRow.GetString(4), // IS_NEWEST_REFRESH
+			chunkRow.GetString(5), // REFRESH_METHOD
 			refreshTime,           // REFRESH_TIME
 			refreshEndTime,        // REFRESH_ENDTIME
 			refreshStatus,         // REFRESH_STATUS
@@ -541,12 +558,14 @@ func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context,
 }
 
 func (e *memtableRetriever) setDataFromTiDBMLogPurgeHist(ctx context.Context, sctx sessionctx.Context) error {
-	const sql = `SELECT MLOG_ID, MLOG_NAME, CAST(PURGE_JOB_ID AS CHAR), IS_NEWEST_PURGE, PURGE_METHOD,
+	checker := privilege.GetPrivilegeManager(sctx)
+	const sql = `SELECT l.TABLE_SCHEMA, h.MLOG_ID, h.MLOG_NAME, CAST(h.PURGE_JOB_ID AS CHAR), h.IS_NEWEST_PURGE, h.PURGE_METHOD,
 		PURGE_TIME,
 		PURGE_ENDTIME,
 		PURGE_ROWS,
 		PURGE_STATUS
-		FROM mysql.tidb_mlog_purge_hist`
+		FROM mysql.tidb_mlog_purge_hist h
+		JOIN mysql.tidb_mlogs l ON h.MLOG_ID=l.MLOG_ID`
 	exec := sctx.GetRestrictedSQLExecutor()
 	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
@@ -555,27 +574,31 @@ func (e *memtableRetriever) setDataFromTiDBMLogPurgeHist(ctx context.Context, sc
 	}
 	rows := make([][]types.Datum, 0, len(chunkRows))
 	for _, chunkRow := range chunkRows {
+		schema := chunkRow.GetString(0)
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, strings.ToLower(schema), "", "", mysql.AllPrivMask) {
+			continue
+		}
 		var purgeTime any
-		if !chunkRow.IsNull(5) {
-			purgeTime = chunkRow.GetTime(5)
+		if !chunkRow.IsNull(6) {
+			purgeTime = chunkRow.GetTime(6)
 		}
 		var purgeEndTime any
-		if !chunkRow.IsNull(6) {
-			purgeEndTime = chunkRow.GetTime(6)
+		if !chunkRow.IsNull(7) {
+			purgeEndTime = chunkRow.GetTime(7)
 		}
 		var purgeStatus any
-		if !chunkRow.IsNull(8) {
-			purgeStatus = chunkRow.GetString(8)
+		if !chunkRow.IsNull(9) {
+			purgeStatus = chunkRow.GetString(9)
 		}
 		row := types.MakeDatums(
-			chunkRow.GetString(0), // MLOG_ID
-			chunkRow.GetString(1), // MLOG_NAME
-			chunkRow.GetString(2), // PURGE_JOB_ID
-			chunkRow.GetString(3), // IS_NEWEST_PURGE
-			chunkRow.GetString(4), // PURGE_METHOD
+			chunkRow.GetString(1), // MLOG_ID
+			chunkRow.GetString(2), // MLOG_NAME
+			chunkRow.GetString(3), // PURGE_JOB_ID
+			chunkRow.GetString(4), // IS_NEWEST_PURGE
+			chunkRow.GetString(5), // PURGE_METHOD
 			purgeTime,             // PURGE_TIME
 			purgeEndTime,          // PURGE_ENDTIME
-			chunkRow.GetInt64(7),  // PURGE_ROWS
+			chunkRow.GetInt64(8),  // PURGE_ROWS
 			purgeStatus,           // PURGE_STATUS
 		)
 		rows = append(rows, row)

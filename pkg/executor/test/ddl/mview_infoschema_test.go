@@ -15,8 +15,10 @@
 package ddl
 
 import (
+	"fmt"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -115,4 +117,69 @@ func TestInfoSchemaTiDBMViewRefreshHistAndMLogPurgeHist(t *testing.T) {
 		from information_schema.tidb_mlog_purge_hist
 		where mlog_id='mlogid1'`,
 	).Check(testkit.Rows("2026-01-01 00:00:00"))
+}
+
+func TestInfoSchemaTiDBMViewsAndMLogsPrivilegeFilteringBySchema(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database is_mview_priv1")
+	tk.MustExec("create database is_mview_priv2")
+
+	// db1 objects
+	tk.MustExec("use is_mview_priv1")
+	tk.MustExec("create materialized view mv1 (a) as select 1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create materialized view log on t (a)")
+
+	// db2 objects
+	tk.MustExec("use is_mview_priv2")
+	tk.MustExec("create materialized view mv2 (a) as select 1")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create materialized view log on t (a)")
+
+	rows := tk.MustQuery("select mview_id from mysql.tidb_mviews where table_schema='is_mview_priv1' and mview_name='mv1'").Rows()
+	require.Len(t, rows, 1)
+	mviewID1 := rows[0][0].(string)
+	rows = tk.MustQuery("select mview_id from mysql.tidb_mviews where table_schema='is_mview_priv2' and mview_name='mv2'").Rows()
+	require.Len(t, rows, 1)
+	mviewID2 := rows[0][0].(string)
+
+	rows = tk.MustQuery("select mlog_id from mysql.tidb_mlogs where base_table_schema='is_mview_priv1' and base_table_name='t'").Rows()
+	require.Len(t, rows, 1)
+	mlogID1 := rows[0][0].(string)
+	rows = tk.MustQuery("select mlog_id from mysql.tidb_mlogs where base_table_schema='is_mview_priv2' and base_table_name='t'").Rows()
+	require.Len(t, rows, 1)
+	mlogID2 := rows[0][0].(string)
+
+	tk.MustExec(fmt.Sprintf(`
+		insert into mysql.tidb_mview_refresh_hist
+			(mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
+		values
+			('%s', 'mv1', 1, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL),
+			('%s', 'mv2', 2, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL)`,
+		mviewID1, mviewID2))
+	tk.MustExec(fmt.Sprintf(`
+		insert into mysql.tidb_mlog_purge_hist
+			(mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status)
+		values
+			('%s', 'mlog1', 3, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL),
+			('%s', 'mlog2', 4, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL)`,
+		mlogID1, mlogID2))
+	tk.MustExec("commit")
+
+	tk.MustExec("create user 'mv_priv_u1'@'%'")
+	tk.MustExec("grant select on is_mview_priv1.* to 'mv_priv_u1'@'%'")
+
+	tkUser := testkit.NewTestKit(t, store)
+	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "mv_priv_u1", Hostname: "%"}, nil, nil, nil))
+
+	tkUser.MustQuery("select table_schema, mview_name from information_schema.tidb_mviews order by table_schema, mview_name").
+		Check(testkit.Rows("is_mview_priv1 mv1"))
+	tkUser.MustQuery("select base_table_schema, base_table_name from information_schema.tidb_mlogs order by base_table_schema, base_table_name").
+		Check(testkit.Rows("is_mview_priv1 t"))
+	tkUser.MustQuery("select mview_id, refresh_job_id from information_schema.tidb_mview_refresh_hist order by refresh_job_id").
+		Check(testkit.Rows(fmt.Sprintf("%s 1", mviewID1)))
+	tkUser.MustQuery("select mlog_id, purge_job_id from information_schema.tidb_mlog_purge_hist order by purge_job_id").
+		Check(testkit.Rows(fmt.Sprintf("%s 3", mlogID1)))
 }
