@@ -45,7 +45,7 @@ func TestMaterializedViewMetadataDDL(t *testing.T) {
 	require.Len(t, rows, 1)
 	require.Equal(t, "mview_meta", rows[0][0])
 	require.Len(t, rows[0][1].(string), 36) // UUID
-	require.IsType(t, "", rows[0][2]) // owner may be empty in test sessions
+	require.IsType(t, "", rows[0][2])       // owner may be empty in test sessions
 	require.Contains(t, rows[0][3].(string), "CREATE MATERIALIZED VIEW")
 	require.Equal(t, "<nil>", fmt.Sprint(rows[0][4]))
 	require.Equal(t, "0", fmt.Sprint(rows[0][5]))

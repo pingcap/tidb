@@ -21,7 +21,7 @@ func TestBootstrapMaterializedViewSystemTables(t *testing.T) {
 		"tidb_mlog_purge_hist",
 		"tidb_mlog_job",
 	} {
-		tk.MustQuery("select count(*) from information_schema.tables where table_schema='mysql' and table_name='"+tbl+"'").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='mysql' and table_name='" + tbl + "'").Check(testkit.Rows("1"))
 	}
 
 	tk.MustQuery("select lower(column_name) from information_schema.statistics where table_schema='mysql' and table_name='tidb_mviews' and index_name='PRIMARY' order by seq_in_index").
@@ -82,7 +82,6 @@ func TestUpgradeToVer221MaterializedViewSystemTables(t *testing.T) {
 		"tidb_mlog_purge_hist",
 		"tidb_mlog_job",
 	} {
-		tk.MustQuery("select count(*) from information_schema.tables where table_schema='mysql' and table_name='"+tbl+"'").Check(testkit.Rows("1"))
+		tk.MustQuery("select count(*) from information_schema.tables where table_schema='mysql' and table_name='" + tbl + "'").Check(testkit.Rows("1"))
 	}
 }
-
