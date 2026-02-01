@@ -10,10 +10,15 @@ go_test(
     flaky = True,
     deps = [
         "//pkg/config",
+<<<<<<< HEAD
         "//pkg/ddl",
         "//pkg/ddl/util/callback",
         "//pkg/disttask/framework/proto",
         "//pkg/disttask/framework/scheduler",
+=======
+        "//pkg/ddl/ingest",
+        "//pkg/disttask/framework/proto",
+>>>>>>> 6953d3656c0 (disttask: fix potential block on DXF scheduler (#59945))
         "//pkg/disttask/framework/storage",
         "//pkg/errno",
         "//pkg/parser/model",
