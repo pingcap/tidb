@@ -17,13 +17,17 @@ package mydump
 import (
 	"context"
 	"io"
+	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/file"
+	"github.com/apache/arrow-go/v18/parquet/metadata"
 	"github.com/apache/arrow-go/v18/parquet/schema"
+	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
@@ -33,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/zeropool"
 	"go.uber.org/zap"
+	"golang.org/x/sync/errgroup"
 )
 
 const (
@@ -42,6 +47,8 @@ const (
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
+
+	rowGroupInMemoryThreshold = 256 * units.MiB
 )
 
 var (
@@ -222,6 +229,8 @@ type parquetFileWrapper struct {
 	// current file path and store, used to open file
 	store storage.ExternalStorage
 	path  string
+
+	openOnce sync.Once
 }
 
 func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
@@ -237,6 +246,9 @@ func (pf *parquetFileWrapper) readNBytes(p []byte) (int, error) {
 
 // ReadAt implement ReaderAt interface
 func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
+	if err := pf.open(); err != nil {
+		return 0, err
+	}
 	// We want to minimize the number of Seek call as much as possible,
 	// since the underlying reader may require reopening the file.
 	gap := int(off - pf.lastOff)
@@ -262,6 +274,9 @@ func (pf *parquetFileWrapper) ReadAt(p []byte, off int64) (int, error) {
 
 // Seek implemement Seeker interface
 func (pf *parquetFileWrapper) Seek(offset int64, whence int) (int64, error) {
+	if err := pf.open(); err != nil {
+		return 0, err
+	}
 	newOffset, err := pf.ReadSeekCloser.Seek(offset, whence)
 	pf.lastOff = newOffset
 	return newOffset, err
@@ -271,18 +286,21 @@ func (*parquetFileWrapper) Write(_ []byte) (n int, err error) {
 	return 0, errors.New("unsupported operation")
 }
 
-func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
-	reader, err := pf.store.Open(pf.ctx, pf.path, nil)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
+func (pf *parquetFileWrapper) open() (err error) {
+	pf.openOnce.Do(func() {
+		if pf.ReadSeekCloser == nil {
+			pf.ReadSeekCloser, err = pf.store.Open(pf.ctx, pf.path, nil)
+		}
+	})
+	return err
+}
 
+func (pf *parquetFileWrapper) Open() (parquet.ReaderAtSeeker, error) {
 	newPf := &parquetFileWrapper{
-		ReadSeekCloser: reader,
-		store:          pf.store,
-		ctx:            pf.ctx,
-		path:           pf.path,
-		skipBuf:        make([]byte, defaultBufSize),
+		store:   pf.store,
+		ctx:     pf.ctx,
+		path:    pf.path,
+		skipBuf: make([]byte, defaultBufSize),
 	}
 	return newPf, nil
 }
@@ -349,6 +367,22 @@ func (pp *ParquetParser) resetIterators() error {
 	return err
 }
 
+func (pp *ParquetParser) openReaderInParallel() error {
+	var eg errgroup.Group
+	for c := range len(pp.iterators) {
+		eg.Go(func() error {
+			rowGroup := pp.readers[c].RowGroup(pp.curRowGroup)
+			colReader, err := rowGroup.Column(c)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			pp.iterators[c].SetReader(colReader)
+			return nil
+		})
+	}
+	return eg.Wait()
+}
+
 // readSingleRow read one row internally and store them in the row buffer.
 // The data read is shallow copied from the internal buffer of parquet reader,
 // so copy it if you need to keep the data before the next read.
@@ -365,13 +399,8 @@ func (pp *ParquetParser) readSingleRow(row []types.Datum) error {
 			return io.EOF
 		}
 
-		for c := range len(pp.iterators) {
-			rowGroup := pp.readers[c].RowGroup(pp.curRowGroup)
-			colReader, err := rowGroup.Column(c)
-			if err != nil {
-				return errors.Trace(err)
-			}
-			pp.iterators[c].SetReader(colReader)
+		if err := pp.openReaderInParallel(); err != nil {
+			return errors.Annotate(err, "parquet open column reader failed")
 		}
 		pp.readRowInGroup, pp.totalRowsInGroup = 0, int(pp.readers[0].MetaData().RowGroups[pp.curRowGroup].NumRows)
 	}
@@ -532,6 +561,36 @@ func ReadParquetFileRowCountByFile(
 	return reader.MetaData().NumRows, nil
 }
 
+func rowGroupSizeInThreshold(meta *metadata.FileMetaData) bool {
+	for i := range meta.RowGroups {
+		var (
+			rg       = meta.RowGroup(i)
+			minStart = int64(math.MaxInt64)
+			maxEnd   = int64(0)
+		)
+
+		for i := range rg.NumColumns() {
+			col, _ := rg.ColumnChunk(i)
+			start := col.DataPageOffset()
+			if col.HasDictionaryPage() && col.DictionaryPageOffset() > 0 {
+				start = min(start, col.DictionaryPageOffset())
+			}
+			size := col.TotalCompressedSize()
+			if start < 0 || size < 0 {
+				return false
+			}
+			minStart = min(minStart, start)
+			maxEnd = max(maxEnd, start+size)
+		}
+
+		if maxEnd-minStart >= rowGroupInMemoryThreshold {
+			return false
+		}
+	}
+
+	return true
+}
+
 // NewParquetParser generates a parquet parser.
 func NewParquetParser(
 	ctx context.Context,
@@ -562,12 +621,13 @@ func NewParquetParser(
 		return nil, errors.Trace(err)
 	}
 
-	fileSchema := reader.MetaData().Schema
+	fileMeta := reader.MetaData()
+	fileSchema := fileMeta.Schema
 	colTypes := make([]convertedType, fileSchema.NumColumns())
 	colNames := make([]string, 0, fileSchema.NumColumns())
 
 	for i := range colTypes {
-		desc := reader.MetaData().Schema.Column(i)
+		desc := fileMeta.Schema.Column(i)
 		colNames = append(colNames, strings.ToLower(desc.Name()))
 
 		logicalType := desc.LogicalType()
@@ -603,6 +663,10 @@ func NewParquetParser(
 		}
 	}
 
+	if rowGroupSizeInThreshold(fileMeta) {
+		prop.BufferedStreamEnabled = false
+	}
+
 	subreaders := make([]*file.Reader, 0, fileSchema.NumColumns())
 	subreaders = append(subreaders, reader)
 	for i := 1; i < fileSchema.NumColumns(); i++ {
@@ -615,7 +679,7 @@ func NewParquetParser(
 
 		reader, err := file.NewParquetReader(newWrapper,
 			file.WithReadProps(prop),
-			file.WithMetadata(reader.MetaData()),
+			file.WithMetadata(fileMeta),
 		)
 		if err != nil {
 			return nil, errors.Trace(err)
