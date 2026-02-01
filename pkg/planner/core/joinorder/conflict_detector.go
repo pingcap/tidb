@@ -39,6 +39,22 @@ type edge struct {
 	rightVertexes BitSet
 }
 
+// CreateCartesianCheckResult creates a CheckConnectionResult representing a cartesian product between left and right nodes.
+// This is used when we still want to make a cartesian join even there is no join condition between two nodes.
+// This usually happens when there is a leading hint forcing the join order.
+func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *CheckConnectionResult {
+	if !d.allInnerJoin {
+		return nil
+	}
+	cartesianEdge := d.makeEdge(base.InnerJoin, []expression.Expression{}, left.bitSet, right.bitSet, nil, nil)
+	return &CheckConnectionResult{
+		node1:             left,
+		node2:             right,
+		appliedInnerEdges: []*edge{cartesianEdge},
+		hasEQCond:         false,
+	}
+}
+
 type BitSet uint64
 
 func newBitSet(idx int64) BitSet {
@@ -683,8 +699,8 @@ var assocRuleTable = [][]ruleTableEntry{
 	},
 	// RIGHT OUTER gjt todo?
 	{
-		0, // INNER
-		0, // LEFT OUTER
+		1, // INNER
+		1, // LEFT OUTER
 		0, // RIGHT OUTER gjt todo?
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
@@ -756,7 +772,7 @@ var rightAsscomRuleTable = [][]ruleTableEntry{
 	{
 		1, // INNER
 		1, // LEFT OUTER
-		0, // RIGHT OUTER
+		1, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},
@@ -771,7 +787,7 @@ var rightAsscomRuleTable = [][]ruleTableEntry{
 	// RIGHT OUTER
 	{
 		0, // INNER
-		0, // LEFT OUTER
+		1, // LEFT OUTER
 		0, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI

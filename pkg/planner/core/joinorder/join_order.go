@@ -60,11 +60,17 @@ type vertexJoinMethodHint struct {
 	HintInfo         *hint.PlanHints
 }
 
-func extractJoinGroup(p base.LogicalPlan) *joinGroup {
+func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	join, isJoin := p.(*logicalop.LogicalJoin)
 	if !isJoin {
 		return makeSingleGroup(p)
 	}
+
+	defer func() {
+		if join.PreferJoinOrder {
+			resJoinGroup.leadingHints = []*hint.PlanHints{join.HintInfo}
+		}
+	}()
 
 	if join.StraightJoin {
 		return makeSingleGroup(p)
@@ -120,14 +126,11 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroup {
 		}
 	}
 
-	resJoinGroup := &joinGroup{
+	resJoinGroup = &joinGroup{
 		root:         p,
 		vertexes:     []base.LogicalPlan{},
 		vertexHints:  vertexHints,
 		allInnerJoin: join.JoinType == base.InnerJoin,
-	}
-	if join.PreferJoinOrder {
-		resJoinGroup.leadingHints = []*hint.PlanHints{join.HintInfo}
 	}
 
 	var leftJoinGroup, rightJoinGroup *joinGroup
@@ -184,6 +187,10 @@ func optimizeRecursive(p base.LogicalPlan) (base.LogicalPlan, error) {
 			newChildren = append(newChildren, newChild)
 		}
 		p.SetChildren(newChildren...)
+
+		if len(joinGroup.leadingHints) > 0 {
+			p.SCtx().GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check the join type or the join algorithm hint")
+		}
 		return p, nil
 	}
 
@@ -292,13 +299,16 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 			"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
 	}
 
-	checker := func(leftPlan, rightPlan *Node) (*Node, error) {
-		checkResult, err := detector.CheckConnection(leftPlan, rightPlan)
+	checker := func(left, right *Node) (*Node, error) {
+		checkResult, err := checkConnection(detector, left, right)
 		if err != nil {
 			return nil, err
 		}
 		if !checkResult.Connected() {
-			return nil, nil
+			// gjt todo duplicated with makeBushyTree?
+			if checkResult = detector.TryCreateCartesianCheckResult(left, right); checkResult == nil {
+				return nil, nil
+			}
 		}
 		return detector.MakeJoin(checkResult, j.group.vertexHints)
 	}
@@ -307,7 +317,45 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		return nil, nodes, nil
 	}
 
-	return buildLeadingTreeFromList(j.ctx, leadingHint.LeadingList, nodes, checker)
+	nodeWithHint, nodes, err := buildLeadingTreeFromList(j.ctx, leadingHint.LeadingList, nodes, checker)
+	if err != nil {
+		return nil, nil, err
+	}
+	if nodeWithHint == nil {
+		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
+		return nil, nodes, nil
+	}
+	return nodeWithHint, nodes, nil
+}
+
+func checkConnection(detector *ConflictDetector, leftPlan, rightPlan *Node) (*CheckConnectionResult, error) {
+	checkResult, err := detector.CheckConnection(leftPlan, rightPlan)
+	if err != nil {
+		return nil, err
+	}
+	if checkResult.Connected() {
+		return checkResult, nil
+	}
+	checkResult, err = detector.CheckConnection(rightPlan, leftPlan)
+	if err != nil {
+		return nil, err
+	}
+	return checkResult, nil
+}
+
+func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan *Node, vertexHints map[int]*vertexJoinMethodHint) (*CheckConnectionResult, *Node, error) {
+	checkResult, err := checkConnection(detector, leftPlan, rightPlan)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !checkResult.Connected() {
+		return nil, nil, nil
+	}
+	newNode, err := detector.MakeJoin(checkResult, vertexHints)
+	if err != nil {
+		return nil, nil, err
+	}
+	return checkResult, newNode, nil
 }
 
 func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
@@ -339,28 +387,35 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	}
 	nodes = newNodes
 
-	var curJoinIdx int
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0 // gjt todo handle cartesian
+	allowNoEQ := !disableCartesian && j.group.allInnerJoin
+	nodes, err = connectSubgraphGreedy(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ) // gjt todo better func name
+	if err != nil {
+		return nil, err
+	}
+	nodes, usedEdges, err := tryApplyAllRemainingEdges(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ)
+	if err != nil {
+		return nil, err
+	}
+	if !detector.CheckAllEdgesUsed(usedEdges) {
+		return group.root, nil
+	}
+	if len(nodes) <= 0 {
+		return nil, errors.New("internal error: bushy join tree nodes is empty")
+	}
+	return makeBushyTree(j.ctx, nodes, j.group.vertexHints)
+}
+
+func connectSubgraphGreedy(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*vertexJoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
+	var curJoinIdx int
 	for curJoinIdx < len(nodes)-1 {
 		var bestNode *Node
 		var bestIdx int
 		curJoinTree := nodes[curJoinIdx]
 		for iterIdx := curJoinIdx + 1; iterIdx < len(nodes); iterIdx++ {
 			iterNode := nodes[iterIdx]
-			checkResult, err := detector.CheckConnection(curJoinTree, iterNode)
-			if err != nil {
-				return nil, err
-			}
-			if !checkResult.Connected() {
-				if checkResult, err = detector.CheckConnection(iterNode, curJoinTree); err != nil {
-					return nil, err
-				}
-				if !checkResult.Connected() {
-					continue
-				}
-			}
-			newNode, err := detector.MakeJoin(checkResult, j.group.vertexHints)
+			checkResult, newNode, err := checkConnectionAndMakeJoin(detector, curJoinTree, iterNode, vertexHints)
 			if err != nil {
 				return nil, err
 			}
@@ -369,7 +424,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			}
 			if checkResult.NoEQEdge() {
 				// todo we dont support reorder non INNER JOIN without eqCond now.
-				if disableCartesian {
+				if !allowNoEQ {
 					continue
 				}
 				newNode.cumCost = newNode.cumCost * cartesianFactor
@@ -386,23 +441,44 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 			nodes = append(nodes[:bestIdx], nodes[bestIdx+1:]...)
 		}
 	}
-	// gjt todo better policy
+	return nodes, nil
+}
+
+func tryApplyAllRemainingEdges(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*vertexJoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, map[uint64]struct{}, error) {
+	usedEdges := collectUsedEdges(nodes)
+	// If all edges are used, return directly.
+	if detector.CheckAllEdgesUsed(usedEdges) {
+		return nodes, usedEdges, nil
+	}
+	// If there is only one node, return directly.
+	if len(nodes) < 2 {
+		return nodes, usedEdges, nil
+	}
+
+	slices.SortFunc(nodes, func(a, b *Node) int {
+		return cmp.Compare(a.cumCost, b.cumCost)
+	})
+
+	nodes, err := connectSubgraphGreedy(detector, nodes, vertexHints, cartesianFactor, allowNoEQ)
+	if err != nil {
+		return nil, nil, err
+	}
+	// Need to recompute usedEdges.
+	usedEdges = collectUsedEdges(nodes)
+	return nodes, usedEdges, nil
+}
+
+func collectUsedEdges(nodes []*Node) map[uint64]struct{} {
 	usedEdges := make(map[uint64]struct{})
 	for _, node := range nodes {
 		if node != nil && node.usedEdges != nil {
 			maps.Copy(usedEdges, node.usedEdges)
 		}
 	}
-	if !detector.CheckAllEdgesUsed(usedEdges) {
-		return group.root, nil
-	}
-	if len(nodes) <= 0 {
-		return nil, errors.New("internal error: bushy join tree nodes is empty")
-	}
-	return makeBushyTree(j.ctx, nodes)
+	return usedEdges
 }
 
-func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPlan, error) {
+func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node, vertexHints map[int]*vertexJoinMethodHint) (base.LogicalPlan, error) {
 	var iterNodes []*Node
 	for len(cartesianNodes) > 1 {
 		for i := 0; i < len(cartesianNodes); i += 2 {
@@ -410,7 +486,7 @@ func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node) (base.LogicalPl
 				iterNodes = append(iterNodes, cartesianNodes[i])
 				break
 			}
-			newJoin, err := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, nil)
+			newJoin, err := newCartesianJoin(ctx, base.InnerJoin, cartesianNodes[i].p, cartesianNodes[i+1].p, vertexHints)
 			if err != nil {
 				return nil, err
 			}
@@ -453,11 +529,13 @@ func buildLeadingTreeFromList(
 	}
 
 	var (
-		currentJoin     *Node
-		remainingGroups = availableGroups
-		err             error
-		ok              bool
+		currentJoin *Node
+		err         error
+		ok          bool
 	)
+	// copy here because findAndRemovePlanByAstHint will modify the slice.
+	remainingGroups := make([]*Node, len(availableGroups))
+	copy(remainingGroups, availableGroups)
 
 	for i, item := range leadingList.Items {
 		switch element := item.(type) {
