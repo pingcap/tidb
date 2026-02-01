@@ -19,7 +19,7 @@ import (
 
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/tidb/pkg/ddl/placement"
-    "github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -93,11 +93,11 @@ func TestIsTiFlashWriteNode(t *testing.T) {
 
 func TestIssue62639(t *testing.T) {
 	// prepare a database table for testing
-	colInfo := []columnInfo{  
-        {name: "COL1", tp: mysql.TypeVarchar, size: 64},  
-        {name: "COL2", tp: mysql.TypeLong, size: 11},  
-        {name: "COL3", tp: mysql.TypeDatetime, size: 19},  
-    }
+	colInfo := []columnInfo{
+		{name: "COL1", tp: mysql.TypeVarchar, size: 64},
+		{name: "COL2", tp: mysql.TypeLong, size: 11},
+		{name: "COL3", tp: mysql.TypeDatetime, size: 19},
+	}
 
 	tableInfo := buildTableMeta("TEST_TABLE", colInfo)
 
