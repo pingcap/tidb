@@ -101,13 +101,13 @@ func TestIssue62639(t *testing.T) {
 
 	tableInfo := buildTableMeta("TEST_TABLE", colInfo)
 
-	// Validate that column IDs start from 1 (not 0) and are sequential  
-	require.Equal(t, int64(1), tableInfo.Columns[0].ID)  
-	require.Equal(t, int64(2), tableInfo.Columns[1].ID)  
-	require.Equal(t, int64(3), tableInfo.Columns[2].ID)  
-	  
-	// Also validate column names are preserved correctly  
-	require.Equal(t, "COL1", tableInfo.Columns[0].Name.O)  
-	require.Equal(t, "COL2", tableInfo.Columns[1].Name.O)  
-	require.Equal(t, "COL3", tableInfo.Columns[2].Name.O)  
+	// Validate that column IDs start from 1 (not 0) and are sequential
+	require.Equal(t, int64(1), tableInfo.Columns[0].ID)
+	require.Equal(t, int64(2), tableInfo.Columns[1].ID)
+	require.Equal(t, int64(3), tableInfo.Columns[2].ID)
+
+	// Also validate column names are preserved correctly
+	require.Equal(t, "COL1", tableInfo.Columns[0].Name.O)
+	require.Equal(t, "COL2", tableInfo.Columns[1].Name.O)
+	require.Equal(t, "COL3", tableInfo.Columns[2].Name.O)
 }
