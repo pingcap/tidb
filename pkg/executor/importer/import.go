@@ -1378,8 +1378,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize, totalRealSize int64
-		sourceType               mydump.SourceType
+		sourceType mydump.SourceType
 		// sizeExpansionRatio is the estimated size expansion for parquet format.
 		// For non-parquet format, it's always 1.0.
 		sizeExpansionRatio = 1.0
@@ -1417,7 +1416,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
-		totalSize = size
 	} else {
 		var commonPrefix string
 		if !objstore.IsLocal(u) {
@@ -1481,8 +1479,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		for _, f := range processedFiles {
 			if f != nil {
 				dataFiles = append(dataFiles, f)
-				totalSize += f.FileSize
-				totalRealSize += f.RealSize
 			}
 		}
 	}
@@ -1491,10 +1487,20 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err2
 		}
 	}
+	var totalSize, totalRealSize int64
+	for _, dfile := range dataFiles {
+		totalSize += dfile.FileSize
+		realSize := dfile.RealSize
+		failpoint.Inject("amplifyRealSize", func(val failpoint.Value) {
+			factor := int64(val.(int))
+			realSize *= factor
+		})
+		totalRealSize += realSize
+	}
 
 	e.dataFiles = dataFiles
-	e.totalRealSize = totalRealSize
 	e.TotalFileSize = totalSize
+	e.totalRealSize = totalRealSize
 
 	return nil
 }
@@ -1512,7 +1518,6 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		return err
 	}
 	totalSize := e.totalRealSize
-	failpoint.InjectCall("mockImportDataSize", &totalSize)
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {
