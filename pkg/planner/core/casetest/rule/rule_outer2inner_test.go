@@ -122,16 +122,15 @@ FROM t0
          INNER JOIN t3 ON (((((CASE 1
                                    WHEN subQuery1.col_2 THEN t3.c0
                                    ELSE NULL END)) AND (((t0.c0))))) < 1);`).
-			Check(testkit.Rows(`Projection root  test.t0.c0, Column, test.t3.c0`,
-				`└─HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
+			Check(testkit.Rows(`HashJoin root  CARTESIAN inner join, other cond:lt(and(case(eq(1, cast(Column, double BINARY)), test.t3.c0, NULL), test.t0.c0), 1)`,
+				`├─TableReader(Build) root  data:TableFullScan`,
+				`│ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
+				`└─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader`,
 				`  ├─TableReader(Build) root  data:TableFullScan`,
-				`  │ └─TableFullScan cop[tikv] table:t3 keep order:false, stats:pseudo`,
-				`  └─HashJoin(Probe) root  CARTESIAN left outer join, left side:TableReader`,
-				`    ├─TableReader(Build) root  data:TableFullScan`,
-				`    │ └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`,
-				`    └─Projection(Probe) root  <nil>->Column`,
-				`      └─TableReader root  data:TableFullScan`,
-				`        └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
+				`  │ └─TableFullScan cop[tikv] table:t0 keep order:false, stats:pseudo`,
+				`  └─Projection(Probe) root  <nil>->Column`,
+				`    └─TableReader root  data:TableFullScan`,
+				`      └─TableFullScan cop[tikv] table:t2 keep order:false, stats:pseudo`))
 		tk.MustQuery(`SELECT *
 FROM t0
          LEFT JOIN (SELECT NULL AS col_2
