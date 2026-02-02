@@ -2260,3 +2260,28 @@ desc v_aes;
 show columns from v_aes;
 drop view v_aes;
 drop table t_aes;
+
+# TestIssue35302
+create table cb_ast (id int, tname varchar(64));
+insert into cb_ast values (1, 'a\\a'), (2, 'a\\a'), (3, '中\\中'), (4, '中\\中');
+# default values should be 'on'
+select @@tidb_enable_no_backslash_escapes_in_like;
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+select * from cb_ast;
+select * from cb_ast where tname like '%%';
+# like expression should consider 'NO_BACKSLASH_ESCAPES' and behavior the same as MySQL
+select * from cb_ast where tname like '%\%';
+select 'David_' like 'David\_';
+select 'David_' like 'David\_' escape '\';
+set session sql_mode=default;
+# keep buggy behavior for old tidb compatibility, only fix on newer version
+set @@tidb_enable_no_backslash_escapes_in_like = 'off';
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+select * from cb_ast;
+select * from cb_ast where tname like '%%';
+# like expression should consider 'NO_BACKSLASH_ESCAPES' and behavior the same as MySQL
+select * from cb_ast where tname like '%\%';
+select 'David_' like 'David\_';
+select 'David_' like 'David\_' escape '\';
+set session sql_mode=default;
+set @@tidb_enable_no_backslash_escapes_in_like = default;

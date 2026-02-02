@@ -37,6 +37,11 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 )
+
+type likeEscapeSpec struct {
+	escape   string
+	explicit bool
+}
 %}
 
 %union {
@@ -1121,6 +1126,7 @@ import (
 %type	<item>
 	AdminShowSlow                          "Admin Show Slow statement"
 	AdminStmtLimitOpt                      "Admin show ddl jobs limit option"
+	LikeOrIlikeEscapeOpt                   "like or ilike escape option"
 	AllOrPartitionNameList                 "All or partition name list"
 	AlgorithmClause                        "Alter table algorithm"
 	AlterJobOptionList                     "Alter job option list"
@@ -1641,7 +1647,6 @@ import (
 	FieldTerminator                 "Field terminator"
 	FlashbackToNewName              "Flashback to new name"
 	HashString                      "Hashed string"
-	LikeOrIlikeEscapeOpt            "like or ilike escape option"
 	OptCharset                      "Optional Character setting"
 	OptCollate                      "Optional Collate setting"
 	PasswordOpt                     "Password option"
@@ -1799,17 +1804,17 @@ SplitIndexListOpt:
 	{
 		$$ = nil
 	}
-|   SplitIndexList %prec lowerThanComma
+|	SplitIndexList %prec lowerThanComma
 	{
 		$$ = $1.([]*ast.SplitIndexOption)
 	}
 
 SplitIndexList:
-    SplitIndexOption
+	SplitIndexOption
 	{
 		$$ = []*ast.SplitIndexOption{$1.(*ast.SplitIndexOption)}
 	}
-|   SplitIndexList SplitIndexOption
+|	SplitIndexList SplitIndexOption
 	{
 		$$ = append($1.([]*ast.SplitIndexOption), $2.(*ast.SplitIndexOption))
 	}
@@ -1819,22 +1824,22 @@ SplitIndexOption:
 	{
 		$$ = &ast.SplitIndexOption{
 			PrimaryKey: true,
-			IndexName: ast.NewCIStr(mysql.PrimaryKeyName),
-			SplitOpt: $4.(*ast.SplitOption),
+			IndexName:  ast.NewCIStr(mysql.PrimaryKeyName),
+			SplitOpt:   $4.(*ast.SplitOption),
 		}
 	}
 |	"SPLIT" "INDEX" Identifier SplitOptionBetween
 	{
 		$$ = &ast.SplitIndexOption{
 			IndexName: ast.NewCIStr($3),
-			SplitOpt: $4.(*ast.SplitOption),
+			SplitOpt:  $4.(*ast.SplitOption),
 		}
 	}
 |	"SPLIT" SplitOptionBetween
 	{
 		$$ = &ast.SplitIndexOption{
 			TableLevel: true,
-			SplitOpt: $2.(*ast.SplitOption),
+			SplitOpt:   $2.(*ast.SplitOption),
 		}
 	}
 
@@ -2221,8 +2226,8 @@ AlterTableSpecSingleOpt:
 |	SplitIndexOption
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTableSplitIndex,
-			SplitIndex:		$1.(*ast.SplitIndexOption),
+			Tp:         ast.AlterTableSplitIndex,
+			SplitIndex: $1.(*ast.SplitIndexOption),
 		}
 	}
 |	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
@@ -6619,36 +6624,44 @@ PredicateExpr:
 	}
 |	BitExpr LikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		} else if len(escape) == 0 {
 			escape = "\\"
+			explicit = false
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  true,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escape[0],
+			EscapeExplicit: explicit,
+			IsLike:         true,
 		}
 	}
 |	BitExpr IlikeOrNotOp SimpleExpr LikeOrIlikeEscapeOpt
 	{
-		escape := $4
+		escapeSpec := $4.(*likeEscapeSpec)
+		escape := escapeSpec.escape
+		explicit := escapeSpec.explicit
 		if len(escape) > 1 {
 			yylex.AppendError(ErrWrongArguments.GenWithStackByArgs("ESCAPE"))
 			return 1
 		} else if len(escape) == 0 {
 			escape = "\\"
+			explicit = false
 		}
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Expr:    $1,
-			Pattern: $3,
-			Not:     !$2.(bool),
-			Escape:  escape[0],
-			IsLike:  false,
+			Expr:           $1,
+			Pattern:        $3,
+			Not:            !$2.(bool),
+			Escape:         escape[0],
+			EscapeExplicit: explicit,
+			IsLike:         false,
 		}
 	}
 |	BitExpr RegexpOrNotOp SimpleExpr
@@ -6668,11 +6681,11 @@ RegexpSym:
 LikeOrIlikeEscapeOpt:
 	%prec empty
 	{
-		$$ = "\\"
+		$$ = &likeEscapeSpec{escape: "\\", explicit: false}
 	}
 |	"ESCAPE" stringLit
 	{
-		$$ = $2
+		$$ = &likeEscapeSpec{escape: $2, explicit: true}
 	}
 
 Field:
@@ -12411,9 +12424,10 @@ ShowLikeOrWhereOpt:
 |	"LIKE" SimpleExpr
 	{
 		$$ = &ast.PatternLikeOrIlikeExpr{
-			Pattern: $2,
-			Escape:  '\\',
-			IsLike:  true,
+			Pattern:        $2,
+			Escape:         '\\',
+			EscapeExplicit: false,
+			IsLike:         true,
 		}
 	}
 |	"WHERE" Expression

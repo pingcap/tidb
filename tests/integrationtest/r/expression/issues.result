@@ -3335,3 +3335,58 @@ Field	Type	Null	Key	Default	Extra
 aes_encrypt(myid,'testkey')	varbinary(32)	YES		NULL	
 drop view v_aes;
 drop table t_aes;
+create table cb_ast (id int, tname varchar(64));
+insert into cb_ast values (1, 'a\\a'), (2, 'a\\a'), (3, '中\\中'), (4, '中\\中');
+select @@tidb_enable_no_backslash_escapes_in_like;
+@@tidb_enable_no_backslash_escapes_in_like
+1
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+select * from cb_ast;
+id	tname
+1	a\a
+2	a\a
+3	中\中
+4	中\中
+select * from cb_ast where tname like '%%';
+id	tname
+1	a\a
+2	a\a
+3	中\中
+4	中\中
+select * from cb_ast where tname like '%\%';
+id	tname
+1	a\a
+2	a\a
+3	中\中
+4	中\中
+select 'David_' like 'David\_';
+'David_' like 'David\_'
+0
+select 'David_' like 'David\_' escape '\';
+'David_' like 'David\_' escape '\'
+1
+set session sql_mode=default;
+set @@tidb_enable_no_backslash_escapes_in_like = 'off';
+set session sql_mode='NO_BACKSLASH_ESCAPES';
+select * from cb_ast;
+id	tname
+1	a\a
+2	a\a
+3	中\中
+4	中\中
+select * from cb_ast where tname like '%%';
+id	tname
+1	a\a
+2	a\a
+3	中\中
+4	中\中
+select * from cb_ast where tname like '%\%';
+id	tname
+select 'David_' like 'David\_';
+'David_' like 'David\_'
+1
+select 'David_' like 'David\_' escape '\';
+'David_' like 'David\_' escape '\'
+1
+set session sql_mode=default;
+set @@tidb_enable_no_backslash_escapes_in_like = default;

@@ -473,6 +473,10 @@ const (
 	// version253
 	// Add last_used_date to mysql.bind_info
 	version253 = 253
+
+	// version254
+	// Add tidb_enable_no_backslash_escapes_in_like global variable.
+	version254 = 254
 )
 
 // versionedUpgradeFunction is a struct that holds the upgrade function related
@@ -486,7 +490,7 @@ type versionedUpgradeFunction struct {
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version253
+var currentBootstrapVersion int64 = version254
 
 var (
 	// this list must be ordered by version in ascending order, and the function
@@ -664,6 +668,7 @@ var (
 		{version: version251, fn: upgradeToVer251},
 		{version: version252, fn: upgradeToVer252},
 		{version: version253, fn: upgradeToVer253},
+		{version: version254, fn: upgradeToVer254},
 	}
 )
 
@@ -2037,4 +2042,9 @@ func upgradeToVer252(s sessionapi.Session, _ int64) {
 
 func upgradeToVer253(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.bind_info ADD COLUMN last_used_date DATE DEFAULT NULL AFTER `plan_digest`", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer254(s sessionapi.Session, _ int64) {
+	// Keep old behavior for upgraded clusters.
+	initGlobalVariableIfNotExists(s, vardef.TiDBEnableNoBackslashEscapesInLike, vardef.Off)
 }
