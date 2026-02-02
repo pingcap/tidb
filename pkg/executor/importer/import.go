@@ -386,10 +386,11 @@ type LoadDataController struct {
 	// - ref columns in set clause is allowed in mysql, but not in tidb
 	InsertColumns []*table.Column
 
-	logger        *zap.Logger
-	dataStore     storeapi.Storage
-	dataFiles     []*mydump.SourceFileMeta
-	totalRealSize int64
+	logger    *zap.Logger
+	dataStore storeapi.Storage
+	dataFiles []*mydump.SourceFileMeta
+	// exported for testing.
+	TotalRealSize int64
 	// globalSortStore is used to store sorted data when using global sort.
 	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
@@ -1500,7 +1501,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
-	e.totalRealSize = totalRealSize
+	e.TotalRealSize = totalRealSize
 
 	return nil
 }
@@ -1517,7 +1518,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	if err != nil {
 		return err
 	}
-	totalSize := e.totalRealSize
+	totalSize := e.TotalRealSize
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {
