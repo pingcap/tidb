@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/planner"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/kv"
+	lkv "github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/config"
 	"github.com/pingcap/tidb/pkg/lightning/metric"
@@ -44,8 +46,10 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	statsstorage "github.com/pingcap/tidb/pkg/statistics/handle/storage"
 	"github.com/pingcap/tidb/pkg/store"
+	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
+	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -271,6 +275,26 @@ func (sch *importScheduler) unregisterTask(ctx context.Context, task *proto.Task
 	}
 }
 
+func (sch *importScheduler) checkImportTableEmpty(ctx context.Context, taskMeta *TaskMeta) error {
+	idAlloc := lkv.NewPanickingAllocators(taskMeta.Plan.TableInfo.SepAutoInc())
+	tbl, err := tables.TableFromMeta(idAlloc, taskMeta.Plan.TableInfo)
+	if err != nil {
+		return err
+	}
+	return sch.WithNewTxn(ctx, func(se sessionctx.Context) error {
+		// Only check once when generating the import step plan to avoid repeated checks
+		// when executors are recreated in HA tests.
+		isEmpty, err2 := ddl.CheckImportIntoTableIsEmpty(sch.TaskStore, se, tbl)
+		if err2 != nil {
+			return err2
+		}
+		if !isEmpty {
+			return exeerrors.ErrLoadDataPreCheckFailed.FastGenByArgs("target table is not empty")
+		}
+		return nil
+	})
+}
+
 // OnNextSubtasksBatch generate batch of next stage's plan.
 func (sch *importScheduler) OnNextSubtasksBatch(
 	ctx context.Context,
@@ -311,6 +335,11 @@ func (sch *importScheduler) OnNextSubtasksBatch(
 		}
 		if err = sch.startJob(ctx, logger, taskMeta, jobStep); err != nil {
 			return nil, err
+		}
+		if kerneltype.IsClassic() {
+			if err = sch.checkImportTableEmpty(ctx, taskMeta); err != nil {
+				return nil, err
+			}
 		}
 		if importer.GetNumOfIndexGenKV(taskMeta.Plan.TableInfo) > warningIndexCount {
 			dxfmetric.ScheduleEventCounter.WithLabelValues(fmt.Sprint(task.ID), dxfmetric.EventTooManyIdx).Inc()
