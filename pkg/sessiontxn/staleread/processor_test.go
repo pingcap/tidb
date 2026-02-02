@@ -384,7 +384,7 @@ func TestStaleReadProcessorInTxn(t *testing.T) {
 	processor = createProcessor(t, tk.Session())
 	err = processor.OnSelectTable(p1.tn)
 	require.Error(t, err)
-	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp can't be set in transaction.", err.Error())
+	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp can't be set in transaction or when autocommit is disabled.", err.Error())
 
 	// return an error when execute prepared stmt with as of
 	processor = createProcessor(t, tk.Session())
@@ -392,7 +392,7 @@ func TestStaleReadProcessorInTxn(t *testing.T) {
 		return p1.ts, nil
 	})
 	require.Error(t, err)
-	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp can't be set in transaction.", err.Error())
+	require.Equal(t, "[planner:8135]invalid as of timestamp: as of timestamp can't be set in transaction or when autocommit is disabled.", err.Error())
 
 	tk.MustExec("rollback")
 
