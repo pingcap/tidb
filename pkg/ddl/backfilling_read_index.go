@@ -93,6 +93,31 @@ type readIndexEngineRegistrar interface {
 	Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error)
 }
 
+const pebbleLockHeldByCurrentProcessMsg = "lock held by current process"
+
+func isPebbleLockHeldByCurrentProcess(err error) bool {
+	// Pebble's vfs.Lock returns a plain error containing `pebbleLockHeldByCurrentProcessMsg`
+	// when the lock is already held by the current process (see pebble/vfs/file_lock_unix.go).
+	// Pebble does not export a sentinel error/type for this case, so we must match on the
+	// message.
+	for err != nil {
+		if strings.Contains(err.Error(), pebbleLockHeldByCurrentProcessMsg) {
+			return true
+		}
+		err = goerrors.Unwrap(err)
+	}
+	return false
+}
+
+func cleanupAllLocalEnginesForReadIndexSafe(backend *local.Backend) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = errors.Errorf("cleanup engines panicked: %v", p)
+		}
+	}()
+	return cleanupAllLocalEnginesForReadIndex(backend)
+}
+
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
@@ -520,7 +545,7 @@ func registerReadIndexEngines(
 	tbl table.Table,
 ) ([]ingest.Engine, error) {
 	engines, err := backendCtx.Register(indexIDs, uniques, tbl)
-	if err == nil || !strings.Contains(err.Error(), "lock held by current process") {
+	if err == nil || !isPebbleLockHeldByCurrentProcess(err) {
 		return engines, err
 	}
 
@@ -535,22 +560,12 @@ func registerReadIndexEngines(
 		zap.Int64("job ID", jobID),
 		zap.Int64s("index IDs", indexIDs),
 	)
-	defer func() {
-		if p := recover(); p != nil {
-			tidblogutil.Logger(wctx).Warn("cleanup engines panicked",
-				zap.Any("panic", p),
-				zap.Int64("job ID", jobID),
-				zap.Int64s("index IDs", indexIDs),
-			)
-		}
-	}()
-	if cleanupErr := cleanupAllLocalEnginesForReadIndex(backend); cleanupErr != nil {
+	if cleanupErr := cleanupAllLocalEnginesForReadIndexSafe(backend); cleanupErr != nil {
 		tidblogutil.Logger(wctx).Warn("cleanup engines failed",
 			zap.Error(cleanupErr),
 			zap.Int64("job ID", jobID),
 			zap.Int64s("index IDs", indexIDs),
 		)
-		return engines, err
 	}
 	return backendCtx.Register(indexIDs, uniques, tbl)
 }

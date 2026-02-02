@@ -139,6 +139,66 @@ func TestRegisterReadIndexEnginesRetryOnLockHeld(t *testing.T) {
 	require.Equal(t, int32(1), cleanupCalls)
 }
 
+func TestRegisterReadIndexEnginesRetryOnLockHeldRegisterFail(t *testing.T) {
+	origCleanup := cleanupAllLocalEnginesForReadIndex
+	var cleanupCalls int32
+	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
+		atomic.AddInt32(&cleanupCalls, 1)
+		return nil
+	}
+	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
+
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+
+	var registerCalls int32
+	backendCtx := &testReadIndexBackendCtx{
+		localBackend: &local.Backend{},
+		registerFn: func([]int64, []bool, table.Table) ([]ingest.Engine, error) {
+			if atomic.AddInt32(&registerCalls, 1) == 1 {
+				return nil, errors.New("lock held by current process")
+			}
+			return nil, errors.New("second register failed")
+		},
+	}
+
+	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
+	require.ErrorContains(t, err, "second register failed")
+	require.Nil(t, engines)
+	require.Equal(t, int32(2), registerCalls)
+	require.Equal(t, int32(1), cleanupCalls)
+}
+
+func TestRegisterReadIndexEnginesRetryOnLockHeldCleanupFailStillRetry(t *testing.T) {
+	origCleanup := cleanupAllLocalEnginesForReadIndex
+	var cleanupCalls int32
+	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
+		atomic.AddInt32(&cleanupCalls, 1)
+		return errors.New("cleanup failed")
+	}
+	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
+
+	wctx := workerpool.NewContext(context.Background())
+	defer wctx.Cancel()
+
+	var registerCalls int32
+	backendCtx := &testReadIndexBackendCtx{
+		localBackend: &local.Backend{},
+		registerFn: func([]int64, []bool, table.Table) ([]ingest.Engine, error) {
+			if atomic.AddInt32(&registerCalls, 1) == 1 {
+				return nil, errors.New("lock held by current process")
+			}
+			return nil, nil
+		},
+	}
+
+	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
+	require.NoError(t, err)
+	require.Nil(t, engines)
+	require.Equal(t, int32(2), registerCalls)
+	require.Equal(t, int32(1), cleanupCalls)
+}
+
 func TestCleanupReadIndexLocalEngines(t *testing.T) {
 	origCleanup := cleanupAllLocalEnginesForReadIndex
 	var cleanupCalls int32
