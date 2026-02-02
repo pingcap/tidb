@@ -40,7 +40,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intset"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"go.uber.org/zap"
 )
 
 // DataSource represents a tableScan without condition push down.
@@ -586,10 +588,34 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 	originSchemaColumns []*model.ColumnInfo) (*expression.Column, *model.ColumnInfo) {
 	var resultColumnInfo *model.ColumnInfo
 	var resultColumn *expression.Column
-	if dataSource.Table.Type().IsClusterTable() && len(originColumns) > 0 {
-		// use the first column.
-		resultColumnInfo = originSchemaColumns[0]
-		resultColumn = originColumns[0]
+	if dataSource.Table.Type().IsClusterTable() {
+		// For cluster tables, ExtraHandleID is not valid as they are memory tables.
+		// Use the first column from originColumns if available, otherwise fall back
+		// to the first column from table metadata.
+		if len(originColumns) > 0 {
+			resultColumnInfo = originSchemaColumns[0]
+			resultColumn = originColumns[0]
+		} else {
+			cols := dataSource.Table.Meta().Columns
+			if len(cols) > 0 {
+				col := cols[0]
+				resultColumnInfo = col
+				resultColumn = &expression.Column{
+					RetType:  col.FieldType.Clone(),
+					UniqueID: dataSource.SCtx().GetSessionVars().AllocPlanColumnID(),
+					ID:       col.ID,
+					OrigName: fmt.Sprintf("%v.%v.%v", dataSource.DBName, dataSource.TableInfo.Name, col.Name),
+				}
+			} else {
+				// All cluster tables must have at least one column in their metadata.
+				// If this is ever reached, it indicates a bug in table registration.
+				logutil.BgLogger().Error("cluster table has no metadata columns",
+					zap.String("db", dataSource.DBName.L),
+					zap.String("table", dataSource.TableInfo.Name.L))
+				resultColumn = dataSource.NewExtraHandleSchemaCol()
+				resultColumnInfo = model.NewExtraHandleColInfo()
+			}
+		}
 	} else {
 		if dataSource.HandleCols != nil {
 			resultColumn = dataSource.HandleCols.GetCol(0)
