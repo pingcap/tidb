@@ -26,6 +26,7 @@ set @a=now(6);
 select sleep(0.1);
 update t1 set v=100 where id=1;
 set autocommit=0;
+--error 8135
 select * from t1 as of timestamp @a;
 
 set tidb_txn_mode = default;
