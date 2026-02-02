@@ -4231,7 +4231,7 @@ func (e *executor) dropTableObject(
 
 			tempTableType := tableInfo.Meta().TempTableType
 			if config.CheckTableBeforeDrop && tempTableType == model.TempTableNone {
-				err := adminCheckTableBeforeDrop(ctx, fullti)
+				err := adminCheckTableBeforeDrop(e.sessPool, fullti)
 				if err != nil {
 					return err
 				}
@@ -4306,35 +4306,41 @@ func (e *executor) dropTableObject(
 // adminCheckTableBeforeDrop runs `admin check table` for the table to be dropped.
 // Actually this function doesn't do anything specific for `DROP TABLE`, but to avoid
 // using it in other places by mistake, it's named like this.
-func adminCheckTableBeforeDrop(ctx sessionctx.Context, fullti ast.Ident) error {
+func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 	logutil.DDLLogger().Warn("admin check table before drop",
 		zap.String("database", fullti.Schema.O),
 		zap.String("table", fullti.Name.O),
 	)
-	exec := ctx.GetRestrictedSQLExecutor()
 	internalCtx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 
-	// `tidb_enable_fast_table_check` is already the default value, and some feature (e.g. partial index)
-	// doesn't support admin check with `tidb_enable_fast_table_check = OFF`, so we just set it to `ON` here.
-	// TODO: set the value of `tidb_enable_fast_table_check` to 'ON' for all internal sessions if it's OK.
-	originalFastTableCheck := ctx.GetSessionVars().FastCheckTable
-	_, _, err := exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'ON';")
+	sctx, err := sessPool.Get()
 	if err != nil {
+		return err
+	}
+	var restoreErr error
+	defer func() {
+		if restoreErr == nil {
+			sessPool.Put(sctx)
+			return
+		}
+		logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(restoreErr))
+		sessPool.Destroy(sctx)
+	}()
+	s := sess.NewSession(sctx)
+
+	// Some features (e.g. partial index) doesn't support admin check with `tidb_enable_fast_table_check = OFF`,
+	// so we temporarily enable it in the internal DDL session and restore it afterward.
+	originalFastTableCheck := sctx.GetSessionVars().FastCheckTable
+	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
 		return err
 	}
 	if !originalFastTableCheck {
 		defer func() {
-			_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "set tidb_enable_fast_table_check = 'OFF';")
-			if err != nil {
-				logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(err))
-			}
+			restoreErr = sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off)
 		}()
 	}
-	_, _, err = exec.ExecRestrictedSQL(internalCtx, nil, "admin check table %n.%n", fullti.Schema.O, fullti.Name.O)
-	if err != nil {
-		return err
-	}
-	return nil
+	_, err = s.Execute(internalCtx, "admin check table %n.%n", "admin_check_table_before_drop", fullti.Schema.O, fullti.Name.O)
+	return err
 }
 
 // DropTable will proceed even if some table in the list does not exists.
