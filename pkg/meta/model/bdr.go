@@ -105,6 +105,8 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionAddVectorIndex,
 		ActionAlterTableMode,
 		ActionRefreshMeta,
+		ActionModifySchemaSoftDeleteAndActiveActive,
+		ActionAlterTableSoftDeleteInfo,
 	},
 	UnmanagementDDL: {
 		ActionCreatePlacementPolicy,

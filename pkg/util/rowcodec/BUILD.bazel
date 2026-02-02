@@ -18,6 +18,7 @@ go_library(
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
+        "//pkg/util/intest",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_multierr//:multierr",
     ],
