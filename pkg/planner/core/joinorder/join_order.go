@@ -435,6 +435,11 @@ func connectSubgraphGreedy(detector *ConflictDetector, nodes []*Node, vertexHint
 				continue
 			}
 			if checkResult.NoEQEdge() {
+				// The original plan tree may have cartesian edges, to avoid cartesian join happens first,
+				// we need the check here.
+				if !allowNoEQ {
+					continue
+				}
 				// todo we dont support reorder non INNER JOIN without eqCond now.
 				newNode.cumCost = newNode.cumCost * cartesianFactor
 			}
