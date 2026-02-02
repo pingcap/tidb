@@ -19,6 +19,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -63,22 +64,29 @@ func ShouldPreferIndexMerge(ds *logicalop.DataSource) bool {
 // 2. Have consecutive column matches from the index start (enabling index prefix usage)
 // 3. Support single-scan (covering index without table lookups)
 // 4. Have different consecutive column orderings (e.g., if interesting columns are A, B, keep both (A,B) and (B,A))
+// The threshold controls the behavior:
+// threshold = -1: disable pruning (handled by caller)
+// threshold = 0: only prune indexes with no interesting columns (score == 0)
+// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
+// but if there are fewer than threshold indexes, we will still prune zero-score indexes.
 func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessPath, interestingColumns []*expression.Column, threshold int) []*util.AccessPath {
 	if len(paths) <= 1 {
 		return paths
 	}
 
-	// Build column ID maps and calculate totals
-	req := buildColumnRequirements(interestingColumns)
-
 	totalPathCount := len(paths)
 
-	// If totalPathCount <= threshold, we should keep all indexes with score > 0
-	// Only prune indexes with score > 0 when we have more index paths than the threshold
-	// threshold = -1: disable pruning (handled by caller)
-	// threshold = 0: only prune indexes with no interesting columns (score == 0)
-	// threshold > 0: keep at least threshold indexes (but at least defaultMaxIndexes)
-	needPruning := totalPathCount > threshold && threshold >= 0
+	// If we disabled the prune, return directly.
+	if threshold < 0 {
+		return paths
+	}
+	// Now the prune must happen.
+
+	// If threshold is 0 or greater than total paths, we only prune zero-score indexes.
+	onlyPruneZeroScore := threshold == 0 || (threshold > totalPathCount)
+
+	// Build column ID maps and calculate totals
+	req := buildColumnRequirements(interestingColumns)
 
 	preferredIndexes := make([]indexWithScore, 0, totalPathCount)
 	tablePaths := make([]*util.AccessPath, 0, 1)
@@ -128,7 +136,7 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 		if ds.TableInfo != nil {
 			tableColumns = ds.TableInfo.Columns
 		}
-		idxScore := scoreIndexPath(path, req, tableColumns)
+		idxScore := scoreIndexPath(ds, path, req, tableColumns)
 
 		if path.FullIdxCols != nil {
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
@@ -187,7 +195,8 @@ func PruneIndexesByWhereAndOrder(ds *logicalop.DataSource, paths []*util.AccessP
 
 	// Build final result by sorting and selecting top indexes
 	maxToKeep := max(threshold, defaultMaxIndexes)
-	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, needPruning, req)
+	result := buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths, preferredIndexes, maxToKeep, onlyPruneZeroScore, req)
+	failpoint.InjectCall("InjectCheckForIndexPrune", result)
 
 	// Safety check: if we ended up with nothing, return the original paths
 	if len(result) == 0 {
@@ -240,8 +249,24 @@ func buildOrderingKey(columnIDs []int64) string {
 // When FullIdxCols is nil (e.g., in static pruning mode), it uses path.Index.Columns
 // and tableColumns to determine interesting columns. Note that consecutiveColumnIDs
 // cannot be determined when FullIdxCols is nil, so it will remain empty.
-func scoreIndexPath(path *util.AccessPath, req columnRequirements, tableColumns []*model.ColumnInfo) indexWithScore {
+func scoreIndexPath(
+	ds *logicalop.DataSource,
+	path *util.AccessPath,
+	req columnRequirements,
+	tableColumns []*model.ColumnInfo,
+) indexWithScore {
 	score := indexWithScore{path: path}
+
+	if path.Index != nil && path.Index.ConditionExprString != "" {
+		for _, col := range path.Index.AffectColumn {
+			// Some columns from the constraint is not found. Then the path can not be selected.
+			// We mixed the WHERE clause and other clauses like JOIN/ORDER BY to prune the indexes.
+			// So this check is not the strictest one.
+			if _, found := req.interestingColIDs[ds.TableInfo.Columns[col.Offset].ID]; !found {
+				return score
+			}
+		}
+	}
 
 	if path.FullIdxCols != nil {
 		// Normal path: use FullIdxCols which contains expression.Column with IDs
@@ -358,7 +383,7 @@ func scoreAndSort(indexes []indexWithScore, req columnRequirements) []scoredInde
 	return scored
 }
 
-func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, needPruning bool, req columnRequirements) []*util.AccessPath {
+func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.AccessPath, preferredIndexes []indexWithScore, maxToKeep int, onlyPruneZeroScore bool, req columnRequirements) []*util.AccessPath {
 	result := make([]*util.AccessPath, 0, len(tablePaths)+len(indexMergeIndexPaths)+len(preferredIndexes))
 
 	// CRITICAL: Always include table paths - this is mandatory for correctness
@@ -386,8 +411,8 @@ func buildFinalResult(tablePaths, mvIndexPaths, indexMergeIndexPaths []*util.Acc
 
 	preferredScored := scoreAndSort(preferredIndexes, req)
 
-	// If we don't need pruning, skip two-phase selection and keep all indexes with score > 0
-	if !needPruning {
+	// Prune all the path with 0 score.
+	if onlyPruneZeroScore {
 		for _, entry := range preferredScored {
 			if _, ok := added[entry.info.path]; !ok {
 				result = append(result, entry.info.path)

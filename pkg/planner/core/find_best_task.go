@@ -3108,6 +3108,7 @@ func getOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		tblColHists:      ds.TblColHists,
 		pkIsHandleCol:    ds.GetPKIsHandleCol(),
 		constColsByCond:  path.ConstCols,
+		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 		prop:             prop,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
 	rowCount := path.CountAfterAccess

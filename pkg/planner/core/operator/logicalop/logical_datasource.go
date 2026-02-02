@@ -17,6 +17,7 @@ package logicalop
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -29,6 +30,7 @@ import (
 	base2 "github.com/pingcap/tidb/pkg/planner/cascades/base"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/constraint"
+	"github.com/pingcap/tidb/pkg/planner/core/partidx"
 	ruleutil "github.com/pingcap/tidb/pkg/planner/core/rule/util"
 	fd "github.com/pingcap/tidb/pkg/planner/funcdep"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -695,4 +697,85 @@ func preferKeyColumnFromTable(dataSource *DataSource, originColumns []*expressio
 		}
 	}
 	return resultColumn, resultColumnInfo
+}
+
+// CheckPartialIndexes checks and removes the partial indexes that cannot be used according to the pushed down conditions.
+// It will go through each partial index to see whether its condition constraints are all satisfied by the pushed down conditions.
+func (ds *DataSource) CheckPartialIndexes() {
+	var columnNames types.NameSlice
+	var removedPaths map[int64]struct{}
+	partialIndexUsedHint, hasPartialIndex := false, false
+
+	for _, path := range ds.PossibleAccessPaths {
+		// If there is no condition expression, it is not a partial index.
+		if path.Index == nil || path.Index.ConditionExprString == "" {
+			continue
+		}
+		hasPartialIndex = true
+		if columnNames == nil {
+			columnNames = make(types.NameSlice, 0, ds.Schema().Len())
+			for i := range ds.Schema().Columns {
+				columnNames = append(columnNames, &types.FieldName{
+					TblName: ds.TableInfo.Name,
+					ColName: ds.Columns[i].Name,
+				})
+			}
+		}
+
+		// Convert the raw string expression to Expression.
+		expr, err := expression.ParseSimpleExpr(
+			ds.SCtx().GetExprCtx(),
+			path.Index.ConditionExprString,
+			expression.WithInputSchemaAndNames(ds.Schema(), columnNames, ds.TableInfo),
+		)
+		cnfExprs := expression.SplitCNFItems(expr)
+		if err != nil || !partidx.CheckConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+			if removedPaths == nil {
+				removedPaths = make(map[int64]struct{})
+			}
+			removedPaths[path.Index.ID] = struct{}{}
+			continue
+		}
+
+		// Track whether a partial index is explicitly hinted.
+		// If so and it is valid, we will keep only forced access paths.
+		if path.Forced {
+			partialIndexUsedHint = true
+		}
+
+		// A special handler for plan cache. We only do it for single IS NOT NULL constraint now.
+		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
+			path.PartIdxCondNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+		}
+	}
+
+	// 1. No partial index,
+	// 2. Or no partial index is removed and no partial index is used by hint.
+	// In these cases, we don't need to do anything.
+	if !hasPartialIndex || (len(removedPaths) == 0 && !partialIndexUsedHint) {
+		return
+	}
+
+	checkIndex := func(path *util.AccessPath, checkForced bool) bool {
+		isRemoved := false
+		if path.Index != nil {
+			_, isRemoved = removedPaths[path.Index.ID]
+		}
+		return isRemoved || (checkForced && !path.Forced)
+	}
+	if partialIndexUsedHint {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
+	} else {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
+	}
 }

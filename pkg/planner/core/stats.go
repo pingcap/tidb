@@ -135,6 +135,7 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 		ds.PushedDownConds[i] = expression.PushDownNot(exprCtx, expr)
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, ds.PushedDownConds[i])
 	}
+	ds.CheckPartialIndexes()
 	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
 	// Fill index paths for all paths.
 	for _, path := range ds.AllPossibleAccessPaths {
