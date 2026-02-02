@@ -283,7 +283,7 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 	visitedStates[startState.Encode()] = struct{}{}
 	stateList.PushBack(startState)
 
-	maxPlans, maxExploreState := 30, 5000
+	maxPlans, maxExploreState := 30, 10000
 	for len(visitedPlans) < maxPlans && len(visitedStates) < maxExploreState && stateList.Len() > 0 {
 		currState := stateList.Remove(stateList.Front()).(*state)
 		plan, err := genPlanUnderState(sctx, stmt, currState)
