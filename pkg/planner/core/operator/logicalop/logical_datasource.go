@@ -764,10 +764,16 @@ func (ds *DataSource) CheckPartialIndexes() {
 		return isRemoved || (checkForced && !path.Forced)
 	}
 	if partialIndexUsedHint {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, true)
+		})
 		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 			return checkIndex(path, true)
 		})
 	} else {
+		ds.AllPossibleAccessPaths = slices.DeleteFunc(ds.AllPossibleAccessPaths, func(path *util.AccessPath) bool {
+			return checkIndex(path, false)
+		})
 		ds.PossibleAccessPaths = slices.DeleteFunc(ds.PossibleAccessPaths, func(path *util.AccessPath) bool {
 			return checkIndex(path, false)
 		})
