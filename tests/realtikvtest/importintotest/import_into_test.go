@@ -1497,6 +1497,25 @@ func (s *mockGCSSuite) TestTableMode() {
 	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
 	require.True(s.T(), getError)
 
+	// Test executor recreation during import step won't re-check table empty.
+	s.tk.MustExec("truncate table table_mode")
+	loadDataSQLWithSmallEngine := fmt.Sprintf(`IMPORT INTO table_mode
+		FROM 'gs://table-mode-test/data.csv?endpoint=%s' WITH __max_engine_size='1'`, gcsEndpoint)
+	recreated := atomic.NewBool(false)
+	testfailpoint.EnableCall(s.T(), "github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/mockTiDBShutdown",
+		func(e taskexecutor.TaskExecutor, _ string, task *proto.TaskBase) {
+			if task.Step != proto.ImportStepImport {
+				return
+			}
+			if recreated.CompareAndSwap(false, true) {
+				e.Cancel()
+			}
+		},
+	)
+	s.tk.MustQuery(loadDataSQLWithSmallEngine)
+	require.True(s.T(), recreated.Load())
+	s.tk.MustQuery(query).Sort().Check(testkit.Rows([]string{"1 1", "2 2"}...))
+
 	// Test import into check table is empty get error.
 	s.tk.MustExec("truncate table table_mode")
 	testfailpoint.Enable(s.T(), "github.com/pingcap/tidb/pkg/ddl/checkImportIntoTableIsEmpty", `return("error")`)
