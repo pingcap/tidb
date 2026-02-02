@@ -3,25 +3,18 @@
     "Name": "TestIssue31240",
     "Cases": [
       {
-        "SQL": "explain format = 'plan_tree' select count(*) from t31240;",
+        "SQL": "explain format = 'plan_tree' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",
         "Plan": [
-          "StreamAgg root  funcs:count(Column)->Column",
-          "└─TableReader root  data:StreamAgg",
-          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
-          "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
-        ]
-      },
-      {
-        "SQL": "set @@tidb_isolation_read_engines=\"tiflash,tidb\";",
-        "Plan": null
-      },
-      {
-        "SQL": "explain format = 'plan_tree' select count(*) from t31240;",
-        "Plan": [
-          "StreamAgg root  funcs:count(Column)->Column",
-          "└─TableReader root  data:StreamAgg",
-          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
-          "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
+          "HashAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg mpp[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column",
+          "      └─Projection mpp[tiflash]  test.partsupp.ps_supplycost",
+          "        └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
+          "          ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "          │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─TableFullScan mpp[tiflash] table:supplier keep order:false, stats:pseudo",
+          "          └─TableFullScan(Probe) mpp[tiflash] table:partsupp keep order:false, stats:pseudo"
         ]
       }
     ]

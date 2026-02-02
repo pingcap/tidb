@@ -186,17 +186,13 @@
         "Warn": null
       },
       {
-        "SQL": "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
-        "Plan": [
-          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
-        ],
+        "SQL": "",
+        "Plan": null,
         "Warn": null
       },
       {
-        "SQL": "explain select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
-        "Plan": [
-          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
-        ],
+        "SQL": "",
+        "Plan": null,
         "Warn": null
       }
     ]

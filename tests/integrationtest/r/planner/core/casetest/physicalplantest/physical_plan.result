@@ -341,61 +341,61 @@ Level	Code	Message
 explain format = 'plan_tree' with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t1	keep order:false
+├─HashJoin(Build)	root		CARTESIAN inner join
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
+│ └─TableReader(Probe)	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
-  └─HashJoin(Probe)	root		CARTESIAN inner join
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:false
-    └─TableReader(Probe)	root		data:TableFullScan
-      └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' with cte1 as (select /*+ MERGE() */  * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t1	keep order:false
+├─HashJoin(Build)	root		CARTESIAN inner join
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
+│ └─TableReader(Probe)	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
-  └─HashJoin(Probe)	root		CARTESIAN inner join
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:false
-    └─TableReader(Probe)	root		data:TableFullScan
-      └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select * from t3) select * from cte5,cte6) ,cte4 as (select /*+ MERGE() */ * from t4) select * from cte3,cte4) select * from cte1,cte2;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t1	keep order:false
+├─HashJoin(Build)	root		CARTESIAN inner join
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
+│ └─TableReader(Probe)	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
-  └─HashJoin(Probe)	root		CARTESIAN inner join
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:false
-    └─TableReader(Probe)	root		data:TableFullScan
-      └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' with cte1 as (select * from t1), cte2 as (with cte3 as (with cte5 as (select * from t2),cte6 as (select /*+ MERGE() */ * from t3) select * from cte5,cte6) ,cte4 as (select * from t4) select * from cte3,cte4) select * from cte1,cte2;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
-├─TableReader(Build)	root		data:TableFullScan
-│ └─TableFullScan	cop[tikv]	table:t1	keep order:false
+├─HashJoin(Build)	root		CARTESIAN inner join
+│ ├─TableReader(Build)	root		data:TableFullScan
+│ │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
+│ └─TableReader(Probe)	root		data:TableFullScan
+│   └─TableFullScan	cop[tikv]	table:t3	keep order:false
 └─HashJoin(Probe)	root		CARTESIAN inner join
   ├─TableReader(Build)	root		data:TableFullScan
-  │ └─TableFullScan	cop[tikv]	table:t4	keep order:false
-  └─HashJoin(Probe)	root		CARTESIAN inner join
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:t3	keep order:false
-    └─TableReader(Probe)	root		data:TableFullScan
-      └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  │ └─TableFullScan	cop[tikv]	table:t2	keep order:false
+  └─TableReader(Probe)	root		data:TableFullScan
+    └─TableFullScan	cop[tikv]	table:t1	keep order:false
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' with cte2 as (with cte4 as (select * from tc) select * from te, cte4) select * from cte2;

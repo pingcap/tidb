@@ -178,37 +178,37 @@ id	task	access object	operator info
 Projection	root		tpch50.supplier.s_acctbal, tpch50.supplier.s_name, tpch50.nation.n_name, tpch50.part.p_partkey, tpch50.part.p_mfgr, tpch50.supplier.s_address, tpch50.supplier.s_phone, tpch50.supplier.s_comment
 └─TopN	root		tpch50.supplier.s_acctbal:desc, tpch50.nation.n_name, tpch50.supplier.s_name, tpch50.part.p_partkey, offset:0, count:100
   └─Projection	root		tpch50.part.p_partkey, tpch50.part.p_mfgr, tpch50.supplier.s_name, tpch50.supplier.s_address, tpch50.supplier.s_phone, tpch50.supplier.s_acctbal, tpch50.supplier.s_comment, tpch50.nation.n_name
-    └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey) eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey) eq(Column, tpch50.partsupp.ps_supplycost)]
-      ├─TableReader(Build)	root		data:TableFullScan
-      │ └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
-      └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey)]
-        ├─Selection(Build)	root		not(isnull(Column))
-        │ └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, funcs:min(tpch50.partsupp.ps_supplycost)->Column, funcs:firstrow(tpch50.partsupp.ps_partkey)->tpch50.partsupp.ps_partkey
-        │   └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
-        │     ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-        │     │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
-        │     │ │ ├─TableReader(Build)	root		data:Selection
-        │     │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
-        │     │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
-        │     │ │ └─TableReader(Probe)	root		data:TableFullScan
-        │     │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
-        │     │ └─TableReader(Probe)	root		data:TableFullScan
-        │     │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
-        │     └─TableReader(Probe)	root		data:TableFullScan
-        │       └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
-        └─HashJoin(Probe)	root		CARTESIAN inner join
-          ├─TableReader(Build)	root		data:Selection
-          │ └─Selection	cop[tikv]		eq(tpch50.part.p_size, 30), like(tpch50.part.p_type, "%STEEL", 92)
-          │   └─TableFullScan	cop[tikv]	table:part	keep order:false
-          └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-            ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
-            │ ├─TableReader(Build)	root		data:Selection
-            │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
-            │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+    └─HashJoin	root		inner join, equal:[eq(tpch50.part.p_partkey, tpch50.partsupp.ps_partkey) eq(tpch50.partsupp.ps_supplycost, Column)]
+      ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.partsupp.ps_partkey, tpch50.part.p_partkey)]
+      │ ├─TableReader(Build)	root		data:Selection
+      │ │ └─Selection	cop[tikv]		eq(tpch50.part.p_size, 30), like(tpch50.part.p_type, "%STEEL", 92)
+      │ │   └─TableFullScan	cop[tikv]	table:part	keep order:false
+      │ └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
+      │   ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
+      │   │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+      │   │ │ ├─TableReader(Build)	root		data:Selection
+      │   │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
+      │   │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+      │   │ │ └─TableReader(Probe)	root		data:TableFullScan
+      │   │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
+      │   │ └─TableReader(Probe)	root		data:TableFullScan
+      │   │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
+      │   └─TableReader(Probe)	root		data:TableFullScan
+      │     └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
+      └─Selection(Probe)	root		not(isnull(Column))
+        └─HashAgg	root		group by:tpch50.partsupp.ps_partkey, funcs:min(tpch50.partsupp.ps_supplycost)->Column, funcs:firstrow(tpch50.partsupp.ps_partkey)->tpch50.partsupp.ps_partkey
+          └─HashJoin	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.partsupp.ps_suppkey)]
+            ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
+            │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.region.r_regionkey, tpch50.nation.n_regionkey)]
+            │ │ ├─TableReader(Build)	root		data:Selection
+            │ │ │ └─Selection	cop[tikv]		eq(tpch50.region.r_name, "ASIA")
+            │ │ │   └─TableFullScan	cop[tikv]	table:region	keep order:false
+            │ │ └─TableReader(Probe)	root		data:TableFullScan
+            │ │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
             │ └─TableReader(Probe)	root		data:TableFullScan
-            │   └─TableFullScan	cop[tikv]	table:nation	keep order:false
+            │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
             └─TableReader(Probe)	root		data:TableFullScan
-              └─TableFullScan	cop[tikv]	table:supplier	keep order:false
+              └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
 /*
 Q3 Shipping Priority Query
 This query retrieves the 10 unshipped orders with the highest value.
@@ -444,26 +444,26 @@ Sort	root		tpch50.nation.n_name, tpch50.nation.n_name, Column
   └─HashAgg	root		group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->tpch50.nation.n_name, funcs:firstrow(Column)->tpch50.nation.n_name, funcs:firstrow(Column)->Column
     └─Projection	root		mul(tpch50.lineitem.l_extendedprice, minus(1, tpch50.lineitem.l_discount))->Column, tpch50.nation.n_name->Column, tpch50.nation.n_name->Column, extract(YEAR, tpch50.lineitem.l_shipdate)->Column
       └─Projection	root		tpch50.lineitem.l_extendedprice, tpch50.lineitem.l_discount, tpch50.lineitem.l_shipdate, tpch50.nation.n_name, tpch50.nation.n_name
-        └─HashJoin	root		inner join, equal:[eq(tpch50.orders.o_custkey, tpch50.customer.c_custkey) eq(tpch50.nation.n_nationkey, tpch50.customer.c_nationkey)]
-          ├─TableReader(Build)	root		data:TableFullScan
-          │ └─TableFullScan	cop[tikv]	table:customer	keep order:false
-          └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)]
+        └─HashJoin	root		inner join, equal:[eq(tpch50.customer.c_nationkey, tpch50.nation.n_nationkey)], other cond:or(and(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA")), and(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN")))
+          ├─TableReader(Build)	root		data:Selection
+          │ └─Selection	cop[tikv]		or(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN"))
+          │   └─TableFullScan	cop[tikv]	table:n2	keep order:false
+          └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.orders.o_custkey, tpch50.customer.c_custkey)]
             ├─TableReader(Build)	root		data:TableFullScan
-            │ └─TableFullScan	cop[tikv]	table:orders	keep order:false
-            └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
-              ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
-              │ ├─HashJoin(Build)	root		CARTESIAN inner join, other cond:or(and(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA")), and(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN")))
+            │ └─TableFullScan	cop[tikv]	table:customer	keep order:false
+            └─IndexJoin(Probe)	root		inner join, inner:TableReader, outer key:tpch50.lineitem.l_orderkey, inner key:tpch50.orders.o_orderkey, equal cond:eq(tpch50.lineitem.l_orderkey, tpch50.orders.o_orderkey)
+              ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
+              │ ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
               │ │ ├─TableReader(Build)	root		data:Selection
-              │ │ │ └─Selection	cop[tikv]		or(eq(tpch50.nation.n_name, "INDIA"), eq(tpch50.nation.n_name, "JAPAN"))
-              │ │ │   └─TableFullScan	cop[tikv]	table:n2	keep order:false
-              │ │ └─TableReader(Probe)	root		data:Selection
-              │ │   └─Selection	cop[tikv]		or(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA"))
-              │ │     └─TableFullScan	cop[tikv]	table:n1	keep order:false
-              │ └─TableReader(Probe)	root		data:TableFullScan
-              │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
-              └─TableReader(Probe)	root		data:Selection
-                └─Selection	cop[tikv]		ge(tpch50.lineitem.l_shipdate, 1995-01-01 00:00:00.000000), le(tpch50.lineitem.l_shipdate, 1996-12-31 00:00:00.000000)
-                  └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
+              │ │ │ └─Selection	cop[tikv]		or(eq(tpch50.nation.n_name, "JAPAN"), eq(tpch50.nation.n_name, "INDIA"))
+              │ │ │   └─TableFullScan	cop[tikv]	table:n1	keep order:false
+              │ │ └─TableReader(Probe)	root		data:TableFullScan
+              │ │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
+              │ └─TableReader(Probe)	root		data:Selection
+              │   └─Selection	cop[tikv]		ge(tpch50.lineitem.l_shipdate, 1995-01-01 00:00:00.000000), le(tpch50.lineitem.l_shipdate, 1996-12-31 00:00:00.000000)
+              │     └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
+              └─TableReader(Probe)	root		data:TableRangeScan
+                └─TableRangeScan	cop[tikv]	table:orders	range: decided by [tpch50.lineitem.l_orderkey], keep order:false
 /*
 Q8 National Market Share Query
 This query determines how the market share of a given nation within a given region has changed over two years for
@@ -599,18 +599,18 @@ Sort	root		tpch50.nation.n_name, Column:desc
           └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.lineitem.l_suppkey, tpch50.partsupp.ps_suppkey) eq(tpch50.lineitem.l_partkey, tpch50.partsupp.ps_partkey)]
             ├─TableReader(Build)	root		data:TableFullScan
             │ └─TableFullScan	cop[tikv]	table:partsupp	keep order:false
-            └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey) eq(tpch50.part.p_partkey, tpch50.lineitem.l_partkey)]
-              ├─TableReader(Build)	root		data:TableFullScan
-              │ └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
-              └─HashJoin(Probe)	root		CARTESIAN inner join
+            └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.lineitem.l_partkey, tpch50.part.p_partkey)]
+              ├─TableReader(Build)	root		data:Selection
+              │ └─Selection	cop[tikv]		like(tpch50.part.p_name, "%dim%", 92)
+              │   └─TableFullScan	cop[tikv]	table:part	keep order:false
+              └─HashJoin(Probe)	root		inner join, equal:[eq(tpch50.supplier.s_suppkey, tpch50.lineitem.l_suppkey)]
                 ├─HashJoin(Build)	root		inner join, equal:[eq(tpch50.nation.n_nationkey, tpch50.supplier.s_nationkey)]
                 │ ├─TableReader(Build)	root		data:TableFullScan
                 │ │ └─TableFullScan	cop[tikv]	table:nation	keep order:false
                 │ └─TableReader(Probe)	root		data:TableFullScan
                 │   └─TableFullScan	cop[tikv]	table:supplier	keep order:false
-                └─TableReader(Probe)	root		data:Selection
-                  └─Selection	cop[tikv]		like(tpch50.part.p_name, "%dim%", 92)
-                    └─TableFullScan	cop[tikv]	table:part	keep order:false
+                └─TableReader(Probe)	root		data:TableFullScan
+                  └─TableFullScan	cop[tikv]	table:lineitem	keep order:false
 /*
 Q10 Returned Item Reporting Query
 The query identifies customers who might be having problems with the parts that are shipped to them.
