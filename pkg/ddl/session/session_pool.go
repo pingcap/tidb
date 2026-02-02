@@ -87,6 +87,37 @@ func (sg *Pool) Put(ctx sessionctx.Context) {
 	infosync.DeleteInternalSession(ctx)
 }
 
+// Destroy discards the sessionCtx and returns the pool slot.
+// It is used when the session should not be reused.
+func (sg *Pool) Destroy(ctx sessionctx.Context) {
+	intest.AssertNotNil(ctx)
+	intest.AssertFunc(func() bool {
+		txn, _ := ctx.Txn(false)
+		return txn == nil || !txn.Valid()
+	})
+	ctx.RollbackTxn(context.Background())
+	ctx.GetSessionVars().ClearDiskFullOpt()
+	infosync.DeleteInternalSession(ctx)
+
+	// If the underlying pool supports destroying resources, use it.
+	if p, ok := sg.resPool.(util.DestroyableSessionPool); ok {
+		p.Destroy(ctx.(pools.Resource))
+		return
+	}
+
+	// *pools.ResourcePool requires a Put for every Get. Put(nil) returns the slot
+	// and causes a new resource to be created next time.
+	if p, ok := sg.resPool.(*pools.ResourcePool); ok {
+		ctx.(pools.Resource).Close()
+		p.Put(nil)
+		return
+	}
+
+	// Fallback: avoid leaking the pool slot.
+	ctx.(pools.Resource).Close()
+	sg.resPool.Put(ctx.(pools.Resource))
+}
+
 // Close clean up the Pool.
 func (sg *Pool) Close() {
 	sg.mu.Lock()
