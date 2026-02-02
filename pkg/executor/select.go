@@ -913,6 +913,66 @@ func (e *MaxOneRowExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
+// hasAsOfClauseInResultSet checks if a ResultSetNode (table reference) contains any AS OF clause.
+func hasAsOfClauseInResultSet(node ast.ResultSetNode) bool {
+	if node == nil {
+		return false
+	}
+	switch n := node.(type) {
+	case *ast.TableSource:
+		return hasAsOfClauseInResultSet(n.Source)
+	case *ast.TableName:
+		return n.AsOf != nil
+	case *ast.Join:
+		return hasAsOfClauseInResultSet(n.Left) || hasAsOfClauseInResultSet(n.Right)
+	case *ast.SelectStmt:
+		if n.From != nil && n.From.TableRefs != nil {
+			return hasAsOfClauseInResultSet(n.From.TableRefs)
+		}
+		return false
+	case *ast.SetOprStmt:
+		// Check all select statements in the set operation
+		if n.SelectList != nil {
+			for _, selNode := range n.SelectList.Selects {
+				if selStmt, ok := selNode.(*ast.SelectStmt); ok {
+					if selStmt.From != nil && selStmt.From.TableRefs != nil {
+						if hasAsOfClauseInResultSet(selStmt.From.TableRefs) {
+							return true
+						}
+					}
+				} else if nestedSetOpr, ok := selNode.(*ast.SetOprStmt); ok {
+					// Recursively check nested set operations
+					return hasAsOfClauseInSetOpr(nestedSetOpr)
+				}
+			}
+		}
+		return false
+	default:
+		return false
+	}
+}
+
+// hasAsOfClauseInSetOpr checks if a SetOprStmt contains any AS OF clause.
+func hasAsOfClauseInSetOpr(stmt *ast.SetOprStmt) bool {
+	if stmt == nil || stmt.SelectList == nil {
+		return false
+	}
+	for _, selNode := range stmt.SelectList.Selects {
+		if selStmt, ok := selNode.(*ast.SelectStmt); ok {
+			if selStmt.From != nil && selStmt.From.TableRefs != nil {
+				if hasAsOfClauseInResultSet(selStmt.From.TableRefs) {
+					return true
+				}
+			}
+		} else if nestedSetOpr, ok := selNode.(*ast.SetOprStmt); ok {
+			if hasAsOfClauseInSetOpr(nestedSetOpr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // ResetContextOfStmt resets the StmtContext and session variables.
 // Before every execution, we must clear statement context.
 func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
@@ -1156,6 +1216,14 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.SelectStmt:
 		sc.InSelectStmt = true
 		sc.MemSensitive = true
+		// Check if SELECT ... AS OF TIMESTAMP is used with autocommit = 0
+		// According to Stale Read Product Design, AS OF TIMESTAMP should only be used
+		// in implicit transactions with autocommit = 1.
+		if stmt.From != nil && stmt.From.TableRefs != nil {
+			if hasAsOfClauseInResultSet(stmt.From.TableRefs) && !vars.IsAutocommit() {
+				return exeerrors.ErrWrongUsage.GenWithStackByArgs("SELECT ... AS OF TIMESTAMP", "can only be used in implicit transactions with autocommit = 1")
+			}
+		}
 		// Return warning for truncate error in selection.
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
@@ -1169,6 +1237,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.SetOprStmt:
 		sc.InSelectStmt = true
 		sc.MemSensitive = true
+		// Check if SET operation contains AS OF TIMESTAMP with autocommit = 0
+		if hasAsOfClauseInSetOpr(stmt) && !vars.IsAutocommit() {
+			return exeerrors.ErrWrongUsage.GenWithStackByArgs("SELECT ... AS OF TIMESTAMP", "can only be used in implicit transactions with autocommit = 1")
+		}
 		sc.SetTypeFlags(sc.TypeFlags().
 			WithTruncateAsWarning(true).
 			WithIgnoreZeroInDate(true).
