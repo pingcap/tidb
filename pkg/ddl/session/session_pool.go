@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"go.uber.org/zap"
 )
 
 // Pool is used to new Session.
@@ -113,9 +114,13 @@ func (sg *Pool) Destroy(ctx sessionctx.Context) {
 		return
 	}
 
-	// Fallback: avoid leaking the pool slot.
-	ctx.(pools.Resource).Close()
+	// Fallback: avoid putting a closed resource back.
+	// The underlying pool implementation may return the same resource later.
+	logutil.DDLLogger().Warn("session pool doesn't support Destroy, fall back to Put",
+		zap.String("poolType", fmt.Sprintf("%T", sg.resPool)),
+	)
 	sg.resPool.Put(ctx.(pools.Resource))
+	intest.Assert(false, "unsupported session pool type for Destroy: %T", sg.resPool)
 }
 
 // Close clean up the Pool.

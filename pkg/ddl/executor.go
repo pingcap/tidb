@@ -4317,13 +4317,13 @@ func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 	if err != nil {
 		return err
 	}
-	var restoreErr error
+	var discardErr error
 	defer func() {
-		if restoreErr == nil {
+		if discardErr == nil {
 			sessPool.Put(sctx)
 			return
 		}
-		logutil.DDLLogger().Warn("set tidb_enable_fast_table_check = 'OFF' failed", zap.Error(restoreErr))
+		logutil.DDLLogger().Warn("discard internal session because tidb_enable_fast_table_check change failed", zap.Error(discardErr))
 		sessPool.Destroy(sctx)
 	}()
 	s := sess.NewSession(sctx)
@@ -4332,11 +4332,14 @@ func adminCheckTableBeforeDrop(sessPool *sess.Pool, fullti ast.Ident) error {
 	// so we temporarily enable it in the internal DDL session and restore it afterward.
 	originalFastTableCheck := sctx.GetSessionVars().FastCheckTable
 	if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.On); err != nil {
+		discardErr = err
 		return err
 	}
 	if !originalFastTableCheck {
 		defer func() {
-			restoreErr = sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off)
+			if err := sctx.GetSessionVars().SetSystemVar(vardef.TiDBFastCheckTable, vardef.Off); err != nil {
+				discardErr = err
+			}
 		}()
 	}
 	_, err = s.Execute(internalCtx, "admin check table %n.%n", "admin_check_table_before_drop", fullti.Schema.O, fullti.Name.O)
