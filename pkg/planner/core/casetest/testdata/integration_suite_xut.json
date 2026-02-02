@@ -1,25 +1,5 @@
 [
   {
-    "Name": "TestIssue31240",
-    "Cases": [
-      {
-        "SQL": "explain format = 'plan_tree' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",
-        "Plan": [
-          "HashAgg root  funcs:sum(Column)->Column",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column",
-          "      └─Projection mpp[tiflash]  test.partsupp.ps_supplycost",
-          "        └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
-          "          ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "          │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "          │   └─TableFullScan mpp[tiflash] table:supplier keep order:false, stats:pseudo",
-          "          └─TableFullScan(Probe) mpp[tiflash] table:partsupp keep order:false, stats:pseudo"
-        ]
-      }
-    ]
-  },
-  {
     "Name": "TestVerboseExplain",
     "Cases": [
       {
@@ -183,6 +163,47 @@
           "      └─ExchangeSender_20 3.00 464146.40 mpp[tiflash]  ExchangeType: PassThrough",
           "        └─Selection_19 3.00 464146.40 mpp[tiflash]  not(isnull(test.t1.a))",
           "          └─TableFullScan_18 3.00 464139.20 mpp[tiflash] table:t1 keep order:false"
+        ]
+      },
+      {
+        "SQL": "set @@session.tidb_allow_tiflash_cop=ON",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_allow_mpp=0) */ select count(*) from t31240;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─TableReader root  data:StreamAgg",
+          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
+          "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_isolation_read_engines='tiflash,tidb'), set_var(tidb_allow_mpp=0) */ select count(*) from t31240;",
+        "Plan": [
+          "StreamAgg root  funcs:count(Column)->Column",
+          "└─TableReader root  data:StreamAgg",
+          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
+          "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
+        ]
+      },
+      {
+        "SQL": "set @@session.tidb_allow_tiflash_cop=OFF",
+        "Plan": null
+      },
+      {
+        "SQL": "explain format = 'plan_tree' /*+ set_var(tidb_allow_mpp=1), set_var(tidb_enforce_mpp=1) */ select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",
+        "Plan": [
+          "HashAgg root  funcs:sum(Column)->Column",
+          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
+          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "    └─HashAgg mpp[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column",
+          "      └─Projection mpp[tiflash]  test.partsupp.ps_supplycost",
+          "        └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
+          "          ├─ExchangeReceiver(Build) mpp[tiflash]  ",
+          "          │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "          │   └─TableFullScan mpp[tiflash] table:supplier keep order:false, stats:pseudo",
+          "          └─TableFullScan(Probe) mpp[tiflash] table:partsupp keep order:false, stats:pseudo"
         ]
       }
     ]
@@ -980,26 +1001,6 @@
           "Aggregation can not be pushed to tiflash because arguments of AggFunc `group_concat` contains unsupported exprs in order-by clause",
           "Scalar function 'nulleq'(signature: NullEQString, return type: bigint(1)) is not supported to push down to tiflash now.",
           "Aggregation can not be pushed to tiflash because arguments of AggFunc `group_concat` contains unsupported exprs in order-by clause"
-        ]
-      }
-    ]
-  },
-  {
-    "Name": "TestIssue32632",
-    "Cases": [
-      {
-        "SQL": "explain format = 'plan_tree' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",
-        "Plan": [
-          "HashAgg root  funcs:sum(Column)->Column",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column",
-          "      └─Projection mpp[tiflash]  test.partsupp.ps_supplycost",
-          "        └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
-          "          ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "          │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "          │   └─TableFullScan mpp[tiflash] table:supplier keep order:false, stats:pseudo",
-          "          └─TableFullScan(Probe) mpp[tiflash] table:partsupp keep order:false, stats:pseudo"
         ]
       }
     ]

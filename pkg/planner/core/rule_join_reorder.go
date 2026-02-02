@@ -435,8 +435,15 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(
 	if hintInfo == nil || hintInfo.LeadingList == nil {
 		return false, nil
 	}
+	// Leading hint processing can partially build join trees and consume otherConds.
+	// If the hint is inapplicable, restore original otherConds to avoid losing filters.
+	origOtherConds := slices.Clone(s.otherConds)
 	// Use the unified nested processing for both flat and nested structures
-	return s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
+	ok, remaining := s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
+	if !ok {
+		s.otherConds = origOtherConds
+	}
+	return ok, remaining
 }
 
 // generateNestedLeadingJoinGroup processes both flat and nested LEADING hint structures
