@@ -649,10 +649,12 @@ func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []b
 	}
 	return joinGroup, nil
 }
+
 const (
 	capFactor = 1000.0    // cap = max(absMinCap, capFactor*out)
 	absMinCap = 1_000_000 // hard floor; not a knob
 )
+
 // baseNodeCumCost calculates the cumulative cost of the node in the join group.
 //
 // Heuristic (operator-split):
@@ -695,7 +697,6 @@ func inputRowsOneLevel(p base.LogicalPlan) float64 {
 	}
 	return sum
 }
-
 
 // checkConnection used to check whether two nodes have equal conditions or not.
 func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
