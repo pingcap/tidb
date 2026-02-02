@@ -136,6 +136,13 @@ The following points must be achieved:
 2. Existing tests should be reused as much as possible, and existing test data and table structures should be utilized. Modifications should be made on this basis to accommodate the new tests.
 3. Some tests use the JSON files in `testdata` as the test set (`xxxx_in.json`) and the validation set (`xxxx_out.json` and `xxxx_xut.json`). It is necessary to modify the test set before running the unit test.
 
+#### Regression tests for bug fixes
+
+- A bug fix should include a regression test that reproduces the issue.
+- Verify the new/updated test fails on the buggy code (before the fix), and passes after the fix.
+  - Example approaches: run the test on `upstream/master` (or the target base commit) before applying the fix, or temporarily revert the fix and confirm the test fails.
+- Include the exact test command in the PR description under `Tests` (for example: `go test -run TestXxx --tags=intest ./pkg/...`).
+
 ### Integration Tests
 
 Integration tests are located in the `/tests/integrationtest` directory.
@@ -248,6 +255,17 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 - **Atomicity**: Use `atomic` variables to track logic in concurrent tests.
 - **Environment check**: Check for running playground processes before starting.
 - **Fmt-only changes**: If PR only involves code formatting (gofmt, indentation), do NOT run time-consuming `realtikvtest`. Just ensure local compilation passes.
+
+## Issue Instructions
+
+- When submitting an issue, follow the GitHub templates under `.github/ISSUE_TEMPLATE/` and fill in all required fields.
+- Bug reports should include minimal reproduction steps, expected/actual behavior, and the TiDB version (for example: the output of `SELECT tidb_version()`).
+- Search existing issues/PRs first to avoid duplicates (try `gh` first; for example: `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), and include any relevant logs/configuration/SQL plans to help diagnosis.
+- Apply labels to help triage:
+  - `type/*` is usually applied by the issue template; add `type/regression` when applicable.
+  - Add at least one `component/*` label (for example: `component/ddl`, `component/br`, `component/parser`).
+  - For bug/regression issues, `severity/*` and affected-version label(s) are required (for example: `affects-8.5`; use `may-affects-*` if unsure).
+  - If you don't have permission to add labels, include a `Suggested labels: ...` line in the issue body.
 
 ## Pull Request Instructions
 
