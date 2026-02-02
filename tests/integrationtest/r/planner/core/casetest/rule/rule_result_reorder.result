@@ -315,7 +315,7 @@ explain format='plan_tree' select sum(b) over(partition by a) as sum_b from t1;
 id	task	access object	operator info
 Projection	root		Column
 └─Sort	root		planner__core__casetest__rule__rule_result_reorder.t1.b, planner__core__casetest__rule__rule_result_reorder.t1.a, Column
-  └─Window	root		sum(cast(planner__core__casetest__rule__rule_result_reorder.t1.b, decimal(10,0) BINARY))->Column#6 over(partition by planner__core__casetest__rule__rule_result_reorder.t1.a)
+  └─Window	root		sum(cast(planner__core__casetest__rule__rule_result_reorder.t1.b, decimal(10,0) BINARY))->Column#7 over(partition by planner__core__casetest__rule__rule_result_reorder.t1.a)
     └─TableReader	root		data:TableFullScan
       └─TableFullScan	cop[tikv]	table:t1	keep order:true, stats:pseudo
 explain format='plan_tree' select min(a), max(b), sum(c) from t1 group by d;
