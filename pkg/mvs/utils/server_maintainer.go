@@ -23,7 +23,7 @@ import (
 
 type ServerConsistentHash struct {
 	servers map[string]*infosync.ServerInfo
-	chash   ConsistentHash // use consistent hash to reduce task movement when nodes change
+	chash   ConsistentHash // use consistent hash to reduce task movements after nodes changed
 	mu      sync.RWMutex
 	id      string // current server id
 }
@@ -80,49 +80,14 @@ func (sch *ServerConsistentHash) Refresh(ctx context.Context) error {
 	return nil
 }
 
-func (sch *ServerConsistentHash) CanExecuteTask(taskID string) bool {
-	return sch.GetTaskExecNode(taskID) == sch.id
-}
-
-func (sch *ServerConsistentHash) GetTaskExecNode(taskID string) string {
+func (sch *ServerConsistentHash) ToServerID(key string) string {
 	sch.mu.RLock()
 	defer sch.mu.RUnlock()
-	return sch.chash.GetNode(taskID)
+	return sch.chash.GetNode(key)
 }
 
-/*
-create table task_locks (
-	task_id varchar(128) primary key,
-	holder_id varchar(128) not null,
-	updated_at timestamp not null default current_timestamp on update current_timestamp
-) engine=InnoDB
-*/
-
-func (sch *ServerConsistentHash) AcquireTaskLock(taskID string) bool {
-	sql := ""
-	return true
-}
-
-func (sch *ServerConsistentHash) GetTaskHolder(taskID string) string {
-	return "?"
-}
-
-func (sch *ServerConsistentHash) ExecuteTask(taskID string) bool {
-	return true
-}
-
-func (sch *ServerConsistentHash) TryExecuteTask(taskID string) bool {
-	if !sch.CanExecuteTask(taskID) {
-		return false
-	}
-	if !sch.AcquireTaskLock(taskID) {
-		holder := sch.GetTaskHolder(taskID)
-		if sch.servers[holder] == nil {
-			logutil.BgLogger().Info("task holder is not available, try to execute the task",
-				zap.String("task-id", taskID),
-				zap.String("holder", holder))
-			
-		}
-	}
-	return sch.ExecuteTask(taskID)
+func (sch *ServerConsistentHash) Available(key string) bool {
+	sch.mu.RLock()
+	defer sch.mu.RUnlock()
+	return sch.chash.GetNode(key) == sch.id
 }
