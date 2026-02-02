@@ -7,13 +7,18 @@ go_library(
         "rule_build_key_info.go",
         "rule_constant_propagation.go",
         "rule_init.go",
+        "rule_prune_indexes.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/planner/core/rule",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
+        "//pkg/meta/model",
         "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/core/rule/util",
+        "//pkg/planner/util",
+        "//pkg/planner/util/fixcontrol",
         "//pkg/planner/util/optimizetrace",
     ],
 )

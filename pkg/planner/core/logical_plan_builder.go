@@ -507,7 +507,7 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 		alias = &h.HintedTable{DBName: ds.DBName, TblName: ds.TableInfo.Name, SelectOffset: ds.QueryBlockOffset()}
 	}
 	if hintTbl := hintInfo.IfPreferTiKV(alias); hintTbl != nil {
-		for _, path := range ds.PossibleAccessPaths {
+		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiKV {
 				ds.PreferStoreType |= h.PreferTiKV
 				ds.PreferPartitions[h.PreferTiKV] = hintTbl.Partitions
@@ -533,7 +533,7 @@ func setPreferredStoreType(ds *logicalop.DataSource, hintInfo *h.PlanHints) {
 			ds.PreferStoreType = 0
 			return
 		}
-		for _, path := range ds.PossibleAccessPaths {
+		for _, path := range ds.AllPossibleAccessPaths {
 			if path.StoreType == kv.TiFlash {
 				ds.PreferStoreType |= h.PreferTiFlash
 				ds.PreferPartitions[h.PreferTiFlash] = hintTbl.Partitions
@@ -4638,22 +4638,27 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			}
 		}
 	}
+	allPaths := make([]*util.AccessPath, len(possiblePaths))
+	copy(allPaths, possiblePaths)
+
+	countCnt := len(columns) + 1 // +1 for an extra handle column
 	ds := logicalop.DataSource{
-		DBName:              dbName,
-		TableAsName:         asName,
-		Table:               tbl,
-		TableInfo:           tableInfo,
-		PhysicalTableID:     tableInfo.ID,
-		AstIndexHints:       tn.IndexHints,
-		IndexHints:          b.TableHints().IndexHintList,
-		IndexMergeHints:     indexMergeHints,
-		PossibleAccessPaths: possiblePaths,
-		Columns:             make([]*model.ColumnInfo, 0, len(columns)),
-		PartitionNames:      tn.PartitionNames,
-		TblCols:             make([]*expression.Column, 0, len(columns)),
-		PreferPartitions:    make(map[int][]pmodel.CIStr),
-		IS:                  b.is,
-		IsForUpdateRead:     b.isForUpdateRead,
+		DBName:                 dbName,
+		TableAsName:            asName,
+		Table:                  tbl,
+		TableInfo:              tableInfo,
+		PhysicalTableID:        tableInfo.ID,
+		AstIndexHints:          tn.IndexHints,
+		IndexHints:             b.TableHints().IndexHintList,
+		IndexMergeHints:        indexMergeHints,
+		PossibleAccessPaths:    possiblePaths,
+		AllPossibleAccessPaths: allPaths,
+		Columns:                make([]*model.ColumnInfo, 0, countCnt),
+		PartitionNames:         tn.PartitionNames,
+		TblCols:                make([]*expression.Column, 0, countCnt),
+		PreferPartitions:       make(map[int][]pmodel.CIStr),
+		IS:                     b.is,
+		IsForUpdateRead:        b.isForUpdateRead,
 	}.Init(b.ctx, b.getSelectOffset())
 	var handleCols util.HandleCols
 	schema := expression.NewSchema(make([]*expression.Column, 0, len(columns))...)
@@ -4709,6 +4714,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	b.handleHelper.pushMap(handleMap)
 	ds.SetSchema(schema)
 	ds.SetOutputNames(names)
+	// setPreferredStoreType will mark user preferred path, which should be shared by all ds alternative. Here
+	// we only mark it for the AllPossibleAccessPaths(since the element inside is shared by PossibleAccessPaths),
+	// and the following ds alternative will clone/inherit this mark from DS copying.
 	setPreferredStoreType(ds, b.TableHints())
 	ds.SampleInfo = tablesampler.NewTableSampleInfo(tn.TableSample, schema, b.partitionedTable)
 	b.isSampling = ds.SampleInfo != nil
@@ -4735,7 +4743,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
-	for _, path := range ds.PossibleAccessPaths {
+	for _, path := range ds.AllPossibleAccessPaths {
 		if !path.IsIntHandlePath {
 			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 

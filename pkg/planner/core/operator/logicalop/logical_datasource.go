@@ -71,8 +71,15 @@ type DataSource struct {
 	StatisticTable *statistics.Table
 	TableStats     *property.StatsInfo
 
-	// PossibleAccessPaths stores all the possible access path for physical plan, including table scan.
+	// PossibleAccessPaths stores all the possible access path for one specific logical alternative.
+	// because different logical alternative may have different filter condition, so the possible access path may be different.
+	// like:
+	// * special rule XForm will gen additional selection which will be push down to a ds alternative.
+	// * correlate rule XForm will gen additional correlated condition which will be push down to a ds alternative.
+	// No matter whether the newly generated ds is always good or not, we should both derive the stats from the conditions we so far.
 	PossibleAccessPaths []*util.AccessPath
+	// AllPossibleAccessPaths stores all the possible access paths before pruning.
+	AllPossibleAccessPaths []*util.AccessPath
 
 	// The data source may be a partition, rather than a real table.
 	PartitionDefIdx *int
@@ -116,6 +123,14 @@ type DataSource struct {
 	// It's calculated after we generated the access paths and estimated row count for them, and before entering findBestTask.
 	// It considers CountAfterIndex for index paths and CountAfterAccess for table paths and index merge paths.
 	AccessPathMinSelectivity float64
+
+	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
+	AskedColumnGroup [][]*expression.Column
+
+	// InterestingColumns stores columns from this DataSource that are used in the query.
+	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
+	// index pruning early in the planning phase - which is an approximate heuristic.
+	InterestingColumns []*expression.Column
 }
 
 // Init initializes DataSource.
@@ -370,9 +385,8 @@ func (ds *DataSource) DeriveStats(_ []*property.StatsInfo, _ *expression.Schema,
 
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*expression.Column) [][]*expression.Column {
-	result := make([][]*expression.Column, 0, len(ds.PossibleAccessPaths))
-
-	for _, path := range ds.PossibleAccessPaths {
+	result := make([][]*expression.Column, 0, len(ds.AllPossibleAccessPaths))
+	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsIntHandlePath {
 			col := ds.GetPKIsHandleCol()
 			if col != nil {
@@ -392,6 +406,11 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...[][]*
 		}
 	}
 	return result
+}
+
+// IsSingleScan checks whether the access path can be a single scan.
+func (ds *DataSource) IsSingleScan(cols []*expression.Column, colLens []int) bool {
+	return utilfuncp.IsSingleScan(ds, cols, colLens)
 }
 
 // ExhaustPhysicalPlans inherits BaseLogicalPlan.LogicalPlan.<14th> implementation.

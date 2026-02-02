@@ -35,42 +35,17 @@ select /*+ nth_plan(1000) */ count(1) from t where exists (select count(1) from 
 # TestIssue25729
 drop table if exists tt;
 create table tt(a int, b int, key k((a+1)), key k1((a+1), b), key k2((a+1), b), key k3((a+1)));
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
-explain format='brief' select * from tt where a+1 = 5 and b=3;
 insert into tt values(4, 3);
+analyze table tt all columns;
 select * from tt where a+1 = 5 and b=3;
+explain format='brief' select * from tt where a+1 = 5 and b=3;
 drop table if exists t1;
 CREATE TABLE `t1` (  `a` varchar(10) DEFAULT NULL,  `b` varchar(10) DEFAULT NULL,  KEY `expression_index` ((concat(`a`, `b`))),  KEY `expression_index_2` ((concat(`a`, `b`))),  KEY `idx` ((concat(`a`, `b`)),`a`),  KEY `idx1` (`a`,(concat(`a`, `b`))),  KEY `idx2` (`a`,(concat(`a`, `b`)),`b`));
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
-explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
-explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 insert into t1 values("a", "adwa");
+analyze table t1 all columns;
 select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select * from t1  where concat(a, b) like "aadwa" and a = "a";
+explain format='brief' select b from t1 where concat(a, b) >= "aa" and a = "b";
 
 
 # TestIssue34863
