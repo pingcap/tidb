@@ -268,11 +268,11 @@ type joinOrderDP struct {
 	JoinOrder
 }
 
-func newJoinOrderDP(ctx base.PlanContext, group *joinGroup) *joinOrderDP {
+func newJoinOrderDP(_ base.PlanContext, _ *joinGroup) *joinOrderDP {
 	panic("not implement yet")
 }
 
-func (j *joinOrderDP) optimize() (base.LogicalPlan, error) {
+func (*joinOrderDP) optimize() (base.LogicalPlan, error) {
 	panic("not implement yet")
 }
 
@@ -399,6 +399,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		return nil, err
 	}
 	if !detector.CheckAllEdgesUsed(usedEdges) {
+		// gjt todo add log
 		return group.root, nil
 	}
 	if len(nodes) <= 0 {
@@ -444,6 +445,7 @@ func connectSubgraphGreedy(detector *ConflictDetector, nodes []*Node, vertexHint
 	return nodes, nil
 }
 
+// gjt todo add example
 func tryApplyAllRemainingEdges(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*vertexJoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, map[uint64]struct{}, error) {
 	usedEdges := collectUsedEdges(nodes)
 	// If all edges are used, return directly.

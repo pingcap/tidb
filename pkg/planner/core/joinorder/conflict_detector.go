@@ -4,7 +4,6 @@ import (
 	"maps"
 
 	"github.com/pingcap/errors"
-
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
@@ -58,6 +57,7 @@ func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *Che
 }
 
 // BitSet is a simple bitset implementation using uint64.
+// gjt todo use FastIntSet in fast_int_set.go
 type BitSet uint64
 
 func newBitSet(idx int64) BitSet {
@@ -342,28 +342,21 @@ func assoc(e1, e2 *edge) bool {
 	j1 := joinTypeConvertTable[e1.joinType]
 	j2 := joinTypeConvertTable[e2.joinType]
 	// gjt todo handle null-rejective
-	if assocRuleTable[j1][j2] == 0 {
-		return false
-	}
-	return true
+	return assocRuleTable[j1][j2] == 1
 }
 
 func leftAsscom(e1, e2 *edge) bool {
 	j1 := joinTypeConvertTable[e1.joinType]
 	j2 := joinTypeConvertTable[e2.joinType]
-	if leftAsscomRuleTable[j1][j2] == 0 {
-		return false
-	}
-	return true
+	// gjt todo handle null-rejective
+	return leftAsscomRuleTable[j1][j2] == 1
 }
 
 func rightAsscom(e1, e2 *edge) bool {
 	j1 := joinTypeConvertTable[e1.joinType]
 	j2 := joinTypeConvertTable[e2.joinType]
-	if rightAsscomRuleTable[j1][j2] == 0 {
-		return false
-	}
-	return true
+	// gjt todo handle null-rejective
+	return rightAsscomRuleTable[j1][j2] == 1
 }
 
 // CheckConnectionResult contains the result of checking connection between two nodes.
