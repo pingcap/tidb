@@ -1483,16 +1483,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
+	// it's possible that all these path are inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
 			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
 
