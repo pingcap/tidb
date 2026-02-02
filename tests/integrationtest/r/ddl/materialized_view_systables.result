@@ -41,6 +41,20 @@ refresh materialized view mv1;
 Error 8200 (HY000): REFRESH MATERIALIZED VIEW is not supported
 delete from mysql.tidb_mview_refresh_hist where mview_id='mvid1';
 delete from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1';
+delete from mysql.tidb_mviews where mview_id='mvid1';
+delete from mysql.tidb_mlogs where mlog_id='mlogid1';
+insert into mysql.tidb_mviews
+(table_catalog, table_schema, mview_id, mview_name, mview_owner, mview_definition, mview_modify_time)
+values
+('def', 'ddl__materialized_view_systables', 'mvid1', 'mvx', 'root', 'select 1', '2026-01-01 00:00:00');
+insert into mysql.tidb_mlogs
+(table_catalog, table_schema, mlog_id, mlog_name, mlog_owner, mlog_columns,
+base_table_catalog, base_table_schema, base_table_id, base_table_name,
+purge_method, purge_start, purge_interval, last_purge_time, last_purge_rows, last_purge_duration)
+values
+('def', 'ddl__materialized_view_systables', 'mlogid1', 'mlogx', 'root', 'a,b',
+'def', 'ddl__materialized_view_systables', 'base_table_id_x', 't',
+'IMMEDIATE', '2026-01-01 00:00:00', 0, '2026-01-01 00:00:00', 0, 0);
 insert into mysql.tidb_mview_refresh_hist
 (mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
 values
@@ -62,4 +76,6 @@ mlog_id	mlog_name	purge_job_id	is_newest_purge	purge_method	purge_time	purge_end
 mlogid1	mlogx	456	YES	IMMEDIATE	NULL	2026-01-01 00:00:00	0	NULL
 delete from mysql.tidb_mview_refresh_hist where mview_id='mvid1';
 delete from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1';
+delete from mysql.tidb_mviews where mview_id='mvid1';
+delete from mysql.tidb_mlogs where mlog_id='mlogid1';
 drop materialized view mv1;
