@@ -689,6 +689,7 @@ var Keywords = []KeywordsType{
 	{"STATISTICS", false, "tidb"},
 	{"STATS", false, "tidb"},
 	{"STATS_BUCKETS", false, "tidb"},
+	{"STATS_DELTA", false, "tidb"},
 	{"STATS_EXTENDED", false, "tidb"},
 	{"STATS_HEALTHY", false, "tidb"},
 	{"STATS_HISTOGRAMS", false, "tidb"},

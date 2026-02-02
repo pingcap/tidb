@@ -1,5 +1,10 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
+exports_files(
+    ["plan_clone_utils.go"],
+    visibility = ["//pkg/planner/core/casetest/plancache:__pkg__"],
+)
+
 go_library(
     name = "core",
     srcs = [
@@ -202,7 +207,6 @@ go_test(
     name = "core_test",
     timeout = "short",
     srcs = [
-        "binary_plan_test.go",
         "cbo_test.go",
         "common_plans_test.go",
         "enforce_mpp_test.go",
@@ -210,10 +214,6 @@ go_test(
         "expression_test.go",
         "find_best_task_test.go",
         "hint_test.go",
-        "indexmerge_intersection_test.go",
-        "indexmerge_path_test.go",
-        "indexmerge_test.go",
-        "integration_partition_test.go",
         "integration_test.go",
         "lateral_join_test.go",
         "logical_plans_test.go",
@@ -222,11 +222,6 @@ go_test(
         "physical_plan_test.go",
         "plan_cache_instance_test.go",
         "plan_cache_lru_test.go",
-        "plan_cache_param_test.go",
-        "plan_cache_partition_table_test.go",
-        "plan_cache_rebuild_test.go",
-        "plan_cache_test.go",
-        "plan_cacheable_checker_test.go",
         "plan_cost_ver1_test.go",
         "plan_cost_ver2_test.go",
         "plan_replayer_capture_test.go",
@@ -256,7 +251,6 @@ go_test(
         "//pkg/config",
         "//pkg/config/kerneltype",
         "//pkg/domain",
-        "//pkg/domain/infosync",
         "//pkg/executor/join/joinversion",
         "//pkg/expression",
         "//pkg/expression/aggregation",
@@ -303,9 +297,7 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/testkit/testutil",
         "//pkg/types",
-        "//pkg/types/parser_driver",
         "//pkg/util",
-        "//pkg/util/benchdaily",
         "//pkg/util/chunk",
         "//pkg/util/collate",
         "//pkg/util/context",
@@ -316,9 +308,7 @@ go_test(
         "//pkg/util/mock",
         "//pkg/util/plancodec",
         "//pkg/util/ranger",
-        "//pkg/util/stmtsummary",
         "@com_github_docker_go_units//:go-units",
-        "@com_github_golang_snappy//:snappy",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",

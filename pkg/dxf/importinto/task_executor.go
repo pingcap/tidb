@@ -258,6 +258,15 @@ func (s *importStepExecutor) RunSubtask(ctx context.Context, subtask *proto.Subt
 		indexKVFileCount: &indexKVFiles,
 	}
 	s.sharedVars.Store(subtaskMeta.ID, sharedVars)
+	defer func() {
+		s.sharedVars.Delete(subtaskMeta.ID)
+		if err == nil || !s.tableImporter.IsLocalSort() {
+			return
+		}
+		if cleanupErr := s.tableImporter.Backend().CleanupAllLocalEngines(context.Background()); cleanupErr != nil {
+			logger.Warn("cleanup engines failed", zap.Error(cleanupErr))
+		}
+	}()
 
 	wctx := workerpool.NewContext(ctx)
 	tasks := make([]*importStepMinimalTask, 0, len(subtaskMeta.Chunks))
@@ -358,7 +367,6 @@ func (s *importStepExecutor) onFinished(ctx context.Context, subtask *proto.Subt
 		}
 	}
 
-	s.sharedVars.Delete(subtaskMeta.ID)
 	newMeta, err := subtaskMeta.Marshal()
 	if err != nil {
 		return errors.Trace(err)

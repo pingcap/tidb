@@ -281,7 +281,7 @@ group_key	val
 EXPLAIN FORMAT='BRIEF' SELECT group_key, ANY_VALUE(val) as val FROM final_test_v2 GROUP BY group_key HAVING val = 100 ORDER BY group_key;
 id	estRows	task	access object	operator info
 Sort	1.60	root		planner__core__casetest__pushdown__push_down.final_test_v2.group_key
-└─Projection	1.60	root		planner__core__casetest__pushdown__push_down.final_test_v2.group_key, any_value(planner__core__casetest__pushdown__push_down.final_test_v2.val)->Column#4
+└─Projection	1.60	root		planner__core__casetest__pushdown__push_down.final_test_v2.group_key, any_value(planner__core__casetest__pushdown__push_down.final_test_v2.val)->Column#5
   └─HashAgg	1.60	root		group by:planner__core__casetest__pushdown__push_down.final_test_v2.group_key, funcs:firstrow(planner__core__casetest__pushdown__push_down.final_test_v2.val)->planner__core__casetest__pushdown__push_down.final_test_v2.val, funcs:firstrow(planner__core__casetest__pushdown__push_down.final_test_v2.group_key)->planner__core__casetest__pushdown__push_down.final_test_v2.group_key
     └─Selection	3.20	root		eq(any_value(planner__core__casetest__pushdown__push_down.final_test_v2.val), 100)
       └─TableReader	4.00	root		data:TableFullScan

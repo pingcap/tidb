@@ -22,7 +22,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -69,11 +69,12 @@ type WalkOption struct {
 	// ListCount is the number of entries per page.
 	//
 	// In cloud storages such as S3 and GCS, the files listed and sent in pages.
-	// Typically a page contains 1000 files, and if a folder has 3000 descendant
+	// Typically, a page contains 1000 files, and if a folder has 3000 descendant
 	// files, one would need 3 requests to retrieve all of them. This parameter
-	// controls this size. Note that both S3 and GCS limits the maximum to 1000.
+	// controls this size. Note that both S3, GCS and OSS limits the maximum to
+	// 1000.
 	//
-	// Typically you want to leave this field unassigned (zero) to use the
+	// Typically, you want to leave this field unassigned (zero) to use the
 	// default value (1000) to minimize the number of requests, unless you want
 	// to reduce the possibility of timeout on an extremely slow connection, or
 	// perform testing.
@@ -86,6 +87,9 @@ type WalkOption struct {
 	//
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
+	// StartAfter is the key to start after. If not empty, the walk will start
+	// after the key. Currently only S3-like storage supports this option.
+	StartAfter string
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
@@ -190,7 +194,7 @@ type Options struct {
 
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
-	S3Retryer retry.Standard
+	S3Retryer aws.Retryer
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.
