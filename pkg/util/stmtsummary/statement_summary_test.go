@@ -22,6 +22,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1159,6 +1160,16 @@ func TestMaxSQLLength(t *testing.T) {
 	require.Equal(t, 10, ssMap.maxSQLLength())
 	require.Nil(t, ssMap.SetMaxSQLLength(32768))
 	require.Equal(t, 32768, ssMap.maxSQLLength())
+}
+
+func TestFormatSQLClone(t *testing.T) {
+	base := strings.Repeat("x", 1024)
+	sub := base[100:200]
+
+	formatted := formatSQL(sub)
+
+	require.Equal(t, sub, formatted)
+	require.NotEqual(t, unsafe.StringData(sub), unsafe.StringData(formatted))
 }
 
 // Test AddStatement and SetMaxStmtCount parallel.
