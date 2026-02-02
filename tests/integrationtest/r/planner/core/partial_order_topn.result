@@ -129,13 +129,21 @@ TopN	5.00	root		planner__core__partial_order_topn.t_text.content, offset:0, coun
   ├─Limit(Build)	5.00	cop[tikv]		offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_text.content, prefix_len:20
   │ └─IndexFullScan	10000.00	cop[tikv]	table:t_text, index:idx_content_prefix(content)	keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t_text	keep order:false, stats:pseudo
-explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where name like 'ap%' order by name limit 5;
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where id=1 order by name limit 5;
+id	estRows	task	access object	operator info
+TopN	1.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
+└─IndexLookUp	1.00	root		
+  ├─Limit(Build)	1.00	cop[tikv]		offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
+  │ └─Selection	1.00	cop[tikv]		eq(planner__core__partial_order_topn.t_varchar.id, 1)
+  │   └─IndexFullScan	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where left(name, 2) = 'ap' order by name limit 5;
 id	estRows	task	access object	operator info
 TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10
-└─IndexLookUp	250.00	root		
-  ├─IndexRangeScan(Build)	250.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	range:["ap","aq"), keep order:true, stats:pseudo
-  └─Selection(Probe)	250.00	cop[tikv]		like(planner__core__partial_order_topn.t_varchar.name, "ap%", 92)
-    └─TableRowIDScan	250.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
+└─Selection	8000.00	root		eq(left(planner__core__partial_order_topn.t_varchar.name, 2), "ap")
+  └─IndexLookUp	10000.00	root		
+    ├─IndexFullScan(Build)	10000.00	cop[tikv]	table:t_varchar, index:idx_name_prefix(name)	keep order:true, stats:pseudo
+    └─TableRowIDScan(Probe)	10000.00	cop[tikv]	table:t_varchar	keep order:false, stats:pseudo
 explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where data = 'fruit' order by name limit 5;
 id	estRows	task	access object	operator info
 TopN	5.00	root		planner__core__partial_order_topn.t_varchar.name, offset:0, count:5, prefix_col:planner__core__partial_order_topn.t_varchar.name, prefix_len:10

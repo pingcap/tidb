@@ -127,7 +127,7 @@ explain format='brief' select * from t_multi_col where a = 1 order by b limit 5;
 # Section 3: Session Variable COST (optimization enabled)
 # To ensure the test results are stable (rather than based on data volume),
 # the planner testing will currently use a combination of Session Variable and Hint "use index".
-# To do: After completing the dynamic selection of the optimal plan based on the cost model,
+# TODO: After completing the dynamic selection of the optimal plan based on the cost model,
 # we will add testing for the cost model.
 # ==========================================
 
@@ -154,7 +154,10 @@ explain format='brief' select /*+ use_index(t_text, idx_content_prefix) */ * fro
 # ==========================================
 
 # Selection can be push down to Index Scan side
-explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where name like 'ap%' order by name limit 5;
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where id=1 order by name limit 5;
+
+# Selection keep in TiDB side
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where left(name, 2) = 'ap' order by name limit 5;
 
 # Selection with equality condition
 explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where data = 'fruit' order by name limit 5;
