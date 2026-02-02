@@ -39,7 +39,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
 	sess "github.com/pingcap/tidb/pkg/ddl/session"
 	"github.com/pingcap/tidb/pkg/ddl/systable"
 	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
@@ -81,7 +80,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/backoff"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/intest"
@@ -90,16 +88,12 @@ import (
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	tipb "github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pdHttp "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
@@ -1671,7 +1665,15 @@ func (w *worker) onCreateFulltextIndex(jobCtx *jobContext, job *model.Job) (ver 
 			if err != nil {
 				return ver, errors.Trace(err)
 			}
-			err = w.createFullTextIndexOnTiCI(jobCtx, job, tbl, indexInfo)
+			parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
+			if err != nil {
+				if !isRetryableJobError(err, job.ErrorCount) {
+					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
+				}
+				return ver, errors.Trace(err)
+			}
+
+			err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, parserInfo)
 			if err != nil {
 				if !isRetryableJobError(err, job.ErrorCount) {
 					return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
@@ -1815,7 +1817,7 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 			// so job.SnapshotVer will be captured and propagated
 			// through dist-task metadata.
 			if !job.ReorgMeta.TiCIIndexCreated {
-				err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName)
+				err = tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, nil)
 				if err != nil {
 					if !isRetryableJobError(err, job.ErrorCount) {
 						return convertAddIdxJob2RollbackJob(jobCtx, job, tbl.Meta(), []*model.IndexInfo{indexInfo}, err)
@@ -1983,7 +1985,11 @@ func (w *worker) onCreateColumnarIndex(jobCtx *jobContext, job *model.Job) (ver 
 				return ver, errors.Trace(err)
 			}
 			if indexInfo.FullTextInfo != nil {
-				if err := w.createFullTextIndexOnTiCI(jobCtx, job, tbl, indexInfo); err != nil {
+				parserInfo, err := w.buildTiCIFulltextParserInfo(jobCtx, job, indexInfo)
+				if err != nil {
+					return ver, errors.Trace(err)
+				}
+				if err := tici.CreateFulltextIndex(jobCtx.stepCtx, jobCtx.store, tblInfo, indexInfo, job.SchemaName, parserInfo); err != nil {
 					return ver, errors.Trace(err)
 				}
 			}
@@ -2135,112 +2141,7 @@ const (
 	maxFullTextStopwordBytes = 1 << 20 // 1MiB
 )
 
-var mockTiCICreateIndexRequest atomic.Value // stores []byte of tipb.CreateIndexRequest for tests.
-
-func (w *worker) createFullTextIndexOnTiCI(jobCtx *jobContext, job *model.Job, tbl table.Table, indexInfo *model.IndexInfo) error {
-	req, err := w.buildTiCICreateIndexRequestForFullText(jobCtx, job, tbl, indexInfo)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	failpoint.Inject("MockTiCICreateIndexRequest", func(val failpoint.Value) {
-		v, ok := val.(int)
-		if ok {
-			data, err := req.Marshal()
-			if err != nil {
-				failpoint.Return(errors.Trace(err))
-			}
-			switch v {
-			case 1:
-				mockTiCICreateIndexRequest.Store(data)
-				failpoint.Return(nil)
-			case 2:
-				// Return the request bytes for black-box tests (decode from hex in test code).
-				failpoint.Return(errors.Errorf("mock tici create index request: %s", hex.EncodeToString(data)))
-			}
-		}
-	})
-
-	// Unit tests often run with a mock TiFlash (HTTP) server only; skip real TiCI RPC in that case.
-	if infosync.GetMockTiFlash() != nil {
-		return nil
-	}
-
-	addrs, err := w.getTiFlashWriteNodeAddresses(jobCtx.store)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(addrs) == 0 {
-		return errors.New("no TiFlash write nodes found for TiCI CreateIndex")
-	}
-
-	for _, addr := range addrs {
-		if err := w.sendTiCICreateIndexRequest(jobCtx.stepCtx, addr, req); err != nil {
-			return errors.Trace(err)
-		}
-	}
-	return nil
-}
-
-func (w *worker) getTiFlashWriteNodeAddresses(store kv.Storage) ([]string, error) {
-	servers, err := infoschema.GetStoreServerInfo(store)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	tiflashWriteAddrs := make([]string, 0, len(servers))
-	tiflashAllAddrs := make([]string, 0, len(servers))
-	for _, srv := range servers {
-		if srv.ServerType != kv.TiFlash.Name() {
-			continue
-		}
-		tiflashAllAddrs = append(tiflashAllAddrs, srv.Address)
-		if srv.EngineRole == placement.EngineRoleLabelWrite {
-			tiflashWriteAddrs = append(tiflashWriteAddrs, srv.Address)
-		}
-	}
-	if len(tiflashWriteAddrs) > 0 {
-		return tiflashWriteAddrs, nil
-	}
-	return tiflashAllAddrs, nil
-}
-
-func (w *worker) sendTiCICreateIndexRequest(ctx context.Context, addr string, req *tipb.CreateIndexRequest) error {
-	dialOpt := grpc.WithTransportCredentials(insecure.NewCredentials())
-	security := config.GetGlobalConfig().Security
-	if len(security.ClusterSSLCA) != 0 {
-		clusterSecurity := security.ClusterSecurity()
-		tlsConfig, err := clusterSecurity.ToTLSConfig()
-		if err != nil {
-			return errors.Trace(err)
-		}
-		dialOpt = grpc.WithTransportCredentials(credentials.NewTLS(tlsConfig))
-	}
-
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	conn, err := grpc.NewClient(addr, dialOpt)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	defer func() {
-		if err := conn.Close(); err != nil {
-			logutil.DDLLogger().Warn("close TiCI grpc connection failed", zap.String("addr", addr), zap.Error(err))
-		}
-	}()
-
-	cli := tipb.NewIndexerServiceClient(conn)
-	resp, err := cli.CreateIndex(ctx, req)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if resp.GetStatus() != 0 {
-		return errors.New(resp.GetErrorMessage())
-	}
-	return nil
-}
-
-func (w *worker) buildTiCICreateIndexRequestForFullText(jobCtx *jobContext, job *model.Job, tbl table.Table, indexInfo *model.IndexInfo) (*tipb.CreateIndexRequest, error) {
+func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job, indexInfo *model.IndexInfo) (*tici.ParserInfo, error) {
 	getJobSysVar := func(name, fallback string) string {
 		if val, ok := job.GetSystemVars(name); ok {
 			return val
@@ -2248,17 +2149,21 @@ func (w *worker) buildTiCICreateIndexRequestForFullText(jobCtx *jobContext, job 
 		return fallback
 	}
 
-	parserType := tipb.ParserType_UNKNOWN_PARSER
-	parserParams := make(map[string]string)
+	if indexInfo == nil || indexInfo.FullTextInfo == nil {
+		return nil, errors.New("missing fulltext info")
+	}
+
+	parserType := tici.ParserType_UNKNOWN_PARSER
+	parserParams := make(map[string]string, 8)
 	switch indexInfo.FullTextInfo.ParserType {
 	case model.FullTextParserTypeStandardV1:
-		parserType = tipb.ParserType_DEFAULT_PARSER
+		parserType = tici.ParserType_DEFAULT_PARSER
 		parserParams["parser_name"] = "standard"
 		parserParams[vardef.InnodbFtMinTokenSize] = getJobSysVar(vardef.InnodbFtMinTokenSize, "3")
 		parserParams[vardef.InnodbFtMaxTokenSize] = getJobSysVar(vardef.InnodbFtMaxTokenSize, "84")
 	case model.FullTextParserTypeMultilingualV1, model.FullTextParserTypeNgramV1:
 		// Multilingual parser is currently treated as an n-gram based tokenizer.
-		parserType = tipb.ParserType_OTHER_PARSER
+		parserType = tici.ParserType_OTHER_PARSER
 		if indexInfo.FullTextInfo.ParserType == model.FullTextParserTypeMultilingualV1 {
 			parserParams["parser_name"] = "multilingual"
 		} else {
@@ -2266,7 +2171,7 @@ func (w *worker) buildTiCICreateIndexRequestForFullText(jobCtx *jobContext, job 
 		}
 		parserParams[vardef.NgramTokenSize] = getJobSysVar(vardef.NgramTokenSize, "2")
 	default:
-		parserType = tipb.ParserType_OTHER_PARSER
+		parserType = tici.ParserType_OTHER_PARSER
 		parserParams["parser_name"] = indexInfo.FullTextInfo.ParserType.SQLName()
 	}
 
@@ -2276,15 +2181,10 @@ func (w *worker) buildTiCICreateIndexRequestForFullText(jobCtx *jobContext, job 
 	parserParams[vardef.InnodbFtUserStopwordTable] = getJobSysVar(vardef.InnodbFtUserStopwordTable, "")
 
 	var stopWords []string
-	// Stopwords are only supported for the standard parser currently.
 	if indexInfo.FullTextInfo.ParserType == model.FullTextParserTypeStandardV1 && variable.TiDBOptOn(enableStopword) {
-		userStopwordTable := strings.TrimSpace(parserParams[vardef.InnodbFtUserStopwordTable])
-		serverStopwordTable := strings.TrimSpace(parserParams[vardef.InnodbFtServerStopwordTable])
-		stopwordTable := userStopwordTable
-		stopwordSource := "user_table"
+		stopwordTable := strings.TrimSpace(parserParams[vardef.InnodbFtUserStopwordTable])
 		if stopwordTable == "" {
-			stopwordTable = serverStopwordTable
-			stopwordSource = "server_table"
+			stopwordTable = strings.TrimSpace(parserParams[vardef.InnodbFtServerStopwordTable])
 		}
 		if stopwordTable != "" {
 			dbName, tblName, ok := splitFullTextStopwordTableName(stopwordTable)
@@ -2296,78 +2196,14 @@ func (w *worker) buildTiCICreateIndexRequestForFullText(jobCtx *jobContext, job 
 				return nil, errors.Trace(err)
 			}
 			stopWords = stopwords
-			parserParams["innodb_ft_stop_words_source"] = stopwordSource
-			parserParams["innodb_ft_stop_word_table"] = stopwordTable
-		} else {
-			parserParams["innodb_ft_stop_words_source"] = "builtin"
 		}
 	}
 
-	tblInfo := tbl.Meta()
-	tableCols := make([]*tipb.TiCIColumnInfo, 0, len(tblInfo.Columns))
-	for _, col := range tblInfo.Columns {
-		tableCols = append(tableCols, tidbColumnToTiCIColumnInfo(col))
-	}
-
-	indexCols := make([]*tipb.TiCIColumnInfo, 0, len(indexInfo.Columns))
-	for _, idxCol := range indexInfo.Columns {
-		if idxCol.Offset < 0 || idxCol.Offset >= len(tblInfo.Columns) {
-			continue
-		}
-		indexCols = append(indexCols, tidbColumnToTiCIColumnInfo(tblInfo.Columns[idxCol.Offset]))
-	}
-
-	return &tipb.CreateIndexRequest{
-		IndexInfo: &tipb.TiCIIndexInfo{
-			IndexId:   indexInfo.ID,
-			IndexName: indexInfo.Name.O,
-			IndexType: tipb.IndexType_FULL_TEXT,
-			Columns:   indexCols,
-			IsUnique:  indexInfo.Unique,
-			ParserInfo: &tipb.ParserInfo{
-				ParserType:   parserType,
-				ParserParams: parserParams,
-				StopWords:    stopWords,
-			},
-			OtherParams: map[string]string{},
-		},
-		TableInfo: &tipb.TiCITableInfo{
-			TableId:      tblInfo.ID,
-			TableName:    tblInfo.Name.O,
-			DatabaseName: job.SchemaName,
-			Version:      int64(tblInfo.UpdateTS),
-			Columns:      tableCols,
-		},
+	return &tici.ParserInfo{
+		ParserType:   parserType,
+		ParserParams: parserParams,
+		StopWords:    stopWords,
 	}, nil
-}
-
-func tidbColumnToTiCIColumnInfo(col *model.ColumnInfo) *tipb.TiCIColumnInfo {
-	collationID := int32(0)
-	if collationName := col.FieldType.GetCollate(); collationName != "" {
-		if coll, err := collate.GetCollationByName(collationName); err == nil && coll != nil {
-			collationID = int32(coll.ID)
-		}
-	}
-
-	var length int32
-	if flen := col.FieldType.GetFlen(); flen > 0 {
-		length = int32(flen)
-	}
-	decimal := int32(col.FieldType.GetDecimal())
-
-	return &tipb.TiCIColumnInfo{
-		ColumnId:     col.ID,
-		ColumnName:   col.Name.O,
-		Type:         int32(col.FieldType.GetType()),
-		Collation:    collationID,
-		ColumnLength: length,
-		Decimal:      decimal,
-		Flag:         int32(col.GetFlag()),
-		Elems:        col.FieldType.GetElems(),
-		DefaultVal:   nil,
-		IsPrimaryKey: mysql.HasPriKeyFlag(col.GetFlag()),
-		IsArray:      col.FieldType.IsArray(),
-	}
 }
 
 func (w *worker) readFullTextStopwords(jobCtx *jobContext, dbName, tblName string) (stopwords []string, err error) {

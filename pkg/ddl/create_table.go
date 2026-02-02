@@ -218,7 +218,7 @@ func createTiCIIndexes(jobCtx *jobContext, schemaName string, tblInfo *model.Tab
 		if !index.IsTiCIIndex() {
 			continue
 		}
-		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName); err != nil {
+		if err := tici.CreateFulltextIndex(ctx, jobCtx.store, tblInfo, index, schemaName, nil); err != nil {
 			return err
 		}
 	}

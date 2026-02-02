@@ -16,7 +16,6 @@ package ddl_test
 
 import (
 	"context"
-	"encoding/hex"
 	"fmt"
 	"math"
 	"math/rand"
@@ -51,13 +50,13 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/external"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/tici"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	tipb "github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1945,7 +1944,8 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	defer func() { ddl.SetWaitTimeWhenErrorOccurred(originalWT) }()
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockTiCICreateIndexRequest", `return(2)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
+	tici.ResetMockTiCICreateIndexRequest()
 
 	tk.MustExec("create table sw (value varchar(20))")
 	tk.MustExec("insert into sw values ('a'), ('the'), ('foo'), ('foo')")
@@ -1958,40 +1958,23 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	tk.MustExec("set @@innodb_ft_enable_stopword=on")
 	tk.MustExec("set @@innodb_ft_user_stopword_table='test/sw'")
 
-	err := tk.ExecToErr("alter table t add fulltext index fts_idx(c)")
-	require.Error(t, err)
+	tk.MustExec("alter table t add fulltext index fts_idx(c)")
 
-	const prefix = "mock tici create index request: "
-	idx := strings.Index(err.Error(), prefix)
-	require.Greater(t, idx, -1, err.Error())
-	payload := err.Error()[idx+len(prefix):]
-	payload = strings.TrimSpace(payload)
-	hexStr := payload
-	for i := 0; i < len(payload); i++ {
-		c := payload[i]
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F') {
-			hexStr = payload[:i]
-			break
-		}
-	}
+	raw := tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
 
-	raw, err := hex.DecodeString(hexStr)
-	require.NoError(t, err)
-
-	var req tipb.CreateIndexRequest
+	var req tici.CreateIndexRequest
 	require.NoError(t, req.Unmarshal(raw))
-	require.NotNil(t, req.IndexInfo)
-	require.NotNil(t, req.IndexInfo.ParserInfo)
+	require.NotNil(t, req.ParserInfo)
 
-	parserParams := req.IndexInfo.ParserInfo.ParserParams
+	parserParams := req.ParserInfo.ParserParams
+	require.Equal(t, "standard", parserParams["parser_name"])
 	require.Equal(t, "1", parserParams["innodb_ft_min_token_size"])
 	require.Equal(t, "10", parserParams["innodb_ft_max_token_size"])
 	require.Equal(t, "ON", parserParams["innodb_ft_enable_stopword"])
 	require.Equal(t, "test/sw", parserParams["innodb_ft_user_stopword_table"])
-	require.Equal(t, "user_table", parserParams["innodb_ft_stop_words_source"])
-	require.Equal(t, "test/sw", parserParams["innodb_ft_stop_word_table"])
 
-	stopwords := append([]string(nil), req.IndexInfo.ParserInfo.StopWords...)
+	stopwords := append([]string(nil), req.ParserInfo.StopWords...)
 	sort.Strings(stopwords)
 	require.Equal(t, []string{"a", "foo", "the"}, stopwords)
 }

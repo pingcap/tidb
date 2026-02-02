@@ -406,6 +406,8 @@ message CreateIndexRequest {
   int64 index_id = 3;
   // Keyspace ID
   uint32 keyspace_id = 4;
+  // Parser information for index creation.
+  ParserInfo parser_info = 5;
 }
 
 // CreateIndexResponse is a response to the index creation request
@@ -500,6 +502,8 @@ message ParserInfo {
   ParserType parser_type = 1;
   // Parser parameters
   map<string, string> parser_params = 2;
+  // Stop words list. Only used when stopwords are enabled at index creation time.
+  repeated string stop_words = 3;
 }
 
 // GetIndexProgressRequest is a request to get the progress of an index build
