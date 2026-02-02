@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql" //nolint: goimports
 	"github.com/pingcap/tidb/pkg/table"
 	"github.com/pingcap/tidb/pkg/types"
@@ -174,6 +175,57 @@ func (en *TableKVEncoder) parserData2TableData(parserData []types.Datum, rowID i
 	return newRow, nil
 }
 
+// canSkipCastForColumn returns true only when CastColumnValue is guaranteed to be a no-op.
+// It returns the possibly adjusted datum to preserve column metadata for encoding.
+func canSkipCastForColumn(val types.Datum, colInfo *model.ColumnInfo) (types.Datum, bool) {
+	if val.IsNull() {
+		return val, true
+	}
+	switch val.Kind() {
+	case types.KindInt64:
+		return val, colInfo.GetType() == mysql.TypeLonglong && !mysql.HasUnsignedFlag(colInfo.GetFlag())
+	case types.KindUint64:
+		return val, colInfo.GetType() == mysql.TypeLonglong && mysql.HasUnsignedFlag(colInfo.GetFlag())
+	case types.KindMysqlJSON:
+		return val, colInfo.GetType() == mysql.TypeJSON
+	case types.KindMysqlDecimal:
+		// Only skip when DECIMAL already satisfies precision/scale/unsigned
+		// constraints. Otherwise CastColumnValue would round/truncate/overflow
+		// or emit warnings.
+		if canSkipDecimalCast(val, colInfo) {
+			val.SetLength(colInfo.GetFlen())
+			val.SetFrac(colInfo.GetDecimal())
+			return val, true
+		}
+	default:
+		return val, false
+	}
+	return val, false
+}
+
+func canSkipDecimalCast(val types.Datum, colInfo *model.ColumnInfo) bool {
+	if colInfo.GetType() != mysql.TypeNewDecimal ||
+		val.Kind() != types.KindMysqlDecimal {
+		return false
+	}
+
+	flen := colInfo.GetFlen()
+	dec := colInfo.GetDecimal()
+	decVal := val.GetMysqlDecimal()
+	// Unsigned columns reject negative values in convertToMysqlDecimal.
+	if mysql.HasUnsignedFlag(colInfo.GetFlag()) && decVal.IsNegative() {
+		return false
+	}
+	// Scale/precision checks must pass to avoid rounding/truncation/overflow.
+	if int(decVal.GetDigitsFrac()) > dec {
+		return false
+	}
+	if int(decVal.GetDigitsInt()) > flen-dec {
+		return false
+	}
+	return true
+}
+
 // getRow gets the row which from `insert into select from` or `load data`.
 // The input values from these two statements are datums instead of
 // expressions which are used in `insert into set x=y`.
@@ -190,13 +242,20 @@ func (en *TableKVEncoder) getRow(vals []types.Datum, hasValue []bool, rowID int6
 	}
 	row := en.rowCache
 	for i := range en.insertColumns {
-		casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), vals[i], en.insertColumns[i].ToInfo(), false, false)
-		if err != nil {
-			return nil, err
+		colInfo := en.insertColumns[i].ToInfo()
+		val := vals[i]
+		if skipVal, ok := canSkipCastForColumn(val, colInfo); ok {
+			val = skipVal
+		} else {
+			casted, err := table.CastColumnValue(en.SessionCtx.GetExprCtx(), val, colInfo, false, false)
+			if err != nil {
+				return nil, err
+			}
+			val = casted
 		}
 
-		offset := en.insertColumns[i].Offset
-		row[offset] = casted
+		offset := colInfo.Offset
+		row[offset] = val
 	}
 
 	return en.fillRow(row, hasValue, rowID)
