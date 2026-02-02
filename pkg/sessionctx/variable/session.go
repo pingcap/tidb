@@ -1725,51 +1725,14 @@ type SessionVars struct {
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
 
-<<<<<<< HEAD
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
-=======
-	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
-	MemArbitrator struct {
-		WaitAverse    MemArbitratorWaitAverseMode
-		QueryReserved int64
-	}
 
 	// InPacketBytes records the total incoming packet bytes from clients for current session.
 	InPacketBytes atomic.Uint64
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
-}
-
-// ResetRelevantOptVarsAndFixes resets the relevant optimizer variables and fixes.
-func (s *SessionVars) ResetRelevantOptVarsAndFixes(record bool) {
-	s.RecordRelevantOptVarsAndFixes = record
-	s.RelevantOptVars = nil
-	s.RelevantOptFixes = nil
-}
-
-// RecordRelevantOptVar records the optimizer variable that is relevant to the current query.
-func (s *SessionVars) RecordRelevantOptVar(varName string) {
-	if !s.RecordRelevantOptVarsAndFixes {
-		return
-	}
-	if s.RelevantOptVars == nil {
-		s.RelevantOptVars = make(map[string]struct{})
-	}
-	s.RelevantOptVars[varName] = struct{}{}
-}
-
-// RecordRelevantOptFix records the optimizer fix that is relevant to the current query.
-func (s *SessionVars) RecordRelevantOptFix(fixID uint64) {
-	if !s.RecordRelevantOptVarsAndFixes {
-		return
-	}
-	if s.RelevantOptFixes == nil {
-		s.RelevantOptFixes = make(map[uint64]struct{})
-	}
-	s.RelevantOptFixes[fixID] = struct{}{}
->>>>>>> e407943c073 (*: Collect client network info for topsql to pick topN sql with highest network traffic (#63796))
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
