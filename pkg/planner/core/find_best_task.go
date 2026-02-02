@@ -1208,7 +1208,7 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 	}
 
 	// Only iterate over the actual index definition columns, not the appended handle columns
-	for i := 0; i < indexColCount; i++ {
+	for i := range indexColCount {
 		// check if the same column
 		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
 			return emptyResult
