@@ -4775,6 +4775,10 @@ func (e *executor) createFulltextIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	job.Type = model.ActionAddFullTextIndex
 	indexPartSpecifications[0].Expr = nil
 
+	if err := e.captureFullTextIndexSysvarsToJob(ctx, job, indexOption); err != nil {
+		return errors.Trace(err)
+	}
+
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
 			IndexName:               indexName,
@@ -4982,6 +4986,12 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// indexPartSpecifications[0].Expr can not be unmarshaled, so we set it to nil.
 	indexPartSpecifications[0].Expr = nil
 
+	if columnarIndexType == model.ColumnarIndexTypeFulltext {
+		if err := e.captureFullTextIndexSysvarsToJob(ctx, job, indexOption); err != nil {
+			return errors.Trace(err)
+		}
+	}
+
 	// TODO: support CDCWriteSource
 
 	args := &model.ModifyIndexArgs{
@@ -5003,6 +5013,116 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 		return nil
 	}
 	return errors.Trace(err)
+}
+
+func (e *executor) captureFullTextIndexSysvarsToJob(sctx sessionctx.Context, job *model.Job, indexOption *ast.IndexOption) error {
+	parser := model.FullTextParserTypeStandardV1
+	if indexOption != nil && indexOption.ParserName.L != "" {
+		parser = model.GetFullTextParserTypeBySQLName(indexOption.ParserName.L)
+	}
+
+	sessVars := sctx.GetSessionVars()
+	getVar := func(name string) (string, error) {
+		val, err := sessVars.GetSessionOrGlobalSystemVar(context.Background(), name)
+		return val, errors.Trace(err)
+	}
+
+	maxTokenSize, err := getVar(vardef.InnodbFtMaxTokenSize)
+	if err != nil {
+		return err
+	}
+	minTokenSize, err := getVar(vardef.InnodbFtMinTokenSize)
+	if err != nil {
+		return err
+	}
+	ngramTokenSize, err := getVar(vardef.NgramTokenSize)
+	if err != nil {
+		return err
+	}
+	enableStopword, err := getVar(vardef.InnodbFtEnableStopword)
+	if err != nil {
+		return err
+	}
+	serverStopwordTable, err := getVar(vardef.InnodbFtServerStopwordTable)
+	if err != nil {
+		return err
+	}
+	userStopwordTable, err := getVar(vardef.InnodbFtUserStopwordTable)
+	if err != nil {
+		return err
+	}
+
+	// Validate token size constraints early.
+	if parser == model.FullTextParserTypeStandardV1 {
+		minVal, err := strconv.ParseInt(minTokenSize, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		maxVal, err := strconv.ParseInt(maxTokenSize, 10, 64)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if minVal > maxVal {
+			return variable.ErrWrongValueForVar.GenWithStackByArgs(vardef.InnodbFtMinTokenSize, minTokenSize)
+		}
+	}
+
+	// Validate stopword table schema if it will be used by standard parser.
+	if parser == model.FullTextParserTypeStandardV1 && variable.TiDBOptOn(enableStopword) {
+		stopwordTable := strings.TrimSpace(userStopwordTable)
+		stopwordTableVar := vardef.InnodbFtUserStopwordTable
+		if stopwordTable == "" {
+			stopwordTable = strings.TrimSpace(serverStopwordTable)
+			stopwordTableVar = vardef.InnodbFtServerStopwordTable
+		}
+		if stopwordTable != "" {
+			dbName, tblName, ok := splitFullTextStopwordTableName(stopwordTable)
+			if !ok {
+				return variable.ErrWrongValueForVar.GenWithStackByArgs(stopwordTableVar, stopwordTable)
+			}
+			is := e.infoCache.GetLatest()
+			tbl, err := is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
+			if err != nil {
+				return errors.Trace(err)
+			}
+			tblInfo := tbl.Meta()
+			// TiDB row-store tables are treated as InnoDB-compatible. TiFlash-only tables are not.
+			if tblInfo.IsColumnar {
+				return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("stopword table must be an InnoDB table")
+			}
+			if len(tblInfo.Columns) != 1 || tblInfo.Columns[0].Name.L != "value" || tblInfo.Columns[0].FieldType.GetType() != mysql.TypeVarchar {
+				return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("stopword table must contain a single VARCHAR column named value")
+			}
+		}
+	}
+
+	job.AddSystemVars(vardef.InnodbFtMaxTokenSize, maxTokenSize)
+	job.AddSystemVars(vardef.InnodbFtMinTokenSize, minTokenSize)
+	job.AddSystemVars(vardef.NgramTokenSize, ngramTokenSize)
+	job.AddSystemVars(vardef.InnodbFtEnableStopword, enableStopword)
+	job.AddSystemVars(vardef.InnodbFtServerStopwordTable, serverStopwordTable)
+	job.AddSystemVars(vardef.InnodbFtUserStopwordTable, userStopwordTable)
+	return nil
+}
+
+func splitFullTextStopwordTableName(raw string) (dbName string, tblName string, ok bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", "", false
+	}
+	parts := strings.Split(raw, "/")
+	if len(parts) != 2 {
+		parts = strings.Split(raw, ".")
+	}
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	dbName = strings.TrimSpace(parts[0])
+	tblName = strings.TrimSpace(parts[1])
+	if dbName == "" || tblName == "" {
+		return "", "", false
+	}
+	return dbName, tblName, true
 }
 
 func buildAddIndexJobWithoutTypeAndArgs(ctx sessionctx.Context, schema *model.DBInfo, t table.Table) *model.Job {
