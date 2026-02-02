@@ -171,7 +171,7 @@ id1	id7
 1	NULL
 select @@last_sql_use_alloc;
 @@last_sql_use_alloc
-1
+0
 explain format='plan_tree' select t1.id1,t1.id6 ,t2.id6  from t1 join t2 on t1.id2 = '1' and t2.id2 = '2' ;
 id	task	access object	operator info
 HashJoin	root		CARTESIAN inner join
