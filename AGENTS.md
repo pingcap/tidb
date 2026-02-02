@@ -49,9 +49,11 @@ This file provides guidance to agents when working with code in this repository.
 
 - When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
 
-### Optimizer Notes
+### Notes
 
-- Record optimizer-related PR experience in `docs/note/planner/rule/optimizer_ai_notes.md`.
+- Optimizer: record optimizer-related PR experience in `docs/note/planner/rule/optimizer_ai_notes.md`.
+- For any package update, append notes under the matching `docs/note/<component>/` path; if missing, create it and update this section with the new location.
+- If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
 
 ## Building
 
