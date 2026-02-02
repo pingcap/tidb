@@ -682,8 +682,8 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalP
 
 	case *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalWindow:
 		in := inputRowsOneLevel(groupNode)
-		cap := math.Max(absMinCap, capFactor*cost)
-		return cost + ratio*math.Min(in, cap)
+		maxCap := math.Max(absMinCap, capFactor*cost)
+		return cost + ratio*math.Min(in, maxCap)
 
 	default:
 		return cost
