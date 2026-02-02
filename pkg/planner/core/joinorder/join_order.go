@@ -316,17 +316,8 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 	}
 
 	checker := func(left, right *Node) (*Node, error) {
-		checkResult, err := checkConnection(detector, left, right)
-		if err != nil {
-			return nil, err
-		}
-		if !checkResult.Connected() {
-			// gjt todo duplicated with makeBushyTree?
-			if checkResult = detector.TryCreateCartesianCheckResult(left, right); checkResult == nil {
-				return nil, nil
-			}
-		}
-		return detector.MakeJoin(checkResult, j.group.vertexHints)
+		_, newNode, err := checkConnectionAndMakeJoin(detector, left, right, j.group.vertexHints, true)
+		return newNode, err
 	}
 
 	if leadingHint == nil || leadingHint.LeadingList == nil {
@@ -359,13 +350,19 @@ func checkConnection(detector *ConflictDetector, leftPlan, rightPlan *Node) (*Ch
 	return checkResult, nil
 }
 
-func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan *Node, vertexHints map[int]*vertexJoinMethodHint) (*CheckConnectionResult, *Node, error) {
+func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan *Node, vertexHints map[int]*vertexJoinMethodHint, allowNoEQ bool) (*CheckConnectionResult, *Node, error) {
 	checkResult, err := checkConnection(detector, leftPlan, rightPlan)
 	if err != nil {
 		return nil, nil, err
 	}
 	if !checkResult.Connected() {
-		return nil, nil, nil
+		if !allowNoEQ {
+			return nil, nil, nil
+		}
+		// gjt todo duplicated with makeBushyTree?
+		if checkResult = detector.TryCreateCartesianCheckResult(leftPlan, rightPlan); checkResult == nil {
+			return nil, nil, nil
+		}
 	}
 	newNode, err := detector.MakeJoin(checkResult, vertexHints)
 	if err != nil {
@@ -430,7 +427,7 @@ func connectSubgraphGreedy(detector *ConflictDetector, nodes []*Node, vertexHint
 		curJoinTree := nodes[curJoinIdx]
 		for iterIdx := curJoinIdx + 1; iterIdx < len(nodes); iterIdx++ {
 			iterNode := nodes[iterIdx]
-			checkResult, newNode, err := checkConnectionAndMakeJoin(detector, curJoinTree, iterNode, vertexHints)
+			checkResult, newNode, err := checkConnectionAndMakeJoin(detector, curJoinTree, iterNode, vertexHints, allowNoEQ)
 			if err != nil {
 				return nil, err
 			}
@@ -439,9 +436,6 @@ func connectSubgraphGreedy(detector *ConflictDetector, nodes []*Node, vertexHint
 			}
 			if checkResult.NoEQEdge() {
 				// todo we dont support reorder non INNER JOIN without eqCond now.
-				if !allowNoEQ {
-					continue
-				}
 				newNode.cumCost = newNode.cumCost * cartesianFactor
 			}
 			if bestNode == nil || newNode.cumCost < bestNode.cumCost {

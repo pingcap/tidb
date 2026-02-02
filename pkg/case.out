@@ -1,4 +1,0 @@
-# ./pkg/planner/...
-pattern ./pkg/planner/...: lstat ./pkg/planner/: no such file or directory
-FAIL	./pkg/planner/... [setup failed]
-FAIL
