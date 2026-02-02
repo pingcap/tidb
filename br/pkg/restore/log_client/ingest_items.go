@@ -30,8 +30,37 @@ func (rc *LogClient) LoadIngestRecorderItems(
 	restoredTS uint64,
 	logCheckpointMetaManager checkpoint.SegmentedRestoreStorage,
 ) (map[int64]map[int64]bool, error) {
+	tableExists := rc.pitrIDMapTableExists()
+	if tableExists {
+		payload, found, err := rc.loadPitrIdMapPayloadForSegment(ctx, restoredTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if found {
+			items, err := PitrIngestItemsFromPayload(payload)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if items == nil {
+				items = map[int64]map[int64]bool{}
+			}
+			log.Info("loaded pitr ingest items",
+				zap.Uint64("restored-ts", restoredTS),
+				zap.Int("table-count", len(items)),
+				zap.Int("index-count", ingestrec.CountItems(items)))
+			return items, nil
+		}
+	}
+
 	if logCheckpointMetaManager == nil {
+		if tableExists {
+			return nil, nil
+		}
 		return nil, errors.New("checkpoint meta manager is not initialized")
+	}
+	if tableExists {
+		log.Info("pitr ingest items not found in mysql.tidb_pitr_id_map, fallback to checkpoint storage",
+			zap.Uint64("restored-ts", restoredTS))
 	}
 	clusterID := rc.GetClusterID(ctx)
 	items, found, err := logCheckpointMetaManager.LoadPITRIngestItems(ctx, clusterID, restoredTS)
@@ -58,11 +87,40 @@ func (rc *LogClient) SaveIngestRecorderItems(
 	items map[int64]map[int64]bool,
 	logCheckpointMetaManager checkpoint.SegmentedRestoreStorage,
 ) error {
+	if rc.pitrIDMapTableExists() {
+		payload, found, err := rc.loadPitrIdMapPayloadForSegment(ctx, restoredTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !found {
+			if logManager, ok := logCheckpointMetaManager.(checkpoint.LogMetaManagerT); ok {
+				dbMaps, err := rc.loadSchemasMap(ctx, restoredTS, logManager)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(dbMaps) > 0 {
+					payload = newPitrIdMapPayload(dbMaps)
+				}
+			}
+		}
+		if payload == nil {
+			log.Warn("pitr id map payload not found when saving ingest items",
+				zap.Uint64("restored-ts", restoredTS))
+			return errors.New("pitr id map payload not found for ingest items")
+		}
+		payload.IngestItems = PitrIngestItemsToProto(items)
+		log.Info("saving pitr ingest items",
+			zap.Uint64("restored-ts", restoredTS),
+			zap.Int("table-count", len(items)),
+			zap.Int("index-count", ingestrec.CountItems(items)))
+		return errors.Trace(rc.savePitrIdMapPayloadToTable(ctx, restoredTS, payload))
+	}
+
 	if logCheckpointMetaManager == nil {
 		return errors.New("checkpoint meta manager is not initialized")
 	}
 	clusterID := rc.GetClusterID(ctx)
-	log.Info("saving pitr ingest items",
+	log.Info("saving pitr ingest items to checkpoint storage",
 		zap.Uint64("restored-ts", restoredTS),
 		zap.Int("table-count", len(items)),
 		zap.Int("index-count", ingestrec.CountItems(items)))

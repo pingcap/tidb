@@ -270,8 +270,6 @@ func (r *Runner) runParallelTick(
 	for _, spec := range selected {
 		wg.Go(
 			func() {
-				defer wg.Done()
-
 				mu.Lock()
 				state, ok := states[spec.Name]
 				mu.Unlock()

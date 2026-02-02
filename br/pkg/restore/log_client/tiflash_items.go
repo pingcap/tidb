@@ -30,8 +30,36 @@ func (rc *LogClient) LoadTiFlashRecorderItems(
 	restoredTS uint64,
 	logCheckpointMetaManager checkpoint.SegmentedRestoreStorage,
 ) (map[int64]model.TiFlashReplicaInfo, error) {
+	tableExists := rc.pitrIDMapTableExists()
+	if tableExists {
+		payload, found, err := rc.loadPitrIdMapPayloadForSegment(ctx, restoredTS)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		if found {
+			items, err := PitrTiFlashItemsFromPayload(payload)
+			if err != nil {
+				return nil, errors.Trace(err)
+			}
+			if items == nil {
+				items = map[int64]model.TiFlashReplicaInfo{}
+			}
+			log.Info("loaded pitr tiflash items",
+				zap.Uint64("restored-ts", restoredTS),
+				zap.Int("item-count", len(items)))
+			return items, nil
+		}
+	}
+
 	if logCheckpointMetaManager == nil {
+		if tableExists {
+			return nil, nil
+		}
 		return nil, errors.New("checkpoint meta manager is not initialized")
+	}
+	if tableExists {
+		log.Info("pitr tiflash items not found in mysql.tidb_pitr_id_map, fallback to checkpoint storage",
+			zap.Uint64("restored-ts", restoredTS))
 	}
 	clusterID := rc.GetClusterID(ctx)
 	items, found, err := logCheckpointMetaManager.LoadPITRTiFlashItems(ctx, clusterID, restoredTS)
@@ -57,11 +85,39 @@ func (rc *LogClient) SaveTiFlashRecorderItems(
 	items map[int64]model.TiFlashReplicaInfo,
 	logCheckpointMetaManager checkpoint.SegmentedRestoreStorage,
 ) error {
+	if rc.pitrIDMapTableExists() {
+		payload, found, err := rc.loadPitrIdMapPayloadForSegment(ctx, restoredTS)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !found {
+			if logManager, ok := logCheckpointMetaManager.(checkpoint.LogMetaManagerT); ok {
+				dbMaps, err := rc.loadSchemasMap(ctx, restoredTS, logManager)
+				if err != nil {
+					return errors.Trace(err)
+				}
+				if len(dbMaps) > 0 {
+					payload = newPitrIdMapPayload(dbMaps)
+				}
+			}
+		}
+		if payload == nil {
+			log.Warn("pitr id map payload not found when saving tiflash items",
+				zap.Uint64("restored-ts", restoredTS))
+			return errors.New("pitr id map payload not found for tiflash items")
+		}
+		payload.TiflashItems = PitrTiFlashItemsToProto(items)
+		log.Info("saving pitr tiflash items",
+			zap.Uint64("restored-ts", restoredTS),
+			zap.Int("item-count", len(items)))
+		return errors.Trace(rc.savePitrIdMapPayloadToTable(ctx, restoredTS, payload))
+	}
+
 	if logCheckpointMetaManager == nil {
 		return errors.New("checkpoint meta manager is not initialized")
 	}
 	clusterID := rc.GetClusterID(ctx)
-	log.Info("saving pitr tiflash items",
+	log.Info("saving pitr tiflash items to checkpoint storage",
 		zap.Uint64("restored-ts", restoredTS),
 		zap.Int("item-count", len(items)))
 	return errors.Trace(logCheckpointMetaManager.SavePITRTiFlashItems(ctx, clusterID, restoredTS, items))

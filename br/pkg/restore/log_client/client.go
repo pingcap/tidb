@@ -243,6 +243,10 @@ func (rc *LogClient) LastOne() bool {
 	return rc.lastRestore
 }
 
+func (rc *LogClient) ValidateNoTiFlashReplica() error {
+	return rc.validateNoTiFlashReplica()
+}
+
 type restoreStatistics struct {
 	// restoreSSTKVSize is the total size (Original KV length) of KV pairs restored from SST files.
 	restoreSSTKVSize uint64
@@ -1991,11 +1995,21 @@ func (rc *LogClient) SaveIdMapWithFailPoints(
 	manager *stream.TableMappingManager,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
+	payload := newPitrIdMapPayload(manager.ToProto())
+	return rc.SavePitrIdMapPayloadWithFailPoints(ctx, rc.restoreTS, payload, logCheckpointMetaManager)
+}
+
+func (rc *LogClient) SavePitrIdMapPayloadWithFailPoints(
+	ctx context.Context,
+	restoredTS uint64,
+	payload *backuppb.PitrIdMapPayload,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+) error {
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
 
-	if err := rc.saveIDMap(ctx, manager, logCheckpointMetaManager); err != nil {
+	if err := rc.savePitrIdMapPayload(ctx, restoredTS, payload, logCheckpointMetaManager); err != nil {
 		return errors.Trace(err)
 	}
 
