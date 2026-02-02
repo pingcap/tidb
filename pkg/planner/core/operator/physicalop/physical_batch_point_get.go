@@ -854,7 +854,7 @@ func (p *BatchPointGetPlan) PrunePartitionsAndValues(sctx sessionctx.Context) ([
 			for i, idx := range partIdxs {
 				if idx < 0 {
 					curr := i - skipped
-					p.IndexValues = append(p.IndexValues[:curr], p.IndexValues[curr+1:]...)
+					p.IndexValues = slices.Delete(p.IndexValues, curr, curr+1)
 					skipped++
 				} else if !p.SinglePartition {
 					p.PartitionIdxs = append(p.PartitionIdxs, idx)
