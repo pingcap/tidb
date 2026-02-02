@@ -1182,12 +1182,22 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 
 	// Case 1: Prefix index INDEX idx(col(N)) matches ORDER BY col
 	// Check if index columns can match ORDER BY columns (allowing prefix index)
-	// Constraint 1: The number of index columns must be <= the number of ORDER BY columns
-	if len(path.IdxCols) > len(sortItems) {
+	//
+	// NOTE: We use path.Index.Columns to get the actual index definition columns count,
+	// because path.IdxCols may include additional handle columns (e.g., primary key `id`)
+	// appended for non-unique indexes on tables with PKIsHandle.
+	// For example, for `index idx_name_prefix (name(10))` on a table with `id int primary key`,
+	// path.IdxCols = [name, id] but path.Index.Columns only contains [name].
+	// We should only consider the actual index definition columns for partial order matching.
+	indexColCount := len(path.Index.Columns)
+
+	// Constraint 1: The number of index definition columns must be <= the number of ORDER BY columns
+	if indexColCount > len(sortItems) {
 		return emptyResult
 	}
-	// Constraint 2: The last column of the index must be a prefix column
-	if path.IdxColLens[len(path.IdxCols)-1] == types.UnspecifiedLength {
+	// Constraint 2: The last column of the index definition must be a prefix column
+	lastIdxColLen := path.Index.Columns[indexColCount-1].Length
+	if lastIdxColLen == types.UnspecifiedLength {
 		// The last column is not a prefix column, skip this index
 		return emptyResult
 	}
@@ -1197,7 +1207,8 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 		orderByCols = append(orderByCols, item.Col)
 	}
 
-	for i := range path.IdxCols {
+	// Only iterate over the actual index definition columns, not the appended handle columns
+	for i := 0; i < indexColCount; i++ {
 		// check if the same column
 		if !orderByCols[i].EqualColumn(path.IdxCols[i]) {
 			return emptyResult
@@ -1205,9 +1216,9 @@ func matchPartialOrderProperty(path *util.AccessPath, partialOrderInfo *property
 
 		// meet prefix index column, match termination
 		if path.IdxColLens[i] != types.UnspecifiedLength {
-			// If we meet a prefix column but it's not the last index column, it's not supported.
+			// If we meet a prefix column but it's not the last index definition column, it's not supported.
 			// e.g. prefix(a), b cannot provide partial order for ORDER BY a, b.
-			if i != len(path.IdxCols)-1 {
+			if i != indexColCount-1 {
 				return emptyResult
 			}
 			// Encountered a prefix index column.
