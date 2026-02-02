@@ -19,6 +19,7 @@ import (
 	"cmp"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"math"
 	"os"
@@ -794,6 +795,9 @@ func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, error) {
 	var record StmtRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
 		return nil, err
+	}
+	if len(record.Digest) == 0 {
+		return nil, errors.New("empty digest")
 	}
 	return &record, nil
 }
