@@ -430,8 +430,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(
 	}
 	// Leading hint processing can partially build join trees and consume otherConds.
 	// If the hint is inapplicable, restore original otherConds to avoid losing filters.
-	origOtherConds := make([]expression.Expression, len(s.otherConds))
-	copy(origOtherConds, s.otherConds)
+	origOtherConds := slices.Clone(s.otherConds)
 	// Use the unified nested processing for both flat and nested structures
 	ok, remaining := s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
 	if !ok {
