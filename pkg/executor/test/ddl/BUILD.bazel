@@ -10,7 +10,7 @@ go_test(
         "mview_systable_test.go",
     ],
     flaky = True,
-    shard_count = 34,
+    shard_count = 36,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
