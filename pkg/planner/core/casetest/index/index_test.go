@@ -465,3 +465,22 @@ func TestPartialIndexWithIndexPrune(t *testing.T) {
 		require.NoError(t, failpoint.Disable(fpName))
 	})
 }
+
+func TestForceIndexLimit(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec(`use test`)
+		tk.MustExec(`CREATE TABLE tb (
+  object_id bigint(20),
+  a bigint(20) ,
+  b bigint(20) ,
+  c bigint(20) ,
+  PRIMARY KEY (object_id),
+  KEY ab (a,b))`)
+		tk.MustQuery(`explain format='brief' select count(1) from (select /* issue:54213 */ /*+ force_index(tb, ab) */ 1 from tb where a=1 and b=1 limit 100) a`).Check(
+			testkit.Rows("StreamAgg 1.00 root  funcs:count(1)->Column#7",
+				"└─Limit 1.00 root  offset:0, count:100",
+				"  └─IndexReader 1.25 root  index:Limit",
+				"    └─Limit 1.25 cop[tikv]  offset:0, count:100",
+				"      └─IndexRangeScan 1.25 cop[tikv] table:tb, index:ab(a, b) range:[1 1,1 1], keep order:false, stats:pseudo"))
+	})
+}
