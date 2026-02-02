@@ -764,7 +764,7 @@ func (ds *DataSource) CheckPartialIndexes() {
 		// We only do it for single IS NOT NULL constraint now.
 		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
 			if !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
-				path.NoncacheableReason = "IndexScan of partial index is un-cacheable"
+				path.NoncacheableReason = "IndexScan of partial index is uncacheable"
 			}
 		}
 	}
