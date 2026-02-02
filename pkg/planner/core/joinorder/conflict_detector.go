@@ -10,6 +10,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 )
 
+// ConflictDetector is used to detect conflicts between join edges in a join graph.
+// It's based on the paper "On the Correct and Complete Enumeration of the Core Search Space"
 type ConflictDetector struct {
 	ctx           base.PlanContext
 	groupRoot     base.LogicalPlan
@@ -39,7 +41,7 @@ type edge struct {
 	rightVertexes BitSet
 }
 
-// CreateCartesianCheckResult creates a CheckConnectionResult representing a cartesian product between left and right nodes.
+// TryCreateCartesianCheckResult creates a CheckConnectionResult representing a cartesian product between left and right nodes.
 // This is used when we still want to make a cartesian join even there is no join condition between two nodes.
 // This usually happens when there is a leading hint forcing the join order.
 func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *CheckConnectionResult {
@@ -55,28 +57,34 @@ func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *Che
 	}
 }
 
+// BitSet is a simple bitset implementation using uint64.
 type BitSet uint64
 
 func newBitSet(idx int64) BitSet {
 	return 1 << idx
 }
 
+// Union returns the union of two bitsets.
 func (b BitSet) Union(s BitSet) BitSet {
 	return b | s
 }
 
+// HasIntersect checks if two bitsets have intersection.
 func (b BitSet) HasIntersect(s BitSet) bool {
 	return (b & s) != 0
 }
 
+// Intersect returns the intersection of two bitsets.
 func (b BitSet) Intersect(s BitSet) BitSet {
 	return b & s
 }
 
+// Contains returns true if b contains s.
 func (b BitSet) Contains(s BitSet) bool {
 	return (b & s) == s
 }
 
+// IsSubsetOf checks if b is a subset of s.
 func (b BitSet) IsSubsetOf(s BitSet) bool {
 	return (b & s) == b
 }
@@ -86,6 +94,7 @@ type rule struct {
 	to   BitSet
 }
 
+// Node can be a leaf node(vertex) or a intermediate node(join of two nodes).
 type Node struct {
 	bitSet    BitSet
 	p         base.LogicalPlan
@@ -113,6 +122,7 @@ func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
 	}
 }
 
+// Build will construct the conflict detector from the given join group.
 func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 	if len(group.vertexes) > 64 {
 		return nil, errors.Errorf("too many vertexes in join group: %d, exceeds maximum supported 64", len(group.vertexes))
@@ -356,6 +366,7 @@ func rightAsscom(e1, e2 *edge) bool {
 	return true
 }
 
+// CheckConnectionResult contains the result of checking connection between two nodes.
 // gjt todo maybe sync.pool
 // gjt todo remove
 type CheckConnectionResult struct {
@@ -366,14 +377,17 @@ type CheckConnectionResult struct {
 	hasEQCond           bool
 }
 
+// Connected checks if two nodes are connected.
 func (r *CheckConnectionResult) Connected() bool {
 	return len(r.appliedInnerEdges) > 0 || r.appliedNonInnerEdge != nil
 }
 
+// NoEQEdge checks if there is no EQ edge between two nodes.
 func (r *CheckConnectionResult) NoEQEdge() bool {
 	return !r.hasEQCond
 }
 
+// CheckAndMakeJoin checks the connection between two nodes and makes a join if they are connected.
 func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node, vertexHints map[int]*vertexJoinMethodHint) (*Node, error) {
 	checkResult, err := d.CheckConnection(node1, node2)
 	if err != nil {
@@ -385,6 +399,7 @@ func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node, vertexHints map[
 	return d.MakeJoin(checkResult, vertexHints)
 }
 
+// CheckConnection checks if there is a connection between two nodes.
 func (d *ConflictDetector) CheckConnection(node1, node2 *Node) (*CheckConnectionResult, error) {
 	if node1 == nil || node2 == nil {
 		return nil, errors.Errorf("nil node found in CheckConnection, node1: %v, node2: %v", node1, node2)
@@ -450,6 +465,7 @@ func (e *edge) checkRules(node1, node2 *Node) bool {
 	return true
 }
 
+// MakeJoin construct a join plan from the check result.
 func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHints map[int]*vertexJoinMethodHint) (*Node, error) {
 	numInnerEdges := len(checkResult.appliedInnerEdges)
 	var numNonInnerEdges int
@@ -614,9 +630,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 			return nil, err
 		}
 		join.EqualConditions = append(join.EqualConditions, alignedEQConds...)
-		for _, cond := range e.nonEQConds {
-			join.OtherConditions = append(join.OtherConditions, cond)
-		}
+		join.OtherConditions = append(join.OtherConditions, e.nonEQConds...)
 	}
 	return join, nil
 }
@@ -642,6 +656,7 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	return join, nil
 }
 
+// CheckAllEdgesUsed checks if all edges with join conditions are used.
 func (d *ConflictDetector) CheckAllEdgesUsed(usedEdges map[uint64]struct{}) bool {
 	for _, e := range d.innerEdges {
 		if len(e.eqConds) > 0 || len(e.nonEQConds) > 0 {

@@ -96,6 +96,7 @@ func (s *Schema) Clone() *Schema {
 	return schema
 }
 
+// Equal checks if two schemas are equal.
 func (s *Schema) Equal(other *Schema) bool {
 	if other == nil {
 		return false

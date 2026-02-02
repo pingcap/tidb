@@ -16,6 +16,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/hint"
 )
 
+// JoinOrder is the base struct for join order optimization.
 type JoinOrder struct {
 	ctx   base.PlanContext
 	group *joinGroup
@@ -158,6 +159,7 @@ func makeSingleGroup(p base.LogicalPlan) *joinGroup {
 	}
 }
 
+// Optimize performs join order optimization on the given plan.
 func Optimize(p base.LogicalPlan) (base.LogicalPlan, error) {
 	return optimizeRecursive(p)
 }
@@ -378,14 +380,12 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	})
 
 	// todo refine
-	newNodes := make([]*Node, 0, len(nodes))
 	if nodeWithHint != nil {
+		newNodes := make([]*Node, 0, len(nodes)+1)
 		newNodes = append(newNodes, nodeWithHint)
+		newNodes = append(newNodes, nodes...)
+		nodes = newNodes
 	}
-	for _, n := range nodes {
-		newNodes = append(newNodes, n)
-	}
-	nodes = newNodes
 
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
 	var disableCartesian = cartesianFactor <= 0 // gjt todo handle cartesian
