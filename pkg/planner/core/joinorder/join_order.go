@@ -271,7 +271,7 @@ func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.Logica
 		proj := logicalop.LogicalProjection{
 			Exprs: expression.Column2Exprs(originalSchema.Columns),
 		}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(originalSchema)
+		proj.SetSchema(originalSchema.Clone())
 		proj.SetChildren(p)
 		return proj, nil
 	}
