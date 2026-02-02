@@ -4,7 +4,6 @@ import (
 	"hash/crc32"
 	"sort"
 	"strconv"
-	"sync"
 )
 
 // ConsistentHash is a consistent hashing ring.
@@ -12,7 +11,6 @@ type ConsistentHash struct {
 	ring     []virtualNode
 	hashFunc func(data []byte) uint32
 	replicas int
-	mu       sync.RWMutex
 }
 
 type virtualNode struct {
@@ -29,11 +27,32 @@ func NewConsistentHash(replicas int) *ConsistentHash {
 	}
 }
 
-// AddNode adds a real node (and creates virtual nodes).
-func (c *ConsistentHash) AddNode(node string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+// Rebuild rebuilds the consistent hash with the given nodes.
+func (c *ConsistentHash) Rebuild(nodes []string) {
+	c.ring = make([]virtualNode, 0, len(nodes)*c.replicas)
+	for _, node := range nodes {
+		c.doInsert(node)
+	}
+	c.doResort()
+}
 
+// RebuildFromMap rebuilds the consistent hash from a template map keyed by node.
+func RebuildFromMap[T any](c *ConsistentHash, nodeMap map[string]T) {
+	c.ring = make([]virtualNode, 0, len(nodeMap)*c.replicas)
+	for node := range nodeMap {
+		c.doInsert(node)
+	}
+	c.doResort()
+}
+
+func (c *ConsistentHash) doResort() {
+	// Keep the ring sorted for binary search.
+	sort.Slice(c.ring, func(i, j int) bool {
+		return c.ring[i].hash < c.ring[j].hash
+	})
+}
+
+func (c *ConsistentHash) doInsert(node string) {
 	for i := 0; i < c.replicas; i++ {
 		// Create a virtual node identifier, e.g. "node1#0", "node1#1".
 		virtualKey := node + "#" + strconv.Itoa(i)
@@ -41,18 +60,16 @@ func (c *ConsistentHash) AddNode(node string) {
 
 		c.ring = append(c.ring, virtualNode{hash: hash, node: node})
 	}
+}
 
-	// Keep the ring sorted for binary search.
-	sort.Slice(c.ring, func(i, j int) bool {
-		return c.ring[i].hash < c.ring[j].hash
-	})
+// AddNode adds a real node (and creates virtual nodes).
+func (c *ConsistentHash) AddNode(node string) {
+	c.doInsert(node)
+	c.doResort()
 }
 
 // RemoveNode removes a real node (and all its virtual nodes).
 func (c *ConsistentHash) RemoveNode(node string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
 	newRing := make([]virtualNode, 0, len(c.ring))
 	for _, vnode := range c.ring {
 		if vnode.node != node {
@@ -64,9 +81,6 @@ func (c *ConsistentHash) RemoveNode(node string) {
 
 // GetNode returns the real node for the given key.
 func (c *ConsistentHash) GetNode(key string) string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	if len(c.ring) == 0 {
 		return ""
 	}
@@ -88,9 +102,6 @@ func (c *ConsistentHash) GetNode(key string) string {
 
 // GetNodes returns all real nodes.
 func (c *ConsistentHash) GetNodes() []string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	nodeSet := make(map[string]struct{})
 	for _, vnode := range c.ring {
 		nodeSet[vnode.node] = struct{}{}
@@ -106,9 +117,6 @@ func (c *ConsistentHash) GetNodes() []string {
 
 // NodeCount returns the number of real nodes.
 func (c *ConsistentHash) NodeCount() int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
 	nodeSet := make(map[string]struct{})
 	for _, vnode := range c.ring {
 		nodeSet[vnode.node] = struct{}{}
@@ -117,11 +125,7 @@ func (c *ConsistentHash) NodeCount() int {
 	return len(nodeSet)
 }
 
-// GetVirtualNodes returns the number of virtual nodes for a given node.
-func (c *ConsistentHash) GetVirtualNodes(node string) int {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-
+func (c *ConsistentHash) getVirtualNodes(node string) int {
 	count := 0
 	for _, vnode := range c.ring {
 		if vnode.node == node {

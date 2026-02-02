@@ -17,8 +17,8 @@ func mustHash(mapping map[string]uint32) func([]byte) uint32 {
 
 func TestConsistentHash_GetNodeWraps(t *testing.T) {
 	mapping := map[string]uint32{
-		"nodeA#0": 10,
-		"nodeB#0": 20,
+		"nodeA#0":  10,
+		"nodeB#0":  20,
 		"key-low":  5,
 		"key-mid":  15,
 		"key-high": 25,
@@ -62,10 +62,10 @@ func TestConsistentHash_RemoveNodeUpdatesState(t *testing.T) {
 	if got := c.NodeCount(); got != 2 {
 		t.Fatalf("expected 2 nodes, got %d", got)
 	}
-	if got := c.GetVirtualNodes("nodeA"); got != 2 {
+	if got := c.getVirtualNodes("nodeA"); got != 2 {
 		t.Fatalf("expected 2 virtual nodes for nodeA, got %d", got)
 	}
-	if got := c.GetVirtualNodes("nodeB"); got != 2 {
+	if got := c.getVirtualNodes("nodeB"); got != 2 {
 		t.Fatalf("expected 2 virtual nodes for nodeB, got %d", got)
 	}
 
@@ -74,7 +74,7 @@ func TestConsistentHash_RemoveNodeUpdatesState(t *testing.T) {
 	if got := c.NodeCount(); got != 1 {
 		t.Fatalf("expected 1 node after removal, got %d", got)
 	}
-	if got := c.GetVirtualNodes("nodeB"); got != 0 {
+	if got := c.getVirtualNodes("nodeB"); got != 0 {
 		t.Fatalf("expected 0 virtual nodes for nodeB, got %d", got)
 	}
 	if len(c.ring) != 2 {
