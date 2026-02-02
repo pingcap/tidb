@@ -51,8 +51,9 @@ This file provides guidance to agents when working with code in this repository.
 
 ### Notes
 
-- Planner rule: record rule-related PR experience in `docs/note/planner/rule/rule_ai_notes.md`.
-- For any package update, append notes under the matching `docs/note/<component>/` path; if missing, create it and update this section with the new location.
+- Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
+- Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
+- Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
 - If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
 
 ## Building
