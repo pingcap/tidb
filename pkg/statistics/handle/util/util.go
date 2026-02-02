@@ -188,6 +188,17 @@ func UpdateSCtxVarsForStats(sctx sessionctx.Context) error {
 		return err
 	}
 	sctx.GetSessionVars().AnalyzePartitionMergeConcurrency = int(ver)
+
+	// timezone setting
+	// timezone used to datetime/timestamp conversion when collecting stats.
+	globalTZ, err := sctx.GetSessionVars().GlobalVarsAccessor.GetGlobalSysVar(variable.TimeZone)
+	if err != nil {
+		return err
+	}
+	if err := sctx.GetSessionVars().SetSystemVar(variable.TimeZone, globalTZ); err != nil {
+		return err
+	}
+	sctx.GetSessionVars().StmtCtx.SetTimeZone(sctx.GetSessionVars().Location())
 	return nil
 }
 
