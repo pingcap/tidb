@@ -277,7 +277,17 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
+
+	// Generate candidate plans for partial order optimization using prefix index FIRST.
+	// This is important because when use_index hint is used with a prefix index,
+	// we need to set ForcePartialOrder flag before other candidates are evaluated.
+	// Otherwise, normal TopN plans without partial order optimization might be selected.
+	if canUsePartialOrder4TopN(lt) {
+		topNWithPartialOrderProperty := getPhysTopNWithPartialOrderProperty(lt, prop)
+		ret = append(ret, topNWithPartialOrderProperty...)
+	}
+
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
 			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
@@ -289,12 +299,6 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), resultProp)
 		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
-	}
-
-	// Generate additional candidate plans for partial order optimization using prefix index.
-	if canUsePartialOrder4TopN(lt) {
-		topNWithPartialOrderProperty := getPhysTopNWithPartialOrderProperty(lt, prop)
-		ret = append(ret, topNWithPartialOrderProperty...)
 	}
 
 	// If we can generate MPP task and there's vector distance function in the order by column.

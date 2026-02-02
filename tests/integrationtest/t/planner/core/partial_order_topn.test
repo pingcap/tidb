@@ -137,28 +137,28 @@ select @@tidb_opt_partial_ordered_index_for_topn;
 # ==========================================
 
 # Single column prefix index on VARCHAR
-explain format='brief' select /*+ use_index(idx_name_prefix) */ * from t_varchar order by name limit 5;
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
 
 # Single column prefix index on CHAR
-explain format='brief' select /*+ use_index(idx_code_prefix) */ * from t_char order by code limit 5;
+explain format='brief' select /*+ use_index(t_char, idx_code_prefix) */ * from t_char order by code limit 5;
 
 # Single column prefix index on TEXT
-explain format='brief' select /*+ use_index(idx_content_prefix) */ * from t_text order by content limit 5;
+explain format='brief' select /*+ use_index(t_text, idx_content_prefix) */ * from t_text order by content limit 5;
 
 # ==========================================
 # Section 3.2: Supported Query Pattern - TopN -> Selection -> DataSource
 # ==========================================
 
 # Selection with equality condition
-explain format='brief' select /*+ use_index(idx_name_prefix) */ * from t_varchar where data = 'fruit' order by name limit 5;
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where data = 'fruit' order by name limit 5;
 explain format='brief' select * from t_varchar where data = 'fruit' order by name limit 5;
 
 # Selection with range condition
-explain format='brief' select /*+ use_index(idx_code_prefix) */ * from t_char where value > 300 order by code limit 5;
+explain format='brief' select /*+ use_index(t_char, idx_code_prefix) */ * from t_char where value > 300 order by code limit 5;
 explain format='brief' select * from t_char where value > 300 order by code limit 5;
 
 # Selection with LIKE condition
-explain format='brief' select /*+ use_index(idx_content_prefix) */ * from t_text where score < 80 order by content limit 3;
+explain format='brief' select /*+ use_index(t_text, idx_content_prefix) */ * from t_text where score < 80 order by content limit 3;
 explain format='brief' select * from t_text where score < 80 order by content limit 3;
 
 # ==========================================
