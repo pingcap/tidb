@@ -922,19 +922,19 @@ left join
 (select a, b, c, (row_number() over (partition by b order by e asc)) from t4) tmp4 on tmp4.b = t2.c and tmp4.c = t3.c
 join t5 on t5.a = t1.e;
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(test.t5.a, test.t1.e)]
-├─TableReader(Build)	root		data:Selection
-│ └─Selection	cop[tikv]		not(isnull(test.t5.a))
-│   └─TableFullScan	cop[tikv]	table:t5	keep order:false, stats:pseudo
-└─HashJoin(Probe)	root		left outer join, left side:HashJoin, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
-  ├─Selection(Build)	root		not(isnull(test.t4.c))
-  │ └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
-  │   └─Window	root		row_number()->Column#30 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
-  │     └─Sort	root		test.t4.b, test.t4.e
-  │       └─ShuffleReceiver	root		
-  │         └─TableReader	root		data:Selection
-  │           └─Selection	cop[tikv]		not(isnull(test.t4.b))
-  │             └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+HashJoin	root		left outer join, left side:HashJoin, equal:[eq(test.t2.c, test.t4.b) eq(test.t3.c, test.t4.c)]
+├─Selection(Build)	root		not(isnull(test.t4.c))
+│ └─Shuffle	root		execution info: concurrency:100, data sources:[TableReader]
+│   └─Window	root		row_number()->Column#30 over(partition by test.t4.b order by test.t4.e rows between current row and current row)
+│     └─Sort	root		test.t4.b, test.t4.e
+│       └─ShuffleReceiver	root		
+│         └─TableReader	root		data:Selection
+│           └─Selection	cop[tikv]		not(isnull(test.t4.b))
+│             └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+└─HashJoin(Probe)	root		inner join, equal:[eq(test.t1.e, test.t5.a)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(test.t5.a))
+  │   └─TableFullScan	cop[tikv]	table:t5	keep order:false, stats:pseudo
   └─HashJoin(Probe)	root		inner join, equal:[eq(test.t1.b, test.t3.b)]
     ├─HashJoin(Build)	root		inner join, equal:[eq(test.t1.a, test.t2.b)]
     │ ├─TableReader(Build)	root		data:Selection
@@ -955,21 +955,21 @@ set @@tidb_opt_join_reorder_threshold=5;
 explain format='plan_tree' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
 id	task	access object	operator info
 Projection	root		1->Column
-└─HashJoin	root		CARTESIAN inner join
-  ├─HashJoin(Build)	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
-  │ ├─TableReader(Build)	root		data:Selection
-  │ │ └─Selection	cop[tikv]		not(isnull(test.t4.b))
-  │ │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
-  │ └─TableReader(Probe)	root		data:Selection
-  │   └─Selection	cop[tikv]		not(isnull(test.t3.b))
-  │     └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-  └─HashJoin(Probe)	root		inner join, equal:[eq(test.t1.a, test.t2.a)]
-    ├─TableReader(Build)	root		data:Selection
-    │ └─Selection	cop[tikv]		not(isnull(test.t2.a))
-    │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+└─HashJoin	root		inner join, equal:[eq(test.t3.b, test.t4.b)]
+  ├─TableReader(Build)	root		data:Selection
+  │ └─Selection	cop[tikv]		not(isnull(test.t4.b))
+  │   └─TableFullScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
+  └─HashJoin(Probe)	root		CARTESIAN inner join
+    ├─HashJoin(Build)	root		inner join, equal:[eq(test.t1.a, test.t2.a)]
+    │ ├─TableReader(Build)	root		data:Selection
+    │ │ └─Selection	cop[tikv]		not(isnull(test.t2.a))
+    │ │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
+    │ └─TableReader(Probe)	root		data:Selection
+    │   └─Selection	cop[tikv]		not(isnull(test.t1.a))
+    │     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
     └─TableReader(Probe)	root		data:Selection
-      └─Selection	cop[tikv]		not(isnull(test.t1.a))
-        └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+      └─Selection	cop[tikv]		not(isnull(test.t3.b))
+        └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
 set @@tidb_opt_join_reorder_threshold=default;
 set global tidb_enable_stmt_summary = 0;
 drop table if exists long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;

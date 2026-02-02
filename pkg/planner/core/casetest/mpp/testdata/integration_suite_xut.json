@@ -268,7 +268,7 @@
           "StreamAgg 1.00 root  funcs:count(1)->Column#13",
           "└─TableReader 16.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 16.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Projection 16.00 mpp[tiflash]  test.fact_t.d1_k",
+          "    └─Projection 16.00 mpp[tiflash]  test.d1_t.d1_k",
           "      └─HashJoin 16.00 mpp[tiflash]  CARTESIAN inner join, other cond:gt(test.fact_t.d1_k, test.d1_t.d1_k)",
           "        ├─ExchangeReceiver(Build) 2.00 mpp[tiflash]  ",
           "        │ └─ExchangeSender 2.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
