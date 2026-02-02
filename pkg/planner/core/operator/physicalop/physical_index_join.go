@@ -69,6 +69,9 @@ type PhysicalIndexJoin struct {
 	// IsOrderPreserving indicates whether this IndexJoin is being used to satisfy an ORDER BY requirement.
 	// When true, the optimizer may apply OrderPreservingJoinDiscount to make this plan more attractive.
 	IsOrderPreserving bool
+	// OrderPreservingExpectedCnt stores the expected output row count (from LIMIT) when IsOrderPreserving is true.
+	// This is used to cap buildRows in the cost model to reflect that only a limited number of rows will be fetched.
+	OrderPreservingExpectedCnt float64
 }
 
 // Init initializes PhysicalIndexJoin.
@@ -103,6 +106,7 @@ func (p *PhysicalIndexJoin) Clone(newCtx base.PlanContext) (base.PhysicalPlan, e
 	cloned.OuterHashKeys = util.CloneCols(p.OuterHashKeys)
 	cloned.InnerHashKeys = util.CloneCols(p.InnerHashKeys)
 	cloned.IsOrderPreserving = p.IsOrderPreserving
+	cloned.OrderPreservingExpectedCnt = p.OrderPreservingExpectedCnt
 	return cloned, nil
 }
 

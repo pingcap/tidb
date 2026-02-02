@@ -488,11 +488,20 @@ func compareTaskCost(curTask, bestTask base.Task) (curIsBetter bool, err error) 
 	return curCost < bestCost, nil
 }
 
-// isOrderPreservingPlan checks if a physical plan is an order-preserving join.
-// Currently this checks for PhysicalIndexJoin with IsOrderPreserving=true.
+// isOrderPreservingPlan checks if a physical plan is an order-preserving plan.
+// This includes:
+// - PhysicalIndexJoin with IsOrderPreserving=true
+// - PhysicalLimit that requires sorted input from its child (has non-empty SortItems)
 func isOrderPreservingPlan(pp base.PhysicalPlan) bool {
 	if indexJoin, ok := pp.(*physicalop.PhysicalIndexJoin); ok {
 		return indexJoin.IsOrderPreserving
+	}
+	// PhysicalLimit is order-preserving if its child property requires sorting
+	// This is the case when LogicalTopN generates PhysicalLimit plans that expect
+	// the child to provide sorted output (via SortItems in child property)
+	if _, ok := pp.(*physicalop.PhysicalLimit); ok {
+		childProps := pp.GetChildReqProps(0)
+		return childProps != nil && !childProps.IsSortItemEmpty()
 	}
 	return false
 }
@@ -518,44 +527,17 @@ func compareTaskCostWithOrderPreservingDiscount(sctx base.PlanContext, curTask, 
 		return true, nil
 	}
 
-	// DEBUG: Log comparison details - only for specific table IDs (127, 129) when debugTableID is provided
-	discount := sctx.GetSessionVars().OrderPreservingJoinDiscount
-	shouldLog := debugTableID == 127 || debugTableID == 129
-	if shouldLog {
-		logutil.BgLogger().Info("[DEBUG-ORDER-PRESERVE] compareTaskCost",
-			zap.Int64("tableID", debugTableID),
-			zap.Bool("propSortItemsEmpty", prop.IsSortItemEmpty()),
-			zap.Int("propSortItemsLen", len(prop.SortItems)),
-			zap.Float64("propExpectedCnt", prop.ExpectedCnt),
-			zap.Float64("discount", discount),
-			zap.Bool("curMatchesProp", curMatchesProp),
-			zap.Bool("bestMatchesProp", bestMatchesProp),
-			zap.Float64("curCost", curCost),
-			zap.Float64("bestCost", bestCost))
-	}
-
 	// Apply order-preserving discount if:
 	// 1. There is a non-empty ordering requirement (ORDER BY)
 	// 2. The discount is enabled (< 1.0)
 	// 3. Apply discount to each task that matches the ordering requirement
 	if !prop.IsSortItemEmpty() {
+		discount := sctx.GetSessionVars().OrderPreservingJoinDiscount
 		if discount < 1.0 {
 			if curMatchesProp {
-				if shouldLog {
-					logutil.BgLogger().Info("[DEBUG-ORDER-PRESERVE] Applying discount to curTask",
-						zap.Int64("tableID", debugTableID),
-						zap.Float64("beforeCost", curCost),
-						zap.Float64("afterCost", curCost*discount))
-				}
 				curCost = curCost * discount
 			}
 			if bestMatchesProp {
-				if shouldLog {
-					logutil.BgLogger().Info("[DEBUG-ORDER-PRESERVE] Applying discount to bestTask",
-						zap.Int64("tableID", debugTableID),
-						zap.Float64("beforeCost", bestCost),
-						zap.Float64("afterCost", bestCost*discount))
-				}
 				bestCost = bestCost * discount
 			}
 		}
