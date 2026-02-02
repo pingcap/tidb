@@ -6,14 +6,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type MVJobsManager struct {
-	se sessionctx.Context
+	se          sessionctx.Context
+	lastRefresh time.Time
 
 	mvMu struct {
 		sync.Mutex
@@ -177,21 +177,118 @@ last_refresh_read_tso
 read_tso used during the last successful refresh
 last_refresh_failed_reason
 Reason for the last refresh failure (and time?)
-
 */
 
-// RefreshTasks refreshes the tasks from the upper layer and filters by ID
-func (t *MVJobsManager) GetAllMV() error {
-	// sql := "SELECT MVIEW_ID,STALENESS FROM mysql.tidb_mviews"
-	return nil
+func (t *MVJobsManager) Start(sch *ServerConsistentHash) {
+	// TODO: enhance refresh logic to avoid sync all frequently
+	// 	listen to DDL events of add/remove/alter mview/mlog
 
+	ticker := time.NewTicker(time.Second)
+	go func() {
+		for range ticker.C {
+			if time.Since(t.lastRefresh) >= time.Second*20 {
+				t.RefreshAll(sch)
+			} else if time.Since(t.lastRefresh) >= time.Second {
+				if update, err := t.AnyUpdate(sch); err != nil {
+					continue
+				} else if update {
+					t.RefreshAll(sch)
+				}
+			}
+		}
+	}()
 }
 
-func (t *MVJobsManager) GetAllMlogs(sch *ServerConsistentHash) error {
-	if t.se == nil {
-		return errors.New("session context is nil")
+func (t *MVJobsManager) exec() error {
+	now := time.Now()
+	mvlogToPurge := make([]*mvlog, 0)
+	mvToRefresh := make([]*mv, 0)
+	{
+		t.mvlogMu.Lock()
+		for _, l := range t.mvlogMu.orderByNext {
+			if l.nextPurge.After(now) {
+				break
+			}
+			mvlogToPurge = append(mvlogToPurge, l)
+		}
+		t.mvlogMu.Unlock()
 	}
+	{
+		t.mvMu.Lock()
+		for _, m := range t.mvMu.orderByNext {
+			if m.nextRefresh.After(now) {
+				break
+			}
+			mvToRefresh = append(mvToRefresh, m)
+		}
+		t.mvMu.Unlock()
+	}
+	if len(mvToRefresh) > 0 {
+		
+	}
+	if len(mvlogToPurge) > 0 {
+	}
+	return nil
+}
 
+func (t *MVJobsManager) AnyUpdate(sch *ServerConsistentHash) (bool, error) {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	exec := t.se.GetSQLExecutor()
+	{
+		rs, err := exec.ExecuteInternal(ctx, "SELECT count(1) FROM mysql.tidb_mlogs")
+		if rs != nil {
+			//nolint: errcheck
+			defer rs.Close()
+		}
+		if err != nil {
+			return false, err
+		}
+		count := int64(0)
+		if rs != nil {
+			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+			if err != nil {
+				return false, err
+			}
+			count = rows[0].GetInt64(0)
+		}
+		t.mvlogMu.Lock()
+		pendingCount := int64(len(t.mvlogMu.pending))
+		t.mvlogMu.Unlock()
+
+		if count != pendingCount {
+			return true, nil
+		}
+	}
+	{
+		rs, err := exec.ExecuteInternal(ctx, "SELECT count(1) FROM mysql.tidb_mviews")
+		if rs != nil {
+			//nolint: errcheck
+			defer rs.Close()
+		}
+		if err != nil {
+			return false, err
+		}
+		count := int64(0)
+		if rs != nil {
+			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+			if err != nil {
+				return false, err
+			}
+			count = rows[0].GetInt64(0)
+		}
+
+		t.mvMu.Lock()
+		pendingCount := int64(len(t.mvMu.pending))
+		t.mvMu.Unlock()
+
+		if count != pendingCount {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (t *MVJobsManager) RefreshAll(sch *ServerConsistentHash) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	exec := t.se.GetSQLExecutor()
 	{
@@ -203,44 +300,46 @@ func (t *MVJobsManager) GetAllMlogs(sch *ServerConsistentHash) error {
 		if err != nil {
 			return err
 		}
-		if rs == nil {
-			return nil
-		}
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
-		newPending := make(map[string]*mvlog, len(rows))
-		for _, row := range rows {
-			l := &mvlog{
-				ID: row.GetString(0),
+		if rs != nil {
+			rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
+			if err != nil {
+				return err
 			}
-			if l.ID == "" {
-				continue
+			newPending := make(map[string]*mvlog, len(rows))
+			for _, row := range rows {
+				l := &mvlog{
+					ID: row.GetString(0),
+				}
+				if l.ID == "" {
+					continue
+				}
+				if !sch.Available(l.ID) {
+					continue
+				}
+				l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
+				l.purgeMethod = row.GetString(2)
+				if !row.IsNull(3) {
+					lastPurgeTime, _ := row.GetTime(3).GoTime(time.Local)
+					l.lastPurgeTime = lastPurgeTime
+				}
+				if l.purgeInterval > 0 && !l.lastPurgeTime.IsZero() {
+					l.nextPurge = l.lastPurgeTime.Add(l.purgeInterval)
+				}
+				newPending[l.ID] = l
 			}
-			if !sch.Available(l.ID) {
-				continue
+			newOrderByNext := make([]*mvlog, 0, len(newPending))
+			for _, l := range newPending {
+				newOrderByNext = append(newOrderByNext, l)
 			}
-			l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
-			l.purgeMethod = row.GetString(2)
-			if !row.IsNull(3) {
-				lastPurgeTime, _ := row.GetTime(3).GoTime(time.Local)
-				l.lastPurgeTime = lastPurgeTime
-			}
-			if l.purgeInterval > 0 && !l.lastPurgeTime.IsZero() {
-				l.nextPurge = l.lastPurgeTime.Add(l.purgeInterval)
-			}
-			newPending[l.ID] = l
-		}
-		newOrderByNext := make([]*mvlog, 0, len(newPending))
-		for _, l := range newPending {
-			newOrderByNext = append(newOrderByNext, l)
-		}
-		slices.SortFunc(newOrderByNext, func(a, b *mvlog) int {
-			return a.nextPurge.Compare(b.nextPurge)
-		})
+			slices.SortFunc(newOrderByNext, func(a, b *mvlog) int {
+				return a.nextPurge.Compare(b.nextPurge)
+			})
 
-		t.mvlogMu.Lock()
-		t.mvlogMu.pending = newPending
-		t.mvlogMu.orderByNext = newOrderByNext
-		t.mvlogMu.Unlock()
+			t.mvlogMu.Lock()
+			t.mvlogMu.pending = newPending
+			t.mvlogMu.orderByNext = newOrderByNext
+			t.mvlogMu.Unlock()
+		}
 	}
 	{
 		rs, err := exec.ExecuteInternal(ctx, "SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mviews")
@@ -251,47 +350,48 @@ func (t *MVJobsManager) GetAllMlogs(sch *ServerConsistentHash) error {
 		if err != nil {
 			return err
 		}
-		if rs == nil {
-			return nil
-		}
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
-		if err != nil {
-			return err
-		}
-		newPending := make(map[string]*mv, len(rows))
-		for _, row := range rows {
-			m := &mv{
-				ID: row.GetString(0),
-			}
-			if m.ID == "" {
-				continue
-			}
-			if !sch.Available(m.ID) {
-				continue
-			}
-			m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
-			if !row.IsNull(2) {
-				lastRefreshTime, _ := row.GetTime(2).GoTime(time.Local)
-				m.lastRefreshTime = lastRefreshTime
-			}
-			if m.refreshInterval > 0 && !m.lastRefreshTime.IsZero() {
-				m.nextRefresh = m.lastRefreshTime.Add(m.refreshInterval)
-			}
-			newPending[m.ID] = m
-		}
-		newOrderByNext := make([]*mv, 0, len(newPending))
-		for _, m := range newPending {
-			newOrderByNext = append(newOrderByNext, m)
-		}
-		slices.SortFunc(newOrderByNext, func(a, b *mv) int {
-			return a.nextRefresh.Compare(b.nextRefresh)
-		})
+		if rs != nil {
 
-		t.mvMu.Lock()
-		t.mvMu.pending = newPending
-		t.mvMu.orderByNext = newOrderByNext
-		t.mvMu.Unlock()
+			rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
+			if err != nil {
+				return err
+			}
+			newPending := make(map[string]*mv, len(rows))
+			for _, row := range rows {
+				m := &mv{
+					ID: row.GetString(0),
+				}
+				if m.ID == "" {
+					continue
+				}
+				if !sch.Available(m.ID) {
+					continue
+				}
+				m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
+				if !row.IsNull(2) {
+					lastRefreshTime, _ := row.GetTime(2).GoTime(time.Local)
+					m.lastRefreshTime = lastRefreshTime
+				}
+				if m.refreshInterval > 0 && !m.lastRefreshTime.IsZero() {
+					m.nextRefresh = m.lastRefreshTime.Add(m.refreshInterval)
+				}
+				newPending[m.ID] = m
+			}
+			newOrderByNext := make([]*mv, 0, len(newPending))
+			for _, m := range newPending {
+				newOrderByNext = append(newOrderByNext, m)
+			}
+			slices.SortFunc(newOrderByNext, func(a, b *mv) int {
+				return a.nextRefresh.Compare(b.nextRefresh)
+			})
+
+			t.mvMu.Lock()
+			t.mvMu.pending = newPending
+			t.mvMu.orderByNext = newOrderByNext
+			t.mvMu.Unlock()
+		}
 	}
 
+	t.lastRefresh = time.Now()
 	return nil
 }
