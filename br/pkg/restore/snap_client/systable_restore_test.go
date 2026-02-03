@@ -393,7 +393,11 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
+<<<<<<< HEAD
 	require.Equal(t, int64(229), session.CurrentBootstrapVersion)
+=======
+	require.Equal(t, int64(254), session.CurrentBootstrapVersion)
+>>>>>>> 1b68e1ea218 (feat(session): add schema upgrade v254 to optimize runaway watch index (#65828))
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {

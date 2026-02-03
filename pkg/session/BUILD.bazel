@@ -151,7 +151,11 @@ go_test(
     embed = [":session"],
     flaky = True,
     race = "off",
+<<<<<<< HEAD
     shard_count = 50,
+=======
+    shard_count = 47,
+>>>>>>> 1b68e1ea218 (feat(session): add schema upgrade v254 to optimize runaway watch index (#65828))
     deps = [
         "//pkg/autoid_service",
         "//pkg/bindinfo",
