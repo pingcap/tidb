@@ -68,6 +68,13 @@ type LogicalJoin struct {
 	LeftProperties  [][]*expression.Column
 	RightProperties [][]*expression.Column
 
+	// OrderProperties stores ordering requirements (e.g., from ORDER BY).
+	// Each element represents a possible ordering (sequence of columns).
+	// Used to guide join reordering to preserve ordering when beneficial.
+	// We check all tables in the join group to find one with a matching index,
+	// regardless of which side of the join it came from.
+	OrderProperties [][]*expression.Column
+
 	// DefaultValues is only used for left/right outer join, which is values the inner row's should be when the outer table
 	// doesn't match any inner table's row.
 	// That it's nil just means the default values is a slice of NULL.
@@ -485,6 +492,17 @@ func (p *LogicalJoin) PushDownTopN(topNLogicalPlan base.LogicalPlan) base.Logica
 	var topN *LogicalTopN
 	if topNLogicalPlan != nil {
 		topN = topNLogicalPlan.(*LogicalTopN)
+		// Store ordering requirements from TopN for join reordering consideration.
+		// Extract columns from ByItems to represent ordering requirements.
+		if len(topN.ByItems) > 0 {
+			orderingCols := getPossiblePropertyFromByItems(topN.ByItems)
+			if len(orderingCols) > 0 {
+				// Store ordering requirements for join reordering.
+				// During join reordering, we'll check all tables in the join group
+				// to find one with an index matching these columns.
+				p.OrderProperties = [][]*expression.Column{orderingCols}
+			}
+		}
 	}
 	topnEliminated := false
 	switch p.JoinType {

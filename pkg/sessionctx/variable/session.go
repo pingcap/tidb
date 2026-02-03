@@ -1048,6 +1048,10 @@ type SessionVars struct {
 	// When 0: never do Cartesian Join first.
 	// When > 0: allow Cartesian Join if cost(cartesian join) * threshold < cost(non cartesian join).
 	CartesianJoinOrderThreshold float64
+	// OrderPreservingJoinDiscount controls whether to prefer join orders that preserve ORDER BY.
+	// When < 1.0: prioritize tables with indexes matching ORDER BY columns as the leading table.
+	// When 1.0 (default): feature disabled, use normal cost-based join reordering.
+	OrderPreservingJoinDiscount float64
 
 	// cpuFactor is the CPU cost of processing one expression for one row.
 	cpuFactor float64
@@ -2271,6 +2275,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
 		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
 		CartesianJoinOrderThreshold:   vardef.DefOptCartesianJoinOrderThreshold,
+		OrderPreservingJoinDiscount:   vardef.DefOptOrderPreservingJoinDiscount,
 		EnableOuterJoinReorder:        vardef.DefTiDBEnableOuterJoinReorder,
 		EnableNoDecorrelateInSelect:   vardef.DefOptEnableNoDecorrelateInSelect,
 		EnableSemiJoinRewrite:         vardef.DefOptEnableSemiJoinRewrite,
