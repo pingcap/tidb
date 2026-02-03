@@ -1755,31 +1755,25 @@ var tableTiDBIndexUsage = []columnInfo{
 var tableTiDBMViewsCols = []columnInfo{
 	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "MVIEW_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "MVIEW_OWNER", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "MVIEW_DEFINITION", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "MVIEW_SQL_CONTENT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "MVIEW_COMMENT", tp: mysql.TypeVarchar, size: 128},
-	{name: "MVIEW_TIFLASH_REPLICAS", tp: mysql.TypeLong, size: 11, deflt: 0},
 	{name: "MVIEW_MODIFY_TIME", tp: mysql.TypeDatetime, size: 21, flag: mysql.NotNullFlag},
 	{name: "REFRESH_METHOD", tp: mysql.TypeVarchar, size: 32},
-	{name: "REFRESH_MODE", tp: mysql.TypeVarchar, size: 256},
-	{name: "LAST_REFRESH_METHOD", tp: mysql.TypeVarchar, size: 32},
-	{name: "LAST_REFRESH_TIME", tp: mysql.TypeDatetime, size: 21},
-	{name: "LAST_REFRESH_ENDTIME", tp: mysql.TypeDatetime, size: 21},
-	{name: "STALENESS", tp: mysql.TypeVarchar, size: 32},
+	{name: "START_WITH", tp: mysql.TypeVarchar, size: 256},
+	{name: "NEXT", tp: mysql.TypeVarchar, size: 256},
 }
 
 var tableTiDBMLogsCols = []columnInfo{
 	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
 	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "MLOG_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "MLOG_OWNER", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "MLOG_COLUMNS", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
 	{name: "BASE_TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
 	{name: "BASE_TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "BASE_TABLE_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "BASE_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "PURGE_START", tp: mysql.TypeDatetime, size: 21, flag: mysql.NotNullFlag},
@@ -1790,9 +1784,9 @@ var tableTiDBMLogsCols = []columnInfo{
 }
 
 var tableTiDBMViewRefreshHistCols = []columnInfo{
-	{name: "MVIEW_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "REFRESH_JOB_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "REFRESH_JOB_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "IS_NEWEST_REFRESH", tp: mysql.TypeVarchar, size: 3, flag: mysql.NotNullFlag},
 	{name: "REFRESH_METHOD", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "REFRESH_TIME", tp: mysql.TypeDatetime, size: 21},
@@ -1801,9 +1795,9 @@ var tableTiDBMViewRefreshHistCols = []columnInfo{
 }
 
 var tableTiDBMLogPurgeHistCols = []columnInfo{
-	{name: "MLOG_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "PURGE_JOB_ID", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "PURGE_JOB_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "IS_NEWEST_PURGE", tp: mysql.TypeVarchar, size: 3, flag: mysql.NotNullFlag},
 	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
 	{name: "PURGE_TIME", tp: mysql.TypeDatetime, size: 21},

@@ -12,11 +12,3 @@ type mviewCreateOptions struct {
 	hasRefresh bool
 	refresh    *ast.MViewRefreshClause
 }
-
-type mlogCreateOptions struct {
-	hasIncludingNewVals bool
-	includingNewVals    bool
-
-	hasPurge bool
-	purge    *ast.MLogPurgeClause
-}

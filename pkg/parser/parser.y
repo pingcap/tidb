@@ -371,6 +371,7 @@ import (
 	commit                "COMMIT"
 	committed             "COMMITTED"
 	compact               "COMPACT"
+	complete              "COMPLETE"
 	compressed            "COMPRESSED"
 	compression           "COMPRESSION"
 	compressionLevel      "COMPRESSION_LEVEL"
@@ -1430,15 +1431,14 @@ import (
 	MViewNextOpt                           "materialized view NEXT option"
 	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
 	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
-	MLogCreateOptionListOpt                "materialized view log create options"
-	MLogCreateOptionList                   "materialized view log create option list"
-	MLogCreateOption                       "materialized view log create option"
+	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 	MLogPurgeClause                        "materialized view log PURGE clause"
 	MLogStartWithOpt                       "materialized view log START WITH option"
 	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
+	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
 	RefreshWithSyncModeOpt                 "REFRESH MATERIALIZED VIEW WITH SYNC MODE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
@@ -5323,11 +5323,7 @@ MViewCreateOption:
 	}
 
 MViewRefreshClause:
-	"NEVER" "REFRESH"
-	{
-		$$ = &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodNever}
-	}
-|	"REFRESH" "FAST" MViewRefreshOnClauseOpt
+	"REFRESH" "FAST" MViewRefreshOnClauseOpt
 	{
 		x := $3.(*ast.MViewRefreshClause)
 		x.Method = ast.MViewRefreshMethodFast
@@ -5337,18 +5333,7 @@ MViewRefreshClause:
 MViewRefreshOnClauseOpt:
 	/* EMPTY */
 	{
-		$$ = &ast.MViewRefreshClause{OnDemand: true}
-	}
-|	"ON" "DEMAND" MViewStartWithOrNextOpt
-	{
-		var startWith ast.ExprNode
-		var next ast.ExprNode
-		if $3 != nil {
-			x := $3.(*ast.MViewRefreshClause)
-			startWith = x.StartWith
-			next = x.Next
-		}
-		$$ = &ast.MViewRefreshClause{OnDemand: true, StartWith: startWith, Next: next}
+		$$ = &ast.MViewRefreshClause{}
 	}
 |	MViewStartWithOrNext
 	{
@@ -5373,11 +5358,11 @@ MViewStartWithOrNext:
 		if $4 != nil {
 			next = $4.(ast.ExprNode)
 		}
-		$$ = &ast.MViewRefreshClause{OnDemand: true, StartWith: $3.(ast.ExprNode), Next: next}
+		$$ = &ast.MViewRefreshClause{StartWith: $3.(ast.ExprNode), Next: next}
 	}
 |	"NEXT" Expression
 	{
-		$$ = &ast.MViewRefreshClause{OnDemand: true, Next: $2.(ast.ExprNode)}
+		$$ = &ast.MViewRefreshClause{Next: $2.(ast.ExprNode)}
 	}
 
 MViewStartWithOpt:
@@ -5401,67 +5386,24 @@ MViewNextOpt:
 	}
 
 CreateMaterializedViewLogStmt:
-	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogCreateOptionListOpt
+	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogPurgeClauseOpt
 	{
-		opts := $10.(*mlogCreateOptions)
 		x := &ast.CreateMaterializedViewLogStmt{
 			Table:            $6.(*ast.TableName),
 			Cols:             $8.([]model.CIStr),
-			IncludingNewVals: opts.includingNewVals,
-			Purge:            opts.purge,
+			Purge:            $10.(*ast.MLogPurgeClause),
 		}
 		$$ = x
 	}
 
-MLogCreateOptionListOpt:
+MLogPurgeClauseOpt:
 	/* EMPTY */
 	{
-		$$ = &mlogCreateOptions{includingNewVals: true}
-	}
-|	MLogCreateOptionList
-	{
-		$$ = $1
-	}
-
-MLogCreateOptionList:
-	MLogCreateOption
-	{
-		opts := $1.(*mlogCreateOptions)
-		// Default INCLUDING NEW VALUES is true (unless explicitly overridden in the future).
-		if !opts.hasIncludingNewVals {
-			opts.includingNewVals = true
-		}
-		$$ = opts
-	}
-|	MLogCreateOptionList MLogCreateOption
-	{
-		opts := $1.(*mlogCreateOptions)
-		opt := $2.(*mlogCreateOptions)
-		if opt.hasIncludingNewVals {
-			if opts.hasIncludingNewVals {
-				yylex.AppendError(yylex.Errorf("Duplicate INCLUDING NEW VALUES specified in CREATE MATERIALIZED VIEW LOG"))
-			}
-			opts.hasIncludingNewVals = true
-			opts.includingNewVals = opt.includingNewVals
-		}
-		if opt.hasPurge {
-			if opts.hasPurge {
-				yylex.AppendError(yylex.Errorf("Duplicate PURGE clause specified in CREATE MATERIALIZED VIEW LOG"))
-			}
-			opts.hasPurge = true
-			opts.purge = opt.purge
-		}
-		$$ = opts
-	}
-
-MLogCreateOption:
-	"INCLUDING" "NEW" "VALUES"
-	{
-		$$ = &mlogCreateOptions{hasIncludingNewVals: true, includingNewVals: true}
+		$$ = (*ast.MLogPurgeClause)(nil)
 	}
 |	MLogPurgeClause
 	{
-		$$ = &mlogCreateOptions{hasPurge: true, purge: $1.(*ast.MLogPurgeClause)}
+		$$ = $1
 	}
 
 MLogPurgeClause:
@@ -5574,9 +5516,19 @@ DropMaterializedViewLogStmt:
 	}
 
 RefreshMaterializedViewStmt:
-	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithSyncModeOpt
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithSyncModeOpt RefreshMaterializedViewType
 	{
-		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithSyncMode: $5.(bool)}
+		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithSyncMode: $5.(bool), Type: $6.(ast.RefreshMaterializedViewType)}
+	}
+
+RefreshMaterializedViewType:
+	"COMPLETE"
+	{
+		$$ = ast.RefreshMaterializedViewTypeComplete
+	}
+|	"FAST"
+	{
+		$$ = ast.RefreshMaterializedViewTypeFast
 	}
 
 RefreshWithSyncModeOpt:
@@ -7182,6 +7134,7 @@ UnReservedKeyword:
 |	"CAPTURE"
 |	"CAUSAL"
 |	"CLEANUP"
+|	"COMPLETE"
 |	"CLOSE"
 |	"CHAIN"
 |	"CHARSET"

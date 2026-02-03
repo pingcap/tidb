@@ -31,30 +31,41 @@ func TestInfoSchemaTiDBMViewsAndMLogs(t *testing.T) {
 
 	tk.MustExec("create database is_mview")
 	tk.MustExec("use is_mview")
-	tk.MustExec("create materialized view mv1 (a) as select 1")
-	tk.MustExec("update mysql.tidb_mviews set mview_modify_time='2026-01-01 00:00:00', mview_tiflash_replicas=NULL where table_schema='is_mview' and mview_name='mv1'")
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("create materialized view log on t (k, v)")
+	tk.MustExec("create materialized view mv1 (k, cnt, sum_v) as select k, count(*), sum(v) from t group by k")
 
-	tk.MustQuery(`
-		select table_schema, mview_name, length(mview_id), refresh_method, refresh_mode, staleness, mview_comment, mview_tiflash_replicas, mview_modify_time
+	rows := tk.MustQuery(`
+		select table_schema, mview_name, mview_id, mview_sql_content, mview_comment, refresh_method, start_with, ` + "`next`" + `
 		from information_schema.tidb_mviews
 		where table_schema='is_mview' and mview_name='mv1'`,
-	).Check(testkit.Rows("is_mview mv1 36 REFRESH FAST ON DEMAND START WITH NOW() NEXT 300 FRESH <nil> 0 2026-01-01 00:00:00"))
+	).Rows()
+	require.Len(t, rows, 1)
+	require.Equal(t, "is_mview", rows[0][0])
+	require.Equal(t, "mv1", rows[0][1])
+	mviewID := fmt.Sprint(rows[0][2])
+	require.NotEmpty(t, mviewID)
+	require.NotEmpty(t, fmt.Sprint(rows[0][3]))
+	require.Equal(t, "<nil>", fmt.Sprint(rows[0][4]))
+	require.Equal(t, "REFRESH FAST", rows[0][5])
+	require.NotEmpty(t, fmt.Sprint(rows[0][6]))
+	require.NotEmpty(t, fmt.Sprint(rows[0][7]))
 
-	// time_zone conversion should keep the displayed DATETIME stable.
-	tk.MustExec("set time_zone = '+08:00'")
 	tk.MustQuery(`
-		select mview_modify_time
-		from information_schema.tidb_mviews
-		where table_schema='is_mview' and mview_name='mv1'`,
-	).Check(testkit.Rows("2026-01-01 00:00:00"))
+		select count(*) from mysql.tidb_mview_refresh
+		where mview_id=` + fmt.Sprint(mviewID),
+	).Check(testkit.Rows("1"))
 
 	tk.MustExec("create database is_mlog")
 	tk.MustExec("use is_mlog")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create materialized view log on t (a)")
-	tk.MustExec("update mysql.tidb_mlogs set purge_start='2026-01-02 03:04:05', last_purge_time='2026-01-02 03:04:05', last_purge_rows=7, last_purge_duration=9 where base_table_schema='is_mlog' and base_table_name='t'")
+	rows = tk.MustQuery("select mlog_id from information_schema.tidb_mlogs where base_table_schema='is_mlog' and base_table_name='t'").Rows()
+	require.Len(t, rows, 1)
+	mlogID := fmt.Sprint(rows[0][0])
+	tk.MustExec(fmt.Sprintf("update mysql.tidb_mlog_purge set purge_start='2026-01-02 03:04:05', last_purge_time='2026-01-02 03:04:05', last_purge_rows=7, last_purge_duration=9 where mlog_id=%s", mlogID))
 
-	rows := tk.MustQuery(`
+	rows = tk.MustQuery(`
 		select base_table_schema, base_table_name, purge_method, purge_start, purge_interval, last_purge_time, last_purge_rows, last_purge_duration
 		from information_schema.tidb_mlogs
 		where base_table_schema='is_mlog' and base_table_name='t'`,
@@ -76,63 +87,51 @@ func TestInfoSchemaTiDBMViewRefreshHistAndMLogPurgeHist(t *testing.T) {
 
 	tk.MustExec("set time_zone = '+00:00'")
 
-	// The infoschema reader joins hist tables with tidb_mviews/tidb_mlogs to get the schema for privilege filtering.
-	tk.MustExec(`
-		insert into mysql.tidb_mviews
-			(table_catalog, table_schema, mview_id, mview_name, mview_owner, mview_definition, mview_modify_time, staleness)
-		values
-			('def', 'test', 'mvid1', 'mv1', '', 'create materialized view mv1 (a) as select 1', '2026-01-01 00:00:00', 'FRESH')`)
-	tk.MustExec(`
-		insert into mysql.tidb_mlogs
-			(table_catalog, table_schema, mlog_id, mlog_name, mlog_owner, mlog_columns,
-			 base_table_catalog, base_table_schema, base_table_id, base_table_name,
-			 purge_method, purge_start, purge_interval, last_purge_time, last_purge_rows, last_purge_duration)
-		values
-			('def', 'test', 'mlogid1', 'mlog1', '', 'a',
-			 'def', 'test', 'baseid1', 't',
-			 'IMMEDIATE', '2026-01-01 00:00:00', 0, '2026-01-01 00:00:00', 0, 0)`)
+	tk.MustExec("create database is_mvhist")
+	tk.MustExec("use is_mvhist")
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("create materialized view log on t (k, v)")
+	tk.MustExec("create materialized view mv (k, cnt, sum_v) as select k, count(*), sum(v) from t group by k")
+	rows := tk.MustQuery("select mview_id, mview_name from information_schema.tidb_mviews where table_schema='is_mvhist' and mview_name='mv'").Rows()
+	require.Len(t, rows, 1)
+	mviewID := fmt.Sprint(rows[0][0])
+	mviewName := rows[0][1].(string)
 
-	tk.MustExec(`
+	rows = tk.MustQuery("select mlog_id, mlog_name from information_schema.tidb_mlogs where base_table_schema='is_mvhist' and base_table_name='t'").Rows()
+	require.Len(t, rows, 1)
+	mlogID := fmt.Sprint(rows[0][0])
+	mlogName := rows[0][1].(string)
+
+	tk.MustExec(fmt.Sprintf(`
 		insert into mysql.tidb_mview_refresh_hist
 			(mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
 		values
-			('mvid1', 'mv1', 123, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL)`)
+			(%s, '%s', 123, 'Y', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL)`,
+		mviewID, mviewName))
 
-	tk.MustExec(`
+	tk.MustExec(fmt.Sprintf(`
 		insert into mysql.tidb_mlog_purge_hist
 			(mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status)
 		values
-			('mlogid1', 'mlog1', 456, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL)`)
+			(%s, '%s', 456, 'Y', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL)`,
+		mlogID, mlogName))
 
 	// Make sure the rows are visible to restricted SQL (infoschema reader uses restricted SQL internally).
 	tk.MustExec("commit")
-	tk.MustQuery(`select count(*) from mysql.tidb_mview_refresh_hist where mview_id='mvid1'`).Check(testkit.Rows("1"))
-	tk.MustQuery(`select count(*) from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1'`).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mview_refresh_hist where mview_id=%s", mviewID)).Check(testkit.Rows("1"))
+	tk.MustQuery(fmt.Sprintf("select count(*) from mysql.tidb_mlog_purge_hist where mlog_id=%s", mlogID)).Check(testkit.Rows("1"))
 
 	tk.MustQuery(`
 		select mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status
 		from information_schema.tidb_mview_refresh_hist
-		where mview_id='mvid1'`,
-	).Check(testkit.Rows("mvid1 mv1 123 YES REFRESH FAST 2026-01-01 00:00:00 <nil> <nil>"))
+		where mview_id=` + fmt.Sprint(mviewID),
+	).Check(testkit.Rows(fmt.Sprintf("%s %s 123 Y REFRESH FAST 2026-01-01 00:00:00 <nil> <nil>", mviewID, mviewName)))
 
 	tk.MustQuery(`
 		select mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status
 		from information_schema.tidb_mlog_purge_hist
-		where mlog_id='mlogid1'`,
-	).Check(testkit.Rows("mlogid1 mlog1 456 YES IMMEDIATE <nil> 2026-01-01 00:00:00 0 <nil>"))
-
-	// time_zone conversion should keep the displayed DATETIME stable.
-	tk.MustExec("set time_zone = '+08:00'")
-	tk.MustQuery(`
-		select refresh_time
-		from information_schema.tidb_mview_refresh_hist
-		where mview_id='mvid1'`,
-	).Check(testkit.Rows("2026-01-01 00:00:00"))
-	tk.MustQuery(`
-		select purge_endtime
-		from information_schema.tidb_mlog_purge_hist
-		where mlog_id='mlogid1'`,
-	).Check(testkit.Rows("2026-01-01 00:00:00"))
+		where mlog_id=` + fmt.Sprint(mlogID),
+	).Check(testkit.Rows(fmt.Sprintf("%s %s 456 Y IMMEDIATE <nil> 2026-01-01 00:00:00 0 <nil>", mlogID, mlogName)))
 }
 
 func TestInfoSchemaTiDBMViewsAndMLogsPrivilegeFilteringBySchema(t *testing.T) {
@@ -144,44 +143,46 @@ func TestInfoSchemaTiDBMViewsAndMLogsPrivilegeFilteringBySchema(t *testing.T) {
 
 	// db1 objects
 	tk.MustExec("use is_mview_priv1")
-	tk.MustExec("create materialized view mv1 (a) as select 1")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("create materialized view mv1 (a, cnt) as select a, count(*) from t group by a")
 
 	// db2 objects
 	tk.MustExec("use is_mview_priv2")
-	tk.MustExec("create materialized view mv2 (a) as select 1")
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("create materialized view log on t (a)")
+	tk.MustExec("create materialized view mv2 (a, cnt) as select a, count(*) from t group by a")
 
-	rows := tk.MustQuery("select mview_id from mysql.tidb_mviews where table_schema='is_mview_priv1' and mview_name='mv1'").Rows()
+	rows := tk.MustQuery("select mview_id from information_schema.tidb_mviews where table_schema='is_mview_priv1' and mview_name='mv1'").Rows()
 	require.Len(t, rows, 1)
-	mviewID1 := rows[0][0].(string)
-	rows = tk.MustQuery("select mview_id from mysql.tidb_mviews where table_schema='is_mview_priv2' and mview_name='mv2'").Rows()
+	mviewID1 := fmt.Sprint(rows[0][0])
+	rows = tk.MustQuery("select mview_id from information_schema.tidb_mviews where table_schema='is_mview_priv2' and mview_name='mv2'").Rows()
 	require.Len(t, rows, 1)
-	mviewID2 := rows[0][0].(string)
+	mviewID2 := fmt.Sprint(rows[0][0])
 
-	rows = tk.MustQuery("select mlog_id from mysql.tidb_mlogs where base_table_schema='is_mview_priv1' and base_table_name='t'").Rows()
+	rows = tk.MustQuery("select mlog_id, mlog_name from information_schema.tidb_mlogs where base_table_schema='is_mview_priv1' and base_table_name='t'").Rows()
 	require.Len(t, rows, 1)
-	mlogID1 := rows[0][0].(string)
-	rows = tk.MustQuery("select mlog_id from mysql.tidb_mlogs where base_table_schema='is_mview_priv2' and base_table_name='t'").Rows()
+	mlogID1 := fmt.Sprint(rows[0][0])
+	mlogName1 := rows[0][1].(string)
+	rows = tk.MustQuery("select mlog_id, mlog_name from information_schema.tidb_mlogs where base_table_schema='is_mview_priv2' and base_table_name='t'").Rows()
 	require.Len(t, rows, 1)
-	mlogID2 := rows[0][0].(string)
+	mlogID2 := fmt.Sprint(rows[0][0])
+	mlogName2 := rows[0][1].(string)
 
 	tk.MustExec(fmt.Sprintf(`
 		insert into mysql.tidb_mview_refresh_hist
 			(mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
 		values
-			('%s', 'mv1', 1, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL),
-			('%s', 'mv2', 2, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL)`,
+			(%s, 'mv1', 1, 'Y', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL),
+			(%s, 'mv2', 2, 'Y', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL)`,
 		mviewID1, mviewID2))
 	tk.MustExec(fmt.Sprintf(`
 		insert into mysql.tidb_mlog_purge_hist
 			(mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status)
 		values
-			('%s', 'mlog1', 3, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL),
-			('%s', 'mlog2', 4, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL)`,
-		mlogID1, mlogID2))
+			(%s, '%s', 3, 'Y', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL),
+			(%s, '%s', 4, 'Y', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL)`,
+		mlogID1, mlogName1, mlogID2, mlogName2))
 	tk.MustExec("commit")
 
 	tk.MustExec("create user 'mv_priv_u1'@'%'")

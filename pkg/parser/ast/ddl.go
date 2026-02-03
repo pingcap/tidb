@@ -1655,7 +1655,6 @@ func (m MViewRefreshMethod) String() string {
 // MViewRefreshClause is the refresh clause in CREATE/ALTER MATERIALIZED VIEW.
 type MViewRefreshClause struct {
 	Method    MViewRefreshMethod
-	OnDemand  bool
 	StartWith ExprNode
 	Next      ExprNode
 }
@@ -1667,9 +1666,6 @@ func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
 		return nil
 	}
 
-	if n.OnDemand {
-		ctx.WriteKeyWord(" ON DEMAND")
-	}
 	if n.StartWith != nil {
 		ctx.WriteKeyWord(" START WITH ")
 		if err := n.StartWith.Restore(ctx); err != nil {
@@ -1805,10 +1801,9 @@ func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewLogStmt struct {
 	ddlNode
 
-	Table            *TableName
-	Cols             []model.CIStr
-	IncludingNewVals bool
-	Purge            *MLogPurgeClause
+	Table *TableName
+	Cols  []model.CIStr
+	Purge *MLogPurgeClause
 }
 
 // Restore implements Node interface.
@@ -1825,9 +1820,6 @@ func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(col.O)
 	}
 	ctx.WritePlain(")")
-	if n.IncludingNewVals {
-		ctx.WriteKeyWord(" INCLUDING NEW VALUES")
-	}
 	if n.Purge != nil {
 		ctx.WritePlain(" ")
 		if err := n.Purge.Restore(ctx); err != nil {
@@ -2152,6 +2144,25 @@ type RefreshMaterializedViewStmt struct {
 
 	ViewName     *TableName
 	WithSyncMode bool
+	Type         RefreshMaterializedViewType
+}
+
+type RefreshMaterializedViewType int
+
+const (
+	RefreshMaterializedViewTypeComplete RefreshMaterializedViewType = iota
+	RefreshMaterializedViewTypeFast
+)
+
+func (t RefreshMaterializedViewType) String() string {
+	switch t {
+	case RefreshMaterializedViewTypeComplete:
+		return "COMPLETE"
+	case RefreshMaterializedViewTypeFast:
+		return "FAST"
+	default:
+		return "UNKNOWN"
+	}
 }
 
 // Restore implements Node interface.
@@ -2163,6 +2174,8 @@ func (n *RefreshMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 	if n.WithSyncMode {
 		ctx.WriteKeyWord(" WITH SYNC MODE")
 	}
+	ctx.WritePlain(" ")
+	ctx.WriteKeyWord(n.Type.String())
 	return nil
 }
 

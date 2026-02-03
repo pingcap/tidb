@@ -317,6 +317,7 @@ var Keywords = []KeywordsType{
 	{"COMMIT", false, "unreserved"},
 	{"COMMITTED", false, "unreserved"},
 	{"COMPACT", false, "unreserved"},
+	{"COMPLETE", false, "unreserved"},
 	{"COMPRESSED", false, "unreserved"},
 	{"COMPRESSION", false, "unreserved"},
 	{"COMPRESSION_LEVEL", false, "unreserved"},

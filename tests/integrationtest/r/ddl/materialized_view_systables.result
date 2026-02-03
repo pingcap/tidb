@@ -1,81 +1,74 @@
 use ddl__materialized_view_systables;
-create materialized view mv1 (a) as select 1;
-select table_schema, mview_name, length(mview_id) as mview_id_len, refresh_method, refresh_mode, staleness
+drop table if exists t;
+create table t (k int, v int);
+create materialized view log on t (k, v);
+create materialized view mv1 (k, cnt, sum_v) as select k, count(*), sum(v) from t group by k;
+select table_schema, mview_name, mview_id > 0 as has_id, refresh_method, start_with, `next`
 from information_schema.tidb_mviews
 where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
-table_schema	mview_name	mview_id_len	refresh_method	refresh_mode	staleness
-ddl__materialized_view_systables	mv1	36	REFRESH FAST	ON DEMAND START WITH NOW() NEXT 300	FRESH
+table_schema	mview_name	has_id	refresh_method	start_with	next
+ddl__materialized_view_systables	mv1	1	REFRESH FAST	NOW()	300
 alter materialized view mv1 comment = 'c1';
 select mview_comment
 from information_schema.tidb_mviews
 where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
 mview_comment
 c1
-create materialized view mv2 (a) never refresh as select 1;
-select mview_name, refresh_method, refresh_mode
+alter materialized view mv1 refresh start with now() next 600;
+select start_with, `next`
 from information_schema.tidb_mviews
-where table_schema='ddl__materialized_view_systables' and mview_name in ('mv1','mv2')
-order by mview_name;
-mview_name	refresh_method	refresh_mode
-mv1	REFRESH FAST	ON DEMAND START WITH NOW() NEXT 300
-mv2	NEVER REFRESH	NULL
-drop materialized view mv2;
-select count(*)
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+start_with	next
+now()	600
+alter materialized view mv1 refresh;
+select start_with is null as start_is_null, `next` is null as next_is_null
 from information_schema.tidb_mviews
-where table_schema='ddl__materialized_view_systables' and mview_name='mv2';
-count(*)
-0
-drop table if exists t;
-create table t (a int, b int);
-create materialized view log on t (a,b);
-select base_table_schema, base_table_name, mlog_name like '__tidb_mlog_%' as mlog_name_like, mlog_columns, purge_method, purge_interval
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+start_is_null	next_is_null
+1	1
+select base_table_schema, base_table_name, mlog_id > 0 as has_id, mlog_name, mlog_columns, purge_method, purge_interval
 from information_schema.tidb_mlogs
 where base_table_schema='ddl__materialized_view_systables' and base_table_name='t';
-base_table_schema	base_table_name	mlog_name_like	mlog_columns	purge_method	purge_interval
-ddl__materialized_view_systables	t	1	a,b	IMMEDIATE	0
+base_table_schema	base_table_name	has_id	mlog_name	mlog_columns	purge_method	purge_interval
+ddl__materialized_view_systables	t	1	$mlog$t	k,v	IMMEDIATE	0
 drop table t;
 Error 1105 (HY000): can't drop table ddl__materialized_view_systables.t: materialized view log exists, drop it first
+drop materialized view log on t;
+Error 1105 (HY000): can't drop materialized view log on ddl__materialized_view_systables.t: dependent materialized views exist
+drop materialized view mv1;
 drop materialized view log on t;
 drop table t;
 refresh materialized view mv1;
 Error 8200 (HY000): REFRESH MATERIALIZED VIEW is not supported
-delete from mysql.tidb_mview_refresh_hist where mview_id='mvid1';
-delete from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1';
-delete from mysql.tidb_mviews where mview_id='mvid1';
-delete from mysql.tidb_mlogs where mlog_id='mlogid1';
-insert into mysql.tidb_mviews
-(table_catalog, table_schema, mview_id, mview_name, mview_owner, mview_definition, mview_modify_time)
-values
-('def', 'ddl__materialized_view_systables', 'mvid1', 'mvx', 'root', 'select 1', '2026-01-01 00:00:00');
-insert into mysql.tidb_mlogs
-(table_catalog, table_schema, mlog_id, mlog_name, mlog_owner, mlog_columns,
-base_table_catalog, base_table_schema, base_table_id, base_table_name,
-purge_method, purge_start, purge_interval, last_purge_time, last_purge_rows, last_purge_duration)
-values
-('def', 'ddl__materialized_view_systables', 'mlogid1', 'mlogx', 'root', 'a,b',
-'def', 'ddl__materialized_view_systables', 'base_table_id_x', 't',
-'IMMEDIATE', '2026-01-01 00:00:00', 0, '2026-01-01 00:00:00', 0, 0);
+delete from mysql.tidb_mview_refresh_hist where refresh_job_id=123;
+delete from mysql.tidb_mlog_purge_hist where purge_job_id=456;
+drop table if exists t_hist;
+create table t_hist (a int);
+create materialized view log on t_hist (a);
+create materialized view mv_hist (a, cnt) as select a, count(*) from t_hist group by a;
 insert into mysql.tidb_mview_refresh_hist
 (mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
-values
-('mvid1', 'mvx', 123, 'YES', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL);
+select mview_id, mview_name, 123, 'Y', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv_hist';
 insert into mysql.tidb_mlog_purge_hist
 (mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status)
-values
-('mlogid1', 'mlogx', 456, 'YES', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL);
+select mlog_id, mlog_name, 456, 'Y', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL
+from information_schema.tidb_mlogs
+where base_table_schema='ddl__materialized_view_systables' and base_table_name='t_hist';
 commit;
-select mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status
+select mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status
 from information_schema.tidb_mview_refresh_hist
-where mview_id='mvid1';
-mview_id	mview_name	refresh_job_id	is_newest_refresh	refresh_method	refresh_time	refresh_endtime	refresh_status
-mvid1	mvx	123	YES	REFRESH FAST	2026-01-01 00:00:00	NULL	NULL
-select mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status
+where refresh_job_id=123;
+mview_name	refresh_job_id	is_newest_refresh	refresh_method	refresh_time	refresh_endtime	refresh_status
+mv_hist	123	Y	REFRESH FAST	2026-01-01 00:00:00	NULL	NULL
+select mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status
 from information_schema.tidb_mlog_purge_hist
-where mlog_id='mlogid1';
-mlog_id	mlog_name	purge_job_id	is_newest_purge	purge_method	purge_time	purge_endtime	purge_rows	purge_status
-mlogid1	mlogx	456	YES	IMMEDIATE	NULL	2026-01-01 00:00:00	0	NULL
-delete from mysql.tidb_mview_refresh_hist where mview_id='mvid1';
-delete from mysql.tidb_mlog_purge_hist where mlog_id='mlogid1';
-delete from mysql.tidb_mviews where mview_id='mvid1';
-delete from mysql.tidb_mlogs where mlog_id='mlogid1';
-drop materialized view mv1;
+where purge_job_id=456;
+mlog_name	purge_job_id	is_newest_purge	purge_method	purge_time	purge_endtime	purge_rows	purge_status
+$mlog$t_hist	456	Y	IMMEDIATE	NULL	2026-01-01 00:00:00	0	NULL
+delete from mysql.tidb_mview_refresh_hist where refresh_job_id=123;
+delete from mysql.tidb_mlog_purge_hist where purge_job_id=456;
+drop materialized view mv_hist;
+drop materialized view log on t_hist;
+drop table t_hist;

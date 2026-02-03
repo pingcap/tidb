@@ -164,6 +164,9 @@ type TableInfo struct {
 
 	View *ViewInfo `json:"view"`
 
+	MaterializedView    *MaterializedViewInfo    `json:"materialized_view,omitempty"`
+	MaterializedViewLog *MaterializedViewLogInfo `json:"materialized_view_log,omitempty"`
+
 	Sequence *SequenceInfo `json:"sequence"`
 
 	// Lock represent the table lock info.
