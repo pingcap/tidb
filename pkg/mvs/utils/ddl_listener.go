@@ -11,8 +11,8 @@ const (
 	ActionAddMV     = 146
 	ActionDropMV    = 147
 	ActionAlterMV   = 148
-	ActionAddMVLOG  = 149
-	ActionDropMVLOG = 150
+	ActionAddMVLog  = 149
+	ActionDropMVLog = 150
 )
 
 // RegisterMVDDLEventHandler registers a DDL event handler for MV-related events.
@@ -22,7 +22,7 @@ func RegisterMVDDLEventHandler(ddlNotifier *notifier.DDLNotifier) {
 	}
 	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		switch event.GetType() {
-		case ActionAddMV, ActionDropMVLOG, ActionAlterMV, ActionAddMVLOG, ActionDropMV:
+		case ActionAddMV, ActionDropMVLog, ActionAlterMV, ActionAddMVLog, ActionDropMV:
 			mvDDLEventCh.Wake()
 		}
 		return nil

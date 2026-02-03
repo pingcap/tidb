@@ -25,7 +25,7 @@ type ServerConsistentHash struct {
 	servers map[string]*infosync.ServerInfo
 	chash   ConsistentHash // use consistent hash to reduce task movements after nodes changed
 	mu      sync.RWMutex
-	id      string // current server id
+	ID      string // current server ID
 }
 
 func NewServerConsistentHash(replicas int) *ServerConsistentHash {
@@ -55,11 +55,11 @@ func (sch *ServerConsistentHash) Refresh(ctx context.Context) error {
 	{ // if no change, return directly
 		sch.mu.RLock()
 
-		nochanged := len(sch.servers) == len(newServerInfos)
-		if nochanged {
+		noChanged := len(sch.servers) == len(newServerInfos)
+		if noChanged {
 			for _, srv := range newServerInfos {
 				if _, ok := sch.servers[srv.ID]; !ok {
-					nochanged = false
+					noChanged = false
 					break
 				}
 			}
@@ -67,7 +67,7 @@ func (sch *ServerConsistentHash) Refresh(ctx context.Context) error {
 
 		sch.mu.RUnlock()
 
-		if nochanged {
+		if noChanged {
 			return nil
 		}
 	}
@@ -87,5 +87,5 @@ func (sch *ServerConsistentHash) ToServerID(key string) string {
 }
 
 func (sch *ServerConsistentHash) Available(key string) bool {
-	return sch.ToServerID(key) == sch.id
+	return sch.ToServerID(key) == sch.ID
 }

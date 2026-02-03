@@ -2,36 +2,36 @@ package utils
 
 import "sync/atomic"
 
-// Notifer works as the multiple producer & single consumer mode.
-type Notifer struct {
+// Notifier works as the multiple producer & single consumer mode.
+type Notifier struct {
 	C     chan struct{}
 	awake int32
 }
 
-// NewNotifer creates a new Notifer instance.
-func NewNotifer() Notifer {
-	return Notifer{
+// NewNotifier creates a new Notifier instance.
+func NewNotifier() Notifier {
+	return Notifier{
 		C: make(chan struct{}, 1),
 	}
 }
 
 // return previous awake status
-func (n *Notifer) clear() bool {
+func (n *Notifier) clear() bool {
 	return atomic.SwapInt32(&n.awake, 0) != 0
 }
 
 // Wait for signal synchronously (consumer)
-func (n *Notifer) Wait() {
+func (n *Notifier) Wait() {
 	<-n.C
 	n.clear()
 }
 
 // Wake the consumer
-func (n *Notifer) Wake() {
+func (n *Notifier) Wake() {
 	n.wake()
 }
 
-func (n *Notifer) wake() {
+func (n *Notifier) wake() {
 	// 1 -> 1: do nothing
 	// 0 -> 1: send signal
 	if atomic.SwapInt32(&n.awake, 1) == 0 {
@@ -39,12 +39,12 @@ func (n *Notifer) wake() {
 	}
 }
 
-func (n *Notifer) isAwake() bool {
+func (n *Notifier) isAwake() bool {
 	return atomic.LoadInt32(&n.awake) != 0
 }
 
 // WeakWake wakes the consumer if it is not awake (may loose signal under concurrent scenarios).
-func (n *Notifer) WeakWake() {
+func (n *Notifier) WeakWake() {
 	if n.isAwake() {
 		return
 	}
