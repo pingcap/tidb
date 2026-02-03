@@ -21,18 +21,22 @@ import (
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
 type withCompression struct {
-	Storage
-	compressType  CompressType
-	decompressCfg DecompressConfig
+	storeapi.Storage
+	compressType  compressedio.CompressType
+	decompressCfg compressedio.DecompressConfig
 }
 
 // WithCompression returns an Storage with compress option
-func WithCompression(inner Storage, compressionType CompressType, cfg DecompressConfig) Storage {
-	if compressionType == NoCompression {
+func WithCompression(inner storeapi.Storage, compressionType compressedio.CompressType, cfg compressedio.DecompressConfig) storeapi.Storage {
+	if compressionType == compressedio.NoCompression {
 		return inner
 	}
 	return &withCompression{
@@ -42,21 +46,21 @@ func WithCompression(inner Storage, compressionType CompressType, cfg Decompress
 	}
 }
 
-func (w *withCompression) Create(ctx context.Context, name string, o *WriterOption) (FileWriter, error) {
+func (w *withCompression) Create(ctx context.Context, name string, o *storeapi.WriterOption) (objectio.Writer, error) {
 	writer, err := w.Storage.Create(ctx, name, o)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	// some implementation already wrap the writer, so we need to unwrap it
-	if bw, ok := writer.(*bufferedWriter); ok {
-		writer = bw.writer
+	if bw, ok := writer.(*objectio.BufferedWriter); ok {
+		writer = bw.GetWriter()
 	}
 	// the external storage will do access recording, so no need to pass it again.
-	compressedWriter := newBufferedWriter(writer, hardcodedS3ChunkSize, w.compressType, nil)
+	compressedWriter := objectio.NewBufferedWriter(writer, s3like.HardcodedChunkSize, w.compressType, nil)
 	return compressedWriter, nil
 }
 
-func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption) (FileReader, error) {
+func (w *withCompression) Open(ctx context.Context, path string, o *storeapi.ReaderOption) (objectio.Reader, error) {
 	fileReader, err := w.Storage.Open(ctx, path, o)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -70,7 +74,7 @@ func (w *withCompression) Open(ctx context.Context, path string, o *ReaderOption
 
 func (w *withCompression) WriteFile(ctx context.Context, name string, data []byte) error {
 	bf := bytes.NewBuffer(make([]byte, 0, len(data)))
-	compressBf := newCompressWriter(w.compressType, bf)
+	compressBf := compressedio.NewWriter(w.compressType, bf)
 	_, err := compressBf.Write(data)
 	if err != nil {
 		return errors.Trace(err)
@@ -88,7 +92,7 @@ func (w *withCompression) ReadFile(ctx context.Context, name string) ([]byte, er
 		return data, errors.Trace(err)
 	}
 	bf := bytes.NewBuffer(data)
-	compressBf, err := newCompressReader(w.compressType, w.decompressCfg, bf)
+	compressBf, err := compressedio.NewReader(w.compressType, w.decompressCfg, bf)
 	if err != nil {
 		return nil, err
 	}
@@ -103,18 +107,18 @@ type compressReader struct {
 }
 
 // InterceptDecompressReader intercepts the reader and wraps it with a decompress
-// reader on the given FileReader. Note that the returned
-// FileReader does not have the property that Seek(0, io.SeekCurrent)
+// reader on the given Reader. Note that the returned
+// Reader does not have the property that Seek(0, io.SeekCurrent)
 // equals total bytes Read() if the decompress reader is used.
 func InterceptDecompressReader(
-	fileReader FileReader,
-	compressType CompressType,
-	cfg DecompressConfig,
-) (FileReader, error) {
-	if compressType == NoCompression {
+	fileReader objectio.Reader,
+	compressType compressedio.CompressType,
+	cfg compressedio.DecompressConfig,
+) (objectio.Reader, error) {
+	if compressType == compressedio.NoCompression {
 		return fileReader, nil
 	}
-	r, err := newCompressReader(compressType, cfg, fileReader)
+	r, err := compressedio.NewReader(compressType, cfg, fileReader)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -127,11 +131,11 @@ func InterceptDecompressReader(
 
 // NewLimitedInterceptReader creates a decompress reader with limit n.
 func NewLimitedInterceptReader(
-	fileReader FileReader,
-	compressType CompressType,
-	cfg DecompressConfig,
+	fileReader objectio.Reader,
+	compressType compressedio.CompressType,
+	cfg compressedio.DecompressConfig,
 	n int64,
-) (FileReader, error) {
+) (objectio.Reader, error) {
 	newFileReader := fileReader
 	if n < 0 {
 		return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "compressReader doesn't support negative limit, n: %d", n)
@@ -164,7 +168,7 @@ func (c *compressReader) GetFileSize() (int64, error) {
 
 type flushStorageWriter struct {
 	writer    io.Writer
-	flusher   flusher
+	flusher   compressedio.Flusher
 	closer    io.Closer
 	accessRec *recording.AccessStats
 }
@@ -183,7 +187,7 @@ func (w *flushStorageWriter) Close(_ context.Context) error {
 	return w.closer.Close()
 }
 
-func newFlushStorageWriter(writer io.Writer, flusher2 flusher, closer io.Closer, accessRec *recording.AccessStats) *flushStorageWriter {
+func newFlushStorageWriter(writer io.Writer, flusher2 compressedio.Flusher, closer io.Closer, accessRec *recording.AccessStats) *flushStorageWriter {
 	return &flushStorageWriter{
 		writer:    writer,
 		flusher:   flusher2,

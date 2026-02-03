@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -37,7 +39,7 @@ type trackOpenMemStorage struct {
 	opened atomic.Int32
 }
 
-func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *objstore.ReaderOption) (objstore.FileReader, error) {
+func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *storeapi.ReaderOption) (objectio.Reader, error) {
 	s.opened.Inc()
 	r, err := s.MemStorage.Open(ctx, path, nil)
 	if err != nil {
@@ -47,12 +49,12 @@ func (s *trackOpenMemStorage) Open(ctx context.Context, path string, _ *objstore
 }
 
 type trackOpenFileReader struct {
-	objstore.FileReader
+	objectio.Reader
 	store *trackOpenMemStorage
 }
 
 func (r *trackOpenFileReader) Close() error {
-	err := r.FileReader.Close()
+	err := r.Reader.Close()
 	if err != nil {
 		return err
 	}
@@ -320,7 +322,7 @@ func testMergeIterSwitchMode(t *testing.T, f func([]byte, int) []byte) {
 }
 
 type eofReader struct {
-	objstore.FileReader
+	objectio.Reader
 }
 
 func (r eofReader) Seek(_ int64, _ int) (int64, error) {
@@ -650,8 +652,8 @@ type slowOpenStorage struct {
 func (s *slowOpenStorage) Open(
 	ctx context.Context,
 	filePath string,
-	o *objstore.ReaderOption,
-) (objstore.FileReader, error) {
+	o *storeapi.ReaderOption,
+) (objectio.Reader, error) {
 	time.Sleep(s.sleep)
 	s.openCnt.Inc()
 	return s.MemStorage.Open(ctx, filePath, o)

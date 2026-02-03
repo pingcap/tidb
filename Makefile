@@ -344,6 +344,10 @@ failpoint-disable: tools/bin/failpoint-ctl
 bazel-failpoint-enable:
 	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- enable
 
+.PHONY: bazel_failpoint-disable
+bazel_failpoint-disable:
+	find $$PWD/ -mindepth 1 -type d | grep -vE "(\.git|\.idea|tools)" | xargs bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG) @com_github_pingcap_failpoint//failpoint-ctl:failpoint-ctl -- disable
+
 .PHONY: tools/bin/ut
 tools/bin/ut: tools/check/ut.go tools/check/longtests.go
 	cd tools/check; \
@@ -423,9 +427,9 @@ bench-daily:
 	go test github.com/pingcap/tidb/pkg/executor -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/executor/test/splittest -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/expression -run TestBenchDaily -bench Ignore --outfile bench_daily.json
+	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/tests/partition -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpcds -run TestBenchDaily -bench Ignore --outfile bench_daily.json
-	go test github.com/pingcap/tidb/pkg/planner/core/casetest/plancache -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/planner/core/casetest/tpch -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/session -run TestBenchDaily -bench Ignore --outfile bench_daily.json
 	go test github.com/pingcap/tidb/pkg/statistics -run TestBenchDaily -bench Ignore --outfile bench_daily.json
@@ -559,12 +563,16 @@ mock_import: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/dxf/framework/storage Manager > pkg/dxf/framework/mock/storage_manager_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ingestor/ingestcli Client,WriteClient > pkg/ingestor/ingestcli/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/importsdk FileScanner,JobManager,SQLGenerator,SDK > pkg/importsdk/mock/sdk_mock.go
-	tools/bin/mockgen -package mock github.com/pingcap/tidb/lightning/pkg/importinto CheckpointManager,JobSubmitter,JobMonitor,JobOrchestrator > lightning/pkg/importinto/mock/import_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/lightning/pkg/importinto CheckpointManager,JobSubmitter,JobMonitor,JobOrchestrator,ProgressUpdater > lightning/pkg/importinto/mock/import_mock.go
 
 .PHONY: gen_mock
 gen_mock: mockgen
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/util/sqlexec RestrictedSQLExecutor > pkg/util/sqlexec/mock/restricted_sql_executor_mock.go
 	tools/bin/mockgen -package mockobjstore github.com/pingcap/tidb/pkg/objstore Storage > pkg/objstore/mockobjstore/objstore_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3store S3API > pkg/objstore/s3store/mock/s3api_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/ossstore API > pkg/objstore/ossstore/mock/api_mock.go
+	tools/bin/mockgen -package mock github.com/aliyun/credentials-go/credentials/providers CredentialsProvider > pkg/objstore/ossstore/mock/provider_mock.go
+	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/objstore/s3like PrefixClient > pkg/objstore/s3like/mock/client_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl SchemaLoader > pkg/ddl/mock/schema_loader_mock.go
 	tools/bin/mockgen -package mock github.com/pingcap/tidb/pkg/ddl/systable Manager > pkg/ddl/mock/systable_manager_mock.go
 
@@ -714,7 +722,7 @@ bazel_coverage_test_ddlargsv1: bazel-failpoint-enable bazel_ci_simple_prepare
 bazel_bin: ## Build importer/tidb binary files with Bazel build system
 	mkdir -p bin; \
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --stamp --workspace_status_command=./build/print-workspace-status.sh --define gotags=$(BUILD_TAGS) --norun_validations ;\
  	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
  	cp -f ${IMPORTER_PATH} ./bin/ ;
 
@@ -724,7 +732,7 @@ bazel_build: ## Build TiDB using Bazel build system
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
 		//... --//build:with_nogo_flag=$(NOGO_FLAG)
 	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
-		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
+		//cmd/importer:importer //cmd/tidb-server:tidb-server //cmd/tidb-server:tidb-server-check --stamp --workspace_status_command=./build/print-workspace-status.sh --define gotags=$(BUILD_TAGS) --//build:with_nogo_flag=$(NOGO_FLAG) ;\
 	cp -f ${TIDB_SERVER_PATH} ./bin/ ;\
 	cp -f ${IMPORTER_PATH} ./bin/ ; \
 	cp -f ${TIDB_SERVER_CHECK_PATH} ./bin/ ; \

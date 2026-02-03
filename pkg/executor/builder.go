@@ -169,6 +169,10 @@ func (b *MockExecutorBuilder) Build(p base.Plan) exec.Executor {
 }
 
 func (b *executorBuilder) build(p base.Plan) exec.Executor {
+	if phyWrapper, ok := p.(*plannercore.PhysicalPlanWrapper); ok {
+		p = phyWrapper.Inner
+	}
+
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -250,8 +254,6 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
-	case *plannercore.PhysicalSimpleWrapper:
-		return b.buildSimple(&v.Inner)
 	case *plannercore.Set:
 		return b.buildSet(v)
 	case *plannercore.SetConfig:
@@ -564,7 +566,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 	return e
 }
 
-func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, hasGenedCol bool) []*model.ColumnInfo {
+func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, hasGenedColOrPartialIndex bool) []*model.ColumnInfo {
 	var pkCols []*model.IndexColumn
 	if tblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
@@ -572,7 +574,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 	}
 
 	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+len(pkCols))
-	if hasGenedCol {
+	if hasGenedColOrPartialIndex {
 		columns = tblInfo.Columns
 	} else {
 		for _, idxCol := range indexInfo.Columns {
@@ -619,20 +621,23 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	var hasGenedCol bool
+	var hasGenedColOrPartialIndex bool
 	for _, iCol := range index.Meta().Columns {
 		if tblInfo.Columns[iCol.Offset].IsGenerated() {
-			hasGenedCol = true
+			hasGenedColOrPartialIndex = true
 		}
 	}
-	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), hasGenedCol)
+	if index.Meta().HasCondition() {
+		hasGenedColOrPartialIndex = true
+	}
+	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), hasGenedColOrPartialIndex)
 	e := &RecoverIndexExec{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		columns:          cols,
-		containsGenedCol: hasGenedCol,
-		index:            index,
-		table:            t,
-		physicalID:       t.Meta().ID,
+		BaseExecutor:                   exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		columns:                        cols,
+		containsGenedColOrPartialIndex: hasGenedColOrPartialIndex,
+		index:                          index,
+		table:                          t,
+		physicalID:                     t.Meta().ID,
 	}
 	e.handleCols = buildHandleColsForExec(tblInfo, e.columns)
 	return e
@@ -2253,6 +2258,10 @@ func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec
 	if b.err != nil {
 		return nil
 	}
+	return b.newProjectionExec(childExec, v)
+}
+
+func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physicalop.PhysicalProjection) *ProjectionExec {
 	e := &ProjectionExec{
 		projectionExecutorContext: newProjectionExecutorContext(b.ctx),
 		BaseExecutorV2:            exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
@@ -2264,6 +2273,7 @@ func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
+	// index join would use the same logic.
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
@@ -2590,6 +2600,7 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				},
 			}
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			extractor := v.Extractor.(*plannercore.SlowQueryExtractor)
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -2598,7 +2609,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				retriever: &slowQueryRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
-					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+					extractor:  extractor,
+					limit:      extractor.Limit,
 					memTracker: memTracker,
 				},
 			}
@@ -5239,20 +5251,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 		}
 	}()
 
-	e := &ProjectionExec{
-		projectionExecutorContext: newProjectionExecutorContext(builder.ctx),
-		BaseExecutorV2:            exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
-		numWorkers:                int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay:          v.CalculateNoDelay,
-	}
-
-	// If the calculation row count for this Projection operator is smaller
-	// than a Chunk size, we turn back to the un-parallel Projection
-	// implementation to reduce the goroutine overhead.
-	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
-		e.numWorkers = 0
-	}
+	e := builder.newProjectionExec(childExec, v)
 	failpoint.Inject("buildProjectionForIndexJoinPanic", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
 			panic("buildProjectionForIndexJoinPanic")
@@ -5596,6 +5595,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 		isGlobal:     v.IsGlobal,
 		sqlBindOp:    v.SQLBindOp,
 		details:      v.Details,
+		isFromRemote: v.IsFromRemote,
 	}
 	return e
 }

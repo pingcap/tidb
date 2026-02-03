@@ -22,6 +22,7 @@ go_library(
         "//pkg/metrics",
         "//pkg/objstore",
         "//pkg/objstore/recording",
+        "//pkg/objstore/storeapi",
         "//pkg/sessionctx",
         "//pkg/sessionctx/vardef",
         "//pkg/util/backoff",

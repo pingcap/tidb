@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/conn"
 	"github.com/pingcap/tidb/br/pkg/conn/util"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/br/pkg/gc"
 	"github.com/pingcap/tidb/br/pkg/glue"
 	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/pdutil"
@@ -34,6 +35,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/tikv"
@@ -121,7 +123,7 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 	defer mgr.Close()
 	client := backup.NewBackupClient(ctx, mgr)
 
-	opts := objstore.Options{
+	opts := storeapi.Options{
 		NoCredentials:   cfg.NoCreds,
 		SendCredentials: cfg.SendCreds,
 	}
@@ -184,13 +186,13 @@ func RunBackupEBS(c context.Context, g glue.Glue, cfg *BackupConfig) error {
 		return errors.Trace(err)
 	}
 	if !cfg.SkipPauseGCAndScheduler {
-		sp := utils.BRServiceSafePoint{
+		sp := gc.BRServiceSafePoint{
 			BackupTS: resolvedTs,
-			TTL:      utils.DefaultBRGCSafePointTTL,
-			ID:       utils.MakeSafePointID(),
+			TTL:      gc.DefaultBRGCSafePointTTL,
+			ID:       gc.MakeSafePointID(),
 		}
 		log.Info("safe point will be stuck during ebs backup", zap.Object("safePoint", sp))
-		err = utils.StartServiceSafePointKeeper(ctx, mgr.GetPDClient(), sp)
+		err = gc.StartServiceSafePointKeeper(ctx, sp, mgr.GetGCManager())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -419,7 +421,7 @@ func newBackupClient(ctx context.Context, storeAddr string, cfg Config, tlsConfi
 	return brpb.NewBackupClient(connection), connection, nil
 }
 
-func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage objstore.Storage) error {
+func saveMetaFile(c context.Context, backupInfo *config.EBSBasedBRMeta, externalStorage storeapi.Storage) error {
 	data, err := json.Marshal(backupInfo)
 	if err != nil {
 		return errors.Trace(err)

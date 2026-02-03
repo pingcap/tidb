@@ -19,232 +19,39 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/pkg/objstore/recording"
+	"github.com/pingcap/tidb/pkg/objstore/ossstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
+	"github.com/pingcap/tidb/pkg/objstore/s3store"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// Permission represents the permission we need to check in create storage.
-type Permission string
-
-// StrongConsistency is a marker interface that indicates the storage is strong consistent
-// over its `Read`, `Write` and `WalkDir` APIs.
-type StrongConsistency interface {
-	MarkStrongConsistency()
-}
-
 const (
-	// AccessBuckets represents bucket access permission
-	// it replace the origin skip-check-path.
-	AccessBuckets Permission = "AccessBucket"
-
-	// ListObjects represents listObjects permission
-	ListObjects Permission = "ListObjects"
-	// GetObject represents GetObject permission
-	GetObject Permission = "GetObject"
-	// PutObject represents PutObject permission
-	PutObject Permission = "PutObject"
-	// PutAndDeleteObject represents PutAndDeleteObject permission
-	// we cannot check DeleteObject permission alone, so we use PutAndDeleteObject instead.
-	PutAndDeleteObject Permission = "PutAndDeleteObject"
 	// TombstoneSize is the tombstone size.
 	TombstoneSize int64 = -1
 )
 
-// WalkOption is the option of storage.WalkDir.
-type WalkOption struct {
-	// walk on SubDir of base directory, i.e. if the base dir is '/path/to/base'
-	// then we're walking '/path/to/base/<SubDir>'
-	SubDir string
-	// whether subdirectory under the walk dir is skipped, only works for LOCAL storage now.
-	// default is false, i.e. we walk recursively.
-	SkipSubDir bool
-	// ObjPrefix used fo prefix search in storage. Note that only part of storage
-	// support it.
-	// It can save lots of time when we want find specify prefix objects in storage.
-	// For example. we have 10000 <Hash>.sst files and 10 backupmeta.(\d+) files.
-	// we can use ObjPrefix = "backupmeta" to retrieve all meta files quickly.
-	ObjPrefix string
-	// ListCount is the number of entries per page.
-	//
-	// In cloud storages such as S3 and GCS, the files listed and sent in pages.
-	// Typically a page contains 1000 files, and if a folder has 3000 descendant
-	// files, one would need 3 requests to retrieve all of them. This parameter
-	// controls this size. Note that both S3 and GCS limits the maximum to 1000.
-	//
-	// Typically you want to leave this field unassigned (zero) to use the
-	// default value (1000) to minimize the number of requests, unless you want
-	// to reduce the possibility of timeout on an extremely slow connection, or
-	// perform testing.
-	ListCount int64
-	// IncludeTombstone will allow `Walk` to emit removed files during walking.
-	//
-	// In most cases, `Walk` runs over a snapshot, if a file in the snapshot
-	// was deleted during walking, the file will be ignored. Set this to `true`
-	// will make them be sent to the callback.
-	//
-	// The size of a deleted file should be `TombstoneSize`.
-	IncludeTombstone bool
-}
-
-// ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
-type ReadSeekCloser interface {
-	io.Reader
-	io.Seeker
-	io.Closer
-}
-
-// Uploader upload file with chunks.
-type Uploader interface {
-	// UploadPart upload part of file data to storage
-	UploadPart(ctx context.Context, data []byte) error
-	// CompleteUpload make the upload data to a complete file
-	CompleteUpload(ctx context.Context) error
-}
-
-// Writer is like io.Writer but with Context, create a new writer on top of Uploader with NewUploaderWriter.
-type Writer interface {
-	// Write writes to buffer and if chunk is filled will upload it
-	Write(ctx context.Context, p []byte) (int, error)
-	// Close writes final chunk and completes the upload
-	Close(ctx context.Context) error
-}
-
-// WriterOption writer option.
-type WriterOption struct {
-	Concurrency int
-	PartSize    int64
-}
-
-// ReaderOption reader option.
-type ReaderOption struct {
-	// StartOffset is inclusive. And it's incompatible with Seek.
-	StartOffset *int64
-	// EndOffset is exclusive. And it's incompatible with Seek.
-	EndOffset *int64
-	// PrefetchSize will switch to NewPrefetchReader if value is positive.
-	PrefetchSize int
-}
-
-// Copier copier.
-type Copier interface {
-	// CopyFrom copies a object to the current external storage by the specification.
-	CopyFrom(ctx context.Context, e Storage, spec CopySpec) error
-}
-
-// CopySpec copy spec.
-type CopySpec struct {
-	From string
-	To   string
-}
-
-// Storage represents a kind of file system storage.
-type Storage interface {
-	// WriteFile writes a complete file to storage, similar to os.WriteFile, but WriteFile should be atomic
-	WriteFile(ctx context.Context, name string, data []byte) error
-	// ReadFile reads a complete file from storage, similar to os.ReadFile
-	ReadFile(ctx context.Context, name string) ([]byte, error)
-	// FileExists return true if file exists
-	FileExists(ctx context.Context, name string) (bool, error)
-	// DeleteFile delete the file in storage
-	DeleteFile(ctx context.Context, name string) error
-	// Open a Reader by file path. path is relative path to storage base path.
-	// Some implementation will use the given ctx as the inner context of the reader.
-	Open(ctx context.Context, path string, option *ReaderOption) (FileReader, error)
-	// DeleteFiles delete the files in storage
-	DeleteFiles(ctx context.Context, names []string) error
-	// WalkDir traverse all the files in a dir.
-	//
-	// fn is the function called for each regular file visited by WalkDir.
-	// The argument `path` is the file path that can be used in `Open`
-	// function; the argument `size` is the size in byte of the file determined
-	// by path.
-	WalkDir(ctx context.Context, opt *WalkOption, fn func(path string, size int64) error) error
-
-	// URI returns the base path as a URI
-	URI() string
-
-	// Create opens a file writer by path. path is relative path to storage base
-	// path. The old file under same path will be overwritten. Currently only s3
-	// implemented WriterOption.
-	Create(ctx context.Context, path string, option *WriterOption) (FileWriter, error)
-	// Rename file name from oldFileName to newFileName
-	Rename(ctx context.Context, oldFileName, newFileName string) error
-	// Close release the resources of the storage.
-	Close()
-}
-
-// FileReader represents the streaming external file reader.
-type FileReader interface {
-	io.ReadSeekCloser
-	// GetFileSize returns the file size.
-	GetFileSize() (int64, error)
-}
-
-// FileWriter represents the streaming external file writer.
-type FileWriter interface {
-	// Write writes to buffer and if chunk is filled will upload it
-	Write(ctx context.Context, p []byte) (int, error)
-	// Close writes final chunk and completes the upload
-	Close(ctx context.Context) error
-}
-
-// Options are backend-independent options provided to New.
-type Options struct {
-	// SendCredentials marks whether to send credentials downstream.
-	//
-	// This field should be set to false if the credentials are provided to
-	// downstream via external key managers, e.g. on K8s or cloud provider.
-	SendCredentials bool
-
-	// NoCredentials means that no cloud credentials are supplied to BR
-	NoCredentials bool
-
-	// HTTPClient to use. The created storage may ignore this field if it is not
-	// directly using HTTP (e.g. the local storage).
-	// NOTICE: the HTTPClient is only used by s3/azure/gcs.
-	// For GCS, we will use this as base client to init a client with credentials.
-	HTTPClient *http.Client
-
-	// CheckPermissions check the given permission in New() function.
-	// make sure we can access the storage correctly before execute tasks.
-	CheckPermissions []Permission
-
-	// S3Retryer is the retryer for create s3 storage, if it is nil,
-	// defaultS3Retryer() will be used.
-	S3Retryer retry.Standard
-
-	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
-	// if enabled. it will send the options to tikv.
-	CheckS3ObjectLockOptions bool
-	// AccessRecording records the access statistics of object storage.
-	// we use the read/write file size as an estimate of the network traffic,
-	// we don't consider the traffic consumed by network protocol, and traffic
-	// caused by retry
-	AccessRecording *recording.AccessStats
-}
-
 // Create creates Storage.
 //
 // Please consider using `New` in the future.
-func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds bool) (Storage, error) {
-	return New(ctx, backend, &Options{
+func Create(ctx context.Context, backend *backuppb.StorageBackend, sendCreds bool) (storeapi.Storage, error) {
+	return New(ctx, backend, &storeapi.Options{
 		SendCredentials: sendCreds,
 		HTTPClient:      nil,
 	})
 }
 
 // NewWithDefaultOpt creates Storage with default options.
-func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (Storage, error) {
+func NewWithDefaultOpt(ctx context.Context, backend *backuppb.StorageBackend) (storeapi.Storage, error) {
 	return New(ctx, backend, nil)
 }
 
 // NewFromURL creates an Storage from URL.
-func NewFromURL(ctx context.Context, uri string) (Storage, error) {
+func NewFromURL(ctx context.Context, uri string) (storeapi.Storage, error) {
 	if len(uri) == 0 {
 		return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "empty store is not allowed")
 	}
@@ -263,9 +70,9 @@ func NewFromURL(ctx context.Context, uri string) (Storage, error) {
 }
 
 // New creates an Storage with options.
-func New(ctx context.Context, backend *backuppb.StorageBackend, opts *Options) (Storage, error) {
+func New(ctx context.Context, backend *backuppb.StorageBackend, opts *storeapi.Options) (storeapi.Storage, error) {
 	if opts == nil {
-		opts = &Options{}
+		opts = &storeapi.Options{}
 	}
 	switch backend := backend.Backend.(type) {
 	case *backuppb.StorageBackend_Local:
@@ -282,10 +89,12 @@ func New(ctx context.Context, backend *backuppb.StorageBackend, opts *Options) (
 		if backend.S3 == nil {
 			return nil, errors.Annotate(berrors.ErrStorageInvalidConfig, "s3 config not found")
 		}
-		if backend.S3.Provider == ks3SDKProvider {
-			return NewKS3Storage(ctx, backend.S3, opts)
+		if backend.S3.Provider == s3like.KS3SDKProvider {
+			return s3store.NewKS3Storage(ctx, backend.S3, opts)
+		} else if backend.S3.Provider == s3like.OSSProvider {
+			return ossstore.NewOSSStorage(ctx, backend.S3, opts)
 		}
-		return NewS3Storage(ctx, backend.S3, opts)
+		return s3store.NewS3Storage(ctx, backend.S3, opts)
 	case *backuppb.StorageBackend_Noop:
 		return newNoopStorage(), nil
 	case *backuppb.StorageBackend_Gcs:
@@ -321,7 +130,7 @@ func CloneDefaultHTTPTransport() (*http.Transport, bool) {
 // ReadDataInRange reads data from storage in range [start, start+len(p)).
 func ReadDataInRange(
 	ctx context.Context,
-	storage Storage,
+	storage storeapi.Storage,
 	name string,
 	start int64,
 	p []byte,
@@ -337,7 +146,7 @@ func ReadDataInRange(
 		return 0, errors.Annotatef(berrors.ErrInvalidArgument,
 			"range calculation overflow: start=%d, len=%d", start, len(p))
 	}
-	rd, err := storage.Open(ctx, name, &ReaderOption{
+	rd, err := storage.Open(ctx, name, &storeapi.ReaderOption{
 		StartOffset: &start,
 		EndOffset:   &end,
 	})
