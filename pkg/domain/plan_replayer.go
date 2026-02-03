@@ -91,7 +91,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 
 	storage, err := extstore.GetGlobalExtStorage(ctx)
 	if err != nil {
-		logutil.BgLogger().Error("get global ext storage failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err))
+		logutil.BgLogger().Warn("get global ext storage failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err))
 		return
 	}
 	opt := &storeapi.WalkOption{
@@ -101,7 +101,7 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 		baseName := filepath.Base(fileName)
 		createTime, err := parseTime(baseName)
 		if err != nil {
-			logutil.BgLogger().Error("parseTime failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
+			logutil.BgLogger().Warn("parseTime failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
 			return nil
 		}
 		isPlanReplayer := strings.Contains(baseName, "replayer")
@@ -146,7 +146,7 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+		logutil.BgLogger().Warn("failed to get server info", zap.Error(err))
 		instance = "unknown"
 	} else {
 		instance = net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
