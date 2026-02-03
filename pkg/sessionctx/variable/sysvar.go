@@ -775,8 +775,6 @@ var defaultSysVars = []*SysVar{
 	},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeStartTime, Value: DefAutoAnalyzeStartTime, Type: TypeTime},
 	{Scope: ScopeGlobal, Name: TiDBAutoAnalyzeEndTime, Value: DefAutoAnalyzeEndTime, Type: TypeTime},
-	{Scope: ScopeGlobal, Name: TiDBMViewRefreshHistTime, Value: "720", Type: TypeUnsigned, MinValue: 0, MaxValue: 86400},
-	{Scope: ScopeGlobal, Name: TiDBMLogPurgeHistTime, Value: "3", Type: TypeUnsigned, MinValue: 0, MaxValue: 16},
 	{Scope: ScopeGlobal, Name: TiDBMemQuotaBindingCache, Value: strconv.FormatInt(DefTiDBMemQuotaBindingCache, 10), Type: TypeUnsigned, MaxValue: math.MaxInt32, GetGlobal: func(_ context.Context, sv *SessionVars) (string, error) {
 		return strconv.FormatInt(MemQuotaBindingCache.Load(), 10), nil
 	}, SetGlobal: func(_ context.Context, s *SessionVars, val string) error {
