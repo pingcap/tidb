@@ -15,6 +15,7 @@
 package addindextest
 
 import (
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -136,4 +137,33 @@ func TestAlterJobOnDXF(t *testing.T) {
 	require.EqualValues(t, 1, finishedSubtasks)
 	require.True(t, modified.Load())
 	tk.MustExec("admin check index t1 idx;")
+}
+
+func TestLocalSortRetryAfterEngineOpenError(t *testing.T) {
+	testutil.ReduceCheckInterval(t)
+
+	store := realtikvtest.CreateMockStoreAndSetup(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists addindexlit_retry;")
+	tk.MustExec("create database addindexlit_retry;")
+	tk.MustExec("use addindexlit_retry;")
+	if kerneltype.IsClassic() {
+		tk.MustExec("set global tidb_enable_dist_task=1;")
+		tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = 1;")
+	}
+	tk.MustExec(`set @@global.tidb_cloud_storage_uri = ""`)
+
+	tk.MustExec("create table t (a int primary key, b int);")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
+
+	var injected atomic.Bool
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/afterOpenEngineInRegister", func(errPtr *error) {
+		if injected.CompareAndSwap(false, true) {
+			*errPtr = errors.New("failpoint: afterOpenEngineInRegister")
+		}
+	})
+
+	tk.MustExec("alter table t add index idx(b);")
+	require.True(t, injected.Load())
+	tk.MustExec("admin check index t idx;")
 }
