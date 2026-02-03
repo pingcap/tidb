@@ -2173,6 +2173,7 @@ func (a *ExecStmt) observeStmtBeginForTopProfiling(ctx context.Context) context.
 	stats := a.Ctx.GetStmtStats()
 	if !topsqlstate.TopProfilingEnabled() {
 		// Always attach the SQL and plan info uses to catch the running SQL when Top Profiling is enabled in execution.
+		// Note: Goroutine labels for CPU profiling are only set when TopSQL is enabled.
 		if stats != nil {
 			stats.OnExecutionBegin(sqlDigestByte, planDigestByte, vars.InPacketBytes.Load())
 		}
