@@ -12,6 +12,15 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select * from t1 where fts_match_phrase('hello', title)",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_phrase(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",
