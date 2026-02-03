@@ -49,6 +49,7 @@ type checkpointStorage interface {
 // 3. BR regards the checkpoint table as a directory which is managed by metadata table.
 const (
 	LogRestoreCheckpointDatabaseName       string = "__TiDB_BR_Temporary_Log_Restore_Checkpoint"
+	LogRestorePITRItemsDatabaseName        string = "__TiDB_BR_Temporary_Log_Restore_PiTR_Items"
 	SnapshotRestoreCheckpointDatabaseName  string = "__TiDB_BR_Temporary_Snapshot_Restore_Checkpoint"
 	CustomSSTRestoreCheckpointDatabaseName string = "__TiDB_BR_Temporary_Custom_SST_Restore_Checkpoint"
 

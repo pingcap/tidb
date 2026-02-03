@@ -327,6 +327,10 @@ func (cfg *RestoreConfig) LocalEncryptionEnabled() bool {
 	return cfg.CipherInfo.CipherType != encryptionpb.EncryptionMethod_PLAINTEXT
 }
 
+func (cfg *RestoreConfig) HasFullBackupStorage() bool {
+	return len(cfg.FullBackupStorage) > 0
+}
+
 type immutableRestoreConfig struct {
 	CmdName           string
 	UpstreamClusterID uint64

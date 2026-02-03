@@ -25,17 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 )
 
-const pitrIdMapPayloadVersion int32 = 1
-
-// DecodePitrIdMapPayload parses the payload and returns db maps for callers outside logclient.
-func DecodePitrIdMapPayload(metaData []byte) ([]*backuppb.PitrDBMap, error) {
-	payload, err := decodePitrIdMapPayload(metaData)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	return payload.GetDbMaps(), nil
-}
-
 func PitrIngestItemsFromProto(items []*backuppb.PitrIngestItem) map[int64]map[int64]bool {
 	if len(items) == 0 {
 		return map[int64]map[int64]bool{}
@@ -115,39 +104,6 @@ func PitrTiFlashItemsToProto(items map[int64]model.TiFlashReplicaInfo) []*backup
 		})
 	}
 	return result
-}
-
-func PitrIngestItemsFromPayload(payload *backuppb.PitrIdMapPayload) (map[int64]map[int64]bool, error) {
-	if payload == nil {
-		return nil, errors.New("pitr id map payload is nil")
-	}
-	return PitrIngestItemsFromProto(payload.IngestItems), nil
-}
-
-func PitrTiFlashItemsFromPayload(payload *backuppb.PitrIdMapPayload) (map[int64]model.TiFlashReplicaInfo, error) {
-	if payload == nil {
-		return nil, errors.New("pitr id map payload is nil")
-	}
-	return PitrTiFlashItemsFromProto(payload.TiflashItems), nil
-}
-
-func decodePitrIdMapPayload(metaData []byte) (*backuppb.PitrIdMapPayload, error) {
-	payload := &backuppb.PitrIdMapPayload{}
-	if err := payload.Unmarshal(metaData); err != nil {
-		return nil, errors.Trace(err)
-	}
-	return payload, nil
-}
-
-func newPitrIdMapPayload(dbMaps []*backuppb.PitrDBMap) *backuppb.PitrIdMapPayload {
-	return &backuppb.PitrIdMapPayload{
-		Version: pitrIdMapPayloadVersion,
-		DbMaps:  dbMaps,
-	}
-}
-
-func NewPitrIdMapPayload(dbMaps []*backuppb.PitrDBMap) *backuppb.PitrIdMapPayload {
-	return newPitrIdMapPayload(dbMaps)
 }
 
 func (rc *LogClient) loadPitrIdMapDataFromTable(
@@ -275,18 +231,6 @@ func (rc *LogClient) loadPitrIdMapPayloadFromTable(
 	restoreID uint64,
 ) (*backuppb.PitrIdMapPayload, bool, error) {
 	restoreID = rc.normalizePitrIdMapRestoreID(restoreID)
-	payload, found, err := rc.loadPitrIdMapPayloadFromTableOnce(ctx, restoredTS, restoreID)
-	if err != nil {
-		return nil, false, errors.Trace(err)
-	}
-	return payload, found, nil
-}
-
-func (rc *LogClient) loadPitrIdMapPayloadFromTableOnce(
-	ctx context.Context,
-	restoredTS uint64,
-	restoreID uint64,
-) (*backuppb.PitrIdMapPayload, bool, error) {
 	metaData, found, err := rc.loadPitrIdMapDataFromTable(ctx, restoredTS, restoreID)
 	if err != nil {
 		return nil, false, errors.Trace(err)
@@ -294,8 +238,8 @@ func (rc *LogClient) loadPitrIdMapPayloadFromTableOnce(
 	if !found {
 		return nil, false, nil
 	}
-	payload, err := decodePitrIdMapPayload(metaData)
-	if err != nil {
+	payload := &backuppb.PitrIdMapPayload{}
+	if err := payload.Unmarshal(metaData); err != nil {
 		return nil, false, errors.Trace(err)
 	}
 	return payload, true, nil
@@ -308,9 +252,6 @@ func (rc *LogClient) savePitrIdMapPayloadToTable(
 ) error {
 	if payload == nil {
 		return errors.New("pitr id map payload is nil")
-	}
-	if payload.Version == 0 {
-		payload.Version = pitrIdMapPayloadVersion
 	}
 	data, err := proto.Marshal(payload)
 	if err != nil {

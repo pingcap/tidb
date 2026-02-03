@@ -61,7 +61,7 @@ func (rc *LogClient) saveIDMap(
 	manager *stream.TableMappingManager,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
-	payload := newPitrIdMapPayload(manager.ToProto())
+	payload := &backuppb.PitrIdMapPayload{DbMaps: manager.ToProto()}
 	return rc.savePitrIdMapPayload(ctx, rc.restoreTS, payload, logCheckpointMetaManager)
 }
 
@@ -81,7 +81,7 @@ func (rc *LogClient) saveIDMap2Storage(
 }
 
 func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.PitrDBMap) error {
-	payload := newPitrIdMapPayload(dbMaps)
+	payload := &backuppb.PitrIdMapPayload{DbMaps: dbMaps}
 	if existing, found, err := rc.loadPitrIdMapPayloadFromTable(ctx, rc.restoreTS, rc.restoreID); err != nil {
 		return errors.Trace(err)
 	} else if found {

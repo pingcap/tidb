@@ -1995,7 +1995,7 @@ func (rc *LogClient) SaveIdMapWithFailPoints(
 	manager *stream.TableMappingManager,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
-	payload := newPitrIdMapPayload(manager.ToProto())
+	payload := &backuppb.PitrIdMapPayload{DbMaps: manager.ToProto()}
 	return rc.SavePitrIdMapPayloadWithFailPoints(ctx, rc.restoreTS, payload, logCheckpointMetaManager)
 }
 
