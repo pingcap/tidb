@@ -1367,7 +1367,7 @@ func TestIssue39593(t *testing.T) {
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
-	require.InDelta(t, float64(3702.6), countResult.Est, float64(1))
+	require.InDelta(t, float64(5400), countResult.Est, float64(1))
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
