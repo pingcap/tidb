@@ -58,6 +58,7 @@ go_library(
         "//pkg/meta/metadef",
         "//pkg/meta/model",
         "//pkg/metrics",
+        "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "//pkg/owner",
         "//pkg/parser",
