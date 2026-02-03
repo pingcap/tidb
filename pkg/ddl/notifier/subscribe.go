@@ -69,6 +69,8 @@ const (
 	StatsMetaHandlerID HandlerID = 1
 	// PriorityQueueHandlerID is used to update the priority queue.
 	PriorityQueueHandlerID HandlerID = 2
+	// MVJobsHandlerID is used to notify MV jobs manager for DDL events.
+	MVJobsHandlerID HandlerID = 3
 )
 
 // String implements fmt.Stringer interface.
@@ -78,6 +80,8 @@ func (id HandlerID) String() string {
 		return "TestHandler"
 	case StatsMetaHandlerID:
 		return "StatsMetaHandler"
+	case MVJobsHandlerID:
+		return "MVJobsHandler"
 	default:
 		return fmt.Sprintf("HandlerID(%d)", id)
 	}

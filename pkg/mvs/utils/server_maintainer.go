@@ -87,7 +87,5 @@ func (sch *ServerConsistentHash) ToServerID(key string) string {
 }
 
 func (sch *ServerConsistentHash) Available(key string) bool {
-	sch.mu.RLock()
-	defer sch.mu.RUnlock()
-	return sch.chash.GetNode(key) == sch.id
+	return sch.ToServerID(key) == sch.id
 }

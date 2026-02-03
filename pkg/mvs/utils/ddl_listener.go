@@ -4,43 +4,26 @@ import (
 	"context"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
 const (
-	ActionAddMV     = 46
-	ActionDropMV    = 47
-	ActionAlterMV   = 48
-	ActionAddMVLOG  = 49
-	ActionDropMVLOG = 50
+	ActionAddMV     = 146
+	ActionDropMV    = 147
+	ActionAlterMV   = 148
+	ActionAddMVLOG  = 149
+	ActionDropMVLOG = 150
 )
 
-// RegisterTableDDLEventHandler registers a DDL notifier handler for table create/alter/drop events.
-// The caller must pass a unique handlerID and register it before the notifier starts.
-// The handler receives the action type, and table info pointers may be nil depending on the action.
-func RegisterTableDDLEventHandler(
-	ddlNotifier *notifier.DDLNotifier,
-	handlerID notifier.HandlerID,
-	onEvent func(action model.ActionType, tableInfo *model.TableInfo, oldTableInfo *model.TableInfo),
-) {
-	ddlNotifier.RegisterHandler(handlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
-		if onEvent == nil {
-			return nil
-		}
-		action := event.GetType()
-		switch action {
-		case ActionAddMV:
-			onEvent(action, event.GetCreateTableInfo(), nil)
-		case ActionAddMVLOG:
-			onEvent(action, nil, event.GetDropTableInfo())
-		case ActionDropMV:
-			onEvent(action, nil, event.GetDropTableInfo())
-		case ActionDropMVLOG:
-			onEvent(action, event.GetCreateTableInfo(), nil)
-		case ActionAlterMV:
-			onEvent(action, event.GetCreateTableInfo(), event.GetOldTableInfo())
-		default:
+// RegisterMVDDLEventHandler registers a DDL event handler for MV-related events.
+func RegisterMVDDLEventHandler(ddlNotifier *notifier.DDLNotifier) {
+	if ddlNotifier == nil {
+		return
+	}
+	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+		switch event.GetType() {
+		case ActionAddMV, ActionDropMVLOG, ActionAlterMV, ActionAddMVLOG, ActionDropMV:
+			mvDDLEventCh.Wake()
 		}
 		return nil
 	})

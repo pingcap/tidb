@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/mvs/utils"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -1386,6 +1387,7 @@ func (do *Domain) Init(
 		ddlNotifierStore,
 		time.Second,
 	)
+	utils.RegisterMVDDLEventHandler(do.ddlNotifier)
 	// TODO(lance6716): find a more representative place for subscriber
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
 

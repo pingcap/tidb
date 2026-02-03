@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/kv"
@@ -14,6 +15,7 @@ import (
 type MVJobsManager struct {
 	se          sessionctx.Context
 	lastRefresh time.Time
+	running     atomic.Bool
 
 	mvMu struct {
 		sync.Mutex
@@ -27,14 +29,16 @@ type MVJobsManager struct {
 	}
 }
 
+var mvDDLEventCh = NewNotifer()
+
 // NewMVJobsManager creates a MVJobsManager with a SQL executor.
 func NewMVJobsManager(se sessionctx.Context) *MVJobsManager {
-	return &MVJobsManager{se: se}
+	mgr := &MVJobsManager{se: se}
+	return mgr
 }
 
 type mv struct {
 	ID              string
-	lastRefreshTime time.Time
 	refreshInterval time.Duration
 
 	singleMlog  bool
@@ -44,29 +48,71 @@ type mv struct {
 type mvlog struct {
 	ID            string
 	purgeInterval time.Duration
-	lastPurgeTime time.Time
-	purgeMethod   string
 
 	nextPurge time.Time
 }
 
 func (m *mvlog) purge() error {
-	// 0. start transaction
-	// 1. find all mysql.tidb_mlogs that depend on this mlog
-	// 2. for each mview, find the last read_tso
-	// 3. delete all entries in mlog whose tso < last read_tso
-	// 4. update the mlog metadata in mysql.tidb_mlogs
-	// 5. commit transaction
+/*
+BEGIN;
+SELECT * FROM mysql.tidb_mlog_job WHERE MLOG_ID = ? FOR UPDATE;
+
+find_min_mv_tso = func {
+  find all mvs depend on the base table of this mlog
+  return the minimum LAST_REFRESH_COMMIT_TSO among these mvs
+}
+
+DELETE FROM find_mvlog_by_base_table() WHERE COMMIT_TSO IN (0, find_min_mv_tso()];
+
+UPDATE mysql.tidb_mlog_job SET
+  LAST_PURGE_TIME = now(),
+  NEXT_PURGE_TIME = now() + PURGE_INTERVAL,
+  LAST_PURGE_ERR = NULL
+WHERE MLOG_ID = ?;
+
+COMMIT;
+*/
 	return nil
 }
 
 func (m *mv) refresh() error {
-	// 0. start transaction
-	// 1. read the mview definition from mysql.tidb_mviews
-	// 2. execute the definition to get the new data
-	// 3. replace the data in the mview table
-	// 4. update the mview metadata in mysql.tidb_mviews
-	// 5. commit transaction
+	/*
+	TODO: implement the refresh logic, the pseudo code is as follows:
+	   is_manual_refresh = func {
+	   	check current refresh is triggered manually
+	   }
+
+	   BEGIN;
+
+	   SELECT * FROM mysql.mview_refresh_info WHERE MVIEW_ID = ? FOR UPDATE;
+
+	   if (NOT is_manual_refresh() and NEXT_REFRESH_TIME > now()) {
+	     COMMIT;
+	     RETURN;
+	   }
+
+	   TSO = GET_COMMIT_TSO();
+
+	   READ MVLOG data in range (LAST_REFRESH_COMMIT_TSO, TSO])
+
+	   COMPUTE new MV data;
+
+	   UPDATE MV table with new data;
+
+	   UPDATE mysql.mview_refresh_info SET
+	     LAST_REFRESH_TIME = now(),
+	     NEXT_REFRESH_TIME = now() + REFRESH_INTERVAL,
+	     LAST_REFRESH_COMMIT_TSO = TSO,
+	     LAST_REFRESH_ERR = NULL
+	   WHERE MVIEW_ID = ?;
+
+	   COMMIT;
+
+	   if (MV depends on single MVLOG) {
+	     PURGE MVLOG data in range (0, LAST_REFRESH_COMMIT_TSO]
+	   }
+
+	*/
 	return nil
 }
 
@@ -82,18 +128,14 @@ CreateTiDBMViewsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mviews (
 	TABLE_SCHEMA varchar(64) NOT NULL,
 	MVIEW_ID varchar(64) NOT NULL,
 	MVIEW_NAME varchar(64) NOT NULL,
-	MVIEW_OWNER varchar(64) NOT NULL,
 	MVIEW_DEFINITION longtext NOT NULL,
 	MVIEW_COMMENT varchar(128) DEFAULT NULL,
 	MVIEW_TIFLASH_REPLICAS int DEFAULT 0,
 	MVIEW_MODIFY_TIME datetime NOT NULL,
 	REFRESH_METHOD varchar(32) DEFAULT NULL,
 	REFRESH_MODE varchar(256) DEFAULT NULL,
-	LAST_REFRESH_METHOD varchar(32) DEFAULT NULL,
-	LAST_REFRESH_TIME datetime DEFAULT NULL,
+	REFRESH_START datetime NOT NULL,
 	REFRESH_INTERVAL bigint NOT NULL,
-	LAST_REFRESH_ENDTIME datetime DEFAULT NULL,
-	STALENESS varchar(32) DEFAULT NULL,
 	PRIMARY KEY(MVIEW_ID),
 	UNIQUE KEY uniq_mview_name(TABLE_SCHEMA, MVIEW_NAME))`
 
@@ -103,7 +145,6 @@ CreateTiDBMLogsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlogs (
 	TABLE_SCHEMA varchar(64) NOT NULL,
 	MLOG_ID varchar(64) NOT NULL,
 	MLOG_NAME varchar(64) NOT NULL,
-	MLOG_OWNER varchar(64) NOT NULL,
 	MLOG_COLUMNS longtext NOT NULL,
 	BASE_TABLE_CATALOG varchar(512) NOT NULL,
 	BASE_TABLE_SCHEMA varchar(64) NOT NULL,
@@ -112,9 +153,6 @@ CreateTiDBMLogsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlogs (
 	PURGE_METHOD varchar(32) NOT NULL,
 	PURGE_START datetime NOT NULL,
 	PURGE_INTERVAL bigint NOT NULL,
-	LAST_PURGE_TIME datetime NOT NULL,
-	LAST_PURGE_ROWS bigint NOT NULL,
-	LAST_PURGE_DURATION bigint NOT NULL,
 	PRIMARY KEY(MLOG_ID),
 	UNIQUE KEY uniq_base_table(BASE_TABLE_ID),
 	UNIQUE KEY uniq_mlog_name(TABLE_SCHEMA, MLOG_NAME))`
@@ -147,56 +185,67 @@ CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge
 	PURGE_STATUS varchar(16) DEFAULT NULL,
 	PRIMARY KEY(PURGE_JOB_ID),
 	KEY idx_mlog_newest(MLOG_ID, IS_NEWEST_PURGE))`
-
-// CreateTiDBMLogJobTable is a table for scheme2 worker coordination (one row per base table / mlog).
-// It's an internal table and not exposed via information_schema.
-CreateTiDBMLogJobTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_job (
-	MLOG_ID varchar(64) NOT NULL,
-	BASE_TABLE_ID varchar(64) NOT NULL,
-	NEXT_RUN_TIME datetime DEFAULT NULL,
-	LEASE_OWNER varchar(64) DEFAULT NULL,
-	LEASE_EXPIRE datetime DEFAULT NULL,
-	STATE varchar(32) NOT NULL DEFAULT 'idle',
-	LAST_RUN_TIME datetime DEFAULT NULL,
-	LAST_ERR longtext DEFAULT NULL,
-	HEARTBEAT datetime DEFAULT NULL,
-	PRIMARY KEY(MLOG_ID),
-	UNIQUE KEY uniq_job_base_table(BASE_TABLE_ID))`
-
-Column Name
-Description
-mv_id
-ID of Mv
-last_refresh_result
-Result of the last refresh, success or failure
-last_refresh_type
-The type of the last refresh includes at least two types: fast and complete, corresponding to incremental refresh and full refresh respectively
-last_refresh_time
-Time of the last refresh
-last_refresh_read_tso
-read_tso used during the last successful refresh
-last_refresh_failed_reason
-Reason for the last refresh failure (and time?)
 */
 
-func (t *MVJobsManager) Start(sch *ServerConsistentHash) {
-	// TODO: enhance refresh logic to avoid sync all frequently
-	// 	listen to DDL events of add/remove/alter mview/mlog
+/*
+CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_job (
+	MLOG_ID varchar(64) NOT NULL,
+	BASE_TABLE_ID varchar(64) NOT NULL,
+	LAST_PURGE_TIME datetime DEFAULT NULL,
+	NEXT_PURGE_TIME datetime DEFAULT NULL,
+	LEASE_OWNER varchar(64) DEFAULT NULL, -- useless for now
+	LAST_PURGE_ERR longtext DEFAULT NULL,
+	HEARTBEAT datetime DEFAULT NULL,
+	PRIMARY KEY(MLOG_ID),
+	UNIQUE KEY uniq_job_base_table(BASE_TABLE_ID)
+)
 
+create table mysql.mview_refresh_info (
+	MVIEW_ID varchar(64) NOT NULL,
+	LAST_REFRESH_TIME datetime DEFAULT NULL,
+	NEXT_REFRESH_TIME datetime DEFAULT NULL,
+	LEASE_OWNER varchar(64) DEFAULT NULL, -- useless for now
+	LAST_REFRESH_COMMIT_TSO bigint DEFAULT 0,
+	LAST_REFRESH_RESULT varchar(16) DEFAULT NULL,
+	LAST_REFRESH_TYPE varchar(16) DEFAULT NULL,
+	LAST_REFRESH_ERR varchar(256) DEFAULT NULL,
+	PRIMARY KEY(MVIEW_ID)
+)
+*/
+
+/*
+
+ */
+
+func (t *MVJobsManager) Start(sch *ServerConsistentHash) {
+	if t.running.Swap(true) {
+		return
+	}
 	ticker := time.NewTicker(time.Second)
 	go func() {
-		for range ticker.C {
-			if time.Since(t.lastRefresh) >= time.Second*20 {
-				t.RefreshAll(sch)
-			} else if time.Since(t.lastRefresh) >= time.Second {
-				if update, err := t.AnyUpdate(sch); err != nil {
-					continue
-				} else if update {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				if time.Since(t.lastRefresh) >= time.Second*20 {
 					t.RefreshAll(sch)
 				}
+			case <-mvDDLEventCh.C:
+				mvDDLEventCh.clear()
+				if !t.running.Load() {
+					return
+				}
+				t.RefreshAll(sch)
 			}
 		}
 	}()
+}
+
+// Close stops the background refresh loop.
+func (t *MVJobsManager) Close() {
+	if t.running.Swap(false) {
+		mvDDLEventCh.Wake()
+	}
 }
 
 func (t *MVJobsManager) exec() error {
@@ -224,13 +273,15 @@ func (t *MVJobsManager) exec() error {
 		t.mvMu.Unlock()
 	}
 	if len(mvToRefresh) > 0 {
-		
+
 	}
 	if len(mvlogToPurge) > 0 {
+
 	}
 	return nil
 }
 
+// deprecated
 func (t *MVJobsManager) AnyUpdate(sch *ServerConsistentHash) (bool, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	exec := t.se.GetSQLExecutor()
@@ -288,108 +339,115 @@ func (t *MVJobsManager) AnyUpdate(sch *ServerConsistentHash) (bool, error) {
 	return false, nil
 }
 
-func (t *MVJobsManager) RefreshAll(sch *ServerConsistentHash) error {
+func (t *MVJobsManager) refreshAll_tidb_mlog_job(sch *ServerConsistentHash) error {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
 	exec := t.se.GetSQLExecutor()
-	{
-		rs, err := exec.ExecuteInternal(ctx, "SELECT MLOG_ID, PURGE_INTERVAL, PURGE_METHOD, LAST_PURGE_TIME FROM mysql.tidb_mlogs")
-		if rs != nil {
-			//nolint: errcheck
-			defer rs.Close()
-		}
-		if err != nil {
-			return err
-		}
-		if rs != nil {
-			rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
-			if err != nil {
-				return err
-			}
-			newPending := make(map[string]*mvlog, len(rows))
-			for _, row := range rows {
-				l := &mvlog{
-					ID: row.GetString(0),
-				}
-				if l.ID == "" {
-					continue
-				}
-				if !sch.Available(l.ID) {
-					continue
-				}
-				l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
-				l.purgeMethod = row.GetString(2)
-				if !row.IsNull(3) {
-					lastPurgeTime, _ := row.GetTime(3).GoTime(time.Local)
-					l.lastPurgeTime = lastPurgeTime
-				}
-				if l.purgeInterval > 0 && !l.lastPurgeTime.IsZero() {
-					l.nextPurge = l.lastPurgeTime.Add(l.purgeInterval)
-				}
-				newPending[l.ID] = l
-			}
-			newOrderByNext := make([]*mvlog, 0, len(newPending))
-			for _, l := range newPending {
-				newOrderByNext = append(newOrderByNext, l)
-			}
-			slices.SortFunc(newOrderByNext, func(a, b *mvlog) int {
-				return a.nextPurge.Compare(b.nextPurge)
-			})
-
-			t.mvlogMu.Lock()
-			t.mvlogMu.pending = newPending
-			t.mvlogMu.orderByNext = newOrderByNext
-			t.mvlogMu.Unlock()
-		}
+	rs, err := exec.ExecuteInternal(ctx, "SELECT MLOG_ID, PURGE_INTERVAL, NEXT_PURGE_TIME FROM mysql.tidb_mlogs b join mysql.tidb_mlog_job v on b.MLOG_ID = v.MLOG_ID")
+	if rs != nil {
+		//nolint: errcheck
+		defer rs.Close()
 	}
-	{
-		rs, err := exec.ExecuteInternal(ctx, "SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mviews")
-		if rs != nil {
-			//nolint: errcheck
-			defer rs.Close()
-		}
+	if err != nil {
+		return err
+	}
+	if rs != nil {
+		rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
 		if err != nil {
 			return err
 		}
-		if rs != nil {
-
-			rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
-			if err != nil {
-				return err
+		newPending := make(map[string]*mvlog, len(rows))
+		for _, row := range rows {
+			l := &mvlog{
+				ID: row.GetString(0),
 			}
-			newPending := make(map[string]*mv, len(rows))
-			for _, row := range rows {
-				m := &mv{
-					ID: row.GetString(0),
-				}
-				if m.ID == "" {
-					continue
-				}
-				if !sch.Available(m.ID) {
-					continue
-				}
-				m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
-				if !row.IsNull(2) {
-					lastRefreshTime, _ := row.GetTime(2).GoTime(time.Local)
-					m.lastRefreshTime = lastRefreshTime
-				}
-				if m.refreshInterval > 0 && !m.lastRefreshTime.IsZero() {
-					m.nextRefresh = m.lastRefreshTime.Add(m.refreshInterval)
-				}
-				newPending[m.ID] = m
+			if l.ID == "" {
+				continue
 			}
-			newOrderByNext := make([]*mv, 0, len(newPending))
-			for _, m := range newPending {
-				newOrderByNext = append(newOrderByNext, m)
+			if !sch.Available(l.ID) {
+				continue
 			}
-			slices.SortFunc(newOrderByNext, func(a, b *mv) int {
-				return a.nextRefresh.Compare(b.nextRefresh)
-			})
-
-			t.mvMu.Lock()
-			t.mvMu.pending = newPending
-			t.mvMu.orderByNext = newOrderByNext
-			t.mvMu.Unlock()
+			l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
+			if !row.IsNull(2) {
+				gt, _ := row.GetTime(2).GoTime(time.Local)
+				l.nextPurge = gt
+			}
+			newPending[l.ID] = l
 		}
+		newOrderByNext := make([]*mvlog, 0, len(newPending))
+		for _, l := range newPending {
+			newOrderByNext = append(newOrderByNext, l)
+		}
+		slices.SortFunc(newOrderByNext, func(a, b *mvlog) int {
+			return a.nextPurge.Compare(b.nextPurge)
+		})
+
+		t.mvlogMu.Lock()
+		t.mvlogMu.pending = newPending
+		t.mvlogMu.orderByNext = newOrderByNext
+		t.mvlogMu.Unlock()
+	}
+	return nil
+}
+
+func (t *MVJobsManager) refreshAll_tidb_mviews(sch *ServerConsistentHash) error {
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	exec := t.se.GetSQLExecutor()
+
+	rs, err := exec.ExecuteInternal(ctx, "SELECT MVIEW_ID, REFRESH_INTERVAL, next_REFRESH_TIME FROM mysql.tidb_mviews b join mysql.mview_refresh_info v on b.MVIEW_ID = v.MVIEW_ID")
+	if rs != nil {
+		//nolint: errcheck
+		defer rs.Close()
+	}
+	if err != nil {
+		return err
+	}
+	if rs != nil {
+
+		rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
+		if err != nil {
+			return err
+		}
+		newPending := make(map[string]*mv, len(rows))
+		for _, row := range rows {
+			m := &mv{
+				ID: row.GetString(0),
+			}
+			if m.ID == "" {
+				continue
+			}
+			if !sch.Available(m.ID) {
+				continue
+			}
+			m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
+			if !row.IsNull(2) {
+				gt, _ := row.GetTime(2).GoTime(time.Local)
+				m.nextRefresh = gt
+			}
+			newPending[m.ID] = m
+		}
+		newOrderByNext := make([]*mv, 0, len(newPending))
+		for _, m := range newPending {
+			newOrderByNext = append(newOrderByNext, m)
+		}
+		slices.SortFunc(newOrderByNext, func(a, b *mv) int {
+			return a.nextRefresh.Compare(b.nextRefresh)
+		})
+
+		t.mvMu.Lock()
+		t.mvMu.pending = newPending
+		t.mvMu.orderByNext = newOrderByNext
+		t.mvMu.Unlock()
+	}
+
+	return nil
+}
+
+func (t *MVJobsManager) RefreshAll(sch *ServerConsistentHash) error {
+	if err := t.refreshAll_tidb_mlog_job(sch); err != nil {
+		return err
+	}
+	if err := t.refreshAll_tidb_mviews(sch); err != nil {
+		return err
 	}
 
 	t.lastRefresh = time.Now()
