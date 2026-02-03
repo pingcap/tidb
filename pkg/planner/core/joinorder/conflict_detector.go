@@ -25,7 +25,7 @@ import (
 )
 
 // ConflictDetector is used to detect conflicts between join edges in a join graph.
-// It's based on the paper "On the Correct and Complete Enumeration of the Core Search Space"
+// It's based on the paper "On the Correct and Complete Enumeration of the Core Search Space".
 type ConflictDetector struct {
 	ctx           base.PlanContext
 	groupRoot     base.LogicalPlan
@@ -318,29 +318,28 @@ var joinTypeConvertTable = []int{
 	4, // ANTI LEFT OUTER SEMI
 }
 
+// TODO doesn't support null-rejective for now(2 in the Table-2 and Table-3).
+// Table-2 and Table-3 are from the paper "On the Correct and Complete Enumeration of the Core Search Space".
+// It will be treated as rule doesn't apply.
 func assoc(e1, e2 *edge) bool {
 	j1 := joinTypeConvertTable[e1.joinType]
 	j2 := joinTypeConvertTable[e2.joinType]
-	// gjt todo handle null-rejective
 	return assocRuleTable[j1][j2] == 1
 }
 
 func leftAsscom(e1, e2 *edge) bool {
 	j1 := joinTypeConvertTable[e1.joinType]
 	j2 := joinTypeConvertTable[e2.joinType]
-	// gjt todo handle null-rejective
 	return leftAsscomRuleTable[j1][j2] == 1
 }
 
 func rightAsscom(e1, e2 *edge) bool {
 	j1 := joinTypeConvertTable[e1.joinType]
 	j2 := joinTypeConvertTable[e2.joinType]
-	// gjt todo handle null-rejective
 	return rightAsscomRuleTable[j1][j2] == 1
 }
 
 // CheckConnectionResult contains the result of checking connection between two nodes.
-// gjt todo maybe sync.pool
 type CheckConnectionResult struct {
 	node1               *Node
 	node2               *Node
@@ -554,8 +553,12 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
 	if existingJoin != nil {
 		// Append selections to existing join
+		condCap := 0
+		for _, e := range checkResult.appliedInnerEdges {
+			condCap += len(e.eqConds) + len(e.nonEQConds)
+		}
 		selection := logicalop.LogicalSelection{
-			Conditions: []expression.Expression{}, // gjt todo reserve space
+			Conditions: make([]expression.Expression, 0, condCap),
 		}
 		for _, e := range checkResult.appliedInnerEdges {
 			alignedEQConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
@@ -589,12 +592,9 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
 	offset := left.QueryBlockOffset()
 	if offset != right.QueryBlockOffset() {
-		// gjt todo ok?
 		offset = -1
 	}
 
-	// gjt todo other members?
-	// gjt todo change init to pointer receiver
 	join := logicalop.LogicalJoin{
 		JoinType:  joinType,
 		Reordered: true,
@@ -654,23 +654,23 @@ var assocRuleTable = [][]ruleTableEntry{
 	{
 		1, // INNER
 		1, // LEFT OUTER
-		0, // RIGHT OUTER gjt todo?
+		0, // RIGHT OUTER
 		1, // LEFT SEMI and LEFT OUTER SEMI
 		1, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},
 	// LEFT OUTER
 	{
 		0, // INNER
-		0, // LEFT OUTER gjt todo should be 2!!!
-		0, // RIGHT OUTER gjt todo?
+		0, // LEFT OUTER
+		0, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},
-	// RIGHT OUTER gjt todo?
+	// RIGHT OUTER
 	{
 		1, // INNER
 		1, // LEFT OUTER
-		0, // RIGHT OUTER gjt todo?
+		0, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},
@@ -678,7 +678,7 @@ var assocRuleTable = [][]ruleTableEntry{
 	{
 		0, // INNER
 		0, // LEFT OUTER
-		0, // RIGHT OUTER gjt todo?
+		0, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},
@@ -687,7 +687,7 @@ var assocRuleTable = [][]ruleTableEntry{
 	{
 		0, // INNER
 		0, // LEFT OUTER
-		0, // RIGHT OUTER gjt todo?
+		0, // RIGHT OUTER
 		0, // LEFT SEMI and LEFT OUTER SEMI
 		0, // LEFT ANTI and ANTI LEFT OUTER SEMI
 	},
