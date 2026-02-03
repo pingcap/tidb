@@ -4402,8 +4402,10 @@ func handleOutputOffsetsForTiCIIndexLookUp(outputOffsets []uint32, handleLen int
 		outputOffsets = append(outputOffsets, uint32(i))
 	}
 	if needExtraOutputCol {
+		// When TiCI index scan includes `ExtraPhysTblID`, it's appended right before the version column.
 		outputOffsets = append(outputOffsets, uint32(schemaLen-2))
 	}
+	// TiCI index scan always appends the per-row MVCC version (`_tidb_mvcc_version`) as the last column.
 	outputOffsets = append(outputOffsets, uint32(schemaLen-1))
 	return outputOffsets
 }
