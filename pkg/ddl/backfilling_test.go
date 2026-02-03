@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -110,21 +109,8 @@ func (c *testReadIndexBackendCtx) Register(indexIDs []int64, uniques []bool, tbl
 
 func (c *testReadIndexBackendCtx) GetLocalBackend() *local.Backend { return c.localBackend }
 
-func TestIsPebbleLockHeldByCurrentProcess(t *testing.T) {
-	// Matches Pebble's lock error message (no exported sentinel).
-	require.False(t, isPebbleLockHeldByCurrentProcess(nil))
-	require.False(t, isPebbleLockHeldByCurrentProcess(errors.New("other error")))
-
-	baseErr := errors.New("lock held by current process")
-	require.True(t, isPebbleLockHeldByCurrentProcess(baseErr))
-	require.True(t, isPebbleLockHeldByCurrentProcess(fmt.Errorf("wrapped: %w", baseErr)))
-}
-
 func TestRegisterReadIndexEnginesNoRetryOnLockHeld(t *testing.T) {
 	// No in-function retry; cleanup is centralized in caller error-path.
-	wctx := workerpool.NewContext(context.Background())
-	defer wctx.Cancel()
-
 	var registerCalls int32
 	backendCtx := &testReadIndexBackendCtx{
 		localBackend: &local.Backend{},
@@ -134,7 +120,7 @@ func TestRegisterReadIndexEnginesNoRetryOnLockHeld(t *testing.T) {
 		},
 	}
 
-	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
+	engines, err := registerReadIndexEngines(backendCtx, []int64{1}, []bool{false}, nil)
 	require.ErrorContains(t, err, "lock held by current process")
 	require.Nil(t, engines)
 	require.Equal(t, int32(1), registerCalls)

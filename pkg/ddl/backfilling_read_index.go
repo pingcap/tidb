@@ -94,16 +94,6 @@ type readIndexEngineRegistrar interface {
 	Register(indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error)
 }
 
-const pebbleLockHeldByCurrentProcessMsg = "lock held by current process"
-
-func isPebbleLockHeldByCurrentProcess(err error) bool {
-	// Pebble's vfs.Lock returns a plain error containing `pebbleLockHeldByCurrentProcessMsg`
-	// when the lock is already held by the current process (see pebble/vfs/file_lock_unix.go).
-	// Pebble does not export a sentinel error/type for this case, so we must match on the
-	// message.
-	return err != nil && strings.Contains(err.Error(), pebbleLockHeldByCurrentProcessMsg)
-}
-
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
@@ -415,7 +405,7 @@ func (r *readIndexStepExecutor) buildLocalStorePipeline(
 		}
 		idxNames.WriteString(index.Name.O)
 	}
-	engines, err := registerReadIndexEngines(wctx, r.job.ID, backendCtx, indexIDs, uniques, r.ptbl)
+	engines, err := registerReadIndexEngines(backendCtx, indexIDs, uniques, r.ptbl)
 	if err != nil {
 		tidblogutil.Logger(wctx).Error("cannot register new engine",
 			zap.Error(err),
@@ -513,24 +503,8 @@ func cleanupReadIndexLocalEngines(jobID, subtaskID int64, backendCtx readIndexLo
 	}
 }
 
-func registerReadIndexEngines(
-	wctx *workerpool.Context,
-	jobID int64,
-	backendCtx readIndexEngineRegistrar,
-	indexIDs []int64,
-	uniques []bool,
-	tbl table.Table,
-) ([]ingest.Engine, error) {
-	engines, err := backendCtx.Register(indexIDs, uniques, tbl)
-	if err != nil && isPebbleLockHeldByCurrentProcess(err) {
-		// Cleanup happens in the caller's error-path defer; dist-task retry will re-run.
-		tidblogutil.Logger(wctx).Warn("register ingest engine got lock held",
-			zap.Error(err),
-			zap.Int64("job ID", jobID),
-			zap.Int64s("index IDs", indexIDs),
-		)
-	}
-	return engines, err
+func registerReadIndexEngines(backendCtx readIndexEngineRegistrar, indexIDs []int64, uniques []bool, tbl table.Table) ([]ingest.Engine, error) {
+	return backendCtx.Register(indexIDs, uniques, tbl)
 }
 
 type distTaskRowCntCollector struct {
