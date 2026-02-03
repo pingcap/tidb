@@ -62,3 +62,14 @@ func DisableTopSQL() {
 func TopSQLEnabled() bool {
 	return GlobalState.enable.Load()
 }
+
+// TopProfilingEnabled returns true if any Top Profiling consumer is enabled.
+//
+// In current codebase it is equivalent to TopSQLEnabled(). It is introduced to
+// unify execution-path hooks (SQL/plan registration, stmt lifecycle callbacks,
+// resource group tagging) so they can later be extended to support TopRU.
+func TopProfilingEnabled() bool {
+	// TODO: include TopRUEnabled() here once TopRU is merged.
+	// return TopSQLEnabled() || TopRUEnabled()
+	return TopSQLEnabled()
+}
