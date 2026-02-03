@@ -21,6 +21,14 @@
         "Warn": null
       },
       {
+        "SQL": "explain format='brief' select title from t1 where fts_match_word('hello', title)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
         "SQL": "explain format='brief' select * from t1 where fts_match_prefix('hello', title)",
         "Plan": [
           "IndexLookUp 1000.00 root  ",

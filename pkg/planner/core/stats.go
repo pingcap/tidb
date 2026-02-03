@@ -194,17 +194,21 @@ func fillIndexPath(ds *logicalop.DataSource, path *util.AccessPath, conds []expr
 	if path.Index.IsTiCIIndex() {
 		if path.Index.HybridInfo != nil && path.Index.HybridInfo.Sharding != nil {
 			ticiType = distsql.TiCIShardExtraShardingKey
+			path.Ranges = ranger.FullRange()
 		} else if ds.TableInfo.IsCommonHandle {
 			ticiType = distsql.TiCIShardCommonHandle
+			path.Ranges = ranger.FullRange()
 		} else {
 			ticiType = distsql.TiCIShardIntHandle
+			// Int Handle's range is a special one.
+			path.Ranges = ranger.FullIntRange(mysql.HasUnsignedFlag(ds.TableInfo.GetPkColInfo().GetFlag()))
 		}
 		path.IdxCols, path.IdxColLens = expression.TiCIIndexInfo2ShardCols(ds.Columns, ds.Schema().Columns, path.Index, possiblePK)
 	} else {
 		path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+		path.Ranges = ranger.FullRange()
 	}
 	path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-	path.Ranges = ranger.FullRange()
 	path.CountAfterAccess = float64(ds.StatisticTable.RealtimeCount)
 	path.MinCountAfterAccess = 0
 	path.MaxCountAfterAccess = 0
