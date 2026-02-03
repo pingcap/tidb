@@ -61,7 +61,7 @@ type collectConflictsStepExecutor struct {
 	// such as for `create table t(id int primary key, c1 int, c2 int, unique u1(c1), unique u2(c2))`
 	// if we have 2 rows (1, 3, 4), (2, 3, 4), one pair of conflicted UK KV will
 	// be generated for kv group u1 and u2 respectively.
-	// this also means to need to process conflicted UK KV group one by one.
+	// this also means we need to process conflicted UK KV group one by one.
 	sharedHandleSet *conflictedkv.BoundedHandleSet
 	summary         execute.SubtaskSummary
 }
