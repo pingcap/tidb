@@ -45,6 +45,7 @@ func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 	tk.MustExec("set global tidb_ttl_job_enable='ON'")
 	tk.MustExec("set global tidb_ttl_job_schedule_window_start_time='00:00'")
 	tk.MustExec("set global tidb_ttl_job_schedule_window_end_time='23:59'")
+	tk.MustExec("set global tidb_ttl_running_tasks = 256")
 
 	cases := []struct {
 		name       string
