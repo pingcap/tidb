@@ -139,8 +139,15 @@ func TestBindingCacheEvictLog(t *testing.T) {
 	ctx := context.WithValue(context.Background(),
 		bindingCacheTestKey, func(binding *Binding) { callbackCnt++ })
 
+	largeBinding := &Binding{BindSQL: fmt.Sprintf("SELECT * FROM t1 WHERE c = '%v'", strings.Repeat("a", 200))}
 	binding := &Binding{BindSQL: "SELECT * FROM t1"}
 	bindingCache := newBindingCache(ctx, int64(binding.size())*3-1).(*bindingCache)
+
+	bindingCache.SetBinding("0", largeBinding)
+	require.Equal(t, callbackCnt, 1) // large binding, reject directly
+	bindingCache.SetBinding("0", largeBinding)
+	require.Equal(t, callbackCnt, 2) // large binding, reject directly
+	callbackCnt = 0                  // reset callback count
 
 	bindingCache.SetBinding("1", binding) // insert the first binding four times
 	bindingCache.SetBinding("1", binding)

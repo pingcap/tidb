@@ -301,6 +301,20 @@ type bindingCache struct {
 func newBindingCache(ctx context.Context, maxCost int64) BindingCache {
 	closed := new(atomic.Bool)
 	closed.Store(false)
+
+	rejectOrEvict := func(item *ristretto.Item) {
+		if closed.Load() { // avoid unnecessary log when exiting
+			return
+		}
+		binding := item.Value.(*Binding)
+		if intest.InTest && ctx != nil && ctx.Value(bindingCacheTestKey) != nil {
+			callback := ctx.Value(bindingCacheTestKey).(func(binding *Binding))
+			callback(binding)
+		}
+		bindingLogger().Warn("binding cache memory limit reached, evict or reject binding",
+			zap.String("sqlDigest", binding.SQLDigest), zap.String("bindSQL", binding.BindSQL))
+	}
+
 	cache, _ := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e6,
 		MaxCost:     maxCost,
@@ -310,18 +324,8 @@ func newBindingCache(ctx context.Context, maxCost int64) BindingCache {
 		},
 		Metrics:            true,
 		IgnoreInternalCost: true,
-		OnEvict: func(item *ristretto.Item) {
-			if closed.Load() { // avoid unnecessary log when exiting
-				return
-			}
-			binding := item.Value.(*Binding)
-			if intest.InTest && ctx != nil && ctx.Value(bindingCacheTestKey) != nil {
-				callback := ctx.Value(bindingCacheTestKey).(func(binding *Binding))
-				callback(binding)
-			}
-			bindingLogger().Warn("binding cache memory limit reached, evict binding",
-				zap.String("sqlDigest", binding.SQLDigest), zap.String("bindSQL", binding.BindSQL))
-		},
+		OnEvict:            rejectOrEvict,
+		OnReject:           rejectOrEvict,
 	})
 	c := bindingCache{
 		cache:       cache,
@@ -365,7 +369,11 @@ func (c *bindingCache) GetAllBindings() []*Binding {
 	sqlDigests := c.digestBiMap.All()
 	bindings := make([]*Binding, 0, len(sqlDigests))
 	for _, sqlDigest := range sqlDigests {
-		bindings = append(bindings, c.GetBinding(sqlDigest))
+		binding := c.GetBinding(sqlDigest)
+		if binding == nil {
+			continue // maybe evicted
+		}
+		bindings = append(bindings, binding)
 	}
 	return bindings
 }
