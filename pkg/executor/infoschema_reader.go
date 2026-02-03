@@ -235,10 +235,6 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTiDBMViews(ctx, sctx)
 		case infoschema.TableTiDBMLogs:
 			err = e.setDataFromTiDBMLogs(ctx, sctx)
-		case infoschema.TableTiDBMViewRefreshHist:
-			err = e.setDataFromTiDBMViewRefreshHist(ctx, sctx)
-		case infoschema.TableTiDBMLogPurgeHist:
-			err = e.setDataFromTiDBMLogPurgeHist(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -548,118 +544,6 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 			)
 			rows = append(rows, row)
 		}
-	}
-	e.rows = rows
-	return nil
-}
-
-func (e *memtableRetriever) setDataFromTiDBMViewRefreshHist(ctx context.Context, sctx sessionctx.Context) error {
-	checker := privilege.GetPrivilegeManager(sctx)
-	const sql = `SELECT MVIEW_ID, MVIEW_NAME, REFRESH_JOB_ID, IS_NEWEST_REFRESH, REFRESH_METHOD,
-		REFRESH_TIME,
-		REFRESH_ENDTIME,
-		REFRESH_STATUS
-		FROM mysql.tidb_mview_refresh_hist`
-	exec := sctx.GetRestrictedSQLExecutor()
-	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
-	if err != nil {
-		return err
-	}
-	rows := make([][]types.Datum, 0, len(chunkRows))
-	for _, chunkRow := range chunkRows {
-		mviewID := chunkRow.GetInt64(0)
-		tbl, ok := e.is.TableByID(ctx, mviewID)
-		if !ok {
-			continue
-		}
-		schema, ok := e.is.SchemaByID(tbl.Meta().DBID)
-		if !ok {
-			continue
-		}
-		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
-			continue
-		}
-		var refreshTime any
-		if !chunkRow.IsNull(5) {
-			refreshTime = chunkRow.GetTime(5)
-		}
-		var refreshEndTime any
-		if !chunkRow.IsNull(6) {
-			refreshEndTime = chunkRow.GetTime(6)
-		}
-		var refreshStatus any
-		if !chunkRow.IsNull(7) {
-			refreshStatus = chunkRow.GetString(7)
-		}
-		row := types.MakeDatums(
-			mviewID,               // MVIEW_ID
-			chunkRow.GetString(1), // MVIEW_NAME
-			chunkRow.GetInt64(2),  // REFRESH_JOB_ID
-			chunkRow.GetString(3), // IS_NEWEST_REFRESH
-			chunkRow.GetString(4), // REFRESH_METHOD
-			refreshTime,           // REFRESH_TIME
-			refreshEndTime,        // REFRESH_ENDTIME
-			refreshStatus,         // REFRESH_STATUS
-		)
-		rows = append(rows, row)
-	}
-	e.rows = rows
-	return nil
-}
-
-func (e *memtableRetriever) setDataFromTiDBMLogPurgeHist(ctx context.Context, sctx sessionctx.Context) error {
-	checker := privilege.GetPrivilegeManager(sctx)
-	const sql = `SELECT MLOG_ID, MLOG_NAME, PURGE_JOB_ID, IS_NEWEST_PURGE, PURGE_METHOD,
-		PURGE_TIME,
-		PURGE_ENDTIME,
-		PURGE_ROWS,
-		PURGE_STATUS
-		FROM mysql.tidb_mlog_purge_hist`
-	exec := sctx.GetRestrictedSQLExecutor()
-	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	chunkRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil, sql)
-	if err != nil {
-		return err
-	}
-	rows := make([][]types.Datum, 0, len(chunkRows))
-	for _, chunkRow := range chunkRows {
-		mlogID := chunkRow.GetInt64(0)
-		tbl, ok := e.is.TableByID(ctx, mlogID)
-		if !ok {
-			continue
-		}
-		schema, ok := e.is.SchemaByID(tbl.Meta().DBID)
-		if !ok {
-			continue
-		}
-		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, schema.Name.L, "", "", mysql.AllPrivMask) {
-			continue
-		}
-		var purgeTime any
-		if !chunkRow.IsNull(5) {
-			purgeTime = chunkRow.GetTime(5)
-		}
-		var purgeEndTime any
-		if !chunkRow.IsNull(6) {
-			purgeEndTime = chunkRow.GetTime(6)
-		}
-		var purgeStatus any
-		if !chunkRow.IsNull(8) {
-			purgeStatus = chunkRow.GetString(8)
-		}
-		row := types.MakeDatums(
-			mlogID,                // MLOG_ID
-			chunkRow.GetString(1), // MLOG_NAME
-			chunkRow.GetInt64(2),  // PURGE_JOB_ID
-			chunkRow.GetString(3), // IS_NEWEST_PURGE
-			chunkRow.GetString(4), // PURGE_METHOD
-			purgeTime,             // PURGE_TIME
-			purgeEndTime,          // PURGE_ENDTIME
-			chunkRow.GetInt64(7),  // PURGE_ROWS
-			purgeStatus,           // PURGE_STATUS
-		)
-		rows = append(rows, row)
 	}
 	e.rows = rows
 	return nil

@@ -40,35 +40,3 @@ drop materialized view log on t;
 drop table t;
 refresh materialized view mv1;
 Error 8200 (HY000): REFRESH MATERIALIZED VIEW is not supported
-delete from mysql.tidb_mview_refresh_hist where refresh_job_id=123;
-delete from mysql.tidb_mlog_purge_hist where purge_job_id=456;
-drop table if exists t_hist;
-create table t_hist (a int);
-create materialized view log on t_hist (a);
-create materialized view mv_hist (a, cnt) as select a, count(*) from t_hist group by a;
-insert into mysql.tidb_mview_refresh_hist
-(mview_id, mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status)
-select mview_id, mview_name, 123, 'Y', 'REFRESH FAST', '2026-01-01 00:00:00', NULL, NULL
-from information_schema.tidb_mviews
-where table_schema='ddl__materialized_view_systables' and mview_name='mv_hist';
-insert into mysql.tidb_mlog_purge_hist
-(mlog_id, mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status)
-select mlog_id, mlog_name, 456, 'Y', 'IMMEDIATE', NULL, '2026-01-01 00:00:00', 0, NULL
-from information_schema.tidb_mlogs
-where base_table_schema='ddl__materialized_view_systables' and base_table_name='t_hist';
-commit;
-select mview_name, refresh_job_id, is_newest_refresh, refresh_method, refresh_time, refresh_endtime, refresh_status
-from information_schema.tidb_mview_refresh_hist
-where refresh_job_id=123;
-mview_name	refresh_job_id	is_newest_refresh	refresh_method	refresh_time	refresh_endtime	refresh_status
-mv_hist	123	Y	REFRESH FAST	2026-01-01 00:00:00	NULL	NULL
-select mlog_name, purge_job_id, is_newest_purge, purge_method, purge_time, purge_endtime, purge_rows, purge_status
-from information_schema.tidb_mlog_purge_hist
-where purge_job_id=456;
-mlog_name	purge_job_id	is_newest_purge	purge_method	purge_time	purge_endtime	purge_rows	purge_status
-$mlog$t_hist	456	Y	IMMEDIATE	NULL	2026-01-01 00:00:00	0	NULL
-delete from mysql.tidb_mview_refresh_hist where refresh_job_id=123;
-delete from mysql.tidb_mlog_purge_hist where purge_job_id=456;
-drop materialized view mv_hist;
-drop materialized view log on t_hist;
-drop table t_hist;
