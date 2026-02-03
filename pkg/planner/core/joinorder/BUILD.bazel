@@ -15,7 +15,10 @@ go_library(
         "//pkg/planner/core/operator/logicalop",
         "//pkg/planner/util",
         "//pkg/util/hint",
+        "//pkg/util/intset",
+        "//pkg/util/logutil",
         "@com_github_cockroachdb_errors//:errors",
         "@com_github_pingcap_errors//:errors",
+        "@org_uber_go_zap//:zap",
     ],
 )
