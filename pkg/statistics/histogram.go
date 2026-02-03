@@ -1203,6 +1203,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// Multiplying addedRows by 0.5 provides the assumption that 50% "addedRows" are inside
 		// the histogram range, and 50% (0.5) are out-of-range. Users can adjust this
 		// magic number by setting the session variable `tidb_opt_risk_range_skew_ratio`.
+		// When skewRatio > 0, estRows sets the starting point for the skew ratio calculation.
 		addedRowMultiplier := 0.5
 		if skewRatio > 0 {
 			addedRowMultiplier = skewRatio
@@ -1228,11 +1229,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		maxAddedRows *= maxTotalPercent
 	}
 
-	minEst := min(estRows, oneValue)
+	result.MinEst = min(estRows, oneValue)
 	if skewRatio > 0 {
-		result = CalculateSkewRatioCounts(minEst, maxAddedRows, skewRatio)
+		result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)
 	} else {
-		result.MinEst = minEst
 		result.Est = estRows
 	}
 	result.Est = max(result.Est, oneValue)
