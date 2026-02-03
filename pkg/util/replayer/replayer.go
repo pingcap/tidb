@@ -30,6 +30,10 @@ import (
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 )
 
+const (
+	planReplayerDirName = "replayer"
+)
+
 // PlanReplayerTaskKey indicates key of a plan replayer task
 type PlanReplayerTaskKey struct {
 	SQLDigest  string
@@ -107,5 +111,5 @@ var (
 // GetPlanReplayerDirName returns plan replayer directory path.
 // The path is a relative path for external storage.
 func GetPlanReplayerDirName() string {
-	return "replayer"
+	return planReplayerDirName
 }
