@@ -111,6 +111,7 @@ func (c *testReadIndexBackendCtx) Register(indexIDs []int64, uniques []bool, tbl
 func (c *testReadIndexBackendCtx) GetLocalBackend() *local.Backend { return c.localBackend }
 
 func TestIsPebbleLockHeldByCurrentProcess(t *testing.T) {
+	// Matches Pebble's lock error message (no exported sentinel).
 	require.False(t, isPebbleLockHeldByCurrentProcess(nil))
 	require.False(t, isPebbleLockHeldByCurrentProcess(errors.New("other error")))
 
@@ -120,6 +121,7 @@ func TestIsPebbleLockHeldByCurrentProcess(t *testing.T) {
 }
 
 func TestRegisterReadIndexEnginesNoRetryOnLockHeld(t *testing.T) {
+	// No in-function retry; cleanup is centralized in caller error-path.
 	wctx := workerpool.NewContext(context.Background())
 	defer wctx.Cancel()
 
@@ -139,6 +141,7 @@ func TestRegisterReadIndexEnginesNoRetryOnLockHeld(t *testing.T) {
 }
 
 func TestCleanupAllLocalEnginesForReadIndexSafeRecoversFromPanic(t *testing.T) {
+	// Ensure cleanup wrapper recovers from panic.
 	origCleanup := cleanupAllLocalEnginesForReadIndex
 	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
 		panic("boom")
@@ -149,6 +152,7 @@ func TestCleanupAllLocalEnginesForReadIndexSafeRecoversFromPanic(t *testing.T) {
 }
 
 func TestCleanupReadIndexLocalEngines(t *testing.T) {
+	// Best-effort: run when backend exists; no-op when nil.
 	origCleanup := cleanupAllLocalEnginesForReadIndex
 	var cleanupCalls int32
 	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {

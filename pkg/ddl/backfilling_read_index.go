@@ -81,6 +81,7 @@ type readIndexSummary struct {
 }
 
 var cleanupAllLocalEnginesForReadIndex = func(backend *local.Backend) error {
+	// Use Background so best-effort cleanup isn't skipped by cancellation.
 	return backend.CleanupAllLocalEngines(context.Background())
 }
 
@@ -531,6 +532,7 @@ func registerReadIndexEngines(
 ) ([]ingest.Engine, error) {
 	engines, err := backendCtx.Register(indexIDs, uniques, tbl)
 	if err != nil && isPebbleLockHeldByCurrentProcess(err) {
+		// Cleanup happens in the caller's error-path defer; dist-task retry will re-run.
 		tidblogutil.Logger(wctx).Warn("register ingest engine got lock held",
 			zap.Error(err),
 			zap.Int64("job ID", jobID),
