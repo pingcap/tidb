@@ -74,6 +74,7 @@ func (g *joinGroup) merge(other *joinGroup) {
 }
 
 // JoinMethodHint records the join method hint for a vertex.
+// JoinMethodHint stores join method hint info associated with a vertex.
 type JoinMethodHint struct {
 	PreferJoinMethod uint
 	HintInfo         *hint.PlanHints
@@ -319,20 +320,34 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 			"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
 	}
 
-	checker := func(left, right *Node) (*Node, error) {
-		_, newNode, err := checkConnectionAndMakeJoin(detector, left, right, j.group.vertexHints, true)
-		return newNode, err
-	}
-
 	if leadingHint == nil || leadingHint.LeadingList == nil {
 		return nil, nodes, nil
 	}
 
-	nodeWithHint, nodes, err := buildLeadingTreeFromList(j.ctx, leadingHint.LeadingList, nodes, checker)
+	findAndRemoveByHint := func(available []*Node, hint *ast.HintTable) (*Node, []*Node, bool) {
+		return FindAndRemovePlanByAstHint(j.ctx, available, hint, func(node *Node) base.LogicalPlan {
+			return node.p
+		})
+	}
+	joiner := func(left, right *Node) (*Node, bool, error) {
+		_, newNode, err := checkConnectionAndMakeJoin(detector, left, right, j.group.vertexHints, true)
+		if err != nil {
+			return nil, false, err
+		}
+		if newNode == nil {
+			return nil, false, nil
+		}
+		return newNode, true, nil
+	}
+	warn := func() {
+		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+	}
+
+	nodeWithHint, nodes, ok, err := BuildLeadingTreeFromList(leadingHint.LeadingList, nodes, findAndRemoveByHint, joiner, warn)
 	if err != nil {
 		return nil, nil, err
 	}
-	if nodeWithHint == nil {
+	if !ok {
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
 		return nil, nodes, nil
 	}
@@ -574,7 +589,6 @@ func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node, vertexHints map
 	return cartesianNodes[0].p, nil
 }
 
-// TODO refactor these functions to avoid code duplication.
 func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
 	var leadingHintInfo *hint.PlanHints
@@ -595,79 +609,95 @@ func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, b
 	return leadingHintInfo, hasDiffLeadingHint
 }
 
-type checkAndMakeJoinFunc func(leftPlan, rightPlan *Node) (*Node, error)
+// LeadingTreeFinder finds a node by hint and removes it from the available slice.
+type LeadingTreeFinder[T any] func(available []T, hint *ast.HintTable) (T, []T, bool)
 
-func buildLeadingTreeFromList(
-	ctx base.PlanContext, leadingList *ast.LeadingList, availableGroups []*Node, checker checkAndMakeJoinFunc,
-) (*Node, []*Node, error) {
+// LeadingTreeJoiner joins two nodes in the leading tree.
+type LeadingTreeJoiner[T any] func(left, right T) (T, bool, error)
+
+// BuildLeadingTreeFromList constructs a join tree according to a LeadingList.
+func BuildLeadingTreeFromList[T any](
+	leadingList *ast.LeadingList,
+	availableGroups []T,
+	findAndRemoveByHint LeadingTreeFinder[T],
+	checkAndJoin LeadingTreeJoiner[T],
+	warn func(),
+) (T, []T, bool, error) {
+	var zero T
 	if leadingList == nil || len(leadingList.Items) == 0 {
-		return nil, availableGroups, nil
+		return zero, availableGroups, false, nil
 	}
 
 	var (
-		currentJoin *Node
+		currentJoin T
 		err         error
 		ok          bool
 	)
-	// copy here because findAndRemovePlanByAstHint will modify the slice.
-	remainingGroups := make([]*Node, len(availableGroups))
+	// copy here because findAndRemoveByHint will modify the slice.
+	remainingGroups := make([]T, len(availableGroups))
 	copy(remainingGroups, availableGroups)
 
 	for i, item := range leadingList.Items {
 		switch element := item.(type) {
 		case *ast.HintTable:
-			// find and remove the plan node that matches ast.HintTable from remainingGroups
-			var tableNode *Node
-			tableNode, remainingGroups, ok = findAndRemovePlanByAstHint(ctx, remainingGroups, element)
+			var tableNode T
+			tableNode, remainingGroups, ok = findAndRemoveByHint(remainingGroups, element)
 			if !ok {
-				return nil, availableGroups, nil
+				return zero, availableGroups, false, nil
 			}
 
 			if i == 0 {
 				currentJoin = tableNode
 			} else {
-				currentJoin, err = checker(currentJoin, tableNode)
+				currentJoin, ok, err = checkAndJoin(currentJoin, tableNode)
 				if err != nil {
-					return nil, availableGroups, err
+					return zero, availableGroups, false, err
 				}
-				if currentJoin == nil {
-					return nil, availableGroups, nil
+				if !ok {
+					return zero, availableGroups, false, nil
 				}
 			}
 		case *ast.LeadingList:
-			// recursively handle nested lists
-			var nestedJoin *Node
-			nestedJoin, remainingGroups, err = buildLeadingTreeFromList(ctx, element, remainingGroups, checker)
+			var nestedJoin T
+			nestedJoin, remainingGroups, ok, err = BuildLeadingTreeFromList(element, remainingGroups, findAndRemoveByHint, checkAndJoin, warn)
 			if err != nil {
-				return nil, availableGroups, err
+				return zero, availableGroups, false, err
 			}
-			if nestedJoin == nil {
-				return nil, availableGroups, nil
+			if !ok {
+				return zero, availableGroups, false, nil
 			}
 
 			if i == 0 {
 				currentJoin = nestedJoin
 			} else {
-				currentJoin, err = checker(currentJoin, nestedJoin)
+				currentJoin, ok, err = checkAndJoin(currentJoin, nestedJoin)
 				if err != nil {
-					return nil, availableGroups, err
+					return zero, availableGroups, false, err
 				}
-				if currentJoin == nil {
-					return nil, availableGroups, nil
+				if !ok {
+					return zero, availableGroups, false, nil
 				}
 			}
 		default:
-			ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
-			return nil, availableGroups, nil
+			if warn != nil {
+				warn()
+			}
+			return zero, availableGroups, false, nil
 		}
 	}
 
-	return currentJoin, remainingGroups, nil
+	return currentJoin, remainingGroups, true, nil
 }
 
-func findAndRemovePlanByAstHint(
-	ctx base.PlanContext, plans []*Node, astTbl *ast.HintTable,
-) (*Node, []*Node, bool) {
+// FindAndRemovePlanByAstHint matches a hint table to a plan and removes it from the slice.
+// T is usually be *Node or base.LogicalPlan, we use generics because we want to reuse this function in both the old and new join order code.
+func FindAndRemovePlanByAstHint[T any](
+	ctx base.PlanContext,
+	plans []T,
+	astTbl *ast.HintTable,
+	getPlan func(T) base.LogicalPlan,
+) (T, []T, bool) {
+	var zero T
 	var queryBlockNames []ast.HintTable
 	if p := ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
 		queryBlockNames = *p
@@ -675,7 +705,7 @@ func findAndRemovePlanByAstHint(
 
 	// Step 1: Direct match by table name
 	for i, joinGroup := range plans {
-		plan := joinGroup.p
+		plan := getPlan(joinGroup)
 		tableAlias := util.ExtractTableAlias(plan, plan.QueryBlockOffset())
 		if tableAlias != nil {
 			// Match db/table (supports astTbl.DBName == "*")
@@ -705,7 +735,7 @@ func findAndRemovePlanByAstHint(
 	// Only execute this step if no direct table name match was found
 	groupIdx := -1
 	for i, joinGroup := range plans {
-		plan := joinGroup.p
+		plan := getPlan(joinGroup)
 		blockOffset := plan.QueryBlockOffset()
 		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
 			blockName := queryBlockNames[blockOffset]
@@ -731,7 +761,7 @@ func findAndRemovePlanByAstHint(
 		return matched, newPlans, true
 	}
 
-	return nil, plans, false
+	return zero, plans, false
 }
 
 // extract the number x from 'sel_x'
