@@ -78,7 +78,6 @@ func TestMemArbitratorSession(t *testing.T) {
 	require.Equal(t, int64(5), approxParseSQLTokenCnt("replace into t values 1"))
 	require.Equal(t, int64(0), approxParseSQLTokenCnt("prepare stmt1 from 'select * from t where a=? and b=?'"))
 	require.Equal(t, int64(0), approxParseSQLTokenCnt("execute stmt1 using @a,@b,@c"))
-	require.Equal(t, int64(0), approxParseSQLTokenCnt("execute stmt1 using @a,@b,@c"))
 	require.Equal(t, int64(10), approxParseSQLTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?"))
 	require.Equal(t, int64(9), approxCompilePlanTokenCnt("select * from `a_1`.`b_2` where c1 = ? and c2 = ?", true))
 	require.Equal(t, int64(0), approxCompilePlanTokenCnt("select @@version @a", true))
