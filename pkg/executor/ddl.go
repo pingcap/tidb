@@ -420,7 +420,7 @@ func validateCreateMaterializedViewQuery(
 	sctx sessionctx.Context,
 	baseTableName *ast.TableName,
 	baseTableInfo *model.TableInfo,
-	mlogColumns []string,
+	mlogColumns []pmodel.CIStr,
 	selectNode ast.ResultSetNode,
 ) (groupBySelectIdx []int, _ error) {
 	sel, ok := selectNode.(*ast.SelectStmt)
@@ -465,7 +465,7 @@ func validateCreateMaterializedViewQuery(
 
 	mlogColSet := make(map[string]struct{}, len(mlogColumns))
 	for _, c := range mlogColumns {
-		mlogColSet[strings.ToLower(c)] = struct{}{}
+		mlogColSet[c.L] = struct{}{}
 	}
 
 	groupBySet := make(map[string]struct{}, len(sel.GroupBy.Items))
@@ -627,19 +627,17 @@ func findMaterializedViewLogByBaseTableID(ctx context.Context, is infoschema.Inf
 	return found, nil
 }
 
-func hasMaterializedViewDependsOnMLog(ctx context.Context, is infoschema.InfoSchema, mlogID int64) (bool, error) {
-	for _, db := range is.AllSchemas() {
-		tblInfos, err := is.SchemaTableInfos(ctx, db.Name)
-		if err != nil {
-			return false, err
+func hasMaterializedViewDependsOnMLog(ctx context.Context, is infoschema.InfoSchema, schema pmodel.CIStr, mlogID int64) (bool, error) {
+	tblInfos, err := is.SchemaTableInfos(ctx, schema)
+	if err != nil {
+		return false, err
+	}
+	for _, tblInfo := range tblInfos {
+		if tblInfo.MaterializedView == nil {
+			continue
 		}
-		for _, tblInfo := range tblInfos {
-			if tblInfo.MaterializedView == nil {
-				continue
-			}
-			if tblInfo.MaterializedView.MLogID == mlogID {
-				return true, nil
-			}
+		if tblInfo.MaterializedView.MLogID == mlogID {
+			return true, nil
 		}
 	}
 	return false, nil
@@ -681,6 +679,9 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	baseTableName := tables[0]
 	if baseTableName.Schema.L == "" {
 		baseTableName.Schema = pmodel.NewCIStr(dbName)
+	}
+	if baseTableName.Schema.L != s.ViewName.Schema.L {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("CREATE MATERIALIZED VIEW requires the base table in the same schema")
 	}
 
 	dom := domain.GetDomain(e.Ctx())
@@ -869,7 +870,7 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 	}
 
 	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
-	colNames := make([]string, 0, len(s.Cols))
+	colNames := make([]pmodel.CIStr, 0, len(s.Cols))
 	for _, c := range s.Cols {
 		baseCol := colMap[c.L]
 		if baseCol == nil {
@@ -880,7 +881,7 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 			Name: &ast.ColumnName{Name: c},
 			Tp:   &ft,
 		})
-		colNames = append(colNames, c.O)
+		colNames = append(colNames, c)
 	}
 	metaCols := []struct {
 		name string
@@ -1196,7 +1197,7 @@ func (e *DDLExec) executeDropMaterializedViewLog(ctx context.Context, s *ast.Dro
 	if mlogInfo == nil {
 		return infoschema.ErrTableNotExists.GenWithStackByArgs("materialized view log on " + fmt.Sprintf("%s.%s", dbName, s.Table.Name.O))
 	}
-	if depends, err := hasMaterializedViewDependsOnMLog(ctx, is, mlogInfo.ID); err != nil {
+	if depends, err := hasMaterializedViewDependsOnMLog(ctx, is, pmodel.NewCIStr(dbName), mlogInfo.ID); err != nil {
 		return err
 	} else if depends {
 		return errors.Errorf("can't drop materialized view log on %s.%s: dependent materialized views exist", dbName, s.Table.Name.O)

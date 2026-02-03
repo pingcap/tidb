@@ -525,12 +525,16 @@ func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessi
 				continue
 			}
 			p := purgeMap[tblInfo.ID]
+			mlogCols := make([]string, 0, len(tblInfo.MaterializedViewLog.Columns))
+			for _, col := range tblInfo.MaterializedViewLog.Columns {
+				mlogCols = append(mlogCols, col.O)
+			}
 			row := types.MakeDatums(
-				"def",          // TABLE_CATALOG
-				db.Name.O,      // TABLE_SCHEMA
-				tblInfo.ID,     // MLOG_ID
-				tblInfo.Name.O, // MLOG_NAME
-				strings.Join(tblInfo.MaterializedViewLog.Columns, ","), // MLOG_COLUMNS
+				"def",                                   // TABLE_CATALOG
+				db.Name.O,                               // TABLE_SCHEMA
+				tblInfo.ID,                              // MLOG_ID
+				tblInfo.Name.O,                          // MLOG_NAME
+				strings.Join(mlogCols, ","),             // MLOG_COLUMNS
 				"def",                                   // BASE_TABLE_CATALOG
 				baseSchema.Name.O,                       // BASE_TABLE_SCHEMA
 				tblInfo.MaterializedViewLog.BaseTableID, // BASE_TABLE_ID
