@@ -1026,9 +1026,10 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 	tableMappingManager *stream.TableMappingManager,
-) error {
+) (*SegmentedPiTRState, error) {
 	var (
 		err        error
+		state      *SegmentedPiTRState
 		dbMaps     []*backuppb.PitrDBMap
 		dbReplaces map[stream.UpstreamID]*stream.DBReplace
 	)
@@ -1036,9 +1037,12 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	// this is a retry, id map saved last time, load it from external storage
 	if loadSavedIDMap {
 		log.Info("try to load previously saved pitr id maps")
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.restoreTS, logCheckpointMetaManager)
+		state, err = rc.loadSegmentedPiTRState(ctx, rc.restoreTS, logCheckpointMetaManager, true)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
+		}
+		if state != nil {
+			dbMaps = state.DbMaps
 		}
 	}
 
@@ -1046,19 +1050,23 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	// schemas map whose `restore-ts`` is the task's `start-ts`.
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Info("try to load pitr id maps of the previous task", zap.Uint64("start-ts", rc.startTS))
-		dbMaps, err = rc.loadSchemasMap(ctx, rc.startTS, logCheckpointMetaManager)
+		state, err = rc.loadSegmentedPiTRState(ctx, rc.startTS, logCheckpointMetaManager, false)
 		if err != nil {
-			return errors.Trace(err)
+			return nil, errors.Trace(err)
 		}
-		err := rc.validateNoTiFlashReplica()
-		if err != nil {
-			return errors.Trace(err)
+		if state != nil {
+			dbMaps = state.DbMaps
+		}
+		if len(dbMaps) > 0 {
+			if err := rc.validateNoTiFlashReplica(); err != nil {
+				return nil, errors.Trace(err)
+			}
 		}
 	}
 
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Error("no id maps found")
-		return errors.New("no base id map found from saved id or last restored PiTR")
+		return nil, errors.New("no base id map found from saved id or last restored PiTR")
 	}
 	dbReplaces = stream.FromDBMapProto(dbMaps)
 
@@ -1067,7 +1075,7 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 		tableMappingManager.SetFromPiTRIDMap()
 		tableMappingManager.MergeBaseDBReplace(dbReplaces)
 	}
-	return nil
+	return state, nil
 }
 
 func SortMetaKVFiles(files []*backuppb.DataFileInfo) []*backuppb.DataFileInfo {

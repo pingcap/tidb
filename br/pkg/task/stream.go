@@ -1478,6 +1478,7 @@ type LogRestoreConfig struct {
 	tableMappingManager *stream.TableMappingManager
 	logClient           *logclient.LogClient
 	ddlFiles            []logclient.Log
+	ingestRecorderState *ingestrec.RecorderState
 }
 
 // restoreStream starts the log restore
@@ -1627,6 +1628,9 @@ func restoreStream(
 	if err != nil {
 		return errors.Trace(err)
 	}
+	if cfg.ingestRecorderState != nil {
+		schemasReplace.GetIngestRecorder().MergeState(cfg.ingestRecorderState)
+	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(),
 		cfg.Config.SwitchModeInterval, mgr.GetTLSConfig())
@@ -1679,9 +1683,6 @@ func restoreStream(
 	rewriteRules := buildRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
-	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
-		return errors.Trace(err)
-	}
 
 	logFilesIter, err := client.LoadDMLFiles(ctx)
 	if err != nil {
@@ -1790,17 +1791,33 @@ func restoreStream(
 		return errors.Annotate(err, "failed to insert rows into gc_delete_range")
 	}
 
-	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
-		return errors.Annotate(err, "failed to repair ingest index")
-	}
+	if !cfg.LastRestore {
+		state := &logclient.SegmentedPiTRState{
+			DbMaps:              cfg.tableMappingManager.ToProto(),
+			IngestRecorderState: ingestRecorder.ExportState(),
+		}
+		if cfg.tiflashRecorder != nil {
+			state.TiFlashItems = cfg.tiflashRecorder.GetItems()
+		}
+		if err := client.SaveSegmentedPiTRState(ctx, state, cfg.logCheckpointMetaManager); err != nil {
+			return errors.Annotate(err, "failed to save segmented pitr state")
+		}
+	} else {
+		if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
+			return errors.Trace(err)
+		}
+		// index ingestion is not captured by regular log backup, so we need to manually ingest again
+		if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
+			return errors.Annotate(err, "failed to repair ingest index")
+		}
 
-	if cfg.tiflashRecorder != nil {
-		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
-		log.Info("Generating SQLs for restoring TiFlash Replica",
-			zap.Strings("sqls", sqls))
-		if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
-			return errors.Annotate(err, "failed to reset tiflash replicas")
+		if cfg.tiflashRecorder != nil {
+			sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
+			log.Info("Generating SQLs for restoring TiFlash Replica",
+				zap.Strings("sqls", sqls))
+			if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
+				return errors.Annotate(err, "failed to reset tiflash replicas")
+			}
 		}
 	}
 
@@ -2218,10 +2235,16 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	// get the schemas ID replace information.
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
 	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
-	err := client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
+	state, err := client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
 		cfg.logCheckpointMetaManager, cfg.tableMappingManager)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if state != nil {
+		if state.TiFlashItems != nil && cfg.tiflashRecorder != nil {
+			cfg.tiflashRecorder.Load(state.TiFlashItems)
+		}
+		cfg.ingestRecorderState = state.IngestRecorderState
 	}
 
 	if saved {

@@ -23,7 +23,6 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/metautil"
 	"github.com/pingcap/tidb/br/pkg/restore"
 	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
@@ -62,52 +61,90 @@ func (rc *LogClient) saveIDMap(
 	manager *stream.TableMappingManager,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
-	dbmaps := manager.ToProto()
+	state := &SegmentedPiTRState{
+		DbMaps: manager.ToProto(),
+	}
+	existingState, err := rc.loadSegmentedPiTRState(ctx, rc.restoreTS, logCheckpointMetaManager, true)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if existingState != nil {
+		state.TiFlashItems = existingState.TiFlashItems
+		state.IngestRecorderState = existingState.IngestRecorderState
+	}
+	return rc.saveSegmentedPiTRState(ctx, state, logCheckpointMetaManager)
+}
+
+// SaveSegmentedPiTRState saves segmented PiTR state for later restores.
+func (rc *LogClient) SaveSegmentedPiTRState(
+	ctx context.Context,
+	state *SegmentedPiTRState,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+) error {
+	return rc.saveSegmentedPiTRState(ctx, state, logCheckpointMetaManager)
+}
+
+func (rc *LogClient) saveSegmentedPiTRState(
+	ctx context.Context,
+	state *SegmentedPiTRState,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+) error {
+	if state == nil {
+		return errors.New("segmented pitr state is nil")
+	}
+	pbState, err := state.toProto()
+	if err != nil {
+		return errors.Trace(err)
+	}
 	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
-		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
-		if err := rc.saveIDMap2Storage(ctx, checkpointStorage, dbmaps); err != nil {
+		log.Info("checkpoint storage is specified, save pitr id map to the checkpoint storage.")
+		if err := rc.saveSegmentedPiTRStateToStorage(ctx, checkpointStorage, pbState); err != nil {
 			return errors.Trace(err)
 		}
 	} else if rc.pitrIDMapTableExists() {
-		if err := rc.saveIDMap2Table(ctx, dbmaps); err != nil {
+		if err := rc.saveSegmentedPiTRStateToTable(ctx, pbState); err != nil {
 			return errors.Trace(err)
 		}
 	} else {
 		log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
-		if err := rc.saveIDMap2Storage(ctx, rc.storage, dbmaps); err != nil {
+		if err := rc.saveSegmentedPiTRStateToStorage(ctx, rc.storage, pbState); err != nil {
 			return errors.Trace(err)
 		}
 	}
 
 	if rc.useCheckpoint {
-		log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
-		if err := logCheckpointMetaManager.SaveCheckpointProgress(ctx, &checkpoint.CheckpointProgress{
-			Progress: checkpoint.InLogRestoreAndIdMapPersisted,
-		}); err != nil {
+		exists, err := logCheckpointMetaManager.ExistsCheckpointProgress(ctx)
+		if err != nil {
 			return errors.Trace(err)
+		}
+		if !exists {
+			log.Info("save checkpoint task info with InLogRestoreAndIdMapPersist status")
+			if err := logCheckpointMetaManager.SaveCheckpointProgress(ctx, &checkpoint.CheckpointProgress{
+				Progress: checkpoint.InLogRestoreAndIdMapPersisted,
+			}); err != nil {
+				return errors.Trace(err)
+			}
 		}
 	}
 	return nil
 }
 
-func (rc *LogClient) saveIDMap2Storage(
+func (rc *LogClient) saveSegmentedPiTRStateToStorage(
 	ctx context.Context,
 	storage storeapi.Storage,
-	dbMaps []*backuppb.PitrDBMap,
+	state *backuppb.SegmentedPiTRState,
 ) error {
 	clusterID := rc.GetClusterID(ctx)
 	metaFileName := PitrIDMapsFilename(clusterID, rc.restoreTS)
-	metaWriter := metautil.NewMetaWriter(storage, metautil.MetaFileSize, false, metaFileName, nil)
-	metaWriter.Update(func(m *backuppb.BackupMeta) {
-		m.ClusterId = clusterID
-		m.DbMaps = dbMaps
-	})
-	return metaWriter.FlushBackupMeta(ctx)
+	data, err := proto.Marshal(state)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return storage.WriteFile(ctx, metaFileName, data)
 }
 
-func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.PitrDBMap) error {
-	backupmeta := &backuppb.BackupMeta{DbMaps: dbMaps}
-	data, err := proto.Marshal(backupmeta)
+func (rc *LogClient) saveSegmentedPiTRStateToTable(ctx context.Context, state *backuppb.SegmentedPiTRState) error {
+	data, err := proto.Marshal(state)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -153,30 +190,31 @@ func (rc *LogClient) saveIDMap2Table(ctx context.Context, dbMaps []*backuppb.Pit
 	return nil
 }
 
-func (rc *LogClient) loadSchemasMap(
+func (rc *LogClient) loadSegmentedPiTRState(
 	ctx context.Context,
 	restoredTS uint64,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) ([]*backuppb.PitrDBMap, error) {
+	onlyThisRestore bool,
+) (*SegmentedPiTRState, error) {
 	if checkpointStorage := rc.tryGetCheckpointStorage(logCheckpointMetaManager); checkpointStorage != nil {
 		log.Info("checkpoint storage is specified, load pitr id map from the checkpoint storage.")
-		dbMaps, err := rc.loadSchemasMapFromStorage(ctx, checkpointStorage, restoredTS)
-		return dbMaps, errors.Trace(err)
+		state, err := rc.loadSegmentedPiTRStateFromStorage(ctx, checkpointStorage, restoredTS)
+		return state, errors.Trace(err)
 	}
 	if rc.pitrIDMapTableExists() {
-		dbMaps, err := rc.loadSchemasMapFromTable(ctx, restoredTS)
-		return dbMaps, errors.Trace(err)
+		state, err := rc.loadSegmentedPiTRStateFromTable(ctx, restoredTS, onlyThisRestore)
+		return state, errors.Trace(err)
 	}
 	log.Info("the table mysql.tidb_pitr_id_map does not exist, maybe the cluster version is old.")
-	dbMaps, err := rc.loadSchemasMapFromStorage(ctx, rc.storage, restoredTS)
-	return dbMaps, errors.Trace(err)
+	state, err := rc.loadSegmentedPiTRStateFromStorage(ctx, rc.storage, restoredTS)
+	return state, errors.Trace(err)
 }
 
-func (rc *LogClient) loadSchemasMapFromStorage(
+func (rc *LogClient) loadSegmentedPiTRStateFromStorage(
 	ctx context.Context,
 	storage storeapi.Storage,
 	restoredTS uint64,
-) ([]*backuppb.PitrDBMap, error) {
+) (*SegmentedPiTRState, error) {
 	clusterID := rc.GetClusterID(ctx)
 	metaFileName := PitrIDMapsFilename(clusterID, restoredTS)
 	exist, err := storage.FileExists(ctx, metaFileName)
@@ -192,26 +230,34 @@ func (rc *LogClient) loadSchemasMapFromStorage(
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
+	state := &backuppb.SegmentedPiTRState{}
+	if err := state.Unmarshal(metaData); err != nil {
 		return nil, errors.Trace(err)
 	}
-	return backupMeta.GetDbMaps(), nil
+	return segmentedPiTRStateFromProto(state)
 }
 
-func (rc *LogClient) loadSchemasMapFromTable(
+func (rc *LogClient) loadSegmentedPiTRStateFromTable(
 	ctx context.Context,
 	restoredTS uint64,
-) ([]*backuppb.PitrDBMap, error) {
+	onlyThisRestore bool,
+) (*SegmentedPiTRState, error) {
 	hasRestoreIDColumn := rc.pitrIDMapHasRestoreIDColumn()
 
 	var getPitrIDMapSQL string
 	var args []any
+	var withRestoreID bool
 
 	if hasRestoreIDColumn {
-		// new version with restore_id column
-		getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
-		args = []any{rc.restoreID, restoredTS, rc.upstreamClusterID}
+		if onlyThisRestore {
+			// new version with restore_id column
+			getPitrIDMapSQL = "SELECT segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restore_id = %? and restored_ts = %? and upstream_cluster_id = %? ORDER BY segment_id;"
+			args = []any{rc.restoreID, restoredTS, rc.upstreamClusterID}
+		} else {
+			getPitrIDMapSQL = "SELECT restore_id, segment_id, id_map FROM mysql.tidb_pitr_id_map WHERE restored_ts = %? and upstream_cluster_id = %? ORDER BY restore_id, segment_id;"
+			args = []any{restoredTS, rc.upstreamClusterID}
+			withRestoreID = true
+		}
 	} else {
 		// old version without restore_id column
 		log.Info("mysql.tidb_pitr_id_map table does not have restore_id column, using backward compatible mode")
@@ -234,21 +280,38 @@ func (rc *LogClient) loadSchemasMapFromTable(
 		return nil, nil
 	}
 	metaData := make([]byte, 0, len(rows)*PITRIdMapBlockSize)
+	var expectedSegmentID uint64
+	var selectedRestoreID uint64
 	for i, row := range rows {
-		elementID := row.GetUint64(0)
-		if uint64(i) != elementID {
+		var elementID uint64
+		var data []byte
+		if withRestoreID {
+			restoreID := row.GetUint64(0)
+			if i == 0 {
+				selectedRestoreID = restoreID
+			} else if restoreID != selectedRestoreID {
+				return nil, errors.Errorf("multiple restore_id values found for restored_ts=%d and upstream_cluster_id=%d: %d, %d",
+					restoredTS, rc.upstreamClusterID, selectedRestoreID, restoreID)
+			}
+			elementID = row.GetUint64(1)
+			data = row.GetBytes(2)
+		} else {
+			elementID = row.GetUint64(0)
+			data = row.GetBytes(1)
+		}
+		if expectedSegmentID != elementID {
 			return nil, errors.Errorf("the part(segment_id = %d) of pitr id map is lost", i)
 		}
-		d := row.GetBytes(1)
-		if len(d) == 0 {
+		if len(data) == 0 {
 			return nil, errors.Errorf("get the empty part(segment_id = %d) of pitr id map", i)
 		}
-		metaData = append(metaData, d...)
+		metaData = append(metaData, data...)
+		expectedSegmentID++
 	}
-	backupMeta := &backuppb.BackupMeta{}
-	if err := backupMeta.Unmarshal(metaData); err != nil {
+	state := &backuppb.SegmentedPiTRState{}
+	if err := state.Unmarshal(metaData); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	return backupMeta.GetDbMaps(), nil
+	return segmentedPiTRStateFromProto(state)
 }

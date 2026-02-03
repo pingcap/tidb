@@ -105,6 +105,8 @@ const (
 	// FlagStreamStartTS and FlagStreamRestoreTS is used for log restore timestamp range.
 	FlagStreamStartTS   = "start-ts"
 	FlagStreamRestoreTS = "restored-ts"
+	// FlagLastSegment indicates whether this restore is the last segment.
+	FlagLastSegment = "last-segment"
 	// FlagStreamFullBackupStorage is used for log restore, represents the full backup storage.
 	FlagStreamFullBackupStorage = "full-backup-storage"
 	// FlagPiTRBatchCount and FlagPiTRBatchSize are used for restore log with batch method.
@@ -279,11 +281,13 @@ type RestoreConfig struct {
 	// whether RestoreTS was explicitly specified by user vs auto-detected
 	IsRestoredTSUserSpecified bool `json:"-" toml:"-"`
 	// rewriteTS is the rewritten timestamp of meta kvs.
-	RewriteTS       uint64                      `json:"-" toml:"-"`
-	tiflashRecorder *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
-	PitrBatchCount  uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
-	PitrBatchSize   uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
-	PitrConcurrency uint32                      `json:"-" toml:"-"`
+	RewriteTS                  uint64                      `json:"-" toml:"-"`
+	tiflashRecorder            *tiflashrec.TiFlashRecorder `json:"-" toml:"-"`
+	LastRestore                bool                        `json:"last-segment" toml:"last-segment"`
+	IsLastRestoreUserSpecified bool                        `json:"-" toml:"-"`
+	PitrBatchCount             uint32                      `json:"pitr-batch-count" toml:"pitr-batch-count"`
+	PitrBatchSize              uint32                      `json:"pitr-batch-size" toml:"pitr-batch-size"`
+	PitrConcurrency            uint32                      `json:"-" toml:"-"`
 
 	UseCheckpoint                 bool                            `json:"use-checkpoint" toml:"use-checkpoint"`
 	CheckpointStorage             string                          `json:"checkpoint-storage" toml:"checkpoint-storage"`
@@ -383,6 +387,7 @@ func DefineStreamRestoreFlags(command *cobra.Command) {
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
 	command.Flags().String(FlagStreamRestoreTS, "", "the point of restore, used for log restore.\n"+
 		"support TSO or datetime, e.g. '400036290571534337' or '2018-05-11 01:42:23+0800'")
+	command.Flags().Bool(FlagLastSegment, true, "whether this restore is the last segment of a segmented PiTR task")
 	command.Flags().String(FlagStreamFullBackupStorage, "", "specify the backup full storage. "+
 		"fill it if want restore full backup before restore log.")
 	command.Flags().Uint32(FlagPiTRBatchCount, defaultPiTRBatchCount, "specify the batch count to restore log.")
@@ -406,6 +411,11 @@ func (cfg *RestoreConfig) ParseStreamRestoreFlags(flags *pflag.FlagSet) error {
 	if cfg.RestoreTS, err = ParseTSString(tsString, true); err != nil {
 		return errors.Trace(err)
 	}
+	cfg.LastRestore, err = flags.GetBool(FlagLastSegment)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	cfg.IsLastRestoreUserSpecified = flags.Changed(FlagLastSegment)
 
 	// check if RestoreTS was explicitly specified by user
 	cfg.IsRestoredTSUserSpecified = flags.Changed(FlagStreamRestoreTS)
@@ -614,6 +624,9 @@ func (cfg *RestoreConfig) Adjust() {
 }
 
 func (cfg *RestoreConfig) adjustRestoreConfigForStreamRestore() {
+	if !cfg.IsLastRestoreUserSpecified {
+		cfg.LastRestore = true
+	}
 	if cfg.PitrConcurrency == 0 {
 		cfg.PitrConcurrency = defaultPiTRConcurrency
 	}
