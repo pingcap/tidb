@@ -52,6 +52,9 @@ func TestDumpStatsAPI(t *testing.T) {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
@@ -157,12 +160,12 @@ func prepareData(t *testing.T, client *testserverclient.TestServerClient, statHa
 	require.NoError(t, err)
 	tk.MustExec("create index c on test (a, b)")
 	tk.MustExec("insert test values (1, 's')")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table test")
 	tk.MustExec("set global tidb_enable_historical_stats = 1")
 	tk.MustExec("insert into test(a,b) values (1, 'v'),(3, 'vvv'),(5, 'vv')")
 	is := statHandle.Domain().InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 }
 
@@ -204,7 +207,7 @@ func preparePartitionData(t *testing.T, client *testserverclient.TestServerClien
 	tk.MustExec("insert into test2 (a) values (1)")
 	tk.MustExec("analyze table test2")
 	is := statHandle.Domain().InfoSchema()
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 }
 
@@ -304,6 +307,9 @@ func TestStatsPriorityQueueAPI(t *testing.T) {
 	cfg.Status.ReportStatus = true
 	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()
@@ -365,6 +371,9 @@ func TestLoadNullStatsFile(t *testing.T) {
 	cfg.Socket = filepath.Join(tmp, fmt.Sprintf("tidb-mock-%d.sock", time.Now().UnixNano()))
 
 	// Creating and running the server
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server2.RunInGoTestChan = make(chan struct{})
 	server, err := server2.NewServer(cfg, driver)
 	require.NoError(t, err)
 	defer server.Close()

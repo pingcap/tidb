@@ -700,7 +700,7 @@ aa
 44
 explain format="plan_tree" select a, b, lag(a,1) over (order by b) from t order by b;
 id	task	access object	operator info
-Window	root		lag(planner__cascades__integration.t.a, 1)->Column#4 over(order by planner__cascades__integration.t.b)
+Window	root		lag(planner__cascades__integration.t.a, 1)->Column#5 over(order by planner__cascades__integration.t.b)
 └─Sort	root		planner__cascades__integration.t.b
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo

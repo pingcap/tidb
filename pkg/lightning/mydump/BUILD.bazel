@@ -69,6 +69,7 @@ go_test(
     name = "mydump_test",
     timeout = "short",
     srcs = [
+        "benchmark_parquet_decimal_test.go",
         "charset_convertor_test.go",
         "csv_parser_test.go",
         "loader_test.go",

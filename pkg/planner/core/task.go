@@ -1234,6 +1234,10 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 	if !ok {
 		return nil, false
 	}
+	// For cluster tables, HandleCols may be nil. Skip this optimization if HandleCols is not available.
+	if tblScan.HandleCols == nil {
+		return nil, false
+	}
 	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), tblScan.HandleCols.GetCol(0)) {
 		return nil, false
 	}
@@ -2113,7 +2117,14 @@ func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base
 
 func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
 	if mppPlan != nil && mppPlan.StatsInfo() != nil && mppPlan.StatsInfo().HistColl != nil {
-		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, mppPlan.Schema().Columns, false, false)
+		schemaCols := mppPlan.Schema().Columns
+		for i, col := range schemaCols {
+			if col.ID == model.ExtraCommitTSID {
+				schemaCols = slices.Delete(slices.Clone(schemaCols), i, i+1)
+				break
+			}
+		}
+		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, schemaCols, false, false)
 	}
 	return 1 // use 1 as lower-bound for safety
 }
