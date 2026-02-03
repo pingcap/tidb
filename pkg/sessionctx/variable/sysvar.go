@@ -2241,6 +2241,12 @@ var defaultSysVars = []*SysVar{
 		s.CartesianJoinOrderThreshold = tidbOptFloat64(val, vardef.DefOptCartesianJoinOrderThreshold)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptOrderPreservingJoinDiscount, Value: strconv.FormatFloat(vardef.DefOptOrderPreservingJoinDiscount, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
+		s.OrderPreservingJoinDiscount = tidbOptFloat64(val, vardef.DefOptOrderPreservingJoinDiscount)
+		return nil
+	}, GetSession: func(s *SessionVars) (string, error) {
+		return strconv.FormatFloat(s.OrderPreservingJoinDiscount, 'f', -1, 64), nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptRiskEqSkewRatio, Value: strconv.FormatFloat(vardef.DefOptRiskEqSkewRatio, 'f', -1, 64), Type: vardef.TypeFloat, MinValue: 0, MaxValue: 1, SetSession: func(s *SessionVars, val string) error {
 		s.RiskEqSkewRatio = tidbOptFloat64(val, vardef.DefOptRiskEqSkewRatio)
 		return nil

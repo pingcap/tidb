@@ -219,10 +219,14 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		}
 		otherConds = append(otherConds, tmpOtherConds...)
 	}
+	// Capture ordering properties from the join for index-preserving optimization
+	orderProperties := join.OrderProperties
+
 	return &joinGroupResult{
 		group:             group,
 		hasOuterJoin:      hasOuterJoin,
 		joinOrderHintInfo: joinOrderHintInfo,
+		orderProperties:   orderProperties,
 		basicJoinGroupInfo: &basicJoinGroupInfo{
 			eqEdges:            eqEdges,
 			otherConds:         otherConds,
@@ -237,8 +241,9 @@ type JoinReOrderSolver struct {
 }
 
 type jrNode struct {
-	p       base.LogicalPlan
-	cumCost float64
+	p                 base.LogicalPlan
+	cumCost           float64
+	isOrderPreserving bool // true if this node contains/is the order-preserving table
 }
 
 type joinTypeWithExtMsg struct {
@@ -254,11 +259,37 @@ func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (bas
 
 // optimizeRecursive recursively collects join groups and applies join reorder algorithm for each group.
 func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.LogicalPlan) (base.LogicalPlan, error) {
+	return s.optimizeRecursiveWithParentFilters(ctx, p, nil)
+}
+
+// optimizeRecursiveWithParentFilters is the internal implementation that carries parent filter conditions.
+func (s *JoinReOrderSolver) optimizeRecursiveWithParentFilters(ctx base.PlanContext, p base.LogicalPlan, parentFilterConds []expression.Expression) (base.LogicalPlan, error) {
 	if _, ok := p.(*logicalop.LogicalCTE); ok {
 		return p, nil
 	}
 
 	var err error
+
+	// If this is a Selection with a Join child and TiDBOptJoinReorderThroughSel is false,
+	// capture the Selection conditions to pass to the join reorder solver for the
+	// order-preserving optimization.
+	if selection, ok := p.(*logicalop.LogicalSelection); ok {
+		if len(selection.Children()) > 0 {
+			if _, isJoin := selection.Children()[0].(*logicalop.LogicalJoin); isJoin {
+				// Check if TiDBOptJoinReorderThroughSel is false (Selection conditions
+				// won't be in otherConds, so we need to pass them separately)
+				if !ctx.GetSessionVars().TiDBOptJoinReorderThroughSel {
+					// Pass Selection conditions to the child Join for use by order-preserving optimization
+					newChild, err := s.optimizeRecursiveWithParentFilters(ctx, selection.Children()[0], selection.Conditions)
+					if err != nil {
+						return nil, err
+					}
+					selection.SetChildren(newChild)
+					return p, nil
+				}
+			}
+		}
+	}
 
 	if _, ok := p.(*logicalop.LogicalJoin); ok {
 		result := extractJoinGroup(p)
@@ -284,6 +315,8 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			baseGroupSolver := &baseSingleGroupJoinOrderSolver{
 				ctx:                ctx,
 				basicJoinGroupInfo: result.basicJoinGroupInfo,
+				orderProperties:    result.orderProperties,
+				parentFilterConds:  parentFilterConds,
 			}
 
 			joinGroupNum := len(curJoinGroup)
@@ -410,6 +443,7 @@ type joinGroupResult struct {
 	group             []base.LogicalPlan
 	hasOuterJoin      bool
 	joinOrderHintInfo []*h.PlanHints
+	orderProperties   [][]*expression.Column // ORDER BY columns that could benefit from index ordering
 	*basicJoinGroupInfo
 }
 
@@ -418,6 +452,11 @@ type baseSingleGroupJoinOrderSolver struct {
 	ctx              base.PlanContext
 	curJoinGroup     []*jrNode
 	leadingJoinGroup base.LogicalPlan
+	orderProperties  [][]*expression.Column // ORDER BY columns for index-preserving join selection
+	// parentFilterConds stores filter conditions from a parent Selection when
+	// TiDBOptJoinReorderThroughSel is false. These are used by the order-preserving
+	// optimization to detect equality predicates on index prefix columns.
+	parentFilterConds []expression.Expression
 	*basicJoinGroupInfo
 }
 
@@ -861,8 +900,18 @@ func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *logicalop.L
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
-func (*baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lNode, rNode *jrNode) float64 {
-	return join.StatsInfo().RowCount + lNode.cumCost + rNode.cumCost
+// When the left node is order-preserving and the discount is enabled, we apply
+// the discount factor to make the optimizer prefer keeping the order-preserving
+// table on the left (probe) side of the join.
+func (s *baseSingleGroupJoinOrderSolver) calcJoinCumCost(join base.LogicalPlan, lNode, rNode *jrNode) float64 {
+	cost := join.StatsInfo().RowCount + lNode.cumCost + rNode.cumCost
+	if lNode.isOrderPreserving {
+		discount := s.ctx.GetSessionVars().OrderPreservingJoinDiscount
+		if discount > 0 && discount < 1.0 {
+			cost = cost * discount
+		}
+	}
+	return cost
 }
 
 // Name implements the base.LogicalOptRule.<1st> interface.
