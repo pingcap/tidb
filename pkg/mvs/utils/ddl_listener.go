@@ -8,24 +8,39 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx"
 )
 
-// RegisterCreateDropTableHandler registers a DDL notifier handler for table create/drop events.
+const (
+	ActionAddMV     = 46
+	ActionDropMV    = 47
+	ActionAlterMV   = 48
+	ActionAddMVLOG  = 49
+	ActionDropMVLOG = 50
+)
+
+// RegisterTableDDLEventHandler registers a DDL notifier handler for table create/alter/drop events.
 // The caller must pass a unique handlerID and register it before the notifier starts.
-func RegisterCreateDropTableHandler(
+// The handler receives the action type, and table info pointers may be nil depending on the action.
+func RegisterTableDDLEventHandler(
 	ddlNotifier *notifier.DDLNotifier,
 	handlerID notifier.HandlerID,
-	onCreate func(*model.TableInfo),
-	onDrop func(*model.TableInfo),
+	onEvent func(action model.ActionType, tableInfo *model.TableInfo, oldTableInfo *model.TableInfo),
 ) {
 	ddlNotifier.RegisterHandler(handlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
-		switch event.GetType() {
-		case model.ActionCreateTable:
-			if onCreate != nil {
-				onCreate(event.GetCreateTableInfo())
-			}
-		case model.ActionDropTable:
-			if onDrop != nil {
-				onDrop(event.GetDropTableInfo())
-			}
+		if onEvent == nil {
+			return nil
+		}
+		action := event.GetType()
+		switch action {
+		case ActionAddMV:
+			onEvent(action, event.GetCreateTableInfo(), nil)
+		case ActionAddMVLOG:
+			onEvent(action, nil, event.GetDropTableInfo())
+		case ActionDropMV:
+			onEvent(action, nil, event.GetDropTableInfo())
+		case ActionDropMVLOG:
+			onEvent(action, event.GetCreateTableInfo(), nil)
+		case ActionAlterMV:
+			onEvent(action, event.GetCreateTableInfo(), event.GetOldTableInfo())
+		default:
 		}
 		return nil
 	})
