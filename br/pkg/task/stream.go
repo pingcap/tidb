@@ -2236,11 +2236,15 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
 	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
 	state, err := client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
-		cfg.logCheckpointMetaManager, cfg.tableMappingManager)
+		cfg.logCheckpointMetaManager)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	if state != nil {
+		if len(state.DbMaps) > 0 {
+			cfg.tableMappingManager.SetFromPiTRIDMap()
+			cfg.tableMappingManager.MergeBaseDBReplace(stream.FromDBMapProto(state.DbMaps))
+		}
 		if state.TiFlashItems != nil && cfg.tiflashRecorder != nil {
 			cfg.tiflashRecorder.Load(state.TiFlashItems)
 		}
@@ -2263,7 +2267,16 @@ func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient,
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err = client.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
+	newState := &logclient.SegmentedPiTRState{
+		DbMaps:              cfg.tableMappingManager.ToProto(),
+		IngestRecorderState: cfg.ingestRecorderState,
+	}
+	if cfg.tiflashRecorder != nil {
+		newState.TiFlashItems = cfg.tiflashRecorder.GetItems()
+	} else if state != nil && state.TiFlashItems != nil {
+		newState.TiFlashItems = state.TiFlashItems
+	}
+	if err = client.SaveIdMapWithFailPoints(ctx, newState, cfg.logCheckpointMetaManager); err != nil {
 		return errors.Trace(err)
 	}
 	return nil

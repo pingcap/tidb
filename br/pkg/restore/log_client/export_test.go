@@ -22,7 +22,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -66,10 +65,10 @@ func (m *PhysicalWithMigrations) Physical() *backuppb.DataFileGroup {
 
 func (rc *LogClient) TEST_saveIDMap(
 	ctx context.Context,
-	m *stream.TableMappingManager,
+	state *SegmentedPiTRState,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
-	return rc.SaveIdMapWithFailPoints(ctx, m, logCheckpointMetaManager)
+	return rc.SaveIdMapWithFailPoints(ctx, state, logCheckpointMetaManager)
 }
 
 func (rc *LogClient) TEST_initSchemasMap(
@@ -85,6 +84,14 @@ func (rc *LogClient) TEST_initSchemasMap(
 		return nil, nil
 	}
 	return state.DbMaps, nil
+}
+
+func (rc *LogClient) TEST_loadSegmentedPiTRState(
+	ctx context.Context,
+	restoreTS uint64,
+	logCheckpointMetaManager checkpoint.LogMetaManagerT,
+) (*SegmentedPiTRState, error) {
+	return rc.loadSegmentedPiTRState(ctx, restoreTS, logCheckpointMetaManager, true)
 }
 
 // readStreamMetaByTS is used for streaming task. collect all meta file by TS, it is for test usage.

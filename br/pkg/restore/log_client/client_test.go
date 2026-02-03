@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"math"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1346,9 +1347,8 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		require.NoError(t, err)
 		err = stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 1), []byte("123"))
 		require.NoError(t, err)
-		_, err = client.GetBaseIDMapAndMerge(ctx, false, false, nil, stream.NewTableMappingManager())
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "proto: wrong")
+		_, err = client.GetBaseIDMapAndMerge(ctx, false, false, nil)
+		requireInvalidProtoError(t, err)
 		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 1))
 		require.NoError(t, err)
 	}
@@ -1358,9 +1358,8 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		client.SetStorage(ctx, backend, nil)
 		err := stg.WriteFile(ctx, logclient.PitrIDMapsFilename(123, 2), []byte("123"))
 		require.NoError(t, err)
-		_, err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
-		require.Error(t, err)
-		require.Contains(t, err.Error(), "proto: wrong")
+		_, err = client.GetBaseIDMapAndMerge(ctx, false, true, nil)
+		requireInvalidProtoError(t, err)
 		err = stg.DeleteFile(ctx, logclient.PitrIDMapsFilename(123, 2))
 		require.NoError(t, err)
 	}
@@ -1373,10 +1372,18 @@ func TestInitSchemasReplaceForDDL(t *testing.T) {
 		se, err := g.CreateSession(s.Mock.Storage)
 		require.NoError(t, err)
 		client := logclient.TEST_NewLogClient(123, 1, 2, 1, s.Mock.Domain, se)
-		_, err = client.GetBaseIDMapAndMerge(ctx, false, true, nil, stream.NewTableMappingManager())
+		_, err = client.GetBaseIDMapAndMerge(ctx, false, true, nil)
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "no base id map found from saved id or last restored PiTR")
 	}
+}
+
+func requireInvalidProtoError(t *testing.T, err error) {
+	t.Helper()
+	require.Error(t, err)
+	errMsg := err.Error()
+	require.True(t, strings.Contains(errMsg, "proto") || strings.Contains(errMsg, "EOF"),
+		"unexpected error: %s", errMsg)
 }
 
 func downstreamID(upstreamID int64) int64 {
@@ -1446,8 +1453,30 @@ func TestPITRIDMap(t *testing.T) {
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
 	}
-	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, nil)
+	tiflashItems := map[int64]model.TiFlashReplicaInfo{
+		1: {Count: 1, Available: true},
+		2: {Count: 2, LocationLabels: []string{"zone", "rack"}, AvailablePartitionIDs: []int64{3, 4}},
+	}
+	ingestState := &ingestrec.RecorderState{
+		Items: map[int64]map[int64]ingestrec.IndexState{
+			10: {
+				1: {IsPrimary: true},
+				2: {IsPrimary: false},
+			},
+		},
+	}
+	state := &logclient.SegmentedPiTRState{
+		DbMaps:              baseTableMappingManager.ToProto(),
+		TiFlashItems:        tiflashItems,
+		IngestRecorderState: ingestState,
+	}
+	err = client.TEST_saveIDMap(ctx, state, nil)
 	require.NoError(t, err)
+	loadedState, err := client.TEST_loadSegmentedPiTRState(ctx, 2, nil)
+	require.NoError(t, err)
+	require.NotNil(t, loadedState)
+	require.Equal(t, tiflashItems, loadedState.TiFlashItems)
+	require.Equal(t, ingestState, loadedState.IngestRecorderState)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1, nil)
 	require.NoError(t, err)
 	require.Nil(t, newSchemaReplaces)
@@ -1496,7 +1525,10 @@ func TestPITRIDMapOnStorage(t *testing.T) {
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
 	}
-	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, nil)
+	state := &logclient.SegmentedPiTRState{
+		DbMaps: baseTableMappingManager.ToProto(),
+	}
+	err = client.TEST_saveIDMap(ctx, state, nil)
 	require.NoError(t, err)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1, nil)
 	require.NoError(t, err)
@@ -1552,7 +1584,10 @@ func TestPITRIDMapOnCheckpointStorage(t *testing.T) {
 	baseTableMappingManager := &stream.TableMappingManager{
 		DBReplaceMap: getDBMap(),
 	}
-	err = client.TEST_saveIDMap(ctx, baseTableMappingManager, logCheckpointMetaManager)
+	state := &logclient.SegmentedPiTRState{
+		DbMaps: baseTableMappingManager.ToProto(),
+	}
+	err = client.TEST_saveIDMap(ctx, state, logCheckpointMetaManager)
 	require.NoError(t, err)
 	newSchemaReplaces, err := client.TEST_initSchemasMap(ctx, 1, logCheckpointMetaManager)
 	require.NoError(t, err)

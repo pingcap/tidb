@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/checkpoint"
 	"github.com/pingcap/tidb/br/pkg/restore"
-	"github.com/pingcap/tidb/br/pkg/stream"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -55,36 +54,7 @@ func (rc *LogClient) tryGetCheckpointStorage(
 	return logCheckpointMetaManager.TryGetStorage()
 }
 
-// saveIDMap saves the id mapping information.
-func (rc *LogClient) saveIDMap(
-	ctx context.Context,
-	manager *stream.TableMappingManager,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) error {
-	state := &SegmentedPiTRState{
-		DbMaps: manager.ToProto(),
-	}
-	existingState, err := rc.loadSegmentedPiTRState(ctx, rc.restoreTS, logCheckpointMetaManager, true)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if existingState != nil {
-		state.TiFlashItems = existingState.TiFlashItems
-		state.IngestRecorderState = existingState.IngestRecorderState
-	}
-	return rc.saveSegmentedPiTRState(ctx, state, logCheckpointMetaManager)
-}
-
-// SaveSegmentedPiTRState saves segmented PiTR state for later restores.
 func (rc *LogClient) SaveSegmentedPiTRState(
-	ctx context.Context,
-	state *SegmentedPiTRState,
-	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-) error {
-	return rc.saveSegmentedPiTRState(ctx, state, logCheckpointMetaManager)
-}
-
-func (rc *LogClient) saveSegmentedPiTRState(
 	ctx context.Context,
 	state *SegmentedPiTRState,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,

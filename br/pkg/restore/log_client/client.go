@@ -1008,14 +1008,6 @@ type FullBackupStorageConfig struct {
 	Opts    *storeapi.Options
 }
 
-type GetIDMapConfig struct {
-	// required
-	LoadSavedIDMap bool
-
-	// optional
-	TableMappingManager *stream.TableMappingManager
-}
-
 // GetBaseIDMapAndMerge get the id map from following ways
 // 1. from previously saved id map if the same task has been running and built/saved id map already but failed later
 // 2. from previous different task. A PiTR job might be split into multiple runs/tasks and each task only restores
@@ -1025,13 +1017,11 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	hasFullBackupStorageConfig,
 	loadSavedIDMap bool,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
-	tableMappingManager *stream.TableMappingManager,
 ) (*SegmentedPiTRState, error) {
 	var (
-		err        error
-		state      *SegmentedPiTRState
-		dbMaps     []*backuppb.PitrDBMap
-		dbReplaces map[stream.UpstreamID]*stream.DBReplace
+		err    error
+		state  *SegmentedPiTRState
+		dbMaps []*backuppb.PitrDBMap
 	)
 
 	// this is a retry, id map saved last time, load it from external storage
@@ -1067,13 +1057,6 @@ func (rc *LogClient) GetBaseIDMapAndMerge(
 	if len(dbMaps) <= 0 && !hasFullBackupStorageConfig {
 		log.Error("no id maps found")
 		return nil, errors.New("no base id map found from saved id or last restored PiTR")
-	}
-	dbReplaces = stream.FromDBMapProto(dbMaps)
-
-	stream.LogDBReplaceMap("base db replace info", dbReplaces)
-	if len(dbReplaces) != 0 {
-		tableMappingManager.SetFromPiTRIDMap()
-		tableMappingManager.MergeBaseDBReplace(dbReplaces)
 	}
 	return state, nil
 }
@@ -1987,14 +1970,14 @@ func (rc *LogClient) GetGCRows() []*stream.PreDelRangeQuery {
 
 func (rc *LogClient) SaveIdMapWithFailPoints(
 	ctx context.Context,
-	manager *stream.TableMappingManager,
+	state *SegmentedPiTRState,
 	logCheckpointMetaManager checkpoint.LogMetaManagerT,
 ) error {
 	failpoint.Inject("failed-before-id-maps-saved", func(_ failpoint.Value) {
 		failpoint.Return(errors.New("failpoint: failed before id maps saved"))
 	})
 
-	if err := rc.saveIDMap(ctx, manager, logCheckpointMetaManager); err != nil {
+	if err := rc.SaveSegmentedPiTRState(ctx, state, logCheckpointMetaManager); err != nil {
 		return errors.Trace(err)
 	}
 
