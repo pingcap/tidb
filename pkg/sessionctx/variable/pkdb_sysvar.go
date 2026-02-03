@@ -94,6 +94,17 @@ var ffiSysVars = []*SysVar{
 		}, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 			return BoolToOnOff(tikvrpc.TiDBXStoreBatchGet.Load()), nil
 		}},
+
+	{Scope: ScopeGlobal, Name: TiDBXEnableFastPath, Value: BoolToOnOff(DefTiDBXFastPath), Type: TypeBool,
+		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
+			EnableFastPath.Store(TiDBOptOn(val))
+			tikvrpc.EnableFastPath.Store(TiDBOptOn(val))
+			return nil
+		},
+		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+			return BoolToOnOff(EnableFastPath.Load()), nil
+		},
+	},
 }
 
 // PDLocalCallVar will be set by the upper package tidbx-server to point to pd-server's

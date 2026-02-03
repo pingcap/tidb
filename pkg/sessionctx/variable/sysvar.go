@@ -3664,22 +3664,6 @@ var defaultSysVars = []*SysVar{
 		},
 		IsHintUpdatableVerified: true,
 	},
-	{Scope: ScopeGlobal, Name: TiDBXEnableFastPath, Value: BoolToOnOff(DefTiDBXFastPath), Type: TypeBool,
-		SetGlobal: func(ctx context.Context, vars *SessionVars, val string) error {
-			enabled := TiDBOptOn(val)
-			if enabled {
-				config.UpdateGlobal(func(conf *config.Config) {
-					// When enabling fast path, disable collecting execution info for better performance.
-					conf.Instance.EnableCollectExecutionInfo.Store(false)
-				})
-			}
-			EnableFastPath.Store(enabled)
-			return nil
-		},
-		GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-			return BoolToOnOff(EnableFastPath.Load()), nil
-		},
-	},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBXEnableIndexLookUpPushDown, Value: BoolToOnOff(DefTiDBXEnableIndexLookUpPushDown), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableIndexLookUpPushDown = TiDBOptOn(val)
 		return nil
