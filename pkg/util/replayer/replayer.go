@@ -20,20 +20,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/spf13/afero"
-	"go.uber.org/zap"
 )
 
 // PlanReplayerTaskKey indicates key of a plan replayer task
@@ -114,58 +108,4 @@ var (
 // The path is a relative path for external storage.
 func GetPlanReplayerDirName() string {
 	return "replayer"
-}
-
-// GetPlanReplayerFullPathDirName returns the full path for plan replayer directory.
-// This is used for backward compatibility with local file system.
-func GetPlanReplayerFullPathDirName(vfs ...afero.Fs) string {
-	PlanReplayerPathOnce.Do(func() {
-		var fs afero.Fs
-		fs = afero.NewOsFs()
-		if vfs != nil {
-			fs = vfs[0]
-		}
-		tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
-		tidbLogDir = filepath.Join(tidbLogDir, "replayer")
-		tidbLogDir = filepath.Clean(tidbLogDir)
-		if canWriteToFile(fs, tidbLogDir) {
-			PlanReplayerPath = tidbLogDir
-			logutil.BgLogger().Info("use log dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
-		} else {
-			PlanReplayerPath = filepath.Join(config.GetGlobalConfig().TempDir, "replayer")
-			logutil.BgLogger().Info("use temp dir as plan replayer dir", zap.String("dir", PlanReplayerPath))
-		}
-	})
-	return PlanReplayerPath
-}
-
-func canWriteToFile(vfs afero.Fs, path string) bool {
-	now := time.Now()
-	timeStr := now.Format("20060102150405")
-	filename := fmt.Sprintf("test_%s.txt", timeStr)
-	path = filepath.Join(path, filename)
-	if !canWriteToFileInternal(vfs, path) {
-		logutil.BgLogger().Warn("cannot write to file", zap.String("path", path))
-		return false
-	}
-	return true
-}
-
-func canWriteToFileInternal(vfs afero.Fs, path string) bool {
-	// Open the file in write mode
-	file, err := vfs.OpenFile(path, os.O_RDWR|os.O_CREATE, os.ModePerm)
-	if err != nil {
-		return false
-	}
-	defer func() {
-		err = file.Close()
-		intest.Assert(err == nil, "failed to close file")
-		if err == nil {
-			err = vfs.Remove(path)
-			intest.Assert(err == nil, "failed to delete file")
-		}
-	}()
-	// Try to write a single byte to the file
-	_, err = file.Write([]byte{0})
-	return err == nil
 }

@@ -16,10 +16,13 @@ package extstore
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -133,4 +136,44 @@ func TestExtStorage(t *testing.T) {
 
 	// Test Close
 	s.Close()
+}
+
+func TestGetLocalPathDirNameWithWritePerm(t *testing.T) {
+	origLogFile := config.GetGlobalConfig().Log.File.Filename
+	origTempDir := config.GetGlobalConfig().TempDir
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = origLogFile
+		conf.TempDir = origTempDir
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = filepath.Join("/var/log/tidb", "tidb.log")
+		conf.TempDir = filepath.Join("/tmp", "tidb")
+	})
+
+	fs := afero.NewMemMapFs()
+	require.NoError(t, fs.MkdirAll(filepath.Join("/var/log/tidb", "replayer"), 0o755))
+	basePathFsMem := afero.NewBasePathFs(fs, "/")
+
+	path := getLocalPathDirName(basePathFsMem)
+	require.Equal(t, filepath.Join("/var/log/tidb", "replayer"), path)
+}
+
+func TestGetLocalPathDirNameWithoutWritePerm(t *testing.T) {
+	origLogFile := config.GetGlobalConfig().Log.File.Filename
+	origTempDir := config.GetGlobalConfig().TempDir
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = origLogFile
+		conf.TempDir = origTempDir
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = filepath.Join("/var/log/tidb", "tidb.log")
+		conf.TempDir = filepath.Join("/tmp", "tidb")
+	})
+
+	fs := afero.NewMemMapFs()
+	require.NoError(t, fs.MkdirAll(filepath.Join("/var/log/tidb", "replayer"), 0o755))
+	basePathFsMem := afero.NewReadOnlyFs(fs)
+
+	path := getLocalPathDirName(basePathFsMem)
+	require.Equal(t, filepath.Join("/tmp", "tidb", "replayer"), path)
 }

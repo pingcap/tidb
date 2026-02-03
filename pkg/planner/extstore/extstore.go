@@ -20,19 +20,24 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/spf13/afero"
 	"go.uber.org/zap"
 )
 
 var (
 	globalExtStorage   storeapi.Storage
 	globalExtStorageMu sync.Mutex
+	localPath          string
 )
 
 // GetGlobalExtStorage returns the global external storage instance.
@@ -54,9 +59,10 @@ func GetGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 	uri := vardef.CloudStorageURI.Load()
 	if uri == "" {
+		localPath = getLocalPathDirName()
 		logutil.BgLogger().Warn("cloud storage uri is empty, using default local storage",
-			zap.String("category", "extstore"))
-		uri = fmt.Sprintf("file://%s", os.TempDir())
+			zap.String("category", "extstore"), zap.String("localPath", localPath))
+		uri = fmt.Sprintf("file://%s", localPath)
 	}
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 
@@ -104,6 +110,54 @@ func NewExtStorage(ctx context.Context, rawURL, namespace string) (storeapi.Stor
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-
 	return storage, nil
+}
+
+func getLocalPathDirName(vfs ...afero.Fs) string {
+	var fs afero.Fs
+	fs = afero.NewOsFs()
+	if vfs != nil {
+		fs = vfs[0]
+	}
+	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
+	tidbLogDir = filepath.Join(tidbLogDir, "replayer")
+	tidbLogDir = filepath.Clean(tidbLogDir)
+	if canWriteToFile(fs, tidbLogDir) {
+		logutil.BgLogger().Info("use log dir as local path", zap.String("dir", localPath))
+		return tidbLogDir
+	} else {
+		logutil.BgLogger().Info("use temp dir as local path", zap.String("dir", localPath))
+		return filepath.Join(config.GetGlobalConfig().TempDir, "replayer")
+	}
+}
+
+func canWriteToFile(vfs afero.Fs, path string) bool {
+	now := time.Now()
+	timeStr := now.Format("20060102150405")
+	filename := fmt.Sprintf("test_%s.txt", timeStr)
+	path = filepath.Join(path, filename)
+	if !canWriteToFileInternal(vfs, path) {
+		logutil.BgLogger().Warn("cannot write to file", zap.String("path", path))
+		return false
+	}
+	return true
+}
+
+func canWriteToFileInternal(vfs afero.Fs, path string) bool {
+	// Open the file in write mode
+	file, err := vfs.OpenFile(path, os.O_RDWR|os.O_CREATE, os.ModePerm)
+	if err != nil {
+		return false
+	}
+	defer func() {
+		err = file.Close()
+		intest.Assert(err == nil, "failed to close file")
+		if err == nil {
+			err = vfs.Remove(path)
+			intest.Assert(err == nil, "failed to delete file")
+		}
+	}()
+	// Try to write a single byte to the file
+	_, err = file.Write([]byte{0})
+	return err == nil
 }
