@@ -243,6 +243,10 @@ func TestMaterializedViewLogMetadataDDL(t *testing.T) {
 
 	// default purge policy: IMMEDIATE (interval 0).
 	tk.MustExec("create materialized view log on t (a,b)")
+	tk.MustQuery(`
+		select data_type, column_type, is_nullable
+		from information_schema.columns
+		where table_schema='mlog_meta' and table_name='$mlog$t' and column_name='old_new'`).Check(testkit.Rows("tinyint tinyint(2) NO"))
 	rows := tk.MustQuery(`
 		select mlog_id, mlog_name, mlog_columns, purge_method, purge_interval
 		from information_schema.tidb_mlogs

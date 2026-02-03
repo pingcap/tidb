@@ -885,12 +885,21 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 		})
 		colNames = append(colNames, c.O)
 	}
-	for _, metaCol := range []string{"dml_type", "old_new"} {
-		ft := ptypes.NewFieldType(mysql.TypeVarchar)
-		ft.SetFlen(1)
+	metaCols := []struct {
+		name string
+		ft   byte
+		flen int
+	}{
+		{name: "dml_type", ft: mysql.TypeVarchar, flen: 1},
+		// old_new uses -1/1 to represent deleted/added, to simplify later delta computation.
+		{name: "old_new", ft: mysql.TypeTiny, flen: 2},
+	}
+	for _, metaCol := range metaCols {
+		ft := ptypes.NewFieldType(metaCol.ft)
+		ft.SetFlen(metaCol.flen)
 		ft.SetFlag(mysql.NotNullFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{
-			Name: &ast.ColumnName{Name: pmodel.NewCIStr(metaCol)},
+			Name: &ast.ColumnName{Name: pmodel.NewCIStr(metaCol.name)},
 			Tp:   ft,
 		})
 	}
