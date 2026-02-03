@@ -6,12 +6,15 @@ go_library(
     importpath = "github.com/pingcap/tidb/pkg/planner/extstore",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/config",
         "//pkg/keyspace",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
         "//pkg/sessionctx/vardef",
+        "//pkg/util/intest",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
+        "@com_github_spf13_afero//:afero",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -22,9 +25,12 @@ go_test(
     srcs = ["extstore_test.go"],
     embed = [":extstore"],
     flaky = True,
+    shard_count = 3,
     deps = [
+        "//pkg/config",
         "//pkg/objstore/storeapi",
         "//pkg/testkit/testsetup",
+        "@com_github_spf13_afero//:afero",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
