@@ -410,3 +410,70 @@ func TestDropDatabaseBlockedByMaterializedViewLog(t *testing.T) {
 	tk.MustExec("drop materialized view log on t")
 	tk.MustExec("drop database mlog_drop_db_guard")
 }
+
+func TestMaterializedViewAndLogGenericTableDDLForbidden(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database mview_table_ddl_guard")
+	tk.MustExec("use mview_table_ddl_guard")
+	tk.MustExec("create table t (k int, v int)")
+	tk.MustExec("create materialized view log on t (k, v)")
+	tk.MustExec("create materialized view mv (k, cnt, sum_v) as select k, count(*), sum(v) from t group by k")
+
+	// Materialized view table should not be altered by normal table DDL.
+	tk.MustGetErrMsg(
+		"drop table mv",
+		"can't drop table mview_table_ddl_guard.mv: it is a materialized view, use DROP MATERIALIZED VIEW mview_table_ddl_guard.mv",
+	)
+	tk.MustGetErrMsg(
+		"truncate table mv",
+		"can't truncate table mview_table_ddl_guard.mv: it is a materialized view",
+	)
+	tk.MustGetErrMsg(
+		"rename table mv to mv2",
+		"can't rename table mview_table_ddl_guard.mv: it is a materialized view",
+	)
+	tk.MustGetErrMsg(
+		"alter table mv comment = 'c1'",
+		"can't alter table mview_table_ddl_guard.mv: it is a materialized view",
+	)
+	tk.MustGetErrMsg(
+		"create index idx_mv on mv (k)",
+		"can't create index on table mview_table_ddl_guard.mv: it is a materialized view",
+	)
+	tk.MustGetErrMsg(
+		"drop index idx_mv on mv",
+		"can't drop index on table mview_table_ddl_guard.mv: it is a materialized view",
+	)
+
+	// Materialized view log table should not be altered by normal table DDL.
+	tk.MustGetErrMsg(
+		"drop table `$mlog$t`",
+		"can't drop table mview_table_ddl_guard.$mlog$t: it is a materialized view log, use DROP MATERIALIZED VIEW LOG ON mview_table_ddl_guard.t",
+	)
+	tk.MustGetErrMsg(
+		"truncate table `$mlog$t`",
+		"can't truncate table mview_table_ddl_guard.$mlog$t: it is a materialized view log, use DROP MATERIALIZED VIEW LOG ON mview_table_ddl_guard.t",
+	)
+	tk.MustGetErrMsg(
+		"rename table `$mlog$t` to mlog2",
+		"can't rename table mview_table_ddl_guard.$mlog$t: it is a materialized view log, use DROP MATERIALIZED VIEW LOG ON mview_table_ddl_guard.t",
+	)
+	tk.MustGetErrMsg(
+		"alter table `$mlog$t` comment = 'c1'",
+		"can't alter table mview_table_ddl_guard.$mlog$t: it is a materialized view log, use DROP MATERIALIZED VIEW LOG ON mview_table_ddl_guard.t",
+	)
+	tk.MustGetErrMsg(
+		"create index idx_mlog on `$mlog$t` (k)",
+		"can't create index on table mview_table_ddl_guard.$mlog$t: it is a materialized view log, use DROP MATERIALIZED VIEW LOG ON mview_table_ddl_guard.t",
+	)
+	tk.MustGetErrMsg(
+		"drop index idx_mlog on `$mlog$t`",
+		"can't drop index on table mview_table_ddl_guard.$mlog$t: it is a materialized view log, use DROP MATERIALIZED VIEW LOG ON mview_table_ddl_guard.t",
+	)
+
+	// Dedicated DDLs still work.
+	tk.MustExec("drop materialized view mv")
+	tk.MustExec("drop materialized view log on t")
+}

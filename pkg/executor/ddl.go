@@ -260,10 +260,32 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 }
 
 func (e *DDLExec) executeTruncateTable(s *ast.TruncateTableStmt) error {
-	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	if _, exist := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); exist {
 		return e.tempTableDDL.TruncateLocalTemporaryTable(s.Table.Schema, s.Table.Name)
 	}
+
+	dbName := s.Table.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if dbName != "" {
+		is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), s.Table.Name)
+		if err == nil {
+			if tbl.Meta().MaterializedView != nil {
+				return errors.Errorf("can't truncate table %s.%s: it is a materialized view", dbName, s.Table.Name.O)
+			}
+			if tbl.Meta().MaterializedViewLog != nil {
+				hint := "DROP MATERIALIZED VIEW LOG"
+				if base := materializedViewLogBaseTableIdent(context.Background(), is, tbl.Meta().MaterializedViewLog); base != "" {
+					hint = "DROP MATERIALIZED VIEW LOG ON " + base
+				}
+				return errors.Errorf("can't truncate table %s.%s: it is a materialized view log, use %s", dbName, s.Table.Name.O, hint)
+			}
+		}
+	}
+
+	ident := ast.Ident{Schema: s.Table.Schema, Name: s.Table.Name}
 	err := e.ddlExecutor.TruncateTable(e.Ctx(), ident)
 	return err
 }
@@ -272,6 +294,27 @@ func (e *DDLExec) executeRenameTable(s *ast.RenameTableStmt) error {
 	for _, tables := range s.TableToTables {
 		if _, ok := e.getLocalTemporaryTable(tables.OldTable.Schema, tables.OldTable.Name); ok {
 			return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("RENAME TABLE")
+		}
+
+		dbName := tables.OldTable.Schema.O
+		if dbName == "" {
+			dbName = e.Ctx().GetSessionVars().CurrentDB
+		}
+		if dbName != "" {
+			is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+			tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), tables.OldTable.Name)
+			if err == nil {
+				if tbl.Meta().MaterializedView != nil {
+					return errors.Errorf("can't rename table %s.%s: it is a materialized view", dbName, tables.OldTable.Name.O)
+				}
+				if tbl.Meta().MaterializedViewLog != nil {
+					hint := "DROP MATERIALIZED VIEW LOG"
+					if base := materializedViewLogBaseTableIdent(context.Background(), is, tbl.Meta().MaterializedViewLog); base != "" {
+						hint = "DROP MATERIALIZED VIEW LOG ON " + base
+					}
+					return errors.Errorf("can't rename table %s.%s: it is a materialized view log, use %s", dbName, tables.OldTable.Name.O, hint)
+				}
+			}
 		}
 	}
 	return e.ddlExecutor.RenameTable(e.Ctx(), s)
@@ -356,6 +399,21 @@ func restoreToCanonicalString(node ast.Node) (string, error) {
 		return "", err
 	}
 	return sb.String(), nil
+}
+
+func materializedViewLogBaseTableIdent(ctx context.Context, is infoschema.InfoSchema, mlogInfo *model.MaterializedViewLogInfo) string {
+	if mlogInfo == nil {
+		return ""
+	}
+	baseTbl, ok := is.TableByID(ctx, mlogInfo.BaseTableID)
+	if !ok {
+		return ""
+	}
+	baseSchema, ok := is.SchemaByID(baseTbl.Meta().DBID)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf("%s.%s", baseSchema.Name.O, baseTbl.Meta().Name.O)
 }
 
 func validateCreateMaterializedViewQuery(
@@ -1167,6 +1225,27 @@ func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("CREATE INDEX")
 	}
 
+	dbName := s.Table.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if dbName != "" {
+		is := domain.GetDomain(e.Ctx()).InfoSchema()
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), s.Table.Name)
+		if err == nil {
+			if tbl.Meta().MaterializedView != nil {
+				return errors.Errorf("can't create index on table %s.%s: it is a materialized view", dbName, s.Table.Name.O)
+			}
+			if tbl.Meta().MaterializedViewLog != nil {
+				hint := "DROP MATERIALIZED VIEW LOG"
+				if base := materializedViewLogBaseTableIdent(context.Background(), is, tbl.Meta().MaterializedViewLog); base != "" {
+					hint = "DROP MATERIALIZED VIEW LOG ON " + base
+				}
+				return errors.Errorf("can't create index on table %s.%s: it is a materialized view log, use %s", dbName, s.Table.Name.O, hint)
+			}
+		}
+	}
+
 	return e.ddlExecutor.CreateIndex(e.Ctx(), s)
 }
 
@@ -1232,6 +1311,21 @@ func (e *DDLExec) executeDropTable(s *ast.DropTableStmt) error {
 			}
 			continue
 		}
+		if tbl.Meta().MaterializedView != nil {
+			return errors.Errorf(
+				"can't drop table %s.%s: it is a materialized view, use DROP MATERIALIZED VIEW %s.%s",
+				dbName, tableName.Name.O,
+				dbName, tableName.Name.O,
+			)
+		}
+		if tbl.Meta().MaterializedViewLog != nil {
+			hint := "DROP MATERIALIZED VIEW LOG"
+			if base := materializedViewLogBaseTableIdent(context.Background(), is, tbl.Meta().MaterializedViewLog); base != "" {
+				hint = "DROP MATERIALIZED VIEW LOG ON " + base
+			}
+			return errors.Errorf("can't drop table %s.%s: it is a materialized view log, use %s", dbName, tableName.Name.O, hint)
+		}
+
 		mlogInfo, err := findMaterializedViewLogByBaseTableID(context.Background(), is, pmodel.NewCIStr(dbName), tbl.Meta().ID)
 		if err != nil {
 			return err
@@ -1271,12 +1365,54 @@ func (e *DDLExec) executeDropIndex(s *ast.DropIndexStmt) error {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("DROP INDEX")
 	}
 
+	dbName := s.Table.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if dbName != "" {
+		is := domain.GetDomain(e.Ctx()).InfoSchema()
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(dbName), s.Table.Name)
+		if err == nil {
+			if tbl.Meta().MaterializedView != nil {
+				return errors.Errorf("can't drop index on table %s.%s: it is a materialized view", dbName, s.Table.Name.O)
+			}
+			if tbl.Meta().MaterializedViewLog != nil {
+				hint := "DROP MATERIALIZED VIEW LOG"
+				if base := materializedViewLogBaseTableIdent(context.Background(), is, tbl.Meta().MaterializedViewLog); base != "" {
+					hint = "DROP MATERIALIZED VIEW LOG ON " + base
+				}
+				return errors.Errorf("can't drop index on table %s.%s: it is a materialized view log, use %s", dbName, s.Table.Name.O, hint)
+			}
+		}
+	}
+
 	return e.ddlExecutor.DropIndex(e.Ctx(), s)
 }
 
 func (e *DDLExec) executeAlterTable(ctx context.Context, s *ast.AlterTableStmt) error {
 	if _, ok := e.getLocalTemporaryTable(s.Table.Schema, s.Table.Name); ok {
 		return dbterror.ErrUnsupportedLocalTempTableDDL.GenWithStackByArgs("ALTER TABLE")
+	}
+
+	dbName := s.Table.Schema.O
+	if dbName == "" {
+		dbName = e.Ctx().GetSessionVars().CurrentDB
+	}
+	if dbName != "" {
+		is := domain.GetDomain(e.Ctx()).InfoSchema()
+		tbl, err := is.TableByName(ctx, pmodel.NewCIStr(dbName), s.Table.Name)
+		if err == nil {
+			if tbl.Meta().MaterializedView != nil {
+				return errors.Errorf("can't alter table %s.%s: it is a materialized view", dbName, s.Table.Name.O)
+			}
+			if tbl.Meta().MaterializedViewLog != nil {
+				hint := "DROP MATERIALIZED VIEW LOG"
+				if base := materializedViewLogBaseTableIdent(ctx, is, tbl.Meta().MaterializedViewLog); base != "" {
+					hint = "DROP MATERIALIZED VIEW LOG ON " + base
+				}
+				return errors.Errorf("can't alter table %s.%s: it is a materialized view log, use %s", dbName, s.Table.Name.O, hint)
+			}
+		}
 	}
 
 	return e.ddlExecutor.AlterTable(ctx, e.Ctx(), s)
