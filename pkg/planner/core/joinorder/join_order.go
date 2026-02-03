@@ -255,7 +255,7 @@ func replaceJoinGroupVertexes(root base.LogicalPlan, vertexMap map[int]base.Logi
 func optimizeForJoinGroup(ctx base.PlanContext, group *joinGroup) (p base.LogicalPlan, err error) {
 	originalSchema := group.root.Schema()
 
-	// gjt todo impl DP
+	// TODO impl DP
 	// useGreedy := len(group.vertexes) > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 	useGreedy := true
 	if useGreedy {
@@ -363,7 +363,7 @@ func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan 
 		if !allowNoEQ {
 			return nil, nil, nil
 		}
-		// gjt todo duplicated with makeBushyTree?
+		// TODO duplicated with makeBushyTree?
 		if checkResult = detector.TryCreateCartesianCheckResult(leftPlan, rightPlan); checkResult == nil {
 			return nil, nil, nil
 		}
@@ -474,7 +474,7 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 	return nodes, nil
 }
 
-// gjt todo add example
+// TODO add example
 func tryApplyAllRemainingEdges(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, map[uint64]struct{}, error) {
 	usedEdges := collectUsedEdges(nodes)
 	// If all edges are used, return directly.
@@ -574,7 +574,7 @@ func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node, vertexHints map
 	return cartesianNodes[0].p, nil
 }
 
-// gjt todo refactor these functions to avoid code duplication.
+// TODO refactor these functions to avoid code duplication.
 func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
 	var leadingHintInfo *hint.PlanHints
