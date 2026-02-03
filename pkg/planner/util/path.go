@@ -136,6 +136,10 @@ type AccessPath struct {
 	Forced           bool
 	ForceKeepOrder   bool
 	ForceNoKeepOrder bool
+	// ForcePartialOrder means whether to force using "current path + partial order optimize".
+	// Only when "Index is Force", "Partial Order is enable" and "Index can match partial order property"
+	// this flag will be set to true.
+	ForcePartialOrder bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
 
@@ -201,6 +205,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		Forced:                       path.Forced,
 		ForceKeepOrder:               path.ForceKeepOrder,
 		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		ForcePartialOrder:            path.ForcePartialOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
