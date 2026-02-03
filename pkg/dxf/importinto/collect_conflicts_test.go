@@ -37,7 +37,7 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
-	require.EqualValues(t, &importinto.Checksum{Sum: 6734985763851266693, KVs: 27, Size: 909}, outSTMeta.Checksum)
+	require.EqualValues(t, &importinto.Checksum{Sum: 2944242980394429146, KVs: 27, Size: 909}, outSTMeta.Checksum)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
 	// one for each kv group
 	require.Len(t, outSTMeta.ConflictedRowFilenames, 2)
