@@ -7623,39 +7623,6 @@ func (b *PlanBuilder) buildProjection4CTEUnion(_ context.Context, seed base.Logi
 	return proj, nil
 }
 
-// getResultCTESchemaWithRecur creates the result schema for a recursive CTE by using
-// the wider/longer type from both seed and recursive parts. This is similar to how regular
-// UNION handles type inference. For example, if seed has ' ' (empty string - varchar(0)) and recur
-// has varchar(10), the result schema will use varchar(10) to prevent truncation.
-// Special case: if seed type is NULL, use the recursive part's type directly.
-func getResultCTESchemaWithRecur(seedSchema, recurSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
-	res := seedSchema.Clone()
-	for i, col := range res.Columns {
-		col.RetType = col.RetType.Clone()
-		col.UniqueID = svar.AllocPlanColumnID()
-		col.RetType.DelFlag(mysql.NotNullFlag)
-		// Since you have reallocated unique id here, the old-cloned-cached hash code is not valid anymore.
-		col.CleanHashCode()
-
-		// Use the wider/longer type from both seed and recur schemas
-		if i < len(recurSchema.Columns) {
-			recurTp := recurSchema.Columns[i].RetType
-			seedTp := col.RetType
-			// Special case: if seed type is NULL, use recursive type directly
-			// This handles cases like: WITH RECURSIVE cte AS (SELECT 1, NULL UNION ALL SELECT n+1, val FROM ...)
-			if seedTp.GetType() == mysql.TypeNull {
-				col.RetType = recurTp.Clone()
-			} else {
-				// Use unionJoinFieldType to get the wider/longer type that can hold both
-				widerTp := unionJoinFieldType(seedTp, recurTp)
-				col.RetType = widerTp.Clone()
-			}
-			col.RetType.DelFlag(mysql.NotNullFlag)
-		}
-	}
-	return res
-}
-
 // The recursive part/CTE's schema is nullable, and the UID should be unique.
 func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVars) *expression.Schema {
 	res := seedSchema.Clone()
@@ -7667,53 +7634,4 @@ func getResultCTESchema(seedSchema *expression.Schema, svar *variable.SessionVar
 		col.CleanHashCode()
 	}
 	return res
-}
-
-// buildProjection4CTESeed creates a projection for the CTE seed part if any columns have NULL type.
-// This is needed when the seed has NULL literals that need to be cast to the proper type from the recursive part.
-// Returns the original seed if no projection is needed.
-func (b *PlanBuilder) buildProjection4CTESeed(seed, recur base.LogicalPlan) base.LogicalPlan {
-	if recur == nil {
-		return seed
-	}
-	if seed.Schema().Len() != recur.Schema().Len() {
-		return seed
-	}
-
-	// Check if any seed column has NULL type
-	needsProjection := false
-	for _, col := range seed.Schema().Columns {
-		if col.RetType.GetType() == mysql.TypeNull {
-			needsProjection = true
-			break
-		}
-	}
-	if !needsProjection {
-		return seed
-	}
-
-	// Build projection for seed, casting NULL columns to recur's type
-	exprs := make([]expression.Expression, len(seed.Schema().Columns))
-	resSchema := getResultCTESchemaWithRecur(seed.Schema(), recur.Schema(), b.ctx.GetSessionVars())
-
-	for i, col := range seed.Schema().Columns {
-		newCol := &expression.Column{
-			UniqueID: col.UniqueID,
-			RetType:  col.RetType,
-			Index:    i,
-		}
-		// If seed column is NULL type, cast to the target type from result schema
-		if col.RetType.GetType() == mysql.TypeNull && i < len(resSchema.Columns) {
-			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
-		} else if !resSchema.Columns[i].RetType.Equal(col.RetType) {
-			exprs[i] = expression.BuildCastFunction4Union(b.ctx.GetExprCtx(), newCol, resSchema.Columns[i].RetType)
-		} else {
-			exprs[i] = newCol
-		}
-	}
-
-	proj := logicalop.LogicalProjection{Exprs: exprs}.Init(b.ctx, b.getSelectOffset())
-	proj.SetSchema(resSchema)
-	proj.SetChildren(seed)
-	return proj
 }
