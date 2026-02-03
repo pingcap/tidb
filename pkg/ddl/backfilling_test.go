@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"sync/atomic"
 	"testing"
@@ -109,45 +110,16 @@ func (c *testReadIndexBackendCtx) Register(indexIDs []int64, uniques []bool, tbl
 
 func (c *testReadIndexBackendCtx) GetLocalBackend() *local.Backend { return c.localBackend }
 
-func TestRegisterReadIndexEnginesRetryOnLockHeld(t *testing.T) {
-	origCleanup := cleanupAllLocalEnginesForReadIndex
-	var cleanupCalls int32
-	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
-		atomic.AddInt32(&cleanupCalls, 1)
-		return nil
-	}
-	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
+func TestIsPebbleLockHeldByCurrentProcess(t *testing.T) {
+	require.False(t, isPebbleLockHeldByCurrentProcess(nil))
+	require.False(t, isPebbleLockHeldByCurrentProcess(errors.New("other error")))
 
-	wctx := workerpool.NewContext(context.Background())
-	defer wctx.Cancel()
-
-	var registerCalls int32
-	backendCtx := &testReadIndexBackendCtx{
-		localBackend: &local.Backend{},
-		registerFn: func([]int64, []bool, table.Table) ([]ingest.Engine, error) {
-			if atomic.AddInt32(&registerCalls, 1) == 1 {
-				return nil, errors.New("lock held by current process")
-			}
-			return nil, nil
-		},
-	}
-
-	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
-	require.NoError(t, err)
-	require.Nil(t, engines)
-	require.Equal(t, int32(2), registerCalls)
-	require.Equal(t, int32(1), cleanupCalls)
+	baseErr := errors.New("lock held by current process")
+	require.True(t, isPebbleLockHeldByCurrentProcess(baseErr))
+	require.True(t, isPebbleLockHeldByCurrentProcess(fmt.Errorf("wrapped: %w", baseErr)))
 }
 
-func TestRegisterReadIndexEnginesRetryOnLockHeldRegisterFail(t *testing.T) {
-	origCleanup := cleanupAllLocalEnginesForReadIndex
-	var cleanupCalls int32
-	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
-		atomic.AddInt32(&cleanupCalls, 1)
-		return nil
-	}
-	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
-
+func TestRegisterReadIndexEnginesNoRetryOnLockHeld(t *testing.T) {
 	wctx := workerpool.NewContext(context.Background())
 	defer wctx.Cancel()
 
@@ -155,48 +127,25 @@ func TestRegisterReadIndexEnginesRetryOnLockHeldRegisterFail(t *testing.T) {
 	backendCtx := &testReadIndexBackendCtx{
 		localBackend: &local.Backend{},
 		registerFn: func([]int64, []bool, table.Table) ([]ingest.Engine, error) {
-			if atomic.AddInt32(&registerCalls, 1) == 1 {
-				return nil, errors.New("lock held by current process")
-			}
-			return nil, errors.New("second register failed")
+			atomic.AddInt32(&registerCalls, 1)
+			return nil, errors.New("lock held by current process")
 		},
 	}
 
 	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
-	require.ErrorContains(t, err, "second register failed")
+	require.ErrorContains(t, err, "lock held by current process")
 	require.Nil(t, engines)
-	require.Equal(t, int32(2), registerCalls)
-	require.Equal(t, int32(1), cleanupCalls)
+	require.Equal(t, int32(1), registerCalls)
 }
 
-func TestRegisterReadIndexEnginesRetryOnLockHeldCleanupFailStillRetry(t *testing.T) {
+func TestCleanupAllLocalEnginesForReadIndexSafeRecoversFromPanic(t *testing.T) {
 	origCleanup := cleanupAllLocalEnginesForReadIndex
-	var cleanupCalls int32
 	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
-		atomic.AddInt32(&cleanupCalls, 1)
-		return errors.New("cleanup failed")
+		panic("boom")
 	}
 	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
 
-	wctx := workerpool.NewContext(context.Background())
-	defer wctx.Cancel()
-
-	var registerCalls int32
-	backendCtx := &testReadIndexBackendCtx{
-		localBackend: &local.Backend{},
-		registerFn: func([]int64, []bool, table.Table) ([]ingest.Engine, error) {
-			if atomic.AddInt32(&registerCalls, 1) == 1 {
-				return nil, errors.New("lock held by current process")
-			}
-			return nil, nil
-		},
-	}
-
-	engines, err := registerReadIndexEngines(wctx, 1, backendCtx, []int64{1}, []bool{false}, nil)
-	require.NoError(t, err)
-	require.Nil(t, engines)
-	require.Equal(t, int32(2), registerCalls)
-	require.Equal(t, int32(1), cleanupCalls)
+	require.ErrorContains(t, cleanupAllLocalEnginesForReadIndexSafe(&local.Backend{}), "cleanup engines panicked")
 }
 
 func TestCleanupReadIndexLocalEngines(t *testing.T) {

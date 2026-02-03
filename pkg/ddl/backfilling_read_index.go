@@ -100,13 +100,7 @@ func isPebbleLockHeldByCurrentProcess(err error) bool {
 	// when the lock is already held by the current process (see pebble/vfs/file_lock_unix.go).
 	// Pebble does not export a sentinel error/type for this case, so we must match on the
 	// message.
-	for err != nil {
-		if strings.Contains(err.Error(), pebbleLockHeldByCurrentProcessMsg) {
-			return true
-		}
-		err = goerrors.Unwrap(err)
-	}
-	return false
+	return err != nil && strings.Contains(err.Error(), pebbleLockHeldByCurrentProcessMsg)
 }
 
 func cleanupAllLocalEnginesForReadIndexSafe(backend *local.Backend) (err error) {
@@ -209,6 +203,12 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 		if retErr == nil {
 			return
 		}
+		// For dist task local based ingest, checkpoint is unsupported.
+		// If there is an error we should keep local sort dir clean.
+		if err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData); err1 != nil {
+			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
+		}
+		// Best-effort cleanup all local engines to release the Pebble directory lock.
 		cleanupReadIndexLocalEngines(r.job.ID, subtask.ID, bCtx)
 	}()
 
@@ -222,12 +222,6 @@ func (r *readIndexStepExecutor) runLocalPipeline(
 	}()
 	err = executeAndClosePipeline(wctx, pipe, nil, nil, r.avgRowSize)
 	if err != nil {
-		// For dist task local based ingest, checkpoint is unsupported.
-		// If there is an error we should keep local sort dir clean.
-		err1 := bCtx.FinishAndUnregisterEngines(ingest.OptCleanData)
-		if err1 != nil {
-			logutil.DDLLogger().Warn("read index executor unregister engine failed", zap.Error(err1))
-		}
 		return err
 	}
 
@@ -518,16 +512,7 @@ func cleanupReadIndexLocalEngines(jobID, subtaskID int64, backendCtx readIndexLo
 	if backend == nil {
 		return
 	}
-	defer func() {
-		if p := recover(); p != nil {
-			logutil.DDLLogger().Warn("read index executor cleanup engines panicked",
-				zap.Any("panic", p),
-				zap.Int64("job ID", jobID),
-				zap.Int64("subtask ID", subtaskID),
-			)
-		}
-	}()
-	if cleanupErr := cleanupAllLocalEnginesForReadIndex(backend); cleanupErr != nil {
+	if cleanupErr := cleanupAllLocalEnginesForReadIndexSafe(backend); cleanupErr != nil {
 		logutil.DDLLogger().Warn("read index executor cleanup engines failed",
 			zap.Error(cleanupErr),
 			zap.Int64("job ID", jobID),
@@ -545,29 +530,14 @@ func registerReadIndexEngines(
 	tbl table.Table,
 ) ([]ingest.Engine, error) {
 	engines, err := backendCtx.Register(indexIDs, uniques, tbl)
-	if err == nil || !isPebbleLockHeldByCurrentProcess(err) {
-		return engines, err
-	}
-
-	// A stale Pebble directory lock can be left behind by a previously failed attempt.
-	// Best-effort cleanup to unblock subsequent retries.
-	backend := backendCtx.GetLocalBackend()
-	if backend == nil {
-		return engines, err
-	}
-	tidblogutil.Logger(wctx).Warn("register ingest engine got lock held, cleanup and retry",
-		zap.Error(err),
-		zap.Int64("job ID", jobID),
-		zap.Int64s("index IDs", indexIDs),
-	)
-	if cleanupErr := cleanupAllLocalEnginesForReadIndexSafe(backend); cleanupErr != nil {
-		tidblogutil.Logger(wctx).Warn("cleanup engines failed",
-			zap.Error(cleanupErr),
+	if err != nil && isPebbleLockHeldByCurrentProcess(err) {
+		tidblogutil.Logger(wctx).Warn("register ingest engine got lock held",
+			zap.Error(err),
 			zap.Int64("job ID", jobID),
 			zap.Int64s("index IDs", indexIDs),
 		)
 	}
-	return backendCtx.Register(indexIDs, uniques, tbl)
+	return engines, err
 }
 
 type distTaskRowCntCollector struct {
