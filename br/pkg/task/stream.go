@@ -1373,12 +1373,6 @@ func RunStreamRestore(
 	if err := checkLogRange(cfg.StartTS, cfg.RestoreTS, logInfo.logMinTS, logInfo.logMaxTS); err != nil {
 		return errors.Trace(err)
 	}
-	if cfg.LastRestore && !cfg.IsLastRestoreUserSpecified && cfg.IsRestoredTSUserSpecified && cfg.RestoreTS < logInfo.logMaxTS {
-		log.Info("restore-ts is before log max and --last not specified; treating as non-final segment",
-			zap.Uint64("restore-ts", cfg.RestoreTS),
-			zap.Uint64("log-max-ts", logInfo.logMaxTS))
-		cfg.LastRestore = false
-	}
 
 	// register task if needed
 	// will potentially override restoredTS
@@ -1500,7 +1494,6 @@ func restoreStream(
 		checkpointTotalSize    uint64
 		currentTS              uint64
 		extraFields            []zapcore.Field
-		ingestItemsForNextSeg  map[int64]map[int64]bool
 		mu                     sync.Mutex
 		startTime              = time.Now()
 	)
@@ -1543,10 +1536,6 @@ func restoreStream(
 	}
 
 	client := cfg.logClient
-	if !cfg.LastRestore && cfg.logCheckpointMetaManager == nil {
-		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"segmented log restore requires checkpoint storage (table or external), enable checkpoint or configure --checkpoint-storage")
-	}
 	migs, err := client.GetLockedMigrations(ctx)
 	if err != nil {
 		return errors.Trace(err)
@@ -1628,44 +1617,15 @@ func restoreStream(
 		}
 	}
 
-	savedIDMap := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
-	segmentedPayloads, savedIDMap, err := loadSegmentedRestorePayloads(ctx, client, cfg, savedIDMap)
-	if err != nil {
+	// build and save id map
+	if err := buildAndSaveIDMapIfNeeded(ctx, client, cfg); err != nil {
 		return errors.Trace(err)
-	}
-	if !cfg.HasFullBackupStorage() && segmentedPayloads.previous == nil {
-		return errors.Annotatef(berrors.ErrInvalidArgument,
-			"missing payload for previous segment; start-ts=%d", cfg.StartTS)
-	}
-	if err := buildIDMapWithPayloads(ctx, client, cfg, segmentedPayloads, savedIDMap); err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.tiflashRecorder != nil && !cfg.HasFullBackupStorage() {
-		items, err := loadSegmentedTiFlashItems(segmentedPayloads.previous)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		cfg.tiflashRecorder.Load(items)
-		log.Info("loaded tiflash items for previous segment",
-			zap.Uint64("start-ts", cfg.StartTS),
-			zap.Int("item-count", len(items)))
 	}
 
 	// build schema replace
 	schemasReplace, err := buildSchemaReplace(client, cfg)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	if recorder := schemasReplace.GetIngestRecorder(); recorder != nil && !cfg.HasFullBackupStorage() {
-		items, err := loadSegmentedIngestItems(segmentedPayloads.previous)
-		if err != nil {
-			return errors.Trace(err)
-		}
-		recorder.MergeItems(items)
-		log.Info("loaded ingest items for previous segment",
-			zap.Uint64("start-ts", cfg.StartTS),
-			zap.Int("table-count", len(items)),
-			zap.Int("index-count", ingestrec.CountItems(items)))
 	}
 
 	importModeSwitcher := restore.NewImportModeSwitcher(mgr.GetPDClient(),
@@ -1719,9 +1679,6 @@ func restoreStream(
 	rewriteRules := buildRewriteRules(schemasReplace)
 
 	ingestRecorder := schemasReplace.GetIngestRecorder()
-	if !cfg.LastRestore {
-		ingestItemsForNextSeg = ingestRecorder.ExportItems()
-	}
 	if err := rangeFilterFromIngestRecorder(ingestRecorder, rewriteRules); err != nil {
 		return errors.Trace(err)
 	}
@@ -1834,31 +1791,17 @@ func restoreStream(
 	}
 
 	// index ingestion is not captured by regular log backup, so we need to manually ingest again
-	if cfg.LastRestore {
-		if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
-			return errors.Annotate(err, "failed to repair ingest index")
-		}
-	} else {
-		log.Info("skip repairing ingest index until last segment",
-			zap.Uint64("restored-ts", cfg.RestoreTS))
+	if err = client.RepairIngestIndex(ctx, ingestRecorder, cfg.logCheckpointMetaManager, g); err != nil {
+		return errors.Annotate(err, "failed to repair ingest index")
 	}
 
 	if cfg.tiflashRecorder != nil {
-		if !cfg.LastRestore {
-			log.Info("skip restoring TiFlash Replica until last segment",
-				zap.Uint64("restored-ts", cfg.RestoreTS))
-		} else {
-			sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
-			log.Info("Generating SQLs for restoring TiFlash Replica",
-				zap.Strings("sqls", sqls))
-			if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
-				return errors.Annotate(err, "failed to reset tiflash replicas")
-			}
+		sqls := cfg.tiflashRecorder.GenerateAlterTableDDLs(mgr.GetDomain().InfoSchema())
+		log.Info("Generating SQLs for restoring TiFlash Replica",
+			zap.Strings("sqls", sqls))
+		if err := client.ResetTiflashReplicas(ctx, sqls, g); err != nil {
+			return errors.Annotate(err, "failed to reset tiflash replicas")
 		}
-	}
-
-	if err := persistSegmentedRestorePayload(ctx, client, cfg, segmentedPayloads, ingestItemsForNextSeg); err != nil {
-		return errors.Annotate(err, "failed to persist segmented restore payload")
 	}
 
 	failpoint.Inject("do-checksum-with-rewrite-rules", func(_ failpoint.Value) {
@@ -1899,7 +1842,6 @@ func createLogClient(ctx context.Context, g glue.Glue, cfg *RestoreConfig, mgr *
 	}
 	client.SetCrypter(&cfg.CipherInfo)
 	client.SetUpstreamClusterID(cfg.UpstreamClusterID)
-	client.SetRestoreToLast(cfg.LastRestore)
 
 	err = client.InitClients(ctx, u, cfg.logCheckpointMetaManager, cfg.sstCheckpointMetaManager, uint(cfg.PitrConcurrency), cfg.ConcurrencyPerStore.Value)
 	if err != nil {
@@ -2272,85 +2214,17 @@ func buildSchemaReplace(client *logclient.LogClient, cfg *LogRestoreConfig) (*st
 	return schemasReplace, nil
 }
 
-type segmentedRestorePayloads struct {
-	previous *backuppb.PitrIdMapPayload
-	current  *backuppb.PitrIdMapPayload
-}
-
-func loadSegmentedRestorePayloads(
-	ctx context.Context,
-	client *logclient.LogClient,
-	cfg *LogRestoreConfig,
-	savedIDMap bool,
-) (*segmentedRestorePayloads, bool, error) {
-	payloads := &segmentedRestorePayloads{}
-	if savedIDMap {
-		payload, found, err := client.LoadPitrIdMapPayloadForSegment(ctx, cfg.RestoreTS)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if found {
-			payloads.current = payload
-		} else {
-			log.Warn("checkpoint indicates id map saved but payload not found, rebuild it",
-				zap.Uint64("restore-ts", cfg.RestoreTS),
-				zap.Uint64("restore-id", cfg.RestoreID))
-			savedIDMap = false
-		}
-	}
-
-	if len(cfg.FullBackupStorage) == 0 {
-		payload, found, err := client.LoadPitrIdMapPayloadForSegment(ctx, cfg.StartTS)
-		if err != nil {
-			return nil, false, errors.Trace(err)
-		}
-		if found {
-			payloads.previous = payload
-		}
-	}
-
-	return payloads, savedIDMap, nil
-}
-
-func buildIDMapWithPayloads(
-	ctx context.Context,
-	client *logclient.LogClient,
-	cfg *LogRestoreConfig,
-	payloads *segmentedRestorePayloads,
-	savedIDMap bool,
-) error {
+func buildAndSaveIDMapIfNeeded(ctx context.Context, client *logclient.LogClient, cfg *LogRestoreConfig) error {
+	// get the schemas ID replace information.
+	saved := isCurrentIdMapSaved(cfg.checkpointTaskInfo)
 	hasFullBackupStorage := len(cfg.FullBackupStorage) != 0
-	var (
-		dbMaps     []*backuppb.PitrDBMap
-		usePrevMap bool
-	)
-	if payloads.current != nil && len(payloads.current.DbMaps) > 0 {
-		dbMaps = payloads.current.DbMaps
-	}
-	if len(dbMaps) == 0 && !hasFullBackupStorage && payloads.previous != nil {
-		dbMaps = payloads.previous.DbMaps
-		usePrevMap = true
-	}
-	if len(dbMaps) == 0 && !hasFullBackupStorage {
-		log.Error("no id maps found")
-		return errors.New("no base id map found from saved id or last restored PiTR")
-	}
-	if len(dbMaps) > 0 {
-		dbReplaces := stream.FromDBMapProto(dbMaps)
-		stream.LogDBReplaceMap("base db replace info", dbReplaces)
-		if len(dbReplaces) != 0 {
-			cfg.tableMappingManager.SetFromPiTRIDMap()
-			cfg.tableMappingManager.MergeBaseDBReplace(dbReplaces)
-		}
+	err := client.GetBaseIDMapAndMerge(ctx, hasFullBackupStorage, saved,
+		cfg.logCheckpointMetaManager, cfg.tableMappingManager)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
-	if usePrevMap {
-		if err := client.ValidateNoTiFlashReplica(); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	if savedIDMap {
+	if saved {
 		return nil
 	}
 
@@ -2362,52 +2236,14 @@ func buildIDMapWithPayloads(
 	// reuse existing database ids if it exists in the current cluster
 	cfg.tableMappingManager.ReuseExistingDatabaseIDs(client.GetDomain().InfoSchema())
 	// replace temp id with read global id
-	if err := cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs); err != nil {
+	err = cfg.tableMappingManager.ReplaceTemporaryIDs(ctx, client.GenGlobalIDs)
+	if err != nil {
 		return errors.Trace(err)
 	}
-	payloads.current = &backuppb.PitrIdMapPayload{DbMaps: cfg.tableMappingManager.ToProto()}
+	if err = client.SaveIdMapWithFailPoints(ctx, cfg.tableMappingManager, cfg.logCheckpointMetaManager); err != nil {
+		return errors.Trace(err)
+	}
 	return nil
-}
-
-func loadSegmentedTiFlashItems(
-	payload *backuppb.PitrIdMapPayload,
-) (map[int64]model.TiFlashReplicaInfo, error) {
-	if payload == nil {
-		return nil, errors.New("pitr id map payload is nil")
-	}
-	return logclient.PitrTiFlashItemsFromProto(payload.TiflashItems), nil
-}
-
-func loadSegmentedIngestItems(
-	payload *backuppb.PitrIdMapPayload,
-) (map[int64]map[int64]bool, error) {
-	if payload == nil {
-		return nil, errors.New("pitr id map payload is nil")
-	}
-	return logclient.PitrIngestItemsFromProto(payload.IngestItems), nil
-}
-
-func persistSegmentedRestorePayload(
-	ctx context.Context,
-	client *logclient.LogClient,
-	cfg *LogRestoreConfig,
-	payloads *segmentedRestorePayloads,
-	ingestItemsForNextSeg map[int64]map[int64]bool,
-) error {
-	if payloads == nil || payloads.current == nil {
-		payloads = &segmentedRestorePayloads{
-			current: &backuppb.PitrIdMapPayload{DbMaps: cfg.tableMappingManager.ToProto()},
-		}
-	}
-	if !cfg.LastRestore {
-		if ingestItemsForNextSeg != nil {
-			payloads.current.IngestItems = logclient.PitrIngestItemsToProto(ingestItemsForNextSeg)
-		}
-		if cfg.tiflashRecorder != nil {
-			payloads.current.TiflashItems = logclient.PitrTiFlashItemsToProto(cfg.tiflashRecorder.GetItems())
-		}
-	}
-	return errors.Trace(client.SavePitrIdMapPayloadWithFailPoints(ctx, cfg.RestoreTS, payloads.current, cfg.logCheckpointMetaManager))
 }
 
 func getCurrentTSFromCheckpointOrPD(ctx context.Context, mgr *conn.Mgr, cfg *LogRestoreConfig) (uint64, error) {

@@ -85,7 +85,7 @@ run_sql "select count(*) from \`$latest_db\`.\`cpt_data\`;"
 check_contains "count(*): 1"
 
 # check the log restore save id map into the table mysql.tidb_pitr_id_map
-run_sql "select count(*) from mysql.tidb_pitr_id_map;"
+run_sql 'select count(*) from mysql.tidb_pitr_id_map;'
 check_contains "count(*): 1"
 
 # PITR with checkpoint but failed in the log restore datakv stage
@@ -129,7 +129,7 @@ check_result() {
 
 check_result
 # check mysql.tidb_pitr_id_map has data
-count=$(run_sql "select count(*) from mysql.tidb_pitr_id_map;" | awk '/count/{print $2}')
+count=$(run_sql 'select count(*) from mysql.tidb_pitr_id_map;' | awk '/count/{print $2}')
 if [ $count -eq 0 ]; then
     echo "the number of pitr id map is $count"
     exit 1
@@ -170,17 +170,14 @@ if [ $restore_fail -ne 1 ]; then
     exit 1
 fi
 
-# check the pitr id map is saved in the checkpoint storage and system table
+# check the pitr id map is saved in the checkpoint storage
 count=$(ls $TEST_DIR/$PREFIX/log/pitr_id_maps | wc -l)
 if [ $count -ne 0 ]; then
     echo "the number of pitr id map is $count instead of 0"
     exit 1
 fi
-count=$(run_sql "select count(*) from mysql.tidb_pitr_id_map;" | awk '/count/{print $2}')
-if [ $count -eq 0 ]; then
-    echo "the number of pitr id map is $count"
-    exit 1
-fi
+run_sql 'select count(*) from mysql.tidb_pitr_id_map;'
+check_contains "count(*): 0"
 count=$(ls $TEST_DIR/$PREFIX/checkpoints/pitr_id_maps | wc -l)
 if [ $count -ne 1 ]; then
     echo "the number of pitr id map is $count instead of 1"

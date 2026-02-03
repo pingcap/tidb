@@ -258,12 +258,11 @@ func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, resto
 	for _, row := range rows {
 		restoreID, elementID, data := getRowColumns(row)
 		if lastRestoreID != restoreID {
-			payload := &backup.PitrIdMapPayload{}
-			if err := payload.Unmarshal(metaData); err != nil {
+			backupMeta := &backup.BackupMeta{}
+			if err := backupMeta.Unmarshal(metaData); err != nil {
 				return nil, errors.Trace(err)
 			}
-			dbMaps := payload.GetDbMaps()
-			pitrDBMap = append(pitrDBMap, dbMaps...)
+			pitrDBMap = append(pitrDBMap, backupMeta.DbMaps...)
 			metaData = make([]byte, 0)
 			lastRestoreID = restoreID
 			nextSegmentID = uint64(0)
@@ -278,12 +277,11 @@ func (c *checksumTableCtx) loadPitrIdMap(ctx context.Context, g glue.Glue, resto
 		nextSegmentID += 1
 	}
 	if len(metaData) > 0 {
-		payload := &backup.PitrIdMapPayload{}
-		if err := payload.Unmarshal(metaData); err != nil {
+		backupMeta := &backup.BackupMeta{}
+		if err := backupMeta.Unmarshal(metaData); err != nil {
 			return nil, errors.Trace(err)
 		}
-		dbMaps := payload.GetDbMaps()
-		pitrDBMap = append(pitrDBMap, dbMaps...)
+		pitrDBMap = append(pitrDBMap, backupMeta.DbMaps...)
 	}
 	return pitrDBMap, nil
 }
