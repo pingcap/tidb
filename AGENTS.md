@@ -68,7 +68,7 @@ Recommended local build flow:
 make bazel_prepare
 
 # build
-make
+make bazel_bin
 
 # optional: regenerate generated code if needed
 make gogenerate

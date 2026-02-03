@@ -134,5 +134,8 @@ func TestBenchDaily(t *testing.T) {
 	benchdaily.Run(
 		BenchmarkNewPlanCacheKey,
 		BenchmarkNewPlanCacheKeyInTxn,
+		BenchmarkPlanCacheBindingMatch,
+		BenchmarkPlanCacheInsert,
+		BenchmarkNonPreparedPlanCacheDML,
 	)
 }

@@ -1030,7 +1030,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 		if err != nil {
 			return nil, err
 		}
-		// If len(value) >= 9, it may contains partition id.
+		// If len(value) >= 9, it may contain partition id.
 		// We should decode it and return a partition handle.
 		if len(value) >= 9 {
 			seg := SplitIndexValue(value)
@@ -1038,6 +1038,14 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 				_, pid, err := codec.DecodeInt(seg.PartitionID)
 				if err != nil {
 					return nil, err
+				}
+				// For GlobalIndexVersionV1+, the handle from the key may already be a
+				// PartitionHandle (partition ID encoded in key). To avoid creating a
+				// nested PartitionHandle, extract the inner handle first.
+				// For V1: use partition ID from value (authoritative source).
+				// TODO: For V2+, use partition ID from key (PartitionHandle) instead.
+				if ph, ok := handle.(kv.PartitionHandle); ok {
+					handle = ph.Handle
 				}
 				handle = kv.NewPartitionHandle(pid, handle)
 			}
@@ -1051,7 +1059,7 @@ func DecodeIndexHandle(key, value []byte, colsLen int) (kv.Handle, error) {
 }
 
 func decodeHandleInIndexKey(keySuffix []byte) (kv.Handle, error) {
-	// Check if this is a PartitionHandle (for global non-unique indexes V2+)
+	// Check if this is a PartitionHandle (for global non-unique indexes V1+)
 	if len(keySuffix) > 0 && keySuffix[0] == PartitionIDFlag {
 		// Format: PartitionIDFlag + partition_id (8 bytes) + inner_handle
 		keySuffix = keySuffix[1:] // Skip the flag

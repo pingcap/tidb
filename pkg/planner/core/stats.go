@@ -127,6 +127,7 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	}
 	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
 	// Fill index paths for all paths
+	ds.CheckPartialIndexes()
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
