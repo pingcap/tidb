@@ -274,22 +274,13 @@ func (p *LogicalJoin) normalizeJoinConditionsForOuterJoin() {
 	}
 	// Outer join ON conditions are not simplified through predicate pushdown.
 	// Normalize only double NOT here to avoid cartesian joins caused by other conditions.
-	if !containsUnaryNot(p.OtherConditions) {
-		return
-	}
 	exprCtx := p.SCtx().GetExprCtx()
 	for i := range p.OtherConditions {
+		if !expression.ContainOuterNot(p.OtherConditions[i]) {
+			continue
+		}
 		p.OtherConditions[i] = expression.PushDownNot(exprCtx, p.OtherConditions[i])
 	}
-}
-
-func containsUnaryNot(conds []expression.Expression) bool {
-	for _, cond := range conds {
-		if expression.ContainOuterNot(cond) {
-			return true
-		}
-	}
-	return false
 }
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
