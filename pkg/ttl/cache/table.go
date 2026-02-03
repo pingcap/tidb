@@ -214,7 +214,7 @@ func NewPhysicalTableWithTimeColumnForJob(
 	schema ast.CIStr,
 	tbl *model.TableInfo,
 	partition ast.CIStr,
-	jobType TTLJobType,
+	jobType session.TTLJobType,
 	timeColumn *model.ColumnInfo,
 ) (*PhysicalTable, error) {
 	if timeColumn == nil {
@@ -225,7 +225,7 @@ func NewPhysicalTableWithTimeColumnForJob(
 		return nil, err
 	}
 	switch jobType {
-	case TTLJobTypeRunawayGC:
+	case session.TTLJobTypeRunawayGC:
 		pt.RunawayGCTimeColumn = timeColumn
 		return pt, nil
 	default:
@@ -234,19 +234,19 @@ func NewPhysicalTableWithTimeColumnForJob(
 }
 
 // TimeColumnForJob returns the time column for the given job type.
-func (t *PhysicalTable) TimeColumnForJob(jobType TTLJobType) (*model.ColumnInfo, error) {
+func (t *PhysicalTable) TimeColumnForJob(jobType session.TTLJobType) (*model.ColumnInfo, error) {
 	switch jobType {
-	case TTLJobTypeSoftDelete:
+	case session.TTLJobTypeSoftDelete:
 		if t.SoftDeleteTimeColumn == nil {
 			return nil, errors.New("softdelete time column is nil")
 		}
 		return t.SoftDeleteTimeColumn, nil
-	case TTLJobTypeTTL:
+	case session.TTLJobTypeTTL:
 		if t.TTLTimeColumn == nil {
 			return nil, errors.New("ttl time column is nil")
 		}
 		return t.TTLTimeColumn, nil
-	case TTLJobTypeRunawayGC:
+	case session.TTLJobTypeRunawayGC:
 		if t.RunawayGCTimeColumn == nil {
 			return nil, errors.New("runaway gc time column is nil")
 		}
@@ -329,7 +329,7 @@ func (t *PhysicalTable) FullName() string {
 // For TTL jobs, it uses the TTL definition in table meta.
 // For softdelete jobs, it uses the retention in `SoftdeleteInfo`.
 func (t *PhysicalTable) EvalExpireTimeForJob(ctx context.Context, se session.Session,
-	now time.Time, jobType TTLJobType) (time.Time, error) {
+	now time.Time, jobType session.TTLJobType) (time.Time, error) {
 	if intest.InTest {
 		if tm, ok := ctx.Value(mockExpireTimeKey{}).(time.Time); ok {
 			return tm, nil
@@ -349,14 +349,14 @@ func (t *PhysicalTable) EvalExpireTimeForJob(ctx context.Context, se session.Ses
 	}
 
 	switch jobType {
-	case TTLJobTypeSoftDelete:
+	case session.TTLJobTypeSoftDelete:
 		retention, err := t.SoftdeleteInfo.GetRetention()
 		if err != nil {
 			return time.Time{}, err
 		}
 		expire := now.In(globalTz).Add(-retention)
 		return expire.In(now.Location()), nil
-	case TTLJobTypeTTL:
+	case session.TTLJobTypeTTL:
 		start := now.In(globalTz)
 		expire, err := EvalExpireTime(start, t.TTLInfo.IntervalExprStr, ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit))
 		if err != nil {

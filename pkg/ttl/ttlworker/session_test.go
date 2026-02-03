@@ -197,6 +197,10 @@ func (s *mockSession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
 }
 
+func (s *mockSession) GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error) {
+	return 0, nil
+}
+
 func (s *mockSession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
 	return s.GetLatestInfoSchema()
 }
@@ -281,7 +285,7 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	s := newMockSession(t, tbl)
 	s.execErr = errors.New("mockErr")
 	s.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
-	tblSe, err := newTableSession(s, tbl, time.UnixMilli(0).In(time.UTC), cache.TTLJobTypeTTL)
+	tblSe, err := newTableSession(s, tbl, time.UnixMilli(0).In(time.UTC), session.TTLJobTypeTTL)
 	require.NoError(t, err)
 
 	rows, shouldRetry, err := tblSe.ExecuteSQLWithCheck(ctx, "select 1")
@@ -320,13 +324,13 @@ func TestNewTableSessionDisablesSoftDeleteRewriteForTTL(t *testing.T) {
 
 	s := newMockSession(t, tbl)
 	s.sessionVars.SoftDeleteRewrite = true
-	_, err := newTableSession(s, tbl, expire, cache.TTLJobTypeTTL)
+	_, err := newTableSession(s, tbl, expire, session.TTLJobTypeTTL)
 	require.NoError(t, err)
 	require.True(t, s.sessionVars.SoftDeleteRewrite)
 
 	s2 := newMockSession(t, tbl)
 	s2.sessionVars.SoftDeleteRewrite = true
-	_, err = newTableSession(s2, tbl, expire, cache.TTLJobTypeSoftDelete)
+	_, err = newTableSession(s2, tbl, expire, session.TTLJobTypeSoftDelete)
 	require.NoError(t, err)
 	require.False(t, s2.sessionVars.SoftDeleteRewrite)
 }
@@ -342,7 +346,7 @@ func TestValidateTTLWork(t *testing.T) {
 
 	// test table dropped
 	s.sessionInfoSchema = newMockInfoSchema()
-	tblSe, err := newTableSession(s, tbl, expire, cache.TTLJobTypeTTL)
+	tblSe, err := newTableSession(s, tbl, expire, session.TTLJobTypeTTL)
 	require.NoError(t, err)
 	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
@@ -423,7 +427,7 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.Partition = tp.Partition.Clone()
 	tbl2.Partition.Definitions[0].Name = ast.NewCIStr("p1")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	tblSe, err = newTableSession(s, tbl, expire, cache.TTLJobTypeTTL)
+	tblSe, err = newTableSession(s, tbl, expire, session.TTLJobTypeTTL)
 	require.NoError(t, err)
 	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "partition 'p0' is not found in ttl table 'test.t1'")

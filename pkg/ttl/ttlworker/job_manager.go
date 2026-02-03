@@ -95,38 +95,38 @@ var (
 
 var timeFormat = time.DateTime
 
-func setTableStatusOwnerSQL(jobType cache.TTLJobType, uuid string, tableID int64, jobStart time.Time, now time.Time, currentJobTTLExpire *time.Time, id string) (string, []any) {
+func setTableStatusOwnerSQL(jobType session.TTLJobType, uuid string, tableID int64, jobStart time.Time, now time.Time, currentJobTTLExpire *time.Time, id string) (string, []any) {
 	sql := setTTLTableStatusOwnerTemplate
-	if jobType == cache.TTLJobTypeSoftDelete {
+	if jobType == session.TTLJobTypeSoftDelete {
 		sql = setSoftDeleteTableStatusOwnerTemplate
 	}
 	return sql, []any{uuid, id, jobStart.Format(timeFormat), now.Format(timeFormat), currentJobTTLExpire.Format(timeFormat), now.Format(timeFormat), tableID}
 }
 
-func insertNewTableIntoStatusSQL(jobType cache.TTLJobType, tableID int64, parentTableID int64) (string, []any) {
+func insertNewTableIntoStatusSQL(jobType session.TTLJobType, tableID int64, parentTableID int64) (string, []any) {
 	sql := insertNewTTLTableIntoStatusTemplate
-	if jobType == cache.TTLJobTypeSoftDelete {
+	if jobType == session.TTLJobTypeSoftDelete {
 		sql = insertNewSoftDeleteTableIntoStatusTemplate
 	}
 	return sql, []any{tableID, parentTableID}
 }
 
-func updateHeartBeatSQL(jobType cache.TTLJobType, tableID int64, now time.Time, id string) (string, []any) {
+func updateHeartBeatSQL(jobType session.TTLJobType, tableID int64, now time.Time, id string) (string, []any) {
 	sql := updateTTLHeartBeatTemplate
-	if jobType == cache.TTLJobTypeSoftDelete {
+	if jobType == session.TTLJobTypeSoftDelete {
 		sql = updateSoftDeleteHeartBeatTemplate
 	}
 	return sql, []any{now.Format(timeFormat), tableID, id}
 }
 
-func gcTableStatusGCSQL(jobType cache.TTLJobType, existIDs []int64) string {
+func gcTableStatusGCSQL(jobType session.TTLJobType, existIDs []int64) string {
 	existIDStrs := make([]string, 0, len(existIDs))
 	for _, id := range existIDs {
 		existIDStrs = append(existIDStrs, strconv.Itoa(int(id)))
 	}
 
 	template := ttlTableStatusGCWithoutIDTemplate
-	if jobType == cache.TTLJobTypeSoftDelete {
+	if jobType == session.TTLJobTypeSoftDelete {
 		template = softdeleteTableStatusGCWithoutIDTemplate
 	}
 
@@ -569,14 +569,14 @@ func (m *JobManager) reportMetrics(se session.Session) {
 	var softRunningJobs, softCancellingJobs float64
 	for _, job := range m.runningJobs {
 		switch job.jobType {
-		case cache.TTLJobTypeTTL:
+		case session.TTLJobTypeTTL:
 			switch job.status {
 			case cache.JobStatusRunning:
 				ttlRunningJobs++
 			case cache.JobStatusCancelling:
 				ttlCancellingJobs++
 			}
-		case cache.TTLJobTypeSoftDelete:
+		case session.TTLJobTypeSoftDelete:
 			switch job.status {
 			case cache.JobStatusRunning:
 				softRunningJobs++
@@ -585,10 +585,10 @@ func (m *JobManager) reportMetrics(se session.Session) {
 			}
 		}
 	}
-	metrics.JobStatus(metrics.JobStatusRunning, cache.TTLJobTypeTTL).Set(ttlRunningJobs)
-	metrics.JobStatus(metrics.JobStatusCancel, cache.TTLJobTypeTTL).Set(ttlCancellingJobs)
-	metrics.JobStatus(metrics.JobStatusRunning, cache.TTLJobTypeSoftDelete).Set(softRunningJobs)
-	metrics.JobStatus(metrics.JobStatusCancel, cache.TTLJobTypeSoftDelete).Set(softCancellingJobs)
+	metrics.JobStatus(metrics.JobStatusRunning, session.TTLJobTypeTTL).Set(ttlRunningJobs)
+	metrics.JobStatus(metrics.JobStatusCancel, session.TTLJobTypeTTL).Set(ttlCancellingJobs)
+	metrics.JobStatus(metrics.JobStatusRunning, session.TTLJobTypeSoftDelete).Set(softRunningJobs)
+	metrics.JobStatus(metrics.JobStatusCancel, session.TTLJobTypeSoftDelete).Set(softCancellingJobs)
 
 	if !m.isLeader() {
 		// only the leader can do collect delay metrics to reduce the performance overhead
@@ -616,11 +616,11 @@ func (m *JobManager) checkNotOwnJob() {
 
 		var statusOwnerID string
 		switch job.jobType {
-		case cache.TTLJobTypeSoftDelete:
+		case session.TTLJobTypeSoftDelete:
 			if st := m.softdeleteStatusCache.Tables[job.tableID]; st != nil {
 				statusOwnerID = st.CurrentJobOwnerID
 			}
-		case cache.TTLJobTypeTTL:
+		case session.TTLJobTypeTTL:
 			if st := m.ttlStatusCache.Tables[job.tableID]; st != nil {
 				statusOwnerID = st.CurrentJobOwnerID
 			}
@@ -702,7 +702,7 @@ func (m *JobManager) checkFinishedJob(se session.Session) {
 func (m *JobManager) rescheduleJobs(se session.Session, now time.Time) {
 	// Try to lock HB timeout jobs, to avoid the case that when the `tidb_ttl_job_enable = 'OFF'`, the HB timeout job will
 	// never be cancelled.
-	for _, jobType := range []cache.TTLJobType{cache.TTLJobTypeTTL, cache.TTLJobTypeSoftDelete} {
+	for _, jobType := range []session.TTLJobType{session.TTLJobTypeTTL, session.TTLJobTypeSoftDelete} {
 		jobTables := m.readyForLockHBTimeoutJobTablesByType(jobType, now)
 		for _, table := range jobTables {
 			logger := logutil.Logger(m.ctx).With(
@@ -789,11 +789,11 @@ func (m *JobManager) localJobs() []*ttlJob {
 	for _, job := range m.runningJobs {
 		var ownerID string
 		switch job.jobType {
-		case cache.TTLJobTypeSoftDelete:
+		case session.TTLJobTypeSoftDelete:
 			if st := m.softdeleteStatusCache.Tables[job.tableID]; st != nil {
 				ownerID = st.CurrentJobOwnerID
 			}
-		case cache.TTLJobTypeTTL:
+		case session.TTLJobTypeTTL:
 			if st := m.ttlStatusCache.Tables[job.tableID]; st != nil {
 				ownerID = st.CurrentJobOwnerID
 			}
@@ -810,12 +810,12 @@ func (m *JobManager) localJobs() []*ttlJob {
 }
 
 // readyForLockHBTimeoutJobTables returns all tables whose job is timeout and should be taken over
-func (m *JobManager) readyForLockHBTimeoutJobTablesByType(jobType cache.TTLJobType, now time.Time) []*cache.TableStatus {
+func (m *JobManager) readyForLockHBTimeoutJobTablesByType(jobType session.TTLJobType, now time.Time) []*cache.TableStatus {
 	var tables map[int64]*cache.TableStatus
 	switch jobType {
-	case cache.TTLJobTypeSoftDelete:
+	case session.TTLJobTypeSoftDelete:
 		tables = m.softdeleteStatusCache.Tables
-	case cache.TTLJobTypeTTL:
+	case session.TTLJobTypeTTL:
 		tables = m.ttlStatusCache.Tables
 	}
 
@@ -840,7 +840,7 @@ tblLoop:
 }
 
 // couldLockJobForCreate returns whether a table should be tried to create a new TTL job.
-func (m *JobManager) couldLockJobForCreateWithType(jobType cache.TTLJobType, tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time, checkScheduleInterval bool) bool {
+func (m *JobManager) couldLockJobForCreateWithType(jobType session.TTLJobType, tableStatus *cache.TableStatus, table *cache.PhysicalTable, now time.Time, checkScheduleInterval bool) bool {
 	if tableStatus == nil {
 		return true
 	}
@@ -859,9 +859,9 @@ func (m *JobManager) couldLockJobForCreateWithType(jobType cache.TTLJobType, tab
 		err      error
 	)
 	switch jobType {
-	case cache.TTLJobTypeSoftDelete:
+	case session.TTLJobTypeSoftDelete:
 		interval, err = table.TableInfo.SoftdeleteInfo.GetJobInterval()
-	case cache.TTLJobTypeTTL:
+	case session.TTLJobTypeTTL:
 		interval, err = table.TTLInfo.GetJobInterval()
 	default:
 		err = errors.Errorf("unknown job type %s", jobType)
@@ -880,7 +880,7 @@ func (m *JobManager) couldLockJobForCreateWithType(jobType cache.TTLJobType, tab
 }
 
 // couldLockJob returns whether a job for a table should be taken over.
-func (m *JobManager) couldLockJobForExistJobWithType(jobType cache.TTLJobType, tableStatus *cache.TableStatus, now time.Time) bool {
+func (m *JobManager) couldLockJobForExistJobWithType(jobType session.TTLJobType, tableStatus *cache.TableStatus, now time.Time) bool {
 	// if isCreate is false, it means to take over an exist job
 	if tableStatus == nil || tableStatus.CurrentJobID == "" {
 		return false
@@ -912,7 +912,7 @@ func (m *JobManager) couldLockJobForExistJobWithType(jobType cache.TTLJobType, t
 	return true
 }
 
-func (m *JobManager) lockHBTimeoutJobByType(ctx context.Context, se session.Session, jobType cache.TTLJobType, tableID int64, parentTableID int64, now time.Time) (*ttlJob, error) {
+func (m *JobManager) lockHBTimeoutJobByType(ctx context.Context, se session.Session, jobType session.TTLJobType, tableID int64, parentTableID int64, now time.Time) (*ttlJob, error) {
 	var jobID string
 	var jobStart time.Time
 	var expireTime time.Time
@@ -944,7 +944,7 @@ func (m *JobManager) lockHBTimeoutJobByType(ctx context.Context, se session.Sess
 }
 
 // lockNewJob locks a new job
-func (m *JobManager) lockNewJobByType(ctx context.Context, se session.Session, jobType cache.TTLJobType, table *cache.PhysicalTable, now time.Time, jobID string, checkScheduleInterval bool) (*ttlJob, error) {
+func (m *JobManager) lockNewJobByType(ctx context.Context, se session.Session, jobType session.TTLJobType, table *cache.PhysicalTable, now time.Time, jobID string, checkScheduleInterval bool) (*ttlJob, error) {
 	var expireTime time.Time
 	err := se.RunInTxn(ctx, func() error {
 		tableStatus, err := m.getTableStatusForUpdateNotWait(ctx, se, jobType, table.ID, table.TableInfo.ID, true)
@@ -999,7 +999,7 @@ func (m *JobManager) lockNewJobByType(ctx context.Context, se session.Session, j
 	return m.appendLockedJob(jobID, se, now, expireTime, table.ID, jobType)
 }
 
-func (m *JobManager) getTableStatusForUpdateNotWait(ctx context.Context, se session.Session, jobType cache.TTLJobType, physicalID int64, parentTableID int64, createIfNotExist bool) (*cache.TableStatus, error) {
+func (m *JobManager) getTableStatusForUpdateNotWait(ctx context.Context, se session.Session, jobType session.TTLJobType, physicalID int64, parentTableID int64, createIfNotExist bool) (*cache.TableStatus, error) {
 	sql, args := cache.SelectFromTableStatusWithID(jobType, physicalID)
 
 	// use ` FOR UPDATE NOWAIT`, then if the new job has been locked by other nodes, it will return:
@@ -1034,16 +1034,16 @@ func (m *JobManager) getTableStatusForUpdateNotWait(ctx context.Context, se sess
 	return cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
 }
 
-func (m *JobManager) appendLockedJob(id string, se session.Session, createTime time.Time, expireTime time.Time, tableID int64, jobType cache.TTLJobType) (*ttlJob, error) {
+func (m *JobManager) appendLockedJob(id string, se session.Session, createTime time.Time, expireTime time.Time, tableID int64, jobType session.TTLJobType) (*ttlJob, error) {
 	// successfully update the table status, will need to refresh the cache.
 	err := m.updateInfoSchemaCache(se)
 	if err != nil {
 		return nil, err
 	}
 	switch jobType {
-	case cache.TTLJobTypeSoftDelete:
+	case session.TTLJobTypeSoftDelete:
 		err = m.updateSoftdeleteTableStatusCache(se)
-	case cache.TTLJobTypeTTL:
+	case session.TTLJobTypeTTL:
 		err = m.updateTTLTableStatusCache(se)
 	default:
 		err = errors.Errorf("unknown job type %s", jobType)
@@ -1244,12 +1244,12 @@ func (m *JobManager) DoGC(ctx context.Context, se session.Session, now time.Time
 			}
 		}
 
-		sql := gcTableStatusGCSQL(cache.TTLJobTypeTTL, ttlExistIDs)
+		sql := gcTableStatusGCSQL(session.TTLJobTypeTTL, ttlExistIDs)
 		if _, err := se.ExecuteSQL(ctx, sql); err != nil {
 			logutil.Logger(ctx).Warn("fail to gc ttl table status", zap.Error(err))
 		}
 
-		sql = gcTableStatusGCSQL(cache.TTLJobTypeSoftDelete, softdeleteExistIDs)
+		sql = gcTableStatusGCSQL(session.TTLJobTypeSoftDelete, softdeleteExistIDs)
 		if _, err := se.ExecuteSQL(ctx, sql); err != nil {
 			logutil.Logger(ctx).Warn("fail to gc softdelete table status", zap.Error(err))
 		}
@@ -1379,7 +1379,7 @@ type SubmitTTLManagerJobRequest struct {
 	//  RequestID indicates the request id of the job
 	RequestID string
 	//  JobType indicates the type of the job (ttl or softdelete)
-	JobType cache.TTLJobType
+	JobType session.TTLJobType
 	// RespCh indicates the channel for response
 	RespCh chan<- error
 }
@@ -1388,16 +1388,16 @@ type managerJobAdapter struct {
 	store     kv.Storage
 	sessPool  syssession.Pool
 	requestCh chan<- *SubmitTTLManagerJobRequest
-	jobType   cache.TTLJobType
+	jobType   session.TTLJobType
 }
 
 // NewManagerJobAdapter creates a managerJobAdapter
 func NewManagerJobAdapter(store kv.Storage, sessPool syssession.Pool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
-	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh, jobType: cache.TTLJobTypeTTL}
+	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh, jobType: session.TTLJobTypeTTL}
 }
 
 func newSoftdeleteManagerJobAdapter(store kv.Storage, sessPool syssession.Pool, requestCh chan<- *SubmitTTLManagerJobRequest) TTLJobAdapter {
-	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh, jobType: cache.TTLJobTypeSoftDelete}
+	return &managerJobAdapter{store: store, sessPool: sessPool, requestCh: requestCh, jobType: session.TTLJobTypeSoftDelete}
 }
 
 func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) (ok bool) {
@@ -1414,7 +1414,7 @@ func (a *managerJobAdapter) CanSubmitJob(tableID, physicalID int64) (ok bool) {
 	return ok
 }
 
-func (a *managerJobAdapter) canSubmitJobWithSession(tableID, physicalID int64, jobType cache.TTLJobType, se session.Session) (bool, error) {
+func (a *managerJobAdapter) canSubmitJobWithSession(tableID, physicalID int64, jobType session.TTLJobType, se session.Session) (bool, error) {
 	is := se.GetLatestInfoSchema().(infoschema.InfoSchema)
 	tbl, ok := is.TableByID(context.Background(), tableID)
 	if !ok {
@@ -1423,11 +1423,11 @@ func (a *managerJobAdapter) canSubmitJobWithSession(tableID, physicalID int64, j
 
 	tblInfo := tbl.Meta()
 	switch jobType {
-	case cache.TTLJobTypeSoftDelete:
+	case session.TTLJobTypeSoftDelete:
 		if tblInfo.SoftdeleteInfo == nil || !tblInfo.SoftdeleteInfo.JobEnable {
 			return false, nil
 		}
-	case cache.TTLJobTypeTTL:
+	case session.TTLJobTypeTTL:
 		ttlInfo := tblInfo.TTLInfo
 		if ttlInfo == nil || !ttlInfo.Enable {
 			return false, nil

@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -275,6 +276,9 @@ sendReaderInfoLoop:
 	err = group.Wait()
 	e.setResult(encoder.exprWarnings)
 	committer.reportActiveActiveStats("LoadData")
+	if rows := committer.softDeleteStats.ImplicitRemoveRows; rows > 0 {
+		metrics.SoftDeleteImplicitDeleteRowsLoadData.Observe(float64(rows))
+	}
 	return err
 }
 

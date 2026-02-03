@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -261,12 +262,12 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-	tb, err := cache.NewPhysicalTableWithTimeColumnForJob(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), cache.TTLJobTypeRunawayGC, col)
+	tb, err := cache.NewPhysicalTableWithTimeColumnForJob(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), session.TTLJobTypeRunawayGC, col)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
-	generator, err := sqlbuilder.NewScanQueryGenerator(cache.TTLJobTypeRunawayGC, tb, expiredTime, nil, nil)
+	generator, err := sqlbuilder.NewScanQueryGenerator(session.TTLJobTypeRunawayGC, tb, expiredTime, nil, nil)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -305,7 +306,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				endIndex = len(leftRows)
 			}
 			delBatch := leftRows[startIndex:endIndex]
-			sql, err := sqlbuilder.BuildDeleteSQL(tb, cache.TTLJobTypeRunawayGC, delBatch, expiredTime)
+			sql, err := sqlbuilder.BuildDeleteSQL(tb, session.TTLJobTypeRunawayGC, delBatch, expiredTime, 0)
 			if err != nil {
 				logutil.BgLogger().Error(
 					"build delete SQL failed when deleting system table",

@@ -710,13 +710,15 @@ func (m *taskManager) reportMetrics() {
 	var softScanningTaskCnt, softDeletingTaskCnt float64
 	for _, task := range m.runningTasks {
 		switch task.JobType {
-		case cache.TTLJobTypeTTL:
+		case session.TTLJobTypeTTL:
+
 			if task.result != nil {
 				ttlScanningTaskCnt += 1
 			} else {
 				ttlDeletingTaskCnt += 1
 			}
-		case cache.TTLJobTypeSoftDelete:
+		case session.TTLJobTypeSoftDelete:
+
 			if task.result != nil {
 				softScanningTaskCnt += 1
 			} else {
@@ -724,10 +726,10 @@ func (m *taskManager) reportMetrics() {
 			}
 		}
 	}
-	metrics.TaskStatus(metrics.TaskStatusScan, cache.TTLJobTypeTTL).Set(ttlScanningTaskCnt)
-	metrics.TaskStatus(metrics.TaskStatusDel, cache.TTLJobTypeTTL).Set(ttlDeletingTaskCnt)
-	metrics.TaskStatus(metrics.TaskStatusScan, cache.TTLJobTypeSoftDelete).Set(softScanningTaskCnt)
-	metrics.TaskStatus(metrics.TaskStatusDel, cache.TTLJobTypeSoftDelete).Set(softDeletingTaskCnt)
+	metrics.TaskStatus(metrics.TaskStatusScan, session.TTLJobTypeTTL).Set(ttlScanningTaskCnt)
+	metrics.TaskStatus(metrics.TaskStatusDel, session.TTLJobTypeTTL).Set(ttlDeletingTaskCnt)
+	metrics.TaskStatus(metrics.TaskStatusScan, session.TTLJobTypeSoftDelete).Set(softScanningTaskCnt)
+	metrics.TaskStatus(metrics.TaskStatusDel, session.TTLJobTypeSoftDelete).Set(softDeletingTaskCnt)
 }
 
 func (m *taskManager) meetTTLRunningTask(count int, taskStatus cache.TaskStatus) bool {

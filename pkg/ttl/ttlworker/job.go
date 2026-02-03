@@ -74,9 +74,9 @@ const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
 	    status = %?
 	WHERE job_id = %?`
 
-func finishJobSQL(jobType cache.TTLJobType, tableID int64, finishTime time.Time, summary string, jobID string) (string, []any) {
+func finishJobSQL(jobType session.TTLJobType, tableID int64, finishTime time.Time, summary string, jobID string) (string, []any) {
 	sql := finishJobTemplateTTL
-	if jobType == cache.TTLJobTypeSoftDelete {
+	if jobType == session.TTLJobTypeSoftDelete {
 		sql = finishJobTemplateSoftdelete
 	}
 	return sql, []any{finishTime.Format(timeFormat), summary, tableID, jobID}
@@ -86,7 +86,7 @@ func removeTaskForJob(jobID string) (string, []any) {
 	return removeTaskForJobTemplate, []any{jobID}
 }
 
-func createJobHistorySQL(jobID string, jobType cache.TTLJobType, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []any) {
+func createJobHistorySQL(jobID string, jobType session.TTLJobType, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []any) {
 	var partitionName any
 	if tbl.Partition.O != "" {
 		partitionName = tbl.Partition.O
@@ -120,7 +120,7 @@ func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary
 
 type ttlJob struct {
 	id      string
-	jobType cache.TTLJobType
+	jobType session.TTLJobType
 	ownerID string
 
 	createTime    time.Time

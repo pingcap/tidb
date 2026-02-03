@@ -79,6 +79,7 @@ type InsertValues struct {
 
 	activeActive      ActiveActiveTableInfo
 	activeActiveStats ActiveActiveStats
+	softDeleteStats   SoftDeleteStats
 
 	// colDefaultVals is used to store casted default value.
 	// Because not every insert statement needs colDefaultVals, so we will init the buffer lazily.
@@ -1188,6 +1189,7 @@ func (e *InsertValues) collectRuntimeStatsEnabled() bool {
 				SnapshotRuntimeStats:  snapshotStats,
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
 				ActiveActive:          &e.activeActiveStats,
+				SoftDelete:            &e.softDeleteStats,
 			}
 		}
 		return true
@@ -1526,6 +1528,7 @@ type InsertRuntimeStat struct {
 	*txnsnapshot.SnapshotRuntimeStats
 	*autoid.AllocatorRuntimeStats
 	ActiveActive    *ActiveActiveStats
+	SoftDelete      *SoftDeleteStats
 	CheckInsertTime time.Duration
 	Prefetch        time.Duration
 	FKCheckTime     time.Duration
@@ -1594,6 +1597,11 @@ func (e *InsertRuntimeStat) String() string {
 			fmt.Fprintf(buf, ", %s", str)
 		}
 	}
+	if e.SoftDelete != nil {
+		if str := e.SoftDelete.String(); str != "" {
+			fmt.Fprintf(buf, ", %s", str)
+		}
+	}
 	return buf.String()
 }
 
@@ -1615,6 +1623,9 @@ func (e *InsertRuntimeStat) Clone() execdetails.RuntimeStats {
 	}
 	if e.ActiveActive != nil {
 		newRs.ActiveActive = e.ActiveActive.Clone()
+	}
+	if e.SoftDelete != nil {
+		newRs.SoftDelete = e.SoftDelete.Clone()
 	}
 	return newRs
 }
@@ -1648,6 +1659,13 @@ func (e *InsertRuntimeStat) Merge(other execdetails.RuntimeStats) {
 			e.ActiveActive = tmp.ActiveActive.Clone()
 		} else {
 			e.ActiveActive.Merge(tmp.ActiveActive)
+		}
+	}
+	if tmp.SoftDelete != nil {
+		if e.SoftDelete == nil {
+			e.SoftDelete = tmp.SoftDelete.Clone()
+		} else {
+			e.SoftDelete.Merge(tmp.SoftDelete)
 		}
 	}
 	e.Prefetch += tmp.Prefetch
@@ -1690,6 +1708,33 @@ func newActiveActiveTableInfo(tbl *model.TableInfo) ActiveActiveTableInfo {
 type ActiveActiveStats struct {
 	CdcConflictSkipCount uint64
 	UnsafeOriginTSCount  uint64
+}
+
+// SoftDeleteStats is the statistics for softdelete operations.
+type SoftDeleteStats struct {
+	ImplicitRemoveRows uint64
+}
+
+// String implements the Stringer interface.
+func (e *SoftDeleteStats) String() string {
+	if e.ImplicitRemoveRows == 0 {
+		return ""
+	}
+	return fmt.Sprintf("softdelete: {implicit_remove_rows: %d}", e.ImplicitRemoveRows)
+}
+
+// Clone clones SoftDeleteStats.
+func (e *SoftDeleteStats) Clone() *SoftDeleteStats {
+	cloned := *e
+	return &cloned
+}
+
+// Merge merges other SoftDeleteStats into e.
+func (e *SoftDeleteStats) Merge(other *SoftDeleteStats) {
+	if other == nil {
+		return
+	}
+	e.ImplicitRemoveRows += other.ImplicitRemoveRows
 }
 
 // String implements the Stringer interface.

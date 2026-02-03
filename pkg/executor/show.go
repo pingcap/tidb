@@ -1086,7 +1086,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden || model.IsInternalColumn(col.Name) {
+		if col == nil || col.Hidden || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
+			continue
+		}
+		if tableInfo.SoftdeleteInfo != nil && model.IsSoftDeleteColumn(col.Name) {
+			continue
+		}
+		if tableInfo.IsActiveActive && model.IsActiveActiveColumn(col.Name) {
 			continue
 		}
 		if needAddComma {

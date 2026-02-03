@@ -4655,16 +4655,20 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	// Append extra commit ts column to the schema.
-	commitTSCol := ds.NewExtraCommitTSSchemaCol()
-	ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
-	schema.Append(commitTSCol)
-	names = append(names, &types.FieldName{
-		DBName:      dbName,
-		TblName:     tableInfo.Name,
-		ColName:     model.ExtraCommitTSName,
-		OrigColName: model.ExtraCommitTSName,
-	})
-	ds.AppendTableCol(commitTSCol)
+	// Temporary table doesn't have the column _tidb_commit_ts.
+	if tbl.Meta().TempTableType == model.TempTableNone {
+		commitTSCol := ds.NewExtraCommitTSSchemaCol()
+		ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
+		schema.Append(commitTSCol)
+		names = append(names, &types.FieldName{
+			DBName:      dbName,
+			TblName:     tableInfo.Name,
+			ColName:     model.ExtraCommitTSName,
+			OrigColName: model.ExtraCommitTSName,
+		})
+		ds.AppendTableCol(commitTSCol)
+	}
+
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)

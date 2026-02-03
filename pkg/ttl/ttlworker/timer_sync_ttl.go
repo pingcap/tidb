@@ -64,7 +64,8 @@ func NewTTLTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) (*TTLTime
 				pid = partition.ID
 			}
 
-			sql, args := cache.SelectFromTableStatusWithID(cache.TTLJobTypeTTL, pid)
+			sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, pid)
+
 			rows, err := se.ExecuteSQL(ctx, sql, args...)
 			if err != nil {
 				return time.Time{}, err

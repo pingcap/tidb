@@ -209,7 +209,7 @@ func TestResizeWorkers(t *testing.T) {
 		ttlScanTask: &ttlScanTask{
 			tbl: tbl,
 			TTLTask: &cache.TTLTask{
-				JobType: cache.TTLJobTypeTTL,
+				JobType: session.TTLJobTypeTTL,
 				JobID:   "test-job-id",
 				ScanID:  1,
 			},
@@ -217,7 +217,7 @@ func TestResizeWorkers(t *testing.T) {
 	})
 
 	task := &ttlScanTask{tbl: tbl, TTLTask: &cache.TTLTask{
-		JobType: cache.TTLJobTypeTTL,
+		JobType: session.TTLJobTypeTTL,
 		JobID:   "test-job-id",
 		ScanID:  1,
 	}}
@@ -233,7 +233,7 @@ func TestTaskFinishedCondition(t *testing.T) {
 		ttlScanTask: &ttlScanTask{
 			tbl: tbl,
 			TTLTask: &cache.TTLTask{
-				JobType: cache.TTLJobTypeTTL,
+				JobType: session.TTLJobTypeTTL,
 				JobID:   "test-job-id",
 				ScanID:  1,
 			},

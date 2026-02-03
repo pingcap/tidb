@@ -72,6 +72,13 @@ var (
 	// ActiveActiveWriteUnsafeOriginTsStmtCounter records the num of unsafe _tidb_origin_ts statements.
 	ActiveActiveWriteUnsafeOriginTsStmtCounter prometheus.Counter
 
+	// SoftDeleteImplicitDeleteRows records the number of soft-deleted rows implicitly removed per DML statement.
+	SoftDeleteImplicitDeleteRows *prometheus.HistogramVec
+	// SoftDeleteImplicitDeleteRowsInsert records SoftDeleteImplicitDeleteRows with Insert label.
+	SoftDeleteImplicitDeleteRowsInsert prometheus.Observer
+	// SoftDeleteImplicitDeleteRowsLoadData records SoftDeleteImplicitDeleteRows with LoadData label.
+	SoftDeleteImplicitDeleteRowsLoadData prometheus.Observer
+
 	// NetworkTransmissionStats records the network transmission for queries
 	NetworkTransmissionStats *prometheus.CounterVec
 
@@ -189,6 +196,18 @@ func InitExecutorMetrics() {
 			Name:      "write_unsafe_origin_ts_stmt_total",
 			Help:      "stmts written with unsafe _tidb_origin_ts column",
 		})
+
+	SoftDeleteImplicitDeleteRows = metricscommon.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Namespace: "tidb",
+			Subsystem: "executor",
+			Name:      "softdelete_implicit_delete_rows",
+			Help:      "Bucketed histogram of soft-deleted rows implicitly removed per DML statement.",
+			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
+		}, []string{LblSQLType})
+
+	SoftDeleteImplicitDeleteRowsInsert = SoftDeleteImplicitDeleteRows.WithLabelValues("Insert")
+	SoftDeleteImplicitDeleteRowsLoadData = SoftDeleteImplicitDeleteRows.WithLabelValues("LoadData")
 
 	NetworkTransmissionStats = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{

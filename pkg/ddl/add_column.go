@@ -308,7 +308,17 @@ func buildColumnAndConstraint(
 	tblCharset string,
 	tblCollate string,
 ) (*table.Column, []*ast.Constraint, error) {
-	if colName := colDef.Name.Name; model.IsInternalColumn(colName) {
+	if colName := colDef.Name.Name; colName == model.ExtraSoftDeleteTimeName {
+		expected := model.NewExtraSoftDeleteTimeColInfo().FieldType
+		if err := checkInternalColumnFieldTypeMatch(colName, colDef.Tp, &expected); err != nil {
+			return nil, nil, err
+		}
+	} else if colName == model.ExtraOriginTSName {
+		expected := model.NewExtraOriginTSColInfo().FieldType
+		if err := checkInternalColumnFieldTypeMatch(colName, colDef.Tp, &expected); err != nil {
+			return nil, nil, err
+		}
+	} else if model.IsInternalColumn(colName) {
 		return nil, nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(colName.L)
 	}
 
@@ -335,6 +345,17 @@ func buildColumnAndConstraint(
 		return nil, nil, errors.Trace(err)
 	}
 	return col, cts, nil
+}
+
+func checkInternalColumnFieldTypeMatch(colName ast.CIStr, got, expected *field_types.FieldType) error {
+	if got.GetType() != expected.GetType() || got.GetDecimal() != expected.GetDecimal() || got.GetFlen() != expected.GetFlen() {
+		return types.ErrWrongFieldSpec.GenWithStackByArgs(colName.L)
+	}
+	// We only enforce UNSIGNED bit here to avoid overly strict flag matching.
+	if (got.GetFlag() & mysql.UnsignedFlag) != (expected.GetFlag() & mysql.UnsignedFlag) {
+		return types.ErrWrongFieldSpec.GenWithStackByArgs(colName.L)
+	}
+	return nil
 }
 
 // getCharsetAndCollateInColumnDef will iterate collate in the options, validate it by checking the charset
