@@ -417,7 +417,6 @@ func materializedViewLogBaseTableIdent(ctx context.Context, is infoschema.InfoSc
 }
 
 func validateCreateMaterializedViewQuery(
-	ctx context.Context,
 	sctx sessionctx.Context,
 	baseTableName *ast.TableName,
 	baseTableInfo *model.TableInfo,
@@ -597,8 +596,7 @@ type columnNameCollector struct {
 }
 
 func (c *columnNameCollector) Enter(n ast.Node) (ast.Node, bool) {
-	switch x := n.(type) {
-	case *ast.ColumnNameExpr:
+	if x, ok := n.(*ast.ColumnNameExpr); ok {
 		c.cols[x.Name.Name.L] = struct{}{}
 	}
 	return n, false
@@ -701,7 +699,6 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	}
 
 	groupBySelectIdx, err := validateCreateMaterializedViewQuery(
-		ctx,
 		e.Ctx(),
 		baseTableName,
 		baseTable.Meta(),
