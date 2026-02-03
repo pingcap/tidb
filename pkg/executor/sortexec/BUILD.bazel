@@ -3,6 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sortexec",
     srcs = [
+        "aqsort_switch.go",
         "multi_way_merge.go",
         "parallel_sort_spill_helper.go",
         "parallel_sort_worker.go",
@@ -25,8 +26,10 @@ go_library(
         "//pkg/sessionctx/vardef",
         "//pkg/types",
         "//pkg/util",
+        "//pkg/util/aqsort",
         "//pkg/util/channel",
         "//pkg/util/chunk",
+        "//pkg/util/codec",
         "//pkg/util/dbterror/exeerrors",
         "//pkg/util/disk",
         "//pkg/util/logutil",
@@ -53,7 +56,7 @@ go_test(
     ],
     embed = [":sortexec"],
     flaky = True,
-    shard_count = 19,
+    shard_count = 23,
     deps = [
         "//pkg/config",
         "//pkg/executor/internal/exec",

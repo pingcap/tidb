@@ -582,6 +582,9 @@ const (
 	// TiDBEnableParallelApply is used for parallel apply.
 	TiDBEnableParallelApply = "tidb_enable_parallel_apply"
 
+	// TiDBEnableAQSort indicates whether to use the experimental AQSort path for in-memory SortExec.
+	TiDBEnableAQSort = "tidb_enable_aqsort"
+
 	// TiDBBackoffLockFast is used for tikv backoff base time in milliseconds.
 	TiDBBackoffLockFast = "tidb_backoff_lock_fast"
 
@@ -1552,6 +1555,7 @@ const (
 	DefTiDBPointGetCache                    = false
 	DefTiDBEnableTelemetry                  = true
 	DefTiDBEnableParallelApply              = false
+	DefTiDBEnableAQSort                     = false
 	DefTiDBPartitionPruneMode               = "dynamic"
 	DefTiDBEnableRateLimitAction            = false
 	DefTiDBEnableAsyncCommit                = false

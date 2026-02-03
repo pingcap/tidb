@@ -97,6 +97,7 @@ type SortExec struct {
 	}
 
 	enableTmpStorageOnOOM bool
+	aqsortCtrl            *aqsortControl
 }
 
 // When fetcher and workers are not created, we need to initiatively close these channels
@@ -156,6 +157,11 @@ func (e *SortExec) Open(ctx context.Context) error {
 	e.fetched = &atomic.Bool{}
 	e.fetched.Store(false)
 	e.enableTmpStorageOnOOM = vardef.EnableTmpStorageOnOOM.Load()
+	e.aqsortCtrl = newAQSortControl(
+		e.Ctx().GetSessionVars().EnableAQSort || isAQSortEnabled(),
+		e.Ctx().GetSessionVars().ConnectionID,
+		e.ID(),
+	)
 	e.finishCh = make(chan struct{}, 1)
 
 	// To avoid duplicated initialization for TopNExec.
@@ -543,7 +549,8 @@ func (e *SortExec) switchToNewSortPartition(fields []*types.FieldType, byItemsDe
 		}
 	}
 
-	e.curPartition = newSortPartition(fields, byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit, e.FileNamePrefixForTest)
+	e.curPartition = newSortPartition(fields, byItemsDesc, e.keyColumns, e.keyCmpFuncs, e.spillLimit, e.FileNamePrefixForTest, e.Ctx().GetSessionVars().Location())
+	e.curPartition.aqsortCtrl = e.aqsortCtrl
 	e.curPartition.getMemTracker().AttachTo(e.memTracker)
 	e.curPartition.getMemTracker().SetLabel(memory.LabelForRowChunks)
 	e.Unparallel.spillAction = e.curPartition.actionSpill()
@@ -659,13 +666,35 @@ func (e *SortExec) fetchChunksUnparallel(ctx context.Context) error {
 }
 
 func (e *SortExec) fetchChunksParallel(ctx context.Context) error {
+	fields := exec.RetTypes(e)
+	byItemsDesc := make([]bool, len(e.ByItems))
+	for i, byItem := range e.ByItems {
+		byItemsDesc[i] = byItem.Desc
+	}
 	// Wait for the finish of all workers
 	workersWaiter := util.WaitGroupWrapper{}
 	// Wait for the finish of chunk fetcher
 	fetcherWaiter := util.WaitGroupWrapper{}
 
 	for i := range e.Parallel.workers {
-		e.Parallel.workers[i] = newParallelSortWorker(i, e.lessRow, e.Parallel.chunkChannel, e.Parallel.fetcherAndWorkerSyncer, e.Parallel.resultChannel, e.finishCh, e.memTracker, e.Parallel.sortedRowsIters[i], e.MaxChunkSize(), e.Parallel.spillHelper, &e.Ctx().GetSessionVars().SQLKiller)
+		e.Parallel.workers[i] = newParallelSortWorker(
+			i,
+			e.lessRow,
+			e.Parallel.chunkChannel,
+			e.Parallel.fetcherAndWorkerSyncer,
+			e.Parallel.resultChannel,
+			e.finishCh,
+			e.memTracker,
+			e.Parallel.sortedRowsIters[i],
+			e.MaxChunkSize(),
+			e.Parallel.spillHelper,
+			&e.Ctx().GetSessionVars().SQLKiller,
+			fields,
+			e.keyColumns,
+			byItemsDesc,
+			e.Ctx().GetSessionVars().Location(),
+		)
+		e.Parallel.workers[i].aqsortCtrl = e.aqsortCtrl
 		worker := e.Parallel.workers[i]
 		workersWaiter.Run(func() {
 			worker.run()

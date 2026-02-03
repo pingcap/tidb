@@ -17,14 +17,18 @@ package sortexec
 import (
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/aqsort"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/disk"
 	"github.com/pingcap/tidb/pkg/util/memory"
+	"go.uber.org/zap"
 )
 
 type sortPartition struct {
@@ -67,11 +71,15 @@ type sortPartition struct {
 	timesOfRowCompare uint
 
 	fileNamePrefixForTest string
+
+	loc        *time.Location
+	useAQSort  bool
+	aqsortCtrl *aqsortControl
 }
 
 // Creates a new SortPartition in memory.
 func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
-	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64, fileNamePrefixForTest string) *sortPartition {
+	keyColumns []int, keyCmpFuncs []chunk.CompareFunc, spillLimit int64, fileNamePrefixForTest string, loc *time.Location) *sortPartition {
 	lock := new(sync.Mutex)
 	retVal := &sortPartition{
 		cond:                  sync.NewCond(lock),
@@ -91,6 +99,8 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 		cursor:                NewDataCursor(),
 		closed:                false,
 		fileNamePrefixForTest: fileNamePrefixForTest,
+		loc:                   loc,
+		useAQSort:             isAQSortEnabled(),
 	}
 
 	return retVal
@@ -150,10 +160,79 @@ func (s *sortPartition) sortNoLock() (ret error) {
 		}
 	})
 
-	sort.Slice(s.savedRows, s.keyColumnsLess)
+	useAQSort := s.useAQSort
+	if s.aqsortCtrl != nil {
+		useAQSort = s.aqsortCtrl.isEnabled()
+	}
+
+	if useAQSort {
+		if err := s.sortByEncodedKey(); err != nil {
+			if s.aqsortCtrl != nil {
+				s.aqsortCtrl.disableWithWarn(err, zap.Int("rows", len(s.savedRows)))
+			} else {
+				s.useAQSort = false
+			}
+			sort.Slice(s.savedRows, s.keyColumnsLess)
+		}
+	} else {
+		sort.Slice(s.savedRows, s.keyColumnsLess)
+	}
 	s.isSorted = true
 	s.sliceIter = chunk.NewIterator4Slice(s.savedRows)
 	return
+}
+
+func (s *sortPartition) sortByEncodedKey() error {
+	failpoint.Inject("AQSortForceEncodeKeyError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.NewNoStackError("injected aqsort sort key encode error"))
+		}
+	})
+
+	if len(s.savedRows) <= 1 {
+		return nil
+	}
+	if s.loc == nil {
+		s.loc = time.UTC
+	}
+
+	pairs := make([]aqsort.Pair[chunk.Row], len(s.savedRows))
+	for i, row := range s.savedRows {
+		if i%1024 == 0 {
+			s.memTracker.HandleKillSignal()
+		}
+		key, err := s.encodeRowSortKey(row)
+		if err != nil {
+			return err
+		}
+		pairs[i] = aqsort.Pair[chunk.Row]{Key: key, Val: row}
+	}
+
+	var sorter aqsort.PairSorter[chunk.Row]
+	sorter.SortWithCheckpoint(pairs, signalCheckpointForSort, s.memTracker.HandleKillSignal)
+	for i := range pairs {
+		s.savedRows[i] = pairs[i].Val
+	}
+	return nil
+}
+
+func (s *sortPartition) encodeRowSortKey(row chunk.Row) ([]byte, error) {
+	key := make([]byte, 0, len(s.keyColumns)*16)
+	for i, colIdx := range s.keyColumns {
+		start := len(key)
+		datum := row.GetDatum(colIdx, s.fieldTypes[colIdx])
+		var err error
+		key, err = codec.EncodeKey(s.loc, key, datum)
+		if err != nil {
+			return nil, err
+		}
+		if s.byItemsDesc[i] {
+			for j := start; j < len(key); j++ {
+				key[j] = ^key[j]
+			}
+		}
+	}
+	return key, nil
 }
 
 func (s *sortPartition) spillToDiskImpl() (err error) {

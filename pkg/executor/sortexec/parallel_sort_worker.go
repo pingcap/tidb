@@ -22,9 +22,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
+	"github.com/pingcap/tidb/pkg/types"
+	"github.com/pingcap/tidb/pkg/util/aqsort"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"go.uber.org/zap"
 )
 
 // SignalCheckpointForSort indicates the times of row comparation that a signal detection will be triggered.
@@ -54,6 +58,19 @@ type parallelSortWorker struct {
 	merger             *multiWayMerger
 
 	sqlKiller *sqlkiller.SQLKiller
+
+	fieldTypes  []*types.FieldType
+	keyColumns  []int
+	byItemsDesc []bool
+	loc         *time.Location
+
+	aqsPairs  []aqsort.Pair[chunk.Row]
+	aqsSorter aqsort.PairSorter[chunk.Row]
+	aqsArena  []byte
+	aqsKeyCap int
+
+	useAQSort  bool
+	aqsortCtrl *aqsortControl
 }
 
 func newParallelSortWorker(
@@ -68,6 +85,10 @@ func newParallelSortWorker(
 	maxChunkSize int,
 	spillHelper *parallelSortSpillHelper,
 	sqlKiller *sqlkiller.SQLKiller,
+	fieldTypes []*types.FieldType,
+	keyColumns []int,
+	byItemsDesc []bool,
+	loc *time.Location,
 ) *parallelSortWorker {
 	return &parallelSortWorker{
 		workerIDForTest:        workerIDForTest,
@@ -82,6 +103,12 @@ func newParallelSortWorker(
 		maxSortedRowsLimit:     maxChunkSize * 30,
 		spillHelper:            spillHelper,
 		sqlKiller:              sqlKiller,
+		fieldTypes:             fieldTypes,
+		keyColumns:             keyColumns,
+		byItemsDesc:            byItemsDesc,
+		loc:                    loc,
+		aqsKeyCap:              64,
+		useAQSort:              isAQSortEnabled(),
 	}
 }
 
@@ -172,8 +199,117 @@ func (p *parallelSortWorker) convertChunksToRows() []chunk.Row {
 
 func (p *parallelSortWorker) sortBatchRows() {
 	rows := p.convertChunksToRows()
-	slices.SortFunc(rows, p.keyColumnsLess)
+	useAQSort := p.useAQSort
+	if p.aqsortCtrl != nil {
+		useAQSort = p.aqsortCtrl.isEnabled()
+	}
+	if useAQSort {
+		p.sortBatchRowsByEncodedKey(rows)
+	} else {
+		slices.SortFunc(rows, p.keyColumnsLess)
+	}
 	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(rows))
+}
+
+func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) {
+	if len(rows) <= 1 {
+		return
+	}
+	if p.loc == nil {
+		p.loc = time.UTC
+	}
+
+	failpoint.Inject("AQSortForceEncodeKeyError", func(val failpoint.Value) {
+		if val.(bool) {
+			err := errors.NewNoStackError("injected aqsort sort key encode error")
+			if p.aqsortCtrl != nil {
+				p.aqsortCtrl.disableWithWarn(err, zap.Int("worker_id", p.workerIDForTest))
+			} else {
+				p.useAQSort = false
+			}
+			slices.SortFunc(rows, p.keyColumnsLess)
+			failpoint.Return()
+		}
+	})
+
+	if cap(p.aqsPairs) < len(rows) {
+		p.aqsPairs = make([]aqsort.Pair[chunk.Row], len(rows))
+	} else {
+		p.aqsPairs = p.aqsPairs[:len(rows)]
+	}
+
+	keyCap := p.aqsKeyCap
+	if keyCap < 64 {
+		keyCap = 64
+	}
+	neededArena := len(rows) * keyCap
+	if cap(p.aqsArena) < neededArena {
+		p.aqsArena = make([]byte, neededArena)
+	} else {
+		p.aqsArena = p.aqsArena[:neededArena]
+	}
+
+	maxKeyLen := 0
+	for i := range rows {
+		if i%1024 == 0 {
+			p.checkKillSignal()
+		}
+		key := p.aqsArena[i*keyCap : i*keyCap : i*keyCap+keyCap]
+		encoded, err := p.encodeRowSortKey(rows[i], key)
+		if err != nil {
+			if p.aqsortCtrl != nil {
+				p.aqsortCtrl.disableWithWarn(err, zap.Int("worker_id", p.workerIDForTest))
+			} else {
+				p.useAQSort = false
+			}
+			slices.SortFunc(rows, p.keyColumnsLess)
+			return
+		}
+		if ln := len(encoded); ln > maxKeyLen {
+			maxKeyLen = ln
+		}
+		p.aqsPairs[i] = aqsort.Pair[chunk.Row]{Key: encoded, Val: rows[i]}
+	}
+	if maxKeyLen > keyCap {
+		if maxKeyLen > 1024 {
+			p.aqsKeyCap = 1024
+		} else {
+			p.aqsKeyCap = maxKeyLen
+		}
+	}
+
+	p.aqsSorter.SortWithCheckpoint(p.aqsPairs, SignalCheckpointForSort, p.checkKillSignal)
+	for i := range rows {
+		rows[i] = p.aqsPairs[i].Val
+	}
+}
+
+func (p *parallelSortWorker) checkKillSignal() {
+	if p.sqlKiller == nil {
+		return
+	}
+	if err := p.sqlKiller.HandleSignal(); err != nil {
+		panic(err)
+	}
+}
+
+func (p *parallelSortWorker) encodeRowSortKey(row chunk.Row, dst []byte) ([]byte, error) {
+	key := dst[:0]
+	for i, colIdx := range p.keyColumns {
+		start := len(key)
+		datum := row.GetDatum(colIdx, p.fieldTypes[colIdx])
+		var err error
+		key, err = codec.EncodeKey(p.loc, key, datum)
+		if err != nil {
+			return nil, err
+		}
+		if p.byItemsDesc[i] {
+			for j := start; j < len(key); j++ {
+				key[j] = ^key[j]
+			}
+		}
+	}
+	return key, nil
 }
 
 func (p *parallelSortWorker) sortLocalRows() ([]chunk.Row, error) {

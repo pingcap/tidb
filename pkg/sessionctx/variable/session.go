@@ -1373,6 +1373,9 @@ type SessionVars struct {
 	// EnableParallelApply indicates that whether to use parallel apply.
 	EnableParallelApply bool
 
+	// EnableAQSort indicates whether to use the experimental AQSort path for in-memory SortExec.
+	EnableAQSort bool
+
 	// EnableRedactLog indicates that whether redact log. Possible values are 'OFF', 'ON', 'MARKER'.
 	EnableRedactLog string
 
@@ -2342,6 +2345,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		AllowAutoRandExplicitInsert:   vardef.DefTiDBAllowAutoRandExplicitInsert,
 		EnableClusteredIndex:          vardef.DefTiDBEnableClusteredIndex,
 		EnableParallelApply:           vardef.DefTiDBEnableParallelApply,
+		EnableAQSort:                  vardef.DefTiDBEnableAQSort,
 		ShardAllocateStep:             vardef.DefTiDBShardAllocateStep,
 		EnablePointGetCache:           vardef.DefTiDBPointGetCache,
 		PartitionPruneMode:            *atomic2.NewString(vardef.DefTiDBPartitionPruneMode),

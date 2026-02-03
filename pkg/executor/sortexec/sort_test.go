@@ -20,6 +20,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/config"
@@ -138,4 +139,88 @@ func TestIssue16696(t *testing.T) {
 				strings.Contains(disk, "Bytes"))
 		}
 	}
+}
+
+func TestAQSortExecMatchesStdSortExec(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set time_zone = '+00:00'")
+
+	tk.MustExec("drop table if exists t_aqsort")
+	tk.MustExec(`
+create table t_aqsort (
+  id bigint primary key,
+  s varchar(300) collate utf8mb4_general_ci,
+  u bigint unsigned,
+  d decimal(20,6),
+  ts timestamp(6) null,
+  tm time(6) null,
+  n int null
+)`)
+
+	words := []string{"a", "A", "abc", "AbC", "hello", "HeLLo", "", "z"}
+	var buf bytes.Buffer
+	buf.WriteString("insert into t_aqsort values ")
+	for i := 0; i < 200; i++ {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+		s := words[i%len(words)]
+		if i%17 == 0 {
+			pattern := s + "_"
+			repeat := (200 + len(pattern) - 1) / len(pattern)
+			s = strings.Repeat(pattern, repeat)[:200]
+		}
+		u := uint64(i%7) * 100
+		d := fmt.Sprintf("%d.%06d", i%13-6, (i*97)%1_000_000)
+
+		var ts any = "NULL"
+		if i%9 != 0 {
+			t := time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC).Add(time.Duration(i) * time.Minute).Format("2006-01-02 15:04:05.000000")
+			ts = "'" + t + "'"
+		}
+
+		var tm any = "NULL"
+		if i%11 != 0 {
+			tm = fmt.Sprintf("'0%d:%02d:%02d.%06d'", i%10, i%60, (i*7)%60, (i*19)%1_000_000)
+		}
+
+		var n any = "NULL"
+		if i%5 != 0 {
+			n = fmt.Sprintf("%d", i%23-11)
+		}
+
+		buf.WriteString(fmt.Sprintf("(%d,'%s',%d,%s,%s,%s,%s)", i, s, u, d, ts, tm, n))
+	}
+	tk.MustExec(buf.String())
+
+	query := `
+select id, s, u, d, ts, tm, n
+from t_aqsort
+order by s, n desc, u, d desc, ts, tm, id`
+	windowQuery := `
+select sum(rn) from (
+  select row_number() over (order by s, n desc, u, d desc, ts, tm, id) as rn
+  from t_aqsort
+) t`
+
+	tk.MustExec("set tidb_enable_aqsort=0")
+	std := tk.MustQuery(query).Rows()
+	stdWindow := tk.MustQuery(windowQuery).Rows()
+
+	tk.MustExec("set tidb_enable_aqsort=1")
+	aqs := tk.MustQuery(query).Rows()
+	require.Equal(t, std, aqs)
+	aqsWindow := tk.MustQuery(windowQuery).Rows()
+	require.Equal(t, stdWindow, aqsWindow)
+
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/sortexec/AQSortForceEncodeKeyError", "return(true)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/sortexec/AQSortForceEncodeKeyError"))
+	}()
+	aqsFallback := tk.MustQuery(query).Rows()
+	require.Equal(t, std, aqsFallback)
+	aqsWindowFallback := tk.MustQuery(windowQuery).Rows()
+	require.Equal(t, stdWindow, aqsWindowFallback)
 }

@@ -2460,6 +2460,10 @@ var defaultSysVars = []*SysVar{
 		s.EnableParallelApply = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableAQSort, Value: BoolToOnOff(vardef.DefTiDBEnableAQSort), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.EnableAQSort = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBMemQuotaApplyCache, Value: strconv.Itoa(vardef.DefTiDBMemQuotaApplyCache), Type: vardef.TypeUnsigned, MaxValue: math.MaxInt64, SetSession: func(s *SessionVars, val string) error {
 		s.MemQuotaApplyCache = TidbOptInt64(val, vardef.DefTiDBMemQuotaApplyCache)
 		return nil

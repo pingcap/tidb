@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "aqsort",
+    srcs = [
+        "aqsort.go",
+        "pairs.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/util/aqsort",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "aqsort_test",
+    timeout = "short",
+    srcs = [
+        "aqsort_benchmark_test.go",
+        "aqsort_tcp_benchmark_test.go",
+        "aqsort_test.go",
+    ],
+    embed = [":aqsort"],
+    flaky = True,
+)
