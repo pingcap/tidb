@@ -18,15 +18,12 @@ import (
 	"context"
 	"maps"
 	"slices"
-	"strconv"
-	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
 
@@ -448,101 +445,30 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
 
-	leadingJoin, remainingGroup, ok := s.buildLeadingTreeFromList(leadingList, leftJoinGroup, hasOuterJoin)
-	if !ok {
+	find := func(available []base.LogicalPlan, hint *ast.HintTable) (base.LogicalPlan, []base.LogicalPlan, bool) {
+		return joinorder.FindAndRemovePlanByAstHint(s.ctx, available, hint, func(plan base.LogicalPlan) base.LogicalPlan {
+			return plan
+		})
+	}
+	joiner := func(left, right base.LogicalPlan) (base.LogicalPlan, bool, error) {
+		currentJoin, _, ok := s.connectJoinNodes(left, right, hasOuterJoin, leftJoinGroup)
+		if !ok {
+			return nil, false, nil
+		}
+		return currentJoin, true, nil
+	}
+	warn := func() {
+		s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
+	}
+
+	leadingJoin, remainingGroup, ok, err := joinorder.BuildLeadingTreeFromList(leadingList, leftJoinGroup, find, joiner, warn)
+	if err != nil || !ok {
 		return false, nil
 	}
 	s.leadingJoinGroup = leadingJoin
 	return true, remainingGroup
 }
 
-// buildLeadingTreeFromList recursively constructs a LEADING join order tree.
-// the `leadingList` argument is derived from a LEADING hint in SQL, e.g.:
-//
-//	/*+ LEADING(t1, (t2, t3), (t4, (t5, t6, t7))) */
-//
-// and it is parsed into a nested structure of *ast.LeadingList and *ast.HintTable:
-// leadingList.Items = [
-//
-//	*ast.HintTable{name: "t1"},
-//	*ast.LeadingList{ // corresponds to (t2, t3)
-//	    Items: [
-//	        *ast.HintTable{name: "t2"},
-//	        *ast.HintTable{name: "t3"},
-//	    ],
-//	},
-//	*ast.LeadingList{ // corresponds to (t4, (t5, t6, t7))
-//	    Items: [
-//	        *ast.HintTable{name: "t4"},
-//	        *ast.LeadingList{
-//	            Items: [
-//	                *ast.HintTable{name: "t5"},
-//	                *ast.HintTable{name: "t6"},
-//	                *ast.HintTable{name: "t7"},
-//	            ],
-//	        },
-//	    ],
-//	},
-//
-// ]
-func (s *baseSingleGroupJoinOrderSolver) buildLeadingTreeFromList(
-	leadingList *ast.LeadingList, availableGroups []base.LogicalPlan, hasOuterJoin bool,
-) (base.LogicalPlan, []base.LogicalPlan, bool) {
-	if leadingList == nil || len(leadingList.Items) == 0 {
-		return nil, availableGroups, false
-	}
-
-	var (
-		currentJoin     base.LogicalPlan
-		remainingGroups = availableGroups
-		ok              bool
-	)
-
-	for i, item := range leadingList.Items {
-		switch element := item.(type) {
-		case *ast.HintTable:
-			// find and remove the plan node that matches ast.HintTable from remainingGroups
-			var tablePlan base.LogicalPlan
-			tablePlan, remainingGroups, ok = s.findAndRemovePlanByAstHint(remainingGroups, element)
-			if !ok {
-				return nil, availableGroups, false
-			}
-
-			if i == 0 {
-				currentJoin = tablePlan
-			} else {
-				currentJoin, availableGroups, ok = s.connectJoinNodes(currentJoin, tablePlan, hasOuterJoin, availableGroups)
-				if !ok {
-					return nil, availableGroups, false
-				}
-			}
-		case *ast.LeadingList:
-			// recursively handle nested lists
-			var nestedJoin base.LogicalPlan
-			nestedJoin, remainingGroups, ok = s.buildLeadingTreeFromList(element, remainingGroups, hasOuterJoin)
-			if !ok {
-				return nil, availableGroups, false
-			}
-
-			if i == 0 {
-				currentJoin = nestedJoin
-			} else {
-				currentJoin, availableGroups, ok = s.connectJoinNodes(currentJoin, nestedJoin, hasOuterJoin, availableGroups)
-				if !ok {
-					return nil, availableGroups, false
-				}
-			}
-		default:
-			s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
-			return nil, availableGroups, false
-		}
-	}
-
-	return currentJoin, remainingGroups, true
-}
-
-// connectJoinNodes handles joining two subplans, performing connection checks
-// and enforcing the outer join constraint.
 func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
 	hasOuterJoin bool, availableGroups []base.LogicalPlan,
@@ -556,88 +482,6 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
 	s.otherConds = rem
 	return currentJoin, availableGroups, true
-}
-
-// findAndRemovePlanByAstHint: Find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.
-// Matching rules:
-//  1. Match by regular table name (db/table/*)
-//  2. Match by query-block alias (subquery name, e.g., tx)
-//  3. If multiple join groups belong to the same block alias, mark as ambiguous and skip (consistent with old logic)
-func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
-	plans []base.LogicalPlan, astTbl *ast.HintTable,
-) (base.LogicalPlan, []base.LogicalPlan, bool) {
-	var queryBlockNames []ast.HintTable
-	if p := s.ctx.GetSessionVars().PlannerSelectBlockAsName.Load(); p != nil {
-		queryBlockNames = *p
-	}
-
-	// Step 1: Direct match by table name
-	for i, joinGroup := range plans {
-		tableAlias := util.ExtractTableAlias(joinGroup, joinGroup.QueryBlockOffset())
-		if tableAlias != nil {
-			// Match db/table (supports astTbl.DBName == "*")
-			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == tableAlias.DBName.L || astTbl.DBName.L == "*"
-			tableMatch := astTbl.TableName.L == tableAlias.TblName.L
-
-			// Match query block names
-			// Use SelectOffset to match query blocks
-			qbMatch := true
-			if astTbl.QBName.L != "" {
-				expectedOffset := extractSelectOffset(astTbl.QBName.L)
-				if expectedOffset > 0 {
-					qbMatch = tableAlias.SelectOffset == expectedOffset
-				} else {
-					// If QBName cannot be parsed, ignore the QB match.
-					qbMatch = true
-				}
-			}
-			if dbMatch && tableMatch && qbMatch {
-				newPlans := append(plans[:i], plans[i+1:]...)
-				return joinGroup, newPlans, true
-			}
-		}
-	}
-
-	// Step 2: Match by query-block alias (subquery name)
-	// Only execute this step if no direct table name match was found
-	groupIdx := -1
-	for i, joinGroup := range plans {
-		blockOffset := joinGroup.QueryBlockOffset()
-		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
-			blockName := queryBlockNames[blockOffset]
-			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
-			tableMatch := astTbl.TableName.L == blockName.TableName.L
-			if dbMatch && tableMatch {
-				// this can happen when multiple join groups are from the same block, for example:
-				//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
-				// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
-				// TODO: currently we skip this case for simplification, we can support it in the future.
-				if groupIdx != -1 {
-					groupIdx = -1
-					break
-				}
-				groupIdx = i
-			}
-		}
-	}
-
-	if groupIdx != -1 {
-		matched := plans[groupIdx]
-		newPlans := append(plans[:groupIdx], plans[groupIdx+1:]...)
-		return matched, newPlans, true
-	}
-
-	return nil, plans, false
-}
-
-// extract the number x from 'sel_x'
-func extractSelectOffset(qbName string) int {
-	if strings.HasPrefix(qbName, "sel_") {
-		if offset, err := strconv.Atoi(qbName[4:]); err == nil {
-			return offset
-		}
-	}
-	return -1
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
