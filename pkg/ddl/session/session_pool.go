@@ -100,27 +100,26 @@ func (sg *Pool) Destroy(ctx sessionctx.Context) {
 	ctx.GetSessionVars().ClearDiskFullOpt()
 	infosync.DeleteInternalSession(ctx)
 
-	// If the underlying pool supports destroying resources, use it.
-	if p, ok := sg.resPool.(util.DestroyableSessionPool); ok {
+	// Destroy behavior depends on the underlying pool implementation.
+	switch p := sg.resPool.(type) {
+	case util.DestroyableSessionPool:
 		p.Destroy(ctx.(pools.Resource))
 		return
-	}
-
-	// *pools.ResourcePool requires a Put for every Get. Put(nil) returns the slot
-	// and causes a new resource to be created next time.
-	if p, ok := sg.resPool.(*pools.ResourcePool); ok {
+	case *pools.ResourcePool:
+		// *pools.ResourcePool requires a Put for every Get. Put(nil) returns the slot
+		// and causes a new resource to be created next time.
 		ctx.(pools.Resource).Close()
 		p.Put(nil)
 		return
+	default:
+		// Fallback: avoid putting a closed resource back.
+		// The underlying pool implementation may return the same resource later.
+		logutil.DDLLogger().Warn("session pool doesn't support Destroy, fall back to Put",
+			zap.String("poolType", fmt.Sprintf("%T", sg.resPool)),
+		)
+		sg.resPool.Put(ctx.(pools.Resource))
+		intest.Assert(false, "unsupported session pool type for Destroy: %T", sg.resPool)
 	}
-
-	// Fallback: avoid putting a closed resource back.
-	// The underlying pool implementation may return the same resource later.
-	logutil.DDLLogger().Warn("session pool doesn't support Destroy, fall back to Put",
-		zap.String("poolType", fmt.Sprintf("%T", sg.resPool)),
-	)
-	sg.resPool.Put(ctx.(pools.Resource))
-	intest.Assert(false, "unsupported session pool type for Destroy: %T", sg.resPool)
 }
 
 // Close clean up the Pool.
