@@ -197,7 +197,6 @@ func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 			cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
 		}
 	}
-	cloned.PrefixLen = op.PrefixLen
 	return cloned, true
 }
 
@@ -218,7 +217,6 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 			cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
 		}
 	}
-	cloned.PrefixLen = op.PrefixLen
 	return cloned, true
 }
 
