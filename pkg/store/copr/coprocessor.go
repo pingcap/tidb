@@ -49,9 +49,9 @@ import (
 	"github.com/pingcap/tidb/pkg/store/driver/backoff"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/paging"
@@ -270,7 +270,7 @@ type copTask struct {
 	region           tikv.RegionVerID
 	bucketsVer       uint64
 	ranges           *KeyRanges
-	handleVersionMap *kv.HandleMap // used only in TiCI lookup
+	handleVersionMap map[string]uint64 // used only in TiCI lookup
 
 	respChan  chan *copResponse
 	storeAddr string
@@ -312,7 +312,7 @@ func (r *copTask) String() string {
 		r.region.GetID(), r.region.GetConfVer(), r.region.GetVer(), r.ranges.Len(), r.storeAddr)
 }
 
-func versionedKeyRangesToPB(ranges *KeyRanges, handleVersionMap *kv.HandleMap) ([]*coprocessor.VersionedKeyRange, error) {
+func versionedKeyRangesToPB(ranges *KeyRanges, handleVersionMap map[string]uint64) ([]*coprocessor.VersionedKeyRange, error) {
 	if ranges == nil || ranges.Len() == 0 || handleVersionMap == nil {
 		return nil, nil
 	}
@@ -321,20 +321,9 @@ func versionedKeyRangesToPB(ranges *KeyRanges, handleVersionMap *kv.HandleMap) (
 	pbPtrs := make([]*coprocessor.VersionedKeyRange, ranges.Len())
 	for i := 0; i < ranges.Len(); i++ {
 		ran := ranges.RefAt(i)
-		tableID, handle, err := tablecodec.DecodeRecordKey(ran.StartKey)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		version, ok := handleVersionMap.Get(kv.NewPartitionHandle(tableID, handle))
+		readTS, ok := handleVersionMap[string(hack.String(ran.StartKey))]
 		if !ok {
-			version, ok = handleVersionMap.Get(handle)
-		}
-		if !ok {
-			return nil, errors.Errorf("handle not found in handleVersionMap: %v", handle)
-		}
-		readTS, ok := version.(uint64)
-		if !ok {
-			return nil, errors.Errorf("handleVersionMap value must be uint64, got %T", version)
+			return nil, errors.Errorf("start key not found in handleVersionMap: %v", ran.StartKey)
 		}
 
 		pbRanges[i] = coprocessor.VersionedKeyRange{
@@ -385,9 +374,10 @@ type buildCopTaskOpt struct {
 	elapsed  *time.Duration
 	// ignoreTiKVClientReadTimeout is used to ignore tikv_client_read_timeout configuration, use default timeout instead.
 	ignoreTiKVClientReadTimeout bool
-	// handleVersionMap stores per-handle read_ts for TiCI versioned lookup.
+	// handleVersionMap stores per-range read_ts for TiCI versioned lookup.
+	// The map key is the range's StartKey (record key) converted to string.
 	// When non-nil, the request is sent using `CmdVersionedCop` with `versioned_ranges`.
-	handleVersionMap *kv.HandleMap
+	handleVersionMap map[string]uint64
 }
 
 const (

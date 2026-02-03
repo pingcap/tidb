@@ -685,7 +685,7 @@ func TestBuildCopTasksWithVersionedRangesRequiresPointRanges(t *testing.T) {
 
 	bo := backoff.NewBackofferWithVars(context.Background(), 3000, nil)
 	ranges := buildCopRanges("a", "c") // non-point range
-	handleVersionMap := kv.NewHandleMap()
+	handleVersionMap := map[string]uint64{}
 	req := &kv.Request{}
 	_, err = buildCopTasks(bo, ranges, &buildCopTaskOpt{
 		req:              req,
@@ -702,7 +702,7 @@ func TestCopTaskToPBBatchTasksVersionedRangesDecodeFail(t *testing.T) {
 	}
 	sub := &copTask{
 		ranges:           buildCopRanges("a", "b"),
-		handleVersionMap: kv.NewHandleMap(),
+		handleVersionMap: map[string]uint64{},
 	}
 	parent.batchTaskList[1] = &batchedCopTask{
 		task: sub,

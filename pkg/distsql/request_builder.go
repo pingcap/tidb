@@ -37,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/hack"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/ranger"
@@ -171,19 +172,42 @@ func (builder *RequestBuilder) SetHandleRangesForTables(dctx *distsqlctx.DistSQL
 // SetTableHandles sets "KeyRanges" for "kv.Request" by converting table handles
 // "handles" to "KeyRanges" firstly.
 func (builder *RequestBuilder) SetTableHandles(tid int64, handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
-	builder.Request.HandleVersionMap = handleVersionMap
 	keyRanges, hints := TableHandlesToKVRanges(tid, handles, handleVersionMap)
 	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
+	if handleVersionMap != nil {
+		builder.Request.HandleVersionMap, builder.err = buildHandleVersionMapByStartKey(keyRanges, handles, handleVersionMap)
+	}
 	return builder
 }
 
 // SetPartitionsAndHandles sets "KeyRanges" for "kv.Request" by converting ParitionHandles to KeyRanges.
 // handles in slice must be kv.PartitionHandle.
 func (builder *RequestBuilder) SetPartitionsAndHandles(handles []kv.Handle, handleVersionMap *kv.HandleMap) *RequestBuilder {
-	builder.Request.HandleVersionMap = handleVersionMap
 	keyRanges, hints := PartitionHandlesToKVRanges(handles, handleVersionMap)
 	builder.Request.KeyRanges = kv.NewNonParitionedKeyRangesWithHint(keyRanges, hints)
+	if handleVersionMap != nil {
+		builder.Request.HandleVersionMap, builder.err = buildHandleVersionMapByStartKey(keyRanges, handles, handleVersionMap)
+	}
 	return builder
+}
+
+func buildHandleVersionMapByStartKey(keyRanges []kv.KeyRange, handles []kv.Handle, handleVersionMap *kv.HandleMap) (map[string]uint64, error) {
+	if len(keyRanges) != len(handles) {
+		return nil, errors.Errorf("keyRanges length must match handles length: %d vs %d", len(keyRanges), len(handles))
+	}
+	rangeVersionMap := make(map[string]uint64, len(keyRanges))
+	for i := range handles {
+		version, ok := handleVersionMap.Get(handles[i])
+		if !ok {
+			return nil, errors.Errorf("handle not found in handleVersionMap: %v", handles[i])
+		}
+		readTS, ok := version.(uint64)
+		if !ok {
+			return nil, errors.Errorf("handleVersionMap value must be uint64, got %T", version)
+		}
+		rangeVersionMap[string(hack.String(keyRanges[i].StartKey))] = readTS
+	}
+	return rangeVersionMap, nil
 }
 
 const estimatedRegionRowCount = 100000
