@@ -52,6 +52,8 @@ const (
 	ExtractTaskType = "taskType"
 	// ExtractPlanTaskSkipStats indicates skip stats for extract plan task
 	ExtractPlanTaskSkipStats = "SkipStats"
+	// ExtractTaskDirName indicates directory name for extract task
+	ExtractTaskDirName = "extract"
 )
 
 // ExtractType indicates type
@@ -528,5 +530,5 @@ func generateExtractStmtFile() (string, error) {
 
 // GetExtractTaskDirName get extract dir name
 func GetExtractTaskDirName() string {
-	return "extract"
+	return ExtractTaskDirName
 }
