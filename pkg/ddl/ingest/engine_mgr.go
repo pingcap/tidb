@@ -72,7 +72,7 @@ func (bc *litBackendCtx) Register(indexIDs []int64, uniques []bool, tbl table.Ta
 			return nil, errors.Trace(err)
 		}
 
-		// Failpoint for testing cleanup and retry behavior when engine is opened but not registered.
+		// Failpoint: inject error after OpenEngine, before register.
 		var injectedErr error
 		failpoint.InjectCall("afterOpenEngineInRegister", &injectedErr)
 		if injectedErr != nil {
