@@ -871,6 +871,7 @@ func (col *Column) MemoryUsage() (sum int64) {
 	return
 }
 
+// Cols2Exprs converts Columns to an Expressions.
 func Cols2Exprs(cols []*Column) []Expression {
 	exprs := make([]Expression, 0, len(cols))
 	for _, c := range cols {

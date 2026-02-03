@@ -85,15 +85,14 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			basicJoinGroupInfo: &basicJoinGroupInfo{},
 		}
 	}
-	// gjt todo for debug
-	// // If the session var is set to off, we will still reject the outer joins.
-	// if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
-	// 	return &joinGroupResult{
-	// 		group:              []base.LogicalPlan{p},
-	// 		joinOrderHintInfo:  joinOrderHintInfo,
-	// 		basicJoinGroupInfo: &basicJoinGroupInfo{},
-	// 	}
-	// }
+	// If the session var is set to off, we will still reject the outer joins.
+	if !p.SCtx().GetSessionVars().EnableOuterJoinReorder && (join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin) {
+		return &joinGroupResult{
+			group:              []base.LogicalPlan{p},
+			joinOrderHintInfo:  joinOrderHintInfo,
+			basicJoinGroupInfo: &basicJoinGroupInfo{},
+		}
+	}
 	// `leftHasHint` and `rightHasHint` are used to record whether the left child and right child are set by the join method hint.
 	leftHasHint, rightHasHint := false, false
 	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.PreferJoinType > uint(0) {
@@ -249,7 +248,6 @@ type joinTypeWithExtMsg struct {
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	if p.SCtx().GetSessionVars().EnableOuterJoinReorder {
 		p, err := joinorder.Optimize(p)
-		// gjt todo why return false
 		return p, false, err
 	}
 	p, err := s.optimizeRecursive(p.SCtx(), p)
@@ -521,8 +519,6 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 			usedEdges = append(usedEdges, edge)
 		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
 			joinType = s.joinTypes[idx]
-			// gjt todo: 1. why special handling for inner join here?
-			// 2. Is it really ok to swap left and right for outer join?
 			if joinType.JoinType != base.InnerJoin {
 				rightNode, leftNode = leftPlan, rightPlan
 				usedEdges = append(usedEdges, edge)
