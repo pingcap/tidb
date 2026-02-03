@@ -654,7 +654,8 @@ const (
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
-		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch",
+		INDEX idx_start_time(start_time) COMMENT "accelerate the speed when syncing new watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateDoneRunawayWatchTable stores the condition which is used to check whether query should be quarantined.
@@ -670,7 +671,8 @@ const (
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
-		done_time TIMESTAMP(6) NOT NULL
+		done_time TIMESTAMP(6) NOT NULL,
+		INDEX idx_done_time(done_time) COMMENT "accelerate the speed when syncing done watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
@@ -1238,8 +1240,12 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version223 = 223
 
+	// version 224
+	// add idx_start_time index to tidb_runaway_watch and idx_done_time index to tidb_runaway_watch_done.
+	version224 = 224
+
 	// ...
-	// [version223, version238] is the version range reserved for patches of 8.5.x
+	// [version224, version238] is the version range reserved for patches of 8.5.x
 	// ...
 
 	// next version should start with 239
@@ -1247,7 +1253,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version223
+var currentBootstrapVersion int64 = version224
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1426,6 +1432,7 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+		upgradeToVer224,
 	}
 )
 
@@ -3300,6 +3307,15 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
+}
+
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
 }
 
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
