@@ -139,9 +139,9 @@ func TestGlobalIndexVersion0(t *testing.T) {
 
 	require.NotNil(t, globalIdx, "Global index idx_ab not found")
 	require.True(t, globalIdx.Global, "Index should be global")
-	// Version V1 is now default for unique nullable indexes
-	require.Equal(t, model.GlobalIndexVersionV1, globalIdx.GlobalIndexVersion,
-		"Global index should have version %d", model.GlobalIndexVersionV1)
+	// Version V2 is now default for unique nullable indexes
+	require.Equal(t, model.GlobalIndexVersionV2, globalIdx.GlobalIndexVersion,
+		"Global index should have version %d", model.GlobalIndexVersionV2)
 
 	// Verify that clustered tables get V0 global indexes
 	tk.MustExec(`CREATE TABLE tpc (
