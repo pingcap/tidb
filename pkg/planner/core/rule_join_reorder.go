@@ -697,10 +697,10 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
 				if !isCol0 || !isCol1 {
 					if !isCol0 {
-						leftPlan, rCol = s.injectExpr(leftPlan, newSf.GetArgs()[0])
+						leftPlan, rCol = logicalop.InjectExpr(leftPlan, newSf.GetArgs()[0])
 					}
 					if !isCol1 {
-						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
+						rightPlan, lCol = logicalop.InjectExpr(rightPlan, newSf.GetArgs()[1])
 					}
 					leftNode, rightNode = leftPlan, rightPlan
 					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(),
@@ -711,16 +711,6 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		}
 	}
 	return
-}
-
-func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
-	proj, ok := p.(*logicalop.LogicalProjection)
-	if !ok {
-		proj = logicalop.LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(p.Schema().Clone())
-		proj.SetChildren(p)
-	}
-	return proj, proj.AppendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.

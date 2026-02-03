@@ -507,10 +507,10 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 			if !isCol0 || !isCol1 {
 				var lCol, rCol expression.Expression
 				if !isCol0 {
-					left, rCol = injectExpr(left, swapped.GetArgs()[0])
+					left, rCol = logicalop.InjectExpr(left, swapped.GetArgs()[0])
 				}
 				if !isCol1 {
-					right, lCol = injectExpr(right, swapped.GetArgs()[1])
+					right, lCol = logicalop.InjectExpr(right, swapped.GetArgs()[1])
 				}
 				swapped = expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(),
 					rCol, lCol).(*expression.ScalarFunction)
@@ -521,24 +521,6 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 		return nil, errors.New("eq condition does not match join sides")
 	}
 	return res, nil
-}
-
-// gjt todo duplicated code with old implementation
-func injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
-	proj, ok := p.(*logicalop.LogicalProjection)
-	if !ok {
-		proj = logicalop.LogicalProjection{Exprs: cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(p.Schema().Clone())
-		proj.SetChildren(p)
-	}
-	return proj, proj.AppendExpr(expr)
-}
-func cols2Exprs(cols []*expression.Column) []expression.Expression {
-	exprs := make([]expression.Expression, 0, len(cols))
-	for _, c := range cols {
-		exprs = append(exprs, c)
-	}
-	return exprs
 }
 
 func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*vertexJoinMethodHint) (*logicalop.LogicalJoin, error) {

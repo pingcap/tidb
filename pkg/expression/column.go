@@ -870,3 +870,11 @@ func (col *Column) MemoryUsage() (sum int64) {
 	}
 	return
 }
+
+func Cols2Exprs(cols []*Column) []Expression {
+	exprs := make([]Expression, 0, len(cols))
+	for _, c := range cols {
+		exprs = append(exprs, c)
+	}
+	return exprs
+}
