@@ -22,7 +22,7 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
@@ -46,7 +46,7 @@ type KVReader struct {
 func NewKVReader(
 	ctx context.Context,
 	name string,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	initFileOffset uint64,
 	bufSize int,
 ) (*KVReader, error) {

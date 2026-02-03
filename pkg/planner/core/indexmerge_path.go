@@ -134,6 +134,10 @@ func generateNormalIndexPartialPath(
 	item expression.Expression,
 	candidatePath *util.AccessPath,
 ) (paths *util.AccessPath, needSelection bool) {
+	// Reject partial index first.
+	if candidatePath.Index != nil && candidatePath.Index.HasCondition() {
+		return nil, false
+	}
 	pushDownCtx := util.GetPushDownCtx(ds.SCtx())
 	cnfItems := expression.SplitCNFItems(item)
 	pushedDownCNFItems := make([]expression.Expression, 0, len(cnfItems))
@@ -384,7 +388,7 @@ func generateANDIndexMerge4NormalIndex(ds *logicalop.DataSource, normalPathCnt i
 	}
 
 	// 3. Estimate the row count after partial paths.
-	sel, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
+	sel, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, partialFilters, nil)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		sel = cost.SelectionFactor

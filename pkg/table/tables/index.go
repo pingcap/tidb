@@ -235,15 +235,6 @@ out:
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
 func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			err = errors.Errorf("panic in MeetPartialCondition: %v", r)
-			intest.Assert(false, "should never panic in MeetPartialCondition")
-			logutil.BgLogger().Warn("panic in MeetPartialCondition", zap.Error(err), zap.Any("recover message", r))
-		}
-	}()
-
 	if c.conditionExpr == nil {
 		return true, nil
 	}
@@ -252,7 +243,20 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 	defer c.conditionEvalBufferPool.Put(evalBuffer)
 	evalBuffer.SetDatums(row...)
 
-	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), evalBuffer.ToRow())
+	return c.MeetPartialConditionWithChunk(evalBuffer.ToRow())
+}
+
+func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			err = errors.Errorf("panic in MeetPartialConditionWithChunk: %v", r)
+			intest.Assert(false, "should never panic in MeetPartialConditionWithChunk")
+			logutil.BgLogger().Warn("panic in MeetPartialConditionWithChunk", zap.Error(err), zap.Any("recover message", r))
+		}
+	}()
+
+	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), row)
 	if err != nil {
 		return false, err
 	}
@@ -393,9 +397,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			}
 			if !ignoreAssertion && !untouched {
 				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
-					err = txn.SetAssertion(key, kv.SetAssertUnknown)
+					err = setAssertion(txn, key, kv.AssertUnknown)
 				} else {
-					err = txn.SetAssertion(key, kv.SetAssertNotExist)
+					err = setAssertion(txn, key, kv.AssertNotExist)
 				}
 			}
 			if err != nil {
@@ -434,7 +438,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
 						if id == partHandle.PartitionID {
 							// Simply overwrite it
-							err = txn.SetAssertion(key, kv.SetAssertUnknown)
+							err = setAssertion(txn, key, kv.AssertUnknown)
 							if err != nil {
 								return nil, err
 							}
@@ -519,9 +523,9 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {
-				err = txn.SetAssertion(key, kv.SetAssertUnknown)
+				err = setAssertion(txn, key, kv.AssertUnknown)
 			} else {
-				err = txn.SetAssertion(key, kv.SetAssertNotExist)
+				err = setAssertion(txn, key, kv.AssertNotExist)
 			}
 			if err != nil {
 				return nil, err
@@ -630,7 +634,7 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 		}
 		if c.idxInfo.State == model.StatePublic {
 			// If the index is in public state, delete this index means it must exists.
-			err = txn.SetAssertion(key, kv.SetAssertExist)
+			err = setAssertion(txn, key, kv.AssertExist)
 		}
 		if err != nil {
 			return err

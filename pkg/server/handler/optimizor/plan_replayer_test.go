@@ -93,6 +93,9 @@ func prepareServerAndClientForTest(t *testing.T, store kv.Storage, dom *domain.D
 	cfg.Status.StatusPort = client.StatusPort
 	cfg.Status.ReportStatus = true
 
+	// RunInGoTestChan is a global channel and will be closed after the first server starts.
+	// Recreate it to avoid racing on subsequent server starts in the same test binary.
+	server.RunInGoTestChan = make(chan struct{})
 	srv, err := server.NewServer(cfg, driver)
 	srv.SetDomain(dom)
 	require.NoError(t, err)
@@ -217,6 +220,75 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.Contains(t, string(body), "can't find dump file")
 }
 
+func TestPlanReplayerLoadWithSemicolonInColumnComment(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
+	store := testkit.CreateMockStore(t)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server, client := prepareServerAndClientForTest(t, store, dom)
+	defer server.Close()
+
+	db, err := sql.Open("mysql", client.GetDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create database planReplayerSemicolon")
+	tk.MustExec("use planReplayerSemicolon")
+	tk.MustExec("create table t(k1 int, k2 int comment 'xx;xxx')")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("plan replayer dump explain select * from t")
+	require.True(t, rows.Next(), "unexpected data")
+	var filename string
+	require.NoError(t, rows.Scan(&filename))
+	require.NoError(t, rows.Close())
+
+	resp, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	path := t.TempDir()
+	path = filepath.Join(path, "plan_replayer.zip")
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+	_, err = io.Copy(fp, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.NoError(t, fp.Sync())
+
+	db2, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+	}))
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db2.Close()
+		require.NoError(t, err)
+	}()
+	tk2 := testkit.NewDBTestKit(t, db2)
+	tk2.MustExec("use planReplayerSemicolon")
+	tk2.MustExec(`SET FOREIGN_KEY_CHECKS = 0;`)
+	tk2.MustExec("drop table planReplayerSemicolon.t")
+	tk2.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
+	tk2.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+	tk2.MustExec("use planReplayerSemicolon")
+	rows = tk2.MustQuery("show create table t")
+	require.True(t, rows.Next(), "unexpected data")
+}
+
 // prepareData4PlanReplayer trigger tidb to dump 2 plan replayer files,
 // one by manual command, the other by capture, and return the filenames.
 func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) (string, string) {
@@ -239,12 +311,12 @@ func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerC
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("insert into t values(1), (2), (3), (4)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values(5), (6), (7), (8)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("INSERT INTO tt (a, b) VALUES (1, 'str1'), (2, 'str2'), (3, 'str3'), (4, 'str4'),(5, 'str5'), (6, 'str6'), (7, 'str7'), (8, 'str8'),(9, 'str9'), (10, 'str10'), (11, 'str11'), (12, 'str12'),(13, 'str13'), (14, 'str14'), (15, 'str15'), (16, 'str16'),(17, 'str17'), (18, 'str18'), (19, 'str19'), (20, 'str20'),(21, 'str21'), (22, 'str22'), (23, 'str23'), (24, 'str24'),(25, 'str25'), (26, 'str26'), (27, 'str27'), (28, 'str28'),(29, 'str29'), (30, 'str30'), (31, 'str31'), (32, 'str32'),(33, 'str33'), (34, 'str34'), (35, 'str35'), (36, 'str36'),(37, 'str37'), (38, 'str38'), (39, 'str39'), (40, 'str40'),(41, 'str41'), (42, 'str42'), (43, 'str43'), (44, 'str44'),(45, 'str45'), (46, 'str46'), (47, 'str47'), (48, 'str48'),(49, 'str49'), (50, 'str50'), (51, 'str51'), (52, 'str52'),(53, 'str53'), (54, 'str54'), (55, 'str55'), (56, 'str56'),(57, 'str57'), (58, 'str58'), (59, 'str59'), (60, 'str60'),(61, 'str61'), (62, 'str62'), (63, 'str63'), (64, 'str64'),(65, 'str65'), (66, 'str66'), (67, 'str67'), (68, 'str68'),(69, 'str69'), (70, 'str70'), (71, 'str71'), (72, 'str72'),(73, 'str73'), (74, 'str74'), (75, 'str75'), (76, 'str76'),(77, 'str77'), (78, 'str78'), (79, 'str79'), (80, 'str80'),(81, 'str81'), (82, 'str82'), (83, 'str83'), (84, 'str84'),(85, 'str85'), (86, 'str86'), (87, 'str87'), (88, 'str88'),(89, 'str89'), (90, 'str90'), (91, 'str91'), (92, 'str92'),(93, 'str93'), (94, 'str94'), (95, 'str95'), (96, 'str96'),(97, 'str97'), (98, 'str98'), (99, 'str99'), (100, 'str100');")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table tt")
 	rows := tk.MustQuery("plan replayer dump explain select * from t")
 	require.True(t, rows.Next(), "unexpected data")
@@ -359,6 +431,8 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 		config.AllowAllFiles = true
 	}))
 	require.NoError(t, err, "Error connecting")
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -374,15 +448,31 @@ func TestPlanReplayerWithMultiForeignKey(t *testing.T) {
 	tk.MustExec("drop table planReplayer.c")
 	tk.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+	tk.MustExec("use planReplayer")
+	tk.MustExec("set @@tidb_use_plan_baselines = 1")
+
+	rows := tk.MustQuery("select @@global.tidb_mem_quota_binding_cache")
+	require.True(t, rows.Next(), "unexpected data")
+	var originBindingCacheQuota int64
+	require.NoError(t, rows.Scan(&originBindingCacheQuota))
+	require.NoError(t, rows.Close())
+	tk.MustExec("set global tidb_mem_quota_binding_cache = 268435456") // 256MB
+	defer tk.MustExec(fmt.Sprintf("set global tidb_mem_quota_binding_cache = %d", originBindingCacheQuota))
+
 	tk.MustExec("admin reload bindings")
 	// 3-3. check whether binding takes effect
-	tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
-	rows := tk.MustQuery("select @@last_plan_from_binding")
-	require.True(t, rows.Next(), "unexpected data")
-	var count int64
-	err = rows.Scan(&count)
-	require.NoError(t, err)
-	require.Equal(t, int64(1), count)
+	require.Eventually(t, func() bool {
+		tk.MustExec(`select a, b from t where a in (1, 2, 3)`)
+		rows := tk.MustQuery("select @@last_plan_from_binding")
+		if !rows.Next() {
+			_ = rows.Close()
+			return false
+		}
+		var count int64
+		err := rows.Scan(&count)
+		_ = rows.Close()
+		return err == nil && count == int64(1)
+	}, 10*time.Second, 100*time.Millisecond)
 }
 
 func TestIssue43192(t *testing.T) {
@@ -475,7 +565,7 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
 	tk.MustExec("INSERT INTO t (a, b) VALUES (1, 1), (2, 2), (3, 3), (4, 4),(5, 5), (6, 6), (7, 7), (8, 8),(9, 9), (10, 10), (11, 11), (12, 12),(13, 13), (14, 14), (15, 15), (16, 16),(17, 17), (18, 18), (19, 19), (20, 20),(21, 21), (22, 22), (23, 23), (24, 24),(25, 25), (26, 26), (27, 27), (28, 28),(29, 29), (30, 30), (31, 31), (32, 32),(33, 33), (34, 34), (35, 35), (36, 36),(37, 37), (38, 38), (39, 39), (40, 40),(41, 41), (42, 42), (43, 43), (44, 44),(45, 45), (46, 46), (47, 47), (48, 48),(49, 49), (50, 50), (51, 51), (52, 52),(53, 53), (54, 54), (55, 55), (56, 56),(57, 57), (58, 58), (59, 59), (60, 60),(61, 61), (62, 62), (63, 63), (64, 64),(65, 65), (66, 66), (67, 67), (68, 68),(69, 69), (70, 70), (71, 71), (72, 72),(73, 73), (74, 74), (75, 75), (76, 76),(77, 77), (78, 78), (79, 79), (80, 80),(81, 81), (82, 82), (83, 83), (84, 84),(85, 85), (86, 86), (87, 87), (88, 88),(89, 89), (90, 90), (91, 91), (92, 92),(93, 93), (94, 94), (95, 95), (96, 96),(97, 97), (98, 98), (99, 99), (100, 100);")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	tk.MustExec("analyze table t")
 
 	require.NoError(t, err)
@@ -487,6 +577,13 @@ func prepareData4Issue43192(t *testing.T, client *testserverclient.TestServerCli
 	require.NoError(t, rows.Close())
 	rows = tk.MustQuery("select @@tidb_last_plan_replayer_token")
 	require.True(t, rows.Next(), "unexpected data")
+	var token string
+	require.NoError(t, rows.Scan(&token))
+	require.NoError(t, rows.Close())
+	require.Equal(t, filename, token)
+
+	// Cleanup the binding created for dumping to avoid interference when the same server later loads the replayer file.
+	tk.MustExec("drop global binding for select a, b from t where a in (1, 2, 3)")
 	return filename
 }
 
@@ -494,6 +591,8 @@ func prepareData4Issue56458(t *testing.T, client *testserverclient.TestServerCli
 	h := dom.StatsHandle()
 	db, err := sql.Open("mysql", client.GetDSN())
 	require.NoError(t, err, "Error connecting")
+	db.SetMaxOpenConns(1)
+	db.SetMaxIdleConns(1)
 	defer func() {
 		err := db.Close()
 		require.NoError(t, err)
@@ -702,7 +801,7 @@ func testIssue64802(t *testing.T, injectedPanic bool) {
 	tk := testkit.NewDBTestKit(t, db)
 	tk.MustExec("use test")
 	tk.MustExec("drop table test.test_table")
-	tk.MustExec(`truncate table mysql.bind_info;`)
+	tk.MustExec(`delete from mysql.bind_info;`)
 	tk.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
 	// 3-3. check whether binding takes effect
 	tk.MustExec(`SELECT t1.id, IFNULL(t1.value1, 0) AS value1, IFNULL(t2.value2, 0) AS value2

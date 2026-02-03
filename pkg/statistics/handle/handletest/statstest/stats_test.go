@@ -195,7 +195,7 @@ func TestStatsCacheProcess(t *testing.T) {
 
 	// Insert more rows
 	testKit.MustExec("insert into t values(2, 3)")
-	require.NoError(t, do.StatsHandle().DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 	require.NoError(t, do.StatsHandle().Update(context.Background(), is))
 	newVersion = do.StatsHandle().MaxTableStatsVersion()
 	require.NotEqual(t, currentVersion, newVersion, "update with no table should move forward the stats cache version")
@@ -480,7 +480,7 @@ func TestInitStats(t *testing.T) {
 	// Handle DDL event to init the stats meta and histogram meta.
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -572,7 +572,7 @@ func TestInitStatsForPartitionedTable(t *testing.T) {
 	// Handle DDL event to init the stats meta and histogram meta.
 	err = statstestutil.HandleNextDDLEventWithTxn(h)
 	require.NoError(t, err)
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 	require.NoError(t, h.Update(context.Background(), is))
 	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
 	require.NoError(t, err)
@@ -668,7 +668,7 @@ func TestInitStatsWithoutHandlingDDLEvent(t *testing.T) {
 	h := dom.StatsHandle()
 	is := dom.InfoSchema()
 	tk.MustExec("insert into t values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
-	require.NoError(t, h.DumpStatsDeltaToKV(true))
+	tk.MustExec("flush stats_delta")
 
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
 	require.NoError(t, err)
@@ -804,7 +804,7 @@ func TestInitStatsIssue41938(t *testing.T) {
 }
 
 func TestDumpStatsDeltaInBatch(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
 	testKit.MustExec("use test")
 	testKit.MustExec("create table t1 (c1 int, c2 int)")
@@ -813,8 +813,7 @@ func TestDumpStatsDeltaInBatch(t *testing.T) {
 	testKit.MustExec("insert into t2 values (1, 1), (2, 2), (3, 3)")
 
 	// Dump stats delta in one batch.
-	handle := dom.StatsHandle()
-	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	testKit.MustExec("flush stats_delta")
 
 	// Check the mysql.stats_meta table.
 	rows := testKit.MustQuery("select modify_count, count, version from mysql.stats_meta order by table_id").Rows()
@@ -830,4 +829,93 @@ func TestDumpStatsDeltaInBatch(t *testing.T) {
 		rows[1][2],
 		"The version of two tables should be the same because they are dumped in the same transaction.",
 	)
+}
+
+func TestInitStatsForTableWithTopNButNoBuckets(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t2(a int, b int, c int, primary key(a), key idx(b))")
+	tk.MustExec("insert into t2 values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,7,8)")
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t2", "c")
+	tk.MustExec("analyze table t2")
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
+	require.NoError(t, err)
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats2 := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.True(t, tableStats2.IsAnalyzed())
+	// Check index stats
+	require.Equal(t, 1, tableStats2.IdxNum())
+	idx := tableStats2.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, idx)
+	require.True(t, tableStats2.ColAndIdxExistenceMap.Has(idx.ID, true))
+	require.True(t, tableStats2.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
+	require.True(t, idx.IsStatsInitialized())
+	require.True(t, idx.IsFullLoad())
+	require.Equal(t, uint64(6), idx.TopN.TotalCount())
+	require.Equal(t, float64(6), idx.TotalRowCount())
+	require.Equal(t, 0, idx.Len())
+}
+
+// TestInitStatsMemoryFullBlocksBucketsButKeepsTopN tests a scenario where:
+// - Table has both TopN and buckets in storage
+// - Memory becomes full after TopN load
+// - TopN should be loaded but buckets should be blocked
+func TestInitStatsMemoryFullBlocksBucketsButKeepsTopN(t *testing.T) {
+	restore := config.RestoreFunc()
+	defer restore()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Performance.LiteInitStats = false
+	})
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	// Create a table with enough data to generate both TopN and buckets
+	tk.MustExec("create table t(a int, b int, c int, primary key(a), key idx(b))")
+	// Insert more data to ensure buckets are generated (not just TopN)
+	for i := 0; i < 100; i++ {
+		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d, %d)", i, i, i))
+	}
+	h := dom.StatsHandle()
+	is := dom.InfoSchema()
+	analyzehelper.TriggerPredicateColumnsCollection(t, tk, store, "t", "c")
+	tk.MustExec("analyze table t with 2 topn, 3 buckets")
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	// Verify the table has buckets before testing
+	rows := tk.MustQuery("select count(*) from mysql.stats_buckets where table_id = " +
+		fmt.Sprintf("%d", tbl.Meta().ID) + " and is_index = 1").Rows()
+	bucketCount := rows[0][0].(string)
+	require.NotEqual(t, "0", bucketCount, "table should have buckets for this test")
+
+	// Simulate memory becoming full before buckets are loaded, so buckets are blocked.
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/statistics/handle/mockBucketsLoadMemoryLimit", "return(1)"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/statistics/handle/mockBucketsLoadMemoryLimit"))
+	}()
+
+	h.Clear()
+	require.NoError(t, h.InitStats(context.Background(), is))
+	tableStats := h.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
+	require.True(t, tableStats.IsAnalyzed())
+
+	// Check index stats - TopN should be loaded while buckets are blocked.
+	require.Equal(t, 1, tableStats.IdxNum())
+	idx := tableStats.GetIdx(tbl.Meta().Indices[0].ID)
+	require.NotNil(t, idx)
+	require.True(t, tableStats.ColAndIdxExistenceMap.Has(idx.ID, true))
+	require.True(t, tableStats.ColAndIdxExistenceMap.HasAnalyzed(idx.ID, true))
+	require.True(t, idx.IsStatsInitialized())
+	require.False(t, idx.IsFullLoad(), "index should not be FullLoad because buckets are blocked")
+	// TopN should be loaded, but buckets should not be loaded
+	require.NotNil(t, idx.TopN, "TopN should be loaded before buckets are blocked")
+	require.Greater(t, idx.TopN.TotalCount(), uint64(0), "TopN should have entries")
+	require.Greater(t, idx.TotalRowCount(), float64(0), "TotalRowCount should be populated by TopN")
+	require.Equal(t, 0, idx.Len(), "histogram should have no buckets loaded")
 }

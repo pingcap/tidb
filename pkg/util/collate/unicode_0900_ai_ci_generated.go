@@ -157,3 +157,8 @@ func (uc *unicode0900AICICollator) ImmutablePrefixKey(str string, prefixCharCoun
 	prefixStr := str[:stringutil.GetCharsByteCount(str, prefixCharCount)]
 	return uc.ImmutableKey(uc.impl.Preprocess(prefixStr))
 }
+
+// MaxKeyLen implements Collator interface.
+func (uc *unicode0900AICICollator) MaxKeyLen(s string) int {
+	return utf8.RuneCountInString(s) * 16
+}

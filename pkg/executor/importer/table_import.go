@@ -30,7 +30,6 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	tidb "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -48,6 +47,7 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -318,7 +318,7 @@ func (ti *TableImporter) GetKVStore() tidbkv.Storage {
 func (e *LoadDataController) getParser(ctx context.Context, chunk *checkpoints.ChunkCheckpoint) (mydump.Parser, error) {
 	info := LoadDataReaderInfo{
 		Opener: func(ctx context.Context) (io.ReadSeekCloser, error) {
-			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, e.dataStore, storage.DecompressConfig{
+			reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, e.dataStore, compressedio.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 			if err != nil {
@@ -549,6 +549,7 @@ func (ti *TableImporter) OpenDataEngine(ctx context.Context, engineID int32) (*b
 func (ti *TableImporter) ImportAndCleanup(ctx context.Context, closedEngine *backend.ClosedEngine) (int64, error) {
 	var kvCount int64
 	importErr := closedEngine.Import(ctx, ti.regionSplitSize, ti.regionSplitKeys)
+	failpoint.InjectCall("mockDataEngineImportErr", &importErr)
 	if common.ErrFoundDuplicateKeys.Equal(importErr) {
 		importErr = local.ConvertToErrFoundConflictRecords(importErr, ti.encTable)
 	}

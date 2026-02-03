@@ -97,6 +97,15 @@ func (b *PBPlanBuilder) pbToPhysicalPlan(e *tipb.Executor, subPlan base.Physical
 		for i, col := range limit.Schema().Columns {
 			col.Index = i
 		}
+		if memTable, ok := p.Children()[0].(*physicalop.PhysicalMemTable); ok {
+			if extractor, ok := memTable.Extractor.(*SlowQueryExtractor); ok {
+				end := limit.Offset + limit.Count
+				if end < limit.Offset {
+					end = ^uint64(0)
+				}
+				extractor.SetRowLimitHint(end)
+			}
+		}
 	}
 	return p, err
 }
@@ -285,8 +294,8 @@ func (*PBPlanBuilder) pbToKill(e *tipb.Executor) (base.PhysicalPlan, error) {
 		ConnectionID: e.Kill.ConnID,
 		Query:        e.Kill.Query,
 	}
-	simple := Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+	simple := &Simple{Statement: node, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	return &PhysicalPlanWrapper{Inner: simple}, nil
 }
 
 func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan, error) {
@@ -297,8 +306,20 @@ func (b *PBPlanBuilder) pbToBroadcastQuery(e *tipb.Executor) (base.PhysicalPlan,
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	simple := Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
-	return &PhysicalSimpleWrapper{Inner: simple}, nil
+
+	var innerPlan base.Plan
+	switch x := stmt.(type) {
+	case *ast.AdminStmt:
+		if x.Tp != ast.AdminReloadBindings {
+			return nil, errors.Errorf("unexpected admin statement %s in broadcast query", *e.BroadcastQuery.Query)
+		}
+		innerPlan = &SQLBindPlan{SQLBindOp: OpReloadBindings, IsFromRemote: true}
+	case *ast.RefreshStatsStmt:
+		innerPlan = &Simple{Statement: stmt, IsFromRemote: true, ResolveCtx: resolve.NewContext()}
+	default:
+		return nil, errors.Errorf("unexpected statement %s in broadcast query", *e.BroadcastQuery.Query)
+	}
+	return &PhysicalPlanWrapper{Inner: innerPlan}, nil
 }
 
 func (b *PBPlanBuilder) predicatePushDown(physicalPlan base.PhysicalPlan, predicates []expression.Expression) ([]expression.Expression, base.PhysicalPlan) {

@@ -76,6 +76,8 @@ type Collator interface {
 	//   prefixCharCount: 3
 	//   only "123" will be converted and returned
 	ImmutablePrefixKey(str string, prefixCharCount int) []byte
+	// MaxKeyLen returns the max length of the collate key for str
+	MaxKeyLen(string) int
 }
 
 // WildcardPattern is the interface used for wildcard pattern match.

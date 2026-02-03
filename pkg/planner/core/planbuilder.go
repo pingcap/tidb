@@ -29,7 +29,6 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
@@ -39,6 +38,8 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/metadef"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
@@ -1240,23 +1241,32 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 	fillContentForTablePath(tablePath, tblInfo)
 	publicPaths = append(publicPaths, tablePath)
 
-	if tblInfo.TiFlashReplica == nil {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
-	} else if !tblInfo.TiFlashReplica.Available {
-		ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
-	} else {
-		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
-	}
-
 	// consider hypo TiFlash replicas
+	isHypoTiFlashReplica := false
 	if ctx.GetSessionVars().StmtCtx.InExplainStmt && ctx.GetSessionVars().HypoTiFlashReplicas != nil {
 		hypoReplicas := ctx.GetSessionVars().HypoTiFlashReplicas
 		originalTableName := tblInfo.Name.L
 		if hypoReplicas[dbName.L] != nil {
 			if _, ok := hypoReplicas[dbName.L][originalTableName]; ok {
-				publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+				isHypoTiFlashReplica = true
 			}
 		}
+	}
+
+	if tblInfo.TiFlashReplica == nil {
+		if isHypoTiFlashReplica {
+			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because there aren't tiflash replicas of table `" + tblInfo.Name.O + "`.")
+		}
+	} else if !tblInfo.TiFlashReplica.Available {
+		if isHypoTiFlashReplica {
+			publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
+		} else {
+			ctx.GetSessionVars().RaiseWarningWhenMPPEnforced("MPP mode may be blocked because tiflash replicas of table `" + tblInfo.Name.O + "` not ready.")
+		}
+	} else {
+		publicPaths = append(publicPaths, genTiFlashPath(tblInfo))
 	}
 
 	optimizerUseInvisibleIndexes := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
@@ -1473,16 +1483,17 @@ func getPossibleAccessPaths(ctx base.PlanContext, tableHints *hint.PlanHints, in
 		available = append(available, tablePath)
 	}
 
-	// If all available paths are Multi-Valued Index, it's possible that the only multi-valued index is inapplicable,
+	// If all available paths are Multi-Valued Index, Partial index or other index that need to check its usability in later phase,
+	// it's possible that all these path are inapplicable,
 	// so that the table paths are still added here to avoid failing to find any physical plan.
-	allMVIIndexPath := true
+	allUndeterminedPath := true
 	for _, availablePath := range available {
-		if !isMVIndexPath(availablePath) {
-			allMVIIndexPath = false
+		if !availablePath.IsUndetermined() {
+			allUndeterminedPath = false
 			break
 		}
 	}
-	if allMVIIndexPath {
+	if allUndeterminedPath {
 		available = append(available, tablePath)
 	}
 
@@ -1668,6 +1679,8 @@ func (b *PlanBuilder) buildAdmin(ctx context.Context, as *ast.AdminStmt) (base.P
 		return nil, errors.Errorf("Cannot enable baseline evolution feature, it is not generally available now")
 	case ast.AdminReloadBindings:
 		return &SQLBindPlan{SQLBindOp: OpReloadBindings}, nil
+	case ast.AdminReloadClusterBindings:
+		return &SQLBindPlan{SQLBindOp: OpReloadClusterBindings}, nil
 	case ast.AdminReloadStatistics:
 		return &Simple{Statement: as, ResolveCtx: b.resolveCtx}, nil
 	case ast.AdminFlushPlanCache:
@@ -4784,13 +4797,13 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		if err != nil {
 			return nil, exeerrors.ErrLoadDataInvalidURI.FastGenByArgs(ImportIntoDataSource, err.Error())
 		}
-		importFromServer = storage.IsLocal(u)
+		importFromServer = objstore.IsLocal(u)
 		// for SEM v2, they are checked by configured rules.
 		if semv1.IsEnabled() {
 			if importFromServer {
 				return nil, plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO from server disk")
 			}
-			if kerneltype.IsNextGen() && storage.IsS3(u) {
+			if kerneltype.IsNextGen() && objstore.IsS3Like(u) {
 				if err := checkNextGenS3PathWithSem(u); err != nil {
 					return nil, err
 				}
@@ -4800,9 +4813,9 @@ func (b *PlanBuilder) buildImportInto(ctx context.Context, ld *ast.ImportIntoStm
 		// share the same AWS role to access import-into source data bucket, this
 		// external ID can be used to restrict the access only to the current tenant.
 		// when SEM enabled, we need set it.
-		if kerneltype.IsNextGen() && sem.IsEnabled() && storage.IsS3(u) {
+		if kerneltype.IsNextGen() && sem.IsEnabled() && objstore.IsS3Like(u) {
 			values := u.Query()
-			values.Set(storage.S3ExternalID, config.GetGlobalKeyspaceName())
+			values.Set(s3like.S3ExternalID, config.GetGlobalKeyspaceName())
 			u.RawQuery = values.Encode()
 			ld.Path = u.String()
 		}
@@ -6445,8 +6458,8 @@ func checkNextGenS3PathWithSem(u *url.URL) error {
 	values := u.Query()
 	for k := range values {
 		lowerK := strings.ToLower(k)
-		if lowerK == storage.S3ExternalID {
-			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with S3 external ID")
+		if lowerK == s3like.S3ExternalID {
+			return plannererrors.ErrNotSupportedWithSem.GenWithStackByArgs("IMPORT INTO with explicit external ID")
 		}
 	}
 

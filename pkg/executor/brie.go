@@ -29,7 +29,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/br/pkg/task"
 	"github.com/pingcap/tidb/br/pkg/task/show"
 	"github.com/pingcap/tidb/pkg/config"
@@ -39,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -288,7 +288,7 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 	cfg.PD = pds
 	cfg.TLS = tlsCfg
 
-	storageURL, err := storage.ParseRawURL(s.Storage)
+	storageURL, err := objstore.ParseRawURL(s.Storage)
 	if err != nil {
 		b.err = errors.Annotate(err, "invalid destination URL")
 		return nil
@@ -296,9 +296,9 @@ func (b *executorBuilder) buildBRIE(s *ast.BRIEStmt, schema *expression.Schema) 
 
 	switch storageURL.Scheme {
 	case "s3":
-		storage.ExtractQueryParameters(storageURL, &cfg.S3)
+		objstore.ExtractQueryParameters(storageURL, &cfg.S3)
 	case "gs", "gcs":
-		storage.ExtractQueryParameters(storageURL, &cfg.GCS)
+		objstore.ExtractQueryParameters(storageURL, &cfg.GCS)
 
 	// Only check `semv1.IsEnabled()` because in SEM v2, the statement will be limited by `RESTRICTED_SQL` configuration in
 	// `(b *PlanBuilder).Build`. `sql_rule.go` is used to define the highly customized SQL rules to filter these statements.
@@ -787,8 +787,8 @@ func (gs *tidbGlueSession) ExecuteInternal(ctx context.Context, sql string, args
 	return err
 }
 
-// CreateDatabase implements glue.Session
-func (gs *tidbGlueSession) CreateDatabase(_ context.Context, schema *model.DBInfo) error {
+// CreateDatabaseOnExistError implements glue.Session
+func (gs *tidbGlueSession) CreateDatabaseOnExistError(_ context.Context, schema *model.DBInfo) error {
 	return BRIECreateDatabase(gs.se, schema, "")
 }
 

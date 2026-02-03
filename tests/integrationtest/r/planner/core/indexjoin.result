@@ -5,10 +5,10 @@ insert into t values(1, 1), (1, 2), (1, 3);
 insert into t1 values(1, 1), (1, 2);
 explain format='plan_tree' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
 id	task	access object	operator info
-IndexJoin	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column#7)
+IndexJoin	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column)
 ├─IndexReader(Build)	root		index:IndexFullScan
 │ └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
-└─Projection(Probe)	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column#7
+└─Projection(Probe)	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column
   └─IndexReader	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.a))
       └─IndexRangeScan	cop[tikv]	table:t1, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)], keep order:false, stats:pseudo
@@ -25,11 +25,11 @@ insert into t1 values(1, 3);
 insert into t values(1, 4);
 explain format='plan_tree' select /*+ INL_JOIN(t1) */ * from t, t1 where t.a=t1.a and t.b = t1.a+t1.b;
 id	task	access object	operator info
-IndexJoin	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column#7)
+IndexJoin	root		inner join, inner:Projection, outer key:planner__core__indexjoin.t.a, inner key:planner__core__indexjoin.t1.a, equal cond:eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a), eq(planner__core__indexjoin.t.b, Column)
 ├─UnionScan(Build)	root		not(isnull(planner__core__indexjoin.t.a))
 │ └─IndexReader	root		index:IndexFullScan
 │   └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
-└─Projection(Probe)	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column#7
+└─Projection(Probe)	root		planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b, plus(planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b)->Column
   └─UnionScan	root		not(isnull(planner__core__indexjoin.t1.a))
     └─IndexReader	root		index:Selection
       └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.a))
@@ -47,11 +47,11 @@ a	b	a	b
 rollback;
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
 id	task	access object	operator info
-Projection	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
 └─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
     └─IndexReader	root		index:Selection
       └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
         └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
@@ -65,12 +65,12 @@ a	count_b
 1	3
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.a=t1.a and tmp.count_b = t1.b;
 id	task	access object	operator info
-Projection	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a), eq(planner__core__indexjoin.t1.b, Column#4)
+Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a), eq(planner__core__indexjoin.t1.b, Column)
   ├─IndexReader(Build)	root		index:Selection
   │ └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
   │   └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
     └─IndexReader	root		index:Selection
       └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
         └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
@@ -80,11 +80,11 @@ select /*+ HASH_JOIN(tmp) */  t1.a, tmp.count_b from (select a, count(b) count_b
 a	count_b
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a, count(b) count_b from t group by a) tmp, t1 where tmp.count_b = t1.b;
 id	task	access object	operator info
-Projection	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.b, Column#4)]
-  ├─HashAgg(Build)	root		group by:planner__core__indexjoin.t.a, funcs:count(Column#8)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.b, Column)]
+  ├─HashAgg(Build)	root		group by:planner__core__indexjoin.t.a, funcs:count(Column)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
   │ └─IndexReader	root		index:HashAgg
-  │   └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#8
+  │   └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column
   │     └─IndexFullScan	cop[tikv]	table:t, index:idx(a, b)	keep order:false, stats:pseudo
   └─IndexReader(Probe)	root		index:Selection
     └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t1.b))
@@ -142,9 +142,9 @@ a	b
 1	2
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a +1 as a1, b from t group by a, b ) tmp, t1 where tmp.a1=t1.a;
 id	task	access object	operator info
-Projection	root		Column#4, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
-└─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.a, Column#4)]
-  ├─Projection(Build)	root		plus(planner__core__indexjoin.t.a, 1)->Column#4, planner__core__indexjoin.t.b
+Projection	root		Column, planner__core__indexjoin.t.b, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+└─HashJoin	root		inner join, equal:[eq(planner__core__indexjoin.t1.a, Column)]
+  ├─Projection(Build)	root		plus(planner__core__indexjoin.t.a, 1)->Column, planner__core__indexjoin.t.b
   │ └─HashAgg	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
   │   └─IndexReader	root		index:HashAgg
   │     └─HashAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
@@ -180,8 +180,8 @@ IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.
       └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select a+1 as a1, b from t where a>=1 group by a, b having a=1) tmp, t1 where tmp.a1=t1.b;
 id	task	access object	operator info
-HashJoin	root		inner join, equal:[eq(Column#4, planner__core__indexjoin.t1.b)]
-├─Projection(Build)	root		plus(planner__core__indexjoin.t.a, 1)->Column#4, planner__core__indexjoin.t.b
+HashJoin	root		inner join, equal:[eq(Column, planner__core__indexjoin.t1.b)]
+├─Projection(Build)	root		plus(planner__core__indexjoin.t.a, 1)->Column, planner__core__indexjoin.t.b
 │ └─StreamAgg	root		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a, funcs:firstrow(planner__core__indexjoin.t.b)->planner__core__indexjoin.t.b
 │   └─IndexReader	root		index:StreamAgg
 │     └─StreamAgg	cop[tikv]		group by:planner__core__indexjoin.t.a, planner__core__indexjoin.t.b, 
@@ -191,11 +191,11 @@ HashJoin	root		inner join, equal:[eq(Column#4, planner__core__indexjoin.t1.b)]
     └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ INL_JOIN(tmp) */ * from (select /*+ stream_agg() */ a, count(b) from t group by a) tmp, t1 where tmp.a=t1.a;
 id	task	access object	operator info
-Projection	root		planner__core__indexjoin.t.a, Column#4, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
+Projection	root		planner__core__indexjoin.t.a, Column, planner__core__indexjoin.t1.a, planner__core__indexjoin.t1.b
 └─IndexJoin	root		inner join, inner:StreamAgg, outer key:planner__core__indexjoin.t1.a, inner key:planner__core__indexjoin.t.a, equal cond:eq(planner__core__indexjoin.t1.a, planner__core__indexjoin.t.a)
   ├─IndexReader(Build)	root		index:IndexFullScan
   │ └─IndexFullScan	cop[tikv]	table:t1, index:idx(a, b)	keep order:false, stats:pseudo
-  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column#4, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
+  └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t.a, funcs:count(planner__core__indexjoin.t.b)->Column, funcs:firstrow(planner__core__indexjoin.t.a)->planner__core__indexjoin.t.a
     └─IndexReader	root		index:Selection
       └─Selection	cop[tikv]		not(isnull(planner__core__indexjoin.t.a))
         └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, b)	range: decided by [eq(planner__core__indexjoin.t.a, planner__core__indexjoin.t1.a)], keep order:true, stats:pseudo
@@ -227,12 +227,12 @@ CREATE TABLE `t2` ( `col_1` json DEFAULT NULL, `col_2` text NOT NULL, `col_3` va
 INSERT INTO `t2` VALUES ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2025-03-27 00:58:56','2025-03-27','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2025-03-27 00:58:56','2025-03-27','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2025-03-27 00:58:56','2012-07-14','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2025-03-27 00:58:56','2025-03-27','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2025-03-27 00:58:56','2025-03-27','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2025-03-27 00:58:56','1997-07-02','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','kWLF!Agj(OBTxWkPI',NULL,'2025-03-27 00:58:56','2013-12-01','IVdtGpX(mIhr','2032-02-27 00:00:00',6223.036), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','%',NULL,'2025-03-27 00:58:56','1996-10-09','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','S5tN6',NULL,'1999-07-06 00:00:00','2025-10-21','IVdtGpX(mIhr','2032-02-27 00:00:00',6518.5405), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','',NULL,'2025-03-27 00:58:56','1994-11-16','IVdtGpX(mIhr','2032-02-27 00:00:00',6424.037), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','))BP!2=g',NULL,'2007-06-09 00:00:00','1977-08-23','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','hcm-fJLUi',NULL,'2028-07-29 00:00:00','1979-05-15','IVdtGpX(mIhr','2032-02-27 00:00:00',5074.166), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','r',NULL,'2033-11-19 00:00:00','1975-10-29','IVdtGpX(mIhr','2032-02-27 00:00:00',4817.4575), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]',')lI(wj*u',NULL,'1972-01-30 00:00:00','2015-05-05','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','!DE&Mk4Q5(f#l(',NULL,'2000-07-28 00:00:00','2004-01-31','IVdtGpX(mIhr','2032-02-27 00:00:00',1514.1029), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','1cL~2h',NULL,'2020-10-22 00:00:00','1982-06-13','IVdtGpX(mIhr','2032-02-27 00:00:00',8787.51), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','sFG4#@9ittRxSKL_I#',NULL,'1971-12-12 00:00:00','1988-09-30','IVdtGpX(mIhr','2032-02-27 00:00:00',1720.4863), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','$',NULL,'1974-06-07 00:00:00','1990-03-12','IVdtGpX(mIhr','2032-02-27 00:00:00',4325.0986), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','4k_1',NULL,'2029-02-06 00:00:00','1971-12-06','IVdtGpX(mIhr','2032-02-27 00:00:00',4845.289), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','Xw4299j2BlHi!E)yW',NULL,'2001-10-17 00:00:00','2013-11-27','IVdtGpX(mIhr','2032-02-27 00:00:00',8842.021), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','06K&O2*s',NULL,'2030-03-23 00:00:00','2016-02-14','IVdtGpX(mIhr','2032-02-27 00:00:00',8300.924), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','(=r=DoMF',NULL,'1980-05-15 00:00:00','1996-06-29','IVdtGpX(mIhr','2032-02-27 00:00:00',889.45575), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','ZEatIL$8Kb_&&(Cxm',NULL,'2016-01-28 00:00:00','2002-08-22','IVdtGpX(mIhr','2032-02-27 00:00:00',5456.3257), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','dxQ2Gu9=D%j',NULL,'2014-07-26 00:00:00','2030-07-04','IVdtGpX(mIhr','2032-02-27 00:00:00',4507.4756), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','g',NULL,'1993-07-30 00:00:00','2022-12-05','IVdtGpX(mIhr','2032-02-27 00:00:00',2533.8955), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','wlQ5bWD16I8',NULL,'1977-01-17 00:00:00','2006-09-26','IVdtGpX(mIhr','2032-02-27 00:00:00',9339.985), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','rPjv',NULL,'2031-06-15 00:00:00','2033-03-19','IVdtGpX(mIhr','2032-02-27 00:00:00',5983.647), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','(',NULL,'2023-03-12 00:00:00','2027-03-15','IVdtGpX(mIhr','2032-02-27 00:00:00',7553.776), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','=TK-f',NULL,'2029-10-25 00:00:00','2035-10-23','IVdtGpX(mIhr','2032-02-27 00:00:00',4353.097), ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','iErjhoQ05oymN',NULL,'2012-07-27 00:00:00','1987-05-04','IVdtGpX(mIhr','2032-02-27 00:00:00',787.99646), ('[\"YrgkJXsoth7WbbS4mvWQnPNEI1qgOMikjgY54lrXbeN2kpTC1XnhIw51m3Neladx\", \"Ibr0pNEZZ8KCeCetc9jf3Yiqp7Ai4mxXuo8BBceCHga0n0nHWXxicZXbJ1YuRhRi\", \"4JzUg2wMoBiuwbMlhC6OS5OR0kATK4IkztqljU49fsdWZOFma0zMl9u4V61dcgD3\", \"eG2T3awDPq4L5Br64s7zg6DB748uDUVWFYJSbOyoHQEiygr5JThWxWlwBEEFuc5x\", \"zHruTOCLXn2aXprRfx6GrjTFi9xTNURbWpa7YwTcK35nSNtWalIpVc51vvmBRxuW\"]','!',NULL,'1972-12-04 00:00:00','2009-07-20','IVdtGpX(mIhr','2032-02-27 00:00:00',3623.0562), ('[\"821Yi2ILbhfWpXekH7NxQ895KJmdLch3tsgO08goddh3Y45OSnnsOWAHanPwi2u7\", \"ZE7c7TWWbKzzTA0lu5y8QZiIB2qaYaVW1yaQVgIo5joBsfmM5NRy57JcnnRpU2Ul\", \"HHjZdsoXA18QZveuvYAu8RtT5TgxRejeMFGVYJPxzzAuqJxufW6MecMHHZTwdcgd\"]','',NULL,'2010-08-07 00:00:00','2031-10-02','IVdtGpX(mIhr','2032-02-27 00:00:00',4971.252), ('[\"LUErkAHU4vZRC9qQz5c1lnO4vnSSnktTRymyM1TpiUCRreuoLQfRQVHBm7CCFb96\", \"hbPNufli5eTsJ7ErIG1lI9xwjxy9YiE1t3KqjNuyqLBN6Vns4TRv9NAr8xMPkTkk\", \"mmeu8rvbYFNzxy5wwFS3WrREm8ArN9AVhXlkwLH2STSeTpaMWKdJyXajRAjU556p\"]','DfTv(8*qPuB=SCG-S5p',NULL,'1997-11-12 00:00:00','1973-11-26','IVdtGpX(mIhr','2032-02-27 00:00:00',3032.7073), ('[\"PvGlcp0yizD77rcbjDME7swKB8abFlOdCiBlFseTfnJFg5Z2zTYBS95yOuXCA9MX\", \"xvICSGyMekQIDU7X5k1NWOM2s9n99AxNPSSk2nZCuww2iIcfWon3BudwJLixp9ym\"]','BBEwcbs@',NULL,'2008-07-27 00:00:00','2004-02-26','IVdtGpX(mIhr','2032-02-27 00:00:00',2515.8047), ('[\"sfgk0pX4tp63GSYwRhGEfM9njuEuxqqZnuc7O0e0YR8Hf0cC06Mpeekau7jufmYd\", \"f9nuRIBkBIsN9lhhbhCd1eVBuLdpghvFvWVsBSqEJQUz88T4dCvq2KL4NyNXr9oW\", \"kAS8E0pu7o0Zz6xGGbtZFxK9yas0m2wGBzlDLA01z2S3XoLZ8cOkpkWfVDEbFF6L\", \"H4HL6VrnDKvIq7dD2ldwA0dxM1htZ1YUhMWRpTsQwpYhHae1JbytgYYSlL8URljP\", \"xlKtawxIefTCZIHbpV63JRHI1pcZxcE0W81jwlzMYhwOA4n5Am365f0zKA9S4vCS\"]','1b*26@0!-HsZqZ',NULL,'2003-07-17 00:00:00','2008-06-03','IVdtGpX(mIhr','2032-02-27 00:00:00',8107.181), ('[\"SX5OXglaCfv1rsv6PzxoNdWMeOLBM2wBQTkwy8xo7MFWRNTVp4xU8tuTtIzwi50r\"]','m)cFFbg4Ei5',NULL,'2024-01-07 00:00:00','2018-12-03','IVdtGpX(mIhr','2032-02-27 00:00:00',5086.8306), ('[\"URfnpkSCvcKAFCI0vZXqEiqGJxWFkb15dKRHp0GmdaC45OAQjutCLg5FRrmdlh5c\", \"RkyqN5uHpUs0j3ZZLwpBvTUVonig4GubxgoUi7VzIVJ8GMnHWMnAPdtChnzagOBY\", \"DivgeeU3ub3Z6t4mTc6Amo6sgac1i8jctCHyHh3zofILVFAhaQr9AdckAjX4BvGy\"]',')uHq',NULL,'1979-08-23 00:00:00','2003-10-16','IVdtGpX(mIhr','2032-02-27 00:00:00',7238.231), ('[\"jsPqTEqdSJyBhF2iJgXN4inba8NONEm9rFcA6chE710hoLed0jhOwvi69z3VBYXn\", \"lhVCfaqgJjBghsEp9VKjAt2LvnHTjcuQMzepCC2gio6l8wM0Oak1iYLMK5BGJgQS\", \"gPubZOwxLUyJtNAGaacOPzOcGGNRz5Kfi8IT2CbIctUKZkWcolbLeITYmcVkInIS\"]','7',NULL,'1998-06-24 00:00:00','2005-07-08','IVdtGpX(mIhr','2032-02-27 00:00:00',799.3357), ('[\"1k3Lemaq0dBRrvWAakprAQxWuvx9SOgZzAlKdoFq7qXeohyvaE0v6SOnfJyQkwNU\"]','$!S*R',NULL,'2036-08-23 00:00:00','1984-02-22','IVdtGpX(mIhr','2032-02-27 00:00:00',9058.462), ('[\"CdMgswemgIz6kIiSrhUTN5AEgydCbjg3j4aTrUFJuucuM22NUkt5gstBaGPA1ZXA\", \"iCz9BMArSd1clswPL27gdHRGSSlfveXFhBtwKTTSoaedm6TqriZHO9jiycqXTPI0\", \"YP2ev5iDGOpK0LyTI3Iq3ajlytTEudETOhg8OP0vN3Tt36aerDmf2FUDeFFxKoe2\", \"b3VllWAoBUEv0hcFSOcQ0PbasdU6jw0x2h3qZPqeUo7viGkXpYLD87XnbZN511Mn\"]','Q~EkduZG*sp@~',NULL,'1980-05-02 00:00:00','2020-04-08','IVdtGpX(mIhr','2032-02-27 00:00:00',9447.873), ('[\"oFg7VQksdvntBUm0WbpKOcx9h5sxCbkWwJbxIwHISro5rY1dGMHHD8hrxao8snHH\", \"dZoefh6njlqAppwLm458cirvJuMBtbjqSmltHPldVO8OJQ2Wi9x7JCrSyqad6rhG\", \"IJnFxvm5ynks00Dk9gEGq1ZUM8f4LA7g2lX9SzzAkA6FUKBC3HpASuFcfdf4iQu8\", \"12gmGt6V7ke8mYy4llrLbtsegoo3aK6G7cXLoEPgNuPa6Sm2E6JVCkRAPAlF8kuG\", \"hBn3aE6J5C9OcWhdaZRa0KIsCac3nuyBZewa9jtmYv3SgI5yUZcT92y5zkNrIsM0\"]','!MYZaNLbMUL',NULL,'1997-09-02 00:00:00','1999-06-30','IVdtGpX(mIhr','2032-02-27 00:00:00',8170.202), ('[\"oCVlcbkjMjyzalj63sHJWJY5FYxe3z5NlJ32gL5pLqKaSogXviKp8PlZFFKxrkoB\", \"3mYAJ2FRwQjtWyjYglxD5D4mpFjHGXow7NqYMu2roijslT1jhq6F0hW2dxMup9BX\", \"ixjU6mVATMnNEqika7NUaB31j88LVY2A6YjLEHucw7ZgrWQKx1BSSVeLnriqcd2c\", \"dFNSva8W3eBgRCzDTVJJwSVBoEvga9JMal060XDdnNyLPf6QG7ekhngaTzodv0xa\"]','KMHWVW(=okU#f0-%qp',NULL,'2006-08-15 00:00:00','2023-12-05','IVdtGpX(mIhr','2032-02-27 00:00:00',3301.944), ('[\"WrAozXSWcvC7Hnbgq4vNDcU5jwMzoKZtcSk0OlipDyk491C5d1ri3N8sO1LUSOBC\", \"QzZbKLELZ10yEICH9oTQBf9FVwjp5y4OSsgBj6UL1FY3TdBjxDaJgT4MsvTJkWdU\"]','UkTKplJyANc9YR*rYL8',NULL,'2002-08-07 00:00:00','2035-12-01','IVdtGpX(mIhr','2032-02-27 00:00:00',1109.6173), ('[\"oxAKGWC7k7PogXZfTmKYiS670eQRvWduXPIpNUq5Y6jedjC6mDpnvjbUyVESRo2m\", \"8zZy2e5vJ4lDQlu4y5ZeSPLfKqKqkdmtbmyfWLFQJsXSUgvaUmVgzKNP7MjTqLS4\", \"WbBnY7jSYxLfTY47lViSkgmUn7ayMJhSC6Ps0g7Qvc2JnTlz1Ox6rMPsedFl0Siy\"]','H89eUO$4TH7^iM',NULL,'1984-03-14 00:00:00','1979-06-02','IVdtGpX(mIhr','2032-02-27 00:00:00',5248.184), ('[\"GDdee9iMKf7hbKKaFnynAdGuA417MySKkXix6cuXDs1X1BX3KH5EnGLxl2w56zsR\", \"DiPKGTXLpCaPMMtTMBur4nvpT8YorvOGFYF6RrxUToEgBWuwjQqIb1iIjA4jG6oX\", \"FrD5l44c63JpQdLsGF6PcYTuRFKv6ZtFdtJttiU2XUQdGxf7OWW72ezUZoBZv2LD\", \"W0tpPorKjXLmDWUQ52srzr3lSj0zPEgtmIWQRsmAQUKUCqOl66huE4o6WwL8mJex\", \"4Ae0dzr0FSgJpuiF7ESJuIFPhOq3YerY1XNn8qQXGURcMzMgBSuQ1VVGwprDCn38\"]','8pF',NULL,'2029-03-20 00:00:00','2009-11-06','IVdtGpX(mIhr','2032-02-27 00:00:00',4824.3594), ('[\"1KrVjjerIeHrydkrGcz6QlsdphJwAesXAKnugOWkigdvvJWYoD4qc7tAmuZbjXcB\", \"K34r0aLLqVigVetI9CPUk12MMbGaUWEtL2OItOuqlovVCBb91jWhjXbeaa2NmxA4\", \"cEBqN4CmwgYQiMcjLjbqHnQjOR6ePqZVqYdYdHn0y9LN3H9QHhNvlnudiZMQaOQS\", \"YQwNQpJDQhkWMTpRXqA6d0UF8lqSxve3ThIRxurFYL83MeYnYvzI7012cbBJKPUi\", \"Z8Bsxm6B81DsDuU81I1zLkma5NWSa9YYJ3xcDHI6ioM2rI57TecAPG5V6ZFhavSe\"]','X40Veku',NULL,'2015-01-10 00:00:00','1979-05-27','IVdtGpX(mIhr','2032-02-27 00:00:00',6170.399), ('[\"d2B37AhgJJj0DS0g7ESf0NI6riSB6ybsrzRY45a9WcVXiRSj1AbSD4mDyNDus706\"]','Ya61yU',NULL,'1984-12-18 00:00:00','2035-07-13','IVdtGpX(mIhr','2032-02-27 00:00:00',9509.278), ('[\"j5uw41kvuU8B0b4fprgrJrWgvrDvjfOlWZBNAj9NubTne9BYq6NnIoO0RKs8Z0XH\"]','84ny$ExZu',NULL,'2007-02-12 00:00:00','2017-10-31','IVdtGpX(mIhr','2032-02-27 00:00:00',7418.3467), ('[\"unM9EPoWy0SoZZvOKXIrtgB29jIa4sT69QMqkgm5PUN7kG2pIbxKkA0rFksX2TTy\"]','x&MokfBw*mJW-k2M7u',NULL,'1993-08-22 00:00:00','2016-03-15','IVdtGpX(mIhr','2032-02-27 00:00:00',1897.0829), ('[\"7Deo1fnh75p0fxaDb3MP4MSvx75oQ9WH561SApYvEDGacLrn0GUqgZBysQPY6vvd\", \"mCDivPUr9KDs0jFOCKkHxR2wMA5urc9t35ECEup5zxuN8L5yR8G7E4EkkuHDjCek\"]','pe5UCbWx2A+!~U7gFQ',NULL,'2008-03-29 00:00:00','1973-11-20','IVdtGpX(mIhr','2032-02-27 00:00:00',1482.7887), ('[\"9LAEoi4SHNsFfMkyJIEJCqSvGRkWiX7mkx5sq8Oo1pMgaOt7k2wKKJFNWRddXI4D\", \"hbtRp77fp2DL5RuQIz9xor0cAixGHBieZZ1hEDS7yNRqsPJ3hJQ7KumO5HPqkSYA\", \"d70rVAUYO8iX6iWycnvElvy4ynXjkAiCzStFrKIwQBfx4EZc46FmqeAKx9YcPyMJ\"]','Mm-eHK*mL)(C~Fwz',NULL,'2007-02-06 00:00:00','1982-05-27','IVdtGpX(mIhr','2032-02-27 00:00:00',774.41284), ('[\"IDGYv6SPRs1J5HuHSqJPuSWSs8XCl1CcyBTQTBWgL3WyPkVMVGcSbfwcplxNCsjA\", \"zZ0CBKP0OkWbXaWdgdWLPyyV9qWuOu2JqskozwWvg4s1vTdlC5plbX1iN2WaklPc\"]','!',NULL,'2001-01-20 00:00:00','1998-11-19','IVdtGpX(mIhr','2032-02-27 00:00:00',7640.187), ('[\"PxqFQxDXDmkmV7cYp2d6RUCEIlA7a57TtzyipzY8vHsD9BDlNHxZPAxCMrtMWK9J\"]','BJF2xgem=dV~1OsquzU',NULL,'2006-05-22 00:00:00','1983-06-02','IVdtGpX(mIhr','2032-02-27 00:00:00',6061.8486), ('[\"QhtYmUVOoG7AEUlKJrQqyfH6HjRFMN8ZdZ4LQtBNe51YzRnNp82PxypMz9f1wmX7\", \"T3bMNI1c8Ie5PPKEkAzBq9lLiuyfXRSHIO5yHDu3qeM9YmUyG3sM2BbFLvZjwkn5\", \"rNtleSxoDvzskoLe3DHLSv51nXLJpNBf9kP5VcKcd6HGWsAXROMuw2SDrnadNIPU\"]','Kc8$FL4lsQ3',NULL,'1975-08-13 00:00:00','2020-03-16','IVdtGpX(mIhr','2032-02-27 00:00:00',2593.0342), ('[\"DaPT5QHGKYG5oQ9g9yz6aGSsBPgjkZ8vYVVgzX4ABhYkuzDx6jU5mpk0XHLh9oP3\", \"PwRHFOwxx3i1gCPg2CnnC6y5XNPQeGNysEl8VZi5hcsvvVU2PmuzMrpBjUviG2zs\", \"DETs1bMkdyGeLoMiz3RrNjgNWJmJog84FJMxy8I9O6yUZKVhEuuvAar892mpHMvb\", \"AKI15KuWtJatDDgI5Jlq6tDJ1kIOHVYRpyX8giRaxljrmy7lg4pJYHKurUfqcFFn\"]','WfzrlbFuW(IZ=hg',NULL,'1975-09-12 00:00:00','2007-08-26','IVdtGpX(mIhr','2032-02-27 00:00:00',893.053), ('[\"twxH0f4JfEVYC3bxNsBqM1RTlhazd3iG3ghJaib8hkiQzQLES7sEVbIBzb0OEloN\", \"TMRjxdpdZSvOCPJ4jbLBeYRWBW23M9ZtB4tIjRIrjy8wfdoTfPDSl7fXU4ZqG7gU\"]','6*6M',NULL,'1975-10-06 00:00:00','2002-02-23','IVdtGpX(mIhr','2032-02-27 00:00:00',1363.9156), ('[\"mWFrALNyYSUR17EnywGaMAaSAkPG5XaSRSzKcfsK0gsuk3JKl3K5ASdDq1rsLBSg\", \"mXf659nueUvs999QAUxjugC6cUMOlpFj9kjfgHUtIEmd3U2jBFAD8zcFF8elaY9L\"]','bQ_SB+ig-z0o',NULL,'2024-05-10 00:00:00','2024-06-13','IVdtGpX(mIhr','2032-02-27 00:00:00',3232.9312), ('[\"zQdxxlMfWVvIXXCaVSl11AxKX4m3fxB16POynB28HigCNUkHqeBRlkvr4nZo73fR\", \"WVEjSX1IqZjVOB6WdO4D9CGhw5dOqUu6G7j0ImxLajVRPeR9RC4WTC9TdeJbfBjj\", \"8sKgfRlLsp5bBBYD8mjE9AYC9ovyyGxxFQRDkeKcXESvnBuwJ0llzG0Y253BeSTw\", \"nrUV7BPoGg0Q6a1EvgwJb9kX9NnB7dVxBZ6lWtJODBfQy9jrDisvfhvbE5FlMmNJ\"]','7!PMY3Cp1fp4dwUIYt',NULL,'2022-03-23 00:00:00','2032-07-08','IVdtGpX(mIhr','2032-02-27 00:00:00',646.46375), ('[\"WztSsNSbN9Qy8pm2Y2jNkZywfZKaIBR8yP9A9Nf0fL9R4772vhpxk5QMaRV17U4p\", \"O6D835hKbH31pGeqDJSCqL59JCvWsdpoK7DKYTafBiiIEWL0qkeTajv8798Cqp01\", \"dSzC3mutqyY5QgnvKzCVTDxGZCmeDErakrPJawuNu21Dw5A0LtEwZNJKI5WyRJmi\", \"YmlzWyY49TiSzI2ADP5SQzxWRh821WpiBaKv6c7rjbqmqxE8QpdW4myHvdnC4RD8\", \"5p0nnhkRZ8hi4OUB0dVmvCz8j5LnMDCSgza76b4sAwDUTzeiSUoqvJB6I0jec8fn\"]','jezTv#y#8Cj!Y%cme+',NULL,'1991-03-11 00:00:00','2001-04-17','IVdtGpX(mIhr','2032-02-27 00:00:00',2699.9775), ('[\"j5qlKArjDTIKBiAQnpZXWPIxMx1n0wJVyYgHfMLYiF9oaHnsV5x8unYEbPJxEyfh\"]','7*lD^aMm&!',NULL,'1974-11-03 00:00:00','2019-04-01','IVdtGpX(mIhr','2032-02-27 00:00:00',208.04456), ('[\"1hkLSpQqZF6IfCOMEJcDdr6ZEEKqgnq7pSb5UMj85PNeJ96CBiZTJZKv87XalbqS\", \"0cTJHiugQYUgkdm094TwOj3sfMoU1U6AWLTIg8XbTBknXfNF7P6q8tWp1C7aKoci\", \"Y5wS5JybDviKf7Jb1qJphmAVVSZ17CCsNDKBDVmEzcAPBAHE2z3SWrFCWvxiquAG\", \"L5RVLjni5FvLo4pWcRAjcibwt8WD3bRY8aH5oOuLIkLtwiQRYG1nSgpen1H5IYEu\"]','w#5P~',NULL,'1973-08-17 00:00:00','1987-02-16','IVdtGpX(mIhr','2032-02-27 00:00:00',1603.7274), ('[\"UtGLouzB4HTlAgflkI1UdocKTTJc3cIfKBbkeY29bLsGvuaZvPOv6CujesBN2lpS\", \"tc1VIiCkucFrwxIAeXUi7k19ZAcZDBoXjDYL3QVBJ4fIuNbncLvqhBC6vSTYNgyN\", \"2NKUkuUQHmVIraxH1eSRcwu7BTEDGKxZDPcVjSRLWX1dshWN6fbStescCuEUXRDj\"]','kULK8&EmjZ*)5',NULL,'2024-06-06 00:00:00','2016-05-11','IVdtGpX(mIhr','2032-02-27 00:00:00',NULL), ('[\"KoHOK9KAvClIHrxcekkAJi433WPq0LcMtOt4rwMbsDcSyGTU0rKqtJrq1A9K55h1\", \"op9wV7Q8BOt2YPQECpU49dUzQP8iCF0XkDEIDTPZHLwb8Kuf2VeYvZovVkBirCYh\"]','VetyD9Rs9X4_w%%hwl',NULL,'2023-10-21 00:00:00','2020-05-22','IVdtGpX(mIhr','2032-02-27 00:00:00',2865.7642), ('[\"VoWNrwsVeizDGC7XBFveS0Pxcpbs79VZafWf4oY1msItWENbqW03Vg2zAc9Vouco\", \"SmTO3VPORKwKehLXRhEJl26J75NamGtXwDUbgSwzXmULlnSpzONm4oIHRz5uXeIx\", \"45Vyx7YFjqYOkZkLW7uZUxSHkePGqdIiNaQZ3RQF8Yliies689bWSChKmKYCXHAC\"]','0',NULL,'2027-06-20 00:00:00','2018-05-29','IVdtGpX(mIhr','2032-02-27 00:00:00',7566.442), ('[\"EdUirD9CisHmMAcEhf1r6he5I7IxAVOttGKI19edrBUeUBJnUwZXcOlWA0sEqp1a\", \"cUEaE5aKMLmWDNhsMrtxRJxsZVTiC0rAmgyUORdKUn48niwWKvZLGqVpvyfKHIOQ\", \"xz1eMweq4shhFMYHKipkH1uAU85A3uRKPsNwq0MGstZbhqZTw8u9ClnmPg11CRxJ\"]','I5xJd9Eb*ds_VST',x'','1972-07-27 00:00:00','2009-08-24','SFks@$13a-','2026-03-13 00:00:00',8840.267), ('[\"WxXtUDuhJ8ekElz2TDCKmOZwQn5tmMA7J7L4tByGGLCHb9MiDMrudlfNzBuPdbGj\", \"0Rm4rQl6r5QhAtzXfM4XQ0Rvpe2NIIv8wHsN6E445kOb5KNcGwHBF9ezz39y35Lq\", \"Fp5asLA8bhekMFWzTAAkHih9tHINfVpTmlvicMg5l3fIZMlit1Xu5lbHP1WY1BXE\"]','KFVBVvAdcVB',x'28696e624b6d2a364426336b78','1976-06-25 00:00:00','1984-06-09','-AQKeAz%dp_o@IbU','2031-06-20 00:00:00',5465.9937), ('[\"Z2no9YWGJZy27lRVApczWlk8A2S9Id280MkeHlIGvUJexZBc1W17i3vOXIyqP4qd\", \"SmOsvCumS5V37Zxj8CuNpdtpZANDOAFid5yG2uak2C6B6MRIh9oCGNq03nbQK1Zh\", \"OSrMSDTymuiZI4wOq0Uw9uiHR9yrz3FuDcLn1NpECeVJV5440qy6BP7xiOaSeKzQ\", \"5iyiSKae9M8J01XAcRq0bU4H1a29aesCQKXSe2s8OCJFk96V9cFtDLMlDM9ZABMH\", \"ZpkHnnrx1WgsbkOeCxNauZM1MlaCE6NuXQKMycZy8EUYYWOQMJZ08DTBD4c0Z4Ub\"]','vLF5QfI2LF',x'32532970684c65654c234a6d444666','2014-04-14 00:00:00','1979-08-02','d','1987-02-15 00:00:00',9501.778), ('[\"eiVIMHeeQMlkMdomw08dZ56SY27pygLedAhud1FHQnQd1by8vjzGyqcBUqc20ezY\", \"29tYqnHXpWZI4VR5xsiaCgseV2l94uB9v0KhfNkHis28NGB2QC1MWFLExHQqcMx3\", \"r5XJwki7YO6PXszmAOsnJoba26n2zVvzUOOrkHas5B2V5OQTNywpTVxDKmLrCoZE\", \"JvRmnMZqHLEee2GZBr8ejsToOhNj5TY4U6HBRfZGxwDRN3ZuaUu73dhL6iIO7dRJ\", \"HrD6cw1evA5oWXz8aiRqqgRuXRByt3LIdZsflEn1qGNdvYJSxWZEA5INX3788CEk\"]','5*WMPVC',x'5555','1990-07-06 00:00:00','1996-02-15','ri$6Vgz!YPY','1993-01-21 00:00:00',891.00543), ('[\"zOzHfnnrrDIT2EsuIAL20XsPqGJaUKWhQ496SUvUBz6nhdn3yDle9x15gUpYxOiW\", \"Zo3UJv0hxC0a90W84N2TH5yCX3ANk8GMQWEPx8VwMO3GP0cxbePAaeC7yY2baeBR\", \"R6Fq1mglpM7IHB9gGRqUGqSkOXjDqILG3pynSW1Tukd8D7QAvVM2yJjLMTkA4Rds\", \"wPOaqRYTgxsHhNq7Fm8aCZfpDkLFyO5631sfp5xxdo68Qsh7rlKjBiDWvCvnlaMy\", \"Nbm0u9rTWvHd7ETL2tuxq545ZB5jRYW3c40NoFJUnGIBZEFyX9tsZxgbzZ6EJ4oe\"]','D',x'75774d235f735878576251672b517847522b','2012-08-09 00:00:00','2010-04-29','Y__)','1996-03-24 00:00:00',1253.7045), ('[\"z88c8oUkZmH8pcf3d3v2xc5ULNML9uMpurtLmBTkd3VxVuGopwrmgxpXXDrAHTb9\"]','zYsnjWMp)NlcDf%w',x'4873384d723d747978543676577056594d','1985-04-29 00:00:00','2002-06-15','28U1bw5PPuKE@t','1990-10-01 00:00:00',6906.9634), ('[\"efjdMOR2te6JjuNFDpiDZdxxHzTM57KVBf8HMvJSVRLLlB0R6xd4v5LwVeOWQ2Kx\", \"oHNYAlLtbZNinKQN7Yjx2WG434Rx6UfkdlRfkqbJ789nkHt1Sdc5cgIc73Gc4dKn\"]','YzhzcpPDv',x'494a45564767412a26387a65','2007-11-23 00:00:00','1995-10-01','ackem3&Mn7hZ','2012-05-15 00:00:00',9152.317), ('[\"EQa6IqnVND5EpfZGrwy1w2uW2fSXQcfXBr53YBcrBIlfCRDS9glLRFFRYqtCbhFc\"]','sZdr',x'2d716b52472b4b6f4b79','2015-12-11 00:00:00','1977-01-22','d9ZZKu1)Vj2zi1','1999-12-12 00:00:00',2191.8223), ('[\"67RgCLQirk6sSN0ro9X19VWMLtKlQPozN67EXvXA8sS9Thf8jQFlKnCR5BPfkDdv\"]','HWXkQDF6jb(de',x'49485236','1991-03-13 00:00:00','2019-08-14','JsgZs','2025-09-28 00:00:00',959.7349), ('[\"0BBHhe6Y2jCVMVLB5eyNxtVS27QU4Q15lB2hr90ifHzdWdluBAnu1NqqKvOboDP4\"]','_d$ZqV&7SPL',x'2174','1980-02-05 00:00:00','2011-10-18','2-','1994-07-01 00:00:00',NULL), ('[\"hW1Vox7utxJcrkRYZen9k8o8us8AM9DfMyVP72AwNPmQhKY3O57Zx5rHuj0Rt35V\", \"7aKDBiNKPPw68tqPZ9VxTE5ptDa9Ln39kYnw33g4QM66NbB5aTu0XEc1T6biZMxt\"]','N0DiPczHkE9#A',x'2a2b6e522634594a484f5f50635e','1988-04-18 00:00:00','2028-04-18','MVdWHwe_6sJb9&UePA','2019-05-15 00:00:00',9742.141);
 explain format='plan_tree' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 where IsNull( t2.col_3 ) group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
 id	task	access object	operator info
-Sort	root		Column#22, Column#23, Column#24, Column#25
-└─Projection	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
+Sort	root		Column, Column, Column, Column
+└─Projection	root		ucase(Column)->Column, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column, lower(planner__core__indexjoin.t1.col_3)->Column, ucase(Column)->Column
   └─IndexJoin	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
+    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
       └─Projection	root		planner__core__indexjoin.t2.col_3, planner__core__indexjoin.t2.col_4
         └─IndexLookUp	root		
           ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t2.col_4, planner__core__indexjoin.t1.col_4)], keep order:true, stats:pseudo
@@ -240,12 +240,12 @@ Sort	root		Column#22, Column#23, Column#24, Column#25
             └─TableRowIDScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
 id	task	access object	operator info
-Sort	root		Column#22, Column#23, Column#24, Column#25
-└─Projection	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
+Sort	root		Column, Column, Column, Column
+└─Projection	root		ucase(Column)->Column, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column, lower(planner__core__indexjoin.t1.col_3)->Column, ucase(Column)->Column
   └─IndexJoin	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
+    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
       └─Projection	root		planner__core__indexjoin.t2.col_3, planner__core__indexjoin.t2.col_4
         └─IndexLookUp	root		
           ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t2.col_4, planner__core__indexjoin.t1.col_4)], keep order:true, stats:pseudo
@@ -926,12 +926,12 @@ CREATE TABLE `t4` ( `col_1` bigint DEFAULT 1, `col_2` int NOT NULL, `col_3` varb
 INSERT INTO `t4` VALUES ('1','11',x'61784f4b626f6e7030514c6b','2025-03-27 00:56:13','2023-11-22','xUhXa6=s%j7h~!G','2025-03-27 01:00:18',4497.738);
 explain format='plan_tree' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t3.col_6 , t3.col_3 ) as r1 , lower( t3.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t3 left join (select /*+  stream_agg() */ t4.col_4 as r0 , max(   t4.col_4 ) as r1 , t4.col_4 as r2 , count(   t4.col_4 ) as r3 , min(   t4.col_3 ) as r4 from t4 where IsNull( t4.col_3 ) group by t4.col_4) st_475 on t3.col_4 = st_475.r0 order by r0,r1,r2,r3;
 id	task	access object	operator info
-Sort	root		Column#20, Column#21, Column#22, Column#23
-└─Projection	root		ucase(Column#19)->Column#20, concat_ws(,, planner__core__indexjoin.t3.col_6, planner__core__indexjoin.t3.col_3)->Column#21, lower(planner__core__indexjoin.t3.col_3)->Column#22, ucase(Column#19)->Column#23
+Sort	root		Column, Column, Column, Column
+└─Projection	root		ucase(Column)->Column, concat_ws(,, planner__core__indexjoin.t3.col_6, planner__core__indexjoin.t3.col_3)->Column, lower(planner__core__indexjoin.t3.col_3)->Column, ucase(Column)->Column
   └─IndexJoin	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t3.col_4, inner key:planner__core__indexjoin.t4.col_4, equal cond:eq(planner__core__indexjoin.t3.col_4, planner__core__indexjoin.t4.col_4)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t4.col_4, funcs:min(planner__core__indexjoin.t4.col_3)->Column#19, funcs:firstrow(planner__core__indexjoin.t4.col_4)->planner__core__indexjoin.t4.col_4
+    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t4.col_4, funcs:min(planner__core__indexjoin.t4.col_3)->Column, funcs:firstrow(planner__core__indexjoin.t4.col_4)->planner__core__indexjoin.t4.col_4
       └─Projection	root		planner__core__indexjoin.t4.col_3, planner__core__indexjoin.t4.col_4
         └─IndexLookUp	root		
           ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t4.col_4, planner__core__indexjoin.t3.col_4)], keep order:true, stats:pseudo
@@ -939,12 +939,12 @@ Sort	root		Column#20, Column#21, Column#22, Column#23
             └─TableRowIDScan	cop[tikv]	table:t4	keep order:false, stats:pseudo
 explain format='plan_tree' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t3.col_6 , t3.col_3 ) as r1 , lower( t3.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t3 left join (select /*+  stream_agg() */ t4.col_4 as r0 , max(   t4.col_4 ) as r1 , t4.col_4 as r2 , count(   t4.col_4 ) as r3 , min(   t4.col_3 ) as r4 from t4 group by t4.col_4) st_475 on t3.col_4 = st_475.r0 order by r0,r1,r2,r3;
 id	task	access object	operator info
-Sort	root		Column#20, Column#21, Column#22, Column#23
-└─Projection	root		ucase(Column#19)->Column#20, concat_ws(,, planner__core__indexjoin.t3.col_6, planner__core__indexjoin.t3.col_3)->Column#21, lower(planner__core__indexjoin.t3.col_3)->Column#22, ucase(Column#19)->Column#23
+Sort	root		Column, Column, Column, Column
+└─Projection	root		ucase(Column)->Column, concat_ws(,, planner__core__indexjoin.t3.col_6, planner__core__indexjoin.t3.col_3)->Column, lower(planner__core__indexjoin.t3.col_3)->Column, ucase(Column)->Column
   └─IndexJoin	root		left outer join, inner:StreamAgg, left side:TableReader, outer key:planner__core__indexjoin.t3.col_4, inner key:planner__core__indexjoin.t4.col_4, equal cond:eq(planner__core__indexjoin.t3.col_4, planner__core__indexjoin.t4.col_4)
     ├─TableReader(Build)	root		data:TableFullScan
     │ └─TableFullScan	cop[tikv]	table:t3	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t4.col_4, funcs:min(planner__core__indexjoin.t4.col_3)->Column#19, funcs:firstrow(planner__core__indexjoin.t4.col_4)->planner__core__indexjoin.t4.col_4
+    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t4.col_4, funcs:min(planner__core__indexjoin.t4.col_3)->Column, funcs:firstrow(planner__core__indexjoin.t4.col_4)->planner__core__indexjoin.t4.col_4
       └─Projection	root		planner__core__indexjoin.t4.col_3, planner__core__indexjoin.t4.col_4
         └─IndexLookUp	root		
           ├─IndexRangeScan(Build)	cop[tikv]	table:t4, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t4.col_4, planner__core__indexjoin.t3.col_4)], keep order:true, stats:pseudo
@@ -966,13 +966,13 @@ insert into t1 values ('[\"a9aQipQwjHVW6WvlI3wTNzS9IShhaN2bpDypWXjPxkLKDRz13L4uV
 insert into t2 values ('[\"umVciu5eOvevA4tEvLqWhfG1pIan06V47oDaUiWYBFFJiq8qxz9ejKiTEN0QM1HE\", \"jAkJHKKf6IGeqbV6jrCs0fyuIv9McFUOccaFAXcaRvENf8wRWdXBzBYSyKhyRlg2\", \"mlP3tQaJMWxcTbBxgafLterHi0Kc0BbsJtL75BzYNrMIjyrI34l63baBHVnn9BX3\", \"9i4tNtQpUW5kCNR5MDVYlpVhgvrrxEYPHflvRwT9Y4tMV6cLTBs3ridsWFWUrcMI\"]','+J8V1doNCnQA',NULL,'2022-03-27 00:58:56','2022-03-27','IVdtGpX(mIhr','2042-02-27 00:00:00',8787.51);
 explain format='plan_tree' select /*+ inl_join(st_475) */ ucase( st_475.r4 ) as r0 , concat_ws(',', t1.col_6 , t1.col_3 ) as r1 , lower( t1.col_3 ) as r2 , ucase( st_475.r4 ) as r3 from t1 left join (select /*+  stream_agg() */ t2.col_4 as r0 , max(   t2.col_4 ) as r1 , t2.col_4 as r2 , count(   t2.col_4 ) as r3 , min(   t2.col_3 ) as r4 from t2 where IsNull( t2.col_3 ) group by t2.col_4) st_475 on t1.col_4 = st_475.r0 order by r0,r1,r2,r3;
 id	task	access object	operator info
-Sort	root		Column#22, Column#23, Column#24, Column#25
-└─Projection	root		ucase(Column#21)->Column#22, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column#23, lower(planner__core__indexjoin.t1.col_3)->Column#24, ucase(Column#21)->Column#25
+Sort	root		Column, Column, Column, Column
+└─Projection	root		ucase(Column)->Column, concat_ws(,, planner__core__indexjoin.t1.col_6, planner__core__indexjoin.t1.col_3)->Column, lower(planner__core__indexjoin.t1.col_3)->Column, ucase(Column)->Column
   └─IndexJoin	root		left outer join, inner:StreamAgg, left side:UnionScan, outer key:planner__core__indexjoin.t1.col_4, inner key:planner__core__indexjoin.t2.col_4, equal cond:eq(planner__core__indexjoin.t1.col_4, planner__core__indexjoin.t2.col_4)
     ├─UnionScan(Build)	root		
     │ └─TableReader	root		data:TableFullScan
     │   └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
-    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column#21, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
+    └─StreamAgg(Probe)	root		group by:planner__core__indexjoin.t2.col_4, funcs:min(planner__core__indexjoin.t2.col_3)->Column, funcs:firstrow(planner__core__indexjoin.t2.col_4)->planner__core__indexjoin.t2.col_4
       └─UnionScan	root		isnull(planner__core__indexjoin.t2.col_3)
         └─IndexLookUp	root		
           ├─IndexRangeScan(Build)	cop[tikv]	table:t2, index:idx_1(col_4)	range: decided by [eq(planner__core__indexjoin.t2.col_4, planner__core__indexjoin.t1.col_4)], keep order:true, stats:pseudo
@@ -1164,15 +1164,15 @@ UNIQUE KEY `idx_22` (`col_61`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;
 explain format='plan_tree' select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 id	task	access object	operator info
-Sort	root		planner__core__indexjoin.td89f296a.col_64, Column#10, Column#11, Column#12
-└─Projection	root		planner__core__indexjoin.td89f296a.col_64, substr(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)), 2)->Column#10, ord(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)))->Column#11, mid(cast(Column#9, var_string(20)), 0, 6)->Column#12
-  └─IndexJoin	root		inner join, inner:Projection, outer key:Column#16, inner key:planner__core__indexjoin.tac9d3b07.col_61, equal cond:eq(Column#16, planner__core__indexjoin.tac9d3b07.col_61)
-    ├─Projection(Build)	root		planner__core__indexjoin.td89f296a.col_64, cast(planner__core__indexjoin.td89f296a.col_64, decimal(3,0) BINARY)->Column#16
+Sort	root		planner__core__indexjoin.td89f296a.col_64, Column, Column, Column
+└─Projection	root		planner__core__indexjoin.td89f296a.col_64, substr(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)), 2)->Column, ord(cast(planner__core__indexjoin.tac9d3b07.col_61, var_string(30)))->Column, mid(cast(Column, var_string(20)), 0, 6)->Column
+  └─IndexJoin	root		inner join, inner:Projection, outer key:Column, inner key:planner__core__indexjoin.tac9d3b07.col_61, equal cond:eq(Column, planner__core__indexjoin.tac9d3b07.col_61)
+    ├─Projection(Build)	root		planner__core__indexjoin.td89f296a.col_64, cast(planner__core__indexjoin.td89f296a.col_64, decimal(3,0) BINARY)->Column
     │ └─TableReader	root		data:TableFullScan
     │   └─TableFullScan	cop[tikv]	table:td89f296a	keep order:false, stats:pseudo
-    └─Projection(Probe)	root		planner__core__indexjoin.tac9d3b07.col_61, ifnull(cast(cast(planner__core__indexjoin.tac9d3b07.col_61, bigint BINARY), bigint UNSIGNED BINARY), 18446744073709551615)->Column#9
+    └─Projection(Probe)	root		planner__core__indexjoin.tac9d3b07.col_61, ifnull(cast(cast(planner__core__indexjoin.tac9d3b07.col_61, bigint BINARY), bigint UNSIGNED BINARY), 18446744073709551615)->Column
       └─IndexLookUp	root		
-        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#16)], keep order:false, stats:pseudo
+        ├─IndexRangeScan(Build)	cop[tikv]	table:tac9d3b07, index:idx_22(col_61)	range: decided by [eq(planner__core__indexjoin.tac9d3b07.col_61, Column#18)], keep order:false, stats:pseudo
         └─TableRowIDScan(Probe)	cop[tikv]	table:tac9d3b07	keep order:false, stats:pseudo
 select /*+ inl_join(st_45) */ td89f296a.col_64 as r0 , substr( st_45.r0 , 2 ) as r1 , ord( st_45.r0 ) as r2 , mid( st_45.r1 , 0 , 6 ) as r3 from td89f296a inner join (select  tac9d3b07.col_61 as r0 , bit_and( tac9d3b07.col_61 ) as r1 from tac9d3b07  group by tac9d3b07.col_61,tac9d3b07.col_60) st_45 on td89f296a.col_64 = st_45.r0 order by r0,r1,r2,r3 ;
 r0	r1	r2	r3
@@ -1207,17 +1207,77 @@ CREATE TABLE `t8e1f515f` (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;
 explain select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
 id	estRows	task	access object	operator info
-Sort_13	8000.00	root		Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
-└─Projection_15	8000.00	root		concat(Column#18, Column#18)->Column#20, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
-  └─Projection_17	8000.00	root		planner__core__indexjoin.t8e1f515f.col_44, planner__core__indexjoin.t5602f14e.col_55, Column#18
-    └─HashJoin_32	8000.00	root		inner join, equal:[eq(Column#22, planner__core__indexjoin.t5602f14e.col_55)]
-      ├─StreamAgg_72(Build)	6400.00	root		group by:Column#26, funcs:group_concat(Column#24 order by Column#25 separator ",")->Column#18, funcs:firstrow(Column#26)->planner__core__indexjoin.t5602f14e.col_55
-      │ └─Projection_91	8000.00	root		cast(planner__core__indexjoin.t5602f14e.col_56, var_string(20))->Column#24, planner__core__indexjoin.t5602f14e.col_56->Column#25, planner__core__indexjoin.t5602f14e.col_55->Column#26
+Sort_13	8000.00	root		Column#22, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+└─Projection_15	8000.00	root		concat(Column#20, Column#20)->Column#22, planner__core__indexjoin.t5602f14e.col_55, planner__core__indexjoin.t8e1f515f.col_44
+  └─Projection_17	8000.00	root		planner__core__indexjoin.t8e1f515f.col_44, planner__core__indexjoin.t5602f14e.col_55, Column#20
+    └─HashJoin_32	8000.00	root		inner join, equal:[eq(Column#24, planner__core__indexjoin.t5602f14e.col_55)]
+      ├─StreamAgg_72(Build)	6400.00	root		group by:Column#28, funcs:group_concat(Column#26 order by Column#27 separator ",")->Column#20, funcs:firstrow(Column#28)->planner__core__indexjoin.t5602f14e.col_55
+      │ └─Projection_91	8000.00	root		cast(planner__core__indexjoin.t5602f14e.col_56, var_string(20))->Column#26, planner__core__indexjoin.t5602f14e.col_56->Column#27, planner__core__indexjoin.t5602f14e.col_55->Column#28
       │   └─Selection_82	8000.00	root		not(isnull(json_overlaps(cast("[15114205522559919477,7224822526648750310]", json BINARY), planner__core__indexjoin.t5602f14e.col_51)))
       │     └─TableReader_84	10000.00	root	partition:all	data:TableFullScan_83
       │       └─TableFullScan_83	10000.00	cop[tikv]	table:t5602f14e	keep order:true, stats:pseudo
-      └─Projection_35(Probe)	10000.00	root		planner__core__indexjoin.t8e1f515f.col_44, cast(planner__core__indexjoin.t8e1f515f.col_48, datetime(6) BINARY)->Column#22
+      └─Projection_35(Probe)	10000.00	root		planner__core__indexjoin.t8e1f515f.col_44, cast(planner__core__indexjoin.t8e1f515f.col_48, datetime(6) BINARY)->Column#24
         └─TableReader_38	10000.00	root		data:TableFullScan_37
           └─TableFullScan_37	10000.00	cop[tikv]	table:t8e1f515f	keep order:false, stats:pseudo
 select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
 r0	r1	r2
+drop table if exists t_inner_pk;
+drop table if exists t_outer_pk;
+create table t_inner_pk (
+a int,
+b int,
+data char(100),
+primary key (a, b)
+);
+create table t_outer_pk (
+a int,
+val int,
+key(val)
+);
+insert into t_inner_pk select 1, n, 'padding' from (
+with recursive x as (
+select 1 as n
+union all
+select n + 1 from x where n < 100
+)
+select n from x
+) t;
+insert into t_outer_pk values (1, 100);
+analyze table t_inner_pk;
+analyze table t_outer_pk;
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	100.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	100.00	root		
+  ├─IndexRangeScan(Build)	100.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a)], keep order:false
+  └─TableRowIDScan(Probe)	100.00	cop[tikv]	table:i	keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b = 1
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	1.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	1.00	root		
+  ├─IndexRangeScan(Build)	1.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) eq(planner__core__indexjoin.t_inner_pk.b, 1)], keep order:false
+  └─TableRowIDScan(Probe)	1.00	cop[tikv]	table:i	keep order:false
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.*
+from t_outer_pk o
+join t_inner_pk i on o.a = i.a and i.b > 50
+where o.val = 100;
+id	estRows	task	access object	operator info
+IndexJoin	51.00	root		inner join, inner:IndexLookUp, outer key:planner__core__indexjoin.t_outer_pk.a, inner key:planner__core__indexjoin.t_inner_pk.a, equal cond:eq(planner__core__indexjoin.t_outer_pk.a, planner__core__indexjoin.t_inner_pk.a)
+├─TableReader(Build)	1.00	root		data:Selection
+│ └─Selection	1.00	cop[tikv]		eq(planner__core__indexjoin.t_outer_pk.val, 100), not(isnull(planner__core__indexjoin.t_outer_pk.a))
+│   └─TableFullScan	1.00	cop[tikv]	table:o	keep order:false
+└─IndexLookUp(Probe)	51.00	root		
+  ├─IndexRangeScan(Build)	51.00	cop[tikv]	table:i, index:PRIMARY(a, b)	range: decided by [eq(planner__core__indexjoin.t_inner_pk.a, planner__core__indexjoin.t_outer_pk.a) gt(planner__core__indexjoin.t_inner_pk.b, 50)], keep order:false
+  └─TableRowIDScan(Probe)	51.00	cop[tikv]	table:i	keep order:false

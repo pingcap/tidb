@@ -45,6 +45,11 @@ func (*binCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
+// MaxKeyLen implements Collator interface.
+func (*binCollator) MaxKeyLen(s string) int {
+	return len(s)
+}
+
 // Pattern implements Collator interface.
 func (*binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
@@ -93,6 +98,11 @@ func (*binPaddingCollator) ImmutableKey(str string) []byte {
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
+}
+
+// MaxKeyLen implements Collator interface.
+func (*binPaddingCollator) MaxKeyLen(s string) int {
+	return len(s)
 }
 
 // Pattern implements Collator interface.

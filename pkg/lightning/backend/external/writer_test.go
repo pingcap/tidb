@@ -30,13 +30,15 @@ import (
 
 	"github.com/docker/go-units"
 	"github.com/jfcg/sorty/v2"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	tidbconfig "github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
 	dbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/kv"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/lightning/log"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/objectio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/size"
 	"github.com/stretchr/testify/require"
@@ -46,7 +48,7 @@ import (
 // only used in testing for now.
 func mergeOverlappingFilesImpl(ctx context.Context,
 	paths []string,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	readBufferSize int,
 	newFilePrefix string,
 	writerID string,
@@ -106,7 +108,7 @@ func TestWriter(t *testing.T) {
 	rand.Seed(seed)
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	var (
 		kvFileCount int
@@ -179,7 +181,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 	rand.Seed(seed)
 	t.Logf("seed: %d", seed)
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
@@ -221,7 +223,7 @@ func TestWriterFlushMultiFileNames(t *testing.T) {
 
 func TestWriterDuplicateDetect(t *testing.T) {
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 
 	writer := NewWriterBuilder().
 		SetPropKeysDistance(2).
@@ -288,7 +290,7 @@ func TestWriterMultiFileStat(t *testing.T) {
 	multiFileStatNum = 3
 
 	ctx := context.Background()
-	memStore := storage.NewMemStorage()
+	memStore := objstore.NewMemStorage()
 	var summary *WriterSummary
 	closeFn := func(s *WriterSummary) {
 		summary = s
@@ -487,27 +489,27 @@ func TestWriterSort(t *testing.T) {
 }
 
 type writerFirstCloseFailStorage struct {
-	storage.ExternalStorage
+	storeapi.Storage
 	shouldFail bool
 }
 
 func (s *writerFirstCloseFailStorage) Create(
 	ctx context.Context,
 	path string,
-	option *storage.WriterOption,
-) (storage.ExternalFileWriter, error) {
-	w, err := s.ExternalStorage.Create(ctx, path, option)
+	option *storeapi.WriterOption,
+) (objectio.Writer, error) {
+	w, err := s.Storage.Create(ctx, path, option)
 	if err != nil {
 		return nil, err
 	}
 	if strings.Contains(path, statSuffix) {
-		return &firstCloseFailWriter{ExternalFileWriter: w, shouldFail: &s.shouldFail}, nil
+		return &firstCloseFailWriter{Writer: w, shouldFail: &s.shouldFail}, nil
 	}
 	return w, nil
 }
 
 type firstCloseFailWriter struct {
-	storage.ExternalFileWriter
+	objectio.Writer
 	shouldFail *bool
 }
 
@@ -516,12 +518,12 @@ func (w *firstCloseFailWriter) Close(ctx context.Context) error {
 		*w.shouldFail = false
 		return fmt.Errorf("first close fail")
 	}
-	return w.ExternalFileWriter.Close(ctx)
+	return w.Writer.Close(ctx)
 }
 
 func TestFlushKVsRetry(t *testing.T) {
 	ctx := context.Background()
-	store := &writerFirstCloseFailStorage{ExternalStorage: storage.NewMemStorage(), shouldFail: true}
+	store := &writerFirstCloseFailStorage{Storage: objstore.NewMemStorage(), shouldFail: true}
 
 	var kvAndStat [2]string
 	writer := NewWriterBuilder().
@@ -564,7 +566,7 @@ func TestGetAdjustedIndexBlockSize(t *testing.T) {
 	require.EqualValues(t, 16*units.MiB, GetAdjustedBlockSize(166*units.MiB, DefaultBlockSize))
 }
 
-func readKVFile(t *testing.T, store storage.ExternalStorage, filename string) []KVPair {
+func readKVFile(t *testing.T, store storeapi.Storage, filename string) []KVPair {
 	t.Helper()
 	reader, err := NewKVReader(context.Background(), filename, store, 0, units.KiB)
 	require.NoError(t, err)
@@ -586,19 +588,19 @@ type testWriter interface {
 }
 
 func TestWriterOnDup(t *testing.T) {
-	getWriterFn := func(store storage.ExternalStorage, b *WriterBuilder) testWriter {
+	getWriterFn := func(store storeapi.Storage, b *WriterBuilder) testWriter {
 		return b.Build(store, "/test", "0")
 	}
 	doTestWriterOnDupRecord(t, false, getWriterFn)
 	doTestWriterOnDupRemove(t, false, getWriterFn)
 }
 
-func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(store storage.ExternalStorage, b *WriterBuilder) testWriter) {
+func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(store storeapi.Storage, b *WriterBuilder) testWriter) {
 	t.Helper()
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	var summary *WriterSummary
-	doGetWriter := func(store storage.ExternalStorage, builder *WriterBuilder) testWriter {
+	doGetWriter := func(store storeapi.Storage, builder *WriterBuilder) testWriter {
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRecord)
 		return getWriter(store, builder)
 	}
@@ -740,12 +742,12 @@ func doTestWriterOnDupRecord(t *testing.T, testingOneFile bool, getWriter func(s
 	})
 }
 
-func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(storage.ExternalStorage, *WriterBuilder) testWriter) {
+func doTestWriterOnDupRemove(t *testing.T, testingOneFile bool, getWriter func(storeapi.Storage, *WriterBuilder) testWriter) {
 	t.Helper()
 	ctx := context.Background()
-	store := storage.NewMemStorage()
+	store := objstore.NewMemStorage()
 	var summary *WriterSummary
-	doGetWriter := func(store storage.ExternalStorage, builder *WriterBuilder) testWriter {
+	doGetWriter := func(store storeapi.Storage, builder *WriterBuilder) testWriter {
 		builder = builder.SetOnCloseFunc(func(s *WriterSummary) { summary = s }).SetOnDup(engineapi.OnDuplicateKeyRemove)
 		return getWriter(store, builder)
 	}

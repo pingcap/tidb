@@ -125,6 +125,9 @@ func deriveStats4DataSource(lp base.LogicalPlan) (*property.StatsInfo, bool, err
 	for i, expr := range ds.PushedDownConds {
 		ds.PushedDownConds[i] = expression.EliminateNoPrecisionLossCast(exprCtx, expr)
 	}
+	// Index pruning is now done earlier in CollectPredicateColumnsPoint to avoid loading stats for pruned indexes.
+	// Fill index paths for all paths
+	ds.CheckPartialIndexes()
 	for _, path := range ds.AllPossibleAccessPaths {
 		if path.IsTablePath() {
 			continue
@@ -241,7 +244,7 @@ func deriveIndexPathStats(ds *logicalop.DataSource, path *util.AccessPath, _ []e
 		adjustCountAfterAccess(ds, path)
 	}
 	if path.IndexFilters != nil {
-		selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
+		selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, path.IndexFilters, nil)
 		if err != nil {
 			logutil.BgLogger().Debug("calculate selectivity failed, use selection factor", zap.Error(err))
 			selectivity = cost.SelectionFactor
@@ -527,7 +530,7 @@ func initStats(ds *logicalop.DataSource) {
 }
 
 func deriveStatsByFilter(ds *logicalop.DataSource, conds expression.CNFExprs, filledPaths []*util.AccessPath) *property.StatsInfo {
-	selectivity, _, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
+	selectivity, err := cardinality.Selectivity(ds.SCtx(), ds.TableStats.HistColl, conds, filledPaths)
 	if err != nil {
 		logutil.BgLogger().Debug("something wrong happened, use the default selectivity", zap.Error(err))
 		selectivity = cost.SelectionFactor
@@ -575,6 +578,8 @@ func derivePathStatsAndTryHeuristics(ds *logicalop.DataSource) error {
 			path.IsSingleScan = true
 		} else {
 			deriveIndexPathStats(ds, path, ds.PushedDownConds, false)
+			// Reevaluate path.IsSingleScan because it may have been set incorrectly
+			// in the pruning logic.
 			path.IsSingleScan = ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens)
 		}
 		// step: 3

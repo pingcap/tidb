@@ -15,12 +15,12 @@ set @@session.tidb_hashagg_partial_concurrency = 1;
 set @@session.tidb_hashagg_final_concurrency = 1;
 explain format = 'plan_tree' select * from t3 where exists (select s.a from t3 s having sum(s.a) = t3.a );
 id	task	access object	operator info
-HashJoin	root		semi join, left side:Projection, equal:[eq(Column#13, Column#11)]
-├─StreamAgg(Build)	root		funcs:sum(Column#16)->Column#11
+HashJoin	root		semi join, left side:Projection, equal:[eq(Column, Column)]
+├─StreamAgg(Build)	root		funcs:sum(Column)->Column
 │ └─TableReader	root		data:StreamAgg
-│   └─StreamAgg	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column#16
+│   └─StreamAgg	cop[tikv]		funcs:sum(explain_easy_stats.t3.a)->Column
 │     └─TableFullScan	cop[tikv]	table:s	keep order:false
-└─Projection(Probe)	root		explain_easy_stats.t3.a, explain_easy_stats.t3.b, explain_easy_stats.t3.c, explain_easy_stats.t3.d, cast(explain_easy_stats.t3.a, decimal(20,0) BINARY)->Column#13
+└─Projection(Probe)	root		explain_easy_stats.t3.a, explain_easy_stats.t3.b, explain_easy_stats.t3.c, explain_easy_stats.t3.d, cast(explain_easy_stats.t3.a, decimal(20,0) BINARY)->Column
   └─TableReader	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t3	keep order:false
 explain format = 'plan_tree' select * from t1;
@@ -64,9 +64,9 @@ Delete	root		N/A
   └─IndexRangeScan	cop[tikv]	table:t1, index:c2(c2)	range:[1,1], keep order:false, stats:partial[c2:missing]
 explain format = 'plan_tree' select count(b.c2) from t1 a, t2 b where a.c1 = b.c2 group by a.c1;
 id	task	access object	operator info
-Projection	root		Column#7
+Projection	root		Column
 └─HashJoin	root		inner join, equal:[eq(explain_easy_stats.t1.c1, explain_easy_stats.t2.c2)]
-  ├─HashAgg(Build)	root		group by:explain_easy_stats.t2.c2, funcs:count(explain_easy_stats.t2.c2)->Column#8, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
+  ├─HashAgg(Build)	root		group by:explain_easy_stats.t2.c2, funcs:count(explain_easy_stats.t2.c2)->Column, funcs:firstrow(explain_easy_stats.t2.c2)->explain_easy_stats.t2.c2
   │ └─TableReader	root		data:Selection
   │   └─Selection	cop[tikv]		not(isnull(explain_easy_stats.t2.c2))
   │     └─TableFullScan	cop[tikv]	table:b	keep order:false
@@ -102,7 +102,7 @@ id	task	access object	operator info
 MemTableScan	root	table:COLUMNS	
 explain format = 'plan_tree' select c2 = (select c2 from t2 where t1.c1 = t2.c1 order by c1 limit 1) from t1;
 id	task	access object	operator info
-Projection	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column#11
+Projection	root		eq(explain_easy_stats.t1.c2, explain_easy_stats.t2.c2)->Column
 └─Apply	root		CARTESIAN left outer join, left side:TableReader
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:t1	keep order:false
