@@ -180,19 +180,23 @@
           "TableReader_17 1.00 root  MppVersion: 3, data:ExchangeSender_16",
           "└─ExchangeSender_16 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection_14 1.00 mpp[tiflash]  test.s.a",
-          "    └─Selection_11 1.00 mpp[tiflash]  eq(test.s.a, 10)",
-          "      └─TableFullScan_10 10.00 mpp[tiflash] table:s pushed down filter:isnull(test.s.b), keep order:false, stats:pseudo"
+          "    └─Selection_11 1.00 mpp[tiflash]  isnull(test.s.b)",
+          "      └─TableFullScan_10 10.00 mpp[tiflash] table:s pushed down filter:eq(test.s.a, 10), keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select /*+ read_from_storage(tiflash[t3]) */ * from t3 where sala='a' and id =1; -- once hinted, walk with tiflash range scan",
+        "Plan": [
+          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
+        ],
         "Warn": null
       },
       {
-        "SQL": "",
-        "Plan": null,
+        "SQL": "explain select * from t3 where sala='a' and id =1; -- once not hinted, walk with tikv point get",
+        "Plan": [
+          "Point_Get_1 1.00 root table:t3, partition:p1, clustered index:PRIMARY(id, sala) "
+        ],
         "Warn": null
       }
     ]
