@@ -72,11 +72,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#9, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#9",
-<<<<<<< HEAD
-          "        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
-=======
           "        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:1)"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -88,11 +84,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#9, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#9",
-<<<<<<< HEAD
-          "        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
-=======
           "        └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:1)"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -104,11 +96,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8:desc, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -120,11 +108,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8:desc, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -136,11 +120,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, plus(vec_cosine_distance(test.t1.vec, [1,1,1]), 1)->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -152,11 +132,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, test.t1.vec, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -168,11 +144,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.vec, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -184,11 +156,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.vec, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -200,11 +168,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.c, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -216,11 +180,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l2_distance(test.t1.d, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -232,11 +192,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_cosine_distance(test.t1.d, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -248,11 +204,7 @@
           "  └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─TopN 1.00 mpp[tiflash]  Column#8, offset:0, count:1",
           "      └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, test.t1.c, test.t1.d, vec_l1_distance(test.t1.d, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "        └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -263,11 +215,7 @@
           "└─TableReader 48.00 root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender 48.00 mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Projection 48.00 mpp[tiflash]  vec_cosine_distance(test.t1.vec, [1,1,1])->Column#8",
-<<<<<<< HEAD
-          "      └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo"
-=======
           "      └─TableFullScan 48.00 mpp[tiflash] table:t1 keep order:false"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -280,11 +228,7 @@
           "    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TopN 1.00 mpp[tiflash]  Column#10, offset:0, count:1",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
-<<<<<<< HEAD
-          "          └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
-=======
           "          └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:1)"
->>>>>>> master
         ],
         "Warn": null
       },
@@ -297,11 +241,7 @@
           "    └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TopN 1.00 mpp[tiflash]  Column#10, offset:0, count:1",
           "        └─Projection 1.00 mpp[tiflash]  test.t1.vec, test.t1.a, test.t1.b, vec_cosine_distance(test.t1.vec, [1,1,1])->Column#10",
-<<<<<<< HEAD
-          "          └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1,1,1], limit:1)"
-=======
           "          └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, annIndex:COSINE(vec..[1,1,1], limit:1)"
->>>>>>> master
         ],
         "Warn": null
       },

@@ -5,15 +5,9 @@
       {
         "SQL": "explain format = 'plan_tree' select count(*) from t31240;",
         "Plan": [
-<<<<<<< HEAD
-          "StreamAgg root  funcs:count(Column#7)->Column#5",
-          "└─TableReader root  data:StreamAgg",
-          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column#7",
-=======
           "StreamAgg root  funcs:count(Column)->Column",
           "└─TableReader root  data:StreamAgg",
           "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
->>>>>>> master
           "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
         ]
       },
@@ -24,15 +18,9 @@
       {
         "SQL": "explain format = 'plan_tree' select count(*) from t31240;",
         "Plan": [
-<<<<<<< HEAD
-          "StreamAgg root  funcs:count(Column#7)->Column#5",
-          "└─TableReader root  data:StreamAgg",
-          "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column#7",
-=======
           "StreamAgg root  funcs:count(Column)->Column",
           "└─TableReader root  data:StreamAgg",
           "  └─StreamAgg batchCop[tiflash]  funcs:count(test.t31240._tidb_rowid)->Column",
->>>>>>> master
           "    └─TableFullScan batchCop[tiflash] table:t31240 keep order:false, stats:pseudo"
         ]
       }
@@ -158,22 +146,6 @@
       {
         "SQL": "explain format = 'verbose' select /*+ read_from_storage(tiflash[t1, t2]) */ count(*) from t1 join t2 on t1.a = t2.a join t3 on t1.b = t3.b",
         "Plan": [
-<<<<<<< HEAD
-          "StreamAgg_20 1.00 71701.80 root  funcs:count(1)->Column#13",
-          "└─HashJoin_92 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
-          "  ├─TableReader_63(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_62",
-          "  │ └─ExchangeSender_62 3.00 1044634.01 mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─Projection_61 3.00 1044634.01 mpp[tiflash]  test.t1.b",
-          "  │     └─HashJoin_46 3.00 1044634.00 mpp[tiflash]  inner join, equal:[eq(test.t1.a, test.t2.a)]",
-          "  │       ├─ExchangeReceiver_40(Build) 3.00 580476.40 mpp[tiflash]  ",
-          "  │       │ └─ExchangeSender_39 3.00 580188.40 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "  │       │   └─Selection_38 3.00 580188.40 mpp[tiflash]  not(isnull(test.t1.a)), not(isnull(test.t1.b))",
-          "  │       │     └─TableFullScan_37 3.00 580174.00 mpp[tiflash] table:t1 keep order:false",
-          "  │       └─Selection_42(Probe) 3.00 464146.40 mpp[tiflash]  not(isnull(test.t2.a))",
-          "  │         └─TableFullScan_41 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
-          "  └─IndexReader_76(Probe) 3.00 45.23 root  index:IndexFullScan_75",
-          "    └─IndexFullScan_75 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
-=======
           "StreamAgg_21 1.00 71701.80 root  funcs:count(1)->Column#13",
           "└─HashJoin_93 3.00 71552.10 root  inner join, equal:[eq(test.t1.b, test.t3.b)]",
           "  ├─TableReader_64(Build) 3.00 69645.79 root  MppVersion: 3, data:ExchangeSender_63",
@@ -188,7 +160,6 @@
           "  │         └─TableFullScan_42 3.00 464139.20 mpp[tiflash] table:t2 keep order:false",
           "  └─IndexReader_77(Probe) 3.00 45.23 root  index:IndexFullScan_76",
           "    └─IndexFullScan_76 3.00 488.40 cop[tikv] table:t3, index:c(b) keep order:false"
->>>>>>> master
         ]
       },
       {
@@ -275,15 +246,6 @@
         "SQL": "explain format = 'plan_tree' SELECT table2 . `col_char_64` AS field1 FROM `ts` AS table2 INNER JOIN (SELECT DISTINCT SUBQUERY3_t1 . * FROM `ts` AS SUBQUERY3_t1 LEFT OUTER JOIN `ts` AS SUBQUERY3_t2 ON SUBQUERY3_t2 . `col_varchar_64_not_null` = SUBQUERY3_t1 . `col_varchar_key`) AS table3 ON (table3 . `col_varchar_key` = table2 . `col_varchar_64`) WHERE table3 . `col_char_64_not_null` >= SOME (SELECT SUBQUERY4_t1 . `col_varchar_64` AS SUBQUERY4_field1 FROM `ts` AS SUBQUERY4_t1) GROUP BY field1 ;",
         "Plan": [
           "HashAgg root  group by:test.ts.col_char_64, funcs:firstrow(test.ts.col_char_64)->test.ts.col_char_64",
-<<<<<<< HEAD
-          "└─HashJoin root  CARTESIAN inner join, other cond:or(ge(test.ts.col_char_64_not_null, Column#29), if(ne(Column#30, 0), NULL, 0))",
-          "  ├─Selection(Build) root  ne(Column#31, 0)",
-          "  │ └─HashAgg root  funcs:min(Column#40)->Column#29, funcs:sum(Column#41)->Column#30, funcs:count(Column#42)->Column#31",
-          "  │   └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  │     └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  │       └─HashAgg mpp[tiflash]  funcs:min(Column#46)->Column#40, funcs:sum(Column#47)->Column#41, funcs:count(1)->Column#42",
-          "  │         └─Projection mpp[tiflash]  test.ts.col_varchar_64->Column#46, cast(isnull(test.ts.col_varchar_64), decimal(20,0) BINARY)->Column#47",
-=======
           "└─HashJoin root  CARTESIAN inner join, other cond:or(ge(test.ts.col_char_64_not_null, Column), if(ne(Column, 0), NULL, 0))",
           "  ├─Selection(Build) root  ne(Column, 0)",
           "  │ └─HashAgg root  funcs:min(Column)->Column, funcs:sum(Column)->Column, funcs:count(Column)->Column",
@@ -291,7 +253,6 @@
           "  │     └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  │       └─HashAgg mpp[tiflash]  funcs:min(Column)->Column, funcs:sum(Column)->Column, funcs:count(1)->Column",
           "  │         └─Projection mpp[tiflash]  test.ts.col_varchar_64->Column, cast(isnull(test.ts.col_varchar_64), decimal(20,0) BINARY)->Column",
->>>>>>> master
           "  │           └─TableFullScan mpp[tiflash] table:SUBQUERY4_t1 keep order:false, stats:pseudo",
           "  └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
@@ -1036,17 +997,10 @@
       {
         "SQL": "explain format = 'plan_tree' select sum(ps_supplycost) from partsupp, supplier where ps_suppkey = s_suppkey;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:sum(Column#17)->Column#16",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column#17",
-=======
           "HashAgg root  funcs:sum(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:sum(test.partsupp.ps_supplycost)->Column",
->>>>>>> master
           "      └─Projection mpp[tiflash]  test.partsupp.ps_supplycost",
           "        └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.supplier.s_suppkey, test.partsupp.ps_suppkey)]",
           "          ├─ExchangeReceiver(Build) mpp[tiflash]  ",
@@ -1081,17 +1035,10 @@
       {
         "SQL": "explain format = 'plan_tree' select count(*) from rp_t where a = 1 or a = 20",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#5)->Column#4",
-          "└─TableReader root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#5",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─TableReader root partition:p0,p3 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column",
->>>>>>> master
           "      └─Selection mpp[tiflash]  or(eq(test.rp_t.a, 1), eq(test.rp_t.a, 20))",
           "        └─TableFullScan mpp[tiflash] table:rp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
@@ -1099,17 +1046,10 @@
       {
         "SQL": "explain format = 'plan_tree' select count(*) from hp_t where a = 1 or a = 20",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#5)->Column#4",
-          "└─TableReader root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#5",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─TableReader root partition:p0,p1 MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column",
->>>>>>> master
           "      └─Selection mpp[tiflash]  or(eq(test.hp_t.a, 1), eq(test.hp_t.a, 20))",
           "        └─TableFullScan mpp[tiflash] table:hp_t keep order:false, stats:pseudo, PartitionTableScan:true"
         ]
@@ -1124,11 +1064,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6->Column#7, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1138,11 +1074,7 @@
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6->Column#7, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1155,11 +1087,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#8->Column#9, Column#7->Column#10, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#8 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1173,11 +1101,7 @@
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#8->Column#9, Column#7->Column#10, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#8 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1192,19 +1116,11 @@
       {
         "SQL": "explain format = 'plan_tree' select row_number() over w1, rank() over w2 from t1 window w1 as (partition by c1 order by c1), w2 as (partition by c2) order by 1, 2 limit 10;",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8->Column#9, Column#7->Column#10",
-          "└─TopN root  Column#8, Column#7, offset:0, count:10",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TopN mpp[tiflash]  Column#8, Column#7, offset:0, count:10",
-=======
           "Projection root  Column, Column",
           "└─TopN root  Column, Column, offset:0, count:10",
           "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TopN mpp[tiflash]  Column, Column, offset:0, count:10",
->>>>>>> master
           "        └─Window mpp[tiflash]  row_number()->Column#8 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "          └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "            └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1216,19 +1132,11 @@
           "                        └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
-<<<<<<< HEAD
-          "Projection root  Column#8->Column#9, Column#7->Column#10",
-          "└─TopN root  Column#8, Column#7, offset:?, count:?",
-          "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "      └─TopN mpp[tiflash]  Column#8, Column#7, offset:?, count:?",
-=======
           "Projection root  Column, Column",
           "└─TopN root  Column, Column, offset:?, count:?",
           "  └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "      └─TopN mpp[tiflash]  Column, Column, offset:?, count:?",
->>>>>>> master
           "        └─Window mpp[tiflash]  row_number()->Column#8 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "          └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "            └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1245,56 +1153,32 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7->Column#8, Column#5->Column#9, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c2 order by test.t1.c2 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c2, test.t1.c2, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
-<<<<<<< HEAD
-          "            └─Projection mpp[tiflash]  Column#5, test.t1.c2",
-          "              └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:sum(Column#10)->Column#5, funcs:firstrow(Column#11)->test.t1.c2",
-          "                └─ExchangeReceiver mpp[tiflash]  ",
-          "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
-          "                    └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#10, funcs:firstrow(test.t1.c2)->Column#11",
-=======
           "            └─Projection mpp[tiflash]  Column, test.t1.c2",
           "              └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t1.c2",
           "                └─ExchangeReceiver mpp[tiflash]  ",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                    └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column, funcs:firstrow(test.t1.c2)->Column",
->>>>>>> master
           "                      └─Selection mpp[tiflash]  gt(test.t1.c1, 10)",
           "                        └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7->Column#8, Column#5->Column#9, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c2 order by test.t1.c2 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c2, test.t1.c2, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary], stream_count: 8",
-<<<<<<< HEAD
-          "            └─Projection mpp[tiflash]  Column#5, test.t1.c2",
-          "              └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:sum(Column#10)->Column#5, funcs:firstrow(Column#11)->test.t1.c2",
-          "                └─ExchangeReceiver mpp[tiflash]  ",
-          "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
-          "                    └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#10, funcs:firstrow(test.t1.c2)->Column#11",
-=======
           "            └─Projection mpp[tiflash]  Column, test.t1.c2",
           "              └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t1.c2",
           "                └─ExchangeReceiver mpp[tiflash]  ",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                    └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column, funcs:firstrow(test.t1.c2)->Column",
->>>>>>> master
           "                      └─Selection mpp[tiflash]  gt(test.t1.c1, ?)",
           "                        └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
@@ -1304,56 +1188,32 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7->Column#8, Column#5->Column#9, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c2, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
-<<<<<<< HEAD
-          "            └─Projection mpp[tiflash]  Column#5, test.t1.c1, test.t1.c2",
-          "              └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:sum(Column#10)->Column#5, funcs:firstrow(Column#11)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
-          "                └─ExchangeReceiver mpp[tiflash]  ",
-          "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary]",
-          "                    └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#10, funcs:firstrow(test.t1.c1)->Column#11",
-=======
           "            └─Projection mpp[tiflash]  Column, test.t1.c1, test.t1.c2",
           "              └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
           "                └─ExchangeReceiver mpp[tiflash]  ",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary]",
           "                    └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column, funcs:firstrow(test.t1.c1)->Column",
->>>>>>> master
           "                      └─Selection mpp[tiflash]  gt(test.t1.c2, 10)",
           "                        └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7->Column#8, Column#5->Column#9, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c2, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary], stream_count: 8",
-<<<<<<< HEAD
-          "            └─Projection mpp[tiflash]  Column#5, test.t1.c1, test.t1.c2",
-          "              └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:sum(Column#10)->Column#5, funcs:firstrow(Column#11)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
-          "                └─ExchangeReceiver mpp[tiflash]  ",
-          "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary]",
-          "                    └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column#10, funcs:firstrow(test.t1.c1)->Column#11",
-=======
           "            └─Projection mpp[tiflash]  Column, test.t1.c1, test.t1.c2",
           "              └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t1.c1, funcs:firstrow(test.t1.c2)->test.t1.c2",
           "                └─ExchangeReceiver mpp[tiflash]  ",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c2, collate: binary]",
           "                    └─HashAgg mpp[tiflash]  group by:test.t1.c2, funcs:count(test.t1.c1)->Column, funcs:firstrow(test.t1.c1)->Column",
->>>>>>> master
           "                      └─Selection mpp[tiflash]  gt(test.t1.c2, ?)",
           "                        └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
@@ -1363,11 +1223,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#10->Column#11, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#10 over(partition by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1384,11 +1240,7 @@
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#10->Column#11, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#10 over(partition by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1408,11 +1260,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6->Column#7, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1423,11 +1271,7 @@
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6->Column#7, stream_count: 8",
-=======
           "  └─Projection mpp[tiflash]  Column, stream_count: 8",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#6 over(partition by test.t1.c1 order by test.t1.c1 rows between current row and current row), stream_count: 8",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c1, stream_count: 8",
           "        └─ExchangeReceiver mpp[tiflash]  stream_count: 8",
@@ -1454,11 +1298,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6->Column#7",
-=======
           "  └─Projection mpp[tiflash]  Column",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#6 over(order by test.t1.c1 rows between current row and current row)",
           "      └─Sort mpp[tiflash]  test.t1.c1",
           "        └─ExchangeReceiver mpp[tiflash]  ",
@@ -1468,11 +1308,7 @@
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6->Column#7",
-=======
           "  └─Projection mpp[tiflash]  Column",
->>>>>>> master
           "    └─Window mpp[tiflash]  row_number()->Column#6 over(order by test.t1.c1 rows between current row and current row)",
           "      └─Sort mpp[tiflash]  test.t1.c1",
           "        └─ExchangeReceiver mpp[tiflash]  ",
@@ -1485,16 +1321,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7->Column#8, Column#5->Column#9",
-          "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row)",
-          "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c2",
-          "        └─Projection mpp[tiflash]  Column#5, test.t1.c1, test.t1.c2",
-          "          └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:sum(Column#10)->Column#5, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(Column#12)->test.t1.c2",
-          "            └─ExchangeReceiver mpp[tiflash]  ",
-          "              └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
-          "                └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#10, funcs:firstrow(test.t1.c2)->Column#12",
-=======
           "  └─Projection mpp[tiflash]  Column, Column",
           "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row)",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c2",
@@ -1503,23 +1329,12 @@
           "            └─ExchangeReceiver mpp[tiflash]  ",
           "              └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column, funcs:firstrow(test.t1.c2)->Column",
->>>>>>> master
           "                  └─Selection mpp[tiflash]  gt(test.t1.c1, 10)",
           "                    └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ],
         "Redact": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7->Column#8, Column#5->Column#9",
-          "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row)",
-          "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c2",
-          "        └─Projection mpp[tiflash]  Column#5, test.t1.c1, test.t1.c2",
-          "          └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:sum(Column#10)->Column#5, funcs:firstrow(test.t1.c1)->test.t1.c1, funcs:firstrow(Column#12)->test.t1.c2",
-          "            └─ExchangeReceiver mpp[tiflash]  ",
-          "              └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
-          "                └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column#10, funcs:firstrow(test.t1.c2)->Column#12",
-=======
           "  └─Projection mpp[tiflash]  Column, Column",
           "    └─Window mpp[tiflash]  row_number()->Column#7 over(partition by test.t1.c1 order by test.t1.c2 rows between current row and current row)",
           "      └─Sort mpp[tiflash]  test.t1.c1, test.t1.c2",
@@ -1528,7 +1343,6 @@
           "            └─ExchangeReceiver mpp[tiflash]  ",
           "              └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t1.c1, collate: binary]",
           "                └─HashAgg mpp[tiflash]  group by:test.t1.c1, funcs:count(test.t1.c2)->Column, funcs:firstrow(test.t1.c2)->Column",
->>>>>>> master
           "                  └─Selection mpp[tiflash]  gt(test.t1.c1, ?)",
           "                    └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo"
         ]
@@ -1556,17 +1370,10 @@
       {
         "SQL": "explain format = 'plan_tree' select count(*) from t1 ta, t1 tb where ta.c1 * ta.c1 > ta.c2 + 10;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#10)->Column#9",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#10",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column",
->>>>>>> master
           "      └─Projection mpp[tiflash]  test.t1.c1",
           "        └─HashJoin mpp[tiflash]  CARTESIAN inner join",
           "          ├─ExchangeReceiver(Build) mpp[tiflash]  ",

@@ -7,17 +7,10 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#9)->Column#6, funcs:firstrow(Column#10)->test.t.a",
-          "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#9, test.t.a->Column#10, test.t.c->Column#11",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
           "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -29,15 +22,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#11)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg mpp[tiflash]  group by:Column#14, Column#15, funcs:sum(Column#13)->Column#11",
-          "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#13, test.t.a->Column#14, test.t.c->Column#15",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
@@ -45,7 +29,6 @@
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "            └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column",
           "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "                └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -87,17 +70,10 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:Column#8, Column#9, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.t.a",
-          "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#7, test.t.a->Column#8, test.t.c->Column#9",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
           "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -109,15 +85,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#9)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg mpp[tiflash]  group by:Column#12, Column#13, funcs:sum(Column#11)->Column#9",
-          "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#11, test.t.a->Column#12, test.t.c->Column#13",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
@@ -125,7 +92,6 @@
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "            └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column",
           "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "                └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -361,17 +327,10 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:Column#8, Column#9, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.t.a",
-          "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#7, test.t.a->Column#8, test.t.c->Column#9",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
           "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -383,15 +342,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#9)->Column#7",
-          "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#9, test.t.a->Column#10, test.t.c->Column#11",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
@@ -399,7 +349,6 @@
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "            └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column",
           "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "                └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -407,19 +356,11 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_1PHASE_AGG(), use_index(t, idx_a) */ a, sum(b) from t where a > 1 group by a, c",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  test.t.a, Column#6",
-          "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column#8)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─IndexLookUp root  ",
-          "    ├─IndexRangeScan(Build) cop[tikv] table:t, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
-          "    └─HashAgg(Probe) cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column#8",
-=======
           "Projection root  test.t.a, Column",
           "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
           "  └─IndexLookUp root  ",
           "    ├─IndexRangeScan(Build) cop[tikv] table:t, index:idx_a(a) range:(1,+inf], keep order:false, stats:pseudo",
           "    └─HashAgg(Probe) cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column",
->>>>>>> master
           "      └─TableRowIDScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -431,17 +372,10 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:Column#8, Column#9, funcs:sum(Column#7)->Column#6, funcs:firstrow(Column#8)->test.t.a",
-          "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#7, test.t.a->Column#8, test.t.c->Column#9",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
           "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─Selection mpp[tiflash]  gt(test.t.a, 1)",
@@ -452,19 +386,11 @@
       {
         "SQL": "select /*+ read_from_storage(tiflash[t]), MPP_2PHASE_AGG(), force_index(t, idx_b) */ a, sum(b) from t where b < 2 group by a, c",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  test.t.a, Column#6",
-          "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column#8)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─IndexLookUp root  ",
-          "    ├─IndexRangeScan(Build) cop[tikv] table:t, index:idx_b(b) range:[-inf,2), keep order:false, stats:pseudo",
-          "    └─HashAgg(Probe) cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column#8",
-=======
           "Projection root  test.t.a, Column",
           "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
           "  └─IndexLookUp root  ",
           "    ├─IndexRangeScan(Build) cop[tikv] table:t, index:idx_b(b) range:[-inf,2), keep order:false, stats:pseudo",
           "    └─HashAgg(Probe) cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column",
->>>>>>> master
           "      └─TableRowIDScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -476,15 +402,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#9)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg mpp[tiflash]  group by:Column#12, Column#13, funcs:sum(Column#11)->Column#9",
-          "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#11, test.t.a->Column#12, test.t.c->Column#13",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
@@ -492,7 +409,6 @@
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "            └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column",
           "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "                └─Selection mpp[tiflash]  or(lt(test.t.b, 2), gt(test.t.a, 2))",
           "                  └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -595,17 +511,10 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#9)->Column#6, funcs:firstrow(Column#10)->test.t.a",
-          "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#9, test.t.a->Column#10, test.t.c->Column#11",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
           "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -617,15 +526,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#11)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg mpp[tiflash]  group by:Column#14, Column#15, funcs:sum(Column#13)->Column#11",
-          "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#13, test.t.a->Column#14, test.t.c->Column#15",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
@@ -633,7 +533,6 @@
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "            └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column",
           "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "                └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -720,21 +619,12 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a, test.t.b, test.t.c",
-<<<<<<< HEAD
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column#11)",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Projection mpp[tiflash]  Column#11, test.t.b",
-          "      │     └─HashAgg mpp[tiflash]  group by:Column#36, funcs:sum(Column#35)->Column#11, funcs:firstrow(Column#36)->test.t.b",
-          "      │       └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#35, test.t.b->Column#36",
-=======
           "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column)",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
           "      │   └─Projection mpp[tiflash]  Column, test.t.b",
           "      │     └─HashAgg mpp[tiflash]  group by:Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.b",
           "      │       └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column, test.t.b->Column",
->>>>>>> master
           "      │         └─ExchangeReceiver mpp[tiflash]  ",
           "      │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "      │             └─Selection mpp[tiflash]  not(isnull(test.t.b))",
@@ -750,17 +640,6 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a, test.t.b, test.t.c",
-<<<<<<< HEAD
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column#11)",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Projection mpp[tiflash]  Column#11, test.t.b",
-          "      │     └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:sum(Column#12)->Column#11, funcs:firstrow(test.t.b)->test.t.b",
-          "      │       └─ExchangeReceiver mpp[tiflash]  ",
-          "      │         └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "      │           └─HashAgg mpp[tiflash]  group by:Column#40, funcs:sum(Column#39)->Column#12",
-          "      │             └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#39, test.t.b->Column#40",
-=======
           "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.b, test.t.b)], other cond:lt(cast(test.t.a, decimal(10,0) BINARY), Column)",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -770,7 +649,6 @@
           "      │         └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "      │           └─HashAgg mpp[tiflash]  group by:Column, funcs:sum(Column)->Column",
           "      │             └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column, test.t.b->Column",
->>>>>>> master
           "      │               └─Selection mpp[tiflash]  not(isnull(test.t.b))",
           "      │                 └─TableFullScan mpp[tiflash] table:t2 keep order:false, stats:pseudo",
           "      └─Selection(Probe) mpp[tiflash]  not(isnull(test.t.b))",
@@ -781,30 +659,18 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ MPP_1PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12",
-          "└─Union root  ",
-          "  ├─Selection root  lt(Column#7, 18)",
-=======
           "HashAgg root  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
           "└─Union root  ",
           "  ├─Selection root  lt(Column, 18)",
->>>>>>> master
           "  │ └─CTEFullScan root CTE:cte data:CTE_0",
           "  └─Selection root  gt(test.t.b, 1)",
           "    └─CTEFullScan root CTE:cte data:CTE_0",
           "CTE_0 root  Non-Recursive CTE",
           "└─TableReader(Seed Part) root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "    └─Selection mpp[tiflash]  or(lt(Column#6, 18), gt(test.t.b, 1))",
-          "      └─Projection mpp[tiflash]  Column#6, test.t.b",
-          "        └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-=======
           "    └─Selection mpp[tiflash]  or(lt(Column, 18), gt(test.t.b, 1))",
           "      └─Projection mpp[tiflash]  Column, test.t.b",
           "        └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column, funcs:firstrow(test.t.b)->test.t.b",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "              └─Selection mpp[tiflash]  lt(test.t.a, 60)",
@@ -815,36 +681,21 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ MPP_2PHASE_AGG() */ count(*) as a, b FROM t WHERE t.a < 60 group by b) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#11, funcs:firstrow(Column#12)->Column#12",
-          "└─Union root  ",
-          "  ├─Selection root  lt(Column#7, 18)",
-=======
           "HashAgg root  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
           "└─Union root  ",
           "  ├─Selection root  lt(Column, 18)",
->>>>>>> master
           "  │ └─CTEFullScan root CTE:cte data:CTE_0",
           "  └─Selection root  gt(test.t.b, 1)",
           "    └─CTEFullScan root CTE:cte data:CTE_0",
           "CTE_0 root  Non-Recursive CTE",
           "└─TableReader(Seed Part) root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "    └─Selection mpp[tiflash]  or(lt(Column#6, 18), gt(test.t.b, 1))",
-          "      └─Projection mpp[tiflash]  Column#6, test.t.b",
-          "        └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:sum(Column#23)->Column#6, funcs:firstrow(test.t.b)->test.t.b",
-          "          └─ExchangeReceiver mpp[tiflash]  ",
-          "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "              └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#23",
-=======
           "    └─Selection mpp[tiflash]  or(lt(Column, 18), gt(test.t.b, 1))",
           "      └─Projection mpp[tiflash]  Column, test.t.b",
           "        └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:sum(Column)->Column, funcs:firstrow(test.t.b)->test.t.b",
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "              └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column",
->>>>>>> master
           "                └─Selection mpp[tiflash]  lt(test.t.a, 60)",
           "                  └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -853,11 +704,7 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ shuffle_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  group by:Column#15, Column#16, funcs:firstrow(Column#15)->Column#15, funcs:firstrow(Column#16)->Column#16",
-=======
           "HashAgg root  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
->>>>>>> master
           "└─Union root  ",
           "  ├─Selection root  lt(test.t.a, 18)",
           "  │ └─CTEFullScan root CTE:cte data:CTE_0",
@@ -882,11 +729,7 @@
       {
         "SQL": "WITH CTE AS (SELECT /*+ broadcast_join(t1, t) */ t.a, t.b FROM t join t t1 where t.a = t1.a) SELECT * FROM CTE WHERE CTE.a <18 union select * from cte where cte.b > 1;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  group by:Column#15, Column#16, funcs:firstrow(Column#15)->Column#15, funcs:firstrow(Column#16)->Column#16",
-=======
           "HashAgg root  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
->>>>>>> master
           "└─Union root  ",
           "  ├─Selection root  lt(test.t.a, 18)",
           "  │ └─CTEFullScan root CTE:cte data:CTE_0",
@@ -911,16 +754,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#23, Column#24",
-          "    └─HashAgg mpp[tiflash]  group by:Column#23, Column#24, funcs:firstrow(Column#23)->Column#23, funcs:firstrow(Column#24)->Column#24",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#23, collate: binary], [name: Column#24, collate: binary]",
-          "          └─Union mpp[tiflash]  ",
-          "            ├─Selection mpp[tiflash]  lt(Column#14, 18)",
-          "            │ └─Projection mpp[tiflash]  Column#14, test.t.b",
-          "            │   └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#14, funcs:firstrow(test.t.b)->test.t.b",
-=======
           "  └─Projection mpp[tiflash]  Column, Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
           "      └─ExchangeReceiver mpp[tiflash]  ",
@@ -929,18 +762,12 @@
           "            ├─Selection mpp[tiflash]  lt(Column, 18)",
           "            │ └─Projection mpp[tiflash]  Column, test.t.b",
           "            │   └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column, funcs:firstrow(test.t.b)->test.t.b",
->>>>>>> master
           "            │     └─ExchangeReceiver mpp[tiflash]  ",
           "            │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "            │         └─Selection mpp[tiflash]  lt(test.t.a, 60)",
           "            │           └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-<<<<<<< HEAD
-          "            └─Projection mpp[tiflash]  Column#22->Column#23, test.t.b->Column#24",
-          "              └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#22, funcs:firstrow(test.t.b)->test.t.b",
-=======
           "            └─Projection mpp[tiflash]  Column, test.t.b->Column",
           "              └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column, funcs:firstrow(test.t.b)->test.t.b",
->>>>>>> master
           "                └─ExchangeReceiver mpp[tiflash]  ",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "                    └─Selection mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
@@ -953,26 +780,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#23, Column#24",
-          "    └─HashAgg mpp[tiflash]  group by:Column#23, Column#24, funcs:firstrow(Column#23)->Column#23, funcs:firstrow(Column#24)->Column#24",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#23, collate: binary], [name: Column#24, collate: binary]",
-          "          └─Union mpp[tiflash]  ",
-          "            ├─Selection mpp[tiflash]  lt(Column#14, 18)",
-          "            │ └─Projection mpp[tiflash]  Column#14, test.t.b",
-          "            │   └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:sum(Column#35)->Column#14, funcs:firstrow(test.t.b)->test.t.b",
-          "            │     └─ExchangeReceiver mpp[tiflash]  ",
-          "            │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "            │         └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#35",
-          "            │           └─Selection mpp[tiflash]  lt(test.t.a, 60)",
-          "            │             └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "            └─Projection mpp[tiflash]  Column#22->Column#23, test.t.b->Column#24",
-          "              └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:sum(Column#49)->Column#22, funcs:firstrow(test.t.b)->test.t.b",
-          "                └─ExchangeReceiver mpp[tiflash]  ",
-          "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
-          "                    └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column#49",
-=======
           "  └─Projection mpp[tiflash]  Column, Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
           "      └─ExchangeReceiver mpp[tiflash]  ",
@@ -991,7 +798,6 @@
           "                └─ExchangeReceiver mpp[tiflash]  ",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.b, collate: binary]",
           "                    └─HashAgg mpp[tiflash]  group by:test.t.b, funcs:count(1)->Column",
->>>>>>> master
           "                      └─Selection mpp[tiflash]  gt(test.t.b, 1), lt(test.t.a, 60)",
           "                        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
@@ -1002,15 +808,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#35, Column#36",
-          "    └─HashAgg mpp[tiflash]  group by:Column#35, Column#36, funcs:firstrow(Column#35)->Column#35, funcs:firstrow(Column#36)->Column#36",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#35, collate: binary], [name: Column#36, collate: binary]",
-          "          └─HashAgg mpp[tiflash]  group by:Column#35, Column#36, ",
-          "            └─Union mpp[tiflash]  ",
-          "              ├─Projection mpp[tiflash]  test.t.a->Column#35, test.t.b->Column#36",
-=======
           "  └─Projection mpp[tiflash]  Column, Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
           "      └─ExchangeReceiver mpp[tiflash]  ",
@@ -1018,7 +815,6 @@
           "          └─HashAgg mpp[tiflash]  group by:Column, Column, ",
           "            └─Union mpp[tiflash]  ",
           "              ├─Projection mpp[tiflash]  test.t.a->Column, test.t.b->Column",
->>>>>>> master
           "              │ └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "              │   ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "              │   │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
@@ -1028,11 +824,7 @@
           "              │     └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "              │       └─Selection mpp[tiflash]  lt(test.t.a, 18), not(isnull(test.t.a))",
           "              │         └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-<<<<<<< HEAD
-          "              └─Projection mpp[tiflash]  test.t.a->Column#35, test.t.b->Column#36",
-=======
           "              └─Projection mpp[tiflash]  test.t.a->Column, test.t.b->Column",
->>>>>>> master
           "                └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "                  ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "                  │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
@@ -1050,15 +842,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#35, Column#36",
-          "    └─HashAgg mpp[tiflash]  group by:Column#35, Column#36, funcs:firstrow(Column#35)->Column#35, funcs:firstrow(Column#36)->Column#36",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#35, collate: binary], [name: Column#36, collate: binary]",
-          "          └─HashAgg mpp[tiflash]  group by:Column#35, Column#36, ",
-          "            └─Union mpp[tiflash]  ",
-          "              ├─Projection mpp[tiflash]  test.t.a->Column#35, test.t.b->Column#36",
-=======
           "  └─Projection mpp[tiflash]  Column, Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column",
           "      └─ExchangeReceiver mpp[tiflash]  ",
@@ -1066,7 +849,6 @@
           "          └─HashAgg mpp[tiflash]  group by:Column, Column, ",
           "            └─Union mpp[tiflash]  ",
           "              ├─Projection mpp[tiflash]  test.t.a->Column, test.t.b->Column",
->>>>>>> master
           "              │ └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "              │   ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "              │   │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -1074,11 +856,7 @@
           "              │   │     └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
           "              │   └─Selection(Probe) mpp[tiflash]  lt(test.t.a, 18), not(isnull(test.t.a))",
           "              │     └─TableFullScan mpp[tiflash] table:t1 keep order:false, stats:pseudo",
-<<<<<<< HEAD
-          "              └─Projection mpp[tiflash]  test.t.a->Column#35, test.t.b->Column#36",
-=======
           "              └─Projection mpp[tiflash]  test.t.a->Column, test.t.b->Column",
->>>>>>> master
           "                └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.a)]",
           "                  ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "                  │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -1317,11 +1095,7 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a",
-<<<<<<< HEAD
-          "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column#11)",
-=======
           "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column)",
->>>>>>> master
           "      └─HashJoin mpp[tiflash]  CARTESIAN left outer semi join, left side:TableFullScan, other cond:eq(test.t.a, test.t.a)",
           "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -1339,11 +1113,7 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a",
-<<<<<<< HEAD
-          "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column#11)",
-=======
           "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column)",
->>>>>>> master
           "      └─HashJoin mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -1363,11 +1133,7 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a",
-<<<<<<< HEAD
-          "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column#11)",
-=======
           "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column)",
->>>>>>> master
           "      └─HashJoin mpp[tiflash]  CARTESIAN left outer semi join, left side:TableFullScan, other cond:eq(test.t.a, test.t.a)",
           "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -1387,11 +1153,7 @@
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "  └─Projection mpp[tiflash]  test.t.a",
-<<<<<<< HEAD
-          "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column#11)",
-=======
           "    └─Selection mpp[tiflash]  or(gt(test.t.a, 1), Column)",
->>>>>>> master
           "      └─HashJoin mpp[tiflash]  Null-aware anti left outer semi join, left side:TableFullScan, equal:[eq(test.t.a, test.t.a)]",
           "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -1418,17 +1180,10 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:Column#10, Column#11, funcs:sum(Column#9)->Column#6, funcs:firstrow(Column#10)->test.t.a",
-          "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#9, test.t.a->Column#10, test.t.c->Column#11",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.t.a",
           "        └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "              └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -1440,15 +1195,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#6",
-          "    └─Projection mpp[tiflash]  Column#6, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column#11)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
-          "            └─HashAgg mpp[tiflash]  group by:Column#14, Column#15, funcs:sum(Column#13)->Column#11",
-          "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column#13, test.t.a->Column#14, test.t.c->Column#15",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
@@ -1456,7 +1202,6 @@
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary], [name: test.t.c, collate: binary]",
           "            └─HashAgg mpp[tiflash]  group by:Column, Column, funcs:sum(Column)->Column",
           "              └─Projection mpp[tiflash]  cast(test.t.b, decimal(10,0) BINARY)->Column, test.t.a->Column, test.t.c->Column",
->>>>>>> master
           "                └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warn": null
@@ -1610,17 +1355,10 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ MPP_1PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  test.t.a, Column#6",
-          "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─TableReader root  data:HashAgg",
-          "    └─HashAgg cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column#7",
-=======
           "Projection root  test.t.a, Column",
           "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
           "  └─TableReader root  data:HashAgg",
           "    └─HashAgg cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column",
->>>>>>> master
           "      └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -1630,17 +1368,10 @@
       {
         "SQL": "explain format = 'plan_tree' select /*+ MPP_2PHASE_AGG() */ a, sum(b) from t group by a, c",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  test.t.a, Column#6",
-          "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column#7)->Column#6, funcs:firstrow(test.t.a)->test.t.a",
-          "  └─TableReader root  data:HashAgg",
-          "    └─HashAgg cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column#7",
-=======
           "Projection root  test.t.a, Column",
           "└─HashAgg root  group by:test.t.a, test.t.c, funcs:sum(Column)->Column, funcs:firstrow(test.t.a)->test.t.a",
           "  └─TableReader root  data:HashAgg",
           "    └─HashAgg cop[tikv]  group by:test.t.a, test.t.c, funcs:sum(test.t.b)->Column",
->>>>>>> master
           "      └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
         "Warn": [
@@ -2600,15 +2331,9 @@
         "SQL": "SELECT COUNT(*) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
         "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->HashAgg)->HashAgg",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#28)->Column#26",
-          "└─IndexReader root  index:HashAgg",
-          "  └─HashAgg cop[tikv]  funcs:count(1)->Column#28",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─IndexReader root  index:HashAgg",
           "  └─HashAgg cop[tikv]  funcs:count(1)->Column",
->>>>>>> master
           "    └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
         ]
       },
@@ -2616,15 +2341,9 @@
         "SQL": "SELECT COUNT(a) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
         "Best": "IndexReader(Index(t.f)[[NULL,+inf]]->HashAgg)->HashAgg",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#27)->Column#26",
-          "└─IndexReader root  index:HashAgg",
-          "  └─HashAgg cop[tikv]  funcs:count(test.t.a)->Column#27",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─IndexReader root  index:HashAgg",
           "  └─HashAgg cop[tikv]  funcs:count(test.t.a)->Column",
->>>>>>> master
           "    └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo"
         ]
       },
@@ -2632,11 +2351,7 @@
         "SQL": "SELECT COUNT(t) FROM (SELECT a, (SELECT t2.b FROM t t2, t t3 WHERE t2.a = t3.a AND t1.a = t2.a LIMIT 1) t FROM t t1) t",
         "Best": "Apply{IndexReader(Index(t.f)[[NULL,+inf]])->IndexJoin{TableReader(Table(t)->Sel([eq(test.t.a, test.t.a)]))->TableReader(Table(t))}(test.t.a,test.t.a)->Limit}->HashAgg",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(test.t.b)->Column#26",
-=======
           "HashAgg root  funcs:count(test.t.b)->Column",
->>>>>>> master
           "└─Apply root  CARTESIAN left outer join, left side:IndexReader",
           "  ├─IndexReader(Build) root  index:IndexFullScan",
           "  │ └─IndexFullScan cop[tikv] table:t1, index:idx_a(a) keep order:false, stats:pseudo",
@@ -2655,11 +2370,7 @@
         "SQL": "SELECT COUNT(a) FROM t t1 WHERE t1.a IN (SELECT t2.a FROM t t2, t t3 WHERE t2.b = t3.b)",
         "Best": "LeftHashJoin{IndexReader(Index(t.f)[[NULL,+inf]])->LeftHashJoin{TableReader(Table(t))->TableReader(Table(t))}(test.t.b,test.t.b)->HashAgg}(test.t.a,test.t.a)->HashAgg",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(test.t.a)->Column#16",
-=======
           "HashAgg root  funcs:count(test.t.a)->Column",
->>>>>>> master
           "└─HashJoin root  inner join, equal:[eq(test.t.a, test.t.a)]",
           "  ├─HashAgg(Build) root  group by:test.t.a, funcs:firstrow(test.t.a)->test.t.a",
           "  │ └─HashJoin root  inner join, equal:[eq(test.t.b, test.t.b)]",
@@ -3019,13 +2730,8 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:group_concat(Column#7 order by Column#8 desc separator \"++\")->Column#5, funcs:group_concat(Column#9 order by Column#8 desc, Column#10 separator \"--\")->Column#6",
-          "└─Projection root  cast(test.test.name, var_string(20))->Column#7, test.test.name->Column#8, cast(test.test.id, var_string(20))->Column#9, test.test.id->Column#10",
-=======
           "HashAgg root  funcs:group_concat(Column order by Column desc separator \"++\")->Column, funcs:group_concat(Column order by Column desc, Column separator \"--\")->Column",
           "└─Projection root  cast(test.test.name, var_string(20))->Column, test.test.name->Column, cast(test.test.id, var_string(20))->Column, test.test.id->Column",
->>>>>>> master
           "  └─TableReader root  data:TableFullScan",
           "    └─TableFullScan cop[tikv] table:test keep order:false, stats:pseudo"
         ],
@@ -3036,13 +2742,8 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:group_concat(Column#7 order by Column#8 desc separator \"++\")->Column#5, funcs:group_concat(Column#9 order by Column#8 desc, Column#10 separator \"--\")->Column#6",
-          "└─Projection root  cast(test.ptest.name, var_string(20))->Column#7, test.ptest.name->Column#8, cast(test.ptest.id, var_string(20))->Column#9, test.ptest.id->Column#10",
-=======
           "HashAgg root  funcs:group_concat(Column order by Column desc separator \"++\")->Column, funcs:group_concat(Column order by Column desc, Column separator \"--\")->Column",
           "└─Projection root  cast(test.ptest.name, var_string(20))->Column, test.ptest.name->Column, cast(test.ptest.id, var_string(20))->Column, test.ptest.id->Column",
->>>>>>> master
           "  └─TableReader root partition:all data:TableFullScan",
           "    └─TableFullScan cop[tikv] table:ptest keep order:false, stats:pseudo"
         ],
@@ -3053,13 +2754,8 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from test;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:group_concat(distinct Column#6 order by Column#7 desc separator \",\")->Column#5",
-          "└─Projection root  cast(test.test.name, var_string(20))->Column#6, test.test.name->Column#7",
-=======
           "HashAgg root  funcs:group_concat(distinct Column order by Column desc separator \",\")->Column",
           "└─Projection root  cast(test.test.name, var_string(20))->Column, test.test.name->Column",
->>>>>>> master
           "  └─TableReader root  data:TableFullScan",
           "    └─TableFullScan cop[tikv] table:test keep order:false, stats:pseudo"
         ],
@@ -3070,13 +2766,8 @@
       {
         "SQL": "select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:group_concat(distinct Column#6 order by Column#7 desc separator \",\")->Column#5",
-          "└─Projection root  cast(test.ptest.name, var_string(20))->Column#6, test.ptest.name->Column#7",
-=======
           "HashAgg root  funcs:group_concat(distinct Column order by Column desc separator \",\")->Column",
           "└─Projection root  cast(test.ptest.name, var_string(20))->Column, test.ptest.name->Column",
->>>>>>> master
           "  └─TableReader root partition:all data:TableFullScan",
           "    └─TableFullScan cop[tikv] table:ptest keep order:false, stats:pseudo"
         ],
@@ -3167,11 +2858,7 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  plus(test.employee.deptid, 5)->Column#6, mul(test.employee.empid, 10)->Column#7",
-=======
           "  └─Projection mpp[tiflash]  plus(test.employee.deptid, 5)->Column, mul(test.employee.empid, 10)->Column",
->>>>>>> master
           "    └─Selection mpp[tiflash]  gt(test.employee.deptid, 1)",
           "      └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ]
@@ -3181,21 +2868,12 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6",
-          "    └─HashAgg mpp[tiflash]  group by:Column#14, funcs:sum(Column#15)->Column#6",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
-          "          └─HashAgg mpp[tiflash]  group by:Column#16, funcs:count(1)->Column#15",
-          "            └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#16",
-=======
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, funcs:sum(Column)->Column",
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "          └─HashAgg mpp[tiflash]  group by:Column, funcs:count(1)->Column",
           "            └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column",
->>>>>>> master
           "              └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ]
       },
@@ -3204,19 +2882,11 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6",
-          "    └─HashAgg mpp[tiflash]  funcs:sum(Column#8)->Column#6",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#8",
-=======
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  funcs:sum(Column)->Column",
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "            └─ExchangeReceiver mpp[tiflash]  ",
           "              └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "                └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3244,15 +2914,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7",
-          "    └─HashAgg mpp[tiflash]  funcs:count(distinct Column#6)->Column#7",
-          "      └─Projection mpp[tiflash]  Column#6",
-          "        └─HashAgg mpp[tiflash]  funcs:sum(Column#9)->Column#6",
-          "          └─ExchangeReceiver mpp[tiflash]  ",
-          "            └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "              └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#9",
-=======
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  funcs:count(distinct Column)->Column",
           "      └─Projection mpp[tiflash]  Column",
@@ -3260,7 +2921,6 @@
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "              └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "                └─ExchangeReceiver mpp[tiflash]  ",
           "                  └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "                    └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3272,16 +2932,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#8",
-          "    └─HashAgg mpp[tiflash]  group by:Column#14, funcs:sum(Column#15)->Column#8",
-          "      └─ExchangeReceiver mpp[tiflash]  ",
-          "        └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
-          "          └─HashAgg mpp[tiflash]  group by:Column#17, funcs:count(Column#16)->Column#15",
-          "            └─Projection mpp[tiflash]  Column#6->Column#16, plus(Column#7, 1)->Column#17",
-          "              └─Projection mpp[tiflash]  Column#6, Column#7",
-          "                └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#6, funcs:count(distinct test.employee.empid)->Column#7",
-=======
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, funcs:sum(Column)->Column",
           "      └─ExchangeReceiver mpp[tiflash]  ",
@@ -3290,7 +2940,6 @@
           "            └─Projection mpp[tiflash]  Column, plus(Column, 1)->Column",
           "              └─Projection mpp[tiflash]  Column, Column",
           "                └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column, funcs:count(distinct test.employee.empid)->Column",
->>>>>>> master
           "                  └─ExchangeReceiver mpp[tiflash]  ",
           "                    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "                      └─HashAgg mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
@@ -3302,17 +2951,10 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#8",
-          "    └─HashAgg mpp[tiflash]  group by:Column#7, funcs:count(Column#6)->Column#8",
-          "      └─Projection mpp[tiflash]  Column#6, Column#7",
-          "        └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#6, funcs:count(distinct test.employee.empid)->Column#7",
-=======
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  group by:Column, funcs:count(Column)->Column",
           "      └─Projection mpp[tiflash]  Column, Column",
           "        └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column, funcs:count(distinct test.employee.empid)->Column",
->>>>>>> master
           "          └─ExchangeReceiver mpp[tiflash]  ",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "              └─HashAgg mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
@@ -3327,13 +2969,8 @@
           "  └─HashJoin mpp[tiflash]  CARTESIAN inner join",
           "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-<<<<<<< HEAD
-          "    │   └─Projection mpp[tiflash]  Column#11, Column#12",
-          "    │     └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#11, funcs:count(distinct test.employee.empid)->Column#12",
-=======
           "    │   └─Projection mpp[tiflash]  Column, Column",
           "    │     └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column, funcs:count(distinct test.employee.empid)->Column",
->>>>>>> master
           "    │       └─ExchangeReceiver mpp[tiflash]  ",
           "    │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "    │           └─HashAgg mpp[tiflash]  group by:test.employee.deptid, test.employee.empid, ",
@@ -3346,16 +2983,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#11)]",
-          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Projection mpp[tiflash]  Column#11",
-          "    │     └─HashAgg mpp[tiflash]  funcs:sum(Column#12)->Column#11",
-          "    │       └─ExchangeReceiver mpp[tiflash]  ",
-          "    │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "    │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#12",
-=======
           "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column)]",
           "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -3364,7 +2991,6 @@
           "    │       └─ExchangeReceiver mpp[tiflash]  ",
           "    │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "    │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "    │             └─ExchangeReceiver mpp[tiflash]  ",
           "    │               └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "    │                 └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3378,17 +3004,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#6, test.employee.empid, test.employee.deptid, test.employee.salary",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#6)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Projection mpp[tiflash]  Column#6",
-          "      │     └─HashAgg mpp[tiflash]  funcs:sum(Column#12)->Column#6",
-          "      │       └─ExchangeReceiver mpp[tiflash]  ",
-          "      │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "      │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#12",
-=======
           "  └─Projection mpp[tiflash]  Column, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
@@ -3398,7 +3013,6 @@
           "      │       └─ExchangeReceiver mpp[tiflash]  ",
           "      │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "      │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "      │             └─ExchangeReceiver mpp[tiflash]  ",
           "      │               └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "      │                 └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3412,16 +3026,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column#6, Column#12)]",
-          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Projection mpp[tiflash]  Column#6",
-          "    │     └─HashAgg mpp[tiflash]  funcs:sum(Column#13)->Column#6",
-          "    │       └─ExchangeReceiver mpp[tiflash]  ",
-          "    │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "    │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#13",
-=======
           "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column, Column)]",
           "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -3430,24 +3034,15 @@
           "    │       └─ExchangeReceiver mpp[tiflash]  ",
           "    │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "    │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "    │             └─ExchangeReceiver mpp[tiflash]  ",
           "    │               └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "    │                 └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
           "    │                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
-<<<<<<< HEAD
-          "    └─Projection(Probe) mpp[tiflash]  Column#12",
-          "      └─HashAgg mpp[tiflash]  funcs:sum(Column#14)->Column#12",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "            └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#14",
-=======
           "    └─Projection(Probe) mpp[tiflash]  Column",
           "      └─HashAgg mpp[tiflash]  funcs:sum(Column)->Column",
           "        └─ExchangeReceiver mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "              └─ExchangeReceiver mpp[tiflash]  ",
           "                └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "                  └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3473,19 +3068,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7, Column#6, test.employee.empid, test.employee.deptid, test.employee.salary",
-          "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#7)]",
-          "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "      │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "      │   └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#7, Column#6",
-          "      │     └─Projection mpp[tiflash]  Column#6, test.employee.deptid",
-          "      │       └─HashAgg mpp[tiflash]  group by:Column#16, funcs:sum(Column#17)->Column#6, funcs:firstrow(Column#18)->test.employee.deptid",
-          "      │         └─ExchangeReceiver mpp[tiflash]  ",
-          "      │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
-          "      │             └─HashAgg mpp[tiflash]  group by:Column#30, funcs:count(Column#28)->Column#17, funcs:firstrow(Column#29)->Column#18",
-          "      │               └─Projection mpp[tiflash]  test.employee.empid->Column#28, test.employee.deptid->Column#29, plus(test.employee.deptid, 1)->Column#30",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column)]",
           "      ├─ExchangeReceiver(Build) mpp[tiflash]  ",
@@ -3497,7 +3079,6 @@
           "      │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "      │             └─HashAgg mpp[tiflash]  group by:Column, funcs:count(Column)->Column, funcs:firstrow(Column)->Column",
           "      │               └─Projection mpp[tiflash]  test.employee.empid->Column, test.employee.deptid->Column, plus(test.employee.deptid, 1)->Column",
->>>>>>> master
           "      │                 └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
           "      │                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "      └─Selection(Probe) mpp[tiflash]  not(isnull(test.employee.deptid))",
@@ -3509,18 +3090,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#12)]",
-          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#12, Column#11",
-          "    │     └─Projection mpp[tiflash]  Column#11, test.employee.deptid",
-          "    │       └─HashAgg mpp[tiflash]  group by:Column#16, funcs:sum(Column#17)->Column#11, funcs:firstrow(Column#18)->test.employee.deptid",
-          "    │         └─ExchangeReceiver mpp[tiflash]  ",
-          "    │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
-          "    │             └─HashAgg mpp[tiflash]  group by:Column#30, funcs:count(Column#28)->Column#17, funcs:firstrow(Column#29)->Column#18",
-          "    │               └─Projection mpp[tiflash]  test.employee.empid->Column#28, test.employee.deptid->Column#29, plus(test.employee.deptid, 1)->Column#30",
-=======
           "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column)]",
           "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -3531,7 +3100,6 @@
           "    │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "    │             └─HashAgg mpp[tiflash]  group by:Column, funcs:count(Column)->Column, funcs:firstrow(Column)->Column",
           "    │               └─Projection mpp[tiflash]  test.employee.empid->Column, test.employee.deptid->Column, plus(test.employee.deptid, 1)->Column",
->>>>>>> master
           "    │                 └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
           "    │                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "    └─Selection(Probe) mpp[tiflash]  not(isnull(test.employee.deptid))",
@@ -3543,27 +3111,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column#7, Column#14)]",
-          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#7, Column#6",
-          "    │     └─Projection mpp[tiflash]  Column#6, test.employee.deptid",
-          "    │       └─HashAgg mpp[tiflash]  group by:Column#21, funcs:sum(Column#22)->Column#6, funcs:firstrow(Column#23)->test.employee.deptid",
-          "    │         └─ExchangeReceiver mpp[tiflash]  ",
-          "    │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#21, collate: binary]",
-          "    │             └─HashAgg mpp[tiflash]  group by:Column#47, funcs:count(Column#45)->Column#22, funcs:firstrow(Column#46)->Column#23",
-          "    │               └─Projection mpp[tiflash]  test.employee.empid->Column#45, test.employee.deptid->Column#46, plus(test.employee.deptid, 1)->Column#47",
-          "    │                 └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
-          "    │                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "    └─Projection(Probe) mpp[tiflash]  plus(test.employee.deptid, 1)->Column#14, Column#13",
-          "      └─Projection mpp[tiflash]  Column#13, test.employee.deptid",
-          "        └─HashAgg mpp[tiflash]  group by:Column#24, funcs:sum(Column#25)->Column#13, funcs:firstrow(Column#26)->test.employee.deptid",
-          "          └─ExchangeReceiver mpp[tiflash]  ",
-          "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#24, collate: binary]",
-          "              └─HashAgg mpp[tiflash]  group by:Column#50, funcs:count(Column#48)->Column#25, funcs:firstrow(Column#49)->Column#26",
-          "                └─Projection mpp[tiflash]  test.employee.empid->Column#48, test.employee.deptid->Column#49, plus(test.employee.deptid, 1)->Column#50",
-=======
           "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column, Column)]",
           "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
@@ -3583,7 +3130,6 @@
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "              └─HashAgg mpp[tiflash]  group by:Column, funcs:count(Column)->Column, funcs:firstrow(Column)->Column",
           "                └─Projection mpp[tiflash]  test.employee.empid->Column, test.employee.deptid->Column, plus(test.employee.deptid, 1)->Column",
->>>>>>> master
           "                  └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
           "                    └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ]
@@ -3599,17 +3145,6 @@
       {
         "SQL": "select * from (select count(distinct deptid) a from employee) e1 join employee e2 on e1.a = e2.deptid",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#6, test.employee.empid, test.employee.deptid, test.employee.salary",
-          "└─HashJoin root  inner join, equal:[eq(test.employee.deptid, Column#6)]",
-          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─Projection mpp[tiflash]  Column#6",
-          "  │     └─HashAgg mpp[tiflash]  funcs:sum(Column#13)->Column#6",
-          "  │       └─ExchangeReceiver mpp[tiflash]  ",
-          "  │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "  │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#13",
-=======
           "Projection root  Column, test.employee.empid, test.employee.deptid, test.employee.salary",
           "└─HashJoin root  inner join, equal:[eq(test.employee.deptid, Column)]",
           "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
@@ -3619,7 +3154,6 @@
           "  │       └─ExchangeReceiver mpp[tiflash]  ",
           "  │         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "  │           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "  │             └─ExchangeReceiver mpp[tiflash]  ",
           "  │               └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "  │                 └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3633,16 +3167,6 @@
       {
         "SQL": "select * from (select count(distinct deptid) a from employee) e1 join (select count(distinct deptid) b from employee) e2 on e1.a=e2.b",
         "Plan": [
-<<<<<<< HEAD
-          "HashJoin root  inner join, equal:[eq(Column#6, Column#12)]",
-          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Projection mpp[tiflash]  Column#12",
-          "│     └─HashAgg mpp[tiflash]  funcs:sum(Column#16)->Column#12",
-          "│       └─ExchangeReceiver mpp[tiflash]  ",
-          "│         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "│           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#16",
-=======
           "HashJoin root  inner join, equal:[eq(Column, Column)]",
           "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
           "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
@@ -3651,26 +3175,17 @@
           "│       └─ExchangeReceiver mpp[tiflash]  ",
           "│         └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "│           └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "│             └─ExchangeReceiver mpp[tiflash]  ",
           "│               └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "│                 └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
           "│                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
           "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "    └─Projection mpp[tiflash]  Column#6",
-          "      └─HashAgg mpp[tiflash]  funcs:sum(Column#15)->Column#6",
-          "        └─ExchangeReceiver mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "            └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column#15",
-=======
           "    └─Projection mpp[tiflash]  Column",
           "      └─HashAgg mpp[tiflash]  funcs:sum(Column)->Column",
           "        └─ExchangeReceiver mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "            └─HashAgg mpp[tiflash]  funcs:count(distinct test.employee.deptid)->Column",
->>>>>>> master
           "              └─ExchangeReceiver mpp[tiflash]  ",
           "                └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
           "                  └─HashAgg mpp[tiflash]  group by:test.employee.deptid, ",
@@ -3698,25 +3213,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#7, Column#6, test.employee.empid, test.employee.deptid, test.employee.salary",
-          "    └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#7, Column#6, Column#29",
-          "      └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#7)]",
-          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#7, collate: binary]",
-          "        │   └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#7, Column#6",
-          "        │     └─Projection mpp[tiflash]  Column#6, test.employee.deptid",
-          "        │       └─HashAgg mpp[tiflash]  group by:Column#16, funcs:sum(Column#17)->Column#6, funcs:firstrow(Column#18)->test.employee.deptid",
-          "        │         └─ExchangeReceiver mpp[tiflash]  ",
-          "        │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
-          "        │             └─HashAgg mpp[tiflash]  group by:Column#32, funcs:count(Column#30)->Column#17, funcs:firstrow(Column#31)->Column#18",
-          "        │               └─Projection mpp[tiflash]  test.employee.empid->Column#30, test.employee.deptid->Column#31, plus(test.employee.deptid, 1)->Column#32",
-          "        │                 └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
-          "        │                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "        └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#29, collate: binary]",
-          "            └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#29",
-=======
           "  └─Projection mpp[tiflash]  Column, Column, test.employee.empid, test.employee.deptid, test.employee.salary",
           "    └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column, Column, Column",
           "      └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column)]",
@@ -3734,7 +3230,6 @@
           "        └─ExchangeReceiver(Probe) mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "            └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column",
->>>>>>> master
           "              └─Selection mpp[tiflash]  not(isnull(test.employee.deptid))",
           "                └─TableFullScan mpp[tiflash] table:e2 keep order:false, stats:pseudo"
         ]
@@ -3744,25 +3239,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#12, Column#11",
-          "    └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#12, Column#11, Column#29",
-          "      └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column#12)]",
-          "        ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#12, collate: binary]",
-          "        │   └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#12, Column#11",
-          "        │     └─Projection mpp[tiflash]  Column#11, test.employee.deptid",
-          "        │       └─HashAgg mpp[tiflash]  group by:Column#16, funcs:sum(Column#17)->Column#11, funcs:firstrow(Column#18)->test.employee.deptid",
-          "        │         └─ExchangeReceiver mpp[tiflash]  ",
-          "        │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#16, collate: binary]",
-          "        │             └─HashAgg mpp[tiflash]  group by:Column#32, funcs:count(Column#30)->Column#17, funcs:firstrow(Column#31)->Column#18",
-          "        │               └─Projection mpp[tiflash]  test.employee.empid->Column#30, test.employee.deptid->Column#31, plus(test.employee.deptid, 1)->Column#32",
-          "        │                 └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
-          "        │                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "        └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#29, collate: binary]",
-          "            └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column#29",
-=======
           "  └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column, Column",
           "    └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column, Column, Column",
           "      └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.employee.deptid, Column)]",
@@ -3780,7 +3256,6 @@
           "        └─ExchangeReceiver(Probe) mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "            └─Projection mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, cast(test.employee.deptid, bigint(20))->Column",
->>>>>>> master
           "              └─Selection mpp[tiflash]  not(isnull(test.employee.deptid))",
           "                └─TableFullScan mpp[tiflash] table:e1 keep order:false, stats:pseudo"
         ]
@@ -3790,29 +3265,6 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column#7, Column#14)]",
-          "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
-          "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#7, collate: binary]",
-          "    │   └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#7, Column#6",
-          "    │     └─Projection mpp[tiflash]  Column#6, test.employee.deptid",
-          "    │       └─HashAgg mpp[tiflash]  group by:Column#21, funcs:sum(Column#22)->Column#6, funcs:firstrow(Column#23)->test.employee.deptid",
-          "    │         └─ExchangeReceiver mpp[tiflash]  ",
-          "    │           └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#21, collate: binary]",
-          "    │             └─HashAgg mpp[tiflash]  group by:Column#47, funcs:count(Column#45)->Column#22, funcs:firstrow(Column#46)->Column#23",
-          "    │               └─Projection mpp[tiflash]  test.employee.empid->Column#45, test.employee.deptid->Column#46, plus(test.employee.deptid, 1)->Column#47",
-          "    │                 └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
-          "    │                   └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo",
-          "    └─ExchangeReceiver(Probe) mpp[tiflash]  ",
-          "      └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#14, collate: binary]",
-          "        └─Projection mpp[tiflash]  plus(test.employee.deptid, 1)->Column#14, Column#13",
-          "          └─Projection mpp[tiflash]  Column#13, test.employee.deptid",
-          "            └─HashAgg mpp[tiflash]  group by:Column#24, funcs:sum(Column#25)->Column#13, funcs:firstrow(Column#26)->test.employee.deptid",
-          "              └─ExchangeReceiver mpp[tiflash]  ",
-          "                └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#24, collate: binary]",
-          "                  └─HashAgg mpp[tiflash]  group by:Column#50, funcs:count(Column#48)->Column#25, funcs:firstrow(Column#49)->Column#26",
-          "                    └─Projection mpp[tiflash]  test.employee.empid->Column#48, test.employee.deptid->Column#49, plus(test.employee.deptid, 1)->Column#50",
-=======
           "  └─HashJoin mpp[tiflash]  inner join, equal:[eq(Column, Column)]",
           "    ├─ExchangeReceiver(Build) mpp[tiflash]  ",
           "    │ └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
@@ -3834,7 +3286,6 @@
           "                └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column, collate: binary]",
           "                  └─HashAgg mpp[tiflash]  group by:Column, funcs:count(Column)->Column, funcs:firstrow(Column)->Column",
           "                    └─Projection mpp[tiflash]  test.employee.empid->Column, test.employee.deptid->Column, plus(test.employee.deptid, 1)->Column",
->>>>>>> master
           "                      └─Selection mpp[tiflash]  not(isnull(plus(test.employee.deptid, 1)))",
           "                        └─TableFullScan mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ]
@@ -3855,19 +3306,11 @@
       {
         "SQL": "select * from t where a > (select /*+ SEMI_JOIN_REWRITE() */ min(b) from t t1 where t1.c = t.c)",
         "Plan": [
-<<<<<<< HEAD
-          "HashJoin root  inner join, equal:[eq(test.t.c, test.t.c)], other cond:gt(test.t.a, Column#11)",
-          "├─Selection(Build) root  not(isnull(Column#11))",
-          "│ └─HashAgg root  group by:test.t.c, funcs:min(Column#12)->Column#11, funcs:firstrow(test.t.c)->test.t.c",
-          "│   └─TableReader root  data:HashAgg",
-          "│     └─HashAgg cop[tikv]  group by:test.t.c, funcs:min(test.t.b)->Column#12",
-=======
           "HashJoin root  inner join, equal:[eq(test.t.c, test.t.c)], other cond:gt(test.t.a, Column)",
           "├─Selection(Build) root  not(isnull(Column))",
           "│ └─HashAgg root  group by:test.t.c, funcs:min(Column)->Column, funcs:firstrow(test.t.c)->test.t.c",
           "│   └─TableReader root  data:HashAgg",
           "│     └─HashAgg cop[tikv]  group by:test.t.c, funcs:min(test.t.b)->Column",
->>>>>>> master
           "│       └─Selection cop[tikv]  not(isnull(test.t.c))",
           "│         └─TableFullScan cop[tikv] table:t1 keep order:false, stats:pseudo",
           "└─TableReader(Probe) root  data:Selection",
@@ -4068,17 +3511,10 @@
       {
         "SQL": "select count(*) from t",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#13)->Column#11",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#13",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column",
->>>>>>> master
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -4086,17 +3522,10 @@
       {
         "SQL": "select count(1), count(3.1415), count(0), count(null) from t -- every count but count(null) can be rewritten",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#19)->Column#11, funcs:count(Column#20)->Column#12, funcs:count(Column#21)->Column#13, funcs:count(Column#22)->Column#14",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#19, funcs:count(test.t.d)->Column#20, funcs:count(test.t.d)->Column#21, funcs:count(NULL)->Column#22",
-=======
           "HashAgg root  funcs:count(Column)->Column, funcs:count(Column)->Column, funcs:count(Column)->Column, funcs:count(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column, funcs:count(test.t.d)->Column, funcs:count(test.t.d)->Column, funcs:count(NULL)->Column",
->>>>>>> master
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -4104,11 +3533,7 @@
       {
         "SQL": "select count(*) from t where a=1",
         "Plan": [
-<<<<<<< HEAD
-          "StreamAgg root  funcs:count(1)->Column#11",
-=======
           "StreamAgg root  funcs:count(1)->Column",
->>>>>>> master
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─Selection mpp[tiflash]  eq(test.t.a, 1)",
@@ -4119,17 +3544,10 @@
       {
         "SQL": "select count(*) from t_pick_row_id",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#6)->Column#4",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(test.t_pick_row_id._tidb_rowid)->Column#6",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(test.t_pick_row_id._tidb_rowid)->Column",
->>>>>>> master
           "      └─TableFullScan mpp[tiflash] table:t_pick_row_id keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -4137,19 +3555,11 @@
       {
         "SQL": "select t.b, t.c from (select count(*) as c from t) a, t where a.c=t.a -- test recursive",
         "Plan": [
-<<<<<<< HEAD
-          "HashJoin root  inner join, equal:[eq(test.t.a, Column#11)]",
-          "├─HashAgg(Build) root  funcs:count(Column#24)->Column#11",
-          "│ └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "│   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│     └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column#24",
-=======
           "HashJoin root  inner join, equal:[eq(test.t.a, Column)]",
           "├─HashAgg(Build) root  funcs:count(Column)->Column",
           "│ └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "│   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "│     └─HashAgg mpp[tiflash]  funcs:count(test.t.d)->Column",
->>>>>>> master
           "│       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
@@ -4161,16 +3571,6 @@
         "SQL": "select * from t outTable where outTable.a > (select count(*) from t inn where inn.a = outTable.b) -- shouldn't be rewritten for correlated sub query",
         "Plan": [
           "Projection root  test.t.a, test.t.b, test.t.c, test.t.d, test.t.e, test.t.f, test.t.g, test.t.h",
-<<<<<<< HEAD
-          "└─Apply root  CARTESIAN inner join, other cond:gt(test.t.a, Column#21)",
-          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  │   └─TableFullScan mpp[tiflash] table:outTable keep order:false, stats:pseudo",
-          "  └─HashAgg(Probe) root  funcs:count(Column#23)->Column#21",
-          "    └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─HashAgg mpp[tiflash]  funcs:count(1)->Column#23",
-=======
           "└─Apply root  CARTESIAN inner join, other cond:gt(test.t.a, Column)",
           "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
           "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
@@ -4179,7 +3579,6 @@
           "    └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "        └─HashAgg mpp[tiflash]  funcs:count(1)->Column",
->>>>>>> master
           "          └─Selection mpp[tiflash]  eq(cast(test.t.a, double BINARY), cast(test.t.b, double BINARY))",
           "            └─TableFullScan mpp[tiflash] table:inn keep order:false, stats:pseudo"
         ],
@@ -4188,17 +3587,10 @@
       {
         "SQL": "select count(*) from t t1, t t2 where t1.a=t2.e -- shouldn't be rewritten when join under agg",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#22)->Column#21",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#22",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column",
->>>>>>> master
           "      └─Projection mpp[tiflash]  test.t.a",
           "        └─HashJoin mpp[tiflash]  inner join, equal:[eq(test.t.a, test.t.e)]",
           "          ├─ExchangeReceiver(Build) mpp[tiflash]  ",
@@ -4213,13 +3605,8 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  Column#11",
-          "    └─HashAgg mpp[tiflash]  funcs:count(distinct Column#15)->Column#11",
-=======
           "  └─Projection mpp[tiflash]  Column",
           "    └─HashAgg mpp[tiflash]  funcs:count(distinct Column)->Column",
->>>>>>> master
           "      └─ExchangeReceiver mpp[tiflash]  ",
           "        └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
           "          └─HashAgg mpp[tiflash]  group by:1, ",
@@ -4230,17 +3617,10 @@
       {
         "SQL": "select count(1), count(a), count(b) from t -- keep count(1)",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#17)->Column#11, funcs:count(Column#18)->Column#12, funcs:count(Column#19)->Column#13",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column#17, funcs:count(test.t.a)->Column#18, funcs:count(test.t.b)->Column#19",
-=======
           "HashAgg root  funcs:count(Column)->Column, funcs:count(Column)->Column, funcs:count(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:count(1)->Column, funcs:count(test.t.a)->Column, funcs:count(test.t.b)->Column",
->>>>>>> master
           "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -4250,15 +3630,9 @@
         "Plan": [
           "TableReader root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "  └─Projection mpp[tiflash]  test.t.a, Column#11",
-          "    └─Projection mpp[tiflash]  Column#11, test.t.a",
-          "      └─HashAgg mpp[tiflash]  group by:test.t.a, funcs:count(1)->Column#11, funcs:firstrow(test.t.a)->test.t.a",
-=======
           "  └─Projection mpp[tiflash]  test.t.a, Column",
           "    └─Projection mpp[tiflash]  Column, test.t.a",
           "      └─HashAgg mpp[tiflash]  group by:test.t.a, funcs:count(1)->Column, funcs:firstrow(test.t.a)->test.t.a",
->>>>>>> master
           "        └─ExchangeReceiver mpp[tiflash]  ",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.a, collate: binary]",
           "            └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
@@ -4268,19 +3642,11 @@
       {
         "SQL": "select sum(a) from t -- sum shouldn't be rewritten",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:sum(Column#13)->Column#11",
-          "└─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─HashAgg mpp[tiflash]  funcs:sum(Column#16)->Column#13",
-          "      └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column#16",
-=======
           "HashAgg root  funcs:sum(Column)->Column",
           "└─TableReader root  MppVersion: 3, data:ExchangeSender",
           "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    └─HashAgg mpp[tiflash]  funcs:sum(Column)->Column",
           "      └─Projection mpp[tiflash]  cast(test.t.a, decimal(10,0) BINARY)->Column",
->>>>>>> master
           "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -4294,18 +3660,6 @@
         "SQL": "select  /*+ agg_to_cop() hash_agg() */  avg( distinct  tbl_15.col_96 ) as r0 , min(   tbl_15.col_92 ) as r1 , sum( distinct  tbl_15.col_91 ) as r2 , max(   tbl_15.col_92 ) as r3 from tbl_15 where tbl_15.col_94 != '2033-01-09' and tbl_15.col_93 > 7623.679908049186   order by r0,r1,r2,r3 limit 79 ;",
         "Plan": [
           "Limit root  offset:0, count:79",
-<<<<<<< HEAD
-          "└─Sort root  Column#12, Column#13, Column#14, Column#15",
-          "  └─HashAgg root  funcs:avg(distinct Column#90)->Column#12, funcs:min(Column#91)->Column#13, funcs:sum(distinct Column#92)->Column#14, funcs:max(Column#93)->Column#15",
-          "    └─Projection root  cast(test.tbl_15.col_96, decimal(10,0) UNSIGNED BINARY)->Column#90, Column#16->Column#91, cast(test.tbl_15.col_91, decimal(3,0) UNSIGNED BINARY)->Column#92, Column#17->Column#93",
-          "      └─PartitionUnion root  ",
-          "        ├─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "        │   └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#19)->Column#16, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#21)->Column#17, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
-          "        │     └─ExchangeReceiver mpp[tiflash]  ",
-          "        │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
-          "        │         └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column#19, funcs:max(test.tbl_15.col_92)->Column#21",
-=======
           "└─Sort root  Column, Column, Column, Column",
           "  └─HashAgg root  funcs:avg(distinct Column)->Column, funcs:min(Column)->Column, funcs:sum(distinct Column)->Column, funcs:max(Column)->Column",
           "    └─Projection root  cast(test.tbl_15.col_96, decimal(10,0) UNSIGNED BINARY)->Column, Column, cast(test.tbl_15.col_91, decimal(3,0) UNSIGNED BINARY)->Column, Column",
@@ -4316,52 +3670,30 @@
           "        │     └─ExchangeReceiver mpp[tiflash]  ",
           "        │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
           "        │         └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column, funcs:max(test.tbl_15.col_92)->Column",
->>>>>>> master
           "        │           └─Selection mpp[tiflash]  gt(test.tbl_15.col_93, 7623.679908049186), ne(test.tbl_15.col_94, 2033-01-09 00:00:00.000000)",
           "        │             └─TableFullScan mpp[tiflash] table:tbl_15, partition:p0 keep order:false, stats:pseudo",
           "        ├─TableReader root  MppVersion: 3, data:ExchangeSender",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "        │   └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#31)->Column#16, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#33)->Column#17, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
-          "        │     └─ExchangeReceiver mpp[tiflash]  ",
-          "        │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
-          "        │         └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column#31, funcs:max(test.tbl_15.col_92)->Column#33",
-=======
           "        │   └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column)->Column, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column)->Column, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
           "        │     └─ExchangeReceiver mpp[tiflash]  ",
           "        │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
           "        │         └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column, funcs:max(test.tbl_15.col_92)->Column",
->>>>>>> master
           "        │           └─Selection mpp[tiflash]  gt(test.tbl_15.col_93, 7623.679908049186), ne(test.tbl_15.col_94, 2033-01-09 00:00:00.000000)",
           "        │             └─TableFullScan mpp[tiflash] table:tbl_15, partition:p1 keep order:false, stats:pseudo",
           "        ├─TableReader root  MppVersion: 3, data:ExchangeSender",
           "        │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "        │   └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#43)->Column#16, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#45)->Column#17, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
-          "        │     └─ExchangeReceiver mpp[tiflash]  ",
-          "        │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
-          "        │         └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column#43, funcs:max(test.tbl_15.col_92)->Column#45",
-=======
           "        │   └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column)->Column, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column)->Column, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
           "        │     └─ExchangeReceiver mpp[tiflash]  ",
           "        │       └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
           "        │         └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column, funcs:max(test.tbl_15.col_92)->Column",
->>>>>>> master
           "        │           └─Selection mpp[tiflash]  gt(test.tbl_15.col_93, 7623.679908049186), ne(test.tbl_15.col_94, 2033-01-09 00:00:00.000000)",
           "        │             └─TableFullScan mpp[tiflash] table:tbl_15, partition:p2 keep order:false, stats:pseudo",
           "        └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "          └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-<<<<<<< HEAD
-          "            └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column#55)->Column#16, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column#57)->Column#17, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
-          "              └─ExchangeReceiver mpp[tiflash]  ",
-          "                └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
-          "                  └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column#55, funcs:max(test.tbl_15.col_92)->Column#57",
-=======
           "            └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:min(Column)->Column, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91, funcs:max(Column)->Column, funcs:firstrow(test.tbl_15.col_96)->test.tbl_15.col_96, funcs:firstrow(test.tbl_15.col_91)->test.tbl_15.col_91",
           "              └─ExchangeReceiver mpp[tiflash]  ",
           "                └─ExchangeSender mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.tbl_15.col_96, collate: binary], [name: test.tbl_15.col_91, collate: binary]",
           "                  └─HashAgg mpp[tiflash]  group by:test.tbl_15.col_91, test.tbl_15.col_96, funcs:min(test.tbl_15.col_92)->Column, funcs:max(test.tbl_15.col_92)->Column",
->>>>>>> master
           "                    └─Selection mpp[tiflash]  gt(test.tbl_15.col_93, 7623.679908049186), ne(test.tbl_15.col_94, 2033-01-09 00:00:00.000000)",
           "                      └─TableFullScan mpp[tiflash] table:tbl_15, partition:p3 keep order:false, stats:pseudo"
         ],
@@ -4370,29 +3702,6 @@
       {
         "SQL": "select  /*+ agg_to_cop() hash_agg() */  count(1) from tbl_15 ;",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  funcs:count(Column#13)->Column#12",
-          "└─PartitionUnion root  ",
-          "  ├─HashAgg root  funcs:count(Column#14)->Column#13",
-          "  │ └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  │   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  │     └─HashAgg mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#14",
-          "  │       └─TableFullScan mpp[tiflash] table:tbl_15, partition:p0 keep order:false, stats:pseudo",
-          "  ├─HashAgg root  funcs:count(Column#15)->Column#13",
-          "  │ └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  │   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  │     └─HashAgg mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#15",
-          "  │       └─TableFullScan mpp[tiflash] table:tbl_15, partition:p1 keep order:false, stats:pseudo",
-          "  ├─HashAgg root  funcs:count(Column#16)->Column#13",
-          "  │ └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "  │   └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "  │     └─HashAgg mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#16",
-          "  │       └─TableFullScan mpp[tiflash] table:tbl_15, partition:p2 keep order:false, stats:pseudo",
-          "  └─HashAgg root  funcs:count(Column#17)->Column#13",
-          "    └─TableReader root  MppVersion: 3, data:ExchangeSender",
-          "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "        └─HashAgg mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column#17",
-=======
           "HashAgg root  funcs:count(Column)->Column",
           "└─PartitionUnion root  ",
           "  ├─HashAgg root  funcs:count(Column)->Column",
@@ -4414,7 +3723,6 @@
           "    └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "      └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "        └─HashAgg mpp[tiflash]  funcs:count(test.tbl_15.col_91)->Column",
->>>>>>> master
           "          └─TableFullScan mpp[tiflash] table:tbl_15, partition:p3 keep order:false, stats:pseudo"
         ],
         "Warning": null
@@ -4422,31 +3730,18 @@
       {
         "SQL": "select  /*+ agg_to_cop() stream_agg() */  avg(   tbl_16.col_100 ) as r0 from tbl_16 where tbl_16.col_100 in ( 10672141 ) or tbl_16.col_104 in ( 'yfEG1t!*b' ,'C1*bqx_qyO' ,'vQ^yUpKHr&j#~' ) group by tbl_16.col_100  order by r0 limit 20 ;",
         "Plan": [
-<<<<<<< HEAD
-          "TopN root  Column#11, offset:0, count:20",
-          "└─HashAgg root  group by:test.tbl_16.col_100, funcs:avg(Column#12, Column#13)->Column#11",
-          "  └─PartitionUnion root  ",
-          "    ├─StreamAgg root  group by:Column#20, funcs:count(Column#20)->Column#12, funcs:sum(Column#21)->Column#13, funcs:firstrow(Column#22)->test.tbl_16.col_100",
-          "    │ └─Projection root  test.tbl_16.col_100->Column#20, cast(test.tbl_16.col_100, decimal(8,0) UNSIGNED BINARY)->Column#21, test.tbl_16.col_100->Column#22",
-=======
           "TopN root  Column, offset:0, count:20",
           "└─HashAgg root  group by:test.tbl_16.col_100, funcs:avg(Column, Column)->Column",
           "  └─PartitionUnion root  ",
           "    ├─StreamAgg root  group by:Column, funcs:count(Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.tbl_16.col_100",
           "    │ └─Projection root  test.tbl_16.col_100->Column, cast(test.tbl_16.col_100, decimal(8,0) UNSIGNED BINARY)->Column, test.tbl_16.col_100->Column",
->>>>>>> master
           "    │   └─Sort root  test.tbl_16.col_100",
           "    │     └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "    │       └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
           "    │         └─Selection mpp[tiflash]  or(eq(test.tbl_16.col_100, 10672141), in(test.tbl_16.col_104, \"yfEG1t!*b\", \"C1*bqx_qyO\", \"vQ^yUpKHr&j#~\"))",
           "    │           └─TableFullScan mpp[tiflash] table:tbl_16, partition:p0 keep order:false, stats:pseudo",
-<<<<<<< HEAD
-          "    └─StreamAgg root  group by:Column#23, funcs:count(Column#23)->Column#12, funcs:sum(Column#24)->Column#13, funcs:firstrow(Column#25)->test.tbl_16.col_100",
-          "      └─Projection root  test.tbl_16.col_100->Column#23, cast(test.tbl_16.col_100, decimal(8,0) UNSIGNED BINARY)->Column#24, test.tbl_16.col_100->Column#25",
-=======
           "    └─StreamAgg root  group by:Column, funcs:count(Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->test.tbl_16.col_100",
           "      └─Projection root  test.tbl_16.col_100->Column, cast(test.tbl_16.col_100, decimal(8,0) UNSIGNED BINARY)->Column, test.tbl_16.col_100->Column",
->>>>>>> master
           "        └─Sort root  test.tbl_16.col_100",
           "          └─TableReader root  MppVersion: 3, data:ExchangeSender",
           "            └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
@@ -4464,17 +3759,10 @@
         "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 );",
         "Plan": [
           "Union root  ",
-<<<<<<< HEAD
-          "├─Projection root  1->Column#17, 1->Column#18, 1->Column#19",
-          "│ └─TableDual root  rows:1",
-          "└─Projection root  cast(Column#14, bigint(11) BINARY)->Column#17, Column#15->Column#18, cast(Column#16, bigint(11) BINARY)->Column#19",
-          "  └─Sort root  Column#14",
-=======
           "├─Projection root  1->Column, 1->Column, 1->Column",
           "│ └─TableDual root  rows:1",
           "└─Projection root  cast(Column, bigint(11) BINARY)->Column, Column, cast(Column, bigint(11) BINARY)->Column",
           "  └─Sort root  Column",
->>>>>>> master
           "    └─Union root  ",
           "      ├─TableReader root  data:Selection",
           "      │ └─Selection cop[tikv]  eq(test.employee.dept_id, 1)",
@@ -4490,17 +3778,10 @@
         "SQL": "select 1,1,1 union all ((select * from employee where dept_id = 1)  union all ( select * from employee where dept_id = 1 order by employee_id ) order by 1 limit 1);",
         "Plan": [
           "Union root  ",
-<<<<<<< HEAD
-          "├─Projection root  1->Column#17, 1->Column#18, 1->Column#19",
-          "│ └─TableDual root  rows:1",
-          "└─Projection root  cast(Column#14, bigint(11) BINARY)->Column#17, Column#15->Column#18, cast(Column#16, bigint(11) BINARY)->Column#19",
-          "  └─TopN root  Column#14, offset:0, count:1",
-=======
           "├─Projection root  1->Column, 1->Column, 1->Column",
           "│ └─TableDual root  rows:1",
           "└─Projection root  cast(Column, bigint(11) BINARY)->Column, Column, cast(Column, bigint(11) BINARY)->Column",
           "  └─TopN root  Column, offset:0, count:1",
->>>>>>> master
           "    └─Union root  ",
           "      ├─TopN root  test.employee.employee_id, offset:0, count:1",
           "      │ └─TableReader root  data:TopN",
@@ -4552,11 +3833,7 @@
           "│ └─TableReader root  data:Selection",
           "│   └─Selection cop[tikv]  eq(test.employee.dept_id, 1)",
           "│     └─TableFullScan cop[tikv] table:employee keep order:false, stats:pseudo",
-<<<<<<< HEAD
-          "└─TopN root  Column#21, offset:0, count:1",
-=======
           "└─TopN root  Column, offset:0, count:1",
->>>>>>> master
           "  └─Union root  ",
           "    ├─TopN root  test.employee.employee_id, offset:0, count:1",
           "    │ └─TableReader root  data:TopN",
@@ -4612,15 +3889,9 @@
         "SQL": "explain format = 'plan_tree' select * from t WHERE TRUE = ALL ( SELECT TRUE GROUP BY 1 LIMIT 1 ) IS NULL IS NOT NULL;",
         "Plan": [
           "HashJoin root  CARTESIAN inner join",
-<<<<<<< HEAD
-          "├─StreamAgg(Build) root  funcs:count(1)->Column#13",
-          "│ └─Limit root  offset:0, count:1",
-          "│   └─HashAgg root  group by:1, funcs:firstrow(1)->Column#14",
-=======
           "├─StreamAgg(Build) root  funcs:count(1)->Column",
           "│ └─Limit root  offset:0, count:1",
           "│   └─HashAgg root  group by:1, funcs:firstrow(1)->Column",
->>>>>>> master
           "│     └─TableDual root  rows:1",
           "└─TableReader(Probe) root  data:TableFullScan",
           "  └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
@@ -4631,19 +3902,11 @@
         "SQL": "explain format = 'plan_tree' select * from t WHERE TRUE = ALL ( SELECT TRUE from t GROUP BY 1 LIMIT 1 ) is null is not null;",
         "Plan": [
           "HashJoin root  CARTESIAN inner join",
-<<<<<<< HEAD
-          "├─StreamAgg(Build) root  funcs:count(1)->Column#17",
-          "│ └─Limit root  offset:0, count:1",
-          "│   └─HashAgg root  group by:Column#19, funcs:firstrow(Column#20)->Column#18",
-          "│     └─TableReader root  data:HashAgg",
-          "│       └─HashAgg cop[tikv]  group by:1, funcs:firstrow(1)->Column#20",
-=======
           "├─StreamAgg(Build) root  funcs:count(1)->Column",
           "│ └─Limit root  offset:0, count:1",
           "│   └─HashAgg root  group by:Column, funcs:firstrow(Column)->Column",
           "│     └─TableReader root  data:HashAgg",
           "│       └─HashAgg cop[tikv]  group by:1, funcs:firstrow(1)->Column",
->>>>>>> master
           "│         └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo",
           "└─TableReader(Probe) root  data:TableFullScan",
           "  └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
@@ -4658,13 +3921,8 @@
       {
         "SQL": "explain format = 'plan_tree' select count(1) from t group by a, b with rollup; -- 1. simple agg",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  group by:Column#8, Column#9, gid, funcs:count(1)->Column#11",
-          "└─Expand root  level-projection:[<nil>->Column#8, <nil>->Column#9, 0->gid],[Column#8, <nil>->Column#9, 1->gid],[Column#8, Column#9, 3->gid]; schema: [Column#8,Column#9,gid]",
-=======
           "HashAgg root  group by:Column, Column, gid, funcs:count(1)->Column",
           "└─Expand root  level-projection:[<nil>->Column, <nil>->Column, 0->gid],[Column, <nil>->Column, 1->gid],[Column, Column, 3->gid]; schema: [Column,Column,gid]",
->>>>>>> master
           "  └─TableReader root  data:TableFullScan",
           "    └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -4673,17 +3931,10 @@
       {
         "SQL": "explain format = 'plan_tree' select sum(c), count(1) from t group by a, b with rollup; -- 2. non-grouping set col c",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  group by:Column#16, Column#17, Column#18, funcs:sum(Column#15)->Column#11, funcs:count(1)->Column#12",
-          "└─Projection root  cast(test.t.c, decimal(10,0) BINARY)->Column#15, Column#8->Column#16, Column#9->Column#17, gid->Column#18",
-          "  └─Expand root  level-projection:[test.t.c, <nil>->Column#8, <nil>->Column#9, 0->gid],[test.t.c, Column#8, <nil>->Column#9, 1->gid],[test.t.c, Column#8, Column#9, 3->gid]; schema: [test.t.c,Column#8,Column#9,gid]",
-          "    └─Projection root  test.t.c, test.t.a->Column#8, test.t.b->Column#9",
-=======
           "HashAgg root  group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:count(1)->Column",
           "└─Projection root  cast(test.t.c, decimal(10,0) BINARY)->Column, Column, Column, gid->Column",
           "  └─Expand root  level-projection:[test.t.c, <nil>->Column, <nil>->Column, 0->gid],[test.t.c, Column, <nil>->Column, 1->gid],[test.t.c, Column, Column, 3->gid]; schema: [test.t.c,Column,Column,gid]",
           "    └─Projection root  test.t.c, test.t.a->Column, test.t.b->Column",
->>>>>>> master
           "      └─TableReader root  data:TableFullScan",
           "        └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -4692,15 +3943,9 @@
       {
         "SQL": "explain format = 'plan_tree' select count(a) from t group by a, b with rollup; -- 3. should keep the original col a",
         "Plan": [
-<<<<<<< HEAD
-          "HashAgg root  group by:Column#8, Column#9, gid, funcs:count(test.t.a)->Column#11",
-          "└─Expand root  level-projection:[test.t.a, <nil>->Column#8, <nil>->Column#9, 0->gid],[test.t.a, Column#8, <nil>->Column#9, 1->gid],[test.t.a, Column#8, Column#9, 3->gid]; schema: [test.t.a,Column#8,Column#9,gid]",
-          "  └─Projection root  test.t.a, test.t.a->Column#8, test.t.b->Column#9",
-=======
           "HashAgg root  group by:Column, Column, gid, funcs:count(test.t.a)->Column",
           "└─Expand root  level-projection:[test.t.a, <nil>->Column, <nil>->Column, 0->gid],[test.t.a, Column, <nil>->Column, 1->gid],[test.t.a, Column, Column, 3->gid]; schema: [test.t.a,Column,Column,gid]",
           "  └─Projection root  test.t.a, test.t.a->Column, test.t.b->Column",
->>>>>>> master
           "    └─TableReader root  data:TableFullScan",
           "      └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -4709,15 +3954,9 @@
       {
         "SQL": "explain format = 'plan_tree' select grouping(a) from t group by a, b with rollup; -- 4. contain grouping function ref to grouping set column a",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  grouping(gid)->Column#12",
-          "└─HashAgg root  group by:Column#8, Column#9, gid, funcs:firstrow(gid)->gid",
-          "  └─Expand root  level-projection:[<nil>->Column#8, <nil>->Column#9, 0->gid],[Column#8, <nil>->Column#9, 1->gid],[Column#8, Column#9, 3->gid]; schema: [Column#8,Column#9,gid]",
-=======
           "Projection root  grouping(gid)->Column",
           "└─HashAgg root  group by:Column, Column, gid, funcs:firstrow(gid)->gid",
           "  └─Expand root  level-projection:[<nil>->Column, <nil>->Column, 0->gid],[Column, <nil>->Column, 1->gid],[Column, Column, 3->gid]; schema: [Column,Column,gid]",
->>>>>>> master
           "    └─TableReader root  data:TableFullScan",
           "      └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -4726,15 +3965,9 @@
       {
         "SQL": "explain format = 'plan_tree' select grouping(a,b) from t group by a, b with rollup; -- 5. grouping function contains grouping set column a,c",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  grouping(gid)->Column#12",
-          "└─HashAgg root  group by:Column#8, Column#9, gid, funcs:firstrow(gid)->gid",
-          "  └─Expand root  level-projection:[<nil>->Column#8, <nil>->Column#9, 0->gid],[Column#8, <nil>->Column#9, 1->gid],[Column#8, Column#9, 3->gid]; schema: [Column#8,Column#9,gid]",
-=======
           "Projection root  grouping(gid)->Column",
           "└─HashAgg root  group by:Column, Column, gid, funcs:firstrow(gid)->gid",
           "  └─Expand root  level-projection:[<nil>->Column, <nil>->Column, 0->gid],[Column, <nil>->Column, 1->gid],[Column, Column, 3->gid]; schema: [Column,Column,gid]",
->>>>>>> master
           "    └─TableReader root  data:TableFullScan",
           "      └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -4743,15 +3976,9 @@
       {
         "SQL": "explain format = 'plan_tree' select a, grouping(b,a) from t group by a,b with rollup; -- 6. resolve normal column a to grouping set column a'",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8->Column#12, grouping(gid)->Column#13",
-          "└─HashAgg root  group by:Column#8, Column#9, gid, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(gid)->gid",
-          "  └─Expand root  level-projection:[<nil>->Column#8, <nil>->Column#9, 0->gid],[Column#8, <nil>->Column#9, 1->gid],[Column#8, Column#9, 3->gid]; schema: [Column#8,Column#9,gid]",
-=======
           "Projection root  Column, grouping(gid)->Column",
           "└─HashAgg root  group by:Column, Column, gid, funcs:firstrow(Column)->Column, funcs:firstrow(gid)->gid",
           "  └─Expand root  level-projection:[<nil>->Column, <nil>->Column, 0->gid],[Column, <nil>->Column, 1->gid],[Column, Column, 3->gid]; schema: [Column,Column,gid]",
->>>>>>> master
           "    └─TableReader root  data:TableFullScan",
           "      └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -4760,17 +3987,10 @@
       {
         "SQL": "explain format = 'plan_tree' select a+1, grouping(b) from t group by a+1, b with rollup; -- 7. resolve field list a+1 to grouping set column a+1",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8->Column#12, grouping(gid)->Column#13",
-          "└─HashAgg root  group by:Column#8, Column#9, gid, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(gid)->gid",
-          "  └─Expand root  level-projection:[<nil>->Column#8, <nil>->Column#9, 0->gid],[Column#8, <nil>->Column#9, 1->gid],[Column#8, Column#9, 3->gid]; schema: [Column#8,Column#9,gid]",
-          "    └─Projection root  plus(test.t.a, 1)->Column#8, test.t.b->Column#9",
-=======
           "Projection root  Column, grouping(gid)->Column",
           "└─HashAgg root  group by:Column, Column, gid, funcs:firstrow(Column)->Column, funcs:firstrow(gid)->gid",
           "  └─Expand root  level-projection:[<nil>->Column, <nil>->Column, 0->gid],[Column, <nil>->Column, 1->gid],[Column, Column, 3->gid]; schema: [Column,Column,gid]",
           "    └─Projection root  plus(test.t.a, 1)->Column, test.t.b->Column",
->>>>>>> master
           "      └─TableReader root  data:TableFullScan",
           "        └─TableFullScan cop[tikv] table:t keep order:false, stats:pseudo"
         ],
@@ -4779,21 +3999,12 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 8. order by item year+2 resolve to gby grouping expression",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#11",
-          "└─Sort root  Column#8",
-          "  └─HashAgg root  group by:Column#16, Column#17, Column#18, funcs:sum(Column#15)->Column#11, funcs:firstrow(Column#16)->Column#8",
-          "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#15, Column#8->Column#16, Column#9->Column#17, gid->Column#18",
-          "      └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, 0->gid],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid],[test.sales.profit, Column#8, Column#9, 3->gid]; schema: [test.sales.profit,Column#8,Column#9,gid]",
-          "        └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column#8, plus(test.sales.year, test.sales.profit)->Column#9",
-=======
           "Projection root  Column",
           "└─Sort root  Column",
           "  └─HashAgg root  group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column",
           "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column, Column, Column, gid->Column",
           "      └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, 0->gid],[test.sales.profit, Column, <nil>->Column, 1->gid],[test.sales.profit, Column, Column, 3->gid]; schema: [test.sales.profit,Column,Column,gid]",
           "        └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column, plus(test.sales.year, test.sales.profit)->Column",
->>>>>>> master
           "          └─TableReader root  data:TableFullScan",
           "            └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4802,21 +4013,12 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year+2, SUM(profit) AS profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP order by year+2; -- 9. order by item year+2 resolve to select field",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8->Column#12, Column#11",
-          "└─Sort root  Column#8",
-          "  └─HashAgg root  group by:Column#17, Column#18, Column#19, funcs:sum(Column#16)->Column#11, funcs:firstrow(Column#17)->Column#8",
-          "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#16, Column#8->Column#17, Column#9->Column#18, gid->Column#19",
-          "      └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, 0->gid],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid],[test.sales.profit, Column#8, Column#9, 3->gid]; schema: [test.sales.profit,Column#8,Column#9,gid]",
-          "        └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column#8, plus(test.sales.year, test.sales.profit)->Column#9",
-=======
           "Projection root  Column, Column",
           "└─Sort root  Column",
           "  └─HashAgg root  group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column",
           "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column, Column, Column, gid->Column",
           "      └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, 0->gid],[test.sales.profit, Column, <nil>->Column, 1->gid],[test.sales.profit, Column, Column, 3->gid]; schema: [test.sales.profit,Column,Column,gid]",
           "        └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column, plus(test.sales.year, test.sales.profit)->Column",
->>>>>>> master
           "          └─TableReader root  data:TableFullScan",
           "            └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4825,15 +4027,6 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year+2 as y, SUM(profit) as profit FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 10. having (year+2) shouldn't be pushed down",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8, Column#11",
-          "└─Sort root  Column#8, Column#11",
-          "  └─HashAgg root  group by:Column#17, Column#18, Column#19, funcs:sum(Column#16)->Column#11, funcs:firstrow(Column#17)->Column#8",
-          "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#16, Column#8->Column#17, Column#9->Column#18, gid->Column#19",
-          "      └─Selection root  gt(Column#8, 2002)",
-          "        └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, 0->gid],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid],[test.sales.profit, Column#8, Column#9, 3->gid]; schema: [test.sales.profit,Column#8,Column#9,gid]",
-          "          └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column#8, plus(test.sales.year, test.sales.profit)->Column#9",
-=======
           "Projection root  Column, Column",
           "└─Sort root  Column, Column",
           "  └─HashAgg root  group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column",
@@ -4841,7 +4034,6 @@
           "      └─Selection root  gt(Column, 2002)",
           "        └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, 0->gid],[test.sales.profit, Column, <nil>->Column, 1->gid],[test.sales.profit, Column, Column, 3->gid]; schema: [test.sales.profit,Column,Column,gid]",
           "          └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column, plus(test.sales.year, test.sales.profit)->Column",
->>>>>>> master
           "            └─TableReader root  data:TableFullScan",
           "              └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4850,15 +4042,6 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year+2 as y, SUM(profit) AS profit, grouping(year+2) FROM sales GROUP BY year+2, year+profit WITH ROLLUP having y > 2002 order by year+2, profit; -- 11. grouping function validation",
         "Plan": [
-<<<<<<< HEAD
-          "Sort root  Column#8, Column#11",
-          "└─Projection root  Column#8, Column#11, grouping(gid)->Column#12",
-          "  └─HashAgg root  group by:Column#20, Column#21, Column#22, funcs:sum(Column#19)->Column#11, funcs:firstrow(Column#20)->Column#8, funcs:firstrow(Column#21)->gid",
-          "    └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#19, Column#8->Column#20, gid->Column#21, Column#9->Column#22",
-          "      └─Selection root  gt(Column#8, 2002)",
-          "        └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, 0->gid],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid],[test.sales.profit, Column#8, Column#9, 3->gid]; schema: [test.sales.profit,Column#8,Column#9,gid]",
-          "          └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column#8, plus(test.sales.year, test.sales.profit)->Column#9",
-=======
           "Sort root  Column, Column",
           "└─Projection root  Column, Column, grouping(gid)->Column",
           "  └─HashAgg root  group by:Column, Column, Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->gid",
@@ -4866,7 +4049,6 @@
           "      └─Selection root  gt(Column, 2002)",
           "        └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, 0->gid],[test.sales.profit, Column, <nil>->Column, 1->gid],[test.sales.profit, Column, Column, 3->gid]; schema: [test.sales.profit,Column,Column,gid]",
           "          └─Projection root  test.sales.profit, plus(test.sales.year, 2)->Column, plus(test.sales.year, test.sales.profit)->Column",
->>>>>>> master
           "            └─TableReader root  data:TableFullScan",
           "              └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4875,16 +4057,6 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup order by grouping(year); -- 12. grouping function in order by clause",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8, Column#9->Column#14, Column#10->Column#15, Column#12",
-          "└─Projection root  Column#12, Column#8, Column#9, Column#10, gid",
-          "  └─Sort root  Column#22",
-          "    └─Projection root  Column#12, Column#8, Column#9, Column#10, gid, grouping(gid)->Column#22",
-          "      └─HashAgg root  group by:Column#18, Column#19, Column#20, Column#21, funcs:sum(Column#17)->Column#12, funcs:firstrow(Column#18)->Column#8, funcs:firstrow(Column#19)->Column#9, funcs:firstrow(Column#20)->Column#10, funcs:firstrow(Column#21)->gid",
-          "        └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#17, Column#8->Column#18, Column#9->Column#19, Column#10->Column#20, gid->Column#21",
-          "          └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, <nil>->Column#10, 0->gid],[test.sales.profit, Column#8, <nil>->Column#9, <nil>->Column#10, 1->gid],[test.sales.profit, Column#8, Column#9, <nil>->Column#10, 3->gid],[test.sales.profit, Column#8, Column#9, Column#10, 7->gid]; schema: [test.sales.profit,Column#8,Column#9,Column#10,gid]",
-          "            └─Projection root  test.sales.profit, test.sales.year->Column#8, test.sales.country->Column#9, test.sales.product->Column#10",
-=======
           "Projection root  Column, Column, Column, Column",
           "└─Projection root  Column, Column, Column, Column, gid",
           "  └─Sort root  Column",
@@ -4893,7 +4065,6 @@
           "        └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column, Column, Column, Column, gid->Column",
           "          └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, <nil>->Column, 0->gid],[test.sales.profit, Column, <nil>->Column, <nil>->Column, 1->gid],[test.sales.profit, Column, Column, <nil>->Column, 3->gid],[test.sales.profit, Column, Column, Column, 7->gid]; schema: [test.sales.profit,Column,Column,Column,gid]",
           "            └─Projection root  test.sales.profit, test.sales.year->Column, test.sales.country->Column, test.sales.product->Column",
->>>>>>> master
           "              └─TableReader root  data:TableFullScan",
           "                └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4902,16 +4073,6 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup order by grouping(country); -- 13. 12 under gpos case",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8, Column#9->Column#14, Column#12",
-          "└─Projection root  Column#12, Column#8, Column#9, gid",
-          "  └─Sort root  Column#21",
-          "    └─Projection root  Column#12, Column#8, Column#9, gid, grouping(gid)->Column#21",
-          "      └─HashAgg root  group by:Column#17, Column#17, Column#18, Column#19, Column#20, funcs:sum(Column#16)->Column#12, funcs:firstrow(Column#17)->Column#8, funcs:firstrow(Column#18)->Column#9, funcs:firstrow(Column#19)->gid",
-          "        └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#16, Column#8->Column#17, Column#9->Column#18, gid->Column#19, gpos->Column#20",
-          "          └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, 0->gid, 0->gpos],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid, 1->gpos],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid, 2->gpos],[test.sales.profit, Column#8, Column#9, 3->gid, 3->gpos]; schema: [test.sales.profit,Column#8,Column#9,gid,gpos]",
-          "            └─Projection root  test.sales.profit, test.sales.country->Column#8, test.sales.product->Column#9",
-=======
           "Projection root  Column, Column, Column",
           "└─Projection root  Column, Column, Column, gid",
           "  └─Sort root  Column",
@@ -4920,7 +4081,6 @@
           "        └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column, Column, Column, gid->Column, gpos->Column",
           "          └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, 0->gid, 0->gpos],[test.sales.profit, Column, <nil>->Column, 1->gid, 1->gpos],[test.sales.profit, Column, <nil>->Column, 1->gid, 2->gpos],[test.sales.profit, Column, Column, 3->gid, 3->gpos]; schema: [test.sales.profit,Column,Column,gid,gpos]",
           "            └─Projection root  test.sales.profit, test.sales.country->Column, test.sales.product->Column",
->>>>>>> master
           "              └─TableReader root  data:TableFullScan",
           "                └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4929,17 +4089,6 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year, country, product, SUM(profit) AS profit FROM sales GROUP BY year, country, product with rollup having grouping(year) > 0 order by grouping(year); -- 14. grouping function in having clause",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8, Column#9->Column#14, Column#10->Column#15, Column#12",
-          "└─Projection root  Column#12, Column#8, Column#9, Column#10, gid",
-          "  └─Sort root  Column#22",
-          "    └─Projection root  Column#12, Column#8, Column#9, Column#10, gid, grouping(gid)->Column#22",
-          "      └─HashAgg root  group by:Column#18, Column#19, Column#20, Column#21, funcs:sum(Column#17)->Column#12, funcs:firstrow(Column#18)->Column#8, funcs:firstrow(Column#19)->Column#9, funcs:firstrow(Column#20)->Column#10, funcs:firstrow(Column#21)->gid",
-          "        └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#17, Column#8->Column#18, Column#9->Column#19, Column#10->Column#20, gid->Column#21",
-          "          └─Selection root  gt(grouping(gid), 0)",
-          "            └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, <nil>->Column#10, 0->gid],[test.sales.profit, Column#8, <nil>->Column#9, <nil>->Column#10, 1->gid],[test.sales.profit, Column#8, Column#9, <nil>->Column#10, 3->gid],[test.sales.profit, Column#8, Column#9, Column#10, 7->gid]; schema: [test.sales.profit,Column#8,Column#9,Column#10,gid]",
-          "              └─Projection root  test.sales.profit, test.sales.year->Column#8, test.sales.country->Column#9, test.sales.product->Column#10",
-=======
           "Projection root  Column, Column, Column, Column",
           "└─Projection root  Column, Column, Column, Column, gid",
           "  └─Sort root  Column",
@@ -4949,7 +4098,6 @@
           "          └─Selection root  gt(grouping(gid), 0)",
           "            └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, <nil>->Column, 0->gid],[test.sales.profit, Column, <nil>->Column, <nil>->Column, 1->gid],[test.sales.profit, Column, Column, <nil>->Column, 3->gid],[test.sales.profit, Column, Column, Column, 7->gid]; schema: [test.sales.profit,Column,Column,Column,gid]",
           "              └─Projection root  test.sales.profit, test.sales.year->Column, test.sales.country->Column, test.sales.product->Column",
->>>>>>> master
           "                └─TableReader root  data:TableFullScan",
           "                  └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4958,17 +4106,6 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT country, product, SUM(profit) AS profit FROM sales GROUP BY country, country, product with rollup having grouping(country) > 0 order by grouping(country); -- 15. 14 under gpos case",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8, Column#9->Column#14, Column#12",
-          "└─Projection root  Column#12, Column#8, Column#9, gid",
-          "  └─Sort root  Column#21",
-          "    └─Projection root  Column#12, Column#8, Column#9, gid, grouping(gid)->Column#21",
-          "      └─HashAgg root  group by:Column#17, Column#17, Column#18, Column#19, Column#20, funcs:sum(Column#16)->Column#12, funcs:firstrow(Column#17)->Column#8, funcs:firstrow(Column#18)->Column#9, funcs:firstrow(Column#19)->gid",
-          "        └─Projection root  cast(test.sales.profit, decimal(10,0) BINARY)->Column#16, Column#8->Column#17, Column#9->Column#18, gid->Column#19, gpos->Column#20",
-          "          └─Selection root  gt(grouping(gid), 0)",
-          "            └─Expand root  level-projection:[test.sales.profit, <nil>->Column#8, <nil>->Column#9, 0->gid, 0->gpos],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid, 1->gpos],[test.sales.profit, Column#8, <nil>->Column#9, 1->gid, 2->gpos],[test.sales.profit, Column#8, Column#9, 3->gid, 3->gpos]; schema: [test.sales.profit,Column#8,Column#9,gid,gpos]",
-          "              └─Projection root  test.sales.profit, test.sales.country->Column#8, test.sales.product->Column#9",
-=======
           "Projection root  Column, Column, Column",
           "└─Projection root  Column, Column, Column, gid",
           "  └─Sort root  Column",
@@ -4978,7 +4115,6 @@
           "          └─Selection root  gt(grouping(gid), 0)",
           "            └─Expand root  level-projection:[test.sales.profit, <nil>->Column, <nil>->Column, 0->gid, 0->gpos],[test.sales.profit, Column, <nil>->Column, 1->gid, 1->gpos],[test.sales.profit, Column, <nil>->Column, 1->gid, 2->gpos],[test.sales.profit, Column, Column, 3->gid, 3->gpos]; schema: [test.sales.profit,Column,Column,gid,gpos]",
           "              └─Projection root  test.sales.profit, test.sales.country->Column, test.sales.product->Column",
->>>>>>> master
           "                └─TableReader root  data:TableFullScan",
           "                  └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
@@ -4987,17 +4123,10 @@
       {
         "SQL": "explain format = 'plan_tree' SELECT year, country, product, grouping(year, country, product) from sales group by year, country, product with rollup having grouping(year, country, product) <> 0; -- 16. grouping function recreating fix",
         "Plan": [
-<<<<<<< HEAD
-          "Projection root  Column#8->Column#13, Column#9->Column#14, Column#10->Column#15, grouping(gid)->Column#16",
-          "└─HashAgg root  group by:Column#10, Column#8, Column#9, gid, funcs:firstrow(Column#8)->Column#8, funcs:firstrow(Column#9)->Column#9, funcs:firstrow(Column#10)->Column#10, funcs:firstrow(gid)->gid",
-          "  └─Selection root  ne(grouping(gid), 0)",
-          "    └─Expand root  level-projection:[<nil>->Column#8, <nil>->Column#9, <nil>->Column#10, 0->gid],[Column#8, <nil>->Column#9, <nil>->Column#10, 1->gid],[Column#8, Column#9, <nil>->Column#10, 3->gid],[Column#8, Column#9, Column#10, 7->gid]; schema: [Column#8,Column#9,Column#10,gid]",
-=======
           "Projection root  Column, Column, Column, grouping(gid)->Column",
           "└─HashAgg root  group by:Column, Column, Column, gid, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(Column)->Column, funcs:firstrow(gid)->gid",
           "  └─Selection root  ne(grouping(gid), 0)",
           "    └─Expand root  level-projection:[<nil>->Column, <nil>->Column, <nil>->Column, 0->gid],[Column, <nil>->Column, <nil>->Column, 1->gid],[Column, Column, <nil>->Column, 3->gid],[Column, Column, Column, 7->gid]; schema: [Column,Column,Column,gid]",
->>>>>>> master
           "      └─TableReader root  data:TableFullScan",
           "        └─TableFullScan cop[tikv] table:sales keep order:false, stats:pseudo"
         ],
