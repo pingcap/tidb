@@ -740,16 +740,3 @@ SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN 
 SET @b = NULL;
 PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE ? END ) AS DATE)';
 EXECUTE prepare_query USING @b;
-
-# Test temporary handling of _tidb_commit_ts
-CREATE TABLE t_commit_ts (a INT PRIMARY KEY, b INT);
--- error 1815
-select _tidb_commit_ts from t_commit_ts where a = 1;
--- error 1815
-select _tidb_commit_ts from t_commit_ts where _tidb_commit_ts = 1;
--- error 1815
-delete from t_commit_ts where _tidb_commit_ts = 1;
--- error 1815
-update t_commit_ts set b = b + 1 where _tidb_commit_ts = 1;
--- error 1054
-insert into t_commit_ts (a, b) values (1, _tidb_commit_ts);

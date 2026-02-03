@@ -22,7 +22,7 @@ Error 1142 (42000): SHOW command denied to user 'testnotexist'@'localhost' for t
 SHOW CREATE TABLE dbnotexists.t1;
 Error 1142 (42000): SHOW command denied to user 'testnotexist'@'localhost' for table 't1'
 DELETE FROM privilege__privileges.t1 WHERE a=0;
-Error 1142 (42000): SELECT command denied to user 'testnotexist'@'localhost' for table 't1'
+Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
 DELETE FROM dbnotexists.t1 WHERE a=0;
 Error 1142 (42000): DELETE command denied to user 'testnotexist'@'localhost' for table 't1'
 DELETE FROM privilege__privileges.t1;
