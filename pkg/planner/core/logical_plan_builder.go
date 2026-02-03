@@ -620,11 +620,16 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	if isLateral {
 		// For USING/NATURAL joins, use FullSchema/FullNames which include redundant columns
 		// that were merged (e.g., both t1.a and t2.a from JOIN ... USING(a))
+		// Also check LogicalApply for nested LATERAL joins - it embeds LogicalJoin and may
+		// have FullSchema from a USING/NATURAL join in its left subtree.
 		outerSchema := leftPlan.Schema()
 		outerNames := leftPlan.OutputNames()
 		if join, ok := leftPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
 			outerSchema = join.FullSchema
 			outerNames = join.FullNames
+		} else if apply, ok := leftPlan.(*logicalop.LogicalApply); ok && apply.FullSchema != nil {
+			outerSchema = apply.FullSchema
+			outerNames = apply.FullNames
 		}
 		b.outerSchemas = append(b.outerSchemas, outerSchema)
 		b.outerNames = append(b.outerNames, outerNames)
@@ -789,8 +794,16 @@ func (b *PlanBuilder) buildLateralJoin(ctx context.Context, leftPlan, rightPlan 
 		return nil, plannererrors.ErrInvalidLateralJoin.GenWithStackByArgs("USING clause is not supported with LATERAL")
 	}
 
-	// Extract correlated columns from right side that reference left side
-	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, leftPlan.Schema())
+	// Extract correlated columns from right side that reference left side.
+	// Use FullSchema when leftPlan is a USING/NATURAL join, so we capture
+	// correlated columns that reference the redundant (merged) join columns.
+	// This must match the schema used for name resolution in LATERAL subqueries
+	// (see buildJoin's outer schema handling for LATERAL).
+	outerSchema := leftPlan.Schema()
+	if join, ok := leftPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+		outerSchema = join.FullSchema
+	}
+	corCols := coreusage.ExtractCorColumnsBySchema4LogicalPlan(rightPlan, outerSchema)
 
 	// Determine join type based on AST
 	var joinType base.JoinType

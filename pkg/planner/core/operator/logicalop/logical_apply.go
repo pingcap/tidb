@@ -137,8 +137,20 @@ func (la *LogicalApply) DeriveStats(childStats []*property.StatsInfo, selfSchema
 		return la.StatsInfo(), false, nil
 	}
 	leftProfile := childStats[0]
+	rightProfile := childStats[1]
+	// For LATERAL joins (IsLateral=true), the right side can return 0..N rows per outer row,
+	// so we estimate cardinality based on join multiplicity.
+	// For scalar subqueries (IsLateral=false), they return at most 1 row per outer row,
+	// so RowCount = leftProfile.RowCount is correct.
+	rowCount := leftProfile.RowCount
+	if la.IsLateral && (la.JoinType == base.InnerJoin || la.JoinType == base.LeftOuterJoin) {
+		// For LATERAL joins, estimate based on join selectivity.
+		// Use rightProfile.RowCount as the average number of rows returned per outer row.
+		// This is a reasonable approximation when we don't have better statistics.
+		rowCount = leftProfile.RowCount * rightProfile.RowCount
+	}
 	la.SetStats(&property.StatsInfo{
-		RowCount: leftProfile.RowCount,
+		RowCount: rowCount,
 		ColNDVs:  make(map[int64]float64, selfSchema.Len()),
 	})
 	// TODO: investigate why this cannot be replaced with maps.Copy()

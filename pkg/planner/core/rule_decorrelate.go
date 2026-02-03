@@ -159,6 +159,12 @@ func pruneRedundantApply(p base.LogicalPlan, groupByColumn map[*expression.Colum
 	if apply.JoinType != base.LeftOuterJoin && apply.JoinType != base.LeftOuterSemiJoin {
 		return nil, false
 	}
+	// IMPORTANT: We can only eliminate Apply for scalar correlated subqueries (which have MaxOneRow guarantee).
+	// For LATERAL joins (IsLateral=true), the subquery may return multiple rows per left row, so eliminating
+	// the Apply would change result multiplicity (wrong COUNT(*), aggregate results, etc.).
+	if apply.IsLateral {
+		return nil, false
+	}
 	// add a strong limit for fix the https://github.com/pingcap/tidb/issues/58451. we can remove it when to have better implememnt.
 	// But this problem has affected tiflash CI.
 	// Simplify predicates from the LogicalSelection
@@ -225,7 +231,15 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 	if apply, ok := p.(*logicalop.LogicalApply); ok {
 		outerPlan := apply.Children()[0]
 		innerPlan := apply.Children()[1]
-		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(apply.Children()[1], apply.Children()[0].Schema())
+		// Use FullSchema when outer plan is a USING/NATURAL join, so we capture
+		// correlated columns that reference the redundant (merged) join columns.
+		// This must match the schema used for name resolution in LATERAL subqueries
+		// (see logical_plan_builder.go buildJoin for LATERAL).
+		outerSchema := outerPlan.Schema()
+		if join, ok := outerPlan.(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+			outerSchema = join.FullSchema
+		}
+		apply.CorCols = coreusage.ExtractCorColumnsBySchema4LogicalPlan(innerPlan, outerSchema)
 		if len(apply.CorCols) == 0 {
 			// If the inner plan is non-correlated, the apply will be simplified to join.
 			join := &apply.LogicalJoin
