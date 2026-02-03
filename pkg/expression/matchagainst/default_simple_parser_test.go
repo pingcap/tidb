@@ -53,6 +53,27 @@ func TestParseSimpleNaturalLanguageMode(t *testing.T) {
 			},
 		},
 		{
+			name:  "terms: boolean operators are treated as delimiters",
+			input: "foo-bar ~baz >qux <quux",
+			expect: SimpleGroup{
+				Terms: []string{"foo", "bar", "baz", "qux", "quux"},
+			},
+		},
+		{
+			name:  "terms: boolean operators without spaces are treated as delimiters",
+			input: "foo-bar~baz>qux<quux",
+			expect: SimpleGroup{
+				Terms: []string{"foo", "bar", "baz", "qux", "quux"},
+			},
+		},
+		{
+			name:  "terms: repeated '-' still works as delimiters",
+			input: "foo---bar",
+			expect: SimpleGroup{
+				Terms: []string{"foo", "bar"},
+			},
+		},
+		{
 			name:  "phrase: basic",
 			input: `"hello world"`,
 			expect: SimpleGroup{
@@ -64,6 +85,21 @@ func TestParseSimpleNaturalLanguageMode(t *testing.T) {
 			input: `"foo-bar  baz"`,
 			expect: SimpleGroup{
 				Phrase: []string{"foo bar baz"},
+			},
+		},
+		{
+			name:  "phrase: boolean operators inside quotes are treated as delimiters",
+			input: `"foo~bar>baz<qux-quux"`,
+			expect: SimpleGroup{
+				Phrase: []string{"foo bar baz qux quux"},
+			},
+		},
+		{
+			name:  "phrase: boolean operators outside quotes are ignored as delimiters",
+			input: `foo-~>"bar baz"<qux`,
+			expect: SimpleGroup{
+				Terms:  []string{"foo", "qux"},
+				Phrase: []string{"bar baz"},
 			},
 		},
 		{
