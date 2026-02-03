@@ -146,7 +146,7 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Warn("failed to get server info", zap.Error(err))
+		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
 		instance = "unknown"
 	} else {
 		instance = net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
