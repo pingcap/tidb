@@ -36,9 +36,9 @@ import (
 const (
 	defaultEnabled             = true
 	defaultEnableInternalQuery = false
-	defaultMaxStmtCount        = 90000
+	defaultMaxStmtCount        = 9000
 	defaultMaxSQLLength        = 32768
-	defaultRefreshInterval     = 30 * 60 // 30 min
+	defaultRefreshInterval     = 10 * 60 // 10 min
 	defaultRotateCheckInterval = 1       // s
 )
 
