@@ -4378,7 +4378,7 @@ func buildIndexScanOutputOffsets(p *physicalop.PhysicalIndexScan, columns []*mod
 		return handleOutputOffsetsForTiCIIndexLookUp(outputOffsets, handleLen, p.Schema().Len(), needExtraOutputCol), nil
 	}
 
-	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, p.NeedExtraOutputCol()), nil
+	return handleOutputOffsetsForTiKVIndexLookUp(outputOffsets, handleLen, columns, needExtraOutputCol), nil
 }
 
 // handleOutputOffsetsForTiKVIndexLookUp handles the output offsets for TiKV index look up requests.
