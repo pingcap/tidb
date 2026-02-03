@@ -104,15 +104,6 @@ func isPebbleLockHeldByCurrentProcess(err error) bool {
 	return err != nil && strings.Contains(err.Error(), pebbleLockHeldByCurrentProcessMsg)
 }
 
-func cleanupAllLocalEnginesForReadIndexSafe(backend *local.Backend) (err error) {
-	defer func() {
-		if p := recover(); p != nil {
-			err = errors.Errorf("cleanup engines panicked: %v", p)
-		}
-	}()
-	return cleanupAllLocalEnginesForReadIndex(backend)
-}
-
 func newReadIndexExecutor(
 	store kv.Storage,
 	sessPool *sess.Pool,
@@ -513,7 +504,7 @@ func cleanupReadIndexLocalEngines(jobID, subtaskID int64, backendCtx readIndexLo
 	if backend == nil {
 		return
 	}
-	if cleanupErr := cleanupAllLocalEnginesForReadIndexSafe(backend); cleanupErr != nil {
+	if cleanupErr := cleanupAllLocalEnginesForReadIndex(backend); cleanupErr != nil {
 		logutil.DDLLogger().Warn("read index executor cleanup engines failed",
 			zap.Error(cleanupErr),
 			zap.Int64("job ID", jobID),

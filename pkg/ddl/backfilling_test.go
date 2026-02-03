@@ -140,17 +140,6 @@ func TestRegisterReadIndexEnginesNoRetryOnLockHeld(t *testing.T) {
 	require.Equal(t, int32(1), registerCalls)
 }
 
-func TestCleanupAllLocalEnginesForReadIndexSafeRecoversFromPanic(t *testing.T) {
-	// Ensure cleanup wrapper recovers from panic.
-	origCleanup := cleanupAllLocalEnginesForReadIndex
-	cleanupAllLocalEnginesForReadIndex = func(*local.Backend) error {
-		panic("boom")
-	}
-	t.Cleanup(func() { cleanupAllLocalEnginesForReadIndex = origCleanup })
-
-	require.ErrorContains(t, cleanupAllLocalEnginesForReadIndexSafe(&local.Backend{}), "cleanup engines panicked")
-}
-
 func TestCleanupReadIndexLocalEngines(t *testing.T) {
 	// Best-effort: run when backend exists; no-op when nil.
 	origCleanup := cleanupAllLocalEnginesForReadIndex
