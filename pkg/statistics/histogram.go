@@ -1191,6 +1191,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
 	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
+	maxAddedRows := addedRows
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 
 	// maxTotalPercent is the maximum out of range percentage that is used for MaxEst.
@@ -1221,9 +1222,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 		}
 		// Use outOfRangeBetweenRate as a divisor to get a small percentage of the approximate
 		// modifyCount (since outOfRangeBetweenRate has a default value of 100).
-		addedRows = max(addedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
+		maxAddedRows = max(maxAddedRows, float64(realtimeRowCount)/outOfRangeBetweenRate)
 	}
-	maxAddedRows := addedRows
 	if maxTotalPercent > 0 {
 		// Always apply maxTotalPercent to maxAddedRows (matching old behavior where addedRows was always scaled)
 		maxAddedRows *= maxTotalPercent
