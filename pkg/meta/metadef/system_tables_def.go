@@ -495,6 +495,7 @@ const (
 	// CreateTiDBTTLTaskTable is a table about parallel ttl tasks
 	CreateTiDBTTLTaskTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
 		job_id varchar(64) NOT NULL,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
 		scan_id int NOT NULL,
 		scan_range_start BLOB,
@@ -508,11 +509,13 @@ const (
 		state text,
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
+		key idx_job_type (job_type),
 		key(created_time));`
 
 	// CreateTiDBTTLJobHistoryTable is a table that stores ttl job's history
 	CreateTiDBTTLJobHistoryTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
 		job_id varchar(64) PRIMARY KEY,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
         parent_table_id bigint(64) NOT NULL,
     	table_schema varchar(64) NOT NULL,
