@@ -59,15 +59,119 @@ func drainEvents(eventCh <-chan []traceevent.Event) {
 	}
 }
 
-// waitForEvent waits for an event to arrive on the channel with a timeout.
-// This provides explicit synchronization between DiscardOrFlush and event consumption.
-func waitForEvent(eventCh <-chan []traceevent.Event, timeout time.Duration) ([]traceevent.Event, bool) {
-	select {
-	case events := <-eventCh:
-		return events, true
-	case <-time.After(timeout):
-		return nil, false
+func cloneTraceID(traceID []byte) []byte {
+	if len(traceID) == 0 {
+		return nil
 	}
+	cloned := make([]byte, len(traceID))
+	copy(cloned, traceID)
+	return cloned
+}
+
+func waitForTraceID(eventCh <-chan []traceevent.Event, traceID []byte, timeout time.Duration) ([]traceevent.Event, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return nil, false
+		}
+		select {
+		case events := <-eventCh:
+			for _, event := range events {
+				if bytes.Equal(event.TraceID, traceID) {
+					return events, true
+				}
+			}
+		case <-time.After(remaining):
+			return nil, false
+		}
+	}
+}
+
+func waitForStmtStartPrevTraceID(eventCh <-chan []traceevent.Event, traceID []byte, timeout time.Duration) (string, bool) {
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return "", false
+		}
+		select {
+		case events := <-eventCh:
+			for _, event := range events {
+				if event.Name != "stmt.start" {
+					continue
+				}
+				if !bytes.Equal(event.TraceID, traceID) {
+					continue
+				}
+				for _, field := range event.Fields {
+					if field.Key == "prev_trace_id" {
+						return field.String, true
+					}
+				}
+				return "", true
+			}
+		case <-time.After(remaining):
+			return "", false
+		}
+	}
+}
+
+func assertNoTraceID(t *testing.T, eventCh <-chan []traceevent.Event, traceID []byte, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return
+		}
+		select {
+		case events := <-eventCh:
+			for _, event := range events {
+				if bytes.Equal(event.TraceID, traceID) {
+					require.Fail(t, "unexpected trace events for statement")
+					return
+				}
+			}
+		case <-time.After(remaining):
+			return
+		}
+	}
+}
+
+func countTraceIDDumps(eventCh <-chan []traceevent.Event, traceIDs [][]byte, expected int, timeout time.Duration) int {
+	pending := make(map[string]struct{}, len(traceIDs))
+	for _, traceID := range traceIDs {
+		pending[string(traceID)] = struct{}{}
+	}
+	count := 0
+	deadline := time.Now().Add(timeout)
+	for len(pending) > 0 {
+		if expected > 0 && count >= expected {
+			return count
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return count
+		}
+		select {
+		case events := <-eventCh:
+			found := false
+			for _, event := range events {
+				key := string(event.TraceID)
+				if _, ok := pending[key]; ok {
+					delete(pending, key)
+					found = true
+				}
+			}
+			if found {
+				count++
+			}
+		case <-time.After(remaining):
+			return count
+		}
+	}
+	return count
 }
 
 func TestPrevTraceIDPersistence(t *testing.T) {
@@ -142,42 +246,13 @@ func TestPrevTraceIDPersistence(t *testing.T) {
 	// Flush the traceBuf to send the second statement's events to the channel
 	traceBuf.DiscardOrFlush(ctx)
 
-	// Check recorded events for prev_trace_id field
-	// Use waitForEvent for explicit synchronization with timeout
-	events, ok := waitForEvent(eventCh, 5*time.Second)
-	require.True(t, ok, "Should receive events within timeout")
-	require.NotEmpty(t, events, "Should have recorded trace events")
+	prevTraceIDHex, found := waitForStmtStartPrevTraceID(eventCh, secondTraceID, 5*time.Second)
+	require.True(t, found, "Should find stmt.start event for second statement")
+	require.NotEmpty(t, prevTraceIDHex, "stmt.start should include prev_trace_id field")
 
-	// Look for stmt.start events and verify prev_trace_id matches first statement
-	// We need to filter for the correct statement's event to avoid flakiness from background operations
-	foundPrevTraceID := false
-	for _, event := range events {
-		if event.Name == "stmt.start" {
-			// Verify this is the stmt.start event for our second statement
-			// by checking trace_id matches secondTraceID to avoid background operation events
-			if !bytes.Equal(event.TraceID, secondTraceID) {
-				continue // Skip events from other statements
-			}
-
-			for _, field := range event.Fields {
-				if field.Key == "prev_trace_id" {
-					foundPrevTraceID = true
-					// The prev_trace_id should match the first statement's trace ID
-					// Note: redact.Key() may uppercase the hex string, so we do case-insensitive comparison
-					prevTraceIDHex := field.String
-					expectedPrevTraceIDHex := hex.EncodeToString(firstTraceID)
-					t.Logf("Found prev_trace_id in stmt.start event: %s (expected: %s)", prevTraceIDHex, expectedPrevTraceIDHex)
-					require.Equal(t, strings.ToUpper(expectedPrevTraceIDHex), strings.ToUpper(prevTraceIDHex), "prev_trace_id should match the previous statement's trace ID")
-					break
-				}
-			}
-			if foundPrevTraceID {
-				break // Found and validated the correct event
-			}
-		}
-	}
-
-	require.True(t, foundPrevTraceID, "Should find prev_trace_id field in stmt.start events")
+	expectedPrevTraceIDHex := hex.EncodeToString(firstTraceID)
+	t.Logf("Found prev_trace_id in stmt.start event: %s (expected: %s)", prevTraceIDHex, expectedPrevTraceIDHex)
+	require.Equal(t, strings.ToUpper(expectedPrevTraceIDHex), strings.ToUpper(prevTraceIDHex), "prev_trace_id should match the previous statement's trace ID")
 }
 
 func TestTraceControlIntegration(t *testing.T) {
@@ -232,7 +307,37 @@ func TestTraceControlIntegration(t *testing.T) {
 }
 
 func TestFlightRecorder(t *testing.T) {
-	eventCh := make(chan []tracing.Event, eventChannelBufferSize)
+	eventCh := make(chan []traceevent.Event, eventChannelBufferSize)
+
+	// Test dump trigger type = sampling without SQL to avoid background statement interference.
+	{
+		config := traceevent.FlightRecorderConfig{
+			EnabledCategories: []string{"*"},
+			DumpTrigger: traceevent.DumpTriggerConfig{
+				Type:     "sampling",
+				Sampling: 5,
+			},
+		}
+		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
+		require.NoError(t, err)
+		traceBuf := traceevent.NewTraceBuf()
+		ctx := traceevent.WithTraceBuf(context.Background(), traceBuf)
+
+		drainEvents(eventCh)
+		traceIDs := make([][]byte, 0, 10)
+		for i := 0; i < 10; i++ {
+			traceID := traceevent.GenerateTraceID(uint64(i+1), uint64(i))
+			traceIDs = append(traceIDs, traceID)
+			traceBuf.SetTraceID(traceID)
+			traceevent.CheckFlightRecorderDumpTrigger(ctx, "dump_trigger.sampling", flightRecorder.CheckSampling)
+			traceevent.TraceEvent(ctx, traceevent.General, "test.sampling")
+			traceBuf.DiscardOrFlush(ctx)
+		}
+		require.Equal(t, 2, countTraceIDDumps(eventCh, traceIDs, 2, 2*time.Second))
+		flightRecorder.Close()
+		drainEvents(eventCh)
+	}
+
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -251,8 +356,12 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		for _, sql := range []string{"select * from t", "select * from t where b = 5"} {
 			tk.MustQueryWithContext(ctx, sql).Check(testkit.Rows())
+			traceID := cloneTraceID(tk.Session().GetSessionVars().PrevTraceID)
+			require.NotEmpty(t, traceID)
 			sink.DiscardOrFlush(ctx)
-			require.GreaterOrEqual(t, len(eventCh), 1)
+			events, ok := waitForTraceID(eventCh, traceID, 5*time.Second)
+			require.True(t, ok)
+			require.NotEmpty(t, events)
 			drainEvents(eventCh)
 		}
 		flightRecorder.Close()
@@ -270,31 +379,14 @@ func TestFlightRecorder(t *testing.T) {
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
+		traceID := cloneTraceID(tk.Session().GetSessionVars().PrevTraceID)
+		require.NotEmpty(t, traceID)
 		sink.DiscardOrFlush(ctx)
-		require.NotEmpty(t, eventCh)
-		events := <-eventCh
+		events, ok := waitForTraceID(eventCh, traceID, 5*time.Second)
+		require.True(t, ok)
 		for _, event := range events {
 			require.Equal(t, event.Category, traceevent.KvRequest)
 		}
-		flightRecorder.Close()
-	}
-
-	// Test dump trigger type = sampling
-	{
-		config := traceevent.FlightRecorderConfig{
-			EnabledCategories: []string{"*"},
-			DumpTrigger: traceevent.DumpTriggerConfig{
-				Type:     "sampling",
-				Sampling: 5,
-			},
-		}
-		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
-		require.NoError(t, err)
-		for i := 0; i < 10; i++ {
-			tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows())
-			sink.DiscardOrFlush(ctx)
-		}
-		require.Len(t, eventCh, 2)
 		flightRecorder.Close()
 		drainEvents(eventCh)
 	}
@@ -314,11 +406,16 @@ func TestFlightRecorder(t *testing.T) {
 		flightRecorder, err := traceevent.StartHTTPFlightRecorder(eventCh, &config)
 		require.NoError(t, err)
 		tk.MustExecWithContext(ctx, "insert into t values ('aaa', 1)")
+		insertTraceID := cloneTraceID(tk.Session().GetSessionVars().PrevTraceID)
+		require.NotEmpty(t, insertTraceID)
 		sink.DiscardOrFlush(ctx)
-		require.Empty(t, eventCh)
+		assertNoTraceID(t, eventCh, insertTraceID, 500*time.Millisecond)
 		tk.MustQueryWithContext(ctx, "select * from t").Check(testkit.Rows("aaa 1"))
+		selectTraceID := cloneTraceID(tk.Session().GetSessionVars().PrevTraceID)
+		require.NotEmpty(t, selectTraceID)
 		sink.DiscardOrFlush(ctx)
-		require.Len(t, eventCh, 1)
+		_, ok := waitForTraceID(eventCh, selectTraceID, 5*time.Second)
+		require.True(t, ok)
 		drainEvents(eventCh)
 		flightRecorder.Close()
 	}
@@ -338,13 +435,18 @@ func TestFlightRecorder(t *testing.T) {
 		require.NoError(t, err)
 		_, err = tk.ExecWithContext(ctx, "insert into t values ('aaa', 2)")
 		require.Error(t, err)
+		failTraceID := cloneTraceID(tk.Session().GetSessionVars().PrevTraceID)
+		require.NotEmpty(t, failTraceID)
 		sink.DiscardOrFlush(ctx)
-		require.Len(t, eventCh, 1)
+		_, ok := waitForTraceID(eventCh, failTraceID, 5*time.Second)
+		require.True(t, ok)
 		drainEvents(eventCh)
 
 		tk.MustExecWithContext(ctx, "insert into t values ('bbb', 2)")
+		successTraceID := cloneTraceID(tk.Session().GetSessionVars().PrevTraceID)
+		require.NotEmpty(t, successTraceID)
 		sink.DiscardOrFlush(ctx)
-		require.Len(t, eventCh, 0)
+		assertNoTraceID(t, eventCh, successTraceID, 500*time.Millisecond)
 		flightRecorder.Close()
 	}
 }
