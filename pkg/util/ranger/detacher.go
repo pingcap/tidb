@@ -131,9 +131,9 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 	case ast.EQ, ast.NullEQ, ast.LE, ast.GE, ast.LT, ast.GT:
 		var constVal *expression.Constant
 		c, ok := f.GetArgs()[0].(*expression.Column)
-		idx_const := 1
+		idxConst := 1
 		if !ok {
-			idx_const = 0
+			idxConst = 0
 			if c, ok = f.GetArgs()[1].(*expression.Column); !ok {
 				return -1
 			}
@@ -146,7 +146,7 @@ func getPotentialEqOrInColOffset(sctx *rangerctx.RangerContext, expr expression.
 			return -1
 		}
 
-		if constVal, ok = f.GetArgs()[idx_const].(*expression.Constant); !ok {
+		if constVal, ok = f.GetArgs()[idxConst].(*expression.Constant); !ok {
 			return -1
 		}
 
