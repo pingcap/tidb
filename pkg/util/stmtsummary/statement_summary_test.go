@@ -1169,7 +1169,10 @@ func TestFormatSQLClone(t *testing.T) {
 	formatted := formatSQL(sub)
 
 	require.Equal(t, sub, formatted)
-	require.NotEqual(t, unsafe.StringData(sub), unsafe.StringData(formatted))
+	// Verify that the formatted string is a true clone, not pointing to the same underlying data
+	if unsafe.StringData(sub) == unsafe.StringData(formatted) {
+		t.Errorf("formatSQL did not clone the string, both point to %p", unsafe.StringData(sub))
+	}
 }
 
 // Test AddStatement and SetMaxStmtCount parallel.
