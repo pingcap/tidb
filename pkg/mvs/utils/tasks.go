@@ -53,71 +53,66 @@ type mvlog struct {
 }
 
 func (m *mvlog) purge() error {
-/*
-BEGIN;
-SELECT * FROM mysql.tidb_mlog_job WHERE MLOG_ID = ? FOR UPDATE;
+	/*
+	   BEGIN;
+	   SELECT * FROM mysql.tidb_mlog_job WHERE MLOG_ID = ? FOR UPDATE;
 
-find_min_mv_tso = func {
-  find all mvs depend on the base table of this mlog
-  return the minimum LAST_REFRESH_COMMIT_TSO among these mvs
-}
+	   find_min_mv_tso = func {
+	     find all mvs depend on the base table of this mlog
+	     return the minimum LAST_REFRESH_COMMIT_TSO among these mvs
+	   }
 
-DELETE FROM find_mvlog_by_base_table() WHERE COMMIT_TSO IN (0, find_min_mv_tso()];
+	   DELETE FROM find_mvlog_by_base_table() WHERE COMMIT_TSO IN (0, find_min_mv_tso()];
 
-UPDATE mysql.tidb_mlog_job SET
-  LAST_PURGE_TIME = now(),
-  NEXT_PURGE_TIME = now() + PURGE_INTERVAL,
-  LAST_PURGE_ERR = NULL
-WHERE MLOG_ID = ?;
+	   UPDATE mysql.tidb_mlog_job SET
+	     LAST_PURGE_TIME = now(),
+	     NEXT_PURGE_TIME = now() + PURGE_INTERVAL,
+	     LAST_PURGE_ERR = NULL
+	   WHERE MLOG_ID = ?;
 
-COMMIT;
-*/
+	   COMMIT;
+	*/
 	return nil
 }
 
 func (m *mv) refresh() error {
 	/*
-	TODO: implement the refresh logic, the pseudo code is as follows:
-	   is_manual_refresh = func {
-	   	check current refresh is triggered manually
-	   }
+		TODO: implement the refresh logic, the pseudo code is as follows:
+		   is_manual_refresh = func {
+		   	check current refresh is triggered manually
+		   }
 
-	   BEGIN;
+		   BEGIN;
 
-	   SELECT * FROM mysql.mview_refresh_info WHERE MVIEW_ID = ? FOR UPDATE;
+		   SELECT * FROM mysql.mview_refresh_info WHERE MVIEW_ID = ? FOR UPDATE;
 
-	   if (NOT is_manual_refresh() and NEXT_REFRESH_TIME > now()) {
-	     COMMIT;
-	     RETURN;
-	   }
+		   if (NOT is_manual_refresh() and NEXT_REFRESH_TIME > now()) {
+		     COMMIT;
+		     RETURN;
+		   }
 
-	   TSO = GET_COMMIT_TSO();
+		   TSO = GET_COMMIT_TSO();
 
-	   READ MVLOG data in range (LAST_REFRESH_COMMIT_TSO, TSO])
+		   READ MVLOG data in range (LAST_REFRESH_COMMIT_TSO, TSO])
 
-	   COMPUTE new MV data;
+		   COMPUTE new MV data;
 
-	   UPDATE MV table with new data;
+		   UPDATE MV table with new data;
 
-	   UPDATE mysql.mview_refresh_info SET
-	     LAST_REFRESH_TIME = now(),
-	     NEXT_REFRESH_TIME = now() + REFRESH_INTERVAL,
-	     LAST_REFRESH_COMMIT_TSO = TSO,
-	     LAST_REFRESH_ERR = NULL
-	   WHERE MVIEW_ID = ?;
+		   UPDATE mysql.mview_refresh_info SET
+		     LAST_REFRESH_TIME = now(),
+		     NEXT_REFRESH_TIME = now() + REFRESH_INTERVAL,
+		     LAST_REFRESH_COMMIT_TSO = TSO,
+		     LAST_REFRESH_ERR = NULL
+		   WHERE MVIEW_ID = ?;
 
-	   COMMIT;
+		   COMMIT;
 
-	   if (MV depends on single MVLOG) {
-	     PURGE MVLOG data in range (0, LAST_REFRESH_COMMIT_TSO]
-	   }
+		   if (MV depends on single MVLOG) {
+		     PURGE MVLOG data in range (0, LAST_REFRESH_COMMIT_TSO]
+		   }
 
 	*/
-	return nil
-}
-
-func (m *mv) purgeMlogsAfterRefresh() error {
-	// only if the mv depends on one mlog
 	return nil
 }
 
@@ -213,10 +208,6 @@ create table mysql.mview_refresh_info (
 )
 */
 
-/*
-
- */
-
 func (t *MVJobsManager) Start(sch *ServerConsistentHash) {
 	if t.running.Swap(true) {
 		return
@@ -273,7 +264,7 @@ func (t *MVJobsManager) exec() error {
 		t.mvMu.Unlock()
 	}
 	if len(mvToRefresh) > 0 {
-
+		//
 	}
 	if len(mvlogToPurge) > 0 {
 
