@@ -2153,7 +2153,7 @@ func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job,
 		return nil, errors.New("missing fulltext info")
 	}
 
-	parserType := tici.ParserType_UNKNOWN_PARSER
+	var parserType tici.ParserType
 	parserParams := make(map[string]string, 8)
 	switch indexInfo.FullTextInfo.ParserType {
 	case model.FullTextParserTypeStandardV1:
