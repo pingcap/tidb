@@ -1062,7 +1062,9 @@ func eliminateCastFunction(sctx BuildContext, expr Expression) (_ Expression, ch
 }
 
 // pushNotAcrossExpr try to eliminate the NOT expr in expression tree.
-// Input `not` indicates whether there's a `NOT` be pushed down.
+// Input `not` indicates whether there's a `NOT` to be pushed down from the parent.
+// Logical operators can cancel double NOT; non-logical expressions are wrapped
+// with is_true_with_null to preserve three-valued logic.
 // Output `changed` indicates whether the output expression differs from the
 // input `expr` because of the pushed-down-not.
 func pushNotAcrossExpr(ctx BuildContext, expr Expression, not bool) (_ Expression, changed bool) {
