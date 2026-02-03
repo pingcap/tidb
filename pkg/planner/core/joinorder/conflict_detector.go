@@ -21,6 +21,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/intset"
 )
 
 // ConflictDetector is used to detect conflicts between join edges in a join graph.
@@ -43,15 +44,15 @@ type edge struct {
 	// It could be otherCond, leftCond or rightCond.
 	nonEQConds expression.CNFExprs
 
-	tes   BitSet
+	tes   intset.FastIntSet
 	rules []*rule
 	// If all joins in the group are inner joins, conflict rules are unnecessary.
 	skipRules bool
 
 	leftEdges     []*edge
 	rightEdges    []*edge
-	leftVertexes  BitSet
-	rightVertexes BitSet
+	leftVertexes  intset.FastIntSet
+	rightVertexes intset.FastIntSet
 }
 
 // TryCreateCartesianCheckResult creates a CheckConnectionResult representing a cartesian product between left and right nodes.
@@ -70,47 +71,14 @@ func (d *ConflictDetector) TryCreateCartesianCheckResult(left, right *Node) *Che
 	}
 }
 
-// BitSet is a simple bitset implementation using uint64.
-// gjt todo use FastIntSet in fast_int_set.go
-type BitSet uint64
-
-func newBitSet(idx int64) BitSet {
-	return 1 << idx
-}
-
-// Union returns the union of two bitsets.
-func (b BitSet) Union(s BitSet) BitSet {
-	return b | s
-}
-
-// HasIntersect checks if two bitsets have intersection.
-func (b BitSet) HasIntersect(s BitSet) bool {
-	return (b & s) != 0
-}
-
-// Intersect returns the intersection of two bitsets.
-func (b BitSet) Intersect(s BitSet) BitSet {
-	return b & s
-}
-
-// Contains returns true if b contains s.
-func (b BitSet) Contains(s BitSet) bool {
-	return (b & s) == s
-}
-
-// IsSubsetOf checks if b is a subset of s.
-func (b BitSet) IsSubsetOf(s BitSet) bool {
-	return (b & s) == b
-}
-
 type rule struct {
-	from BitSet
-	to   BitSet
+	from intset.FastIntSet
+	to   intset.FastIntSet
 }
 
 // Node can be a leaf node(vertex) or a intermediate node(join of two nodes).
 type Node struct {
-	bitSet    BitSet
+	bitSet    intset.FastIntSet
 	p         base.LogicalPlan
 	cumCost   float64
 	usedEdges map[uint64]struct{}
@@ -150,7 +118,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 			return nil, err
 		}
 		vertexMap[v.ID()] = &Node{
-			bitSet:  newBitSet(int64(i)),
+			bitSet:  intset.NewFastIntSet(i),
 			p:       v,
 			cumCost: calcCumCost(v),
 		}
@@ -162,7 +130,7 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 	return d.groupVertexes, nil
 }
 
-func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, BitSet, error) {
+func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
 	if vertexNode, ok := vertexMap[p.ID()]; ok {
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
 		return nil, vertexNode.bitSet, nil
@@ -171,16 +139,16 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.Lo
 	// All internal nodes in the join group should be join operators.
 	joinop, ok := p.(*logicalop.LogicalJoin)
 	if !ok {
-		return nil, 0, errors.New("unexpected plan type in conflict detector")
+		return nil, intset.FastIntSet{}, errors.New("unexpected plan type in conflict detector")
 	}
 
 	leftEdges, leftVertexes, err := d.buildRecursive(joinop.Children()[0], vertexes, vertexMap)
 	if err != nil {
-		return nil, 0, err
+		return nil, intset.FastIntSet{}, err
 	}
 	rightEdges, rightVertexes, err := d.buildRecursive(joinop.Children()[1], vertexes, vertexMap)
 	if err != nil {
-		return nil, 0, err
+		return nil, intset.FastIntSet{}, err
 	}
 
 	var curEdges []*edge
@@ -190,15 +158,15 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.Lo
 		curEdge := d.makeNonInnerEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges)
 		curEdges = []*edge{curEdge}
 	}
-	if leftVertexes.HasIntersect(rightVertexes) {
-		return nil, 0, errors.New("conflicting join edges detected")
+	if leftVertexes.Intersects(rightVertexes) {
+		return nil, intset.FastIntSet{}, errors.New("conflicting join edges detected")
 	}
 	curVertexes := leftVertexes.Union(rightVertexes)
 
 	return append(leftEdges, append(rightEdges, curEdges...)...), curVertexes, nil
 }
 
-func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) (res []*edge) {
+func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) (res []*edge) {
 	// todo: handle NAEQConditions
 	// e.tes = e.tes.Union(d.calcTES(expression.ScalarFuncs2Exprs(joinop.NAEQConditions)))
 	if len(joinop.NAEQConditions) > 0 {
@@ -233,7 +201,7 @@ func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVert
 	return
 }
 
-func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) *edge {
+func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
 	nonEQConds := make([]expression.Expression, 0, len(joinop.LeftConditions)+len(joinop.RightConditions)+len(joinop.OtherConditions))
 	nonEQConds = append(nonEQConds, joinop.LeftConditions...)
 	nonEQConds = append(nonEQConds, joinop.RightConditions...)
@@ -254,7 +222,7 @@ func (d *ConflictDetector) makeNonInnerEdge(joinop *logicalop.LogicalJoin, leftV
 	return e
 }
 
-func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes BitSet, leftEdges, rightEdges []*edge) *edge {
+func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.Expression, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) *edge {
 	e := &edge{
 		idx:           uint64(len(d.innerEdges) + len(d.nonInnerEdges)),
 		joinType:      joinType,
@@ -270,10 +238,10 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 	e.tes = d.calcTES(conds)
 	// For degenerate predicates (only one side referenced), force TES to include
 	// both sides so the edge can't connect unrelated subsets.
-	if !e.tes.HasIntersect(e.leftVertexes) {
+	if !e.tes.Intersects(e.leftVertexes) {
 		e.tes = e.tes.Union(e.leftVertexes)
 	}
-	if !e.tes.HasIntersect(e.rightVertexes) {
+	if !e.tes.Intersects(e.rightVertexes) {
 		e.tes = e.tes.Union(e.rightVertexes)
 	}
 
@@ -309,8 +277,8 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 
 func rightToLeftRule(child *edge) *rule {
 	rule := &rule{from: child.rightVertexes}
-	if child.leftVertexes.HasIntersect(child.tes) {
-		rule.to = child.leftVertexes.Intersect(child.tes)
+	if child.leftVertexes.Intersects(child.tes) {
+		rule.to = child.leftVertexes.Intersection(child.tes)
 	} else {
 		rule.to = child.leftVertexes
 	}
@@ -319,16 +287,16 @@ func rightToLeftRule(child *edge) *rule {
 
 func leftToRightRule(child *edge) *rule {
 	rule := &rule{from: child.leftVertexes}
-	if child.rightVertexes.HasIntersect(child.tes) {
-		rule.to = child.rightVertexes.Intersect(child.tes)
+	if child.rightVertexes.Intersects(child.tes) {
+		rule.to = child.rightVertexes.Intersection(child.tes)
 	} else {
 		rule.to = child.rightVertexes
 	}
 	return rule
 }
 
-func (d *ConflictDetector) calcTES(conds []expression.Expression) BitSet {
-	var res BitSet
+func (d *ConflictDetector) calcTES(conds []expression.Expression) intset.FastIntSet {
+	var res intset.FastIntSet
 	for _, cond := range conds {
 		for _, node := range d.groupVertexes {
 			if expression.ExprReferenceSchema(cond, node.p.Schema()) {
@@ -441,25 +409,25 @@ func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
 	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
-	return e.tes.IsSubsetOf(node1.bitSet.Union(node2.bitSet)) &&
-		e.tes.HasIntersect(node1.bitSet) &&
-		e.tes.HasIntersect(node2.bitSet)
+	return e.tes.SubsetOf(node1.bitSet.Union(node2.bitSet)) &&
+		e.tes.Intersects(node1.bitSet) &&
+		e.tes.Intersects(node2.bitSet)
 }
 
 func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
 	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
-	return e.leftVertexes.Intersect(e.tes).IsSubsetOf(node1.bitSet) &&
-		e.rightVertexes.Intersect(e.tes).IsSubsetOf(node2.bitSet) &&
-		e.tes.HasIntersect(node1.bitSet) &&
-		e.tes.HasIntersect(node2.bitSet)
+	return e.leftVertexes.Intersection(e.tes).SubsetOf(node1.bitSet) &&
+		e.rightVertexes.Intersection(e.tes).SubsetOf(node2.bitSet) &&
+		e.tes.Intersects(node1.bitSet) &&
+		e.tes.Intersects(node2.bitSet)
 }
 
 func (e *edge) checkRules(node1, node2 *Node) bool {
 	s := node1.bitSet.Union(node2.bitSet)
 	for _, r := range e.rules {
-		if r.from.HasIntersect(s) && !r.to.IsSubsetOf(s) {
+		if r.from.Intersects(s) && !r.to.SubsetOf(s) {
 			return false
 		}
 	}

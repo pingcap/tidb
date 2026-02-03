@@ -523,8 +523,8 @@ func summarizeEdges(detector *ConflictDetector, usedEdges map[uint64]struct{}, n
 		}
 		missing++
 		if len(*missingList) < limit {
-			*missingList = append(*missingList, fmt.Sprintf("{idx:%d type:%v eq:%d nonEq:%d tes:%#x left:%#x right:%#x}",
-				e.idx, e.joinType, len(e.eqConds), len(e.nonEQConds), uint64(e.tes), uint64(e.leftVertexes), uint64(e.rightVertexes)))
+			*missingList = append(*missingList, fmt.Sprintf("{idx:%d type:%v eq:%d nonEq:%d tes:%v left:%v right:%v}",
+				e.idx, e.joinType, len(e.eqConds), len(e.nonEQConds), e.tes.String(), e.leftVertexes.String(), e.rightVertexes.String()))
 		}
 	}
 
@@ -546,7 +546,7 @@ func summarizeEdges(detector *ConflictDetector, usedEdges map[uint64]struct{}, n
 			if n == nil {
 				continue
 			}
-			nodeBits = append(nodeBits, fmt.Sprintf("%#x", uint64(n.bitSet)))
+			nodeBits = append(nodeBits, n.bitSet.String())
 		}
 		nodeSets = strings.Join(nodeBits, ",")
 	}
