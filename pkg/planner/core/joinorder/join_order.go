@@ -16,6 +16,7 @@ package joinorder
 
 import (
 	"cmp"
+	"fmt"
 	"maps"
 	"slices"
 	"strconv"
@@ -28,6 +29,8 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"go.uber.org/zap"
 )
 
 // JoinOrder is the base struct for join order optimization.
@@ -390,7 +393,6 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		return cmp.Compare(a.cumCost, b.cumCost)
 	})
 
-	// todo refine
 	if nodeWithHint != nil {
 		newNodes := make([]*Node, 0, len(nodes)+1)
 		newNodes = append(newNodes, nodeWithHint)
@@ -399,9 +401,9 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	}
 
 	var cartesianFactor float64 = j.ctx.GetSessionVars().CartesianJoinOrderThreshold
-	var disableCartesian = cartesianFactor <= 0 // gjt todo handle cartesian
+	var disableCartesian = cartesianFactor <= 0
 	allowNoEQ := !disableCartesian && j.group.allInnerJoin
-	nodes, err = connectSubgraphGreedy(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ) // gjt todo better func name
+	nodes, err = greedyConnectJoinNodes(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ)
 	if err != nil {
 		return nil, err
 	}
@@ -410,7 +412,16 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 		return nil, err
 	}
 	if !detector.CheckAllEdgesUsed(usedEdges) {
-		// gjt todo add log
+		totalEdges, usedEdgeCount, missingEdges, missingDetail, nodeSets := summarizeEdges(detector, usedEdges, nodes, 4)
+		logutil.BgLogger().Warn("join reorder skipped because not all edges are used",
+			zap.Int("rootID", group.root.ID()),
+			zap.Int("nodes", len(nodes)),
+			zap.Int("totalEdges", totalEdges),
+			zap.Int("usedEdges", usedEdgeCount),
+			zap.Int("missingEdges", missingEdges),
+			zap.String("missingDetail", missingDetail),
+			zap.String("nodeSets", nodeSets),
+			zap.Bool("allInnerJoin", group.allInnerJoin))
 		return group.root, nil
 	}
 	if len(nodes) <= 0 {
@@ -419,7 +430,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	return makeBushyTree(j.ctx, nodes, j.group.vertexHints)
 }
 
-func connectSubgraphGreedy(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*vertexJoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
+func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*vertexJoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
 	var curJoinIdx int
 	for curJoinIdx < len(nodes)-1 {
 		var bestNode *Node
@@ -440,7 +451,11 @@ func connectSubgraphGreedy(detector *ConflictDetector, nodes []*Node, vertexHint
 				if !allowNoEQ {
 					continue
 				}
-				// todo we dont support reorder non INNER JOIN without eqCond now.
+				// TODO: Non INNER JOIN without eqCond is not supported for now.
+				// For INNER JOIN, if cartesianFactor > 0, we apply a penalty to the cost of the newNode,
+				// and we might generate a tree with cartesian edge.
+				// For non INNER JOIN, the logic in extractJoinGroup ensures we will not reach here,
+				// check the comment in extractJoinGroup for more details.
 				newNode.cumCost = newNode.cumCost * cartesianFactor
 			}
 			if bestNode == nil || newNode.cumCost < bestNode.cumCost {
@@ -474,7 +489,7 @@ func tryApplyAllRemainingEdges(detector *ConflictDetector, nodes []*Node, vertex
 		return cmp.Compare(a.cumCost, b.cumCost)
 	})
 
-	nodes, err := connectSubgraphGreedy(detector, nodes, vertexHints, cartesianFactor, allowNoEQ)
+	nodes, err := greedyConnectJoinNodes(detector, nodes, vertexHints, cartesianFactor, allowNoEQ)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -491,6 +506,51 @@ func collectUsedEdges(nodes []*Node) map[uint64]struct{} {
 		}
 	}
 	return usedEdges
+}
+
+func summarizeEdges(detector *ConflictDetector, usedEdges map[uint64]struct{}, nodes []*Node, limit int) (total, used, missing int, detail, nodeSets string) {
+	if usedEdges == nil {
+		usedEdges = make(map[uint64]struct{})
+	}
+	addEdge := func(e *edge, missingList *[]string) {
+		if len(e.eqConds) == 0 && len(e.nonEQConds) == 0 {
+			return
+		}
+		total++
+		if _, ok := usedEdges[e.idx]; ok {
+			used++
+			return
+		}
+		missing++
+		if len(*missingList) < limit {
+			*missingList = append(*missingList, fmt.Sprintf("{idx:%d type:%v eq:%d nonEq:%d tes:%#x left:%#x right:%#x}",
+				e.idx, e.joinType, len(e.eqConds), len(e.nonEQConds), uint64(e.tes), uint64(e.leftVertexes), uint64(e.rightVertexes)))
+		}
+	}
+
+	var missingList []string
+	for _, e := range detector.innerEdges {
+		addEdge(e, &missingList)
+	}
+	for _, e := range detector.nonInnerEdges {
+		addEdge(e, &missingList)
+	}
+	if missing > limit {
+		missingList = append(missingList, fmt.Sprintf("...(+%d more)", missing-limit))
+	}
+	detail = strings.Join(missingList, ", ")
+
+	if len(nodes) > 0 {
+		nodeBits := make([]string, 0, len(nodes))
+		for _, n := range nodes {
+			if n == nil {
+				continue
+			}
+			nodeBits = append(nodeBits, fmt.Sprintf("%#x", uint64(n.bitSet)))
+		}
+		nodeSets = strings.Join(nodeBits, ",")
+	}
+	return total, used, missing, detail, nodeSets
 }
 
 func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node, vertexHints map[int]*vertexJoinMethodHint) (base.LogicalPlan, error) {

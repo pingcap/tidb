@@ -95,7 +95,6 @@ func FilterOutInPlace(input []Expression, filter func(Expression) bool) (remaine
 	for i := len(input) - 1; i >= 0; i-- {
 		if filter(input[i]) {
 			filteredOut = append(filteredOut, input[i])
-			// todo refine this function
 			input = slices.Delete(input, i, i+1)
 		}
 	}

@@ -283,8 +283,6 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 		d.nonInnerEdges = append(d.nonInnerEdges, e)
 	}
 
-	// gjt todo: handle CrossProduct
-
 	// setup conflict rules
 	if d.allInnerJoin {
 		return e
@@ -375,7 +373,6 @@ func rightAsscom(e1, e2 *edge) bool {
 
 // CheckConnectionResult contains the result of checking connection between two nodes.
 // gjt todo maybe sync.pool
-// gjt todo remove
 type CheckConnectionResult struct {
 	node1               *Node
 	node2               *Node
@@ -444,7 +441,6 @@ func (e *edge) checkInnerEdge(node1, node2 *Node) bool {
 	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
-	// gjt todo refine this check
 	return e.tes.IsSubsetOf(node1.bitSet.Union(node2.bitSet)) &&
 		e.tes.HasIntersect(node1.bitSet) &&
 		e.tes.HasIntersect(node2.bitSet)
@@ -454,8 +450,6 @@ func (e *edge) checkNonInnerEdge(node1, node2 *Node) bool {
 	if !e.skipRules && !e.checkRules(node1, node2) {
 		return false
 	}
-	// gjt todo commutative?
-	// gjt todo refine this check
 	return e.leftVertexes.Intersect(e.tes).IsSubsetOf(node1.bitSet) &&
 		e.rightVertexes.Intersect(e.tes).IsSubsetOf(node2.bitSet) &&
 		e.tes.HasIntersect(node1.bitSet) &&
