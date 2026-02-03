@@ -125,10 +125,9 @@ func getLocalPathDirName(vfs ...afero.Fs) string {
 	if canWriteToFile(fs, tidbLogDir) {
 		logutil.BgLogger().Info("use log dir as local path", zap.String("dir", localPath))
 		return tidbLogDir
-	} else {
-		logutil.BgLogger().Info("use temp dir as local path", zap.String("dir", localPath))
-		return filepath.Join(config.GetGlobalConfig().TempDir, "replayer")
 	}
+	logutil.BgLogger().Info("use temp dir as local path", zap.String("dir", localPath))
+	return filepath.Join(config.GetGlobalConfig().TempDir, "replayer")
 }
 
 func canWriteToFile(vfs afero.Fs, path string) bool {
