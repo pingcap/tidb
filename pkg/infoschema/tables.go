@@ -1769,12 +1769,12 @@ var tableTiDBMLogsCols = []columnInfo{
 	{name: "BASE_TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
 	{name: "BASE_TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
 	{name: "BASE_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
-	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32, flag: mysql.NotNullFlag},
-	{name: "PURGE_START", tp: mysql.TypeDatetime, size: 21, flag: mysql.NotNullFlag},
-	{name: "PURGE_INTERVAL", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
-	{name: "LAST_PURGE_TIME", tp: mysql.TypeDatetime, size: 21, flag: mysql.NotNullFlag},
-	{name: "LAST_PURGE_ROWS", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
-	{name: "LAST_PURGE_DURATION", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32},
+	{name: "PURGE_START", tp: mysql.TypeDatetime, size: 21},
+	{name: "PURGE_INTERVAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "LAST_PURGE_TIME", tp: mysql.TypeDatetime, size: 21},
+	{name: "LAST_PURGE_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "LAST_PURGE_DURATION", tp: mysql.TypeLonglong, size: 21},
 }
 
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.

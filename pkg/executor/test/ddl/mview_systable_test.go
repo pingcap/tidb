@@ -152,6 +152,66 @@ func TestMaterializedViewMetadataDDLDatabaseNotExists(t *testing.T) {
 	tk.MustGetErrCode("drop materialized view not_exist.mv1", errno.ErrBadDB)
 }
 
+func TestMaterializedViewQueryValidation(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("create database mview_query_validate")
+	tk.MustExec("use mview_query_validate")
+	tk.MustExec("create table t (k int, v int, v2 int)")
+	tk.MustExec("create materialized view log on t (k, v)")
+
+	// TIFLASH REPLICA clause is parsed but not supported in executor yet.
+	tk.MustGetErrCode(
+		"create materialized view mv_tiflash (k, cnt) tiflash replica 1 as select k, count(*) from t group by k",
+		errno.ErrUnsupportedDDLOperation,
+	)
+
+	// missing count(*)
+	tk.MustGetErrCode(
+		"create materialized view mv_no_cnt (k, sum_v) as select k, sum(v) from t group by k",
+		errno.ErrUnsupportedDDLOperation,
+	)
+	// unsupported aggregate functions
+	tk.MustGetErrCode(
+		"create materialized view mv_avg (k, avg_v, cnt) as select k, avg(v), count(*) from t group by k",
+		errno.ErrUnsupportedDDLOperation,
+	)
+	// only supports count(*)/count(1)
+	tk.MustGetErrCode(
+		"create materialized view mv_count_col (k, cnt) as select k, count(v) from t group by k",
+		errno.ErrUnsupportedDDLOperation,
+	)
+	// group-by required
+	tk.MustGetErrCode(
+		"create materialized view mv_no_group (cnt) as select count(*) from t",
+		errno.ErrUnsupportedDDLOperation,
+	)
+	// non-aggregated column must appear in group-by
+	tk.MustGetErrCode(
+		"create materialized view mv_non_agg_col (k, v, cnt) as select k, v, count(*) from t group by k",
+		errno.ErrFieldNotInGroupBy,
+	)
+	// non-deterministic where clause is rejected
+	tk.MustGetErrCode(
+		"create materialized view mv_where_nondet (k, cnt) as select k, count(*) from t where rand() > 0 group by k",
+		errno.ErrUnsupportedDDLOperation,
+	)
+	// query references a base column not recorded in mlog columns
+	tk.MustGetErrCode(
+		"create materialized view mv_col_not_in_mlog (k, cnt, sum_v2) as select k, count(*), sum(v2) from t group by k",
+		errno.ErrUnsupportedDDLOperation,
+	)
+	// distinct aggregate is not supported
+	tk.MustGetErrCode(
+		"create materialized view mv_distinct (k, cnt) as select k, count(distinct v) from t group by k",
+		errno.ErrUnsupportedDDLOperation,
+	)
+
+	// valid query (deterministic where, referenced columns ⊆ mlog columns)
+	tk.MustExec("create materialized view mv_ok (k, cnt, sum_v) as select k, count(*), sum(v) from t where v > 0 group by k")
+}
+
 func TestMaterializedViewLogMetadataDDLNoCurrentDB(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
