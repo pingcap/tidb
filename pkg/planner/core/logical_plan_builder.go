@@ -4510,6 +4510,9 @@ func (b *PlanBuilder) tryBuildCTE(ctx context.Context, tn *ast.TableName, asName
 			}
 			var p base.LogicalPlan
 			lp := logicalop.LogicalCTE{CteAsName: tn.Name, CteName: tn.Name, Cte: cte.cteClass, SeedStat: cte.seedStat}.Init(b.ctx, b.getSelectOffset())
+			// Use cteClass.SeedPartLogicalPlan.Schema() (not cte.seedLP.Schema()) to ensure all references
+			// to the same CTE use a consistent schema. When a CTE is referenced multiple times, cteClass
+			// is shared and contains the schema from when the CTE was first processed.
 			prevSchema := cte.cteClass.SeedPartLogicalPlan.Schema().Clone()
 			lp.SetSchema(getResultCTESchema(cte.cteClass.SeedPartLogicalPlan.Schema(), b.ctx.GetSessionVars()))
 
