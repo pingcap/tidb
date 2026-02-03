@@ -84,7 +84,6 @@ type Node struct {
 	usedEdges map[uint64]struct{}
 }
 
-// gjt todo refine, maybe using node is better?
 func calcCumCost(p base.LogicalPlan) float64 {
 	cost := p.StatsInfo().RowCount
 	for _, child := range p.Children() {
@@ -136,6 +135,7 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.Lo
 		return nil, vertexNode.bitSet, nil
 	}
 
+	var curVertexes intset.FastIntSet
 	// All internal nodes in the join group should be join operators.
 	joinop, ok := p.(*logicalop.LogicalJoin)
 	if !ok {
@@ -144,33 +144,33 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.Lo
 
 	leftEdges, leftVertexes, err := d.buildRecursive(joinop.Children()[0], vertexes, vertexMap)
 	if err != nil {
-		return nil, intset.FastIntSet{}, err
+		return nil, curVertexes, err
 	}
 	rightEdges, rightVertexes, err := d.buildRecursive(joinop.Children()[1], vertexes, vertexMap)
 	if err != nil {
-		return nil, intset.FastIntSet{}, err
+		return nil, curVertexes, err
 	}
 
 	var curEdges []*edge
 	if joinop.JoinType == base.InnerJoin {
-		curEdges = d.makeInnerEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges)
+		if curEdges, err = d.makeInnerEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges); err != nil {
+			return nil, curVertexes, err
+		}
 	} else {
 		curEdge := d.makeNonInnerEdge(joinop, leftVertexes, rightVertexes, leftEdges, rightEdges)
 		curEdges = []*edge{curEdge}
 	}
 	if leftVertexes.Intersects(rightVertexes) {
-		return nil, intset.FastIntSet{}, errors.New("conflicting join edges detected")
+		return nil, curVertexes, errors.New("conflicting join edges detected")
 	}
-	curVertexes := leftVertexes.Union(rightVertexes)
+	curVertexes = leftVertexes.Union(rightVertexes)
 
 	return append(leftEdges, append(rightEdges, curEdges...)...), curVertexes, nil
 }
 
-func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) (res []*edge) {
-	// todo: handle NAEQConditions
-	// e.tes = e.tes.Union(d.calcTES(expression.ScalarFuncs2Exprs(joinop.NAEQConditions)))
+func (d *ConflictDetector) makeInnerEdge(joinop *logicalop.LogicalJoin, leftVertexes, rightVertexes intset.FastIntSet, leftEdges, rightEdges []*edge) (res []*edge, err error) {
 	if len(joinop.NAEQConditions) > 0 {
-		panic("NAEQConditions not supported in conflict detector yet")
+		return nil, errors.New("NAEQConditions not supported in conflict detector yet")
 	}
 
 	conds := expression.ScalarFuncs2Exprs(joinop.EqualConditions)
@@ -360,7 +360,7 @@ func (r *CheckConnectionResult) NoEQEdge() bool {
 }
 
 // CheckAndMakeJoin checks the connection between two nodes and makes a join if they are connected.
-func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node, vertexHints map[int]*vertexJoinMethodHint) (*Node, error) {
+func (d *ConflictDetector) CheckAndMakeJoin(node1, node2 *Node, vertexHints map[int]*JoinMethodHint) (*Node, error) {
 	checkResult, err := d.CheckConnection(node1, node2)
 	if err != nil {
 		return nil, err
@@ -435,7 +435,7 @@ func (e *edge) checkRules(node1, node2 *Node) bool {
 }
 
 // MakeJoin construct a join plan from the check result.
-func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHints map[int]*vertexJoinMethodHint) (*Node, error) {
+func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint) (*Node, error) {
 	numInnerEdges := len(checkResult.appliedInnerEdges)
 	var numNonInnerEdges int
 	if checkResult.appliedNonInnerEdge != nil {
@@ -523,7 +523,7 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 	return res, nil
 }
 
-func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*vertexJoinMethodHint) (*logicalop.LogicalJoin, error) {
+func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
 	e := checkResult.appliedNonInnerEdge
 	left := checkResult.node1.p
 	right := checkResult.node2.p
@@ -551,7 +551,7 @@ func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, 
 	return join, nil
 }
 
-func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*vertexJoinMethodHint) (base.LogicalPlan, error) {
+func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, existingJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
 	if existingJoin != nil {
 		// Append selections to existing join
 		selection := logicalop.LogicalSelection{
@@ -586,7 +586,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 	return join, nil
 }
 
-func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan, vertexHints map[int]*vertexJoinMethodHint) (*logicalop.LogicalJoin, error) {
+func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right base.LogicalPlan, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
 	offset := left.QueryBlockOffset()
 	if offset != right.QueryBlockOffset() {
 		// gjt todo ok?
@@ -603,7 +603,7 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 	join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
 	join.SetChildren(left, right)
 
-	setNewJoinWithHint(join, vertexHints)
+	SetNewJoinWithHint(join, vertexHints)
 	return join, nil
 }
 
@@ -626,8 +626,11 @@ func (d *ConflictDetector) CheckAllEdgesUsed(usedEdges map[uint64]struct{}) bool
 	return true
 }
 
-// gjt todo duplicated function with old implementation
-func setNewJoinWithHint(newJoin *logicalop.LogicalJoin, vertexHints map[int]*vertexJoinMethodHint) {
+// SetNewJoinWithHint sets the join method hint for the join node.
+func SetNewJoinWithHint(newJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) {
+	if newJoin == nil {
+		return
+	}
 	lChild := newJoin.Children()[0]
 	rChild := newJoin.Children()[1]
 	if joinMethodHint, ok := vertexHints[lChild.ID()]; ok {

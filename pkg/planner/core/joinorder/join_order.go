@@ -54,7 +54,7 @@ type joinGroup struct {
 	// Join method hints for each vertex in this join group.
 	// Key is the planID of the vertex.
 	// This is for restore join method hints after join reorder.
-	vertexHints map[int]*vertexJoinMethodHint
+	vertexHints map[int]*JoinMethodHint
 
 	// There is no need to check ConflictRules if all joins in this group are inner join.
 	// This can speed up the join reorder process.
@@ -66,14 +66,15 @@ func (g *joinGroup) merge(other *joinGroup) {
 	g.leadingHints = append(g.leadingHints, other.leadingHints...)
 	if len(other.vertexHints) > 0 {
 		if g.vertexHints == nil {
-			g.vertexHints = make(map[int]*vertexJoinMethodHint, len(other.vertexHints))
+			g.vertexHints = make(map[int]*JoinMethodHint, len(other.vertexHints))
 		}
 		maps.Copy(g.vertexHints, other.vertexHints)
 	}
 	g.allInnerJoin = g.allInnerJoin && other.allInnerJoin
 }
 
-type vertexJoinMethodHint struct {
+// JoinMethodHint records the join method hint for a vertex.
+type JoinMethodHint struct {
 	PreferJoinMethod uint
 	HintInfo         *hint.PlanHints
 }
@@ -125,18 +126,18 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 	}
 
 	var leftHasHint, rightHasHint bool
-	var vertexHints map[int]*vertexJoinMethodHint
+	var vertexHints map[int]*JoinMethodHint
 	if p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.PreferJoinType > uint(0) {
-		vertexHints = make(map[int]*vertexJoinMethodHint)
+		vertexHints = make(map[int]*JoinMethodHint)
 		if join.LeftPreferJoinType > uint(0) {
-			vertexHints[join.Children()[0].ID()] = &vertexJoinMethodHint{
+			vertexHints[join.Children()[0].ID()] = &JoinMethodHint{
 				PreferJoinMethod: join.LeftPreferJoinType,
 				HintInfo:         join.HintInfo,
 			}
 			leftHasHint = true
 		}
 		if join.RightPreferJoinType > uint(0) {
-			vertexHints[join.Children()[1].ID()] = &vertexJoinMethodHint{
+			vertexHints[join.Children()[1].ID()] = &JoinMethodHint{
 				PreferJoinMethod: join.RightPreferJoinType,
 				HintInfo:         join.HintInfo,
 			}
@@ -353,7 +354,7 @@ func checkConnection(detector *ConflictDetector, leftPlan, rightPlan *Node) (*Ch
 	return checkResult, nil
 }
 
-func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan *Node, vertexHints map[int]*vertexJoinMethodHint, allowNoEQ bool) (*CheckConnectionResult, *Node, error) {
+func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan *Node, vertexHints map[int]*JoinMethodHint, allowNoEQ bool) (*CheckConnectionResult, *Node, error) {
 	checkResult, err := checkConnection(detector, leftPlan, rightPlan)
 	if err != nil {
 		return nil, nil, err
@@ -430,7 +431,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	return makeBushyTree(j.ctx, nodes, j.group.vertexHints)
 }
 
-func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*vertexJoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
+func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
 	var curJoinIdx int
 	for curJoinIdx < len(nodes)-1 {
 		var bestNode *Node
@@ -474,7 +475,7 @@ func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHin
 }
 
 // gjt todo add example
-func tryApplyAllRemainingEdges(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*vertexJoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, map[uint64]struct{}, error) {
+func tryApplyAllRemainingEdges(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, map[uint64]struct{}, error) {
 	usedEdges := collectUsedEdges(nodes)
 	// If all edges are used, return directly.
 	if detector.CheckAllEdgesUsed(usedEdges) {
@@ -553,7 +554,7 @@ func summarizeEdges(detector *ConflictDetector, usedEdges map[uint64]struct{}, n
 	return total, used, missing, detail, nodeSets
 }
 
-func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node, vertexHints map[int]*vertexJoinMethodHint) (base.LogicalPlan, error) {
+func makeBushyTree(ctx base.PlanContext, cartesianNodes []*Node, vertexHints map[int]*JoinMethodHint) (base.LogicalPlan, error) {
 	var iterNodes []*Node
 	for len(cartesianNodes) > 1 {
 		for i := 0; i < len(cartesianNodes); i += 2 {
