@@ -670,7 +670,7 @@ func BuildLeadingTreeFromList[T any](
 			if i == 0 {
 				currentJoin = nestedJoin
 			} else {
-				currentJoin, ok, err = join(currentJoin, nestedJoin)
+				currentJoin, ok, err = checkAndJoin(currentJoin, nestedJoin)
 				if err != nil {
 					return zero, availableGroups, false, err
 				}
