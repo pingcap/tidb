@@ -49,6 +49,13 @@ This file provides guidance to agents when working with code in this repository.
 
 - When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
 
+### Notes
+
+- Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
+- Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
+- Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
+- If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
+
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
