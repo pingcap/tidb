@@ -15,6 +15,8 @@
 package bindinfo
 
 import (
+	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -35,7 +37,7 @@ func bindingNoDBDigest(t *testing.T, b *Binding) string {
 }
 
 func TestCrossDBBindingCache(t *testing.T) {
-	fbc := newBindCache().(*bindingCache)
+	fbc := newBindingCache(context.Background(), 1000000000).(*bindingCache)
 	b1 := &Binding{BindSQL: "SELECT * FROM db1.t1", SQLDigest: "b1"}
 	fDigest1 := bindingNoDBDigest(t, b1)
 	b2 := &Binding{BindSQL: "SELECT * FROM db2.t1", SQLDigest: "b2"}
@@ -76,12 +78,12 @@ func TestDuplicatedBinding(t *testing.T) {
 	bindingDB1 := &Binding{BindSQL: "SELECT * FROM db1.t1"}
 	bindingDB2 := &Binding{BindSQL: "SELECT * FROM db2.t1"}
 	bindingDB3 := &Binding{BindSQL: "SELECT * FROM db3.t1"}
-	c := newBindCache()
+	c := newBindingCache(context.Background(), 1000000000).(*bindingCache)
 	require.Nil(t, c.SetBinding("db1", bindingDB1))
 	require.Nil(t, c.SetBinding("db2", bindingDB2))
 	require.Nil(t, c.SetBinding("db3", bindingDB3))
 
-	digestMap := c.(*bindingCache).digestBiMap.(*digestBiMapImpl)
+	digestMap := c.digestBiMap.(*digestBiMapImpl)
 	var noDBDigest string
 	for digest := range digestMap.noDBDigest2SQLDigest {
 		noDBDigest = digest
@@ -106,7 +108,7 @@ func TestBindCache(t *testing.T) {
 		vardef.MemQuotaBindingCache.Store(v)
 	}(vardef.MemQuotaBindingCache.Load())
 	vardef.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
-	bindCache := newBindCache()
+	bindCache := newBindingCache(context.Background(), 1000000000).(*bindingCache)
 	defer bindCache.Close()
 
 	err := bindCache.SetBinding("digest1", binding)
@@ -130,6 +132,39 @@ func TestBindCache(t *testing.T) {
 		}
 		return hit == 2
 	}, time.Second*5, time.Millisecond*100)
+}
+
+func TestBindingCacheEvictLog(t *testing.T) {
+	callbackCnt := 0
+	ctx := context.WithValue(context.Background(),
+		bindingCacheTestKey, func(binding *Binding) { callbackCnt++ })
+
+	binding := &Binding{BindSQL: "SELECT * FROM t1"}
+	bindingCache := newBindingCache(ctx, int64(binding.size())*3-1).(*bindingCache)
+
+	bindingCache.SetBinding("1", binding) // insert the first binding four times
+	bindingCache.SetBinding("1", binding)
+	bindingCache.SetBinding("1", binding)
+	bindingCache.SetBinding("1", binding)
+	require.Equal(t, bindingCache.Size(), 1)
+	require.Equal(t, bindingCache.GetMemUsage(), int64(binding.size()))
+	require.Equal(t, callbackCnt, 0) // duplicated binding should not trigger eviction
+
+	bindingCache.SetBinding("2", binding) // insert the second binding
+	bindingCache.SetBinding("2", binding)
+	require.Equal(t, callbackCnt, 0) // cache size is enough
+
+	bindingCache.SetBinding("3", binding) // insert the third binding, trigger eviction
+	require.Equal(t, callbackCnt, 1)
+
+	for i := 1; i <= 10; i++ {
+		bindingCache.SetBinding(fmt.Sprintf("3-%d", i), binding)
+		require.Equal(t, callbackCnt, 1+i)
+	}
+
+	require.Equal(t, callbackCnt, 11)
+	bindingCache.Close() // close doesn't trigger eviction log
+	require.Equal(t, callbackCnt, 11)
 }
 
 func TestExtractTableName(t *testing.T) {
