@@ -496,6 +496,52 @@ func (t *ManagerCtx) FinishIndexUpload(
 	return nil
 }
 
+// CheckAddIndexProgress checks whether a TiCI index build has completed.
+func (t *ManagerCtx) CheckAddIndexProgress(ctx context.Context, tableID, indexID int64) (bool, error) {
+	if handled, ready, err := maybeMockCheckAddIndexProgress(tableID, indexID); handled {
+		return ready, err
+	}
+	req := &GetIndexProgressRequest{
+		TableId: tableID,
+		IndexId: indexID,
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	if err := t.checkMetaClient(); err != nil {
+		return false, err
+	}
+	resp, err := t.metaClient.client.GetIndexProgress(ctx, req)
+	if err != nil {
+		return false, err
+	}
+	if resp.Status != ErrorCode_SUCCESS {
+		logutil.BgLogger().Error("GetIndexProgress failed",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
+			zap.String("errorMessage", resp.ErrorMessage))
+		return false, fmt.Errorf("tici GetIndexProgress error: %s", resp.ErrorMessage)
+	}
+	switch resp.State {
+	case GetIndexProgressResponse_COMPLETED:
+		return true, nil
+	case GetIndexProgressResponse_PENDING, GetIndexProgressResponse_RUNNING, GetIndexProgressResponse_NOTFOUND:
+		return false, nil
+	case GetIndexProgressResponse_FAILED, GetIndexProgressResponse_ERROR:
+		errMsg := resp.ErrorMessage
+		if errMsg == "" {
+			errMsg = resp.State.String()
+		}
+		logutil.BgLogger().Error("TiCI index build failed",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
+			zap.String("state", resp.State.String()),
+			zap.String("errorMessage", errMsg))
+		return false, fmt.Errorf("tici index build %s: %s", resp.State.String(), errMsg)
+	default:
+		return false, fmt.Errorf("tici GetIndexProgress unknown state: %s", resp.State.String())
+	}
+}
+
 func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 	var (
 		handled bool
@@ -518,6 +564,32 @@ func maybeMockFinishIndexUpload(tidbTaskID string) (bool, error) {
 		}
 	})
 	return handled, err
+}
+
+func maybeMockCheckAddIndexProgress(tableID, indexID int64) (handled bool, ready bool, err error) {
+	failpoint.Inject("MockCheckAddIndexProgress", func(val failpoint.Value) {
+		handled = true
+		switch v := val.(type) {
+		case bool:
+			ready = v
+		case string:
+			if v != "" {
+				err = errors.New(v)
+			}
+		}
+		if err != nil {
+			logutil.BgLogger().Warn("MockCheckAddIndexProgress failpoint triggered with error",
+				zap.Int64("tableID", tableID),
+				zap.Int64("indexID", indexID),
+				zap.Error(err))
+			return
+		}
+		logutil.BgLogger().Info("MockCheckAddIndexProgress failpoint triggered",
+			zap.Int64("tableID", tableID),
+			zap.Int64("indexID", indexID),
+			zap.Bool("ready", ready))
+	})
+	return handled, ready, err
 }
 
 // AbortIndexUpload notifies TiCI that the job has failed and the related TiCI job should be aborted.
@@ -771,6 +843,31 @@ func FinishIndexUpload(ctx context.Context, store kv.Storage, tidbTaskID string)
 		ticiManager.SetKeyspaceID(keyspaceID)
 	}
 	return ticiManager.FinishIndexUpload(ctx, tidbTaskID)
+}
+
+// CheckAddIndexProgress checks whether a TiCI index build has completed.
+func CheckAddIndexProgress(ctx context.Context, store kv.Storage, tableID, indexID int64) (bool, error) {
+	if handled, ready, err := maybeMockCheckAddIndexProgress(tableID, indexID); handled {
+		return ready, err
+	}
+	etcdClient, err := getEtcdClientFunc()
+	if err != nil {
+		return false, dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	ticiManager, err := newManagerCtxFunc(ctx, etcdClient)
+	if err != nil {
+		return false, dbterror.ErrInvalidDDLJob.FastGenByArgs(err)
+	}
+	defer ticiManager.Close()
+	if store != nil {
+		keyspaceID := uint32(store.GetCodec().GetKeyspaceID())
+		// Log when the KeyspaceID is the special null value, as per requested by TiCI team.
+		if keyspaceID == constants.NullKeyspaceID {
+			logutil.BgLogger().Debug("Setting special KeyspaceID for TiCI", zap.Uint32("KeyspaceID", keyspaceID))
+		}
+		ticiManager.SetKeyspaceID(keyspaceID)
+	}
+	return ticiManager.CheckAddIndexProgress(ctx, tableID, indexID)
 }
 
 // cloneAndNormalizeTableInfo deep-clones the given model.TableInfo via JSON

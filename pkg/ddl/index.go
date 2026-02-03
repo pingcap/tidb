@@ -1883,18 +1883,29 @@ func (w *worker) onCreateHybridIndex(jobCtx *jobContext, job *model.Job) (ver in
 				return ver, err
 			}
 
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateRunning
 			checkAndMarkNonRevertible(job)
 		case model.AnalyzeStateRunning:
-			job.ReorgMeta.AnalyzeState = model.AnalyzeStateSkipped
-			checkAndMarkNonRevertible(job)
-		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
 			taskID := strconv.FormatInt(job.ID, 10)
 			// FinishIndexUpload should run after the reorg ingest
 			// completes using the lightweight helper
 			// to finalize TiCI uploads here.
 			if err := tici.FinishIndexUpload(jobCtx.stepCtx, jobCtx.store, taskID); err != nil {
 				return ver, errors.Trace(err)
+			}
+			job.ReorgMeta.AnalyzeState = model.AnalyzeStateDone
+			checkAndMarkNonRevertible(job)
+		// why match matchAnalyzeStateTimeout and not match model.AnalyzeStateRunning?
+		case model.AnalyzeStateDone, model.AnalyzeStateSkipped, model.AnalyzeStateTimeout, model.AnalyzeStateFailed:
+			var done bool
+			if done, err = tici.CheckAddIndexProgress(jobCtx.stepCtx, jobCtx.store, tblInfo.ID, indexInfo.ID); err != nil {
+				return ver, errors.Trace(err)
+			}
+			if !done {
+				logutil.DDLLogger().Debug("[ddl] wait for TiCI hybrid index ready",
+					zap.Int64("tableID", tblInfo.ID),
+					zap.Int64("indexID", indexInfo.ID))
+				return ver, nil
 			}
 
 			AddIndexColumnFlag(tblInfo, indexInfo)

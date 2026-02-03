@@ -1163,6 +1163,7 @@ func TestHybridIndexDropAndTableLifecycle(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1534,6 +1535,7 @@ func TestHybridIndexOnPartitionedTable(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockDropTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	tk.MustExec("drop table if exists pt_create, pt_alter;")
 	tk.MustExec(`create table pt_create(a int, b text, v vector(3))
@@ -2128,6 +2130,7 @@ func TestInsertDuplicateBeforeIndexMerge(t *testing.T) {
 func TestHybridIndexShardingKeyColumns(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()
@@ -2167,6 +2170,7 @@ func TestHybridIndexShardingKeyColumns(t *testing.T) {
 func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `1*return(true)->return(false)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`)
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`)
 
 	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 600*time.Millisecond, mockstore.WithMockTiFlash(2))
 	defer ingesttestutil.InjectMockBackendCtx(t, store)()

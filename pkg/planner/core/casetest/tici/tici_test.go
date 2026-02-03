@@ -31,10 +31,13 @@ import (
 func TestTiCISearchExplain(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
 		require.NoError(t, err)
 		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress")
 		require.NoError(t, err)
 	}()
 
@@ -122,10 +125,13 @@ func TestTiCISearchExplain(t *testing.T) {
 func TestTiCIWithIndexHintCases(t *testing.T) {
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess", `return(true)`))
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress", `return(true)`))
 	defer func() {
 		err := failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexSuccess")
 		require.NoError(t, err)
 		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockFinishIndexUpload")
+		require.NoError(t, err)
+		err = failpoint.Disable("github.com/pingcap/tidb/pkg/tici/MockCheckAddIndexProgress")
 		require.NoError(t, err)
 	}()
 
