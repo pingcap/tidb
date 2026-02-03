@@ -823,6 +823,16 @@ func (p *preprocessor) checkSetOprSelectList(stmt *ast.SetOprSelectList) {
 			p.checkSetOprSelectList(s)
 		}
 	}
+	last := stmt.Selects[len(stmt.Selects)-1]
+	switch s := last.(type) {
+	case *ast.SelectStmt:
+		if s.SelectIntoOpt != nil {
+			p.err = plannererrors.ErrWrongUsage.GenWithStackByArgs("UNION", "INTO")
+			return
+		}
+	case *ast.SetOprSelectList:
+		p.checkSetOprSelectList(s)
+	}
 }
 
 func (p *preprocessor) checkCreateDatabaseGrammar(stmt *ast.CreateDatabaseStmt) {

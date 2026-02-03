@@ -823,6 +823,8 @@ func TestDMLStmt(t *testing.T) {
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' optionally enclosed BY '\"' lines starting by 'xy' terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' OPTIONALLY ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'"},
 		{"select a,b,a+b from t into outfile '/tmp/result.txt' fields terminated BY ',' enclosed BY '\"' lines starting by 'xy' terminated BY '\r'", true, "SELECT `a`,`b`,`a`+`b` FROM `t` INTO OUTFILE '/tmp/result.txt' FIELDS TERMINATED BY ',' ENCLOSED BY '\"' LINES STARTING BY 'xy' TERMINATED BY '\r'"},
 		// select into var list
+		{"select 1 into @a", true, "SELECT 1 INTO @`a`"},
+		{"select 1 into @a from dual", true, "SELECT 1 INTO @`a`"},
 		{"select a into @a from t", true, "SELECT `a` INTO @`a` FROM `t`"},
 		{"select a, b into @a, @bc from t", true, "SELECT `a`,`b` INTO @`a`,@`bc` FROM `t`"},
 		{"select a, b+1 into @a, @bc from t", true, "SELECT `a`,`b`+1 INTO @`a`,@`bc` FROM `t`"},

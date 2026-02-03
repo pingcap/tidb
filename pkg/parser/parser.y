@@ -9499,6 +9499,34 @@ SelectStmt:
 		}
 		$$ = st
 	}
+|	SelectStmtBasic SelectStmtIntoVars WhereClauseOptional SelectStmtGroup OrderByOptional SelectStmtLimitOpt SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := parser.endOffset(&yyS[yypt-5])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+		}
+		if $2 != nil {
+			st.SelectIntoOpt = $2.(*ast.SelectIntoOption)
+		}
+		if $3 != nil {
+			st.Where = $3.(ast.ExprNode)
+		}
+		if $4 != nil {
+			st.GroupBy = $4.(*ast.GroupByClause)
+		}
+		if $5 != nil {
+			st.OrderBy = $5.(*ast.OrderByClause)
+		}
+		if $6 != nil {
+			st.Limit = $6.(*ast.Limit)
+		}
+		if $7 != nil {
+			st.LockInfo = $7.(*ast.SelectLockInfo)
+		}
+		$$ = st
+	}
 |	SelectStmtFromDualTable SelectStmtGroup OrderByOptional SelectStmtLimitOpt SelectLockOpt SelectStmtIntoOption
 	{
 		st := $1.(*ast.SelectStmt)
@@ -9516,6 +9544,34 @@ SelectStmt:
 		}
 		if $6 != nil {
 			st.SelectIntoOpt = $6.(*ast.SelectIntoOption)
+		}
+		$$ = st
+	}
+|	SelectStmtBasic SelectStmtIntoVars FromDual WhereClauseOptional SelectStmtGroup OrderByOptional SelectStmtLimitOpt SelectLockOpt
+	{
+		st := $1.(*ast.SelectStmt)
+		lastField := st.Fields.Fields[len(st.Fields.Fields)-1]
+		if lastField.Expr != nil && lastField.AsName.O == "" {
+			lastEnd := parser.endOffset(&yyS[yypt-6])
+			lastField.SetText(parser.lexer.client, parser.src[lastField.Offset:lastEnd])
+		}
+		if $2 != nil {
+			st.SelectIntoOpt = $2.(*ast.SelectIntoOption)
+		}
+		if $4 != nil {
+			st.Where = $4.(ast.ExprNode)
+		}
+		if $5 != nil {
+			st.GroupBy = $5.(*ast.GroupByClause)
+		}
+		if $6 != nil {
+			st.OrderBy = $6.(*ast.OrderByClause)
+		}
+		if $7 != nil {
+			st.Limit = $7.(*ast.Limit)
+		}
+		if $8 != nil {
+			st.LockInfo = $8.(*ast.SelectLockInfo)
 		}
 		$$ = st
 	}
