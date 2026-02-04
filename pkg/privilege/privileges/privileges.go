@@ -65,6 +65,9 @@ var dynamicPrivs = []string{
 	"ROLE_ADMIN",
 	"CONNECTION_ADMIN",
 	"PLACEMENT_ADMIN",                 // Can Create/Drop/Alter PLACEMENT POLICY
+	"CREATE MASKING POLICY",           // Can Create MASKING POLICY
+	"ALTER MASKING POLICY",            // Can Alter MASKING POLICY
+	"DROP MASKING POLICY",             // Can Drop MASKING POLICY
 	"DASHBOARD_CLIENT",                // Can login to the TiDB-Dashboard.
 	"RESTRICTED_TABLES_ADMIN",         // Can see system tables when SEM is enabled
 	"RESTRICTED_STATUS_ADMIN",         // Can see all status vars when SEM is enabled.

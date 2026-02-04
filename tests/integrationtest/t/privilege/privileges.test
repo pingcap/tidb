@@ -84,6 +84,53 @@ disconnect placement_user;
 connection default;
 drop user placement_user;
 
+# TestMaskingPolicyStmt
+drop table if exists privilege__privileges.mask_t;
+create table privilege__privileges.mask_t (c char(10));
+CREATE USER mask_creator, mask_alter, mask_drop, mask_none;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_creator;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_alter;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_drop;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_none;
+GRANT `CREATE MASKING POLICY` ON *.* TO mask_creator;
+GRANT `ALTER MASKING POLICY` ON *.* TO mask_alter;
+GRANT `DROP MASKING POLICY` ON *.* TO mask_drop;
+
+connect (mask_none, localhost, mask_none,, privilege__privileges);
+connection mask_none;
+--error 1227
+create masking policy p on mask_t(c) as c;
+--error 1227
+alter table mask_t disable masking policy p;
+disconnect mask_none;
+
+connect (mask_creator, localhost, mask_creator,, privilege__privileges);
+connection mask_creator;
+create masking policy p on mask_t(c) as c;
+--error 1227
+alter table mask_t disable masking policy p;
+disconnect mask_creator;
+
+connect (mask_alter, localhost, mask_alter,, privilege__privileges);
+connection mask_alter;
+alter table mask_t disable masking policy p;
+alter table mask_t enable masking policy p;
+--error 1227
+alter table mask_t drop masking policy p;
+disconnect mask_alter;
+
+connect (mask_drop, localhost, mask_drop,, privilege__privileges);
+connection mask_drop;
+alter table mask_t drop masking policy p;
+disconnect mask_drop;
+
+connection default;
+drop user mask_creator;
+drop user mask_alter;
+drop user mask_drop;
+drop user mask_none;
+drop table privilege__privileges.mask_t;
+
 # TestResourceGroupAdminDynamicPriv
 CREATE USER resource_group_admin;
 CREATE USER resource_group_user;
@@ -1076,4 +1123,3 @@ disconnect foo;
 connection default;
 DROP TABLE t_partition;
 DROP USER foo;
-

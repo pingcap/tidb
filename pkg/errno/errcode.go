@@ -1132,6 +1132,8 @@ const (
 	ErrPlacementPolicyNotExists           = 8239
 	ErrPlacementPolicyWithDirectOption    = 8240
 	ErrPlacementPolicyInUse               = 8241
+	ErrMaskingPolicyExists                = 8268
+	ErrMaskingPolicyNotExists             = 8269
 	ErrOptOnCacheTable                    = 8242
 	ErrHTTPServiceError                   = 8243
 	ErrPartitionColumnStatsMissing        = 8244

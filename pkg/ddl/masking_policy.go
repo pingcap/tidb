@@ -66,11 +66,11 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 	if existPolicy != nil {
 		if existPolicy.TableID != policyInfo.TableID || existPolicy.ColumnID != policyInfo.ColumnID {
 			job.State = model.JobStateCancelled
-			return ver, errors.Errorf("masking policy %s already exists on another column", existPolicy.Name.O)
+			return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
 		if !replaceOnExist {
 			job.State = model.JobStateCancelled
-			return ver, errors.Errorf("masking policy %s already exists", existPolicy.Name.O)
+			return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
 
 		replacePolicy := existPolicy.Clone()
@@ -98,7 +98,7 @@ func (w *worker) onCreateMaskingPolicy(jobCtx *jobContext, job *model.Job) (ver 
 
 	if existOnColumn != nil {
 		job.State = model.JobStateCancelled
-		return ver, errors.Errorf("masking policy already exists on column %s", existOnColumn.ColumnName.O)
+		return ver, dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existOnColumn.Name.O)
 	}
 
 	switch policyInfo.State {

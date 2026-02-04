@@ -155,9 +155,9 @@ var (
 	// ErrPolicyNotExists is the error for policy not exists.
 	ErrPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrPlacementPolicyNotExists)
 	// ErrMaskingPolicyExists is the error for masking policy exists.
-	ErrMaskingPolicyExists = errors.New("masking policy already exists")
+	ErrMaskingPolicyExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyExists)
 	// ErrMaskingPolicyNotExists is the error for masking policy not exists.
-	ErrMaskingPolicyNotExists = errors.New("masking policy doesn't exist")
+	ErrMaskingPolicyNotExists = dbterror.ClassMeta.NewStd(errno.ErrMaskingPolicyNotExists)
 	// ErrResourceGroupExists is the error for resource group exists.
 	ErrResourceGroupExists = dbterror.ClassMeta.NewStd(errno.ErrResourceGroupExists)
 	// ErrResourceGroupNotExists is the error for resource group not exists.
@@ -579,7 +579,7 @@ func (m *Mutator) checkPolicyNotExists(policyKey []byte) error {
 func (m *Mutator) checkMaskingPolicyExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v == nil {
-		err = ErrMaskingPolicyNotExists
+		err = ErrMaskingPolicyNotExists.GenWithStack("masking policy doesn't exist")
 	}
 	return errors.Trace(err)
 }
@@ -587,7 +587,7 @@ func (m *Mutator) checkMaskingPolicyExists(policyKey []byte) error {
 func (m *Mutator) checkMaskingPolicyNotExists(policyKey []byte) error {
 	v, err := m.txn.HGet(mMaskingPolicies, policyKey)
 	if err == nil && v != nil {
-		err = ErrMaskingPolicyExists
+		err = ErrMaskingPolicyExists.GenWithStack("masking policy already exists")
 	}
 	return errors.Trace(err)
 }

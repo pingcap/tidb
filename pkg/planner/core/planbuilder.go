@@ -5438,6 +5438,15 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 					b.visitInfo = appendVisitInfo(b.visitInfo, mysql.ReferencesPriv, spec.Constraint.Refer.Table.Schema.L,
 						spec.Constraint.Refer.Table.Name.L, "", authErr)
 				}
+			} else if spec.Tp == ast.AlterTableAddMaskingPolicy {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
+			} else if spec.Tp == ast.AlterTableEnableMaskingPolicy || spec.Tp == ast.AlterTableDisableMaskingPolicy {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or ALTER MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"ALTER MASKING POLICY"}, false, err)
+			} else if spec.Tp == ast.AlterTableDropMaskingPolicy {
+				err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or DROP MASKING POLICY")
+				b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"DROP MASKING POLICY"}, false, err)
 			}
 		}
 	case *ast.AlterSequenceStmt:
@@ -5686,6 +5695,9 @@ func (b *PlanBuilder) buildDDL(ctx context.Context, node ast.DDLNode) (base.Plan
 	case *ast.DropPlacementPolicyStmt, *ast.CreatePlacementPolicyStmt, *ast.AlterPlacementPolicyStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or PLACEMENT_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"PLACEMENT_ADMIN"}, false, err)
+	case *ast.CreateMaskingPolicyStmt:
+		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or CREATE MASKING POLICY")
+		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"CREATE MASKING POLICY"}, false, err)
 	case *ast.CreateResourceGroupStmt, *ast.DropResourceGroupStmt, *ast.AlterResourceGroupStmt:
 		err := plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER or RESOURCE_GROUP_ADMIN")
 		b.visitInfo = appendDynamicVisitInfo(b.visitInfo, []string{"RESOURCE_GROUP_ADMIN"}, false, err)
