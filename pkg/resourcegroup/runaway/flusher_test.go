@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,13 +29,18 @@ func newTestBatchFlusher[K comparable, V any](
 	flushFn func(map[K]V) error,
 ) *batchFlusher[K, V] {
 	return &batchFlusher[K, V]{
-		name:      "test",
-		buffer:    make(map[K]V, threshold),
-		timer:     time.NewTimer(time.Hour),
-		interval:  time.Hour,
-		threshold: threshold,
-		mergeFn:   mergeFn,
-		flushFn:   flushFn,
+		name:                "test",
+		buffer:              make(map[K]V, threshold),
+		ticker:              time.NewTicker(time.Hour),
+		threshold:           threshold,
+		mergeFn:             mergeFn,
+		flushFn:             flushFn,
+		batchSizeObserver:   metrics.RunawayFlusherBatchSizeHistogram.WithLabelValues("test"),
+		durationObserver:    metrics.RunawayFlusherDurationHistogram.WithLabelValues("test"),
+		intervalObserver:    metrics.RunawayFlusherIntervalHistogram.WithLabelValues("test"),
+		flushSuccessCounter: metrics.RunawayFlusherCounter.WithLabelValues("test", metrics.LblOK),
+		flushErrorCounter:   metrics.RunawayFlusherCounter.WithLabelValues("test", metrics.LblError),
+		addCounter:          metrics.RunawayFlusherAddCounter.WithLabelValues("test"),
 	}
 }
 
@@ -52,17 +58,14 @@ func TestBatchFlusherAdd(t *testing.T) {
 	flusher.add("a", 1)
 	flusher.add("b", 2)
 	re.Len(flusher.buffer, 2)
-	re.False(flusher.flushed)
 	re.Equal(int32(0), flushCount.Load())
 
 	flusher.add("c", 3)
 	re.Len(flusher.buffer, 0)
-	re.True(flusher.flushed)
 	re.Equal(int32(1), flushCount.Load())
 
 	flusher.add("d", 4)
 	re.Len(flusher.buffer, 1)
-	re.False(flusher.flushed)
 	re.Equal(int32(1), flushCount.Load())
 }
 
@@ -109,17 +112,14 @@ func TestBatchFlusherFlush(t *testing.T) {
 
 	flusher.add("a", 1)
 	re.Len(flusher.buffer, 1)
-	re.False(flusher.flushed)
 	re.Equal(int32(0), flushCount.Load())
 
 	flusher.flush()
 	re.Len(flusher.buffer, 0)
-	re.True(flusher.flushed)
 	re.Equal(int32(1), flushCount.Load())
 
 	flusher.add("b", 2)
 	re.Len(flusher.buffer, 1)
-	re.False(flusher.flushed)
 	re.Equal(int32(1), flushCount.Load())
 }
 

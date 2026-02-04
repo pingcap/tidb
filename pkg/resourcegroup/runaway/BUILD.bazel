@@ -52,9 +52,11 @@ go_test(
     ],
     embed = [":runaway"],
     flaky = True,
-    shard_count = 7,
+    shard_count = 6,
     deps = [
+        "//pkg/metrics",
         "@com_github_stretchr_testify//assert",
+        "@com_github_stretchr_testify//require",
         "@com_github_tikv_client_go_v2//util",
     ],
 )

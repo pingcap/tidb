@@ -198,16 +198,13 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 
 	for {
 		select {
-		case <-rm.exit: // flush all remaining records before the loop exits
-			logutil.BgLogger().Info("flushing remaining runaway records before the loop exits")
-			runawayRecordFlusher.flush()
-			logutil.BgLogger().Info("flushing remaining quarantine records before the loop exits")
-			quarantineRecordFlusher.flush()
-			logutil.BgLogger().Info("flushing remaining stale quarantine records before the loop exits")
-			staleQuarantineFlusher.flush()
+		case <-rm.exit:
+			runawayRecordFlusher.stop()
+			quarantineRecordFlusher.stop()
+			staleQuarantineFlusher.stop()
 			logutil.BgLogger().Info("runaway record flush loop exit")
 			return
-		case <-runawayRecordFlusher.timerChan(): // flush runaway records periodically
+		case <-runawayRecordFlusher.tickerCh(): // flush runaway records periodically
 			runawayRecordFlusher.flush()
 		case r := <-recordCh: // add runaway records to the flusher
 			key := recordKey{
@@ -219,11 +216,11 @@ func (rm *Manager) RunawayRecordFlushLoop() {
 			runawayRecordFlusher.add(key, r)
 		case <-runawayRecordGCTicker.C: // delete expired runaway records periodically
 			go rm.deleteExpiredRows(runawayRecordExpiredDuration)
-		case <-quarantineRecordFlusher.timerChan(): // flush quarantine records periodically
+		case <-quarantineRecordFlusher.tickerCh(): // flush quarantine records periodically
 			quarantineRecordFlusher.flush()
 		case r := <-quarantineRecordCh: // add quarantine records to the flusher
 			quarantineRecordFlusher.add(r.getRecordKey(), r)
-		case <-staleQuarantineFlusher.timerChan(): // flush stale quarantine records periodically
+		case <-staleQuarantineFlusher.tickerCh(): // flush stale quarantine records periodically
 			staleQuarantineFlusher.flush()
 		case r := <-staleQuarantineRecordCh: // add stale quarantine records to the flusher
 			if r.ID == 0 {

@@ -26,13 +26,10 @@ import (
 )
 
 type batchFlusher[K comparable, V any] struct {
-	name      string
-	buffer    map[K]V
-	timer     *time.Timer
-	interval  time.Duration
-	threshold int
-	// Used to reset the timer lazily with the first `add` operation after the flush.
-	flushed       bool
+	name          string
+	buffer        map[K]V
+	ticker        *time.Ticker
+	threshold     int
 	lastFlushTime time.Time
 	mergeFn       func(map[K]V, K, V)
 	flushFn       func(map[K]V) error
@@ -56,8 +53,7 @@ func newBatchFlusher[K comparable, V any](
 	f := &batchFlusher[K, V]{
 		name:                name,
 		buffer:              make(map[K]V, threshold),
-		timer:               time.NewTimer(interval),
-		interval:            interval,
+		ticker:              time.NewTicker(interval),
 		threshold:           threshold,
 		mergeFn:             mergeFn,
 		batchSizeObserver:   metrics.RunawayFlusherBatchSizeHistogram.WithLabelValues(name),
@@ -85,8 +81,15 @@ func newBatchFlusher[K comparable, V any](
 	return f
 }
 
-func (f *batchFlusher[K, V]) timerChan() <-chan time.Time {
-	return f.timer.C
+func (f *batchFlusher[K, V]) tickerCh() <-chan time.Time {
+	return f.ticker.C
+}
+
+func (f *batchFlusher[K, V]) stop() {
+	logutil.BgLogger().Info("flushing remaining records before stop", zap.String("name", f.name))
+	f.flush()
+	logutil.BgLogger().Info("stopped flusher", zap.String("name", f.name))
+	f.ticker.Stop()
 }
 
 func (f *batchFlusher[K, V]) add(key K, value V) {
@@ -98,10 +101,6 @@ func (f *batchFlusher[K, V]) add(key K, value V) {
 	})
 	if shouldFlush {
 		f.flush()
-	} else if f.flushed {
-		f.flushed = false
-		// Reset the timer to restart the flush cycle.
-		f.timer.Reset(f.interval)
 	}
 }
 
@@ -132,6 +131,5 @@ func (f *batchFlusher[K, V]) flush() {
 	}
 
 	f.lastFlushTime = now
-	f.flushed = true
 	f.buffer = make(map[K]V, f.threshold)
 }
