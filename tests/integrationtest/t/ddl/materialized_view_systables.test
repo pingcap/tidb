@@ -45,4 +45,4 @@ drop table t;
 
 # REFRESH MATERIALIZED VIEW is not implemented in this PR.
 --error 8200
-refresh materialized view mv1;
+refresh materialized view mv1 fast;
