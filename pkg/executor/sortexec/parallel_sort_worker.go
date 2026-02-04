@@ -199,21 +199,43 @@ func (p *parallelSortWorker) convertChunksToRows() []chunk.Row {
 
 func (p *parallelSortWorker) sortBatchRows() {
 	rows := p.convertChunksToRows()
-	useAQSort := p.useAQSort
-	if p.aqsortCtrl != nil {
-		useAQSort = p.aqsortCtrl.isEnabled()
-	}
-	if useAQSort {
-		p.sortBatchRowsByEncodedKey(rows)
-	} else {
-		slices.SortFunc(rows, p.keyColumnsLess)
-	}
+	p.sortRows(rows)
 	p.localSortedRows = append(p.localSortedRows, chunk.NewIterator4Slice(rows))
 }
 
-func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) {
-	if len(rows) <= 1 {
+func (p *parallelSortWorker) sortRows(rows []chunk.Row) {
+	if p.shouldUseAQSort() {
+		if err := p.sortBatchRowsByEncodedKey(rows); err != nil {
+			p.disableAQSort(err)
+			p.sortRowsByColumns(rows)
+		}
 		return
+	}
+	p.sortRowsByColumns(rows)
+}
+
+func (p *parallelSortWorker) shouldUseAQSort() bool {
+	if p.aqsortCtrl != nil {
+		return p.aqsortCtrl.isEnabled()
+	}
+	return p.useAQSort
+}
+
+func (p *parallelSortWorker) disableAQSort(err error) {
+	if p.aqsortCtrl != nil {
+		p.aqsortCtrl.disableWithWarn(err, zap.Int("worker_id", p.workerIDForTest))
+	} else {
+		p.useAQSort = false
+	}
+}
+
+func (p *parallelSortWorker) sortRowsByColumns(rows []chunk.Row) {
+	slices.SortFunc(rows, p.keyColumnsLess)
+}
+
+func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) error {
+	if len(rows) <= 1 {
+		return nil
 	}
 	if p.loc == nil {
 		p.loc = time.UTC
@@ -221,14 +243,7 @@ func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) {
 
 	failpoint.Inject("AQSortForceEncodeKeyError", func(val failpoint.Value) {
 		if val.(bool) {
-			err := errors.NewNoStackError("injected aqsort sort key encode error")
-			if p.aqsortCtrl != nil {
-				p.aqsortCtrl.disableWithWarn(err, zap.Int("worker_id", p.workerIDForTest))
-			} else {
-				p.useAQSort = false
-			}
-			slices.SortFunc(rows, p.keyColumnsLess)
-			failpoint.Return()
+			failpoint.Return(errors.NewNoStackError("injected aqsort sort key encode error"))
 		}
 	})
 
@@ -257,13 +272,7 @@ func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) {
 		key := p.aqsArena[i*keyCap : i*keyCap : i*keyCap+keyCap]
 		encoded, err := p.encodeRowSortKey(rows[i], key)
 		if err != nil {
-			if p.aqsortCtrl != nil {
-				p.aqsortCtrl.disableWithWarn(err, zap.Int("worker_id", p.workerIDForTest))
-			} else {
-				p.useAQSort = false
-			}
-			slices.SortFunc(rows, p.keyColumnsLess)
-			return
+			return err
 		}
 		if ln := len(encoded); ln > maxKeyLen {
 			maxKeyLen = ln
@@ -282,6 +291,7 @@ func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) {
 	for i := range rows {
 		rows[i] = p.aqsPairs[i].Val
 	}
+	return nil
 }
 
 func (p *parallelSortWorker) checkKillSignal() {
