@@ -57,7 +57,7 @@ func TestMySQLDBTables(t *testing.T) {
 	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
 	for _, verBoot := range versionedBootstrapSchemas {
 		for _, schInfo := range verBoot.databases {
-			testTableBasicInfoSlice(t, schInfo.Tables)
+			testTableBasicInfoSlice(t, schInfo.Tables, "IF NOT EXISTS mysql.%s (")
 		}
 	}
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
@@ -1882,7 +1882,7 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
 			allIDs = append(allIDs, db.ID)
 
-			testTableBasicInfoSlice(t, db.Tables)
+			testTableBasicInfoSlice(t, db.Tables, "IF NOT EXISTS mysql.%s (")
 			for _, tbl := range db.Tables {
 				allIDs = append(allIDs, tbl.ID)
 			}
