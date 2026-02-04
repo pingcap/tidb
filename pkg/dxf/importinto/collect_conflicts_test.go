@@ -25,9 +25,6 @@ import (
 )
 
 func TestCollectConflictsStepExecutor(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip test for next-gen kernel temporarily, we need to adapt the test later")
-	}
 	hdlCtx := prepareConflictedKVHandleContext(t)
 	stMeta := importinto.CollectConflictsStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)
@@ -37,9 +34,21 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
-	require.EqualValues(t, &importinto.Checksum{Sum: 6734985763851266693, KVs: 27, Size: 909}, outSTMeta.Checksum)
+	expectedSum := &importinto.Checksum{
+		Sum:  6734985763851266693,
+		KVs:  27,
+		Size: 909,
+	}
+	expectedSum.Size += expectedSum.KVs * uint64(len(hdlCtx.store.GetCodec().GetKeyspace()))
+	if kerneltype.IsNextGen() {
+		// table ID in next-gen is different with classic, so we cannot directly
+		// calculate the checksum from the classic one.
+		expectedSum.Sum = 6636364898488969870
+	}
+	require.EqualValues(t, expectedSum, outSTMeta.Checksum)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
-	// one for each kv group
-	require.Len(t, outSTMeta.ConflictedRowFilenames, 2)
+	// we are running them concurrently, so the number of filenames may vary.
+	require.GreaterOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 2)
+	require.LessOrEqual(t, len(outSTMeta.ConflictedRowFilenames), 9)
 	require.False(t, outSTMeta.TooManyConflictsFromIndex)
 }
