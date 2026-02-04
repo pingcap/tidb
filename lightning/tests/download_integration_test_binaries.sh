@@ -30,10 +30,16 @@ branch=${1:-master}
 file_server_url=${2:-http://fileserver.pingcap.net}
 
 tikv_importer_branch="release-5.0"
+# Use release-8.5 for ticdc when branch is feature/materialized_view
+if [[ "$branch" == "feature/release-8.5-materialized-view" ]]; then
+    ticdc_branch="release-8.5"
+else
+    ticdc_branch="$branch"
+fi
 tikv_sha1_url="${file_server_url}/download/refs/pingcap/tikv/${branch}/sha1"
 pd_sha1_url="${file_server_url}/download/refs/pingcap/pd/${branch}/sha1"
 tiflash_sha1_url="${file_server_url}/download/refs/pingcap/tiflash/${branch}/sha1"
-ticdc_sha1_url="${file_server_url}/download/refs/pingcap/ticdc/${branch}/sha1"
+ticdc_sha1_url="${file_server_url}/download/refs/pingcap/ticdc/${ticdc_branch}/sha1"
 tikv_importer_sha1_url="${file_server_url}/download/refs/pingcap/importer/${tikv_importer_branch}/sha1"
 
 pd_sha1=$(curl "$pd_sha1_url")
