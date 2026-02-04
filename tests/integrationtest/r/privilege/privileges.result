@@ -55,6 +55,33 @@ drop placement policy if exists x;
 create placement policy x PRIMARY_REGION="cn-east-1" REGIONS="cn-east-1";
 drop placement policy if exists x;
 drop user placement_user;
+drop table if exists privilege__privileges.mask_t;
+create table privilege__privileges.mask_t (c char(10));
+CREATE USER mask_creator, mask_alter, mask_drop, mask_none;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_creator;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_alter;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_drop;
+GRANT ALTER ON privilege__privileges.mask_t TO mask_none;
+GRANT `CREATE MASKING POLICY` ON *.* TO mask_creator;
+GRANT `ALTER MASKING POLICY` ON *.* TO mask_alter;
+GRANT `DROP MASKING POLICY` ON *.* TO mask_drop;
+create masking policy p on mask_t(c) as c;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or CREATE MASKING POLICY privilege(s) for this operation
+alter table mask_t disable masking policy p;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
+create masking policy p on mask_t(c) as c;
+alter table mask_t disable masking policy p;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or ALTER MASKING POLICY privilege(s) for this operation
+alter table mask_t disable masking policy p;
+alter table mask_t enable masking policy p;
+alter table mask_t drop masking policy p;
+Error 1227 (42000): Access denied; you need (at least one of) the SUPER or DROP MASKING POLICY privilege(s) for this operation
+alter table mask_t drop masking policy p;
+drop user mask_creator;
+drop user mask_alter;
+drop user mask_drop;
+drop user mask_none;
+drop table privilege__privileges.mask_t;
 CREATE USER resource_group_admin;
 CREATE USER resource_group_user;
 set @@global.tidb_enable_resource_control = 1;

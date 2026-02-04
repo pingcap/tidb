@@ -6397,7 +6397,7 @@ func (e *executor) AlterTableMaskingPolicyState(ctx sessionctx.Context, ident as
 	policyName := spec.MaskingPolicyName
 	policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName)
 	if !ok {
-		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 	if policy.TableID != tbl.Meta().ID {
 		return errors.Errorf("masking policy %s doesn't belong to table %s", policyName.O, tbl.Meta().Name.O)
@@ -6441,7 +6441,7 @@ func (e *executor) DropMaskingPolicy(ctx sessionctx.Context, ident ast.Ident, sp
 	policyName := spec.MaskingPolicyName
 	policy, ok := e.infoCache.GetLatest().MaskingPolicyByName(policyName)
 	if !ok {
-		return errors.Errorf("masking policy %s doesn't exist", policyName.O)
+		return dbterror.ErrMaskingPolicyNotExists.GenWithStackByArgs(policyName.O)
 	}
 	if policy.TableID != tbl.Meta().ID {
 		return errors.Errorf("masking policy %s doesn't belong to table %s", policyName.O, tbl.Meta().Name.O)
@@ -6473,9 +6473,9 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *m
 	is := e.infoCache.GetLatest()
 	if existPolicy, ok := is.MaskingPolicyByName(policy.Name); ok {
 		if existPolicy.TableID != policy.TableID || existPolicy.ColumnID != policy.ColumnID {
-			return errors.Errorf("masking policy %s already exists on another column", existPolicy.Name.O)
+			return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 		}
-		err := errors.Errorf("masking policy %s already exists", policy.Name.O)
+		err := dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(policy.Name.O)
 		switch onExist {
 		case OnExistIgnore:
 			ctx.GetSessionVars().StmtCtx.AppendNote(err)
@@ -6485,7 +6485,7 @@ func (e *executor) createMaskingPolicyWithInfo(ctx sessionctx.Context, policy *m
 		}
 	}
 	if existPolicy, ok := is.MaskingPolicyByTableColumn(policy.TableID, policy.ColumnID); ok && existPolicy.Name.L != policy.Name.L {
-		return errors.Errorf("masking policy already exists on column %s", existPolicy.ColumnName.O)
+		return dbterror.ErrMaskingPolicyExists.GenWithStackByArgs(existPolicy.Name.O)
 	}
 
 	policyID, err := e.genMaskingPolicyID()
