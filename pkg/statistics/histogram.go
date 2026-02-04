@@ -1113,18 +1113,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return DefaultRowEst(0)
 	}
 
-	// Step 1: Calculate "one value"
+	// Step 1: Calculate a default of "one value"
 	// oneValue assumes "one value qualifies", and is used as a lower bound.
-	// outOfRangeBetweenRate (default == 100) avoids an artificially low NDV.
-	// TODO: If we have a large number of added rows, the NDV may be underestimated.
 	histNDV = max(histNDV, 1)
 	oneValue := hg.NotNullCount() / float64(histNDV)
-	if float64(histNDV) < outOfRangeBetweenRate {
-		// If NDV is low, it may no longer be representative of the data since ANALYZE
-		// was last run. Use a default value against realtimeRowCount.
-		// If NDV is not representitative, then hg.NotNullCount may not be either.
-		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
-	}
 
 	// Step 2: If modifications are not allowed, return the one value.
 	// In OptObjectiveDeterminate mode, we can't rely on real time statistics, so default to assuming
@@ -1134,6 +1126,13 @@ func (hg *Histogram) OutOfRangeRowCount(
 		return RowEstimate{Est: oneValue, MinEst: oneValue, MaxEst: oneValue}
 	}
 
+	// Step 3: Adjust oneValue if the NDV is low
+	// If NDV is low, it may no longer be representative of the data since ANALYZE
+	// was last run. Use a default value against realtimeRowCount.
+	// If NDV is not representitative, then hg.NotNullCount may not be either.
+	if float64(histNDV) < outOfRangeBetweenRate {
+		oneValue = max(min(oneValue, float64(realtimeRowCount)/outOfRangeBetweenRate), 1.0)
+	}
 	// Step 4: Calculate how much of the statistics share a common prefix.
 	// For bytes and string type, we need to cut the common prefix when converting them to scalar value.
 	// Here we calculate the length of common prefix.
@@ -1226,7 +1225,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 		estRows = (addedRows * addedRowMultiplier) * totalPercent
 	}
 
-	// Step 11: Calculate a potential worst case
+	// Step 11: Calculate a potential worst case for use in final MaxEst
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always
 	// account for at least 1% of the total row count as a worst case for "addedRows".
