@@ -89,16 +89,17 @@
       {
         "SQL": "select * from foo join bar on foo.a=bar.a where foo.a = rand();",
         "Plan": [
-          "Projection 10000.00 root  test.foo.a, test.foo.b, test.foo.c, test.bar.a, test.bar.b, test.bar.c",
-          "└─MergeJoin 10000.00 root  inner join, left key:test.bar.a, right key:test.foo.a",
-          "  ├─Selection(Build) 8000.00 root  eq(cast(test.foo.a, double BINARY), rand())",
-          "  │ └─TableReader 10000.00 root  data:TableFullScan",
-          "  │   └─TableFullScan 10000.00 cop[tikv] table:foo keep order:true, stats:pseudo",
-          "  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
-          "    └─TableFullScan 10000.00 cop[tikv] table:bar keep order:true, stats:pseudo"
+          "MergeJoin 10000.00 root  inner join, left key:test.foo.a, right key:test.bar.a",
+          "├─TableReader(Build) 10000.00 root  data:TableFullScan",
+          "│ └─TableFullScan 10000.00 cop[tikv] table:bar keep order:true, stats:pseudo",
+          "└─Selection(Probe) 8000.00 root  eq(cast(test.foo.a, double BINARY), rand())",
+          "  └─TableReader 10000.00 root  data:TableFullScan",
+          "    └─TableFullScan 10000.00 cop[tikv] table:foo keep order:true, stats:pseudo"
         ],
         "Warning": [
           "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to storage layer now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
           "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
           "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
           "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
