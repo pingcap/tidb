@@ -218,6 +218,8 @@ const (
 	SlowLogExecRetryCount = "Exec_retry_count"
 	// SlowLogResourceGroup is the resource group name that the current session bind.
 	SlowLogResourceGroup = "Resource_group"
+	// SlowLogCopMVCCReadAmplification is total_keys / processed_keys in coprocessor scan detail.
+	SlowLogCopMVCCReadAmplification = "cop_mvcc_read_amplification"
 )
 
 // JSONSQLWarnForSlowLog helps to print the SQLWarn through the slow log in JSON format.
@@ -898,6 +900,14 @@ var SlowLogRuleFieldAccessors = map[string]SlowLogFieldAccessor{
 				return matchZero(threshold)
 			}
 			return matchGE(threshold, d.ScanDetail.ProcessedKeys)
+		}),
+	strings.ToLower(SlowLogCopMVCCReadAmplification): makeExecDetailAccessor(
+		parseFloat64,
+		func(d *execdetails.ExecDetails, threshold any) bool {
+			if d.ScanDetail == nil || d.ScanDetail.ProcessedKeys <= 0 {
+				return matchZero(threshold)
+			}
+			return matchGE(threshold, float64(d.ScanDetail.TotalKeys)/float64(d.ScanDetail.ProcessedKeys))
 		}),
 	strings.ToLower(execdetails.PreWriteTimeStr): makeExecDetailAccessor(
 		parseFloat64,
