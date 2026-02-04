@@ -2843,6 +2843,7 @@ func exhaustPhysicalPlans4LogicalApply(super base.LogicalPlan, prop *property.Ph
 		PhysicalHashJoin: *join,
 		OuterSchema:      la.CorCols,
 		CanUseCache:      canUseCache,
+		NoDecorrelate:    la.NoDecorrelate,
 	}.Init(la.SCtx(),
 		la.StatsInfo().ScaleByExpectCnt(la.SCtx().GetSessionVars(), prop.ExpectedCnt),
 		la.QueryBlockOffset(),

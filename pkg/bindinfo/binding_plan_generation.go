@@ -136,10 +136,12 @@ func (gp *genedPlan) PlanText() string {
 type state struct {
 	leading2  [2]*tableName // leading-2 table names
 	indexHint *indexHint    // optional index hint for a table (one at a time to limit search space)
-	varNames  []string      // relevant variables and their values to generate a certain plan
-	varValues []any
-	fixIDs    []uint64 // relevant fixes and their values to generate a certain plan
-	fixValues []string
+	// noDecorrelateQB stores the query block name for NO_DECORRELATE() hint.
+	noDecorrelateQB ast.CIStr
+	varNames        []string // relevant variables and their values to generate a certain plan
+	varValues       []any
+	fixIDs          []uint64 // relevant fixes and their values to generate a certain plan
+	fixValues       []string
 }
 
 // Encode encodes the state into a string.
@@ -159,6 +161,13 @@ func (s *state) Encode() string {
 			sb.WriteString(",")
 		}
 		sb.WriteString(s.indexHint.String())
+	}
+	if s.noDecorrelateQB.L != "" {
+		if sb.Len() > 0 {
+			sb.WriteString(",")
+		}
+		sb.WriteString("no_decorrelate@")
+		sb.WriteString(s.noDecorrelateQB.L)
 	}
 	for _, v := range s.varValues {
 		if sb.Len() > 0 {
@@ -182,35 +191,50 @@ func (s *state) Encode() string {
 
 func newStateWithLeading2(old *state, leading2 [2]*tableName) *state {
 	newState := &state{
-		leading2:  leading2,
-		indexHint: old.indexHint,
-		varNames:  old.varNames,
-		varValues: old.varValues,
-		fixIDs:    old.fixIDs,
-		fixValues: old.fixValues,
+		leading2:        leading2,
+		indexHint:       old.indexHint,
+		noDecorrelateQB: old.noDecorrelateQB,
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
 	}
 	return newState
 }
 
 func newStateWithIndexHint(old *state, indexHint *indexHint) *state {
 	return &state{
-		leading2:  old.leading2,
-		indexHint: indexHint,
-		varNames:  old.varNames,
-		varValues: old.varValues,
-		fixIDs:    old.fixIDs,
-		fixValues: old.fixValues,
+		leading2:        old.leading2,
+		indexHint:       indexHint,
+		noDecorrelateQB: old.noDecorrelateQB,
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
+	}
+}
+
+func newStateWithNoDecorrelateQB(old *state, qbName ast.CIStr) *state {
+	return &state{
+		leading2:        old.leading2,
+		indexHint:       old.indexHint,
+		noDecorrelateQB: qbName,
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
 	}
 }
 
 func newStateWithNewVar(old *state, varName string, varVal any) *state {
 	newState := &state{
-		leading2:  old.leading2,
-		indexHint: old.indexHint,
-		varNames:  old.varNames,
-		varValues: make([]any, len(old.varValues)),
-		fixIDs:    old.fixIDs,
-		fixValues: old.fixValues,
+		leading2:        old.leading2,
+		indexHint:       old.indexHint,
+		noDecorrelateQB: old.noDecorrelateQB,
+		varNames:        old.varNames,
+		varValues:       make([]any, len(old.varValues)),
+		fixIDs:          old.fixIDs,
+		fixValues:       old.fixValues,
 	}
 	copy(newState.varValues, old.varValues)
 	for i := range newState.varNames {
@@ -224,12 +248,13 @@ func newStateWithNewVar(old *state, varName string, varVal any) *state {
 
 func newStateWithNewFix(old *state, fixID uint64, fixVal string) *state {
 	newState := &state{
-		leading2:  old.leading2,
-		indexHint: old.indexHint,
-		varNames:  old.varNames,
-		varValues: old.varValues,
-		fixIDs:    old.fixIDs,
-		fixValues: make([]string, len(old.fixValues)),
+		leading2:        old.leading2,
+		indexHint:       old.indexHint,
+		noDecorrelateQB: old.noDecorrelateQB,
+		varNames:        old.varNames,
+		varValues:       old.varValues,
+		fixIDs:          old.fixIDs,
+		fixValues:       make([]string, len(old.fixValues)),
 	}
 	copy(newState.fixValues, old.fixValues)
 	for i := range newState.fixIDs {
@@ -264,11 +289,12 @@ func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, 
 		}
 	}
 	possibleIndexHints := extractSelectIndexHints(sctx, defaultSchema, stmt)
-	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2, possibleIndexHints)
+	possibleNoDecorrelateQBs := extractNoDecorrelateQBs(stmt)
+	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2, possibleIndexHints, possibleNoDecorrelateQBs)
 }
 
 func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
-	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName, possibleIndexHints []*indexHint) (plans []*genedPlan, err error) {
+	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName, possibleIndexHints []*indexHint, possibleNoDecorrelateQBs []ast.CIStr) (plans []*genedPlan, err error) {
 	// init BFS structures
 	visitedStates := make(map[string]struct{})  // map[encodedState]struct{}, all visited states
 	visitedPlans := make(map[string]*genedPlan) // map[planDigest]plan, all visited plans
@@ -293,6 +319,13 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 		visitedPlans[plan.planDigest] = plan
 
 		// in each step, adjust one variable or fix or join-order
+		for _, qbName := range possibleNoDecorrelateQBs {
+			newState := newStateWithNoDecorrelateQB(currState, qbName)
+			if _, ok := visitedStates[newState.Encode()]; !ok {
+				visitedStates[newState.Encode()] = struct{}{}
+				stateList.PushBack(newState)
+			}
+		}
 		for _, leading2 := range possibleLeading2 {
 			newState := newStateWithLeading2(currState, leading2)
 			if _, ok := visitedStates[newState.Encode()]; !ok {
@@ -416,40 +449,45 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 	sctx.GetSessionVars().OptimizerFixControl = fixControlMap
 
 	if sel, isSel := stmt.(*ast.SelectStmt); isSel {
-		if (state.leading2[0] != nil && state.leading2[1] != nil) || state.indexHint != nil {
-			originalHintsLen := len(sel.TableHints)
-			defer func() {
-				sel.TableHints = sel.TableHints[:originalHintsLen]
-			}()
-			if state.leading2[0] != nil && state.leading2[1] != nil {
-				leadingHint := &ast.TableOptimizerHint{
-					HintName: ast.NewCIStr(hint.HintLeading),
-					Tables: []ast.HintTable{
-						{
-							DBName:    ast.NewCIStr(state.leading2[0].schema),
-							TableName: ast.NewCIStr(state.leading2[0].HintName()),
-						},
-						{
-							DBName:    ast.NewCIStr(state.leading2[1].schema),
-							TableName: ast.NewCIStr(state.leading2[1].HintName()),
-						},
+		originalHintsLen := len(sel.TableHints)
+		defer func() {
+			sel.TableHints = sel.TableHints[:originalHintsLen]
+		}()
+		if state.leading2[0] != nil && state.leading2[1] != nil {
+			leadingHint := &ast.TableOptimizerHint{
+				HintName: ast.NewCIStr(hint.HintLeading),
+				Tables: []ast.HintTable{
+					{
+						DBName:    ast.NewCIStr(state.leading2[0].schema),
+						TableName: ast.NewCIStr(state.leading2[0].HintName()),
 					},
-				}
-				sel.TableHints = append(sel.TableHints, leadingHint)
-			}
-			if state.indexHint != nil {
-				indexHint := &ast.TableOptimizerHint{
-					HintName: ast.NewCIStr(hint.HintUseIndex),
-					Tables: []ast.HintTable{
-						{
-							DBName:    ast.NewCIStr(state.indexHint.table.schema),
-							TableName: ast.NewCIStr(state.indexHint.table.HintName()),
-						},
+					{
+						DBName:    ast.NewCIStr(state.leading2[1].schema),
+						TableName: ast.NewCIStr(state.leading2[1].HintName()),
 					},
-					Indexes: []ast.CIStr{ast.NewCIStr(state.indexHint.index)},
-				}
-				sel.TableHints = append(sel.TableHints, indexHint)
+				},
 			}
+			sel.TableHints = append(sel.TableHints, leadingHint)
+		}
+		if state.indexHint != nil {
+			indexHint := &ast.TableOptimizerHint{
+				HintName: ast.NewCIStr(hint.HintUseIndex),
+				Tables: []ast.HintTable{
+					{
+						DBName:    ast.NewCIStr(state.indexHint.table.schema),
+						TableName: ast.NewCIStr(state.indexHint.table.HintName()),
+					},
+				},
+				Indexes: []ast.CIStr{ast.NewCIStr(state.indexHint.index)},
+			}
+			sel.TableHints = append(sel.TableHints, indexHint)
+		}
+		if state.noDecorrelateQB.L != "" {
+			noDecorrelateHint := &ast.TableOptimizerHint{
+				HintName: ast.NewCIStr(hint.HintNoDecorrelate),
+				QBName:   state.noDecorrelateQB,
+			}
+			sel.TableHints = append(sel.TableHints, noDecorrelateHint)
 		}
 	}
 
@@ -602,6 +640,67 @@ type tableNameExtractor struct {
 	tableNames    map[string]*tableName
 }
 
+type selectOffsetAssigner struct {
+	offset int
+}
+
+func (a *selectOffsetAssigner) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+	if sel, ok := in.(*ast.SelectStmt); ok {
+		a.offset++
+		sel.QueryBlockOffset = a.offset
+	}
+	return in, false
+}
+
+func (*selectOffsetAssigner) Leave(in ast.Node) (node ast.Node, ok bool) {
+	return in, true
+}
+
+type subqueryOffsetExtractor struct {
+	offsets map[int]struct{}
+}
+
+func (e *subqueryOffsetExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
+	if subq, ok := in.(*ast.SubqueryExpr); ok {
+		collectSubqueryOffsets(subq.Query, e.offsets)
+	}
+	return in, false
+}
+
+func (*subqueryOffsetExtractor) Leave(in ast.Node) (node ast.Node, ok bool) {
+	return in, true
+}
+
+func collectSubqueryOffsets(node ast.ResultSetNode, offsets map[int]struct{}) {
+	if node == nil {
+		return
+	}
+	switch n := node.(type) {
+	case *ast.SelectStmt:
+		if n.QueryBlockOffset > 0 {
+			offsets[n.QueryBlockOffset] = struct{}{}
+		}
+	case *ast.SetOprStmt:
+		collectSubqueryOffsetsFromSelectList(n.SelectList, offsets)
+	}
+}
+
+func collectSubqueryOffsetsFromSelectList(list *ast.SetOprSelectList, offsets map[int]struct{}) {
+	if list == nil {
+		return
+	}
+	for _, sel := range list.Selects {
+		switch n := sel.(type) {
+		case *ast.SelectStmt:
+			if n.QueryBlockOffset > 0 {
+				offsets[n.QueryBlockOffset] = struct{}{}
+			}
+		case *ast.SetOprStmt:
+			collectSubqueryOffsetsFromSelectList(n.SelectList, offsets)
+		}
+	}
+}
+
 // Enter implements ast.Visitor interface.
 func (e *tableNameExtractor) Enter(in ast.Node) (node ast.Node, skipChildren bool) {
 	if name, ok := in.(*ast.TableName); ok {
@@ -644,6 +743,40 @@ func extractSelectTableNames(defaultSchema string, node ast.StmtNode) []*tableNa
 		return names[i].String() < names[j].String()
 	})
 	return names
+}
+
+func extractNoDecorrelateQBs(node ast.StmtNode) []ast.CIStr {
+	selStmt, isSel := node.(*ast.SelectStmt)
+	if !isSel {
+		return nil // only support SELECT statement for now
+	}
+
+	assigner := &selectOffsetAssigner{}
+	selStmt.Accept(assigner)
+
+	extractor := &subqueryOffsetExtractor{offsets: make(map[int]struct{})}
+	selStmt.Accept(extractor)
+
+	if len(extractor.offsets) == 0 {
+		return nil
+	}
+
+	qbNames := make([]ast.CIStr, 0, len(extractor.offsets))
+	topOffset := selStmt.QueryBlockOffset
+	for offset := range extractor.offsets {
+		if offset == topOffset {
+			continue
+		}
+		qbName, err := hint.GenerateQBName(hint.TypeSelect, offset)
+		if err != nil {
+			continue
+		}
+		qbNames = append(qbNames, qbName)
+	}
+	sort.Slice(qbNames, func(i, j int) bool {
+		return qbNames[i].L < qbNames[j].L
+	})
+	return qbNames
 }
 
 type predicateColumnExtractor struct {

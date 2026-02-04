@@ -33,6 +33,8 @@ type PhysicalApply struct {
 	CanUseCache bool
 	Concurrency int
 	OuterSchema []*expression.CorrelatedColumn
+	// NoDecorrelate indicates this apply is preserved by NO_DECORRELATE hint.
+	NoDecorrelate bool
 }
 
 // Init initializes PhysicalApply.
@@ -65,6 +67,7 @@ func (p *PhysicalApply) Clone(newCtx base.PlanContext) (base.PhysicalPlan, error
 	cloned.PhysicalHashJoin = *hj
 	cloned.CanUseCache = p.CanUseCache
 	cloned.Concurrency = p.Concurrency
+	cloned.NoDecorrelate = p.NoDecorrelate
 	for _, col := range p.OuterSchema {
 		cloned.OuterSchema = append(cloned.OuterSchema, col.Clone().(*expression.CorrelatedColumn))
 	}
@@ -104,7 +107,7 @@ func (p *PhysicalApply) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
+	sum = p.PhysicalHashJoin.MemoryUsage() + size.SizeOfBool + size.SizeOfBool + size.SizeOfBool + size.SizeOfSlice +
 		int64(cap(p.OuterSchema))*size.SizeOfPointer
 	for _, corrCol := range p.OuterSchema {
 		sum += corrCol.MemoryUsage()

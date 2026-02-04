@@ -153,6 +153,25 @@ func TestExplainExploreIndexHintWithAlias(t *testing.T) {
 	require.True(t, hasIndexB, "expected index b plan in explain explore output")
 }
 
+func TestExplainExploreNoDecorrelateHint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table o (a int, b int, c int, d int, key(b))`)
+	tk.MustExec(`create table r (a int, b int, key(a), key(b))`)
+	tk.MustExec(`create table o1 (a int, key(a))`)
+
+	rows := tk.MustQuery(`explain explore select o.* from o where exists (select 1 from r inner join o1 on o1.a=r.a where r.b=o.b)`).Rows()
+	hasNoDecorrelate := false
+	for _, row := range rows {
+		if strings.Contains(row[1].(string), "no_decorrelate") {
+			hasNoDecorrelate = true
+			break
+		}
+	}
+	require.True(t, hasNoDecorrelate, "expected no_decorrelate plan in explain explore output")
+}
+
 func TestIsSimplePointPlan(t *testing.T) {
 	require.True(t, bindinfo.IsSimplePointPlan(`       id  task    estRows operator info  actRows execution info  memory          disk
         Projection_4    root    1       plus(test.t.a, 1)->Column#3     0       time:173µs, open:24.9µs, close:8.92µs, loops:1, Concurrency:OFF                         380 Bytes       N/A
