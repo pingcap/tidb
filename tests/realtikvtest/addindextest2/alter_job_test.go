@@ -16,12 +16,19 @@ package addindextest
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/testutil"
 	"github.com/pingcap/tidb/pkg/dxf/operator"
@@ -136,4 +143,114 @@ func TestAlterJobOnDXF(t *testing.T) {
 	require.EqualValues(t, 1, finishedSubtasks)
 	require.True(t, modified.Load())
 	tk.MustExec("admin check index t1 idx;")
+}
+
+const issue65958ReproChildEnv = "TIDB_ISSUE_65958_REPRO_CHILD"
+
+// TestIssue65958ReproCleanupCrashOnCancelDistTask reproduces issue #65958:
+// canceling an add-index dist-task while local backend is still importing, then
+// the tmp_ddl cleanup loop deletes the job directory, and Pebble later fatals on
+// missing `00000x.sst`.
+func TestIssue65958ReproCleanupCrashOnCancelDistTask(t *testing.T) {
+	if kerneltype.IsNextGen() {
+		t.Skip("nextgen always uses DXF; repro currently targeted at classic kernel")
+	}
+	if os.Getenv(issue65958ReproChildEnv) == "1" {
+		testIssue65958ReproChild(t)
+		return
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestIssue65958ReproCleanupCrashOnCancelDistTask$")
+	cmd.Env = append(os.Environ(), issue65958ReproChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected child process to crash (issue #65958 repro), but it exited normally:\n%s", out)
+	}
+
+	outStr := string(out)
+	if !strings.Contains(outStr, ".sst:") ||
+		!strings.Contains(outStr, "orig err: open") ||
+		!strings.Contains(outStr, "list err: open") ||
+		!strings.Contains(outStr, "no such file or directory") {
+		t.Fatalf("child exited non-zero, but output does not look like a missing SST fatal: %v\n%s", err, out)
+	}
+}
+
+func testIssue65958ReproChild(t *testing.T) {
+	tmpDir := t.TempDir()
+	restore := config.RestoreFunc()
+	t.Cleanup(restore)
+
+	// Speed up the tmp_ddl cleanup loop so we don't need to wait ~1 minute.
+	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockCleanUpTempDirLoopInterval", "return(\"200ms\")")
+	// Must set TempDir before bootstrap. The DDL background loop uses this at init.
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.TempDir = tmpDir
+	})
+
+	store, _ := realtikvtest.CreateMockStoreAndDomainAndSetup(t, realtikvtest.WithAllocPort(true))
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("create database if not exists test")
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a bigint primary key, b bigint)")
+
+	// Need enough rows to generate on-disk Pebble SSTables.
+	for i := 0; i < 2000; i += 1000 {
+		vals := make([]string, 0, 1000)
+		for j := 0; j < 1000 && i+j < 2000; j++ {
+			id := i + j
+			vals = append(vals, fmt.Sprintf("(%d,%d)", id, id))
+		}
+		tk.MustExec("insert into t values " + strings.Join(vals, ","))
+	}
+
+	var jobID atomic.Int64
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+		if job.Type != model.ActionAddIndex || job.TableName != "t" || job.SchemaState != model.StateWriteReorganization {
+			return
+		}
+		jobID.Store(job.ID)
+	})
+
+	readyForImport := make(chan struct{}, 1)
+	resumeImport := make(chan struct{})
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/lightning/backend/local/ReadyForImportEngine", func() {
+		select {
+		case readyForImport <- struct{}{}:
+		default:
+		}
+		<-resumeImport
+	})
+
+	alterDone := make(chan error, 1)
+	go func() {
+		rs, err := tk.Exec("alter table t add index idx(b)")
+		if rs != nil {
+			_ = rs.Close()
+		}
+		alterDone <- err
+	}()
+
+	<-readyForImport
+	for jobID.Load() == 0 {
+		time.Sleep(50 * time.Millisecond)
+	}
+	id := jobID.Load()
+
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", id))
+
+	jobDir := filepath.Join(ingest.GetIngestTempDataDir(), strconv.FormatInt(id, 10))
+	for {
+		_, err := os.Stat(jobDir)
+		if err != nil && os.IsNotExist(err) {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	close(resumeImport)
+	err := <-alterDone
+	require.ErrorContains(t, err, "Cancelled DDL job")
 }
