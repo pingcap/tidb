@@ -7,15 +7,19 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	basic "github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type MVJobsManager struct {
-	se          sessionctx.Context
-	lastRefresh time.Time
-	running     atomic.Bool
+	sysSessionPool basic.SessionPool
+	lastRefresh    time.Time
+	running        atomic.Bool
+	sch            *ServerConsistentHash
 
 	mvMu struct {
 		sync.Mutex
@@ -32,8 +36,11 @@ type MVJobsManager struct {
 var mvDDLEventCh = NewNotifier()
 
 // NewMVJobsManager creates a MVJobsManager with a SQL executor.
-func NewMVJobsManager(se sessionctx.Context) *MVJobsManager {
-	mgr := &MVJobsManager{se: se}
+func NewMVJobsManager(se basic.SessionPool) *MVJobsManager {
+	mgr := &MVJobsManager{
+		sysSessionPool: se,
+		sch:            NewServerConsistentHash(10),
+	}
 	return mgr
 }
 
@@ -203,7 +210,7 @@ CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh (
 )
 */
 
-func (t *MVJobsManager) Start(sch *ServerConsistentHash) {
+func (t *MVJobsManager) Start() {
 	if t.running.Swap(true) {
 		return
 	}
@@ -214,14 +221,14 @@ func (t *MVJobsManager) Start(sch *ServerConsistentHash) {
 			select {
 			case <-ticker.C:
 				if time.Since(t.lastRefresh) >= time.Second*20 {
-					t.RefreshAll(sch)
+					t.RefreshAll()
 				}
 			case <-mvDDLEventCh.C:
 				mvDDLEventCh.clear()
 				if !t.running.Load() {
 					return
 				}
-				t.RefreshAll(sch)
+				t.RefreshAll()
 			}
 		}
 	}()
@@ -267,175 +274,194 @@ func (t *MVJobsManager) exec() error {
 	return nil
 }
 
+// ExecRCRestrictedSQL is used to execute a restricted SQL which related to resource control.
+func ExecRCRestrictedSQL(sysSessionPool basic.SessionPool, sql string, params []any) ([]chunk.Row, error) {
+	se, err := sysSessionPool.Get()
+	defer func() {
+		sysSessionPool.Put(se)
+	}()
+	if err != nil {
+		return nil, err
+	}
+	sctx := se.(sessionctx.Context)
+	exec := sctx.GetRestrictedSQLExecutor()
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
+		sql, params...,
+	)
+	return r, err
+}
+
 // deprecated
-func (t *MVJobsManager) AnyUpdate(sch *ServerConsistentHash) (bool, error) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	exec := t.se.GetSQLExecutor()
-	{
-		rs, err := exec.ExecuteInternal(ctx, "SELECT count(1) FROM mysql.tidb_mlogs")
-		if rs != nil {
-			//nolint: errcheck
-			defer rs.Close()
-		}
-		if err != nil {
-			return false, err
-		}
-		count := int64(0)
-		if rs != nil {
-			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-			if err != nil {
-				return false, err
-			}
-			count = rows[0].GetInt64(0)
-		}
-		t.mvLogMu.Lock()
-		pendingCount := int64(len(t.mvLogMu.pending))
-		t.mvLogMu.Unlock()
+// func (t *MVJobsManager) AnyUpdate(sch *ServerConsistentHash) (bool, error) {
+// 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+// 	exec := t.se.GetSQLExecutor()
+// 	{
+// 		rs, err := exec.ExecuteInternal(ctx, "SELECT count(1) FROM mysql.tidb_mlogs")
+// 		if rs != nil {
+// 			//nolint: errcheck
+// 			defer rs.Close()
+// 		}
+// 		if err != nil {
+// 			return false, err
+// 		}
+// 		count := int64(0)
+// 		if rs != nil {
+// 			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+// 			if err != nil {
+// 				return false, err
+// 			}
+// 			count = rows[0].GetInt64(0)
+// 		}
+// 		t.mvLogMu.Lock()
+// 		pendingCount := int64(len(t.mvLogMu.pending))
+// 		t.mvLogMu.Unlock()
+// 		if count != pendingCount {
+// 			return true, nil
+// 		}
+// 	}
+// 	{
+// 		rs, err := exec.ExecuteInternal(ctx, "SELECT count(1) FROM mysql.tidb_mviews")
+// 		if rs != nil {
+// 			//nolint: errcheck
+// 			defer rs.Close()
+// 		}
+// 		if err != nil {
+// 			return false, err
+// 		}
+// 		count := int64(0)
+// 		if rs != nil {
+// 			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
+// 			if err != nil {
+// 				return false, err
+// 			}
+// 			count = rows[0].GetInt64(0)
+// 		}
+// 		t.mvMu.Lock()
+// 		pendingCount := int64(len(t.mvMu.pending))
+// 		t.mvMu.Unlock()
+// 		if count != pendingCount {
+// 			return true, nil
+// 		}
+// 	}
+// 	return false, nil
+// }
 
-		if count != pendingCount {
-			return true, nil
-		}
-	}
-	{
-		rs, err := exec.ExecuteInternal(ctx, "SELECT count(1) FROM mysql.tidb_mviews")
-		if rs != nil {
-			//nolint: errcheck
-			defer rs.Close()
-		}
-		if err != nil {
-			return false, err
-		}
-		count := int64(0)
-		if rs != nil {
-			rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-			if err != nil {
-				return false, err
-			}
-			count = rows[0].GetInt64(0)
-		}
-
-		t.mvMu.Lock()
-		pendingCount := int64(len(t.mvMu.pending))
-		t.mvMu.Unlock()
-
-		if count != pendingCount {
-			return true, nil
-		}
-	}
-	return false, nil
-}
-
-func (t *MVJobsManager) refreshAllTiDBMLogPurge(sch *ServerConsistentHash) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	exec := t.se.GetSQLExecutor()
-	rs, err := exec.ExecuteInternal(ctx, "SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlogs b join mysql.tidb_mlog_purge v on b.MLOG_ID = v.MLOG_ID")
-	if rs != nil {
-		//nolint: errcheck
-		defer rs.Close()
-	}
+func (t *MVJobsManager) refreshAllTiDBMLogPurge() error {
+	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlogs b join mysql.tidb_mlog_purge v on b.MLOG_ID = v.MLOG_ID", nil)
 	if err != nil {
 		return err
 	}
-	if rs != nil {
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
-		if err != nil {
-			return err
+	newPending := make(map[string]*mvLog, len(rows))
+	for _, row := range rows {
+		l := &mvLog{
+			ID: row.GetString(0),
 		}
-		newPending := make(map[string]*mvLog, len(rows))
-		for _, row := range rows {
-			l := &mvLog{
-				ID: row.GetString(0),
-			}
-			if l.ID == "" {
-				continue
-			}
-			if !sch.Available(l.ID) {
-				continue
-			}
-			l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
-			if !row.IsNull(2) {
-				gt, _ := row.GetTime(2).GoTime(time.Local)
-				l.nextPurge = gt.Add(l.purgeInterval)
-			}
-			newPending[l.ID] = l
+		if l.ID == "" {
+			continue
 		}
-		newOrderByNext := make([]*mvLog, 0, len(newPending))
-		for _, l := range newPending {
-			newOrderByNext = append(newOrderByNext, l)
+		if !t.sch.Available(l.ID) {
+			continue
 		}
-		slices.SortFunc(newOrderByNext, func(a, b *mvLog) int {
-			return a.nextPurge.Compare(b.nextPurge)
-		})
-
-		t.mvLogMu.Lock()
-		t.mvLogMu.pending = newPending
-		t.mvLogMu.orderByNext = newOrderByNext
-		t.mvLogMu.Unlock()
+		l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
+		if !row.IsNull(2) {
+			gt, _ := row.GetTime(2).GoTime(time.Local)
+			l.nextPurge = gt.Add(l.purgeInterval)
+		}
+		newPending[l.ID] = l
 	}
+	newOrderByNext := make([]*mvLog, 0, len(newPending))
+	for _, l := range newPending {
+		newOrderByNext = append(newOrderByNext, l)
+	}
+	slices.SortFunc(newOrderByNext, func(a, b *mvLog) int {
+		return a.nextPurge.Compare(b.nextPurge)
+	})
+
+	t.mvLogMu.Lock()
+	t.mvLogMu.pending = newPending
+	t.mvLogMu.orderByNext = newOrderByNext
+	t.mvLogMu.Unlock()
 	return nil
 }
 
-func (t *MVJobsManager) refreshAllTiDBMViews(sch *ServerConsistentHash) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
-	exec := t.se.GetSQLExecutor()
+func (t *MVJobsManager) refreshAllTiDBMViews() error {
+	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mviews b join mysql.tidb_mview_refresh v on b.MVIEW_ID = v.MVIEW_ID", nil)
 
-	rs, err := exec.ExecuteInternal(ctx, "SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mviews b join mysql.tidb_mview_refresh v on b.MVIEW_ID = v.MVIEW_ID")
-	if rs != nil {
-		//nolint: errcheck
-		defer rs.Close()
-	}
 	if err != nil {
 		return err
 	}
-	if rs != nil {
-
-		rows, err := sqlexec.DrainRecordSet(ctx, rs, 8)
-		if err != nil {
-			return err
+	newPending := make(map[string]*mv, len(rows))
+	for _, row := range rows {
+		m := &mv{
+			ID: row.GetString(0),
 		}
-		newPending := make(map[string]*mv, len(rows))
-		for _, row := range rows {
-			m := &mv{
-				ID: row.GetString(0),
-			}
-			if m.ID == "" {
-				continue
-			}
-			if !sch.Available(m.ID) {
-				continue
-			}
-			m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
-			if !row.IsNull(2) {
-				gt, _ := row.GetTime(2).GoTime(time.Local)
-				m.nextRefresh = gt.Add(m.refreshInterval)
-			}
-			newPending[m.ID] = m
+		if m.ID == "" {
+			continue
 		}
-		newOrderByNext := make([]*mv, 0, len(newPending))
-		for _, m := range newPending {
-			newOrderByNext = append(newOrderByNext, m)
+		if !t.sch.Available(m.ID) {
+			continue
 		}
-		slices.SortFunc(newOrderByNext, func(a, b *mv) int {
-			return a.nextRefresh.Compare(b.nextRefresh)
-		})
-
-		t.mvMu.Lock()
-		t.mvMu.pending = newPending
-		t.mvMu.orderByNext = newOrderByNext
-		t.mvMu.Unlock()
+		m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
+		if !row.IsNull(2) {
+			gt, _ := row.GetTime(2).GoTime(time.Local)
+			m.nextRefresh = gt.Add(m.refreshInterval)
+		}
+		newPending[m.ID] = m
 	}
+	newOrderByNext := make([]*mv, 0, len(newPending))
+	for _, m := range newPending {
+		newOrderByNext = append(newOrderByNext, m)
+	}
+	slices.SortFunc(newOrderByNext, func(a, b *mv) int {
+		return a.nextRefresh.Compare(b.nextRefresh)
+	})
+
+	t.mvMu.Lock()
+	t.mvMu.pending = newPending
+	t.mvMu.orderByNext = newOrderByNext
+	t.mvMu.Unlock()
 
 	return nil
 }
 
-func (t *MVJobsManager) RefreshAll(sch *ServerConsistentHash) error {
-	if err := t.refreshAllTiDBMLogPurge(sch); err != nil {
+func (t *MVJobsManager) RefreshAll() error {
+	if err := t.refreshAllTiDBMLogPurge(); err != nil {
 		return err
 	}
-	if err := t.refreshAllTiDBMViews(sch); err != nil {
+	if err := t.refreshAllTiDBMViews(); err != nil {
 		return err
 	}
 
 	t.lastRefresh = time.Now()
 	return nil
+}
+
+const (
+	ActionAddMV     = 146
+	ActionDropMV    = 147
+	ActionAlterMV   = 148
+	ActionAddMVLog  = 149
+	ActionDropMVLog = 150
+)
+
+var mvs *MVJobsManager
+
+// RegisterMVS registers a DDL event handler for MV-related events.
+func RegisterMVS(ddlNotifier *notifier.DDLNotifier, se basic.SessionPool) {
+	if ddlNotifier == nil {
+		return
+	}
+
+	mvs = NewMVJobsManager(se)
+
+	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
+		switch event.GetType() {
+		case ActionAddMV, ActionDropMVLog, ActionAlterMV, ActionAddMVLog, ActionDropMV:
+			mvDDLEventCh.Wake()
+		}
+		return nil
+	})
+
+	mvs.Start()
 }
