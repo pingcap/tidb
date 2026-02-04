@@ -532,10 +532,6 @@ func (m *mergeSortStepExecutor) ResetSummary() {
 }
 
 func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup string) (engineapi.OnDuplicateKey, error) {
-	if kerneltype.IsNextGen() {
-		// will adapt for next-gen later
-		return engineapi.OnDuplicateKeyIgnore, nil
-	}
 	if kvGroup == external.DataKVGroup {
 		return engineapi.OnDuplicateKeyRecord, nil
 	}
@@ -789,8 +785,11 @@ func NewImportExecutor(
 }
 
 func (*importExecutor) IsIdempotent(*proto.Subtask) bool {
-	// import don't have conflict detection and resolution now, so it's ok
-	// to import data twice.
+	// for local sort, there is no conflict detection and resolution , so it's
+	// ok to import data twice.
+	// for global-sort, subtasks are safe to retry because duplicate KVs are
+	// recorded during encode/merge/ingest steps and conflicted rows are
+	// resolved in later steps.
 	return true
 }
 

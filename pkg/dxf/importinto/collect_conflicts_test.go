@@ -18,16 +18,53 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/importinto"
+	"github.com/pingcap/tidb/pkg/executor/importer"
+	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
+	"github.com/pingcap/tidb/pkg/lightning/verification"
+	"github.com/pingcap/tidb/pkg/table"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
-func TestCollectConflictsStepExecutor(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip test for next-gen kernel temporarily, we need to adapt the test later")
+func expectedConflictsChecksum(t *testing.T, tbl table.Table, keyspace []byte) *importinto.Checksum {
+	t.Helper()
+	encodeCfg := &encode.EncodingConfig{
+		Table:                tbl,
+		UseIdentityAutoRowID: true,
 	}
+	controller := &importer.LoadDataController{
+		ASTArgs: &importer.ASTArgs{},
+		Plan:    &importer.Plan{},
+		Table:   tbl,
+	}
+	encoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, encoder.Close())
+	}()
+
+	checksum := verification.NewKVChecksumWithKeyspace(keyspace)
+	for i := range 3 {
+		dupID := i + 1
+		row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
+		pairs, err := encoder.Encode(row, int64(dupID))
+		require.NoError(t, err)
+		// 2 duplicated data KVs + 1 duplicated index KV per row.
+		for range 3 {
+			checksum.Update(pairs.Pairs)
+		}
+		pairs.Clear()
+	}
+	return &importinto.Checksum{
+		Sum:  checksum.Sum(),
+		KVs:  checksum.SumKVS(),
+		Size: checksum.SumSize(),
+	}
+}
+
+func TestCollectConflictsStepExecutor(t *testing.T) {
 	hdlCtx := prepareConflictedKVHandleContext(t)
 	stMeta := importinto.CollectConflictsStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)
@@ -37,7 +74,7 @@ func TestCollectConflictsStepExecutor(t *testing.T) {
 	runConflictedKVHandleStep(t, st, stepExe)
 	outSTMeta := &importinto.CollectConflictsStepMeta{}
 	require.NoError(t, json.Unmarshal(st.Meta, outSTMeta))
-	require.EqualValues(t, &importinto.Checksum{Sum: 6734985763851266693, KVs: 27, Size: 909}, outSTMeta.Checksum)
+	require.EqualValues(t, expectedConflictsChecksum(t, hdlCtx.tbl, hdlCtx.store.GetCodec().GetKeyspace()), outSTMeta.Checksum)
 	require.EqualValues(t, 9, outSTMeta.ConflictedRowCount)
 	// one for each kv group
 	require.Len(t, outSTMeta.ConflictedRowFilenames, 2)

@@ -136,6 +136,7 @@ go_test(
         "//pkg/lightning/checkpoints",
         "//pkg/lightning/config",
         "//pkg/lightning/mydump",
+        "//pkg/lightning/verification",
         "//pkg/meta/autoid",
         "//pkg/meta/model",
         "//pkg/objstore",

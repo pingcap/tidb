@@ -20,7 +20,6 @@ import (
 	"testing"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	dxfhandle "github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
 	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
@@ -39,14 +38,19 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
 
-func writeConflictKVFile(t *testing.T, kvGroup string, objStore storeapi.Storage, kvs []*external.KVPair) *engineapi.ConflictInfo {
+func writeConflictKVFile(t *testing.T, codec tikv.Codec, kvGroup string, objStore storeapi.Storage, kvs []*external.KVPair) *engineapi.ConflictInfo {
 	t.Helper()
 	ctx := context.Background()
 	var summary *external.WriterSummary
-	w := external.NewWriterBuilder().
+	builder := external.NewWriterBuilder()
+	if codec != nil {
+		builder.SetTiKVCodec(codec)
+	}
+	w := builder.
 		SetOnCloseFunc(func(s *external.WriterSummary) { summary = s }).
 		Build(objStore, "/test", kvGroup)
 	for _, kv := range kvs {
@@ -60,7 +64,7 @@ func writeConflictKVFile(t *testing.T, kvGroup string, objStore storeapi.Storage
 	}
 }
 
-func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table) importinto.KVGroupConflictInfos {
+func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, codec tikv.Codec) importinto.KVGroupConflictInfos {
 	t.Helper()
 	encodeCfg := &encode.EncodingConfig{
 		Table:                tbl,
@@ -101,8 +105,8 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table) impo
 
 	return importinto.KVGroupConflictInfos{
 		ConflictInfos: map[string]*engineapi.ConflictInfo{
-			external.DataKVGroup:        writeConflictKVFile(t, external.DataKVGroup, objStore, dupDataKVs),
-			external.IndexID2KVGroup(2): writeConflictKVFile(t, "2", objStore, dupIndexKVs),
+			external.DataKVGroup:        writeConflictKVFile(t, codec, external.DataKVGroup, objStore, dupDataKVs),
+			external.IndexID2KVGroup(2): writeConflictKVFile(t, codec, "2", objStore, dupIndexKVs),
 		},
 	}
 }
@@ -114,6 +118,7 @@ type conflictedKVHandleContext struct {
 	taskMeta         *importinto.TaskMeta
 	tk               *testkit.TestKit
 	conflictedKVInfo importinto.KVGroupConflictInfos
+	tbl              table.Table
 }
 
 func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
@@ -134,7 +139,7 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 
 	// Note: this conflicted KVs doesn't exist in real world condition, we just
 	// need them to generate conflict KV files for testing.
-	conflictedKVInfo := generateConflictKVFiles(t, tempDir, tbl)
+	conflictedKVInfo := generateConflictKVFiles(t, tempDir, tbl, store.GetCodec())
 
 	taskMeta := &importinto.TaskMeta{
 		Plan: importer.Plan{
@@ -153,6 +158,7 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 		taskMeta:         taskMeta,
 		tk:               tk,
 		conflictedKVInfo: conflictedKVInfo,
+		tbl:              tbl,
 	}
 }
 
@@ -167,9 +173,6 @@ func runConflictedKVHandleStep(t *testing.T, subtask *proto.Subtask, stepExe exe
 }
 
 func TestConflictResolutionStepExecutor(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip test for next-gen kernel temporarily, we need to adapt the test later")
-	}
 	hdlCtx := prepareConflictedKVHandleContext(t)
 	stMeta := importinto.ConflictResolutionStepMeta{Infos: hdlCtx.conflictedKVInfo}
 	bytes, err := json.Marshal(stMeta)
