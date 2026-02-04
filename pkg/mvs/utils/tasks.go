@@ -1,8 +1,8 @@
 package utils
 
 import (
+	"container/heap"
 	"context"
-	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -15,6 +15,9 @@ import (
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
+type mvLogItem *Item[*mvLog]
+type mvItem *Item[*mv]
+
 type MVJobsManager struct {
 	sysSessionPool basic.SessionPool
 	lastRefresh    time.Time
@@ -23,13 +26,13 @@ type MVJobsManager struct {
 
 	mvMu struct {
 		sync.Mutex
-		pending     map[string]*mv
-		orderByNext []*mv
+		pending map[string]mvItem
+		prio    PriorityQueue[*mv]
 	}
 	mvLogMu struct {
 		sync.Mutex
-		pending     map[string]*mvLog
-		orderByNext []*mvLog
+		pending map[string]mvLogItem
+		prio    PriorityQueue[*mvLog]
 	}
 }
 
@@ -59,6 +62,14 @@ type mvLog struct {
 	nextPurge time.Time
 }
 
+func (m *mv) Less(other *mv) bool {
+	return m.nextRefresh.Before(other.nextRefresh)
+}
+
+func (m *mvLog) Less(other *mvLog) bool {
+	return m.nextPurge.Before(other.nextPurge)
+}
+
 /*
 TODO: 实现 purge 逻辑，伪代码如下：
 
@@ -75,8 +86,8 @@ UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = now(), LAST_PURGE_ERR = NULL 
 
 COMMIT;
 */
-func (m *mvLog) purge() error {
-	return nil
+func (m *mvLog) purge() (nextPurge time.Time, err error) {
+	return
 }
 
 /*
@@ -113,8 +124,8 @@ COMMIT;
 
 返回所有相关 MVLOG 的 ID
 */
-func (m *mv) refresh() ([]string, error) {
-	return nil, nil
+func (m *mv) refresh() (relatedMVLog []string, nextRefresh time.Time, err error) {
+	return
 }
 
 /*
@@ -200,7 +211,7 @@ CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh (
     MVIEW_ID bigint NOT NULL,
     REFRESH_METHOD varchar(32) DEFAULT NULL,
     START_WITH varchar(256) DEFAULT NULL,
-    REFRESH_INTERVAL varchar(256) DEFAULT NULL,
+    REFRESH_INTERVAL bigint DEFAULT NULL,
     LAST_REFRESH_RESULT varchar(16) DEFAULT NULL,
     LAST_REFRESH_TYPE varchar(16) DEFAULT NULL,
     LAST_REFRESH_TIME datetime DEFAULT NULL,
@@ -243,33 +254,76 @@ func (t *MVJobsManager) Close() {
 
 func (t *MVJobsManager) exec() error {
 	now := time.Now()
-	mvLogToPurge := make([]*mvLog, 0)
-	mvToRefresh := make([]*mv, 0)
+	mvLogToPurge := make([]mvLogItem, 0)
+	mvToRefresh := make([]mvItem, 0)
 	{
 		t.mvLogMu.Lock()
-		for _, l := range t.mvLogMu.orderByNext {
-			if l.nextPurge.After(now) {
+		for t.mvLogMu.prio.Len() > 0 {
+			x := heap.Pop(&t.mvLogMu.prio).(mvLogItem)
+			l := x.Value
+			if l.nextPurge.Before(now) {
+				mvLogToPurge = append(mvLogToPurge, x)
+			} else {
+				heap.Push(&t.mvLogMu.prio, x)
 				break
 			}
-			mvLogToPurge = append(mvLogToPurge, l)
 		}
 		t.mvLogMu.Unlock()
 	}
 	{
 		t.mvMu.Lock()
-		for _, m := range t.mvMu.orderByNext {
-			if m.nextRefresh.After(now) {
+		for t.mvMu.prio.Len() > 0 {
+			x := heap.Pop(&t.mvMu.prio).(mvItem)
+			m := x.Value
+			if m.nextRefresh.Before(now) {
+				mvToRefresh = append(mvToRefresh, x)
+			} else {
+				heap.Push(&t.mvMu.prio, x)
 				break
 			}
-			mvToRefresh = append(mvToRefresh, m)
 		}
 		t.mvMu.Unlock()
 	}
+
 	if len(mvToRefresh) > 0 {
-		//
+		for _, m := range mvToRefresh {
+			go func() {
+				_, nextRefresh, err := m.Value.refresh()
+				if err != nil {
+					return
+				}
+				{
+					t.mvMu.Lock()
+
+					if p := t.mvMu.pending[m.Value.ID]; p == m {
+						m.Value.nextRefresh = nextRefresh
+						heap.Push(&t.mvMu.prio, m)
+					}
+
+					t.mvMu.Unlock()
+				}
+			}()
+		}
 	}
 	if len(mvLogToPurge) > 0 {
+		for _, l := range mvLogToPurge {
+			go func() {
+				nextPurge, err := l.Value.purge()
+				if err != nil {
+					return
+				}
+				{
+					t.mvLogMu.Lock()
 
+					if p := t.mvLogMu.pending[l.Value.ID]; p == l {
+						l.Value.nextPurge = nextPurge
+						heap.Push(&t.mvLogMu.prio, l)
+					}
+
+					t.mvLogMu.Unlock()
+				}
+			}()
+		}
 	}
 	return nil
 }
@@ -348,7 +402,7 @@ func ExecRCRestrictedSQL(sysSessionPool basic.SessionPool, sql string, params []
 // }
 
 func (t *MVJobsManager) refreshAllTiDBMLogPurge() error {
-	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlogs b join mysql.tidb_mlog_purge v on b.MLOG_ID = v.MLOG_ID", nil)
+	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlog_purge", nil)
 	if err != nil {
 		return err
 	}
@@ -357,10 +411,7 @@ func (t *MVJobsManager) refreshAllTiDBMLogPurge() error {
 		l := &mvLog{
 			ID: row.GetString(0),
 		}
-		if l.ID == "" {
-			continue
-		}
-		if !t.sch.Available(l.ID) {
+		if l.ID == "" || !t.sch.Available(l.ID) {
 			continue
 		}
 		l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
@@ -370,23 +421,38 @@ func (t *MVJobsManager) refreshAllTiDBMLogPurge() error {
 		}
 		newPending[l.ID] = l
 	}
-	newOrderByNext := make([]*mvLog, 0, len(newPending))
-	for _, l := range newPending {
-		newOrderByNext = append(newOrderByNext, l)
-	}
-	slices.SortFunc(newOrderByNext, func(a, b *mvLog) int {
-		return a.nextPurge.Compare(b.nextPurge)
-	})
 
-	t.mvLogMu.Lock()
-	t.mvLogMu.pending = newPending
-	t.mvLogMu.orderByNext = newOrderByNext
-	t.mvLogMu.Unlock()
+	{
+		t.mvLogMu.Lock()
+		if t.mvLogMu.pending == nil {
+			t.mvLogMu.pending = make(map[string]mvLogItem, len(newPending))
+		}
+		for id, nl := range newPending {
+			if ol, ok := t.mvLogMu.pending[id]; ok {
+				if ol.Value.nextPurge != nl.nextPurge {
+					ol.Value.nextPurge = nl.nextPurge
+					heap.Fix(&t.mvLogMu.prio, ol.index)
+				}
+				continue
+			}
+			item := &Item[*mvLog]{Value: nl}
+			heap.Push(&t.mvLogMu.prio, item)
+			t.mvLogMu.pending[id] = item
+		}
+		for id, item := range t.mvLogMu.pending {
+			if _, ok := newPending[id]; ok {
+				continue
+			}
+			delete(t.mvLogMu.pending, id)
+			heap.Remove(&t.mvLogMu.prio, item.index)
+		}
+		t.mvLogMu.Unlock()
+	}
 	return nil
 }
 
 func (t *MVJobsManager) refreshAllTiDBMViews() error {
-	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mviews b join mysql.tidb_mview_refresh v on b.MVIEW_ID = v.MVIEW_ID", nil)
+	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mview_refresh", nil)
 
 	if err != nil {
 		return err
@@ -409,17 +475,9 @@ func (t *MVJobsManager) refreshAllTiDBMViews() error {
 		}
 		newPending[m.ID] = m
 	}
-	newOrderByNext := make([]*mv, 0, len(newPending))
-	for _, m := range newPending {
-		newOrderByNext = append(newOrderByNext, m)
-	}
-	slices.SortFunc(newOrderByNext, func(a, b *mv) int {
-		return a.nextRefresh.Compare(b.nextRefresh)
-	})
 
 	t.mvMu.Lock()
-	t.mvMu.pending = newPending
-	t.mvMu.orderByNext = newOrderByNext
+	// TODO
 	t.mvMu.Unlock()
 
 	return nil

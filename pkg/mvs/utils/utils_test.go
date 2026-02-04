@@ -1,9 +1,13 @@
 package utils
 
 import (
+	"container/heap"
 	"reflect"
 	"sort"
 	"testing"
+	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func mustHash(mapping map[string]uint32) func([]byte) uint32 {
@@ -100,4 +104,31 @@ func TestConsistentHash_EmptyState(t *testing.T) {
 	if nodes := c.GetNodes(); len(nodes) != 0 {
 		t.Fatalf("expected no nodes, got %v", nodes)
 	}
+}
+
+type node struct {
+	v  string
+	ts time.Time
+}
+
+func (t node) Less(other node) bool {
+	return t.ts.Before(other.ts)
+}
+
+func TestPriorityQueue(t *testing.T) {
+	base := time.Now()
+	pq := &PriorityQueue[node]{}
+	heap.Init(pq)
+
+	heap.Push(pq, &Item[node]{Value: node{v: "b", ts: base.Add(2 * time.Second)}})
+	heap.Push(pq, &Item[node]{Value: node{v: "a", ts: base.Add(time.Second)}})
+	item := &Item[node]{Value: node{v: "c", ts: base.Add(3 * time.Second)}}
+	heap.Push(pq, item)
+	pq.Update(item, node{v: "c", ts: base.Add(500 * time.Millisecond)})
+	popRes := make([]string, 0, 3)
+	for pq.Len() > 0 {
+		it := heap.Pop(pq).(*Item[node])
+		popRes = append(popRes, it.Value.v)
+	}
+	require.Equal(t, []string{"c", "a", "b"}, popRes)
 }
