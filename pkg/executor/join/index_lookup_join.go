@@ -115,8 +115,22 @@ type InnerCtx struct {
 	HashTypes     []*types.FieldType
 	HashCols      []int
 	HashCollators []collate.Collator
+	// HashIsNullEQ marks which hash keys are null-safe equal (<=>).
+	// The slice aligns with HashCols; positions corresponding to join keys can be true.
+	HashIsNullEQ []bool
 	ColLens       []int
 	HasPrefixCol  bool
+}
+
+// HashIsNullEQ should align with HashCols on the normal planner->builder path.
+// Keep this defensive alignment for manually-constructed executors in tests/benchmarks.
+func (c *InnerCtx) ensureHashIsNullEQAligned() {
+	if len(c.HashIsNullEQ) == len(c.HashCols) {
+		return
+	}
+	normalized := make([]bool, len(c.HashCols))
+	copy(normalized, c.HashIsNullEQ)
+	c.HashIsNullEQ = normalized
 }
 
 type lookUpJoinTask struct {
@@ -176,6 +190,7 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	e.InnerCtx.ensureHashIsNullEQAligned()
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)
@@ -643,11 +658,18 @@ func (iw *innerWorker) constructDatumLookupKey(task *lookUpJoinTask, chkIdx, row
 	dHashKey = make([]types.Datum, 0, len(iw.HashCols))
 	for i, hashCol := range iw.outerCtx.HashCols {
 		outerValue := outerRow.GetDatum(hashCol, iw.outerCtx.RowTypes[hashCol])
-		// Join-on-condition can be promised to be equal-condition in
-		// IndexNestedLoopJoin, thus the Filter will always be false if
-		// outerValue is null, and we don't need to lookup it.
+		isNullEQ := iw.HashIsNullEQ[i]
+		// For normal equal conditions, outer NULL can't match and we can skip lookup.
+		// For null-safe equal (<=>), we still need to lookup NULLs.
 		if outerValue.IsNull() {
-			return nil, nil, nil
+			if !isNullEQ {
+				return nil, nil, nil
+			}
+			if i < keyLen {
+				dLookupKey = append(dLookupKey, outerValue)
+			}
+			dHashKey = append(dHashKey, outerValue)
+			continue
 		}
 		innerColType := iw.RowTypes[iw.HashCols[i]]
 		innerValue, err := outerValue.ConvertTo(sc.TypeCtx(), innerColType)
@@ -807,7 +829,12 @@ func (iw *innerWorker) buildLookUpMap(task *lookUpJoinTask) error {
 }
 
 func (iw *innerWorker) hasNullInJoinKey(row chunk.Row) bool {
-	return slices.ContainsFunc(iw.HashCols, row.IsNull)
+	for i, keyCol := range iw.HashCols {
+		if row.IsNull(keyCol) && !iw.HashIsNullEQ[i] {
+			return true
+		}
+	}
+	return false
 }
 
 // Close implements the Executor interface.
