@@ -135,31 +135,7 @@ type BindingMatchInfo struct {
 
 // MatchSQLBindingForPlanCache matches binding for plan cache with normalization cache.
 func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string) {
-	sessionVars := sctx.GetSessionVars()
-	useBinding := sessionVars.UsePlanBaselines
-	if !useBinding || stmtNode == nil {
-		return
-	}
-	// When the domain is initializing, the bind will be nil.
-	if sctx.Value(SessionBindInfoKeyType) == nil {
-		return
-	}
-	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
-	if intest.InTest {
-		binding, matched, scope := matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
-		assertMatchSQLBinding(cache, matched, binding, scope)
-		if matched {
-			bindingSQL = binding.BindSQL
-		}
-		return
-	}
-	if cache != nil {
-		if cache.matched {
-			bindingSQL = cache.binding.BindSQL
-		}
-		return
-	}
-	binding, matched, _ := matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+	binding, matched, _ := matchSQLBindingWithCache(sctx, stmtNode, info)
 	if matched {
 		bindingSQL = binding.BindSQL
 	}
@@ -168,6 +144,10 @@ func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode,
 
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
+	return matchSQLBindingWithCache(sctx, stmtNode, nil)
+}
+
+func matchSQLBindingWithCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (binding *Binding, matched bool, scope string) {
 	sessionVars := sctx.GetSessionVars()
 	useBinding := sessionVars.UsePlanBaselines
 	if !useBinding || stmtNode == nil {
@@ -186,7 +166,7 @@ func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *B
 	if cache != nil {
 		return cache.binding, cache.matched, cache.scope
 	}
-	return matchSQLBindingCore(sctx, sessionVars, stmtNode, nil)
+	return matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
 }
 
 func getMatchSQLBindingCache(sessionVars *variable.SessionVars, stmtNode ast.StmtNode) (cache *BindingCacheItem) {
