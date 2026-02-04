@@ -1298,6 +1298,23 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 	if err != nil {
 		return nil, nil, 0, err
 	}
+	var cachedMaskPlan base.LogicalPlan
+	var cachedMaskExprs []expression.Expression
+	getMaskExprs := func(cur base.LogicalPlan) ([]expression.Expression, error) {
+		if cur == nil {
+			return nil, nil
+		}
+		if cur == cachedMaskPlan {
+			return cachedMaskExprs, nil
+		}
+		exprs, err := b.buildMaskingReplaceExprs(ctx, cur)
+		if err != nil {
+			return nil, err
+		}
+		cachedMaskPlan = cur
+		cachedMaskExprs = exprs
+		return exprs, nil
+	}
 	b.optFlag |= rule.FlagEliminateProjection
 	b.curClause = fieldList
 	proj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, 0, len(fields))}.Init(b.ctx, b.getSelectOffset())
@@ -1317,7 +1334,17 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		// When `considerWindow` is true, all the non-window fields have been built, so we just use the schema columns.
 		if considerWindow && !isWindowFuncField {
 			col := p.Schema().Columns[i]
-			proj.Exprs = append(proj.Exprs, col)
+			expr := expression.Expression(col)
+			if !field.Auxiliary {
+				maskExprs, err := getMaskExprs(p)
+				if err != nil {
+					return nil, nil, 0, err
+				}
+				if maskExprs != nil {
+					expr = expression.ColumnSubstitute(b.ctx.GetExprCtx(), expr, p.Schema(), maskExprs)
+				}
+			}
+			proj.Exprs = append(proj.Exprs, expr)
 			schema.Append(col)
 			newNames = append(newNames, p.OutputNames()[i])
 			continue
@@ -1351,6 +1378,15 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		}
 
 		p = np
+		if !field.Auxiliary {
+			maskExprs, err := getMaskExprs(p)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+			if maskExprs != nil {
+				newExpr = expression.ColumnSubstitute(b.ctx.GetExprCtx(), newExpr, p.Schema(), maskExprs)
+			}
+		}
 		proj.Exprs = append(proj.Exprs, newExpr)
 
 		col, name, err := b.buildProjectionField(ctx, p, field, newExpr)
@@ -1489,6 +1525,96 @@ func (b *PlanBuilder) buildProjection(ctx context.Context, p base.LogicalPlan, f
 		}
 	}
 	return proj, proj.Exprs, oldLen, nil
+}
+
+func (b *PlanBuilder) buildMaskingReplaceExprs(ctx context.Context, p base.LogicalPlan) ([]expression.Expression, error) {
+	if b.is == nil || p == nil {
+		return nil, nil
+	}
+	if len(b.is.AllMaskingPolicies()) == 0 {
+		return nil, nil
+	}
+	cols := p.Schema().Columns
+	names := p.OutputNames()
+	if len(cols) == 0 || len(cols) != len(names) {
+		return nil, nil
+	}
+	replaceExprs := make([]expression.Expression, len(cols))
+	for i, col := range cols {
+		replaceExprs[i] = col
+	}
+	schemaVersion := b.is.SchemaMetaVersion()
+	sv := b.ctx.GetSessionVars()
+	hasMask := false
+	for i, col := range cols {
+		policy, tblInfo, colInfo := b.findMaskingPolicy(ctx, names[i], col)
+		if policy == nil || policy.Status != model.MaskingPolicyStatusEnable {
+			continue
+		}
+		expr, placeholder, err := getMaskingPolicyExpr(b.ctx.GetExprCtx(), sv, schemaVersion, policy, tblInfo, colInfo)
+		if err != nil {
+			return nil, err
+		}
+		if placeholder == nil {
+			continue
+		}
+		masked := expression.ColumnSubstitute(
+			b.ctx.GetExprCtx(),
+			expr,
+			expression.NewSchema(placeholder),
+			[]expression.Expression{col},
+		)
+		replaceExprs[i] = masked
+		hasMask = true
+	}
+	if !hasMask {
+		return nil, nil
+	}
+	return replaceExprs, nil
+}
+
+func (b *PlanBuilder) findMaskingPolicy(ctx context.Context, name *types.FieldName, col *expression.Column) (*model.MaskingPolicyInfo, *model.TableInfo, *model.ColumnInfo) {
+	if name == nil || name.Hidden {
+		return nil, nil, nil
+	}
+	tblName := name.OrigTblName
+	if tblName.L == "" {
+		tblName = name.TblName
+	}
+	if tblName.L == "" {
+		return nil, nil, nil
+	}
+	colName := name.OrigColName
+	if colName.L == "" {
+		colName = name.ColName
+	}
+	if colName.L == "" {
+		return nil, nil, nil
+	}
+	dbName := name.DBName
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	if dbName.L == "" {
+		return nil, nil, nil
+	}
+	tbl, err := b.is.TableByName(ctx, dbName, tblName)
+	if err != nil {
+		return nil, nil, nil
+	}
+	tblInfo := tbl.Meta()
+	colInfo := model.FindColumnInfo(tblInfo.Columns, colName.L)
+	if colInfo == nil {
+		return nil, nil, nil
+	}
+	if colInfo.ID != col.ID {
+		return nil, nil, nil
+	}
+	policy, ok := b.is.MaskingPolicyByTableColumn(tblInfo.ID, colInfo.ID)
+	if !ok {
+		return nil, nil, nil
+	}
+	return policy, tblInfo, colInfo
 }
 
 func (b *PlanBuilder) buildDistinct(child base.LogicalPlan, length int) (*logicalop.LogicalAggregation, error) {

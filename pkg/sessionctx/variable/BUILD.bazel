@@ -4,6 +4,7 @@ go_library(
     name = "variable",
     srcs = [
         "error.go",
+        "masking_policy_cache.go",
         "mock_globalaccessor.go",
         "noop.go",
         "removed.go",
