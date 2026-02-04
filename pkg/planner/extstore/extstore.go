@@ -63,8 +63,9 @@ func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) || uri == "" {
 		localPath := getLocalPathDirName()
 		logutil.BgLogger().Warn("using default local storage",
-			zap.String("category", "extstore"), zap.String("localPath", localPath),
-			zap.String("keyspaceName", keyspaceName), zap.String("uri", uri))
+			zap.String("category", "extstore"),
+			zap.String("localPath", localPath),
+			zap.String("keyspaceName", keyspaceName))
 		uri = fmt.Sprintf("file://%s", localPath)
 	}
 
@@ -127,7 +128,7 @@ func getLocalPathDirName(vfs ...afero.Fs) string {
 		logutil.BgLogger().Info("use log dir as local path", zap.String("dir", tidbLogDir))
 		return tidbLogDir
 	}
-	tempDir := filepath.Dir(config.GetGlobalConfig().TempDir)
+	tempDir := config.GetGlobalConfig().TempDir
 	logutil.BgLogger().Info("use temp dir as local path", zap.String("dir", tempDir))
 	return tempDir
 }

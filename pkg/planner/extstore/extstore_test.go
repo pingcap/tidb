@@ -178,7 +178,7 @@ func TestGetLocalPathDirNameWithoutWritePerm(t *testing.T) {
 	basePathFsMem := afero.NewReadOnlyFs(fs)
 
 	path := getLocalPathDirName(basePathFsMem)
-	require.Equal(t, filepath.Dir(config.GetGlobalConfig().TempDir), path)
+	require.Equal(t, config.GetGlobalConfig().TempDir, path)
 }
 
 func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
@@ -255,6 +255,6 @@ func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
 	defer s.Close()
 
 	uri := s.URI()
-	expectedFallback := filepath.Dir(config.GetGlobalConfig().TempDir)
-	require.Contains(t, uri, expectedFallback, "storage URI should use temp dir parent when log dir not writable")
+	expectedFallback := config.GetGlobalConfig().TempDir
+	require.Contains(t, uri, expectedFallback, "storage URI should use temp dir when log dir not writable")
 }

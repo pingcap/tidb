@@ -73,7 +73,7 @@ type PlanReplayerDumpInfo struct {
 }
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.endFlag {
 		return nil
@@ -84,10 +84,16 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return e.registerCaptureTask(ctx)
 	}
-	err := e.createFile(ctx)
+	err = e.createFile(ctx)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil && e.DumpInfo != nil && e.DumpInfo.File != nil {
+			_ = e.DumpInfo.File.Close()
+			e.DumpInfo.File = nil
+		}
+	}()
 	// Note:
 	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
 	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
