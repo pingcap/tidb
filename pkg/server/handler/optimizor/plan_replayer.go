@@ -117,7 +117,7 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 				handler.WriteError(w, err)
 				return
 			}
-			content, err = handlePlanReplayerCaptureFile(content, path, dfHandler)
+			content, err = handlePlanReplayerCaptureFile(content, dfHandler)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
