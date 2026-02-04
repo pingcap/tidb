@@ -1,0 +1,24 @@
+{
+  "oracle": "EET",
+  "sql": [
+    "WITH cte_0 AS (SELECT t0.c0 AS c0, t0.id AS c1, t0.c1 AS c2 FROM t0 WHERE (((t0.c1 <= t0.c0) AND (t0.c0 = t0.c1)) OR ((t0.c1 < t0.c0) AND (t0.c1 = t0.id))) ORDER BY t0.id LIMIT 3), cte_1 AS (SELECT cte_0.c0 AS c0, cte_0.c1 AS c1, cte_0.c2 AS c2 FROM cte_0 WHERE (((cte_0.c0 <=> cte_0.c1) AND (cte_0.c1 != cte_0.c2)) OR ((cte_0.c1 <=> cte_0.c0) AND (cte_0.c2 >= cte_0.c1))) ORDER BY cte_0.c0 LIMIT 5) SELECT AVG(cte_0.c2) OVER (ORDER BY cte_1.c1 DESC, v4.c0) AS c0, (v4.c0 + t1.id) AS c1, (SELECT COUNT(1) AS cnt FROM v0 WHERE (v0.sum1 = t0.c0)) AS c2 FROM cte_1 RIGHT JOIN v4 ON (1 = 0) LEFT JOIN v0 ON (1 = 0) RIGHT JOIN t0 ON (1 = 0) RIGHT JOIN t1 ON (1 = 0) LEFT JOIN cte_0 ON (1 = 0) RIGHT JOIN t2 ON (1 = 0) WHERE (v4.c2 <=> v4.c1)"
+  ],
+  "expected": "",
+  "actual": "",
+  "error": "Error 1105 (HY000): Can't find column Column#530 in schema Column: [Column#583,Column#597,shiro_fuzz_r11.t0.c1,shiro_fuzz_r11.t0.id,shiro_fuzz_r11.t1.id] PKOrUK: [] NullableUK: []",
+  "flaky": false,
+  "seed": 11,
+  "plan_replayer": "reports/case_0012_019c26ba-0b99-7cd5-8550-f8d5e470b51b/plan_replayer.zip",
+  "upload_location": "",
+  "case_dir": "case_0012_019c26ba-0b99-7cd5-8550-f8d5e470b51b",
+  "norec_optimized_sql": "",
+  "norec_unoptimized_sql": "",
+  "norec_predicate": "",
+  "timestamp": "2026-02-04T11:37:32+08:00",
+  "tidb_version": "Release Version: v9.0.0-beta.2.pre-1184-g6ff1adf66f\nEdition: Community\nGit Commit Hash: 6ff1adf66f959369664e89ae460cb0cd3d38e13b\nGit Branch: HEAD\nUTC Build Time: 2026-02-03 19:16:21\nGoVersion: go1.25.6\nRace Enabled: false\nCheck Table Before Drop: false\nStore: tikv\nKernel Type: Classic",
+  "plan_signature": "",
+  "plan_signature_format": "",
+  "details": {
+    "error_reason": "eet:signature_missing_column"
+  }
+}

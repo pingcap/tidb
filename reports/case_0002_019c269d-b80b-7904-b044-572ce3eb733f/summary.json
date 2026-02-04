@@ -1,0 +1,24 @@
+{
+  "oracle": "EET",
+  "sql": [
+    "SELECT LOWER('s50') AS c0, RANK() OVER (ORDER BY t0.c6) AS c1 FROM t1 RIGHT JOIN t0 ON (1 = 0) LEFT JOIN v2 ON (1 = 0) LEFT JOIN v1 ON (1 = 0) JOIN v4 ON (1 = 0) RIGHT JOIN v3 ON (1 = 0) WHERE NOT EXISTS (SELECT v3.c1 AS c0 FROM v3 WHERE (v3.c0 <= 's36') ORDER BY v3.c1 DESC, v3.c1 DESC LIMIT 6) ORDER BY UPPER(v3.c0), v1.c1 LIMIT 3"
+  ],
+  "expected": "",
+  "actual": "",
+  "error": "Error 1105 (HY000): Can't find column Column#1472 in schema Column: [Column#1658,shiro_fuzz_r1.t1.c2,shiro_fuzz_r1.t0.c1,Column#1470] PKOrUK: [] NullableUK: []",
+  "flaky": false,
+  "seed": 1,
+  "plan_replayer": "reports/case_0002_019c269d-b80b-7904-b044-572ce3eb733f/plan_replayer.zip",
+  "upload_location": "",
+  "case_dir": "case_0002_019c269d-b80b-7904-b044-572ce3eb733f",
+  "norec_optimized_sql": "",
+  "norec_unoptimized_sql": "",
+  "norec_predicate": "",
+  "timestamp": "2026-02-04T11:06:36+08:00",
+  "tidb_version": "Release Version: v9.0.0-beta.2.pre-1184-g6ff1adf66f\nEdition: Community\nGit Commit Hash: 6ff1adf66f959369664e89ae460cb0cd3d38e13b\nGit Branch: HEAD\nUTC Build Time: 2026-02-03 19:16:21\nGoVersion: go1.25.6\nRace Enabled: false\nCheck Table Before Drop: false\nStore: tikv\nKernel Type: Classic",
+  "plan_signature": "",
+  "plan_signature_format": "",
+  "details": {
+    "error_reason": "eet:signature_missing_column"
+  }
+}

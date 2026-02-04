@@ -1,0 +1,1 @@
+WITH cte_0 AS (SELECT t5.c3 AS c0, t5.c2 AS c1, t5.c1 AS c2 FROM t5 WHERE (t5.c2 <=> t5.id) ORDER BY t5.id LIMIT 7) SELECT t2.c0 AS c0, t5.c0 AS c1, SUM(t0.c3) OVER (ORDER BY cte_0.c2 DESC) AS c2 FROM cte_0 JOIN t2 ON (1 = 0) LEFT JOIN t5 ON (1 = 0) JOIN t0 ON (1 = 0) WHERE NOT EXISTS (SELECT v2.cnt AS c0 FROM v2 WHERE (v2.cnt <= v2.sum1));

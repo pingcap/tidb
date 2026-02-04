@@ -1,4 +1,4 @@
 ## Planner Notes
 
 - `rule`: rule-related notes and decisions.
-- `plan_cache_notes.md`: plan cache and binding matching notes.
+- `join_notes.md`: join reorder and schema notes.

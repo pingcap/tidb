@@ -1,0 +1,24 @@
+{
+  "oracle": "EET",
+  "sql": [
+    "WITH cte_0 AS (SELECT v2.c0 AS c0 FROM v2 WHERE NOT (v2.c0 IN ('2023-09-17 06:32:46', '2024-02-09 23:42:06', '2025-06-07 12:57:03')) ORDER BY v2.c0 LIMIT 4) SELECT SUM(t1.c0) OVER (PARTITION BY t1.c5 ORDER BY v2.c0) AS c0, (SELECT COUNT(1) AS cnt FROM t2 WHERE (t2.c2 = t2.id)) AS c1 FROM v2 LEFT JOIN v3 ON (1 = 0) LEFT JOIN t2 ON (1 = 0) RIGHT JOIN v4 ON (1 = 0) LEFT JOIN t1 ON (1 = 0) JOIN t0 ON (1 = 0) RIGHT JOIN cte_0 ON (1 = 0) WHERE NOT (t1.c2 IN ((SELECT t0.id AS c0 FROM t0 WHERE (t0.c3 = v2.c0) ORDER BY (t0.id * t0.c1), UPPER('s74') LIMIT 5)))"
+  ],
+  "expected": "",
+  "actual": "",
+  "error": "Error 1105 (HY000): Can't find column Column#60 in schema Column: [Column#365,shiro_fuzz_r7.t1.c0,shiro_fuzz_r7.t1.c5,shiro_fuzz_r7.t0.c3] PKOrUK: [] NullableUK: []",
+  "flaky": false,
+  "seed": 7,
+  "plan_replayer": "reports/case_0008_019c26b3-1696-7a19-a718-9ba6b66c236f/plan_replayer.zip",
+  "upload_location": "",
+  "case_dir": "case_0008_019c26b3-1696-7a19-a718-9ba6b66c236f",
+  "norec_optimized_sql": "",
+  "norec_unoptimized_sql": "",
+  "norec_predicate": "",
+  "timestamp": "2026-02-04T11:29:57+08:00",
+  "tidb_version": "Release Version: v9.0.0-beta.2.pre-1184-g6ff1adf66f\nEdition: Community\nGit Commit Hash: 6ff1adf66f959369664e89ae460cb0cd3d38e13b\nGit Branch: HEAD\nUTC Build Time: 2026-02-03 19:16:21\nGoVersion: go1.25.6\nRace Enabled: false\nCheck Table Before Drop: false\nStore: tikv\nKernel Type: Classic",
+  "plan_signature": "",
+  "plan_signature_format": "",
+  "details": {
+    "error_reason": "eet:signature_missing_column"
+  }
+}

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/types"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
@@ -886,6 +887,7 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
+	setJoinFullSchemaAndNames(join)
 	s.setNewJoinWithHint(join)
 	return join
 }
@@ -898,6 +900,7 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.Lo
 	newJoin.LeftConditions = leftConds
 	newJoin.RightConditions = rightConds
 	newJoin.JoinType = joinType
+	setJoinFullSchemaAndNames(newJoin)
 	if newJoin.JoinType == base.InnerJoin {
 		if newJoin.LeftConditions != nil {
 			left := newJoin.Children()[0]
@@ -911,6 +914,44 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.Lo
 		}
 	}
 	return newJoin
+}
+
+func setJoinFullSchemaAndNames(join *logicalop.LogicalJoin) {
+	lChild := join.Children()[0]
+	rChild := join.Children()[1]
+	var lFullSchema, rFullSchema *expression.Schema
+	var lFullNames, rFullNames types.NameSlice
+	if lJoin, ok := lChild.(*logicalop.LogicalJoin); ok && lJoin.FullSchema != nil {
+		lFullSchema = lJoin.FullSchema
+		lFullNames = lJoin.FullNames
+	} else {
+		lFullSchema = lChild.Schema()
+		lFullNames = lChild.OutputNames()
+	}
+	if rJoin, ok := rChild.(*logicalop.LogicalJoin); ok && rJoin.FullSchema != nil {
+		rFullSchema = rJoin.FullSchema
+		rFullNames = rJoin.FullNames
+	} else {
+		rFullSchema = rChild.Schema()
+		rFullNames = rChild.OutputNames()
+	}
+	if join.JoinType == base.RightOuterJoin {
+		lFullSchema, rFullSchema = rFullSchema, lFullSchema
+		lFullNames, rFullNames = rFullNames, lFullNames
+	}
+	join.FullSchema = expression.MergeSchema(lFullSchema, rFullSchema)
+	if join.JoinType == base.LeftOuterJoin || join.JoinType == base.RightOuterJoin {
+		util.ResetNotNullFlag(join.FullSchema, lFullSchema.Len(), join.FullSchema.Len())
+	}
+	join.FullNames = make([]*types.FieldName, 0, len(lFullNames)+len(rFullNames))
+	for _, lName := range lFullNames {
+		name := *lName
+		join.FullNames = append(join.FullNames, &name)
+	}
+	for _, rName := range rFullNames {
+		name := *rName
+		join.FullNames = append(join.FullNames, &name)
+	}
 }
 
 // setNewJoinWithHint sets the join method hint for the join node.
