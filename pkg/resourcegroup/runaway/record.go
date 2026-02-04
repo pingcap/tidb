@@ -197,7 +197,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 func genBatchInsertWatchStmt(records map[string]*QuarantineRecord) (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, len(records)*9)
-	writeInsert(&builder, watchTableName)
+	writeInsert(&builder, getRunawayWatchTableName())
 	firstRecord := true
 	for _, r := range records {
 		if !firstRecord {
@@ -226,7 +226,7 @@ func genBatchDeleteWatchByIDStmt(records map[int64]*QuarantineRecord) (string, [
 	var builder strings.Builder
 	params := make([]any, 0, len(records))
 	builder.WriteString("delete from ")
-	builder.WriteString(watchTableName)
+	builder.WriteString(getRunawayWatchTableName())
 	builder.WriteString(" where id in (")
 	first := true
 	for id := range records {

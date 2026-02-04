@@ -25,7 +25,7 @@ import (
 func newTestBatchFlusher[K comparable, V any](
 	threshold int,
 	mergeFn func(map[K]V, K, V),
-	flushFn func(map[K]V),
+	flushFn func(map[K]V) error,
 ) *batchFlusher[K, V] {
 	return &batchFlusher[K, V]{
 		name:      "test",
@@ -45,7 +45,7 @@ func TestBatchFlusherAdd(t *testing.T) {
 	flusher := newTestBatchFlusher(
 		3,
 		func(m map[string]int, k string, v int) { m[k] = v },
-		func(m map[string]int) { flushCount.Add(1) },
+		func(m map[string]int) error { flushCount.Add(1); return nil },
 	)
 	re.Empty(flusher.buffer)
 
@@ -79,7 +79,7 @@ func TestBatchFlusherMergeFn(t *testing.T) {
 				m[k] = v
 			}
 		},
-		func(m map[string]*Record) { lastBuffer = m },
+		func(m map[string]*Record) error { lastBuffer = m; return nil },
 	)
 
 	flusher.add("key1", &Record{SQLDigest: "d1", Repeats: 1})
@@ -103,7 +103,7 @@ func TestBatchFlusherFlush(t *testing.T) {
 	flusher := newTestBatchFlusher(
 		100,
 		func(m map[string]int, k string, v int) { m[k] = v },
-		func(m map[string]int) { flushCount.Add(1) },
+		func(m map[string]int) error { flushCount.Add(1); return nil },
 	)
 	re.Empty(flusher.buffer)
 
@@ -130,7 +130,7 @@ func TestBatchFlusherFlushEmpty(t *testing.T) {
 	flusher := newTestBatchFlusher(
 		10,
 		func(m map[string]int, k string, v int) { m[k] = v },
-		func(m map[string]int) { flushCount.Add(1) },
+		func(m map[string]int) error { flushCount.Add(1); return nil },
 	)
 
 	flusher.flush()
