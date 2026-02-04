@@ -46,11 +46,8 @@ func writeConflictKVFile(t *testing.T, codec tikv.Codec, kvGroup string, objStor
 	t.Helper()
 	ctx := context.Background()
 	var summary *external.WriterSummary
-	builder := external.NewWriterBuilder()
-	if codec != nil {
-		builder.SetTiKVCodec(codec)
-	}
-	w := builder.
+	w := external.NewWriterBuilder().
+		SetTiKVCodec(codec).
 		SetOnCloseFunc(func(s *external.WriterSummary) { summary = s }).
 		Build(objStore, "/test", kvGroup)
 	for _, kv := range kvs {
