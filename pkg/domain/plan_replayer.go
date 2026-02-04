@@ -31,7 +31,6 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -95,7 +94,6 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 		logutil.BgLogger().Warn("get global ext storage failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err))
 		return
 	}
-	deleteFile := strings.HasPrefix(storage.URI(), objstore.LocalURIPrefix)
 	opt := &storeapi.WalkOption{
 		SubDir: path,
 	}
@@ -115,14 +113,12 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 			canGC = !createTime.After(gcTargetTimeDefault)
 		}
 		if canGC {
-			if deleteFile {
-				err := storage.DeleteFile(ctx, fileName)
-				if err != nil {
-					logutil.BgLogger().Warn("remove file failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
-					return nil
-				}
-				logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
+			err := storage.DeleteFile(ctx, fileName)
+			if err != nil {
+				logutil.BgLogger().Warn("remove file failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
+				return nil
 			}
+			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 			if isPlanReplayer && p.sctx != nil {
 				deletePlanReplayerStatus(ctx, p.sctx, baseName)
 				p.planReplayerTaskStatus.clearFinishedTask()

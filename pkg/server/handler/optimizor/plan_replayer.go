@@ -219,7 +219,7 @@ type downloadFileHandler struct {
 
 // handlePlanReplayerCaptureFile handles capture_replayer files by adding historical stats.
 // This function is called only when the file is a capture_replayer file (already checked by caller).
-func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
+func handlePlanReplayerCaptureFile(content []byte, handler downloadFileHandler) ([]byte, error) {
 	b := bytes.NewReader(content)
 	zr, err := zip.NewReader(b, int64(len(content)))
 	if err != nil {

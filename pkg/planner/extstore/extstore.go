@@ -24,6 +24,7 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -60,8 +61,8 @@ func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	uri := vardef.CloudStorageURI.Load()
 
-	// When keyspace name is empty (classic TiDB), always use local directory and ignore cloud_storage_uri.
-	if keyspace.IsKeyspaceNameEmpty(keyspaceName) || uri == "" {
+	// When classic kernel or cloud storage URI is not set, use local directory.
+	if kerneltype.IsClassic() || uri == "" {
 		localPath := getLocalPathDirName()
 		logutil.BgLogger().Warn("using default local storage",
 			zap.String("category", "extstore"),
