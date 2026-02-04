@@ -17,7 +17,7 @@ file_server_url=${2:-http://fileserver.pingcap.net}
 
 tikv_importer_branch="release-5.0"
 # Use release-8.5 for ticdc when branch is feature/materialized_view
-if [[ "$branch" == "feature/materialized_view" ]]; then
+if [[ "$branch" == "feature/release-8.5-materialized-view" ]]; then
     ticdc_branch="release-8.5"
 else
     ticdc_branch="$branch"
