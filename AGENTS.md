@@ -262,3 +262,11 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 ### PR description
 
 The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
+
+### Language
+
+Issues and PRs **must** be written in English (title and description).
+
+### Force push
+
+Avoid force-push whenever possible; prefer adding follow-up commits and letting GitHub squash-merge. If a force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.
