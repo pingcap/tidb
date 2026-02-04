@@ -24,7 +24,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,11 +103,7 @@ func TestDuplicatedBinding(t *testing.T) {
 func TestBindCache(t *testing.T) {
 	binding := &Binding{BindSQL: "SELECT * FROM t1"}
 	kvSize := int(binding.size())
-	defer func(v int64) {
-		vardef.MemQuotaBindingCache.Store(v)
-	}(vardef.MemQuotaBindingCache.Load())
-	vardef.MemQuotaBindingCache.Store(int64(kvSize*3) - 1)
-	bindCache := newBindingCache(context.Background(), 1000000000).(*bindingCache)
+	bindCache := newBindingCache(context.Background(), int64(kvSize*3)-1).(*bindingCache)
 	defer bindCache.Close()
 
 	err := bindCache.SetBinding("digest1", binding)
@@ -142,6 +137,7 @@ func TestBindingCacheEvictLog(t *testing.T) {
 	largeBinding := &Binding{BindSQL: fmt.Sprintf("SELECT * FROM t1 WHERE c = '%v'", strings.Repeat("a", 200))}
 	binding := &Binding{BindSQL: "SELECT * FROM t1"}
 	bindingCache := newBindingCache(ctx, int64(binding.size())*3-1).(*bindingCache)
+	defer bindingCache.Close()
 
 	bindingCache.SetBinding("0", largeBinding)
 	require.Equal(t, callbackCnt, 1) // large binding, reject directly
