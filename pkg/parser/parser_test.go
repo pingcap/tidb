@@ -5332,6 +5332,11 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) PURGE START WITH NOW() NEXT 300",
 		},
 		{
+			"CREATE MATERIALIZED VIEW LOG ON t (a) PURGE NEXT 300",
+			true,
+			"CREATE MATERIALIZED VIEW LOG ON `t` (`a`) PURGE NEXT 300",
+		},
+		{
 			"ALTER MATERIALIZED VIEW mv COMMENT = 'c2'",
 			true,
 			"ALTER MATERIALIZED VIEW `mv` COMMENT = 'c2'",
@@ -5340,6 +5345,11 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"ALTER MATERIALIZED VIEW mv TIFLASH REPLICA 1",
 			true,
 			"ALTER MATERIALIZED VIEW `mv` TIFLASH REPLICA 1",
+		},
+		{
+			"ALTER MATERIALIZED VIEW mv REFRESH",
+			true,
+			"ALTER MATERIALIZED VIEW `mv` REFRESH",
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv REFRESH START WITH now() NEXT 300",
@@ -5423,6 +5433,12 @@ func TestMaterializedViewStatements(t *testing.T) {
 func TestMaterializedViewCreateRefreshOnClauseSyntax(t *testing.T) {
 	p := parser.New()
 	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW mv (a) REFRESH FAST START WITH now() AS SELECT 1", "", "")
+	require.Error(t, err)
+}
+
+func TestMaterializedViewLogCreatePurgeClauseSyntax(t *testing.T) {
+	p := parser.New()
+	_, err := p.ParseOneStmt("CREATE MATERIALIZED VIEW LOG ON t (a) PURGE START WITH now()", "", "")
 	require.Error(t, err)
 }
 

@@ -1900,9 +1900,12 @@ func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlainf("%d", n.TiFlashReplicas)
 		return nil
 	case AlterMaterializedViewActionRefresh:
-		ctx.WriteKeyWord("REFRESH ")
+		ctx.WriteKeyWord("REFRESH")
 		if n.Refresh != nil {
 			// In ALTER MATERIALIZED VIEW, only the schedule part is allowed.
+			if n.Refresh.StartWith != nil || n.Refresh.Next != nil {
+				ctx.WritePlain(" ")
+			}
 			if n.Refresh.StartWith != nil {
 				ctx.WriteKeyWord("START WITH ")
 				if err := n.Refresh.StartWith.Restore(ctx); err != nil {

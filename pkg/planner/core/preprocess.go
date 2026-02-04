@@ -292,6 +292,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeCreate
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
+	case *ast.CreateMaterializedViewLogStmt:
+		p.stmtTp = TypeCreate
 	case *ast.DropTableStmt:
 		p.flag |= inCreateOrDropTable
 		p.stmtTp = TypeDrop
@@ -300,6 +302,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeDrop
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
+	case *ast.DropMaterializedViewLogStmt:
+		p.stmtTp = TypeDrop
 	case *ast.RenameTableStmt:
 		p.stmtTp = TypeRename
 		p.flag |= inCreateOrDropTable
@@ -315,6 +319,8 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		p.stmtTp = TypeAlter
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
+	case *ast.AlterMaterializedViewLogStmt:
+		p.stmtTp = TypeAlter
 	case *ast.RefreshMaterializedViewStmt:
 		// The view name is not an existing table. Avoid resolving it as a normal table name.
 		p.flag |= inCreateOrDropTable
