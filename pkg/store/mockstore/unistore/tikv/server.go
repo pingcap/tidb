@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler"
+	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/pberror"

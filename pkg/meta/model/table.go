@@ -1367,23 +1367,6 @@ type TableAffinityInfo struct {
 	Level string `json:"level"`
 }
 
-// NewTableAffinityInfoWithLevel creates a new TableAffinityInfo with level
-// If level is "none" or "", a nil value will be returned
-func NewTableAffinityInfoWithLevel(level string) (*TableAffinityInfo, error) {
-	normalized, ok := ast.NormalizeTableAffinityLevel(level)
-	if !ok {
-		return nil, errors.Errorf("invalid table affinity level: '%s'", level)
-	}
-
-	if normalized == ast.TableAffinityLevelNone {
-		return nil, nil
-	}
-
-	return &TableAffinityInfo{
-		Level: normalized,
-	}, nil
-}
-
 // Clone clones TableAffinityInfo
 func (t *TableAffinityInfo) Clone() *TableAffinityInfo {
 	cloned := *t
