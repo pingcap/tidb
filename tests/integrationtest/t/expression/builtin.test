@@ -1672,3 +1672,15 @@ drop table if exists t;
 # Issue 59420
 SELECT GET_FORMAT(TIME, 'usa'), GET_FORMAT(TIME, 'USA'), GET_FORMAT(TIME, 'UsA'), GET_FORMAT(time, 'UsA'), GET_FORMAT(TIme, 'UsA');
 SELECT GET_FORMAT(DATE, 'jis'),GET_FORMAT(DATETIME, 'iso'),GET_FORMAT(TIMESTAMP, 'eur'),GET_FORMAT(TIME, 'internal');
+# Masking functions
+select mask_full('abc'), mask_full(cast('2012-01-02' as date)), mask_full(cast('2012-01-02 03:04:05' as datetime)), mask_full(cast('03:04:05' as time)), mask_full(cast('2012' as year));
+select mask_null('abc'), mask_null(cast('2012-01-02' as date)), mask_null(cast('03:04:05' as time)), mask_null(cast('2012' as year));
+select mask_partial('abcdef','*',1,3), mask_partial('abcdef','*',10,3), mask_partial('abcdef','*',1,0);
+select mask_partial('中文abcd','*',1,3);
+-- error 1210
+select mask_partial('abc','**',1,2);
+-- error 1210
+select mask_partial('abc','*',-1,2);
+select mask_date(cast('2012-01-02' as date), '2020-12-31'), mask_date(cast('2012-01-02 03:04:05' as datetime), '2020-12-31');
+-- error 1210
+select mask_date(cast('2012-01-02' as date), '2020-1-2');

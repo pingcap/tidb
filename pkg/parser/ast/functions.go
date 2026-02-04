@@ -85,6 +85,12 @@ const (
 	Least    = "least"
 	Interval = "interval"
 
+	// masking functions
+	MaskFull    = "mask_full"
+	MaskPartial = "mask_partial"
+	MaskNull    = "mask_null"
+	MaskDate    = "mask_date"
+
 	// math functions
 	Abs      = "abs"
 	Acos     = "acos"
