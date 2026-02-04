@@ -160,26 +160,40 @@ func (s *sortPartition) sortNoLock() (ret error) {
 		}
 	})
 
-	useAQSort := s.useAQSort
-	if s.aqsortCtrl != nil {
-		useAQSort = s.aqsortCtrl.isEnabled()
-	}
-
-	if useAQSort {
-		if err := s.sortByEncodedKey(); err != nil {
-			if s.aqsortCtrl != nil {
-				s.aqsortCtrl.disableWithWarn(err, zap.Int("rows", len(s.savedRows)))
-			} else {
-				s.useAQSort = false
-			}
-			sort.Slice(s.savedRows, s.keyColumnsLess)
-		}
-	} else {
-		sort.Slice(s.savedRows, s.keyColumnsLess)
-	}
+	s.sortSavedRows()
 	s.isSorted = true
 	s.sliceIter = chunk.NewIterator4Slice(s.savedRows)
 	return
+}
+
+func (s *sortPartition) sortSavedRows() {
+	if s.shouldUseAQSort() {
+		if err := s.sortByEncodedKey(); err != nil {
+			s.disableAQSort(err)
+			s.sortByColumns()
+		}
+		return
+	}
+	s.sortByColumns()
+}
+
+func (s *sortPartition) shouldUseAQSort() bool {
+	if s.aqsortCtrl != nil {
+		return s.aqsortCtrl.isEnabled()
+	}
+	return s.useAQSort
+}
+
+func (s *sortPartition) disableAQSort(err error) {
+	if s.aqsortCtrl != nil {
+		s.aqsortCtrl.disableWithWarn(err, zap.Int("rows", len(s.savedRows)))
+	} else {
+		s.useAQSort = false
+	}
+}
+
+func (s *sortPartition) sortByColumns() {
+	sort.Slice(s.savedRows, s.keyColumnsLess)
 }
 
 func (s *sortPartition) sortByEncodedKey() error {
