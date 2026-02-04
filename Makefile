@@ -865,6 +865,12 @@ bazel_ddltest: failpoint-enable bazel_ci_simple_prepare
 bazel_lint: bazel_prepare
 	bazel build $(BAZEL_CMD_CONFIG) //... --//build:with_nogo_flag=$(NOGO_FLAG)
 
+.PHONY: bazel_lint_changed
+bazel_lint_changed: bazel_prepare
+	@PKGS="$$(scripts/get_changed_pkgs.sh '$(BASE_REF)')"; \
+	echo "$$PKGS"; \
+	bazel build $(BAZEL_CMD_CONFIG) $(PKGS) --//build:with_nogo_flag=$(NOGO_FLAG)
+
 .PHONY: docker
 docker: ## Build TiDB Docker image
 	docker build -t "$(DOCKERPREFIX)tidb:latest" --build-arg 'GOPROXY=$(shell go env GOPROXY),' -f Dockerfile .
