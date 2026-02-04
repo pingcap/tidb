@@ -15,6 +15,7 @@
 package bindinfo
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"sync"
@@ -29,8 +30,11 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"go.uber.org/zap"
 )
+
+var bindingCacheTestKey = struct{}{}
 
 // BindingCacheUpdater maintains the binding cache and provide update APIs.
 type BindingCacheUpdater interface {
@@ -155,7 +159,7 @@ func NewBindingCacheUpdater(sPool util.DestroyableSessionPool) BindingCacheUpdat
 	u := new(bindingCacheUpdater)
 	u.lastUpdateTime.Store(types.ZeroTimestamp)
 	u.sPool = sPool
-	u.BindingCache = newBindCache()
+	u.BindingCache = newBindingCache(context.Background(), vardef.MemQuotaBindingCache.Load())
 	return u
 }
 
@@ -291,27 +295,42 @@ type BindingCache interface {
 type bindingCache struct {
 	digestBiMap digestBiMap      // mapping between noDBDigest and sqlDigest, used to support cross-db binding.
 	cache       *ristretto.Cache // the underlying cache to store the bindings.
+	closed      *atomic.Bool
 }
 
-func newBindCache() BindingCache {
+func newBindingCache(ctx context.Context, maxCost int64) BindingCache {
+	closed := new(atomic.Bool)
+	closed.Store(false)
+
+	rejectOrEvict := func(item *ristretto.Item) {
+		if closed.Load() { // avoid unnecessary log when exiting
+			return
+		}
+		binding := item.Value.(*Binding)
+		if intest.InTest && ctx != nil && ctx.Value(bindingCacheTestKey) != nil {
+			callback := ctx.Value(bindingCacheTestKey).(func(binding *Binding))
+			callback(binding)
+		}
+		bindingLogger().Warn("binding cache memory limit reached, evict or reject binding",
+			zap.String("sqlDigest", binding.SQLDigest), zap.String("bindSQL", binding.BindSQL))
+	}
+
 	cache, _ := ristretto.NewCache(&ristretto.Config{
 		NumCounters: 1e6,
-		MaxCost:     vardef.MemQuotaBindingCache.Load(),
+		MaxCost:     maxCost,
 		BufferItems: 64,
 		Cost: func(value any) int64 {
 			return int64(value.(*Binding).size())
 		},
 		Metrics:            true,
 		IgnoreInternalCost: true,
-		OnExit: func(val any) {
-			binding := val.(*Binding)
-			bindingLogger().Warn("binding cache memory limit reached, evict binding",
-				zap.String("sqlDigest", binding.SQLDigest), zap.String("bindSQL", binding.BindSQL))
-		},
+		OnEvict:            rejectOrEvict,
+		OnReject:           rejectOrEvict,
 	})
 	c := bindingCache{
 		cache:       cache,
 		digestBiMap: newDigestBiMap(),
+		closed:      closed,
 	}
 	return &c
 }
@@ -350,7 +369,11 @@ func (c *bindingCache) GetAllBindings() []*Binding {
 	sqlDigests := c.digestBiMap.All()
 	bindings := make([]*Binding, 0, len(sqlDigests))
 	for _, sqlDigest := range sqlDigests {
-		bindings = append(bindings, c.GetBinding(sqlDigest))
+		binding := c.GetBinding(sqlDigest)
+		if binding == nil {
+			continue // maybe evicted
+		}
+		bindings = append(bindings, binding)
 	}
 	return bindings
 }
@@ -406,7 +429,7 @@ func (c *bindingCache) Size() int {
 
 // Close closes the cache.
 func (c *bindingCache) Close() {
-	c.cache.Clear()
+	c.closed.Store(true)
 	c.cache.Close()
 	c.cache.Wait()
 }
