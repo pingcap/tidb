@@ -325,6 +325,7 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
+	{ID: metadef.SQLBlacklistTableID, Name: "sql_blacklist", SQL: metadef.CreateSQLBlacklistTable},
 	// NOTE: if you need to add more tables to 'mysql' database, please also add
 	// an entry to versionedBootstrapSchemas, to make sure the table is created
 	// correctly in nextgen kennel.
@@ -336,14 +337,14 @@ type versionedBootstrapSchema struct {
 }
 
 const (
-	// 52 is the number of system tables as we do this change.
+	// 53 is the number of system tables as we do this change.
 	// as tablesInSystemDatabase is shared with classic kernel, it's simple to
 	// use a slice to hold all system tables in classic kernel. but in nextgen,
 	// we need to make those tables versioned, as we don't create system tables
 	// through DDL, we need this version to avoid create tables again.
 	// if we add more system tables later, we should increase the version, and
 	// add another versionedBootstrapSchema entry.
-	tableCountInFirstVerOnNextGen = 52
+	tableCountInFirstVerOnNextGen = 53
 )
 
 // used in nextgen, to create system tables directly through meta kv, without

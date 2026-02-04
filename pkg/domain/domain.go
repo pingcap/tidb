@@ -2412,6 +2412,7 @@ func (do *Domain) ServerMemoryLimitHandle() *servermemorylimit.Handle {
 const (
 	privilegeKey          = "/tidb/privilege"
 	sysVarCacheKey        = "/tidb/sysvars"
+	sqlBlacklistKey       = "/tidb/sql_blacklist"
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
 )
 

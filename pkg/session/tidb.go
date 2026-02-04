@@ -20,6 +20,7 @@ package session
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"github.com/ngaut/pools"
@@ -37,6 +38,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
 	"github.com/pingcap/tidb/pkg/session/sessionapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -256,6 +258,8 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 		return meetsErr
 	}
 
+	markSQLBlacklistUpdated(se, sql)
+
 	if !sessVars.InTxn() {
 		if err := se.CommitTxn(ctx); err != nil {
 			if _, ok := sql.(*executor.ExecStmt).StmtNode.(*ast.CommitStmt); ok {
@@ -266,6 +270,33 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 		return nil
 	}
 	return nil
+}
+
+func markSQLBlacklistUpdated(se *session, sql sqlexec.Statement) {
+	execStmt, ok := sql.(*executor.ExecStmt)
+	if !ok {
+		return
+	}
+	if execStmt.IsReadOnly(se.sessionVars) {
+		return
+	}
+	if !stmtTouchesSQLBlacklist(se.sessionVars) {
+		return
+	}
+	se.sessionVars.TxnCtx.SQLBlacklistUpdated = true
+}
+
+func stmtTouchesSQLBlacklist(sessVars *variable.SessionVars) bool {
+	for _, table := range sessVars.StmtCtx.Tables {
+		dbName := table.DB
+		if dbName == "" {
+			dbName = sessVars.CurrentDB
+		}
+		if strings.EqualFold(dbName, mysql.SystemDB) && strings.EqualFold(table.Table, "sql_blacklist") {
+			return true
+		}
+	}
+	return false
 }
 
 func checkStmtLimit(ctx context.Context, se *session, isFinish bool) error {

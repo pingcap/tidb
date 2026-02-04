@@ -88,6 +88,7 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/sessiontxn/isolation",
         "//pkg/sessiontxn/staleread",
+        "//pkg/sqlblacklist",
         "//pkg/statistics/handle",
         "//pkg/statistics/handle/syncload",
         "//pkg/statistics/handle/usage",

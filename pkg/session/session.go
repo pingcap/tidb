@@ -102,6 +102,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
+	"github.com/pingcap/tidb/pkg/sqlblacklist"
 	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
 	"github.com/pingcap/tidb/pkg/statistics/handle/syncload"
 	"github.com/pingcap/tidb/pkg/statistics/handle/usage"
@@ -1001,6 +1002,20 @@ func (s *session) CommitTxn(ctx context.Context) error {
 				s.txn.lastCommitTS, s.sessionVars.LastCommitTS)
 		}
 		s.sessionVars.LastCommitTS = s.txn.lastCommitTS
+	}
+
+	if err == nil {
+		needNotify := s.sessionVars.TxnCtx.SQLBlacklistUpdated
+		if !needNotify {
+			if deltaMap := s.GetSessionVars().TxnCtx.TableDeltaMap; deltaMap != nil {
+				_, needNotify = deltaMap[metadef.SQLBlacklistTableID]
+			}
+		}
+		if needNotify {
+			if notifyErr := domain.GetDomain(s).NotifyUpdateSQLBlacklist(s); notifyErr != nil {
+				logutil.BgLogger().Warn("notify update sql blacklist failed", zap.Error(notifyErr))
+			}
+		}
 	}
 
 	// record the TTLInsertRows in the metric
@@ -2424,6 +2439,11 @@ func (s *session) executeStmtImpl(ctx context.Context, stmtNode ast.StmtNode) (s
 	}
 
 	normalizedSQL, digest := s.sessionVars.StmtCtx.SQLDigest()
+	if !sessVars.InRestrictedSQL {
+		if err := sqlblacklist.CheckSQLDenied(normalizedSQL, sessVars.StmtCtx.OriginalSQL); err != nil {
+			return nil, err
+		}
+	}
 	cmdByte := byte(atomic.LoadUint32(&s.GetSessionVars().CommandValue))
 	if topsqlstate.TopProfilingEnabled() {
 		s.sessionVars.StmtCtx.IsSQLRegistered.Store(true)
@@ -4145,7 +4165,8 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 	}
 	// Mark all bootstrap sessions as restricted since they are used for internal operations
 	// ses[0]: main bootstrap session
-	// ses[1-2]: reserved
+	// ses[1]: SQL blacklist
+	// ses[2]: reserved
 	// ses[3]: privilege loading
 	// ses[4]: sysvar cache
 	// ses[5]: telemetry, expression pushdown
@@ -4190,6 +4211,12 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 
 	// Rebuild sysvar cache in a loop
 	err = dom.LoadSysVarCacheLoop(ses[4])
+	if err != nil {
+		return nil, err
+	}
+
+	// Reload SQL blacklist in a loop
+	err = dom.LoadSQLBlacklistLoop(ses[1])
 	if err != nil {
 		return nil, err
 	}

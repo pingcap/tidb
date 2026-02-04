@@ -1,0 +1,14 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sqlblacklist",
+    srcs = ["blacklist.go"],
+    importpath = "github.com/pingcap/tidb/pkg/sqlblacklist",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/kv",
+        "//pkg/parser",
+        "//pkg/sessionctx",
+        "//pkg/util/dbterror/exeerrors",
+    ],
+)

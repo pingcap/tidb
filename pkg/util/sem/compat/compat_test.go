@@ -28,6 +28,7 @@ const (
 	gcDeleteRange         = "gc_delete_range"
 	gcDeleteRangeDone     = "gc_delete_range_done"
 	optRuleBlacklist      = "opt_rule_blacklist"
+	sqlBlacklist          = "sql_blacklist"
 	tidb                  = "tidb"
 	globalVariables       = "global_variables"
 	informationSchema     = "information_schema"
@@ -76,7 +77,7 @@ func TestIsInvisibleTable(t *testing.T) {
 	defer SwitchToSEMForTest(t, V2)()
 	assert := assert.New(t)
 
-	mysqlTbls := []string{exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, tidb, globalVariables}
+	mysqlTbls := []string{exprPushdownBlacklist, gcDeleteRange, gcDeleteRangeDone, optRuleBlacklist, sqlBlacklist, tidb, globalVariables}
 	infoSchemaTbls := []string{clusterConfig, clusterHardware, clusterLoad, clusterLog, clusterSystemInfo, inspectionResult,
 		inspectionRules, inspectionSummary, metricsSummary, metricsSummaryByLabel, metricsTables, tidbHotRegions}
 	perfSChemaTbls := []string{pdProfileAllocs, pdProfileBlock, pdProfileCPU, pdProfileGoroutines, pdProfileMemory,

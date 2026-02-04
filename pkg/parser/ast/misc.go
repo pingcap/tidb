@@ -2539,6 +2539,7 @@ const (
 	AdminShowNextRowID
 	AdminReloadExprPushdownBlacklist
 	AdminReloadOptRuleBlacklist
+	AdminReloadSQLBlacklist
 	AdminPluginDisable
 	AdminPluginEnable
 	AdminFlushBindings
@@ -2790,6 +2791,8 @@ func (n *AdminStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	case AdminReloadExprPushdownBlacklist:
 		ctx.WriteKeyWord("RELOAD EXPR_PUSHDOWN_BLACKLIST")
+	case AdminReloadSQLBlacklist:
+		ctx.WriteKeyWord("RELOAD SQL_BLACKLIST")
 	case AdminReloadOptRuleBlacklist:
 		ctx.WriteKeyWord("RELOAD OPT_RULE_BLACKLIST")
 	case AdminPluginEnable:

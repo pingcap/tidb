@@ -607,6 +607,7 @@ var tokenMap = map[string]int{
 	"ONLY":                           only,
 	"OPEN":                           open,
 	"OPT_RULE_BLACKLIST":             optRuleBlacklist,
+	"SQL_BLACKLIST":                  sqlBlacklist,
 	"OPTIMISTIC":                     optimistic,
 	"OPTIMIZE":                       optimize,
 	"OPTION":                         option,

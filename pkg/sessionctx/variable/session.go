@@ -227,6 +227,8 @@ type TxnCtxNoNeedToRestore struct {
 	Isolation  string
 	LockExpire uint32
 	ForUpdate  uint32
+	// SQLBlacklistUpdated indicates mysql.sql_blacklist was modified in this transaction.
+	SQLBlacklistUpdated bool
 	// TxnScope indicates the value of txn_scope
 	TxnScope string
 
@@ -407,6 +409,7 @@ func (tc *TransactionContext) Cleanup() {
 	tc.pessimisticLockCache = nil
 	tc.CurrentStmtPessimisticLockCache = nil
 	tc.IsStaleness = false
+	tc.SQLBlacklistUpdated = false
 	tc.Savepoints = nil
 	tc.EnableMDL = false
 }

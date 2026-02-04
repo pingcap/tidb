@@ -185,6 +185,11 @@ type ReloadExprPushdownBlacklist struct {
 	physicalop.SimpleSchemaProducer
 }
 
+// ReloadSQLBlacklist reloads the data from sql_blacklist table.
+type ReloadSQLBlacklist struct {
+	physicalop.SimpleSchemaProducer
+}
+
 // ReloadOptRuleBlacklist reloads the data from opt_rule_blacklist table.
 type ReloadOptRuleBlacklist struct {
 	physicalop.SimpleSchemaProducer
