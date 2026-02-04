@@ -120,7 +120,6 @@ type conflictedKVHandleContext struct {
 	taskMeta         *importinto.TaskMeta
 	tk               *testkit.TestKit
 	conflictedKVInfo importinto.KVGroupConflictInfos
-	tbl              table.Table
 }
 
 func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
@@ -160,7 +159,6 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 		taskMeta:         taskMeta,
 		tk:               tk,
 		conflictedKVInfo: conflictedKVInfo,
-		tbl:              tbl,
 	}
 }
 
