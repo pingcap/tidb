@@ -73,45 +73,44 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 		handler.WriteError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusOK)
 	if !isDump {
+		w.WriteHeader(http.StatusOK)
 		_, err = w.Write([]byte(name))
 		if err != nil {
 			logutil.BgLogger().Error("extract handler failed", zap.Error(err))
 		}
 		return
 	}
-	content, err := loadExtractResponse(req.Context(), name)
+	// For dump mode, stream the file content directly
+	err = streamExtractResponse(req.Context(), w, name)
 	if err != nil {
-		logutil.BgLogger().Error("load extract task failed", zap.Error(err))
+		logutil.BgLogger().Error("stream extract response failed", zap.Error(err))
 		handler.WriteError(w, err)
 		return
 	}
-	_, err = w.Write(content)
-	if err != nil {
-		handler.WriteError(w, err)
-		return
-	}
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", name))
 }
 
-func loadExtractResponse(ctx context.Context, name string) ([]byte, error) {
+// streamExtractResponse streams the extract file to the response writer.
+// It sets headers BEFORE writing body and uses io.Copy for streaming to avoid memory bloat.
+func streamExtractResponse(ctx context.Context, w http.ResponseWriter, name string) error {
 	path := filepath.Join(domain.GetExtractTaskDirName(), name)
 	storage, err := extstore.GetGlobalExtStorage(ctx)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	fileReader, err := storage.Open(ctx, path, nil)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer fileReader.Close()
-	content, err := io.ReadAll(fileReader)
-	if err != nil {
-		return nil, err
-	}
-	return content, nil
+
+	// Set headers BEFORE writing body
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", name))
+
+	// Use streaming io.Copy instead of io.ReadAll to avoid memory bloat
+	_, err = io.Copy(w, fileReader)
+	return err
 }
 
 func buildExtractTask(req *http.Request) (*domain.ExtractTask, bool, error) {

@@ -27,6 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -71,16 +72,17 @@ func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 
 	storage, err := NewExtStorage(ctx, uri, keyspaceName)
 	if err != nil {
+		// Use ast.RedactURL to hide sensitive info (AK/SK) in logs
 		logutil.BgLogger().Warn("failed to create global ext storage",
 			zap.String("category", "extstore"),
-			zap.String("uri", uri),
+			zap.String("uri", ast.RedactURL(uri)),
 			zap.Error(err))
 		return nil, errors.Trace(err)
 	}
 
+	// Only log the storage.URI() which typically doesn't contain credentials
 	logutil.BgLogger().Info("initialized global ext storage",
 		zap.String("category", "extstore"),
-		zap.String("uri", uri),
 		zap.String("storage", storage.URI()))
 	return storage, nil
 }

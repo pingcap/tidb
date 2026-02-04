@@ -10,6 +10,7 @@ go_library(
         "//pkg/keyspace",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",
+        "//pkg/parser/ast",
         "//pkg/sessionctx/vardef",
         "//pkg/util/intest",
         "//pkg/util/logutil",

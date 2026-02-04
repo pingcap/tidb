@@ -356,10 +356,10 @@ func (w *extractWorker) dumpExtractPlanPackage(ctx context.Context, task *Extrac
 			logutil.BgLogger().Error("dump extract plan task failed", zap.Error(err))
 		}
 		if err1 := zw.Close(); err1 != nil {
-			logutil.BgLogger().Warn("close zip file failed", zap.String("file", name), zap.Error(err))
+			logutil.BgLogger().Warn("close zip writer failed", zap.String("file", name), zap.Error(err1))
 		}
 		if err1 := f.Close(); err1 != nil {
-			logutil.BgLogger().Warn("close file failed", zap.String("file", name), zap.Error(err))
+			logutil.BgLogger().Warn("close file failed", zap.String("file", name), zap.Error(err1))
 		}
 	}()
 

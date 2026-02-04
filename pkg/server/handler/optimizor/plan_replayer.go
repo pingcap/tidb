@@ -23,7 +23,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -109,30 +108,39 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 			handler.WriteError(w, err)
 			return
 		}
-		content, err := io.ReadAll(fileReader)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		err = fileReader.Close()
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		if dfHandler.downloadedFilename == "plan_replayer" {
+		defer fileReader.Close()
+
+		// For capture_replayer files, we need to read all content to process it
+		if dfHandler.downloadedFilename == "plan_replayer" && strings.HasPrefix(dfHandler.fileName, "capture_replayer") {
+			content, err := io.ReadAll(fileReader)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
 			content, err = handlePlanReplayerCaptureFile(content, path, dfHandler)
 			if err != nil {
 				handler.WriteError(w, err)
 				return
 			}
+			// Set headers BEFORE writing body
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
+			_, err = w.Write(content)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
+		} else {
+			// Set headers BEFORE writing body
+			w.Header().Set("Content-Type", "application/zip")
+			w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
+			// Use streaming io.Copy instead of io.ReadAll to avoid memory bloat
+			_, err = io.Copy(w, fileReader)
+			if err != nil {
+				handler.WriteError(w, err)
+				return
+			}
 		}
-		_, err = w.Write(content)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
 		logutil.BgLogger().Info("return dump file successfully", zap.String("filename", name),
 			zap.String("address", localAddr), zap.Bool("forwarded", isForwarded))
 		return
@@ -166,28 +174,22 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 			continue
 		}
 		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
 			logutil.BgLogger().Info("can't find file in remote server", zap.String("filename", name),
 				zap.String("remote-addr", remoteAddr), zap.Int("status-code", resp.StatusCode))
 			continue
 		}
-		content, err := io.ReadAll(resp.Body)
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		err = resp.Body.Close()
-		if err != nil {
-			handler.WriteError(w, err)
-			return
-		}
-		_, err = w.Write(content)
+		// Set headers BEFORE writing body
+		w.Header().Set("Content-Type", "application/zip")
+		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
+		// Use streaming io.Copy instead of io.ReadAll to avoid memory bloat
+		_, err = io.Copy(w, resp.Body)
+		resp.Body.Close()
 		if err != nil {
 			handler.WriteError(w, err)
 			return
 		}
 		// find dump file in one remote tidb-server, return file directly
-		w.Header().Set("Content-Type", "application/zip")
-		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=\"%s.zip\"", dfHandler.downloadedFilename))
 		logutil.BgLogger().Info("return dump file successfully in remote server",
 			zap.String("filename", name), zap.String("remote-addr", remoteAddr))
 		return
@@ -215,21 +217,9 @@ type downloadFileHandler struct {
 	is          infoschema.InfoSchema
 }
 
-func isExists(path string) (bool, error) {
-	_, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	return true, nil
-}
-
+// handlePlanReplayerCaptureFile handles capture_replayer files by adding historical stats.
+// This function is called only when the file is a capture_replayer file (already checked by caller).
 func handlePlanReplayerCaptureFile(content []byte, path string, handler downloadFileHandler) ([]byte, error) {
-	if !strings.HasPrefix(handler.filePath, "capture_replayer") {
-		return content, nil
-	}
 	b := bytes.NewReader(content)
 	zr, err := zip.NewReader(b, int64(len(content)))
 	if err != nil {
@@ -253,24 +243,8 @@ func handlePlanReplayerCaptureFile(content []byte, path string, handler download
 		}
 		tbl.jsonStats = jsonStats
 	}
-	newPath, err := dumpJSONStatsIntoZip(tbls, content, path)
-	if err != nil {
-		return nil, err
-	}
-	//nolint: gosec
-	file, err := os.Open(newPath)
-	if err != nil {
-		return nil, err
-	}
-	content, err = io.ReadAll(file)
-	if err != nil {
-		return nil, err
-	}
-	err = file.Close()
-	if err != nil {
-		return nil, err
-	}
-	return content, nil
+	// Create a new zip with the additional stats in memory instead of writing to local filesystem
+	return dumpJSONStatsIntoZipInMemory(tbls, content)
 }
 
 func loadSQLMetaFile(z *zip.Reader) (uint64, error) {
@@ -333,49 +307,42 @@ func loadSchemaMeta(z *zip.Reader, is infoschema.InfoSchema) (map[int64]*tblInfo
 	return r, nil
 }
 
-func dumpJSONStatsIntoZip(tbls map[int64]*tblInfo, content []byte, path string) (string, error) {
+// dumpJSONStatsIntoZipInMemory creates a new zip with additional stats in memory.
+func dumpJSONStatsIntoZipInMemory(tbls map[int64]*tblInfo, content []byte) ([]byte, error) {
 	zr, err := zip.NewReader(bytes.NewReader(content), int64(len(content)))
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	newPath := strings.Replace(path, "capture_replayer", "copy_capture_replayer", 1)
-	zf, err := os.Create(newPath)
-	if err != nil {
-		return "", err
-	}
-	zw := zip.NewWriter(zf)
+	// Create new zip in memory
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
 	for _, f := range zr.File {
 		err = zw.Copy(f)
 		if err != nil {
 			logutil.BgLogger().Error("copy plan replayer zip file failed", zap.Error(err))
-			return "", err
+			return nil, err
 		}
 	}
 	for _, tbl := range tbls {
 		w, err := zw.Create(fmt.Sprintf("stats/%v.%v.json", tbl.dbName, tbl.tblName))
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		data, err := json.Marshal(tbl.jsonStats)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		_, err = w.Write(data)
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	err = zw.Close()
 	if err != nil {
-		logutil.BgLogger().Error("Closing file failed", zap.Error(err))
-		return "", err
+		logutil.BgLogger().Error("Closing zip writer failed", zap.Error(err))
+		return nil, err
 	}
-	err = zf.Close()
-	if err != nil {
-		logutil.BgLogger().Error("Closing file failed", zap.Error(err))
-		return "", err
-	}
-	return newPath, nil
+	return buf.Bytes(), nil
 }
 
 type tblInfo struct {
