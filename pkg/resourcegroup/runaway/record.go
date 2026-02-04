@@ -40,14 +40,7 @@ import (
 	"go.uber.org/zap"
 )
 
-const (
-	// watchTableName is the name of system table which save runaway watch items.
-	watchTableName = "mysql.tidb_runaway_watch"
-	// watchDoneTableName is the name of system table which save done runaway watch items.
-	watchDoneTableName = "mysql.tidb_runaway_watch_done"
-
-	maxIDRetries = 3
-)
+const maxIDRetries = 3
 
 // NullTime is a zero time.Time.
 var NullTime time.Time
@@ -162,7 +155,7 @@ func writeInsert(builder *strings.Builder, tableName string) {
 func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 9)
-	writeInsert(&builder, watchTableName)
+	writeInsert(&builder, getRunawayWatchTableName())
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ResourceGroupName)
 	params = append(params, r.StartTime)
@@ -184,7 +177,7 @@ func (r *QuarantineRecord) genInsertionStmt() (string, []any) {
 func (r *QuarantineRecord) genInsertionDoneStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 11)
-	writeInsert(&builder, watchDoneTableName)
+	writeInsert(&builder, getRunawayWatchDoneTableName())
 	builder.WriteString("(null, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?, %?)")
 	params = append(params, r.ID)
 	params = append(params, r.ResourceGroupName)
@@ -209,7 +202,7 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	var builder strings.Builder
 	params := make([]any, 0, 1)
 	builder.WriteString("delete from ")
-	builder.WriteString(watchTableName)
+	builder.WriteString(getRunawayWatchTableName())
 	builder.WriteString(" where id = %?")
 	params = append(params, r.ID)
 	return builder.String(), params

@@ -1693,6 +1693,65 @@ func TestTiDBUpgradeToVer252(t *testing.T) {
 	require.Contains(t, createTblSQL, "`update_time` timestamp(6)")
 }
 
+func TestTiDBUpgradeToVer254(t *testing.T) {
+	ctx := context.Background()
+	store, dom := CreateStoreAndBootstrap(t)
+	defer func() { require.NoError(t, store.Close()) }()
+
+	ver253 := version253
+	seV253 := CreateSessionAndSetID(t, store)
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	m := meta.NewMutator(txn)
+	err = m.FinishBootstrap(int64(ver253))
+	require.NoError(t, err)
+	RevertVersionAndVariables(t, seV253, ver253)
+	err = txn.Commit(ctx)
+	require.NoError(t, err)
+	store.SetOption(StoreBootstrappedKey, nil)
+
+	getTableCreateSQLFn := func(se sessionapi.Session, tableName string) string {
+		res := MustExecToRecodeSet(t, se, fmt.Sprintf("show create table mysql.%s", tableName))
+		chk := res.NewChunk(nil)
+		err = res.Next(ctx, chk)
+		require.NoError(t, err)
+		require.Equal(t, 1, chk.NumRows())
+		return string(chk.GetRow(0).GetBytes(1))
+	}
+
+	// Verify the indexes exist after bootstrap
+	createWatchSQL := getTableCreateSQLFn(seV253, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL := getTableCreateSQLFn(seV253, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Remove the indexes to simulate the old version
+	seV253.SetValue(sessionctx.Initing, true)
+	seV253.GetSessionVars().SQLMode = mysql.ModeNone
+	mustExecute(seV253, "ALTER TABLE mysql.tidb_runaway_watch DROP INDEX idx_start_time")
+	mustExecute(seV253, "ALTER TABLE mysql.tidb_runaway_watch_done DROP INDEX idx_done_time")
+	createWatchSQL = getTableCreateSQLFn(seV253, "tidb_runaway_watch")
+	require.NotContains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seV253, "tidb_runaway_watch_done")
+	require.NotContains(t, createWatchDoneSQL, "idx_done_time")
+
+	// Upgrade to current version
+	dom.Close()
+	domCurVer, err := BootstrapSession(store)
+	require.NoError(t, err)
+	defer domCurVer.Close()
+	seCurVer := CreateSessionAndSetID(t, store)
+	ver, err := GetBootstrapVersion(seCurVer)
+	require.NoError(t, err)
+	require.Equal(t, currentBootstrapVersion, ver)
+
+	// Verify the indexes have been created after upgrade
+	createWatchSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch")
+	require.Contains(t, createWatchSQL, "idx_start_time")
+	createWatchDoneSQL = getTableCreateSQLFn(seCurVer, "tidb_runaway_watch_done")
+	require.Contains(t, createWatchDoneSQL, "idx_done_time")
+}
+
 func TestWriteClusterIDToMySQLTiDBWhenUpgradingTo242(t *testing.T) {
 	if kerneltype.IsNextGen() {
 		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")

@@ -4302,7 +4302,10 @@ var systemTables = map[string]struct{}{
 	"gc_delete_range_done": {},
 }
 
-func isUndroppableTable(schema, table string) bool {
+func isUndroppableTable(schema, table string, tableInfo *model.TableInfo) bool {
+	if isReservedSchemaObjInNextGen(tableInfo.ID) {
+		return true
+	}
 	if schema == mysql.WorkloadSchema {
 		return true
 	}
@@ -4387,7 +4390,7 @@ func (e *executor) dropTableObject(
 
 		// Protect important system table from been dropped by a mistake.
 		// I can hardly find a case that a user really need to do this.
-		if isUndroppableTable(tn.Schema.L, tn.Name.L) {
+		if isUndroppableTable(tn.Schema.L, tn.Name.L, tableInfo.Meta()) {
 			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Drop tidb system table '%s.%s'", tn.Schema.L, tn.Name.L))
 		}
 		switch tableObjectType {
@@ -4609,6 +4612,9 @@ func (e *executor) renameTable(ctx sessionctx.Context, oldIdent, newIdent ast.Id
 		if err = dbutil.CheckTableModeIsNormal(tbl.Meta().Name, tbl.Meta().Mode); err != nil {
 			return err
 		}
+		if isReservedSchemaObjInNextGen(tbl.Meta().ID) {
+			return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdent.Name.L))
+		}
 	}
 
 	job := &model.Job{
@@ -4658,6 +4664,9 @@ func (e *executor) renameTables(ctx sessionctx.Context, oldIdents, newIdents []a
 			}
 			if err = dbutil.CheckTableModeIsNormal(t.Meta().Name, t.Meta().Mode); err != nil {
 				return err
+			}
+			if isReservedSchemaObjInNextGen(t.Meta().ID) {
+				return dbterror.ErrForbiddenDDL.FastGenByArgs(fmt.Sprintf("Rename system table '%s.%s'", schemas[0].Name.L, oldIdents[i].Name.L))
 			}
 		}
 
