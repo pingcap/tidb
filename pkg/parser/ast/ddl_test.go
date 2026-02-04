@@ -48,7 +48,7 @@ func TestDDLVisitorCover(t *testing.T) {
 		{&CreateMaterializedViewStmt{ViewName: &TableName{}, Select: &SelectStmt{}}, 0, 0},
 		{&CreateMaterializedViewLogStmt{Table: &TableName{}, Purge: &MLogPurgeClause{Immediate: true}}, 0, 0},
 		{&AlterMaterializedViewStmt{ViewName: &TableName{}, Actions: []*AlterMaterializedViewAction{{Tp: AlterMaterializedViewActionComment}}}, 0, 0},
-		{&AlterMaterializedViewLogStmt{Table: &TableName{}, Actions: []*AlterMaterializedViewLogAction{{Purge: &MLogPurgeClause{Immediate: true}}}}, 0, 0},
+		{&AlterMaterializedViewLogStmt{Table: &TableName{}, Actions: []*AlterMaterializedViewLogAction{{Tp: AlterMaterializedViewLogActionPurge, Purge: &MLogPurgeClause{Immediate: true}}}}, 0, 0},
 		{&DropMaterializedViewStmt{ViewName: &TableName{}}, 0, 0},
 		{&DropMaterializedViewLogStmt{Table: &TableName{}}, 0, 0},
 		{&RefreshMaterializedViewStmt{ViewName: &TableName{}}, 0, 0},

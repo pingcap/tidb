@@ -1778,21 +1778,22 @@ type MLogPurgeClause struct {
 
 // Restore implements Node interface.
 func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("PURGE ")
+	ctx.WriteKeyWord("PURGE")
 	if n.Immediate {
-		ctx.WriteKeyWord("IMMEDIATE")
+		ctx.WriteKeyWord(" IMMEDIATE")
 		return nil
 	}
 	if n.StartWith != nil {
-		ctx.WriteKeyWord("START WITH ")
+		ctx.WriteKeyWord(" START WITH ")
 		if err := n.StartWith.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.StartWith")
 		}
-		ctx.WritePlain(" ")
 	}
-	ctx.WriteKeyWord("NEXT ")
-	if err := n.Next.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.Next")
+	if n.Next != nil {
+		ctx.WriteKeyWord(" NEXT ")
+		if err := n.Next.Restore(ctx); err != nil {
+			return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.Next")
+		}
 	}
 	return nil
 }
@@ -1803,7 +1804,9 @@ type CreateMaterializedViewLogStmt struct {
 
 	Table *TableName
 	Cols  []model.CIStr
-	Purge *MLogPurgeClause
+	// TiFlashReplicas is the number of TiFlash replicas for the materialized view log.
+	TiFlashReplicas uint64
+	Purge           *MLogPurgeClause
 }
 
 // Restore implements Node interface.
@@ -1820,6 +1823,10 @@ func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(col.O)
 	}
 	ctx.WritePlain(")")
+	if n.TiFlashReplicas > 0 {
+		ctx.WriteKeyWord(" TIFLASH REPLICA ")
+		ctx.WritePlainf("%d", n.TiFlashReplicas)
+	}
 	if n.Purge != nil {
 		ctx.WritePlain(" ")
 		if err := n.Purge.Restore(ctx); err != nil {
@@ -1867,15 +1874,17 @@ type AlterMaterializedViewActionType int
 
 const (
 	AlterMaterializedViewActionComment AlterMaterializedViewActionType = iota
+	AlterMaterializedViewActionTiFlashReplica
 	AlterMaterializedViewActionRefresh
 )
 
 // AlterMaterializedViewAction is one action in ALTER MATERIALIZED VIEW.
 type AlterMaterializedViewAction struct {
 	node
-	Tp      AlterMaterializedViewActionType
-	Comment string
-	Refresh *MViewRefreshClause
+	Tp              AlterMaterializedViewActionType
+	Comment         string
+	TiFlashReplicas uint64
+	Refresh         *MViewRefreshClause
 }
 
 // Restore implements Node interface.
@@ -1885,6 +1894,10 @@ func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Comment)
+		return nil
+	case AlterMaterializedViewActionTiFlashReplica:
+		ctx.WriteKeyWord("TIFLASH REPLICA ")
+		ctx.WritePlainf("%d", n.TiFlashReplicas)
 		return nil
 	case AlterMaterializedViewActionRefresh:
 		ctx.WriteKeyWord("REFRESH ")
@@ -1991,15 +2004,34 @@ func (n *AlterMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 // AlterMaterializedViewLogAction is one action in ALTER MATERIALIZED VIEW LOG.
 type AlterMaterializedViewLogAction struct {
 	node
-	Purge *MLogPurgeClause
+	Tp AlterMaterializedViewLogActionType
+	// TiFlashReplicas is the number of TiFlash replicas to set for the materialized view log.
+	TiFlashReplicas uint64
+	Purge           *MLogPurgeClause
 }
+
+type AlterMaterializedViewLogActionType int
+
+const (
+	AlterMaterializedViewLogActionTiFlashReplica AlterMaterializedViewLogActionType = iota
+	AlterMaterializedViewLogActionPurge
+)
 
 // Restore implements Node interface.
 func (n *AlterMaterializedViewLogAction) Restore(ctx *format.RestoreCtx) error {
-	if n.Purge == nil {
+	switch n.Tp {
+	case AlterMaterializedViewLogActionTiFlashReplica:
+		ctx.WriteKeyWord("TIFLASH REPLICA ")
+		ctx.WritePlainf("%d", n.TiFlashReplicas)
+		return nil
+	case AlterMaterializedViewLogActionPurge:
+		if n.Purge == nil {
+			return nil
+		}
+		return n.Purge.Restore(ctx)
+	default:
 		return nil
 	}
-	return n.Purge.Restore(ctx)
 }
 
 // Accept implements Node Accept interface.
@@ -2009,7 +2041,7 @@ func (n *AlterMaterializedViewLogAction) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*AlterMaterializedViewLogAction)
-	if n.Purge != nil {
+	if n.Tp == AlterMaterializedViewLogActionPurge && n.Purge != nil {
 		if n.Purge.StartWith != nil {
 			node, ok := n.Purge.StartWith.Accept(v)
 			if !ok {
@@ -2151,12 +2183,15 @@ type RefreshMaterializedViewType int
 
 const (
 	RefreshMaterializedViewTypeFast RefreshMaterializedViewType = iota
+	RefreshMaterializedViewTypeComplete
 )
 
 func (t RefreshMaterializedViewType) String() string {
 	switch t {
 	case RefreshMaterializedViewTypeFast:
 		return "FAST"
+	case RefreshMaterializedViewTypeComplete:
+		return "COMPLETE"
 	default:
 		return "UNKNOWN"
 	}

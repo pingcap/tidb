@@ -371,6 +371,7 @@ import (
 		commit                "COMMIT"
 		committed             "COMMITTED"
 		compact               "COMPACT"
+		complete              "COMPLETE"
 		compressed            "COMPRESSED"
 		compression           "COMPRESSION"
 		compressionLevel      "COMPRESSION_LEVEL"
@@ -399,7 +400,6 @@ import (
 	declare               "DECLARE"
 	definer               "DEFINER"
 	delayKeyWrite         "DELAY_KEY_WRITE"
-	demand                "DEMAND"
 	digest                "DIGEST"
 	directory             "DIRECTORY"
 	disable               "DISABLE"
@@ -460,7 +460,6 @@ import (
 	immediate             "IMMEDIATE"
 	importKwd             "IMPORT"
 	imports               "IMPORTS"
-	including             "INCLUDING"
 	increment             "INCREMENT"
 	incremental           "INCREMENTAL"
 	indexes               "INDEXES"
@@ -511,7 +510,6 @@ import (
 	national              "NATIONAL"
 	ncharType             "NCHAR"
 	never                 "NEVER"
-	new                   "NEW"
 	next                  "NEXT"
 	nextval               "NEXTVAL"
 	no                    "NO"
@@ -1430,9 +1428,11 @@ import (
 	MViewNextOpt                           "materialized view NEXT option"
 	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
 	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
+	MLogOptionClauseOpt                    "materialized view log create option clause"
 	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
 	MLogPurgeClause                        "materialized view log PURGE clause"
 	MLogStartWithOpt                       "materialized view log START WITH option"
+	MLogNextOpt                            "materialized view log NEXT option"
 	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
@@ -5351,13 +5351,9 @@ MViewStartWithOrNextOpt:
 	}
 
 MViewStartWithOrNext:
-	"START" "WITH" Expression MViewNextOpt
+	"START" "WITH" Expression "NEXT" Expression
 	{
-		var next ast.ExprNode
-		if $4 != nil {
-			next = $4.(ast.ExprNode)
-		}
-		$$ = &ast.MViewRefreshClause{StartWith: $3.(ast.ExprNode), Next: next}
+		$$ = &ast.MViewRefreshClause{StartWith: $3.(ast.ExprNode), Next: $5.(ast.ExprNode)}
 	}
 |	"NEXT" Expression
 	{
@@ -5385,14 +5381,25 @@ MViewNextOpt:
 	}
 
 CreateMaterializedViewLogStmt:
-	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogPurgeClauseOpt
+	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogOptionClauseOpt MLogPurgeClauseOpt
 	{
 		x := &ast.CreateMaterializedViewLogStmt{
 			Table:            $6.(*ast.TableName),
 			Cols:             $8.([]model.CIStr),
-			Purge:            $10.(*ast.MLogPurgeClause),
+			TiFlashReplicas:  $10.(uint64),
+			Purge:            $11.(*ast.MLogPurgeClause),
 		}
 		$$ = x
+	}
+
+MLogOptionClauseOpt:
+	/* EMPTY */
+	{
+		$$ = uint64(0)
+	}
+|	"TIFLASH" "REPLICA" LengthNum
+	{
+		$$ = $3.(uint64)
 	}
 
 MLogPurgeClauseOpt:
@@ -5429,6 +5436,16 @@ MLogStartWithOpt:
 		$$ = $3
 	}
 
+MLogNextOpt:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|	"NEXT" Expression
+	{
+		$$ = $2
+	}
+
 AlterMaterializedViewStmt:
 	"ALTER" "MATERIALIZED" "VIEW" TableName AlterMaterializedViewActionList
 	{
@@ -5453,6 +5470,10 @@ AlterMaterializedViewAction:
 	"COMMENT" "=" stringLit
 	{
 		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
+	}
+|	"TIFLASH" "REPLICA" LengthNum
+	{
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionTiFlashReplica, TiFlashReplicas: $3.(uint64)}
 	}
 |	"REFRESH" MViewStartWithOpt MViewNextOpt
 	{
@@ -5489,17 +5510,25 @@ AlterMaterializedViewLogActionList:
 	}
 
 AlterMaterializedViewLogAction:
-	"PURGE" "IMMEDIATE"
+	"TIFLASH" "REPLICA" LengthNum
 	{
-		$$ = &ast.AlterMaterializedViewLogAction{Purge: &ast.MLogPurgeClause{Immediate: true}}
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionTiFlashReplica, TiFlashReplicas: $3.(uint64)}
 	}
-|	"PURGE" MLogStartWithOpt "NEXT" Expression
+|	"PURGE" "IMMEDIATE"
+	{
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: true}}
+	}
+|	"PURGE" MLogStartWithOpt MLogNextOpt
 	{
 		var startWith ast.ExprNode
 		if $2 != nil {
 			startWith = $2.(ast.ExprNode)
 		}
-		$$ = &ast.AlterMaterializedViewLogAction{Purge: &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: $4}}
+		var next ast.ExprNode
+		if $3 != nil {
+			next = $3.(ast.ExprNode)
+		}
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: next}}
 	}
 
 DropMaterializedViewStmt:
@@ -5521,7 +5550,11 @@ RefreshMaterializedViewStmt:
 	}
 
 RefreshMaterializedViewType:
-	"FAST"
+	"COMPLETE"
+	{
+		$$ = ast.RefreshMaterializedViewTypeComplete
+	}
+|	"FAST"
 	{
 		$$ = ast.RefreshMaterializedViewTypeFast
 	}
@@ -7137,6 +7170,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
 |	"CONSISTENT"
@@ -7242,11 +7276,8 @@ UnReservedKeyword:
 |	"KEY_BLOCK_SIZE"
 |	"MASTER"
 |	"MATERIALIZED"
-|	"DEMAND"
 |	"FAST"
 |	"IMMEDIATE"
-|	"INCLUDING"
-|	"NEW"
 |	"REFRESH"
 |	"SYNC"
 |	"MAX_ROWS"
