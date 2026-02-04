@@ -71,6 +71,7 @@ var compatibleSEMV2Config = `{
 		{"schema": "mysql", "name": "gc_delete_range", "hidden": true},
 		{"schema": "mysql", "name": "gc_delete_range_done", "hidden": true},
 		{"schema": "mysql", "name": "opt_rule_blacklist", "hidden": true},
+		{"schema": "mysql", "name": "sql_blacklist", "hidden": true},
 		{"schema": "mysql", "name": "tidb", "hidden": true},
 		{"schema": "mysql", "name": "global_variables", "hidden": true},
 		{"schema": "information_schema", "name": "cluster_config", "hidden": true},

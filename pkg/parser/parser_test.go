@@ -520,6 +520,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin show slow top all 9", true, "ADMIN SHOW SLOW TOP ALL 9"},
 		{"admin show slow recent 11", true, "ADMIN SHOW SLOW RECENT 11"},
 		{"admin reload expr_pushdown_blacklist", true, "ADMIN RELOAD EXPR_PUSHDOWN_BLACKLIST"},
+		{"admin reload sql_blacklist", true, "ADMIN RELOAD SQL_BLACKLIST"},
 		{"admin plugins disable audit, whitelist", true, "ADMIN PLUGINS DISABLE audit, whitelist"},
 		{"admin plugins enable audit, whitelist", true, "ADMIN PLUGINS ENABLE audit, whitelist"},
 		{"admin flush bindings", true, "ADMIN FLUSH BINDINGS"},

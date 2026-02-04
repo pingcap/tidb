@@ -152,6 +152,8 @@ const (
 	TiDBWorkloadValuesTableID = ReservedGlobalIDUpperBound - 59
 	// SysDatabaseID is the database ID of `sys`.
 	SysDatabaseID = ReservedGlobalIDUpperBound - 60
+	// SQLBlacklistTableID is the table ID of `sql_blacklist`.
+	SQLBlacklistTableID = ReservedGlobalIDUpperBound - 61
 )
 
 // IsReservedID checks if the given ID is a reserved global ID.

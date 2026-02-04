@@ -477,6 +477,7 @@ const (
 	// version254
 	// Add index on start_time for mysql.tidb_runaway_watch and done_time for mysql.tidb_runaway_watch_done
 	// to improve the performance of runaway watch sync loop.
+	// version254 add mysql.sql_blacklist table for SQL digest and keyword blacklist.
 	version254 = 254
 )
 
@@ -2048,4 +2049,5 @@ func upgradeToVer253(s sessionapi.Session, _ int64) {
 func upgradeToVer254(s sessionapi.Session, _ int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch ADD INDEX idx_start_time(start_time) COMMENT 'accelerate the speed when syncing new watch records'", dbterror.ErrDupKeyName)
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_runaway_watch_done ADD INDEX idx_done_time(done_time) COMMENT 'accelerate the speed when syncing done watch records'", dbterror.ErrDupKeyName)
+	doReentrantDDL(s, metadef.CreateSQLBlacklistTable)
 }

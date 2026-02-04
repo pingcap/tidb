@@ -1083,6 +1083,7 @@ var MySQLErrName = map[uint16]*mysql.ErrMessage{
 	ErrProtectedTableMode:               mysql.Message("Table %s is in mode %s", nil),
 	ErrInvalidTableModeSet:              mysql.Message("Invalid mode set from (or by default) %s to %s for table %s", nil),
 	ErrForbiddenDDL:                     mysql.Message("%s is forbidden", nil),
+	ErrSQLDeniedByBlacklist:             mysql.Message("SQL is denied by blacklist: %s", nil),
 
 	ErrHTTPServiceError: mysql.Message("HTTP request failed with status %s", nil),
 

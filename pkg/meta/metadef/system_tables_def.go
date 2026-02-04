@@ -308,6 +308,13 @@ const (
 		name 	CHAR(100) NOT NULL
 	);`
 
+	// CreateSQLBlacklistTable stores SQL digest and keyword blacklist for execution denial.
+	// type: 'digest' or 'keyword'; value: normalized SQL (for digest) or comma-separated keywords (for keyword).
+	CreateSQLBlacklistTable = `CREATE TABLE IF NOT EXISTS mysql.sql_blacklist (
+		type 	VARCHAR(16) NOT NULL,
+		value 	VARCHAR(1024) NOT NULL
+	);`
+
 	// CreateStatsExtendedTable stores the registered extended statistics.
 	CreateStatsExtendedTable = `CREATE TABLE IF NOT EXISTS mysql.stats_extended (
 		name varchar(32) NOT NULL,
