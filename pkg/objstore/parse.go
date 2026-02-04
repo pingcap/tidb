@@ -24,14 +24,15 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 )
 
 // BackendOptions further configures the storage backend not expressed by the
 // storage URL.
 type BackendOptions struct {
-	S3     S3BackendOptions     `json:"s3" toml:"s3"`
-	GCS    GCSBackendOptions    `json:"gcs" toml:"gcs"`
-	Azblob AzblobBackendOptions `json:"azblob" toml:"azblob"`
+	S3     s3like.S3BackendOptions `json:"s3" toml:"s3"`
+	GCS    GCSBackendOptions       `json:"gcs" toml:"gcs"`
+	Azblob AzblobBackendOptions    `json:"azblob" toml:"azblob"`
 }
 
 // ParseRawURL parse raw url to url object.
@@ -92,23 +93,25 @@ func parseBackend(u *url.URL, rawURL string, options *BackendOptions) (*backuppb
 		noop := &backuppb.Noop{}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_Noop{Noop: noop}}, nil
 
-	case "s3", "ks3":
+	case "s3", "ks3", "oss":
 		if u.Host == "" {
 			return nil, errors.Annotatef(berrors.ErrStorageInvalidConfig, "please specify the bucket for s3 in %s", rawURL)
 		}
 		prefix := strings.Trim(u.Path, "/")
 		s3 := &backuppb.S3{Bucket: u.Host, Prefix: prefix}
-		var s3Options S3BackendOptions = S3BackendOptions{ForcePathStyle: true}
+		var s3Options s3like.S3BackendOptions = s3like.S3BackendOptions{ForcePathStyle: true}
 		if options != nil {
 			s3Options = options.S3
 		}
 		ExtractQueryParameters(u, &s3Options)
-		s3Options.setForcePathStyle(rawURL)
+		s3Options.SetForcePathStyle(rawURL)
 		if err := s3Options.Apply(s3); err != nil {
 			return nil, errors.Trace(err)
 		}
 		if u.Scheme == "ks3" {
-			s3.Provider = ks3SDKProvider
+			s3.Provider = s3like.KS3SDKProvider
+		} else if u.Scheme == "oss" {
+			s3.Provider = s3like.OSSProvider
 		}
 		return &backuppb.StorageBackend{Backend: &backuppb.StorageBackend_S3{S3: s3}}, nil
 
@@ -240,7 +243,7 @@ func IsLocal(u *url.URL) bool {
 	return u.Scheme == "local" || u.Scheme == "file" || u.Scheme == ""
 }
 
-// IsS3 returns true if the URL is an S3 URL.
-func IsS3(u *url.URL) bool {
-	return u.Scheme == "s3"
+// IsS3Like returns true if the URL is an S3 like store URL.
+func IsS3Like(u *url.URL) bool {
+	return u.Scheme == "s3" || u.Scheme == "oss"
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -95,7 +96,7 @@ func TestBackupConfigHash(t *testing.T) {
 	cfg := &BackupConfig{
 		Config: Config{
 			BackendOptions: objstore.BackendOptions{
-				S3: objstore.S3BackendOptions{
+				S3: s3like.S3BackendOptions{
 					Endpoint: "123",
 				},
 			},

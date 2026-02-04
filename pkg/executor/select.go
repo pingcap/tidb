@@ -984,6 +984,8 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	sc.StatsLoad.Timeout = 0
 	sc.StatsLoad.NeededItems = nil
 	sc.StatsLoad.ResultCh = nil
+	sc.MatchSQLBindingCacheKey = nil
+	sc.MatchSQLBindingCache = nil
 
 	sc.SysdateIsNow = ctx.GetSessionVars().SysdateIsNow
 
@@ -1059,7 +1061,7 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 			goCtx = pprof.WithLabels(goCtx, pprof.Labels("sql", FormatSQL(prepareStmt.NormalizedSQL).String()))
 			pprof.SetGoroutineLabels(goCtx)
 		}
-		if topsqlstate.TopSQLEnabled() && prepareStmt.SQLDigest != nil {
+		if topsqlstate.TopProfilingEnabled() && prepareStmt.SQLDigest != nil {
 			sc.IsSQLRegistered.Store(true)
 			topsql.AttachAndRegisterSQLInfo(goCtx, prepareStmt.NormalizedSQL, prepareStmt.SQLDigest, vars.InRestrictedSQL)
 		}

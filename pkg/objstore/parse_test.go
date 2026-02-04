@@ -22,6 +22,7 @@ import (
 	"testing"
 
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
+	"github.com/pingcap/tidb/pkg/objstore/s3like"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,7 +56,7 @@ func TestCreateStorage(t *testing.T) {
 	require.Regexp(t, `please specify the bucket for s3 in s3:///bucket/more/prefix/.*`, err.Error())
 
 	s3opt := &BackendOptions{
-		S3: S3BackendOptions{
+		S3: s3like.S3BackendOptions{
 			Endpoint: "https://s3.example.com/",
 		},
 	}
@@ -75,7 +76,7 @@ func TestCreateStorage(t *testing.T) {
 	require.Equal(t, "bucket2", s3.Bucket)
 	require.Equal(t, "prefix", s3.Prefix)
 	require.Equal(t, "https://s3.example.com", s3.Endpoint)
-	require.Equal(t, ks3SDKProvider, s3.Provider)
+	require.Equal(t, s3like.KS3SDKProvider, s3.Provider)
 	require.False(t, s3.ForcePathStyle)
 
 	// nolint:lll
@@ -338,7 +339,7 @@ func TestS3ProfileOption(t *testing.T) {
 
 	// Test with BackendOptions
 	s3opt := &BackendOptions{
-		S3: S3BackendOptions{
+		S3: s3like.S3BackendOptions{
 			Profile: "profile-from-options",
 		},
 	}
@@ -411,7 +412,7 @@ func TestS3NoProfileCredentialsValidation(t *testing.T) {
 
 	// Case 1: No profile, partial credentials - should fail
 	s3opt := &BackendOptions{
-		S3: S3BackendOptions{
+		S3: s3like.S3BackendOptions{
 			AccessKey: "only-access-key",
 			// Missing SecretAccessKey
 		},
@@ -422,7 +423,7 @@ func TestS3NoProfileCredentialsValidation(t *testing.T) {
 
 	// Case 2: No profile, both credentials - should be valid
 	s3opt2 := &BackendOptions{
-		S3: S3BackendOptions{
+		S3: s3like.S3BackendOptions{
 			AccessKey:       "test-access",
 			SecretAccessKey: "test-secret",
 		},
@@ -435,7 +436,7 @@ func TestS3NoProfileCredentialsValidation(t *testing.T) {
 
 	// Case 3: No profile, no credentials - should be valid (IAM role, etc.)
 	s3opt3 := &BackendOptions{
-		S3: S3BackendOptions{
+		S3: s3like.S3BackendOptions{
 			Region: "us-east-1",
 			// No credentials
 		},
@@ -450,7 +451,7 @@ func TestS3NoProfileCredentialsValidation(t *testing.T) {
 func TestParseBackend(t *testing.T) {
 	{
 		backendOptions := &BackendOptions{
-			S3:     S3BackendOptions{},
+			S3:     s3like.S3BackendOptions{},
 			GCS:    GCSBackendOptions{},
 			Azblob: AzblobBackendOptions{},
 		}
@@ -466,13 +467,13 @@ func TestParseBackend(t *testing.T) {
 	}
 	{
 		backendOptions := &BackendOptions{
-			S3:     S3BackendOptions{StorageClass: "test"},
+			S3:     s3like.S3BackendOptions{StorageClass: "test"},
 			GCS:    GCSBackendOptions{StorageClass: "test"},
 			Azblob: AzblobBackendOptions{AccessTier: "test"},
 		}
 		u, err := ParseBackend("s3://bucket3/prefix/path?endpoint=https://127.0.0.1:9000&force_path_style=0&sse-kms-key-id=TestKey&xyz=abc", backendOptions)
 		require.NoError(t, err)
-		require.Equal(t, S3BackendOptions{StorageClass: "test"}, backendOptions.S3)
+		require.Equal(t, s3like.S3BackendOptions{StorageClass: "test"}, backendOptions.S3)
 		retBackend1, ok := u.Backend.(*backuppb.StorageBackend_S3)
 		require.True(t, ok)
 		require.Equal(t, backuppb.S3{

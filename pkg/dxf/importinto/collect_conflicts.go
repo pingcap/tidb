@@ -36,7 +36,7 @@ import (
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/log"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -146,7 +146,7 @@ func (e *collectConflictsStepExecutor) onFinished(_ context.Context, subtask *pr
 
 func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 	ctx context.Context,
-	objStore objstore.Storage,
+	objStore storeapi.Storage,
 	concurrency int,
 	kvGroup string,
 	ci *engineapi.ConflictInfo,

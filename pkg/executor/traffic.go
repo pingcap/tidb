@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/privilege"
@@ -375,9 +376,9 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		return readers, nil
 	}
 
-	var store objstore.Storage
+	var store storeapi.Storage
 	if mockStore := ctx.Value(trafficStoreKey); mockStore != nil {
-		store = mockStore.(objstore.Storage)
+		store = mockStore.(storeapi.Storage)
 	} else {
 		store, err = objstore.NewWithDefaultOpt(ctx, backend)
 		if err != nil {
@@ -386,7 +387,7 @@ func formReader4Replay(ctx context.Context, args map[string]string, tiproxyNum i
 		defer store.Close()
 	}
 	names := make(map[string]struct{}, tiproxyNum)
-	err = store.WalkDir(ctx, &objstore.WalkOption{
+	err = store.WalkDir(ctx, &storeapi.WalkOption{
 		ObjPrefix: filePrefix,
 	}, func(name string, _ int64) error {
 		if idx := strings.Index(name, "/"); idx >= 0 {

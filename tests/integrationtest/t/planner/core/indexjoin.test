@@ -156,3 +156,67 @@ CREATE TABLE `t8e1f515f` (
 
 explain select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
 select /*+ inl_join(st_984) */ concat( st_984.r1 , st_984.r1 ) as r0 , st_984.r0 as r1 , t8e1f515f.col_44 as r2 from t8e1f515f inner join (select /*+  stream_agg() */ t5602f14e.col_55 as r0 , group_concat(   t5602f14e.col_56 order by t5602f14e.col_56 ) as r1 , bit_and( t5602f14e.col_53 ) as r2 from t5602f14e where not( IsNull( JSON_OVERLAPS( '[15114205522559919477,7224822526648750310]' , t5602f14e.col_51 ) ) ) group by t5602f14e.col_55) st_984 on t8e1f515f.col_48 = st_984.r0 order by r0,r1,r2 ;
+
+# Test index join estimation with composite primary key prefix scan
+# This tests the fix for incorrect row count estimation when using only prefix columns of a composite PK
+
+drop table if exists t_inner_pk;
+drop table if exists t_outer_pk;
+
+# Create table with composite primary key (a, b)
+create table t_inner_pk (
+    a int,
+    b int,
+    data char(100),
+    primary key (a, b)
+);
+
+create table t_outer_pk (
+    a int,
+    val int,
+    key(val)
+);
+
+# Insert 100 rows with a=1 to demonstrate prefix scan behavior
+insert into t_inner_pk select 1, n, 'padding' from (
+    with recursive x as (
+        select 1 as n 
+        union all 
+        select n + 1 from x where n < 100
+    ) 
+    select n from x
+) t;
+
+# Only 1 row in outer table
+insert into t_outer_pk values (1, 100);
+
+analyze table t_inner_pk;
+analyze table t_outer_pk;
+
+# Test 1: Prefix scan on composite PK (only uses column 'a')
+# The join condition o.a = i.a only matches the FIRST column of PK(a,b)
+# This is a range scan, NOT a unique point get
+# Before fix: estRows would be incorrectly limited to ~1
+# After fix: estRows should reflect actual row count (not limited, e.g. 100)
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.* 
+from t_outer_pk o 
+join t_inner_pk i on o.a = i.a 
+where o.val = 100;
+
+# Test 2: Full PK match (uses both columns 'a' and 'b')
+# The join condition covers ALL columns of PK(a,b)
+# This IS a unique point get, should return at most 1 row
+# estRows should be limited to ~1 (correct behavior)
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.* 
+from t_outer_pk o 
+join t_inner_pk i on o.a = i.a and i.b = 1
+where o.val = 100;
+
+# Test 3: Prefix scan with range condition on second column
+# Uses column 'a' with equality and 'b' with range
+# This is NOT a unique point get (range on last column)
+# estRows should reflect the range size
+explain format='brief' select /*+ INL_JOIN(i) */ o.*, i.* 
+from t_outer_pk o 
+join t_inner_pk i on o.a = i.a and i.b > 50
+where o.val = 100;

@@ -20,6 +20,7 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -54,17 +55,26 @@ import (
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-// LoadDataReaderBuilderKey stores the reader channel that reads from the connection.
+// LoadDataReaderBuilderKey stores the builder of reader channel that reads from the connection.
 const LoadDataReaderBuilderKey loadDataVarKeyType = 1
+
+// LoadDataReaderWg stores the wait group for reader channel.
+const LoadDataReaderWg loadDataVarKeyType = 2
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
-// LoadDataReaderBuilder is a function type that builds a reader from a file path.
-type LoadDataReaderBuilder func(filepath string) (
-	r io.ReadCloser, err error,
-)
+// LoadDataReaderBuilder stores a function to start background goroutines to read from connection and
+// a `Wg` to wait for all background goroutines to finish.
+type LoadDataReaderBuilder struct {
+	// Build is a function that builds a reader from a file path.
+	Build func(filepath string) (
+		r io.ReadCloser, err error,
+	)
+	// Wg is a wait group to wait for the background goroutines created by Build to finish.
+	Wg *sync.WaitGroup
+}
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
@@ -81,7 +91,7 @@ type LoadDataExec struct {
 func (e *LoadDataExec) Open(_ context.Context) error {
 	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
 		var err error
-		e.infileReader, err = rb(e.loadDataWorker.GetInfilePath())
+		e.infileReader, err = rb.Build(e.loadDataWorker.GetInfilePath())
 		if err != nil {
 			return err
 		}
@@ -603,6 +613,10 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 		taskCnt uint64
 	)
 	for {
+		failpoint.Inject("CommitWorkError", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("mock commit work error"))
+		})
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

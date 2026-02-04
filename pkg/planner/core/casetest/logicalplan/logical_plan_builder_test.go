@@ -17,7 +17,9 @@ package logicalplan
 import (
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGroupBySchema(t *testing.T) {
@@ -43,11 +45,44 @@ WHERE EXISTS
                RIGHT JOIN mysql_3 a2
                WHERE t1.col_pk_date IS NULL
                GROUP BY a1.col_pk_char)) )`).Check(testkit.Rows("TableDual 0.00 root  rows:0",
-			"ScalarSubQuery N/A root  Output: ScalarQueryCol#25, ScalarQueryCol#26, ScalarQueryCol#27, ScalarQueryCol#28, ScalarQueryCol#29, ScalarQueryCol#30",
+			"ScalarSubQuery N/A root  Output: ScalarQueryCol#29, ScalarQueryCol#30, ScalarQueryCol#31, ScalarQueryCol#32, ScalarQueryCol#33, ScalarQueryCol#34, ScalarQueryCol#35",
 			"└─HashJoin 8000.00 root  Null-aware anti semi join, left side:TableReader, equal:[eq(test.mysql_3.col_pk_char, test.mysql_3.col_pk_char)]",
 			"  ├─HashAgg(Build) 1.00 root  group by:test.mysql_3.col_pk_char, funcs:firstrow(test.mysql_3.col_pk_char)->test.mysql_3.col_pk_char",
 			"  │ └─TableDual 0.00 root  rows:0",
 			"  └─TableReader(Probe) 10000.00 root  data:TableFullScan",
 			"    └─TableFullScan 10000.00 cop[tikv] table:a1 keep order:false, stats:pseudo"))
+	})
+}
+
+func TestLogicalPlanTypeRegression(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`use test`)
+	tk.MustExec(`create table tt (c year(4) NOT NULL DEFAULT '2016', primary key(c));`)
+	tk.MustExec(`insert into tt values (2016);`)
+	tk.MustQuery(`select /* issue:50235 */ * from tt where c < 16212511333665770580`).Check(testkit.Rows("2016"))
+
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test")
+		tk.MustExec("CREATE TABLE t1 ( c1 int);")
+		tk.MustExec("CREATE TABLE t2 ( c1 int unsigned);")
+		tk.MustExec("CREATE TABLE t3 ( c1 bigint unsigned);")
+		tk.MustExec("INSERT INTO t1 (c1) VALUES (8);")
+		tk.MustExec("INSERT INTO t2 (c1) VALUES (2454396638);")
+
+		// issue:52472
+		// union int and unsigned int will be promoted to long long
+		rs, err := tk.Exec("SELECT c1 FROM t1 UNION ALL SELECT c1 FROM t2")
+		require.NoError(t, err)
+		require.Len(t, rs.Fields(), 1)
+		require.Equal(t, mysql.TypeLonglong, rs.Fields()[0].Column.FieldType.GetType())
+		require.NoError(t, rs.Close())
+
+		// union int (even literal) and unsigned bigint will be promoted to decimal
+		rs, err = tk.Exec("SELECT 0 UNION ALL SELECT c1 FROM t3")
+		require.NoError(t, err)
+		require.Len(t, rs.Fields(), 1)
+		require.Equal(t, mysql.TypeNewDecimal, rs.Fields()[0].Column.FieldType.GetType())
+		require.NoError(t, rs.Close())
 	})
 }

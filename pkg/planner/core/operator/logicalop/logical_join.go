@@ -152,6 +152,9 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+		p.normalizeJoinConditionsForOuterJoin()
+	}
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -263,6 +266,21 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
 	return ret, newnChild, err
+}
+
+func (p *LogicalJoin) normalizeJoinConditionsForOuterJoin() {
+	if len(p.OtherConditions) == 0 {
+		return
+	}
+	// Outer join ON conditions are not simplified through predicate pushdown.
+	// Normalize only double NOT here to avoid cartesian joins caused by other conditions.
+	exprCtx := p.SCtx().GetExprCtx()
+	for i := range p.OtherConditions {
+		if !expression.ContainOuterNot(p.OtherConditions[i]) {
+			continue
+		}
+		p.OtherConditions[i] = expression.PushDownNot(exprCtx, p.OtherConditions[i])
+	}
 }
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
@@ -1477,6 +1495,15 @@ func (p *LogicalJoin) ExtractOnCondition(
 		// `columns` may be empty, if the condition is like `correlated_column op constant`, or `constant`,
 		// push this kind of constant condition down according to join type.
 		if len(columns) == 0 {
+			// The IsMutableEffectsExpr check is primarily designed to prevent mutable expressions
+			// like rand() > 0.5 from being pushed down; instead, such expressions should remain
+			// in other conditions.
+			// Checking len(columns) == 0 first is to let filter like rand() > tbl.col
+			// to be able pushdown as left or right condition
+			if expression.IsMutableEffectsExpr(expr) {
+				otherCond = append(otherCond, expr)
+				continue
+			}
 			leftCond, rightCond = p.pushDownConstExpr(expr, leftCond, rightCond, deriveLeft || deriveRight)
 			continue
 		}

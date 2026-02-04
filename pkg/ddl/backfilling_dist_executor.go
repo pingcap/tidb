@@ -27,7 +27,7 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/backend/external"
 	"github.com/pingcap/tidb/pkg/lightning/common"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/table"
 	"go.uber.org/zap"
@@ -90,7 +90,7 @@ func (m *BackfillSubTaskMeta) Marshal() ([]byte, error) {
 	return m.BaseExternalMeta.Marshal(m)
 }
 
-func decodeBackfillSubTaskMeta(ctx context.Context, extStore objstore.Storage, raw []byte) (*BackfillSubTaskMeta, error) {
+func decodeBackfillSubTaskMeta(ctx context.Context, extStore storeapi.Storage, raw []byte) (*BackfillSubTaskMeta, error) {
 	var subtask BackfillSubTaskMeta
 	err := json.Unmarshal(raw, &subtask)
 	if err != nil {
@@ -116,7 +116,7 @@ func decodeBackfillSubTaskMeta(ctx context.Context, extStore objstore.Storage, r
 	return &subtask, nil
 }
 
-func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore objstore.Storage, subtask *BackfillSubTaskMeta, externalPath string) error {
+func writeExternalBackfillSubTaskMeta(ctx context.Context, extStore storeapi.Storage, subtask *BackfillSubTaskMeta, externalPath string) error {
 	if extStore == nil {
 		return nil
 	}
@@ -174,7 +174,7 @@ func (s *backfillDistExecutor) newBackfillStepExecutor(
 	switch stage {
 	case proto.BackfillStepReadIndex:
 		jc := ddlObj.jobContext(jobMeta.ID, jobMeta.ReorgMeta)
-		ddlObj.setDDLLabelForTopSQL(jobMeta.ID, jobMeta.Query)
+		ddlObj.attachTopProfilingInfo(jobMeta.ID, jobMeta.Query)
 		ddlObj.setDDLSourceForDiagnosis(jobMeta.ID, jobMeta.Type)
 		return newReadIndexExecutor(store, sessPool, ddlObj.etcdCli, jobMeta, indexInfos, tbl, jc, cloudStorageURI, estRowSize)
 	case proto.BackfillStepMergeSort:

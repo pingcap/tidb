@@ -1136,6 +1136,9 @@ type SessionVars struct {
 	// OptimizerSelectivityLevel defines the level of the selectivity estimation in plan.
 	OptimizerSelectivityLevel int
 
+	// OptIndexPruneThreshold defines the threshold for index pruning optimization.
+	OptIndexPruneThreshold int
+
 	// OptimizerEnableNewOnlyFullGroupByCheck enables the new only_full_group_by check which is implemented by maintaining functional dependency.
 	OptimizerEnableNewOnlyFullGroupByCheck bool
 
@@ -1203,6 +1206,10 @@ type SessionVars struct {
 	// TiDBOptJoinReorderThreshold defines the minimal number of join nodes
 	// to use the greedy join reorder algorithm.
 	TiDBOptJoinReorderThreshold int
+
+	// TiDBOptJoinReorderThroughSel enables pushing selection conditions down to
+	// reordered join trees when applicable.
+	TiDBOptJoinReorderThroughSel bool
 
 	// SlowQueryFile indicates which slow query log file for SLOW_QUERY table to parse.
 	SlowQueryFile string
@@ -1624,7 +1631,8 @@ type SessionVars struct {
 	// When set to true, `col is (not) null`(`col` is index prefix column) is regarded as index filter rather than table filter.
 	OptPrefixIndexSingleScan bool
 	// OptPartialOrderedIndexForTopN indicates whether to enable partial ordered index optimization for TOPN queries.
-	OptPartialOrderedIndexForTopN bool
+	// Valid values: "DISABLE" (no optimization), "COST" (enable optimization with cost-based selection)
+	OptPartialOrderedIndexForTopN string
 
 	// chunkPool Several chunks and columns are cached
 	chunkPool chunk.Allocator
@@ -2066,6 +2074,12 @@ func (s *SessionVars) GetExecuteDuration() time.Duration {
 	return time.Since(s.StartTime) - s.DurationCompile
 }
 
+// IsPartialOrderedIndexForTopNEnabled indicates whether the partial ordered index optimization for TOPN queries is enabled.
+// TODO: consider more options other than "COST" in the future.
+func (s *SessionVars) IsPartialOrderedIndexForTopNEnabled() bool {
+	return s.OptPartialOrderedIndexForTopN == "COST"
+}
+
 // PartitionPruneMode presents the prune mode used.
 type PartitionPruneMode string
 
@@ -2259,6 +2273,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		BroadcastJoinThresholdSize:    vardef.DefBroadcastJoinThresholdSize,
 		BroadcastJoinThresholdCount:   vardef.DefBroadcastJoinThresholdCount,
 		OptimizerSelectivityLevel:     vardef.DefTiDBOptimizerSelectivityLevel,
+		OptIndexPruneThreshold:        vardef.DefTiDBOptIndexPruneThreshold,
 		RiskScaleNDVSkewRatio:         vardef.DefOptRiskScaleNDVSkewRatio,
 		RiskGroupNDVSkewRatio:         vardef.DefOptRiskGroupNDVSkewRatio,
 		AlwaysKeepJoinKey:             vardef.DefOptAlwaysKeepJoinKey,
@@ -2309,6 +2324,7 @@ func NewSessionVars(hctx HookContext) *SessionVars {
 		EnableVectorizedExpression:    vardef.DefEnableVectorizedExpression,
 		CommandValue:                  uint32(mysql.ComSleep),
 		TiDBOptJoinReorderThreshold:   vardef.DefTiDBOptJoinReorderThreshold,
+		TiDBOptJoinReorderThroughSel:  vardef.DefTiDBOptJoinReorderThroughSel,
 		SlowQueryFile:                 config.GetGlobalConfig().Log.SlowQueryFile,
 		WaitSplitRegionFinish:         vardef.DefTiDBWaitSplitRegionFinish,
 		WaitSplitRegionTimeout:        vardef.DefWaitSplitRegionTimeout,

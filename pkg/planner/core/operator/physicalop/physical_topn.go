@@ -41,6 +41,15 @@ type PhysicalTopN struct {
 	PartitionBy []property.SortItem
 	Offset      uint64
 	Count       uint64
+
+	// PrefixCol is the prefix index column for partial order optimization.
+	// Used for both execution (via UniqueID) and explain (via column name).
+	// If prefix index optimization is not used, this field is nil.
+	PrefixCol *expression.Column
+
+	// PrefixLen is the prefix index length (in bytes) for TiDB-side short-circuiting.
+	// If prefix index optimization is not used, this field is 0.
+	PrefixLen int
 }
 
 // ExhaustPhysicalPlans4LogicalTopN exhausts PhysicalTopN plans from LogicalTopN.
@@ -104,7 +113,11 @@ func (p *PhysicalTopN) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice + int64(cap(p.ByItems))*size.SizeOfPointer + size.SizeOfUint64*2
+	sum = p.BasePhysicalPlan.MemoryUsage() + size.SizeOfSlice +
+		int64(cap(p.ByItems))*size.SizeOfPointer +
+		size.SizeOfUint64*2 + // Offset, Count
+		size.SizeOfInt64 + // PrefixColID
+		size.SizeOfInt // PrefixLen
 	for _, byItem := range p.ByItems {
 		sum += byItem.MemoryUsage()
 	}
@@ -133,10 +146,23 @@ func (p *PhysicalTopN) ExplainInfo() string {
 	switch p.SCtx().GetSessionVars().EnableRedactLog {
 	case perrors.RedactLogDisable:
 		fmt.Fprintf(buffer, ", offset:%v, count:%v", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:%v, prefix_len:%v",
+				prefixColName, p.PrefixLen)
+		}
 	case perrors.RedactLogMarker:
 		fmt.Fprintf(buffer, ", offset:‹%v›, count:‹%v›", p.Offset, p.Count)
+		if p.PrefixCol != nil {
+			prefixColName := p.PrefixCol.ColumnExplainInfo(ectx, false)
+			fmt.Fprintf(buffer, ", prefix_col:‹%v›, prefix_len:‹%v›",
+				prefixColName, p.PrefixLen)
+		}
 	case perrors.RedactLogEnable:
 		fmt.Fprintf(buffer, ", offset:?, count:?")
+		if p.PrefixCol != nil {
+			fmt.Fprintf(buffer, ", prefix_col:?, prefix_len:?")
+		}
 	}
 	return buffer.String()
 }
@@ -251,7 +277,17 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 	if mppAllowed {
 		allTaskTypes = append(allTaskTypes, property.MppTaskType)
 	}
-	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes))
+	ret := make([]base.PhysicalPlan, 0, len(allTaskTypes)+1)
+
+	// Generate candidate plans for partial order optimization using prefix index FIRST.
+	// This is important because when use_index hint is used with a prefix index,
+	// we need to set ForcePartialOrder flag before other candidates are evaluated.
+	// Otherwise, normal TopN plans without partial order optimization might be selected.
+	if canUsePartialOrder4TopN(lt) {
+		topNWithPartialOrderProperty := getPhysTopNWithPartialOrderProperty(lt, prop)
+		ret = append(ret, topNWithPartialOrderProperty...)
+	}
+
 	for _, tp := range allTaskTypes {
 		resultProp := &property.PhysicalProperty{TaskTp: tp, ExpectedCnt: math.MaxFloat64,
 			CTEProducerStatus: prop.CTEProducerStatus, NoCopPushDown: prop.NoCopPushDown}
@@ -264,6 +300,7 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		topN.SetSchema(lt.Schema())
 		ret = append(ret, topN)
 	}
+
 	// If we can generate MPP task and there's vector distance function in the order by column.
 	// We will try to generate a property for possible vector indexes.
 	if mppAllowed {
@@ -304,4 +341,98 @@ func getPhysTopN(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []b
 		ret = append(ret, topN)
 	}
 	return ret
+}
+
+// canUsePartialOrder4TopN checks if the TopN's child tree satisfies the conditions
+// for partial order optimization.
+// Supported patterns:
+// 1. TopN -> DataSource
+// 2. TopN -> Selection -> DataSource
+// 3. TopN -> Projection -> DataSource
+// 4. TopN -> Projection -> Selection -> DataSource
+// 5. TopN -> Selection -> Projection -> DataSource
+//
+// Note: This function only checks if the query pattern is supported.
+// The actual check of whether PartialOrderInfo can pass through Projection
+// is done in LogicalProjection.TryToGetChildProp during physical optimization.
+func canUsePartialOrder4TopN(lt *logicalop.LogicalTopN) bool {
+	if !lt.SCtx().GetSessionVars().IsPartialOrderedIndexForTopNEnabled() {
+		return false
+	}
+	// Must have ORDER BY columns
+	if len(lt.ByItems) == 0 {
+		return false
+	}
+
+	return checkPartialOrderPattern(lt.SCtx(), lt.Children()[0])
+}
+
+// checkPartialOrderPattern recursively checks if the plan tree matches
+// a supported pattern for partial order optimization.
+// Supported intermediate operators: Selection, Projection
+// Terminal operator: DataSource
+func checkPartialOrderPattern(ctx base.PlanContext, plan base.LogicalPlan) bool {
+	switch p := plan.(type) {
+	case *logicalop.DataSource:
+		return true
+
+	case *logicalop.LogicalSelection:
+		// Selection can pass through, check its child
+		if len(p.Children()) != 1 {
+			return false
+		}
+		return checkPartialOrderPattern(ctx, p.Children()[0])
+
+	case *logicalop.LogicalProjection:
+		// Projection can pass through (actual column check is done in TryToGetChildProp)
+		if len(p.Children()) != 1 {
+			return false
+		}
+		return checkPartialOrderPattern(ctx, p.Children()[0])
+
+	default:
+		// Other operators are not supported
+		return false
+	}
+}
+
+// getPhysTopNWithPartialOrderProperty generates PhysicalTopN plans with partial order property
+// that use partial order optimization with prefix index.
+func getPhysTopNWithPartialOrderProperty(lt *logicalop.LogicalTopN, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	// Convert logical TopN ByItems to SortItems for PartialOrderInfo
+	sortItems := make([]*property.SortItem, 0, len(lt.ByItems))
+	for _, byItem := range lt.ByItems {
+		col, ok := byItem.Expr.(*expression.Column)
+		if !ok {
+			// ORDER BY must be simple column references for partial order optimization
+			return nil
+		}
+		sortItems = append(sortItems, &property.SortItem{
+			Col:  col,
+			Desc: byItem.Desc,
+		})
+	}
+
+	// Create PhysicalProperty with PartialOrderInfo
+	// Use CopMultiReadTaskType for IndexLookUp
+	partialOrderProp := &property.PhysicalProperty{
+		TaskTp: property.CopMultiReadTaskType,
+		// TODO: change it to limit + offset + N
+		ExpectedCnt: math.MaxFloat64,
+		PartialOrderInfo: &property.PartialOrderInfo{
+			SortItems: sortItems,
+		},
+		CTEProducerStatus: prop.CTEProducerStatus,
+		NoCopPushDown:     prop.NoCopPushDown,
+	}
+
+	topN := PhysicalTopN{
+		ByItems:     lt.ByItems,
+		PartitionBy: lt.PartitionBy,
+		Count:       lt.Count,
+		Offset:      lt.Offset,
+	}.Init(lt.SCtx(), lt.StatsInfo(), lt.QueryBlockOffset(), partialOrderProp)
+	topN.SetSchema(lt.Schema())
+
+	return []base.PhysicalPlan{topN}
 }

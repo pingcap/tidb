@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/dumpling/log"
 	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/format"
@@ -60,7 +61,7 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore objstore.Storage
+	extStore storeapi.Storage
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
@@ -79,7 +80,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		if err != nil {
 			panic(err)
 		}
-		s, err := objstore.New(context.Background(), b, &objstore.Options{})
+		s, err := objstore.New(context.Background(), b, &storeapi.Options{})
 		if err != nil {
 			panic(err)
 		}

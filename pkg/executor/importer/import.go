@@ -48,6 +48,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pformat "github.com/pingcap/tidb/pkg/parser/format"
@@ -386,10 +387,12 @@ type LoadDataController struct {
 	InsertColumns []*table.Column
 
 	logger    *zap.Logger
-	dataStore objstore.Storage
+	dataStore storeapi.Storage
 	dataFiles []*mydump.SourceFileMeta
+	// exported for testing.
+	TotalRealSize int64
 	// globalSortStore is used to store sorted data when using global sort.
-	globalSortStore objstore.Storage
+	globalSortStore storeapi.Storage
 	// ExecuteNodesCnt is the count of execute nodes.
 	ExecuteNodesCnt int
 }
@@ -1189,7 +1192,7 @@ func (e *LoadDataController) Close() {
 }
 
 // GetSortStore gets the sort store.
-func GetSortStore(ctx context.Context, url string) (objstore.Storage, error) {
+func GetSortStore(ctx context.Context, url string) (storeapi.Storage, error) {
 	u, err := objstore.ParseRawURL(url)
 	target := "cloud storage"
 	if err != nil {
@@ -1198,7 +1201,7 @@ func GetSortStore(ctx context.Context, url string) (objstore.Storage, error) {
 	return initExternalStore(ctx, u, target)
 }
 
-func initExternalStore(ctx context.Context, u *url.URL, target string) (objstore.Storage, error) {
+func initExternalStore(ctx context.Context, u *url.URL, target string) (storeapi.Storage, error) {
 	b, err2 := objstore.ParseBackendFromURL(u, nil)
 	if err2 != nil {
 		return nil, exeerrors.ErrLoadDataInvalidURI.GenWithStackByArgs(target, errors.GetErrStackMsg(err2))
@@ -1216,7 +1219,7 @@ func estimateCompressionRatio(
 	filePath string,
 	fileSize int64,
 	tp mydump.SourceType,
-	store objstore.Storage,
+	store storeapi.Storage,
 ) (float64, error) {
 	if tp != mydump.SourceTypeParquet {
 		return 1.0, nil
@@ -1284,7 +1287,7 @@ func getHarmonicMean(rs []float64) float64 {
 func (r *compressionEstimator) estimate(
 	ctx context.Context,
 	fileMeta mydump.SourceFileMeta,
-	store objstore.Storage,
+	store storeapi.Storage,
 ) float64 {
 	compressTp := mydump.ParseCompressionOnFileExtension(fileMeta.Path)
 	if compressTp == mydump.CompressionNone {
@@ -1376,7 +1379,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-		totalSize  int64
 		sourceType mydump.SourceType
 		// sizeExpansionRatio is the estimated size expansion for parquet format.
 		// For non-parquet format, it's always 1.0.
@@ -1415,7 +1417,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		fileMeta.RealSize = mydump.EstimateRealSizeForFile(ctx, fileMeta, s)
 		fileMeta.RealSize = int64(float64(fileMeta.RealSize) * compressionRatio)
 		dataFiles = append(dataFiles, &fileMeta)
-		totalSize = size
 	} else {
 		var commonPrefix string
 		if !objstore.IsLocal(u) {
@@ -1429,7 +1430,7 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		escapedPath := stringutil.EscapeGlobQuestionMark(fileNameKey)
 
 		allFiles := make([]mydump.RawFile, 0, 16)
-		if err := s.WalkDir(ctx, &objstore.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
+		if err := s.WalkDir(ctx, &storeapi.WalkOption{ObjPrefix: commonPrefix, SkipSubDir: true},
 			func(remotePath string, size int64) error {
 				allFiles = append(allFiles, mydump.RawFile{Path: remotePath, Size: size})
 				return nil
@@ -1479,7 +1480,6 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 		for _, f := range processedFiles {
 			if f != nil {
 				dataFiles = append(dataFiles, f)
-				totalSize += f.FileSize
 			}
 		}
 	}
@@ -1488,9 +1488,20 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 			return err2
 		}
 	}
+	var totalSize, totalRealSize int64
+	for _, dfile := range dataFiles {
+		totalSize += dfile.FileSize
+		realSize := dfile.RealSize
+		failpoint.Inject("amplifyRealSize", func(val failpoint.Value) {
+			factor := int64(val.(int))
+			realSize *= factor
+		})
+		totalRealSize += realSize
+	}
 
 	e.dataFiles = dataFiles
 	e.TotalFileSize = totalSize
+	e.TotalRealSize = totalRealSize
 
 	return nil
 }
@@ -1507,8 +1518,7 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 	if err != nil {
 		return err
 	}
-	totalSize := e.TotalFileSize
-	failpoint.InjectCall("mockImportDataSize", &totalSize)
+	totalSize := e.TotalRealSize
 	numOfIndexGenKV := GetNumOfIndexGenKV(e.TableInfo)
 	var indexSizeRatio float64
 	if numOfIndexGenKV > 0 {
@@ -1526,7 +1536,8 @@ func (e *LoadDataController) CalResourceParams(ctx context.Context, ksCodec []by
 		zap.Int("maxNode", e.MaxNodeCnt),
 		zap.Int("distsqlScanConcurrency", e.DistSQLScanConcurrency),
 		zap.Int("targetNodeCPU", targetNodeCPUCnt),
-		zap.String("totalFileSize", units.BytesSize(float64(totalSize))),
+		zap.String("totalFileSize", units.BytesSize(float64(e.TotalFileSize))),
+		zap.String("totalRealSize", units.BytesSize(float64(totalSize))),
 		zap.Int("fileCount", len(e.dataFiles)),
 		zap.Int("numOfIndexGenKV", numOfIndexGenKV),
 		zap.Float64("indexSizeRatio", indexSizeRatio),

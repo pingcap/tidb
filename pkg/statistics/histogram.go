@@ -605,15 +605,15 @@ func (hg *Histogram) LessRowCount(sctx planctx.PlanContext, value types.Datum) f
 func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum) RowEstimate {
 	lessCountA, bktIndexA := hg.LessRowCountWithBktIdx(sctx, a)
 	lessCountB, bktIndexB := hg.LessRowCountWithBktIdx(sctx, b)
-	rangeEst := lessCountB - lessCountA
+	rangeEst := DefaultRowEst(lessCountB - lessCountA)
 	lowEqual, _ := hg.EqualRowCount(sctx, a, false)
 	ndvAvg := hg.NotNullCount() / float64(hg.NDV)
 	// If values fall in the same bucket, we may underestimate the fractional result. So estimate the low value (a) as an equals, and
 	// estimate the high value as the default (because the input high value may be "larger" than the true high value). The range should
 	// not be less than both the low+high - or the lesser of the estimate for the individual range of a or b is used as a bound.
-	if rangeEst < max(lowEqual, ndvAvg) && hg.NDV > 0 {
+	if rangeEst.Est < max(lowEqual, ndvAvg) && hg.NDV > 0 {
 		result := min(lessCountB, hg.NotNullCount()-lessCountA)
-		rangeEst = min(result, lowEqual+ndvAvg)
+		rangeEst = DefaultRowEst(min(result, lowEqual+ndvAvg))
 	}
 	// LessCounts are equal only if no valid buckets or both values are out of range
 	isInValidBucket := lessCountA != lessCountB
@@ -623,21 +623,27 @@ func (hg *Histogram) BetweenRowCount(sctx planctx.PlanContext, a, b types.Datum)
 		if sctx != nil {
 			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
 			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
-			if skewRatio > 0 {
-				// Worst case skew is if the range includes all the rows in the bucket
-				skewEstimate := hg.Buckets[bktIndexA].Count
-				if bktIndexA > 0 {
-					skewEstimate -= hg.Buckets[bktIndexA-1].Count
-				}
-				// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
-				if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
-					skewEstimate -= hg.Buckets[bktIndexA].Repeat
-				}
-				return CalculateSkewRatioCounts(rangeEst, float64(skewEstimate), skewRatio)
+			// Worst case skew is if the range includes all the rows in the bucket
+			skewEstimate := hg.Buckets[bktIndexA].Count
+			if bktIndexA > 0 {
+				skewEstimate -= hg.Buckets[bktIndexA-1].Count
 			}
+			// If range does not include last value of its bucket, remove the repeat count from the skew estimate.
+			if lessCountB <= float64(hg.Buckets[bktIndexA].Count-hg.Buckets[bktIndexA].Repeat) {
+				skewEstimate -= hg.Buckets[bktIndexA].Repeat
+			}
+			if skewRatio > 0 {
+				// Cap the max estimate to 2X the estimate, but not beyond the bucket's maximum possible row count.
+				// TODO: RiskRangeSkewRatio is predominantly used for outOfRangeRowCount, and
+				//       it's usage is diluted here. Consider how to address this if
+				//       issues are reported here regarding under-estimation for in-bucket ranges.
+				rangeEst = CalculateSkewRatioCounts(rangeEst.Est, min(rangeEst.Est*2, float64(skewEstimate)), skewRatio)
+			}
+			// Report the full max estimate for risk estimation usage in compareCandidates (skylinePruning).
+			rangeEst.MaxEst = max(rangeEst.MaxEst, float64(skewEstimate))
 		}
 	}
-	return DefaultRowEst(rangeEst)
+	return rangeEst
 }
 
 // CalculateSkewRatioCounts calculates the default, min, and max skew estimates given a skew ratio.
@@ -1028,6 +1034,54 @@ func (hg *Histogram) OutOfRange(val types.Datum) bool {
 		chunk.Compare(hg.Bounds.GetRow(hg.Bounds.NumRows()-1), 0, &val) < 0
 }
 
+// calculateLeftOverlapPercent calculates the percentage for an out-of-range overlap
+// on the left side of the histogram. The predicate range [l, r] overlaps with
+// the region (boundL, histL), and we calculate the percentage of the shaded area.
+func calculateLeftOverlapPercent(l, r, boundL, histL, histWidth float64) float64 {
+	if histWidth <= 0 {
+		return 0
+	}
+	// bound the left/right ranges of the predicates to the "left triangle" of the histogram.
+	l = max(l, boundL)
+	r = min(r, histL)
+	// If there's no overlap after bounding, return 0.
+	if l >= r {
+		return 0
+	}
+	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
+	// Width of the histogram - squared to normalize to a percentage
+	histWidthSq := math.Pow(histWidth, 2)
+	// Right side of the predicate as distance from the left edge of the histogram
+	rightRange := math.Pow(r-boundL, 2)
+	// Left side of the predicate as distance from the left edge of the histogram
+	leftRange := math.Pow(l-boundL, 2)
+	return (rightRange - leftRange) / histWidthSq
+}
+
+// calculateRightOverlapPercent calculates the percentage for an out-of-range overlap
+// on the right side of the histogram. The predicate range [l, r] overlaps with
+// the region (histR, boundR), and we calculate the percentage of the shaded area.
+func calculateRightOverlapPercent(l, r, histR, boundR, histWidth float64) float64 {
+	if histWidth <= 0 {
+		return 0
+	}
+	// bound the left/right ranges of the predicates to the "right triangle" of the histogram.
+	l = max(l, histR)
+	r = min(r, boundR)
+	// If there's no overlap after bounding, return 0.
+	if l >= r {
+		return 0
+	}
+	// NOTE: Ranges are squared to determine a triangular (linear) distribution rather than uniform.
+	// Width of the histogram - squared to normalize to a percentage
+	histWidthSq := math.Pow(histWidth, 2)
+	// Left side of the predicate as distance from the right edge of the histogram.
+	leftRange := math.Pow(boundR-l, 2)
+	// Right side of the predicate as distance from the right edge of the histogram.
+	rightRange := math.Pow(boundR-r, 2)
+	return (leftRange - rightRange) / histWidthSq
+}
+
 // OutOfRangeRowCount estimate the row count of part of [lDatum, rDatum] which is out of range of the histogram.
 // Here we assume the density of data is decreasing from the lower/upper bound of the histogram toward outside.
 // The maximum row count it can get is the modifyCount. It reaches the maximum when out-of-range width reaches histogram range width.
@@ -1109,51 +1163,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 	histR := convertDatumToScalar(hg.GetUpper(hg.Len()-1), commonPrefix)
 	histWidth := histR - histL
 	// If we find that the histogram width is too small or too large - we still may need to consider
-	// the impact of modifications to the table
-	histInvalid := false
-	if histWidth <= 0 {
-		histInvalid = true
+	// the impact of modifications to the table. Reset the histogram width to 0.
+	if histWidth < 0 {
+		histWidth = 0
 	}
 	if math.IsInf(histWidth, 1) {
-		histInvalid = true
+		histWidth = 0
 	}
 	boundL := histL - histWidth
 	boundR := histR + histWidth
 
-	var leftPercent, rightPercent, avgRowCount float64
-	// keep l and r unchanged, use actualL and actualR to calculate.
-	actualL := l
-	actualR := r
-	// Only attempt to calculate the ranges if the histogram is valid
-	if !histInvalid {
-		// If the range overlaps with (boundL,histL), we need to handle the out-of-range part on the left of the histogram range
-		if actualL < histL && actualR > boundL {
-			// make sure boundL <= actualL < actualR <= histL
-			if actualL < boundL {
-				actualL = boundL
-			}
-			if actualR > histL {
-				actualR = histL
-			}
-			// Calculate the percentage of "the shaded area" on the left side.
-			leftPercent = (math.Pow(actualR-boundL, 2) - math.Pow(actualL-boundL, 2)) / math.Pow(histWidth, 2)
-		}
+	// Calculate left overlap percentage if the range overlaps with (boundL, histL)
+	leftPercent := calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
 
-		actualL = l
-		actualR = r
-		// If the range overlaps with (histR,boundR), we need to handle the out-of-range part on the right of the histogram range
-		if actualL < boundR && actualR > histR {
-			// make sure histR <= actualL < actualR <= boundR
-			if actualL < histR {
-				actualL = histR
-			}
-			if actualR > boundR {
-				actualR = boundR
-			}
-			// Calculate the percentage of "the shaded area" on the right side.
-			rightPercent = (math.Pow(boundR-actualL, 2) - math.Pow(boundR-actualR, 2)) / math.Pow(histWidth, 2)
-		}
-	}
+	// Calculate right overlap percentage if the range overlaps with (histR, boundR)
+	rightPercent := calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
 
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
@@ -1166,7 +1190,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	// Assume on average, half of newly added rows are within the histogram range, and the other
 	// half are distributed out of range according to the diagram in the function description.
-	avgRowCount = (addedRows * addedOutOfRangePct) * totalPercent
+	avgRowCount := (addedRows * addedOutOfRangePct) * totalPercent
 
 	// We may have missed the true lowest/highest values due to sampling OR there could be a delay in
 	// updates to modifyCount (meaning modifyCount is incorrectly set to 0). So ensure we always

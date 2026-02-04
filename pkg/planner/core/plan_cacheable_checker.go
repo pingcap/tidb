@@ -543,6 +543,10 @@ func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
 func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	if reason := p.GetNoncacheableReason(); reason != "" {
+		return false, reason
+	}
+
 	var subPlans []base.PhysicalPlan
 	switch x := p.(type) {
 	case *physicalop.PhysicalTableDual:
@@ -563,6 +567,11 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 		}
 		underIndexMerge = true
 		subPlans = append(subPlans, x.PartialPlansRaw...)
+	case *physicalop.PhysicalIndexReader:
+		subPlans = append(subPlans, x.IndexPlan)
+	case *physicalop.PhysicalIndexLookUpReader:
+		// Currently, there's no need to check the table plan of the IndexLookUpReader.
+		subPlans = append(subPlans, x.IndexPlan)
 	case *physicalop.PhysicalIndexScan:
 		if underIndexMerge && x.IsFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"

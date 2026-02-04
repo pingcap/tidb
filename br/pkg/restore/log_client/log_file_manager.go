@@ -24,6 +24,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils/iter"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	"go.uber.org/zap"
@@ -81,7 +82,7 @@ type streamMetadataHelper interface {
 		offset uint64,
 		length uint64,
 		compressionType backuppb.CompressionType,
-		storage objstore.Storage,
+		storage storeapi.Storage,
 		encryptionInfo *encryptionpb.FileEncryptionInfo,
 	) ([]byte, error)
 	ParseToMetadata(rawMetaData []byte) (*backuppb.Metadata, error)
@@ -108,7 +109,7 @@ type LogFileManager struct {
 	// (the startTS in these entries belong to [shiftStartTS, startTS]).
 	shiftStartTS uint64
 
-	storage objstore.Storage
+	storage storeapi.Storage
 	helper  streamMetadataHelper
 
 	withMigrationBuilder *WithMigrationsBuilder
@@ -125,7 +126,7 @@ type LogFileManager struct {
 type LogFileManagerInit struct {
 	StartTS   uint64
 	RestoreTS uint64
-	Storage   objstore.Storage
+	Storage   storeapi.Storage
 
 	MigrationsBuilder         *WithMigrationsBuilder
 	Migrations                *WithMigrations
@@ -225,8 +226,8 @@ func (lm *LogFileManager) streamingMetaByTS(ctx context.Context) (MetaNameIter, 
 	return filtered, nil
 }
 
-func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s objstore.Storage) (MetaNameIter, error) {
-	opt := &objstore.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
+func (lm *LogFileManager) createMetaIterOver(ctx context.Context, s storeapi.Storage) (MetaNameIter, error) {
+	opt := &storeapi.WalkOption{SubDir: stream.GetStreamBackupMetaPrefix()}
 	names := []string{}
 	err := s.WalkDir(ctx, opt, func(path string, size int64) error {
 		if !strings.HasSuffix(path, ".meta") {
@@ -513,10 +514,10 @@ func (lm *LogFileManager) Close() {
 	}
 }
 
-func Subcompactions(ctx context.Context, prefix string, s objstore.Storage, shiftStartTS, restoredTS uint64) SubCompactionIter {
+func Subcompactions(ctx context.Context, prefix string, s storeapi.Storage, shiftStartTS, restoredTS uint64) SubCompactionIter {
 	return iter.FlatMap(objstore.UnmarshalDir(
 		ctx,
-		&objstore.WalkOption{SubDir: prefix},
+		&storeapi.WalkOption{SubDir: prefix},
 		s,
 		func(t *backuppb.LogFileSubcompactions, name string, b []byte) error { return t.Unmarshal(b) },
 	), func(subcs *backuppb.LogFileSubcompactions) iter.TryNextor[*backuppb.LogFileSubcompaction] {
@@ -529,6 +530,6 @@ func Subcompactions(ctx context.Context, prefix string, s objstore.Storage, shif
 	})
 }
 
-func LoadMigrations(ctx context.Context, s objstore.Storage) iter.TryNextor[*backuppb.Migration] {
-	return objstore.UnmarshalDir(ctx, &objstore.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
+func LoadMigrations(ctx context.Context, s storeapi.Storage) iter.TryNextor[*backuppb.Migration] {
+	return objstore.UnmarshalDir(ctx, &storeapi.WalkOption{SubDir: "v1/migrations/"}, s, func(t *backuppb.Migration, name string, b []byte) error { return t.Unmarshal(b) })
 }

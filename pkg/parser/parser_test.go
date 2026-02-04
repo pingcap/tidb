@@ -526,6 +526,7 @@ func TestAdminStmt(t *testing.T) {
 		{"admin capture bindings", true, "ADMIN CAPTURE BINDINGS"},
 		{"admin evolve bindings", true, "ADMIN EVOLVE BINDINGS"},
 		{"admin reload bindings", true, "ADMIN RELOAD BINDINGS"},
+		{"admin reload cluster bindings", true, "ADMIN RELOAD CLUSTER BINDINGS"},
 		// This case would be removed once TiDB PR to remove ADMIN RELOAD STATISTICS is merged.
 		{"admin reload statistics", true, "ADMIN RELOAD STATS_EXTENDED"},
 		{"admin reload stats_extended", true, "ADMIN RELOAD STATS_EXTENDED"},
@@ -1462,6 +1463,8 @@ func TestDBAStmt(t *testing.T) {
 		{"flush general logs", true, "FLUSH GENERAL LOGS"},
 		{"flush slow logs", true, "FLUSH SLOW LOGS"},
 		{"flush client_errors_summary", true, "FLUSH CLIENT_ERRORS_SUMMARY"},
+		{"flush stats_delta", true, "FLUSH STATS_DELTA"},
+		{"flush stats_delta cluster", true, "FLUSH STATS_DELTA CLUSTER"},
 
 		// for call statement
 		{"call ", false, ""},
@@ -8152,4 +8155,16 @@ func TestTableAffinityOption(t *testing.T) {
 	}
 
 	RunTest(t, table, false)
+}
+
+func TestSplitPartition(t *testing.T) {
+	cases := []testCase{
+		{`create table t (id BIGINT, user_id BIGINT, action_type VARCHAR(20), PRIMARY KEY (id), INDEX idx_user_id (user_id)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx_user_id BETWEEN (1000) AND (100000) REGIONS 3`, true, "CREATE TABLE `t` (`id` BIGINT,`user_id` BIGINT,`action_type` VARCHAR(20),PRIMARY KEY(`id`),INDEX `idx_user_id`(`user_id`)) SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx_user_id` BETWEEN (1000) AND (100000) REGIONS 3"},
+		{`alter table t SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4`, true, "ALTER TABLE `t` SPLIT PRIMARY KEY BETWEEN (0) AND (1000000) REGIONS 4"},
+		{`alter table t SPLIT INDEX ss BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT INDEX `ss` BETWEEN (0) AND (1000000) REGIONS 3"},
+		{`create table t (id BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4`, true, "CREATE TABLE `t` (`id` BIGINT) SPLIT BETWEEN (0) AND (1000000) REGIONS 4"},
+		{`create table t (id BIGINT, INDEX idx(id)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX idx BETWEEN (0) AND (1000000) REGIONS 2`, true, "CREATE TABLE `t` (`id` BIGINT,INDEX `idx`(`id`)) SPLIT BETWEEN (0) AND (1000000) REGIONS 4 SPLIT INDEX `idx` BETWEEN (0) AND (1000000) REGIONS 2"},
+		{`alter table t SPLIT BETWEEN (0) AND (1000000) REGIONS 3`, true, "ALTER TABLE `t` SPLIT BETWEEN (0) AND (1000000) REGIONS 3"},
+	}
+	RunTest(t, cases, false)
 }
