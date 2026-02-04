@@ -367,14 +367,13 @@ import (
 	collation             "COLLATION"
 	columns               "COLUMNS"
 	columnFormat          "COLUMN_FORMAT"
-	comment               "COMMENT"
-	commit                "COMMIT"
-	committed             "COMMITTED"
-	compact               "COMPACT"
-	complete              "COMPLETE"
-	compressed            "COMPRESSED"
-	compression           "COMPRESSION"
-	compressionLevel      "COMPRESSION_LEVEL"
+		comment               "COMMENT"
+		commit                "COMMIT"
+		committed             "COMMITTED"
+		compact               "COMPACT"
+		compressed            "COMPRESSED"
+		compression           "COMPRESSION"
+		compressionLevel      "COMPRESSION_LEVEL"
 	compressionType       "COMPRESSION_TYPE"
 	concurrency           "CONCURRENCY"
 	config                "CONFIG"
@@ -5522,11 +5521,7 @@ RefreshMaterializedViewStmt:
 	}
 
 RefreshMaterializedViewType:
-	"COMPLETE"
-	{
-		$$ = ast.RefreshMaterializedViewTypeComplete
-	}
-|	"FAST"
+	"FAST"
 	{
 		$$ = ast.RefreshMaterializedViewTypeFast
 	}
@@ -7134,7 +7129,6 @@ UnReservedKeyword:
 |	"CAPTURE"
 |	"CAUSAL"
 |	"CLEANUP"
-|	"COMPLETE"
 |	"CLOSE"
 |	"CHAIN"
 |	"CHARSET"

@@ -2150,14 +2150,11 @@ type RefreshMaterializedViewStmt struct {
 type RefreshMaterializedViewType int
 
 const (
-	RefreshMaterializedViewTypeComplete RefreshMaterializedViewType = iota
-	RefreshMaterializedViewTypeFast
+	RefreshMaterializedViewTypeFast RefreshMaterializedViewType = iota
 )
 
 func (t RefreshMaterializedViewType) String() string {
 	switch t {
-	case RefreshMaterializedViewTypeComplete:
-		return "COMPLETE"
 	case RefreshMaterializedViewTypeFast:
 		return "FAST"
 	default:
