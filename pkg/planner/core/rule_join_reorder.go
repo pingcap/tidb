@@ -670,24 +670,24 @@ const (
 // - Agg/Sort/Window: add bounded input penalty to reflect blocking startup cost (TPCH-17/Q17).
 func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalPlan) float64 {
 	cost := groupNode.StatsInfo().RowCount
-	ratio := s.ctx.GetSessionVars().OptJoinReorderBlockingPenaltyRatio
-	s.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
 	switch x := groupNode.(type) {
 	case *logicalop.LogicalLimit:
-		need := float64(x.Count + x.Offset)
+		need := float64(x.Count) + float64(x.Offset)
 		if need > cost {
 			return need
 		}
 		return cost
 
 	case *logicalop.LogicalTopN:
-		need := float64(x.Count + x.Offset)
+		need := float64(x.Count) + float64(x.Offset)
 		if need > cost {
 			return need
 		}
 		return cost
 
 	case *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalWindow:
+		ratio := s.ctx.GetSessionVars().OptJoinReorderBlockingPenaltyRatio
+		s.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
 		in := inputRowsOneLevel(groupNode)
 		maxCap := math.Max(absMinCap, capFactor*cost)
 		return cost + ratio*math.Min(in, maxCap)
