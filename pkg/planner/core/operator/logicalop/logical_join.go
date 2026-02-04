@@ -156,11 +156,9 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		// Join ON conditions are not simplified through predicate pushdown.
 		// However, we still need to eliminate obvious logical constants in OtherConditions
 		// (e.g. "a = b OR 0") to avoid losing join keys.
-		p.OtherConditions = ruleutil.ApplyPredicateSimplificationForJoin(
+		p.OtherConditions = ruleutil.ApplyPredicateSimplification(
 			p.SCtx(),
 			p.OtherConditions,
-			nil,
-			nil,
 			false,
 			nil,
 		)
