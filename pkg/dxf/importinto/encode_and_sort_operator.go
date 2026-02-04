@@ -120,7 +120,7 @@ func newChunkWorker(
 		workerUUID := uuid.New().String()
 		// sorted index kv storage path: /{taskID}/{subtaskID}/index/{indexID}/{workerID}
 		indexWriterFn := func(indexID int64) (*external.Writer, error) {
-			onDup, err := getOnDupForKVGroup(op.indicesGenKV, external.IndexID2KVGroup(indexID))
+			onDup, err := getOnDupForIndex(op.indicesGenKV, indexID)
 			if err != nil {
 				return nil, err
 			}

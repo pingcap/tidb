@@ -541,6 +541,10 @@ func getOnDupForKVGroup(indicesGenKV map[int64]importer.GenKVIndex, kvGroup stri
 		// shouldn't happen
 		return engineapi.OnDuplicateKeyIgnore, errors.Trace(err2)
 	}
+	return getOnDupForIndex(indicesGenKV, indexID)
+}
+
+func getOnDupForIndex(indicesGenKV map[int64]importer.GenKVIndex, indexID int64) (engineapi.OnDuplicateKey, error) {
 	info, ok := indicesGenKV[indexID]
 	if !ok {
 		// shouldn't happen
