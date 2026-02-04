@@ -16,6 +16,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"maps"
@@ -900,19 +901,9 @@ func fetchRecordFromClusterStmtSummary(sctx base.PlanContext, planDigest string)
 func collectStrOrUserVarList(ctx base.PlanContext, list []*ast.StringOrUserVar) ([]string, error) {
 	result := make([]string, 0, len(list))
 	for _, single := range list {
-		var str string
-		if single.UserVar != nil {
-			val, ok := ctx.GetSessionVars().GetUserVarVal(strings.ToLower(single.UserVar.Name))
-			if !ok {
-				return nil, errors.New("can't find specified user variable: " + single.UserVar.Name)
-			}
-			var err error
-			str, err = val.ToString()
-			if err != nil {
-				return nil, err
-			}
-		} else {
-			str = single.StringLit
+		str, err := collectStrOrUserVar(ctx, single)
+		if err != nil {
+			return nil, err
 		}
 		split := strings.Split(str, ",")
 		for _, single := range split {
@@ -923,6 +914,20 @@ func collectStrOrUserVarList(ctx base.PlanContext, list []*ast.StringOrUserVar) 
 		}
 	}
 	return result, nil
+}
+
+func collectStrOrUserVar(ctx base.PlanContext, single *ast.StringOrUserVar) (string, error) {
+	if single == nil {
+		return "", nil
+	}
+	if single.UserVar != nil {
+		val, ok := ctx.GetSessionVars().GetUserVarVal(strings.ToLower(single.UserVar.Name))
+		if !ok {
+			return "", errors.New("can't find specified user variable: " + single.UserVar.Name)
+		}
+		return val.ToString()
+	}
+	return single.StringLit, nil
 }
 
 // constructSQLBindOPFromPlanDigest tries to construct a SQLBindOpDetail from plan digest by fetching the corresponding
@@ -1030,6 +1035,34 @@ func (b *PlanBuilder) buildCreateBindPlanFromPlanDigest(v *ast.CreateBindingStmt
 
 func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, error) {
 	if v.OriginNode == nil {
+		if v.EncodedBindingStmt != nil {
+			encoded, err := collectStrOrUserVar(b.ctx, v.EncodedBindingStmt)
+			if err != nil {
+				return nil, err
+			}
+			decodedBytes, err := base64.StdEncoding.DecodeString(strings.TrimSpace(encoded))
+			if err != nil {
+				return nil, errors.Annotate(err, "invalid base64 string for CREATE BINDING USING")
+			}
+			decodedSQL := strings.TrimSpace(string(decodedBytes))
+			if decodedSQL == "" {
+				return nil, errors.New("decoded SQL is empty for CREATE BINDING USING")
+			}
+			charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()
+			p := parser.New()
+			stmt, err := p.ParseOneStmt(decodedSQL, charSet, collation)
+			if err != nil {
+				return nil, errors.Annotatef(err, "failed to parse decoded SQL for CREATE BINDING USING: %s", decodedSQL)
+			}
+			decodedCreate, ok := stmt.(*ast.CreateBindingStmt)
+			if !ok {
+				return nil, errors.Errorf("decoded SQL is not a CREATE BINDING statement: %T", stmt)
+			}
+			if decodedCreate.EncodedBindingStmt != nil {
+				return nil, errors.New("nested CREATE BINDING USING is not allowed")
+			}
+			return b.buildCreateBindPlan(decodedCreate)
+		}
 		return b.buildCreateBindPlanFromPlanDigest(v)
 	}
 	charSet, collation := b.ctx.GetSessionVars().GetCharsetInfo()

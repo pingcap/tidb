@@ -14638,6 +14638,14 @@ CreateBindingStmt:
 
 		$$ = x
 	}
+|	"CREATE" GlobalScope "BINDING" "USING" StringLitOrUserVariable
+	{
+		x := &ast.CreateBindingStmt{
+			GlobalScope:         $2.(bool),
+			EncodedBindingStmt: $5.(*ast.StringOrUserVar),
+		}
+		$$ = x
+	}
 |	"CREATE" GlobalScope "BINDING" "FROM" "HISTORY" "USING" "PLAN" "DIGEST" StringLitOrUserVariableList
 	{
 		x := &ast.CreateBindingStmt{

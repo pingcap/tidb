@@ -2162,6 +2162,9 @@ type CreateBindingStmt struct {
 	OriginNode  StmtNode
 	HintedNode  StmtNode
 	PlanDigests []*StringOrUserVar
+	// EncodedBindingStmt is used by `CREATE [GLOBAL|SESSION] BINDING USING '<base64>'`.
+	// The string literal should be base64-decoded to a SQL statement, then executed to create binding(s).
+	EncodedBindingStmt *StringOrUserVar
 }
 
 func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
@@ -2172,13 +2175,20 @@ func (n *CreateBindingStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SESSION ")
 	}
 	if n.OriginNode == nil {
-		ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
-		for i, v := range n.PlanDigests {
-			if i != 0 {
-				ctx.WritePlain(", ")
+		if n.EncodedBindingStmt != nil {
+			ctx.WriteKeyWord("BINDING USING ")
+			if err := n.EncodedBindingStmt.Restore(ctx); err != nil {
+				return errors.Annotate(err, "An error occurred while restore CreateBindingStmt.EncodedBindingStmt")
 			}
-			if err := v.Restore(ctx); err != nil {
-				return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+		} else {
+			ctx.WriteKeyWord("BINDING FROM HISTORY USING PLAN DIGEST ")
+			for i, v := range n.PlanDigests {
+				if i != 0 {
+					ctx.WritePlain(", ")
+				}
+				if err := v.Restore(ctx); err != nil {
+					return errors.Annotatef(err, "An error occurred while restore CreateBindingStmt.PlanDigests[%d]", i)
+				}
 			}
 		}
 	} else {
@@ -2211,6 +2221,12 @@ func (n *CreateBindingStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.HintedNode = hintedNode.(StmtNode)
+	} else if n.EncodedBindingStmt != nil {
+		newEncoded, ok := n.EncodedBindingStmt.Accept(v)
+		if !ok {
+			return n, false
+		}
+		n.EncodedBindingStmt = newEncoded.(*StringOrUserVar)
 	} else {
 		for i, digest := range n.PlanDigests {
 			newDigest, ok := digest.Accept(v)

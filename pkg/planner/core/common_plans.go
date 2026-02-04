@@ -16,6 +16,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -768,6 +769,10 @@ func (e *Explain) renderResultForExplore() error {
 		if err != nil {
 			return err
 		}
+		// The original binding statement may contain quotes / special chars.
+		// Encode it as base64 and wrap it in a stable "CREATE ... USING '<base64>'" form.
+		originalBindingStmt := fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)
+		encodedBindingStmt := base64.StdEncoding.EncodeToString([]byte(originalBindingStmt))
 
 		e.Rows = append(e.Rows, []string{
 			p.Binding.OriginalSQL,
@@ -783,7 +788,8 @@ func (e *Explain) renderResultForExplore() error {
 			p.Recommend,
 			p.Reason,
 			fmt.Sprintf("EXPLAIN ANALYZE '%v'", p.PlanDigest),
-			fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)})
+			fmt.Sprintf("CREATE GLOBAL BINDING USING '%s'", encodedBindingStmt),
+		})
 	}
 	return nil
 }
