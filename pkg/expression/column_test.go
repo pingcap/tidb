@@ -131,36 +131,6 @@ func TestColInfo2Col(t *testing.T) {
 	require.Nil(t, res)
 }
 
-func TestIndexInfo2Cols(t *testing.T) {
-	col0 := &Column{UniqueID: 0, ID: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	col1 := &Column{UniqueID: 1, ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	colInfo0 := &model.ColumnInfo{ID: 0, Name: ast.NewCIStr("0")}
-	colInfo1 := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("1")}
-	indexCol0, indexCol1 := &model.IndexColumn{Name: ast.NewCIStr("0")}, &model.IndexColumn{Name: ast.NewCIStr("1")}
-	indexInfo := &model.IndexInfo{Columns: []*model.IndexColumn{indexCol0, indexCol1}}
-
-	cols := []*Column{col0}
-	colInfos := []*model.ColumnInfo{colInfo0}
-	resCols, lengths := IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 1)
-	require.Len(t, lengths, 1)
-	require.True(t, resCols[0].EqualColumn(col0))
-
-	cols = []*Column{col1}
-	colInfos = []*model.ColumnInfo{colInfo1}
-	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 0)
-	require.Len(t, lengths, 0)
-
-	cols = []*Column{col0, col1}
-	colInfos = []*model.ColumnInfo{colInfo0, colInfo1}
-	resCols, lengths = IndexInfo2PrefixCols(colInfos, cols, indexInfo)
-	require.Len(t, resCols, 2)
-	require.Len(t, lengths, 2)
-	require.True(t, resCols[0].EqualColumn(col0))
-	require.True(t, resCols[1].EqualColumn(col1))
-}
-
 func TestColHybird(t *testing.T) {
 	ctx := mock.NewContext()
 

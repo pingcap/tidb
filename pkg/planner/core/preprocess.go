@@ -1521,6 +1521,9 @@ var mysqlValidTableEngineNames = map[string]struct{}{
 	"myisam":     {},
 	"ndb":        {},
 	"heap":       {},
+	"aria":       {}, // https://mariadb.com/docs/server/server-usage/storage-engines/aria/aria-storage-engine
+	"myrocks":    {}, // https://mariadb.com/docs/server/server-usage/storage-engines/myrocks
+	"tokudb":     {}, // https://mariadb.com/docs/server/server-usage/storage-engines/legacy-storage-engines/tokudb
 }
 
 func checkTableEngine(engineName string) error {
@@ -2005,7 +2008,6 @@ func (p *preprocessor) hasAutoConvertWarning(colDef *ast.ColumnDef) bool {
 
 func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanContext, dbName ast.CIStr, tbl table.Table, is infoschema.InfoSchema) (retTbl table.Table, err error) {
 	skipLock := false
-	shouldLockMDL := false
 	var lockedID int64
 
 	defer func() {
@@ -2020,8 +2022,8 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 			}
 		}
 
-		if shouldLockMDL && err == nil && !skipLock {
-			sctx.GetSessionVars().StmtCtx.MDLRelatedTableIDs[retTbl.Meta().ID] = struct{}{}
+		if err == nil {
+			sctx.GetSessionVars().StmtCtx.RelatedTableIDs[retTbl.Meta().ID] = struct{}{}
 		}
 
 		if lockedID != 0 && err != nil {
@@ -2052,7 +2054,6 @@ func tryLockMDLAndUpdateSchemaIfNecessary(ctx context.Context, sctx base.PlanCon
 		return tbl, nil
 	}
 	tableInfo := tbl.Meta()
-	shouldLockMDL = true
 	if _, ok := sctx.GetSessionVars().GetRelatedTableForMDL().Load(tableInfo.ID); !ok {
 		if se, ok := is.(*infoschema.SessionExtendedInfoSchema); ok && skipLock && se.MdlTables != nil {
 			if _, ok := se.MdlTables.TableByID(tableInfo.ID); ok {

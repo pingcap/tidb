@@ -20,6 +20,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -602,9 +603,12 @@ func TestSoftDeleteImplicitDeleteRowsMetricsBySQLType(t *testing.T) {
 			name:  "load data",
 			label: "LoadData",
 			exec: func() {
-				readerBuilder := executor.LoadDataReaderBuilder(func(_ string) (io.ReadCloser, error) {
-					return mydump.NewStringReader("1 2\n3 4\n4 5\n"), nil
-				})
+				readerBuilder := executor.LoadDataReaderBuilder{
+					Build: func(_ string) (io.ReadCloser, error) {
+						return mydump.NewStringReader("1 2\n3 4\n4 5\n"), nil
+					},
+					Wg: &sync.WaitGroup{},
+				}
 				sctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 				defer sctx.SetValue(executor.LoadDataReaderBuilderKey, nil)
 				tk.MustExec("LOAD DATA LOCAL INFILE '/tmp/nonexistence.csv' INTO TABLE t fields terminated by ' ' lines terminated by '\\n' (id, v)")

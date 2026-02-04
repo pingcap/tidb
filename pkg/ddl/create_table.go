@@ -49,6 +49,7 @@ import (
 	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/pingcap/tidb/pkg/util/tracing"
 	"go.uber.org/zap"
 )
 
@@ -145,6 +146,13 @@ func createTable(jobCtx *jobContext, job *model.Job, r autoid.Requirement, args 
 			return tbInfo, errors.Wrapf(err, "failed to notify PD the placement rules")
 		}
 
+		if tbInfo.Affinity != nil {
+			if err = createTableAffinityGroupsInPD(jobCtx, tbInfo); err != nil {
+				job.State = model.JobStateCancelled
+				return tbInfo, errors.Wrapf(err, "failed to create table affinity groups in PD")
+			}
+		}
+
 		// Updating auto id meta kv is done in a separate txn.
 		// It's ok as these data are bind with table ID, and we won't use these
 		// table IDs until info schema version is updated.
@@ -195,6 +203,7 @@ func handleAutoIncID(r autoid.Requirement, job *model.Job, tbInfo *model.TableIn
 		}
 	}
 
+	failpoint.InjectCall("handleAutoIncID")
 	return nil
 }
 
@@ -204,6 +213,9 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 			failpoint.Return(ver, errors.New("mock do job error"))
 		}
 	})
+
+	r := tracing.StartRegion(jobCtx.ctx, "ddlWorker.onCreateTable")
+	defer r.End()
 
 	args, err := model.GetCreateTableArgs(job)
 	if err != nil {
@@ -761,9 +773,19 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbInfo)
+		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbInfo)
 	}
-	return tbInfo, err
+
+	if err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidWithStmt(ctx, tbInfo, s); err != nil {
+		return nil, err
+	}
+	if err = checkTableInfoValidExtra(ctx.GetExprCtx().GetEvalCtx().ErrCtx(), store, s.Table.Schema, tbInfo); err != nil {
+		return nil, err
+	}
+	return tbInfo, nil
 }
 
 // BuildTableInfoWithStmt builds model.TableInfo from a SQL statement without validity check
@@ -848,6 +870,11 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbIn
 	// After handleTableOptions, so the partitions can get defaults from Table level
 	err = buildTablePartitionInfo(ctx, s.Partition, tbInfo)
 	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	// validateTableAffinity settings, this should be after buildTablePartitionInfo for some partition checks
+	if err = validateTableAffinity(tbInfo, tbInfo.Affinity); err != nil {
 		return nil, errors.Trace(err)
 	}
 
@@ -1071,6 +1098,12 @@ func handleTableOptions(options []*ast.TableOption, tbInfo *model.TableInfo, dbI
 
 			tbInfo.TTLInfo = ttlInfo
 			ttlOptionsHandled = true
+		case ast.TableOptionAffinity:
+			affinity, err := model.NewTableAffinityInfoWithLevel(op.StrValue)
+			if err != nil {
+				return errors.Trace(dbterror.ErrInvalidTableAffinity.GenWithStackByArgs(fmt.Sprintf("'%s'", op.StrValue)))
+			}
+			tbInfo.Affinity = affinity
 		case ast.TableOptionEngineAttribute:
 			return errors.Trace(dbterror.ErrUnsupportedEngineAttribute)
 		}
@@ -1365,9 +1398,20 @@ func BuildTableInfoWithLike(ident ast.Ident, referTblInfo *model.TableInfo, s *a
 		tblInfo.Partition = &pi
 	}
 
-	if referTblInfo.TTLInfo != nil {
+	// for issue #64948, temporary table does not support TLL, we should remove it
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		tblInfo.TTLInfo = nil
+	} else if referTblInfo.TTLInfo != nil {
 		tblInfo.TTLInfo = referTblInfo.TTLInfo.Clone()
 	}
+
+	if s.TemporaryKeyword != ast.TemporaryNone {
+		// temporary table does not support affinity, we should remove it
+		tblInfo.Affinity = nil
+	} else if referTblInfo.Affinity != nil {
+		tblInfo.Affinity = referTblInfo.Affinity.Clone()
+	}
+
 	renameCheckConstraint(&tblInfo)
 	return &tblInfo, nil
 }

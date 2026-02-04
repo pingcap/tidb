@@ -593,12 +593,12 @@ func (b *PlanBuilder) buildJoin(ctx context.Context, joinNode *ast.Join) (base.L
 	switch joinNode.Tp {
 	case ast.LeftJoin:
 		// left outer join need to be checked elimination
-		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
 		joinPlan.JoinType = base.LeftOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), leftPlan.Schema().Len(), joinPlan.Schema().Len())
 	case ast.RightJoin:
 		// right outer join need to be checked elimination
-		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin
+		b.optFlag = b.optFlag | rule.FlagEliminateOuterJoin | rule.FlagOuterJoinToSemiJoin
 		joinPlan.JoinType = base.RightOuterJoin
 		util.ResetNotNullFlag(joinPlan.Schema(), 0, leftPlan.Schema().Len())
 	default:
@@ -1745,12 +1745,12 @@ func (b *PlanBuilder) buildSemiJoinForSetOperator(
 		if err != nil {
 			return nil, err
 		}
-		_, leftArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[0].(*expression.Column)
-		_, rightArgIsColumn := eqCond.(*expression.ScalarFunction).GetArgs()[1].(*expression.Column)
-		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !leftArgIsColumn || !rightArgIsColumn {
+		sf := eqCond.(*expression.ScalarFunction)
+		_, _, ok := expression.IsColOpCol(sf)
+		if leftCol.RetType.GetType() != rightCol.RetType.GetType() || !ok {
 			joinPlan.OtherConditions = append(joinPlan.OtherConditions, eqCond)
 		} else {
-			joinPlan.EqualConditions = append(joinPlan.EqualConditions, eqCond.(*expression.ScalarFunction))
+			joinPlan.EqualConditions = append(joinPlan.EqualConditions, sf)
 		}
 	}
 	return joinPlan, nil
@@ -3670,16 +3670,6 @@ func (b *PlanBuilder) addAliasName(ctx context.Context, selectStmt *ast.SelectSt
 	return resultList, nil
 }
 
-func (b *PlanBuilder) pushHintWithoutTableWarning(hint *ast.TableOptimizerHint) {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(0, &sb)
-	if err := hint.Restore(ctx); err != nil {
-		return
-	}
-	b.ctx.GetSessionVars().StmtCtx.SetHintWarning(
-		fmt.Sprintf("Hint %s is inapplicable. Please specify the table names in the arguments.", sb.String()))
-}
-
 func (b *PlanBuilder) pushTableHints(hints []*ast.TableOptimizerHint, currentLevel int) {
 	hints = b.hintProcessor.GetCurrentStmtHints(hints, currentLevel)
 	sessionVars := b.ctx.GetSessionVars()
@@ -3916,10 +3906,7 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 				// Besides, it will only lock the metioned in `of` part.
 				b.ctx.GetSessionVars().StmtCtx.LockTableIDs[tNameW.TableInfo.ID] = struct{}{}
 			}
-			dbName := tName.Schema.L
-			if dbName == "" {
-				dbName = b.ctx.GetSessionVars().CurrentDB
-			}
+			dbName := getLowerDB(tName.Schema, b.ctx.GetSessionVars())
 			var authErr error
 			if user := b.ctx.GetSessionVars().User; user != nil {
 				authErr = plannererrors.ErrTableaccessDenied.GenWithStackByArgs("SELECT with locking clause", user.AuthUsername, user.AuthHostname, tNameW.Name.L)
@@ -4596,7 +4583,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	allPaths := make([]*util.AccessPath, len(possiblePaths))
 	copy(allPaths, possiblePaths)
 
-	countCnt := len(columns) + 1 // +1 for an extra handle column
+	countCnt := len(columns) + 2 // +1 for an extra handle column and extra commit ts column
 	ds := logicalop.DataSource{
 		DBName:                 dbName,
 		TableAsName:            asName,
@@ -4715,12 +4702,12 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 
 	// Init CommonHandleCols and CommonHandleLens for data source.
 	if tableInfo.IsCommonHandle {
-		ds.CommonHandleCols, ds.CommonHandleLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
+		ds.CommonHandleCols, ds.CommonHandleLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, tables.FindPrimaryIndex(tableInfo))
 	}
 	// Init FullIdxCols, FullIdxColLens for accessPaths.
 	for _, path := range ds.AllPossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.FullIdxCols, path.FullIdxColLens = util.IndexInfo2FullCols(ds.Columns, ds.Schema().Columns, path.Index)
 
 			// check whether the path's index has a tidb_shard() prefix and the index column count
 			// more than 1. e.g. index(tidb_shard(a), a)
@@ -5310,13 +5297,21 @@ func pruneAndBuildColPositionInfoForDelete(
 
 		tbl := tblID2Table[cols2PosInfo.TblID]
 		tblInfo := tbl.Meta()
-		// If it's partitioned table, or has foreign keys, or is point get plan, we can't prune the columns, currently.
+		// If it's partitioned table, or has foreign keys, or has partial index, or is point get plan, we can't prune the columns, currently.
 		// nonPrunedSet will be nil if it's a point get or has foreign keys.
 		// If there is foreign key, we can't prune the columns.
 		// Use a very relax check for foreign key cascades and checks.
 		// If there's one table containing foreign keys, all of the tables would not do pruning.
 		// It should be strict in the future or just support pruning column when there is foreign key.
-		if tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil {
+		skipPruning := tblInfo.GetPartitionInfo() != nil || hasFK || nonPruned == nil
+		for _, idx := range tblInfo.Indices {
+			if len(idx.ConditionExprString) > 0 {
+				// If the index has a partial index condition, we can't prune the columns.
+				skipPruning = true
+				break
+			}
+		}
+		if skipPruning {
 			err = buildSingleTableColPosInfoForDelete(tbl, cols2PosInfo, prunedColCnt)
 			if err != nil {
 				return nil, nil, err
@@ -5485,10 +5480,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	nodeW := resolve.NewNodeWWithCtx(update.TableRefs.TableRefs, b.resolveCtx)
 	tableList := ExtractTableList(nodeW, false)
 	for _, t := range tableList {
-		dbName := t.Schema.L
-		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
-		}
+		dbName := getLowerDB(t.Schema, b.ctx.GetSessionVars())
 		// Avoid adding CTE table to the SELECT privilege list, maybe we have better way to do this?
 		if _, ok := b.nameMapCTE[t.Name.L]; !ok {
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.SelectPriv, dbName, t.Name.L, "", nil)
@@ -5678,7 +5670,7 @@ func (b *PlanBuilder) buildUpdatePlan(
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
 	// Remove _tidb_commit_ts columns from projection
 	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
-		if proj.OutputNames()[i].ColName.L == "_tidb_commit_ts" {
+		if proj.OutputNames()[i].ColName.L == model.ExtraCommitTSName.L {
 			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
 			proj.Schema().Columns = slices.Delete(proj.Schema().Columns, i, i+1)
 			proj.Exprs = slices.Delete(proj.Exprs, i, i+1)
@@ -5977,7 +5969,7 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 			dbName = dbNameTmp
 		}
 		if dbName == "" {
-			dbName = b.ctx.GetSessionVars().CurrentDB
+			dbName = strings.ToLower(b.ctx.GetSessionVars().CurrentDB)
 		}
 		b.visitInfo = appendVisitInfo(b.visitInfo, mysql.UpdatePriv, dbName, name.OrigTblName.L, "", nil)
 	}

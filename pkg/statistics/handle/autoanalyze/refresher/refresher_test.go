@@ -17,6 +17,7 @@ package refresher_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -27,6 +28,94 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
+
+func TestTurnOffAndOnAutoAnalyze(t *testing.T) {
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	handle := dom.StatsHandle()
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("analyze table t")
+
+	tk.MustExec("insert into t values (5, 4), (5, 5), (6, 6)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	// This would initialize the auto analyze queue.
+	require.True(t, handle.HandleAutoAnalyze())
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		return nil
+	}))
+
+	// Disable auto analyze.
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 0;")
+	// Add a new index to generate DDL event.
+	tk.MustExec("alter table t add index idx_b(b);")
+	// Make sure the mysql.tidb_ddl_notifier is not empty.
+	rows := tk.MustQuery("select * from mysql.tidb_ddl_notifier").Rows()
+	require.Greater(t, len(rows), 0)
+
+	// Make sure the mysql.tidb_ddl_notifier table is empty.
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("select * from mysql.tidb_ddl_notifier").Rows()
+		return len(rows) == 0
+	}, time.Second*5, time.Millisecond*100)
+
+	// Make sure the table is added to the auto analyze queue.
+	snapshot, err := handle.GetPriorityQueueSnapshot()
+	require.NoError(t, err)
+	require.Equal(t, 1, len(snapshot.CurrentJobs), "The queue should have one job for table t with the new index idx_b")
+
+	// Enable auto analyze again to make sure the queue works.
+	tk.MustExec("set @@global.tidb_enable_auto_analyze = 1;")
+	require.True(t, handle.HandleAutoAnalyze())
+}
+
+func TestQueueInitializesOutsideTimeWindow(t *testing.T) {
+	statistics.AutoAnalyzeMinCnt = 0
+	defer func() {
+		statistics.AutoAnalyzeMinCnt = 1000
+	}()
+
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	handle := dom.StatsHandle()
+	now := time.Now()
+	// Set the auto-analyze time window to a future time.
+	tk.MustExec("set @@global.tidb_auto_analyze_start_time = ?", now.Add(time.Hour).Format("15:04"))
+	tk.MustExec("set @@global.tidb_auto_analyze_end_time = ?", now.Add(2*time.Hour).Format("15:04"))
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int, b int, index idx(a))")
+	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+	tk.MustExec("analyze table t")
+
+	r := refresher.NewRefresher(context.Background(), handle, dom.SysProcTracker(), dom.DDLNotifier())
+	defer r.Close()
+
+	tk.MustExec("insert into t values (5, 4), (5, 5), (6, 6)")
+	require.NoError(t, handle.DumpStatsDeltaToKV(true))
+	require.NoError(t, handle.Update(context.Background(), dom.InfoSchema()))
+
+	require.NoError(t, util.CallWithSCtx(handle.SPool(), func(sctx sessionctx.Context) error {
+		require.False(t, r.AnalyzeHighestPriorityTables(sctx), "Because it's out of time window, no jobs should be executed")
+		return nil
+	}))
+	r.WaitAutoAnalyzeFinishedForTest()
+	require.Equal(t, 1, r.Len(), "The job queue should be initialized even if it is out of the time window")
+}
 
 func TestChangePruneMode(t *testing.T) {
 	statistics.AutoAnalyzeMinCnt = 0

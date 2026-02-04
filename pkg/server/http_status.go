@@ -44,7 +44,6 @@ import (
 	pb "github.com/pingcap/kvproto/pkg/autoid"
 	autoid "github.com/pingcap/tidb/pkg/autoid_service"
 	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -61,6 +60,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
@@ -247,10 +247,11 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
-	if kerneltype.IsNextGen() {
-		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Status")
-		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule")
+	if kv.IsSystemKS(tikvHandlerTool.Store) {
+		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler()).Name("DXF_Schedule_Status")
+		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler()).Name("DXF_Schedule")
 		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
+		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")
 	}
 
 	// HTTP path for transaction GC states.
@@ -333,6 +334,7 @@ func (s *Server) startHTTPServer() {
 	router.HandleFunc("/debug/pprof/trace", pprof.Trace)
 	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
 	router.PathPrefix("/debug/pprof/").HandlerFunc(pprof.Index)
+	router.HandleFunc("/debug/traceevent", traceeventHandler)
 
 	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/zip")
@@ -732,4 +734,66 @@ func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHan
 	}
 
 	return optimizor.NewStatsPriorityQueueHandler(do)
+}
+
+var traceeventCounter = make(chan struct{}, 1)
+
+func traceeventHandler(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
+		return
+	}
+
+	select {
+	case traceeventCounter <- struct{}{}:
+	default:
+		http.Error(w, "http api /debug/traceevent only allow one request at a time", http.StatusTooManyRequests)
+		return
+	}
+	defer func() {
+		<-traceeventCounter
+	}()
+
+	var cfg traceevent.FlightRecorderConfig
+	cfg.Initialize()
+	body, _ := io.ReadAll(r.Body)
+	if len(body) > 0 {
+		if err := json.Unmarshal(body, &cfg); err != nil {
+			http.Error(w, fmt.Sprintf("decode json failed: %s", err.Error()), http.StatusBadRequest)
+			return
+		}
+	}
+
+	logutil.BgLogger().Info("http api /debug/traceevent called", zap.Any("config", cfg))
+	ch := make(chan []traceevent.Event, 256)
+	recorder, err := traceevent.StartHTTPFlightRecorder(ch, &cfg)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("validate config failed: %s", err.Error()), http.StatusBadRequest)
+		return
+	}
+	defer recorder.Close()
+
+	for {
+		select {
+		case events := <-ch:
+			res := traceevent.ConvertEventsForRendering(events)
+			fmt.Fprintf(w, "data: ")
+			enc := json.NewEncoder(w)
+			err := enc.Encode(res)
+			if err != nil {
+				logutil.BgLogger().Info("http api /debug/traceevent encode fail", zap.Error(err))
+			}
+			fmt.Fprintf(w, "\n\n")
+			flusher.Flush()
+
+		case <-r.Context().Done():
+			logutil.BgLogger().Info("http api /debug/traceevent client disconnected")
+			return
+		}
+	}
 }

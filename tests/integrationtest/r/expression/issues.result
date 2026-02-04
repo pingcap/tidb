@@ -532,7 +532,7 @@ insert into t1 value (3,1,3,'a');
 insert into t2 value (1,2,date'2020-05-08');
 explain format = 'plan_tree' SELECT /*+ INL_MERGE_JOIN(t1,t2) */ COUNT(*) FROM  t1 LEFT JOIN t2 ON t1.id = t2.order_id WHERE t1.ns = 'a' AND t1.org_id IN (1) AND t1.status IN (2,6,10) AND timestampdiff(month, t2.begin_time, date'2020-05-06') = 0;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(1)->Column#12
+StreamAgg	root		funcs:count(1)->Column
 └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:expression__issues.t1.id, inner key:expression__issues.t2.order_id, equal cond:eq(expression__issues.t1.id, expression__issues.t2.order_id)
   ├─TableReader(Build)	root		data:Selection
   │ └─Selection	cop[tikv]		eq(cast(expression__issues.t1.org_id, double BINARY), 1), eq(expression__issues.t1.ns, "a"), in(expression__issues.t1.status, 2, 6, 10)
@@ -3183,15 +3183,15 @@ create table if not exists test.ast (i varchar(20));
 create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
 explain format='plan_tree' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
 id	task	access object	operator info
-Projection	root		test.ast.i, Column#38
-└─HashAgg	root		group by:Column#41, funcs:group_concat(Column#40 order by Column#40 separator "; ")->Column#38, funcs:firstrow(Column#41)->test.ast.i
-  └─Projection	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column#40, test.ast.i->Column#41
+Projection	root		test.ast.i, Column
+└─HashAgg	root		group by:Column, funcs:group_concat(Column order by Column separator "; ")->Column, funcs:firstrow(Column)->test.ast.i
+  └─Projection	root		case(eq(test.acc.j, 20001), test.acc.l, test.acc.k)->Column, test.ast.i->Column
     └─HashJoin	root		inner join, equal:[eq(test.ast.i, test.acc.m)]
       ├─TableReader(Build)	root		data:Selection
       │ └─Selection	cop[tikv]		eq(test.ast.i, "astp2019121731703151")
       │   └─TableFullScan	cop[tikv]	table:a	keep order:false, stats:pseudo
       └─TableReader(Probe)	root		data:Selection
-        └─Selection	cop[tikv]		eq("astp2019121731703151", test.acc.m)
+        └─Selection	cop[tikv]		eq(test.acc.m, "astp2019121731703151")
           └─TableFullScan	cop[tikv]	table:b	keep order:false, stats:pseudo
 drop table if exists test.t;
 create table test.t (a int);
@@ -3323,3 +3323,15 @@ set @a=NULL, @b=-2;
 execute stmt using @a,@b;
 COL1	COL3	COL1	COL3
 -2	2295421130981788987	-2	2295421130981788987
+drop table if exists t_aes;
+drop view if exists v_aes;
+create table t_aes (myid int(11), myname varchar(10));
+create view v_aes as select aes_encrypt(myid,'testkey') from t_aes;
+desc v_aes;
+Field	Type	Null	Key	Default	Extra
+aes_encrypt(myid,'testkey')	varbinary(32)	YES		NULL	
+show columns from v_aes;
+Field	Type	Null	Key	Default	Extra
+aes_encrypt(myid,'testkey')	varbinary(32)	YES		NULL	
+drop view v_aes;
+drop table t_aes;

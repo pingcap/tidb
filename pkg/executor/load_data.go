@@ -20,11 +20,11 @@ import (
 	"io"
 	"math"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
@@ -32,6 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -54,17 +56,26 @@ import (
 // LoadDataVarKey is a variable key for load data.
 const LoadDataVarKey loadDataVarKeyType = 0
 
-// LoadDataReaderBuilderKey stores the reader channel that reads from the connection.
+// LoadDataReaderBuilderKey stores the builder of reader channel that reads from the connection.
 const LoadDataReaderBuilderKey loadDataVarKeyType = 1
+
+// LoadDataReaderWg stores the wait group for reader channel.
+const LoadDataReaderWg loadDataVarKeyType = 2
 
 var (
 	taskQueueSize = 16 // the maximum number of pending tasks to commit in queue
 )
 
-// LoadDataReaderBuilder is a function type that builds a reader from a file path.
-type LoadDataReaderBuilder func(filepath string) (
-	r io.ReadCloser, err error,
-)
+// LoadDataReaderBuilder stores a function to start background goroutines to read from connection and
+// a `Wg` to wait for all background goroutines to finish.
+type LoadDataReaderBuilder struct {
+	// Build is a function that builds a reader from a file path.
+	Build func(filepath string) (
+		r io.ReadCloser, err error,
+	)
+	// Wg is a wait group to wait for the background goroutines created by Build to finish.
+	Wg *sync.WaitGroup
+}
 
 // LoadDataExec represents a load data executor.
 type LoadDataExec struct {
@@ -81,7 +92,7 @@ type LoadDataExec struct {
 func (e *LoadDataExec) Open(_ context.Context) error {
 	if rb, ok := e.Ctx().Value(LoadDataReaderBuilderKey).(LoadDataReaderBuilder); ok {
 		var err error
-		e.infileReader, err = rb(e.loadDataWorker.GetInfilePath())
+		e.infileReader, err = rb.Build(e.loadDataWorker.GetInfilePath())
 		if err != nil {
 			return err
 		}
@@ -218,7 +229,7 @@ func (e *LoadDataWorker) LoadLocal(ctx context.Context, r io.ReadCloser) error {
 	readers := []importer.LoadDataReaderInfo{{
 		Opener: func(_ context.Context) (io.ReadSeekCloser, error) {
 			addedSeekReader := NewSimpleSeekerOnReadCloser(r)
-			return storage.InterceptDecompressReader(addedSeekReader, compressTp2, storage.DecompressConfig{
+			return objstore.InterceptDecompressReader(addedSeekReader, compressTp2, compressedio.DecompressConfig{
 				ZStdDecodeConcurrency: 1,
 			})
 		}}}
@@ -613,6 +624,10 @@ func (w *commitWorker) commitWork(ctx context.Context, inCh <-chan commitTask) (
 		taskCnt uint64
 	)
 	for {
+		failpoint.Inject("CommitWorkError", func(_ failpoint.Value) {
+			failpoint.Return(errors.New("mock commit work error"))
+		})
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -804,7 +819,7 @@ func (s *SimpleSeekerOnReadCloser) Close() error {
 	return s.r.Close()
 }
 
-// GetFileSize implements storage.ExternalFileReader.
+// GetFileSize implements objectio.Reader.
 func (*SimpleSeekerOnReadCloser) GetFileSize() (int64, error) {
 	return 0, errors.Errorf("unsupported GetFileSize on SimpleSeekerOnReadCloser")
 }

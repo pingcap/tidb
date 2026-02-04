@@ -548,7 +548,6 @@ func TestHiddenColumn(t *testing.T) {
 	tk.MustGetErrMsg("update t set a=1 where c=3 order by b;", "[planner:1054]Unknown column 'b' in 'order clause'")
 
 	// `DELETE` statement
-	tk.MustQuery("trace plan delete from t;")
 	tk.MustExec("delete from t;")
 	tk.MustQuery("select count(*) from t;").Check(testkit.Rows("0"))
 	tk.MustExec("insert into t values (1, 3, 5);")

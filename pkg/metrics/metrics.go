@@ -17,7 +17,7 @@ package metrics
 import (
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/disttask/framework/dxfmetric"
+	"github.com/pingcap/tidb/pkg/dxf/framework/dxfmetric"
 	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	timermetrics "github.com/pingcap/tidb/pkg/timer/metrics"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -352,6 +352,16 @@ func RegisterMetrics() {
 	prometheus.MustRegister(ActiveActiveHardDeleteStmtCounter)
 	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsRowCounter)
 	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsStmtCounter)
+
+	// TLS
+	prometheus.MustRegister(TLSVersion)
+	prometheus.MustRegister(TLSCipher)
+
+	// IndexLookup
+	prometheus.MustRegister(IndexLookUpExecutorDuration)
+	prometheus.MustRegister(IndexLookRowsCounter)
+	prometheus.MustRegister(IndexLookUpExecutorRowNumber)
+	prometheus.MustRegister(IndexLookUpCopTaskCount)
 }
 
 // Register registers custom collectors.

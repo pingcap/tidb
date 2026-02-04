@@ -23,35 +23,24 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/lightning/log"
 	"github.com/pingcap/tidb/pkg/lightning/membuf"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// ReaderSummary is used to collect some statistics during reading.
-type ReaderSummary struct {
-	GetRequestCount uint64
-}
-
-// OnReaderCloseFunc is the callback function when a reader is closed.
-type OnReaderCloseFunc func(summary *ReaderSummary)
-
-// dummyOnReaderCloseFunc is a dummy OnReaderCloseFunc.
-func dummyOnReaderCloseFunc(*ReaderSummary) {}
-
 func readAllData(
 	ctx context.Context,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	dataFiles, statsFiles []string,
 	startKey, endKey []byte,
 	smallBlockBufPool *membuf.Pool,
 	largeBlockBufPool *membuf.Pool,
 	output *memKVsAndBuffers,
-	onClose OnReaderCloseFunc,
 ) (err error) {
 	task := log.BeginTask(logutil.Logger(ctx), "read all data")
 	task.Info("arguments",
@@ -69,7 +58,7 @@ func readAllData(
 			output.memKVBuffers = nil
 		} else {
 			// try to fix a bug that the memory is retained in http2 package
-			if gcs, ok := store.(*storage.GCSStorage); ok {
+			if gcs, ok := store.(*objstore.GCSStorage); ok {
 				err = gcs.Reset(ctx)
 			}
 		}
@@ -118,7 +107,6 @@ func readAllData(
 						smallBlockBuf,
 						largeBlockBuf,
 						output,
-						onClose,
 					)
 					if err2 != nil {
 						return errors.Annotatef(err2, "failed to read file %s", dataFiles[fileIdx])
@@ -141,7 +129,7 @@ func readAllData(
 
 func readOneFile(
 	ctx context.Context,
-	storage storage.ExternalStorage,
+	storage storeapi.Storage,
 	dataFile string,
 	startKey, endKey []byte,
 	startOffset uint64,
@@ -149,7 +137,6 @@ func readOneFile(
 	smallBlockBuf *membuf.Buffer,
 	largeBlockBuf *membuf.Buffer,
 	output *memKVsAndBuffers,
-	onClose OnReaderCloseFunc,
 ) error {
 	readAndSortDurHist := metrics.GlobalSortReadFromCloudStorageDuration.WithLabelValues("read_one_file")
 
@@ -161,9 +148,6 @@ func readOneFile(
 	}
 	defer func() {
 		rd.Close()
-		onClose(&ReaderSummary{
-			GetRequestCount: uint64(rd.byteReader.requestCnt.Load()),
-		})
 	}()
 	if concurrency > 1 {
 		rd.byteReader.enableConcurrentRead(
@@ -179,12 +163,12 @@ func readOneFile(
 		}
 	}
 
-	kvs := make([]kvPair, 0, 1024)
+	kvs := make([]KVPair, 0, 1024)
 	size := 0
 	droppedSize := 0
 
 	for {
-		k, v, err := rd.nextKV()
+		k, v, err := rd.NextKV()
 		if err != nil {
 			if goerrors.Is(err, io.EOF) {
 				break
@@ -200,7 +184,7 @@ func readOneFile(
 		}
 		// TODO(lance6716): we are copying every KV from rd's buffer to memBuf, can we
 		// directly read into memBuf?
-		kvs = append(kvs, kvPair{key: smallBlockBuf.AddBytes(k), value: smallBlockBuf.AddBytes(v)})
+		kvs = append(kvs, KVPair{Key: smallBlockBuf.AddBytes(k), Value: smallBlockBuf.AddBytes(v)})
 		size += len(k) + len(v)
 	}
 	readAndSortDurHist.Observe(time.Since(ts).Seconds())
@@ -209,5 +193,50 @@ func readOneFile(
 	output.size += size
 	output.droppedSizePerFile = append(output.droppedSizePerFile, droppedSize)
 	output.mu.Unlock()
+	return nil
+}
+
+// ReadKVFilesAsync reads multiple KV files asynchronously and sends the KV pairs
+// to the returned channel, the channel will be closed when finish read.
+func ReadKVFilesAsync(ctx context.Context, eg *util.ErrorGroupWithRecover,
+	store storeapi.Storage, files []string) chan *KVPair {
+	pairCh := make(chan *KVPair)
+	eg.Go(func() error {
+		defer close(pairCh)
+		for _, file := range files {
+			if err := readOneKVFile2Ch(ctx, store, file, pairCh); err != nil {
+				return errors.Trace(err)
+			}
+		}
+		return nil
+	})
+	return pairCh
+}
+
+func readOneKVFile2Ch(ctx context.Context, store storeapi.Storage, file string, outCh chan *KVPair) error {
+	reader, err := NewKVReader(ctx, file, store, 0, 3*DefaultReadBufferSize)
+	if err != nil {
+		return err
+	}
+	// if we successfully read all data, it's ok to ignore the error of Close
+	//nolint: errcheck
+	defer reader.Close()
+	for {
+		key, val, err := reader.NextKV()
+		if err != nil {
+			if goerrors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case outCh <- &KVPair{
+			Key:   bytes.Clone(key),
+			Value: bytes.Clone(val),
+		}:
+		}
+	}
 	return nil
 }

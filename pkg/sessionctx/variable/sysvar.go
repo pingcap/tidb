@@ -326,6 +326,10 @@ var defaultSysVars = []*SysVar{
 		s.OptimizerSelectivityLevel = tidbOptPositiveInt32(val, vardef.DefTiDBOptimizerSelectivityLevel)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptIndexPruneThreshold, Value: strconv.Itoa(vardef.DefTiDBOptIndexPruneThreshold), Type: vardef.TypeInt, MinValue: -1, MaxValue: math.MaxInt32, SetSession: func(s *SessionVars, val string) error {
+		s.OptIndexPruneThreshold = TidbOptInt(val, vardef.DefTiDBOptIndexPruneThreshold)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptimizerEnableOuterJoinReorder, Value: BoolToOnOff(vardef.DefTiDBEnableOuterJoinReorder), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.EnableOuterJoinReorder = TiDBOptOn(val)
 		return nil
@@ -499,11 +503,34 @@ var defaultSysVars = []*SysVar{
 			if kerneltype.IsClassic() {
 				return errors.New("can only be set for TiDB X kernel")
 			}
-			_, err := traceevent.SetMode(val)
+			if val == "" {
+				// Reset the flight recorder
+				recorder := traceevent.GetFlightRecorder()
+				if recorder != nil {
+					recorder.Close()
+				}
+				return nil
+			}
+			var config traceevent.FlightRecorderConfig
+			err := json.Unmarshal([]byte(val), &config)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			err = traceevent.StartLogFlightRecorder(&config)
 			return err
 		},
 		GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-			return strings.ToUpper(traceevent.CurrentMode()), nil
+			recorder := traceevent.GetFlightRecorder()
+			if recorder != nil {
+				if recorder.Config != nil {
+					data, err := json.Marshal(recorder.Config)
+					if err != nil {
+						return "", errors.Trace(err)
+					}
+					return string(data), nil
+				}
+			}
+			return "", nil
 		},
 	},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBSlowTxnLogThreshold, Value: strconv.Itoa(logutil.DefaultSlowTxnThreshold),
@@ -2027,7 +2054,7 @@ var defaultSysVars = []*SysVar{
 	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.WaitTimeout, Value: strconv.FormatInt(vardef.DefWaitTimeout, 10), Type: vardef.TypeUnsigned, MinValue: 0, MaxValue: secondsPerYear},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InteractiveTimeout, Value: "28800", Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: secondsPerYear},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbLockWaitTimeout, Value: strconv.FormatInt(vardef.DefInnodbLockWaitTimeout, 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 3600, SetSession: func(s *SessionVars, val string) error {
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.InnodbLockWaitTimeout, Value: strconv.FormatInt(vardef.DefInnodbLockWaitTimeout, 10), Type: vardef.TypeUnsigned, MinValue: 1, MaxValue: 1073741824, SetSession: func(s *SessionVars, val string) error {
 		lockWaitSec := TidbOptInt64(val, vardef.DefInnodbLockWaitTimeout)
 		s.LockWaitTimeout = lockWaitSec * 1000
 		return nil
@@ -2562,6 +2589,10 @@ var defaultSysVars = []*SysVar{
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, vardef.DefTiDBOptJoinReorderThreshold)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(vardef.DefTiDBOptJoinReorderThroughSel), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+		s.TiDBOptJoinReorderThroughSel = TiDBOptOn(val)
+		return nil
+	}},
 	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBEnableNoopFuncs, Value: vardef.DefTiDBEnableNoopFuncs, Type: vardef.TypeEnum, PossibleValues: []string{vardef.Off, vardef.On, vardef.Warn}, Depended: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
 		// The behavior is very weird if someone can turn TiDBEnableNoopFuncs OFF, but keep any of the following on:
 		// TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly, SQLAutoIsNull
@@ -3046,6 +3077,18 @@ var defaultSysVars = []*SysVar{
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPartialOrderedIndexForTopN, Value: BoolToOnOff(vardef.DefTiDBOptPartialOrderedIndexForTopN), Type: vardef.TypeBool, IsHintUpdatableVerified: true,
+		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
+			// Only allow exact values: 0, 1, ON, OFF (case-insensitive)
+			lowerValue := strings.ToLower(strings.TrimSpace(originalValue))
+			if lowerValue != "0" && lowerValue != "1" && lowerValue != "on" && lowerValue != "off" {
+				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPartialOrderedIndexForTopN, originalValue)
+			}
+			return normalizedValue, nil
+		}, SetSession: func(s *SessionVars, val string) error {
+			s.OptPartialOrderedIndexForTopN = TiDBOptOn(val)
+			return nil
+		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExternalTS, Value: strconv.FormatInt(vardef.DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {
 		ts, err := parseTSFromNumberOrTime(s, val)
 		if err != nil {
@@ -3840,6 +3883,22 @@ var defaultSysVars = []*SysVar{
 		},
 		GetGlobal: func(ctx context.Context, sv *SessionVars) (string, error) {
 			return strconv.Itoa(int(vardef.GlobalSlowLogRateLimiter.Limit())), nil
+		},
+	},
+	{
+		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Name:  vardef.TiDBIndexLookUpPushDownPolicy,
+		Value: vardef.DefTiDBIndexLookUpPushDownPolicy,
+		Type:  vardef.TypeEnum,
+		PossibleValues: []string{
+			vardef.IndexLookUpPushDownPolicyHintOnly,
+			vardef.IndexLookUpPushDownPolicyAffinityForce,
+			vardef.IndexLookUpPushDownPolicyForce,
+		},
+		IsHintUpdatableVerified: true,
+		SetSession: func(vars *SessionVars, s string) error {
+			vars.IndexLookUpPushDownPolicy = s
+			return nil
 		},
 	},
 }

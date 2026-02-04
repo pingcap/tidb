@@ -418,9 +418,9 @@ count(*)
 4
 EXPLAIN format="plan_tree" SELECT count(*) FROM tkey14 WHERE col3 IS NULL;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#9)->Column#7
+StreamAgg	root		funcs:count(Column)->Column
 └─TableReader	root	partition:p1	data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─Selection	cop[tikv]		isnull(table__partition.tkey14.col3)
       └─TableFullScan	cop[tikv]	table:tkey14	keep order:false, stats:pseudo
 CREATE TABLE tkey15 (`col1` int, col2 DATE NOT NULL,col3 VARCHAR(12), col4 int)
@@ -428,9 +428,9 @@ PARTITION BY KEY (col3) PARTITIONS 4;
 INSERT INTO tkey15 VALUES(1, '2023-02-22', 'linpin', 1), (2, '2023-02-22', NULL, 2), (3, '2023-02-22', 'anqila', 3), (4, '2023-02-22', NULL, 4);
 EXPLAIN format="plan_tree" SELECT count(*) FROM tkey15 WHERE col3 IS NULL;
 id	task	access object	operator info
-StreamAgg	root		funcs:count(Column#9)->Column#7
+StreamAgg	root		funcs:count(Column)->Column
 └─TableReader	root	partition:p1	data:StreamAgg
-  └─StreamAgg	cop[tikv]		funcs:count(1)->Column#9
+  └─StreamAgg	cop[tikv]		funcs:count(1)->Column
     └─Selection	cop[tikv]		isnull(table__partition.tkey15.col3)
       └─TableFullScan	cop[tikv]	table:tkey15	keep order:false, stats:pseudo
 CREATE TABLE tkey12_2 (col1 INT, col2 INT ,col3 INT ,col4 INT , UNIQUE KEY(col2, col3)) PARTITION BY KEY(col2, col3) PARTITIONS 4;

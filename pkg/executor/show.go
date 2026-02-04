@@ -31,11 +31,11 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/pkg/bindinfo"
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
-	fstorage "github.com/pingcap/tidb/pkg/disttask/framework/storage"
-	"github.com/pingcap/tidb/pkg/disttask/importinto"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
+	fstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
+	"github.com/pingcap/tidb/pkg/dxf/importinto"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -293,6 +293,8 @@ func (e *ShowExec) fetchAll(ctx context.Context) error {
 		return e.fetchShowImportGroups(ctx)
 	case ast.ShowDistributionJobs:
 		return e.fetchShowDistributionJobs(ctx)
+	case ast.ShowAffinity:
+		return e.fetchShowAffinity(ctx)
 	}
 	return nil
 }
@@ -348,6 +350,9 @@ func (e *ShowExec) fetchShowBind() error {
 		return cmpResult > 0
 	})
 	for _, hint := range bindings {
+		if hint == nil { // if the binding cache doesn't have enough memory, it might return nil
+			continue
+		}
 		stmt, err := parser.ParseOneStmt(hint.BindSQL, hint.Charset, hint.Collation)
 		if err != nil {
 			return err
@@ -1560,6 +1565,10 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *ast.CIStr,
 		}
 	}
 
+	if tableInfo.Affinity != nil {
+		fmt.Fprintf(buf, " /*T![%s] AFFINITY='%s' */", tidb.FeatureIDAffinity, tableInfo.Affinity.Level)
+	}
+
 	// add partition info here.
 	ddl.AppendPartitionInfo(tableInfo.Partition, buf, sqlMode)
 	return nil
@@ -2570,7 +2579,7 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 	if runInfo != nil {
 		// running import job
 		result.AppendUint64(8, uint64(runInfo.ImportRows))
-	} else if info.Status == importer.JobStatusFinished {
+	} else if info.IsSuccess() {
 		// successful import job
 		result.AppendUint64(8, uint64(info.Summary.ImportedRows))
 	} else {
@@ -2578,7 +2587,19 @@ func FillOneImportJobInfo(result *chunk.Chunk, info *importer.JobInfo, runInfo *
 		result.AppendNull(8)
 	}
 
-	result.AppendString(9, info.ErrorMessage)
+	if info.IsSuccess() {
+		msgItems := make([]string, 0, 1)
+		if info.Summary.ConflictRowCnt > 0 {
+			msgItems = append(msgItems, fmt.Sprintf("%d conflicted rows.", info.Summary.ConflictRowCnt))
+		}
+		if info.Summary.TooManyConflicts {
+			msgItems = append(msgItems, "Too many conflicted rows, checksum skipped.")
+		}
+		result.AppendString(9, strings.Join(msgItems, " "))
+	} else {
+		result.AppendString(9, info.ErrorMessage)
+	}
+
 	result.AppendTime(10, info.CreateTime)
 	if info.StartTime.IsZero() {
 		result.AppendNull(11)
@@ -2748,7 +2769,7 @@ type groupInfo struct {
 	completed  int64
 	failed     int64
 	canceled   int64
-	startTime  types.Time
+	createTime types.Time
 	updateTime types.Time
 }
 
@@ -2781,21 +2802,29 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 		if _, ok := groupMap[info.GroupKey]; !ok {
 			groupMap[info.GroupKey] = &groupInfo{
 				groupKey:   info.GroupKey,
-				startTime:  types.ZeroTime,
+				createTime: types.ZeroTime,
 				updateTime: types.ZeroTime,
 			}
 		}
 
-		updateTime, err := importinto.GetJobLastUpdateTime(ctx, info.ID)
-		if err != nil {
-			return err
+		updateTime := types.ZeroTime
+		// See FillOneImportJobInfo, we make the update time calculation same with SHOW IMPORT JOBS.
+		if info.Status == importer.JobStatusRunning {
+			runInfo, err := importinto.GetRuntimeInfoForJob(ctx, sctx.GetSessionVars().Location(), info.ID)
+			if err != nil {
+				return err
+			}
+			updateTime = runInfo.UpdateTime
+			if updateTime.IsZero() {
+				updateTime = info.UpdateTime
+			}
 		}
 
 		gInfo := groupMap[info.GroupKey]
-		if gInfo.startTime.IsZero() || info.StartTime.Compare(gInfo.startTime) < 0 {
-			gInfo.startTime = info.StartTime
+		if !info.CreateTime.IsZero() && (gInfo.createTime.IsZero() || info.CreateTime.Compare(gInfo.createTime) < 0) {
+			gInfo.createTime = info.CreateTime
 		}
-		if gInfo.updateTime.IsZero() || updateTime.Compare(gInfo.updateTime) > 0 {
+		if updateTime.Compare(gInfo.updateTime) > 0 {
 			gInfo.updateTime = updateTime
 		}
 
@@ -2823,10 +2852,10 @@ func (e *ShowExec) fetchShowImportGroups(ctx context.Context) error {
 		e.result.AppendInt64(4, gInfo.completed)
 		e.result.AppendInt64(5, gInfo.failed)
 		e.result.AppendInt64(6, gInfo.canceled)
-		if gInfo.startTime.IsZero() {
+		if gInfo.createTime.IsZero() {
 			e.result.AppendNull(7)
 		} else {
-			e.result.AppendTime(7, gInfo.startTime)
+			e.result.AppendTime(7, gInfo.createTime)
 		}
 		if gInfo.updateTime.IsZero() {
 			e.result.AppendNull(8)

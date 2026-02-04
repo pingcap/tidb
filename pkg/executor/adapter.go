@@ -78,6 +78,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/stringutil"
 	"github.com/pingcap/tidb/pkg/util/topsql"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/traceevent"
 	"github.com/pingcap/tidb/pkg/util/tracing"
 	"github.com/prometheus/client_golang/prometheus"
 	tikverr "github.com/tikv/client-go/v2/error"
@@ -639,16 +640,23 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 	}
 	ctx = a.observeStmtBeginForTopSQL(ctx)
 
+	// Record start time before buildExecutor() to include TSO waiting time in maxExecutionTime timeout.
+	// buildExecutor() may block waiting for TSO, so we should start the timer earlier.
+	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
+	cmd := byte(cmd32)
+	var execStartTime time.Time
+	var pi processinfoSetter
+	if raw, ok := sctx.(processinfoSetter); ok {
+		pi = raw
+		execStartTime = time.Now()
+	}
+
 	e, err := a.buildExecutor()
 	if err != nil {
 		return nil, err
 	}
 
-	cmd32 := atomic.LoadUint32(&sctx.GetSessionVars().CommandValue)
-	cmd := byte(cmd32)
-	var pi processinfoSetter
-	if raw, ok := sctx.(processinfoSetter); ok {
-		pi = raw
+	if pi != nil {
 		sql := a.getSQLForProcessInfo()
 		maxExecutionTime := sctx.GetSessionVars().GetMaxExecutionTime()
 		// Update processinfo, ShowProcess() will use it.
@@ -659,7 +667,7 @@ func (a *ExecStmt) Exec(ctx context.Context) (_ sqlexec.RecordSet, err error) {
 		if !a.Ctx.GetSessionVars().StmtCtx.InSelectStmt {
 			maxExecutionTime = 0
 		}
-		pi.SetProcessInfo(sql, time.Now(), cmd, maxExecutionTime)
+		pi.SetProcessInfo(sql, execStartTime, cmd, maxExecutionTime)
 	}
 
 	breakpoint.Inject(a.Ctx, sessiontxn.BreakPointBeforeExecutorFirstRun)
@@ -1380,6 +1388,7 @@ func (a *ExecStmt) logAudit() {
 			if execStmt, ok := a.StmtNode.(*ast.ExecuteStmt); ok {
 				ctx = context.WithValue(ctx, plugin.PrepareStmtIDCtxKey, execStmt.PrepStmtId)
 			}
+			ctx = context.WithValue(ctx, plugin.IsRetryingCtxKey, a.retryCount > 0 || sessVars.RetryInfo.Retrying)
 			if intest.InTest && (cmdBin == mysql.ComStmtPrepare ||
 				cmdBin == mysql.ComStmtExecute || cmdBin == mysql.ComStmtClose) {
 				intest.Assert(ctx.Value(plugin.PrepareStmtIDCtxKey) != nil, "prepare statement id should not be nil")
@@ -1681,6 +1690,10 @@ func resetCTEStorageMap(se sessionctx.Context) error {
 	return nil
 }
 
+func slowQueryDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.Event.Type == "slow_query"
+}
+
 // LogSlowQuery is used to print the slow query in the log files.
 func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1735,6 +1748,7 @@ func (a *ExecStmt) LogSlowQuery(txnTS uint64, succ bool, hasMoreResults bool) {
 	if trace.IsEnabled() {
 		trace.Log(a.GoCtx, "details", slowLog)
 	}
+	traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.suspicious_event", slowQueryDumpTriggerCheck)
 
 	if !matchRules {
 		return
@@ -1912,6 +1926,14 @@ func getEncodedPlan(stmtCtx *stmtctx.StatementContext, genHint bool) (encodedPla
 	return
 }
 
+type planDigestAlias struct {
+	Digest string
+}
+
+func (digest planDigestAlias) planDigestDumpTriggerCheck(config *traceevent.DumpTriggerConfig) bool {
+	return config.UserCommand.PlanDigest == digest.Digest
+}
+
 // SummaryStmt collects statements for information_schema.statements_summary
 func (a *ExecStmt) SummaryStmt(succ bool) {
 	sessVars := a.Ctx.GetSessionVars()
@@ -1958,6 +1980,7 @@ func (a *ExecStmt) SummaryStmt(succ bool) {
 	if a.Plan.TP() != plancodec.TypePointGet {
 		_, tmp := GetPlanDigest(stmtCtx)
 		planDigest = tmp.String()
+		traceevent.CheckFlightRecorderDumpTrigger(a.GoCtx, "dump_trigger.user_command.plan_digest", planDigestAlias{planDigest}.planDigestDumpTriggerCheck)
 	}
 
 	execDetail := stmtCtx.GetExecDetails()
@@ -2299,7 +2322,6 @@ func sendPlanReplayerDumpTask(key replayer.PlanReplayerTaskKey, sctx sessionctx.
 		SessionBindings:     [][]*bindinfo.Binding{bindings},
 		SessionVars:         sctx.GetSessionVars(),
 		ExecStmts:           []ast.StmtNode{stmtNode},
-		DebugTrace:          []any{stmtCtx.OptimizerDebugTrace},
 		Analyze:             false,
 		IsCapture:           true,
 		IsContinuesCapture:  isContinuesCapture,

@@ -6,7 +6,7 @@ create table lo(a int(11) NOT NULL AUTO_INCREMENT, PRIMARY KEY (a)) ENGINE=InnoD
 load stats 's/explain_join_stats_lo.json';
 explain format = 'plan_tree' select count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#7
+HashAgg	root		funcs:count(1)->Column
 └─HashJoin	root		inner join, equal:[eq(explain_join_stats.lo.a, explain_join_stats.e.a)]
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:lo	keep order:false
@@ -16,7 +16,7 @@ HashAgg	root		funcs:count(1)->Column#7
       └─TableRowIDScan	cop[tikv]	table:e	keep order:false
 explain format = 'plan_tree' select /*+ TIDB_INLJ(e) */ count(*) from e, lo where lo.a=e.a and e.b=22336;
 id	task	access object	operator info
-HashAgg	root		funcs:count(1)->Column#7
+HashAgg	root		funcs:count(1)->Column
 └─IndexJoin	root		inner join, inner:IndexLookUp, outer key:explain_join_stats.lo.a, inner key:explain_join_stats.e.a, equal cond:eq(explain_join_stats.lo.a, explain_join_stats.e.a)
   ├─TableReader(Build)	root		data:TableFullScan
   │ └─TableFullScan	cop[tikv]	table:lo	keep order:false

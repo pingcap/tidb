@@ -114,11 +114,11 @@ func (ops ConsoleOperations) PromptBool(p string) bool {
 			// EOF or reply nothing.
 			return false
 		}
-		trimed := strings.TrimSpace(ans)
-		if strings.ToLower(trimed) == "y" {
+		trimmed := strings.TrimSpace(ans)
+		if strings.ToLower(trimmed) == "y" {
 			return true
 		}
-		if trimed == "" || strings.ToLower(trimed) == "n" {
+		if trimmed == "" || strings.ToLower(trimmed) == "n" {
 			return false
 		}
 	}

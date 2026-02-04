@@ -96,7 +96,7 @@
       },
       {
         "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
-        "Best": "TableReader(Table(t)->Sel([eq(test.t.c, 1) eq(test.t.d, 1)])->Limit)->Limit"
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
@@ -197,7 +197,7 @@
       },
       {
         "SQL": "select c from t order by t.a + t.b limit 1",
-        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#14],0,1)->Projection"
+        "Best": "TableReader(Table(t)->TopN([plus(test.t.a, test.t.b)],0,1))->Projection->TopN([Column#15],0,1)->Projection"
       },
       {
         "SQL": "select c from t  limit 1",
@@ -241,7 +241,7 @@
       },
       {
         "SQL": "select c from t where t.c = 1 and t.d = 1 order by t.a limit 1",
-        "Best": "TableReader(Table(t)->Sel([eq(test.t.c, 1) eq(test.t.d, 1)])->Limit)->Limit"
+        "Best": "IndexReader(Index(t.c_d_e)[[1 1,1 1]]->TopN([test.t.a],0,1))->TopN([test.t.a],0,1)"
       },
       {
         "SQL": "select * from t where t.c = 1 and t.a > 1 order by t.d limit 1",
@@ -450,7 +450,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.c=t2.c and t1.f=t2.f",
-        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.c_d_e)[[NULL,NULL]], Table(t))}(test.t.c,test.t.c)"
+        "Best": "IndexJoin{TableReader(Table(t))->IndexLookUp(Index(t.f)[[NULL,NULL]], Table(t))}(test.t.f,test.t.f)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.a = t2.a and t1.f=t2.f",
@@ -466,7 +466,7 @@
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.c and t1.b=1 and t2.d > t1.d-10 and t2.d < t1.d+10",
-        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[NULL NULL,NULL NULL]]->Sel([eq(1, test.t.c)]), Table(t))}(test.t.b,test.t.c)"
+        "Best": "IndexJoin{TableReader(Table(t)->Sel([eq(test.t.b, 1)]))->IndexLookUp(Index(t.c_d_e)[[NULL NULL,NULL NULL]]->Sel([eq(test.t.c, 1)]), Table(t))}(test.t.b,test.t.c)"
       },
       {
         "SQL": "select /*+ TIDB_INLJ(t2) */ * from t t1 join t t2 where t1.b=t2.b and t1.c=1 and t2.c=1 and t2.d > t1.d-10 and t2.d < t1.d+10",

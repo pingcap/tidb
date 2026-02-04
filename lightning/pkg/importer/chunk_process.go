@@ -22,7 +22,6 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/storage"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/lightning/backend"
 	"github.com/pingcap/tidb/pkg/lightning/backend/encode"
@@ -37,6 +36,8 @@ import (
 	verify "github.com/pingcap/tidb/pkg/lightning/verification"
 	"github.com/pingcap/tidb/pkg/lightning/worker"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/objstore/compressedio"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/store/driver/txn"
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -61,7 +62,7 @@ func newChunkProcessor(
 	cfg *config.Config,
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	tableInfo *model.TableInfo,
 ) (*chunkProcessor, error) {
 	parser, err := openParser(ctx, cfg, chunk, ioWorkers, store, tableInfo)
@@ -80,11 +81,11 @@ func openParser(
 	cfg *config.Config,
 	chunk *checkpoints.ChunkCheckpoint,
 	ioWorkers *worker.Pool,
-	store storage.ExternalStorage,
+	store storeapi.Storage,
 	tblInfo *model.TableInfo,
 ) (mydump.Parser, error) {
 	blockBufSize := int64(cfg.Mydumper.ReadBlockSize)
-	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, storage.DecompressConfig{
+	reader, err := mydump.OpenReader(ctx, &chunk.FileMeta, store, compressedio.DecompressConfig{
 		ZStdDecodeConcurrency: 1,
 	})
 	if err != nil {
@@ -107,7 +108,7 @@ func openParser(
 	case mydump.SourceTypeSQL:
 		parser = mydump.NewChunkParser(ctx, cfg.TiDB.SQLMode, reader, blockBufSize, ioWorkers)
 	case mydump.SourceTypeParquet:
-		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path)
+		parser, err = mydump.NewParquetParser(ctx, store, reader, chunk.FileMeta.Path, chunk.FileMeta.ParquetMeta)
 		if err != nil {
 			return nil, err
 		}

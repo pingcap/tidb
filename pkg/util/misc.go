@@ -317,48 +317,6 @@ func CheckSupportX509NameOneline(oneline string) (err error) {
 	return
 }
 
-var tlsCipherString = map[uint16]string{
-	tls.TLS_RSA_WITH_RC4_128_SHA:                "RC4-SHA",
-	tls.TLS_RSA_WITH_3DES_EDE_CBC_SHA:           "DES-CBC3-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA:            "AES128-SHA",
-	tls.TLS_RSA_WITH_AES_256_CBC_SHA:            "AES256-SHA",
-	tls.TLS_RSA_WITH_AES_128_CBC_SHA256:         "AES128-SHA256",
-	tls.TLS_RSA_WITH_AES_128_GCM_SHA256:         "AES128-GCM-SHA256",
-	tls.TLS_RSA_WITH_AES_256_GCM_SHA384:         "AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_RC4_128_SHA:        "ECDHE-ECDSA-RC4-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA:    "ECDHE-ECDSA-AES128-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_CBC_SHA:    "ECDHE-ECDSA-AES256-SHA",
-	tls.TLS_ECDHE_RSA_WITH_RC4_128_SHA:          "ECDHE-RSA-RC4-SHA",
-	tls.TLS_ECDHE_RSA_WITH_3DES_EDE_CBC_SHA:     "ECDHE-RSA-DES-CBC3-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA:      "ECDHE-RSA-AES128-SHA",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_CBC_SHA:      "ECDHE-RSA-AES256-SHA",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_CBC_SHA256: "ECDHE-ECDSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_CBC_SHA256:   "ECDHE-RSA-AES128-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256:   "ECDHE-RSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256: "ECDHE-ECDSA-AES128-GCM-SHA256",
-	tls.TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384:   "ECDHE-RSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384: "ECDHE-ECDSA-AES256-GCM-SHA384",
-	tls.TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305:    "ECDHE-RSA-CHACHA20-POLY1305",
-	tls.TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305:  "ECDHE-ECDSA-CHACHA20-POLY1305",
-	// TLS 1.3 cipher suites, compatible with mysql using '_'.
-	tls.TLS_AES_128_GCM_SHA256:       "TLS_AES_128_GCM_SHA256",
-	tls.TLS_AES_256_GCM_SHA384:       "TLS_AES_256_GCM_SHA384",
-	tls.TLS_CHACHA20_POLY1305_SHA256: "TLS_CHACHA20_POLY1305_SHA256",
-}
-
-// SupportCipher maintains cipher supported by TiDB.
-var SupportCipher = make(map[string]struct{}, len(tlsCipherString))
-
-// TLSCipher2String convert tls num to string.
-// Taken from https://testssl.sh/openssl-rfc.mapping.html .
-func TLSCipher2String(n uint16) string {
-	s, ok := tlsCipherString[n]
-	if !ok {
-		return ""
-	}
-	return s
-}
-
 // ColumnsToProto converts a slice of model.ColumnInfo to a slice of tipb.ColumnInfo.
 func ColumnsToProto(columns []*model.ColumnInfo, pkIsHandle bool, forIndex bool, isTiFlashStore bool) []*tipb.ColumnInfo {
 	cols := make([]*tipb.ColumnInfo, 0, len(columns))
@@ -405,9 +363,6 @@ func ColumnToProto(c *model.ColumnInfo, forIndex bool, isTiFlashStore bool) *tip
 }
 
 func init() {
-	for _, value := range tlsCipherString {
-		SupportCipher[value] = struct{}{}
-	}
 	for key, value := range pkixAttributeTypeNames {
 		pkixTypeNameAttributes[value] = key
 	}

@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -156,9 +157,12 @@ func TestActiveActiveDMLMetrics(t *testing.T) {
 			hardDelete := counter(metrics.ActiveActiveHardDeleteStmtCounter)
 
 			if c.loadData != "" {
-				readerBuilder := executor.LoadDataReaderBuilder(func(_ string) (io.ReadCloser, error) {
-					return mydump.NewStringReader(c.loadData), nil
-				})
+				readerBuilder := executor.LoadDataReaderBuilder{
+					Build: func(_ string) (io.ReadCloser, error) {
+						return mydump.NewStringReader(c.loadData), nil
+					},
+					Wg: &sync.WaitGroup{},
+				}
 				ctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 				t.Cleanup(func() {
 					ctx.SetValue(executor.LoadDataReaderBuilderKey, nil)

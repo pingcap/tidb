@@ -126,6 +126,11 @@ type DataSource struct {
 	AskedColumnGroup [][]*expression.Column
 
 	DisableSoftDeleteFilter bool
+
+	// InterestingColumns stores columns from this DataSource that are used in the query.
+	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
+	// index pruning early in the planning phase - which is an approximate heuristic.
+	InterestingColumns []*expression.Column
 }
 
 // Init initializes DataSource.
@@ -521,7 +526,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
 	is.SetSchema(ds.Schema())
-	is.IdxCols, is.IdxColLens = expression.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
+	is.IdxCols, is.IdxColLens = util.IndexInfo2PrefixCols(is.Columns, is.Schema().Columns, is.Index)
 
 	sg := TiKVSingleGather{
 		Source:        ds,
@@ -539,8 +544,8 @@ func (ds *DataSource) Convert2Gathers() (gathers []base.LogicalPlan) {
 	gathers = append(gathers, tg)
 	for _, path := range ds.PossibleAccessPaths {
 		if !path.IsIntHandlePath {
-			path.FullIdxCols, path.FullIdxColLens = expression.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
-			path.IdxCols, path.IdxColLens = expression.IndexInfo2PrefixCols(ds.Columns, ds.Schema().Columns, path.Index)
+			path.IdxCols, path.IdxColLens, path.FullIdxCols, path.FullIdxColLens =
+				util.IndexInfo2Cols(ds.Columns, ds.Schema().Columns, path.Index)
 			// If index columns can cover all the needed columns, we can use a IndexGather + IndexScan.
 			if ds.IsSingleScan(path.FullIdxCols, path.FullIdxColLens) {
 				gathers = append(gathers, ds.buildIndexGather(path))

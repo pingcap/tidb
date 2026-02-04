@@ -169,6 +169,10 @@ func (b *MockExecutorBuilder) Build(p base.Plan) exec.Executor {
 }
 
 func (b *executorBuilder) build(p base.Plan) exec.Executor {
+	if phyWrapper, ok := p.(*plannercore.PhysicalPlanWrapper); ok {
+		p = phyWrapper.Inner
+	}
+
 	switch v := p.(type) {
 	case nil:
 		return nil
@@ -250,8 +254,6 @@ func (b *executorBuilder) build(p base.Plan) exec.Executor {
 		return b.buildShow(v)
 	case *plannercore.Simple:
 		return b.buildSimple(v)
-	case *plannercore.PhysicalSimpleWrapper:
-		return b.buildSimple(&v.Inner)
 	case *plannercore.Set:
 		return b.buildSet(v)
 	case *plannercore.SetConfig:
@@ -512,29 +514,29 @@ func buildIndexLookUpChecker(b *executorBuilder, p *physicalop.PhysicalIndexLook
 }
 
 func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Executor {
-	noMVIndexOrPrefixIndexOrColumnarIndex := true
+	canUseFastCheck := true
 	for _, idx := range v.IndexInfos {
 		if idx.MVIndex || idx.IsColumnarIndex() {
-			noMVIndexOrPrefixIndexOrColumnarIndex = false
+			canUseFastCheck = false
 			break
 		}
 		for _, col := range idx.Columns {
 			if col.Length != types.UnspecifiedLength {
-				noMVIndexOrPrefixIndexOrColumnarIndex = false
+				canUseFastCheck = false
 				break
 			}
 		}
-		if !noMVIndexOrPrefixIndexOrColumnarIndex {
+		if !canUseFastCheck {
 			break
 		}
 	}
-	if b.ctx.GetSessionVars().FastCheckTable && noMVIndexOrPrefixIndexOrColumnarIndex {
+	if b.ctx.GetSessionVars().FastCheckTable && canUseFastCheck {
 		e := &FastCheckTableExec{
 			BaseExecutor: exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
 			dbName:       v.DBName,
 			table:        v.Table,
 			indexInfos:   v.IndexInfos,
-			err:          &atomic.Pointer[error]{},
+			is:           b.is,
 		}
 		return e
 	}
@@ -3247,7 +3249,7 @@ func (b *executorBuilder) getAdjustedSampleRate(task plannercore.AnalyzeColumnsT
 		// Confirmed by TiKV side, the experience error rate of the approximate count is about 20%.
 		// So we increase the number to 150000 to reduce this error rate.
 		sampleRate = math.Min(1, 150000/approxiCount)
-		return sampleRate, fmt.Sprintf("Row count in stats_meta is much smaller compared with the row count got by PD, use min(1, 15000/%v) as the sample-rate=%v", approxiCount, sampleRate)
+		return sampleRate, fmt.Sprintf("Row count in stats_meta is much smaller compared with the row count got by PD, use min(1, 150000/%v) as the sample-rate=%v", approxiCount, sampleRate)
 	}
 	// If we don't go into the above if branch and we still detect the count is zero. Return 1 to prevent the dividing zero.
 	if statsTbl.RealtimeCount == 0 {
@@ -5618,6 +5620,7 @@ func (b *executorBuilder) buildSQLBindExec(v *plannercore.SQLBindPlan) exec.Exec
 		isGlobal:     v.IsGlobal,
 		sqlBindOp:    v.SQLBindOp,
 		details:      v.Details,
+		isFromRemote: v.IsFromRemote,
 	}
 	return e
 }

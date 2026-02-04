@@ -81,9 +81,14 @@ var PartitionAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.GetPartitionInfo() != nil
 }
 
+// AffinityAttribute is the Affinity attribute filter used by ListTablesWithSpecialAttribute.
+var AffinityAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.Affinity != nil
+}
+
 // HasSpecialAttributes checks if a table has any special attributes.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || SoftDeleteAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t)
+	return TTLAttribute(t) || SoftDeleteAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || AffinityAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.
