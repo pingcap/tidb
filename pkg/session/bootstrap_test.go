@@ -54,23 +54,30 @@ import (
 )
 
 func TestMySQLDBTables(t *testing.T) {
-	require.Len(t, tablesInSystemDatabase, 52,
-		"remember to add the new tables to versionedBootstrapSchemas too")
-	testTableBasicInfoSlice(t, tablesInSystemDatabase)
+	require.Len(t, systemTablesOfBaseNextGenVersion, 52, "DO NOT CHANGE IT")
+	for _, verBoot := range versionedBootstrapSchemas {
+		for _, schInfo := range verBoot.databases {
+			testTableBasicInfoSlice(t, schInfo.Tables)
+		}
+	}
 	reservedIDs := make([]int64, 0, len(ddlTableVersionTables)*2)
 	for _, v := range ddlTableVersionTables {
 		for _, tbl := range v.tables {
 			reservedIDs = append(reservedIDs, tbl.ID)
 		}
 	}
-	for _, tbl := range tablesInSystemDatabase {
-		reservedIDs = append(reservedIDs, tbl.ID)
+	for _, verBoot := range versionedBootstrapSchemas {
+		for _, schInfo := range verBoot.databases {
+			for _, tblInfo := range schInfo.Tables {
+				reservedIDs = append(reservedIDs, tblInfo.ID)
+			}
+		}
 	}
 	for _, db := range systemDatabases {
 		reservedIDs = append(reservedIDs, db.ID)
 	}
 	slices.Sort(reservedIDs)
-	require.IsIncreasing(t, reservedIDs, "used IDs should be in increasing order")
+	require.IsIncreasing(t, reservedIDs, "reserved IDs shouldn't be reused")
 	require.Greater(t, reservedIDs[0], metadef.ReservedGlobalIDLowerBound, "reserved ID should be greater than ReservedGlobalIDLowerBound")
 	require.LessOrEqual(t, reservedIDs[len(reservedIDs)-1], metadef.ReservedGlobalIDUpperBound, "reserved ID should be less than or equal to ReservedGlobalIDUpperBound")
 }
@@ -1869,7 +1876,6 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
 	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
-	var allTableCount int
 	for _, vbs := range versionedBootstrapSchemas {
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
@@ -1877,14 +1883,11 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 			allIDs = append(allIDs, db.ID)
 
 			testTableBasicInfoSlice(t, db.Tables)
-			allTableCount += len(db.Tables)
 			for _, tbl := range db.Tables {
 				allIDs = append(allIDs, tbl.ID)
 			}
 		}
 	}
-	require.Len(t, tablesInSystemDatabase, allTableCount,
-		"versionedBootstrapSchemas should have the same number of tables as tablesInSystemDatabase")
 	slices.Sort(allIDs)
 	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
 }

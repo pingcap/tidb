@@ -64,7 +64,8 @@ func checkBootstrapDotGo(pass *analysis.Pass, file *ast.File) {
 				if len(v2.Names) != 1 {
 					continue
 				}
-				switch v2.Names[0].Name {
+				tablesDefVarName := v2.Names[0].Name
+				switch tablesDefVarName {
 				case "tablesInSystemDatabase":
 					compositeLit := v2.Values[0].(*ast.CompositeLit)
 					for _, elt := range compositeLit.Elts {
@@ -76,7 +77,7 @@ func checkBootstrapDotGo(pass *analysis.Pass, file *ast.File) {
 						quotedName := elt.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr).Value.(*ast.BasicLit).Value
 						tableName, err := strconv.Unquote(quotedName)
 						if err != nil {
-							pass.Reportf(elt.Pos(), "the name of the table in tablesInSystemDatabase must be a string literal, but got %q", quotedName)
+							pass.Reportf(elt.Pos(), "the name of the table in %s must be a string literal, but got %q", tablesDefVarName, quotedName)
 							continue
 						}
 						sqlPkgName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
@@ -85,18 +86,18 @@ func checkBootstrapDotGo(pass *analysis.Pass, file *ast.File) {
 						}
 						sqlIdentName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).Sel.Name
 						if !strings.HasSuffix(idIdentName, "TableID") {
-							pass.Reportf(elt.Pos(), "the name of the constant of table ID in tablesInSystemDatabase must end with TableID, but got %q", idIdentName)
+							pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must end with TableID, but got %q", tablesDefVarName, idIdentName)
 						}
 						if !strings.HasPrefix(sqlIdentName, "Create") || !strings.HasSuffix(sqlIdentName, "Table") {
-							pass.Reportf(elt.Pos(), "the name of the constant of the create table SQL in tablesInSystemDatabase must start 'CreateXXXTable' style, but got %q", sqlIdentName)
+							pass.Reportf(elt.Pos(), "the name of the constant of the create table SQL in %s must start 'CreateXXXTable' style, but got %q", tablesDefVarName, sqlIdentName)
 						}
 						if strings.TrimSuffix(idIdentName, "TableID") !=
 							strings.TrimSuffix(strings.TrimPrefix(sqlIdentName, "Create"), "Table") {
-							pass.Reportf(elt.Pos(), "the name of the constant of table ID in tablesInSystemDatabase must match the name of the create table SQL, but got %q and %q", idIdentName, sqlIdentName)
+							pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must match the name of the create table SQL, but got %q and %q", tablesDefVarName, idIdentName, sqlIdentName)
 						}
 						nameInCamel := strings.ReplaceAll(tableName, "_", "")
 						if strings.ToLower(strings.TrimSuffix(idIdentName, "TableID")) != nameInCamel {
-							pass.Reportf(elt.Pos(), "the name of the constant of table ID in tablesInSystemDatabase must match the name of the table, but got %q and %q", idIdentName, tableName)
+							pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must match the name of the table, but got %q and %q", tablesDefVarName, idIdentName, tableName)
 						}
 					}
 					found = true
