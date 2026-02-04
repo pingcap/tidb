@@ -17,6 +17,7 @@ package bootstrap
 import (
 	"go/ast"
 	"go/token"
+	"maps"
 	"strconv"
 	"strings"
 
@@ -49,64 +50,120 @@ func run(pass *analysis.Pass) (any, error) {
 	return nil, nil
 }
 
+// check whether the spec is a slice variable definition.
+func isSliceVarDefNode(spec ast.Spec) (varName, eleTpName string, lit *ast.CompositeLit, ok bool) {
+	valSpec, ok := spec.(*ast.ValueSpec)
+	if !ok {
+		return "", "", nil, false
+	}
+	if len(valSpec.Names) != 1 || len(valSpec.Values) != 1 {
+		return "", "", nil, false
+	}
+	compLit, ok := valSpec.Values[0].(*ast.CompositeLit)
+	if !ok {
+		return "", "", nil, false
+	}
+	arrTp, ok := compLit.Type.(*ast.ArrayType)
+	if !ok {
+		return "", "", nil, false
+	}
+	varTpIdent, ok := arrTp.Elt.(*ast.Ident)
+	if !ok {
+		return "", "", nil, false
+	}
+	return valSpec.Names[0].Name, varTpIdent.Name, compLit, true
+}
+
+func checkSystemTablesDefinitionNode(pass *analysis.Pass, varName string, compLit *ast.CompositeLit) {
+	for _, elt := range compLit.Elts {
+		idIdentPkg := elt.(*ast.CompositeLit).Elts[0].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
+		if idIdentPkg != "metadef" {
+			pass.Reportf(elt.Pos(), "table ID must be defined in metadef pkg, but got %q", idIdentPkg)
+		}
+		idIdentName := elt.(*ast.CompositeLit).Elts[0].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).Sel.Name
+		quotedName := elt.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr).Value.(*ast.BasicLit).Value
+		tableName, err := strconv.Unquote(quotedName)
+		if err != nil {
+			pass.Reportf(elt.Pos(), "the name of the table in %s must be a string literal, but got %q", varName, quotedName)
+			continue
+		}
+		sqlPkgName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
+		if sqlPkgName != "metadef" {
+			pass.Reportf(elt.Pos(), "Create table SQL must be defined in metadef pkg, but got %q", sqlPkgName)
+		}
+		sqlIdentName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).Sel.Name
+		if !strings.HasSuffix(idIdentName, "TableID") {
+			pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must end with TableID, but got %q", varName, idIdentName)
+		}
+		if !strings.HasPrefix(sqlIdentName, "Create") || !strings.HasSuffix(sqlIdentName, "Table") {
+			pass.Reportf(elt.Pos(), "the name of the constant of the create table SQL in %s must start 'CreateXXXTable' style, but got %q", varName, sqlIdentName)
+		}
+		if strings.TrimSuffix(idIdentName, "TableID") !=
+			strings.TrimSuffix(strings.TrimPrefix(sqlIdentName, "Create"), "Table") {
+			pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must match the name of the create table SQL, but got %q and %q", varName, idIdentName, sqlIdentName)
+		}
+		nameInCamel := strings.ReplaceAll(tableName, "_", "")
+		if strings.ToLower(strings.TrimSuffix(idIdentName, "TableID")) != nameInCamel {
+			pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must match the name of the table, but got %q and %q", varName, idIdentName, tableName)
+		}
+	}
+}
+
+func checkVersionedBootstrapSchema(pass *analysis.Pass, compLit *ast.CompositeLit, schemaDefVarNames map[string]struct{}) {
+	nameUsedInVersionedBootstrapSchema := make(map[string]struct{})
+	for _, elt := range compLit.Elts {
+		// must be {ver: xxx, databases: xxx}
+		databasesKVNode := elt.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr)
+		if databasesKVNode.Key.(*ast.Ident).Name != "databases" {
+			pass.Reportf(databasesKVNode.Pos(), "the 2nd field of versionedBootstrapSchema must be 'databases'")
+			continue
+		}
+		for _, dbDefNode := range databasesKVNode.Value.(*ast.CompositeLit).Elts {
+			dbDefNodeLit := dbDefNode.(*ast.CompositeLit)
+			// {ID:xx, Name: xx, Tables: xx...}
+			if len(dbDefNodeLit.Elts) >= 3 {
+				tablesVarNode, ok := dbDefNodeLit.Elts[2].(*ast.KeyValueExpr).Value.(*ast.Ident)
+				if !ok {
+					pass.Reportf(dbDefNodeLit.Elts[2].Pos(), "the Tables field of database definition must be a variable")
+					continue
+				}
+				nameUsedInVersionedBootstrapSchema[tablesVarNode.Name] = struct{}{}
+			}
+		}
+	}
+	if !maps.Equal(schemaDefVarNames, nameUsedInVersionedBootstrapSchema) {
+		pass.Reportf(compLit.Pos(), "the variables used in versionedBootstrapSchema do not match the defined schema variables, %v vs %v", schemaDefVarNames, nameUsedInVersionedBootstrapSchema)
+	}
+}
+
 func checkBootstrapDotGo(pass *analysis.Pass, file *ast.File) {
-	var found bool
+	foundVarNames := make(map[string]struct{})
+	schemaDefNodeCount := 0
+	versionedBootstrapSchemaDefCount := 0
 	for _, decl := range file.Decls {
 		switch v := decl.(type) {
 		case *ast.GenDecl:
-			switch {
-			case len(v.Specs) == 1:
-				spec := v.Specs[0]
-				v2, ok := spec.(*ast.ValueSpec)
+			for _, spec := range v.Specs {
+				varName, eleTpName, compLit, ok := isSliceVarDefNode(spec)
 				if !ok {
 					continue
 				}
-				if len(v2.Names) != 1 {
-					continue
-				}
-				tablesDefVarName := v2.Names[0].Name
-				switch tablesDefVarName {
-				case "tablesInSystemDatabase":
-					compositeLit := v2.Values[0].(*ast.CompositeLit)
-					for _, elt := range compositeLit.Elts {
-						idIdentPkg := elt.(*ast.CompositeLit).Elts[0].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
-						if idIdentPkg != "metadef" {
-							pass.Reportf(elt.Pos(), "table ID must be defined in metadef pkg, but got %q", idIdentPkg)
-						}
-						idIdentName := elt.(*ast.CompositeLit).Elts[0].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).Sel.Name
-						quotedName := elt.(*ast.CompositeLit).Elts[1].(*ast.KeyValueExpr).Value.(*ast.BasicLit).Value
-						tableName, err := strconv.Unquote(quotedName)
-						if err != nil {
-							pass.Reportf(elt.Pos(), "the name of the table in %s must be a string literal, but got %q", tablesDefVarName, quotedName)
-							continue
-						}
-						sqlPkgName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).X.(*ast.Ident).Name
-						if sqlPkgName != "metadef" {
-							pass.Reportf(elt.Pos(), "Create table SQL must be defined in metadef pkg, but got %q", sqlPkgName)
-						}
-						sqlIdentName := elt.(*ast.CompositeLit).Elts[2].(*ast.KeyValueExpr).Value.(*ast.SelectorExpr).Sel.Name
-						if !strings.HasSuffix(idIdentName, "TableID") {
-							pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must end with TableID, but got %q", tablesDefVarName, idIdentName)
-						}
-						if !strings.HasPrefix(sqlIdentName, "Create") || !strings.HasSuffix(sqlIdentName, "Table") {
-							pass.Reportf(elt.Pos(), "the name of the constant of the create table SQL in %s must start 'CreateXXXTable' style, but got %q", tablesDefVarName, sqlIdentName)
-						}
-						if strings.TrimSuffix(idIdentName, "TableID") !=
-							strings.TrimSuffix(strings.TrimPrefix(sqlIdentName, "Create"), "Table") {
-							pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must match the name of the create table SQL, but got %q and %q", tablesDefVarName, idIdentName, sqlIdentName)
-						}
-						nameInCamel := strings.ReplaceAll(tableName, "_", "")
-						if strings.ToLower(strings.TrimSuffix(idIdentName, "TableID")) != nameInCamel {
-							pass.Reportf(elt.Pos(), "the name of the constant of table ID in %s must match the name of the table, but got %q and %q", tablesDefVarName, idIdentName, tableName)
-						}
-					}
-					found = true
+				if eleTpName == "TableBasicInfo" {
+					schemaDefNodeCount++
+					checkSystemTablesDefinitionNode(pass, varName, compLit)
+					foundVarNames[varName] = struct{}{}
+				} else if eleTpName == "versionedBootstrapSchema" {
+					versionedBootstrapSchemaDefCount++
+					checkVersionedBootstrapSchema(pass, compLit, foundVarNames)
 				}
 			}
 		}
 	}
-	if !found {
-		pass.Reportf(file.Pos(), "bootstrap.go should must have a variable named 'tablesInSystemDatabase'")
+	if schemaDefNodeCount < 1 {
+		pass.Reportf(file.Pos(), "there must be at least one schema definition variable defined")
+	}
+	if versionedBootstrapSchemaDefCount != 1 {
+		pass.Reportf(file.Pos(), "there must be exactly one versionedBootstrapSchema variable defined")
 	}
 }
 
