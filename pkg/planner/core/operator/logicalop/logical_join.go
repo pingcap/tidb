@@ -153,7 +153,7 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
 	switch p.JoinType {
-	case base.AntiLeftOuterSemiJoin, base.LeftOuterSemiJoin:
+	case base.AntiLeftOuterSemiJoin, base.LeftOuterSemiJoin, base.AntiSemiJoin:
 		// For LeftOuterSemiJoin and AntiLeftOuterSemiJoin, we can actually generate
 		// `col is not null` according to expressions in `OtherConditions` now, but we
 		// are putting column equal condition converted from `in (subq)` into
