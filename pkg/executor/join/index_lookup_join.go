@@ -118,8 +118,8 @@ type InnerCtx struct {
 	// HashIsNullEQ marks which hash keys are null-safe equal (<=>).
 	// The slice aligns with HashCols; positions corresponding to join keys can be true.
 	HashIsNullEQ []bool
-	ColLens       []int
-	HasPrefixCol  bool
+	ColLens      []int
+	HasPrefixCol bool
 }
 
 // HashIsNullEQ should align with HashCols on the normal planner->builder path.
