@@ -220,6 +220,75 @@ func TestDumpPlanReplayerAPI(t *testing.T) {
 	require.Contains(t, string(body), "can't find dump file")
 }
 
+func TestPlanReplayerLoadWithSemicolonInColumnComment(t *testing.T) {
+	origin := config.GetGlobalConfig().TempDir
+	defer func() {
+		config.GetGlobalConfig().TempDir = origin
+	}()
+	config.GetGlobalConfig().TempDir = t.TempDir()
+	store := testkit.CreateMockStore(t)
+	dom, err := session.GetDomain(store)
+	require.NoError(t, err)
+	server, client := prepareServerAndClientForTest(t, store, dom)
+	defer server.Close()
+
+	db, err := sql.Open("mysql", client.GetDSN())
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	tk := testkit.NewDBTestKit(t, db)
+	tk.MustExec("create database planReplayerSemicolon")
+	tk.MustExec("use planReplayerSemicolon")
+	tk.MustExec("create table t(k1 int, k2 int comment 'xx;xxx')")
+	tk.MustExec("analyze table t")
+	rows := tk.MustQuery("plan replayer dump explain select * from t")
+	require.True(t, rows.Next(), "unexpected data")
+	var filename string
+	require.NoError(t, rows.Scan(&filename))
+	require.NoError(t, rows.Close())
+
+	resp, err := client.FetchStatus(filepath.Join("/plan_replayer/dump/", filename))
+	require.NoError(t, err)
+	defer func() {
+		require.NoError(t, resp.Body.Close())
+	}()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+
+	path := t.TempDir()
+	path = filepath.Join(path, "plan_replayer.zip")
+	fp, err := os.Create(path)
+	require.NoError(t, err)
+	require.NotNil(t, fp)
+	defer func() {
+		require.NoError(t, fp.Close())
+		require.NoError(t, os.Remove(path))
+	}()
+	_, err = io.Copy(fp, bytes.NewReader(body))
+	require.NoError(t, err)
+	require.NoError(t, fp.Sync())
+
+	db2, err := sql.Open("mysql", client.GetDSN(func(config *mysql.Config) {
+		config.AllowAllFiles = true
+	}))
+	require.NoError(t, err, "Error connecting")
+	defer func() {
+		err := db2.Close()
+		require.NoError(t, err)
+	}()
+	tk2 := testkit.NewDBTestKit(t, db2)
+	tk2.MustExec("use planReplayerSemicolon")
+	tk2.MustExec(`SET FOREIGN_KEY_CHECKS = 0;`)
+	tk2.MustExec("drop table planReplayerSemicolon.t")
+	tk2.MustExec(`SET FOREIGN_KEY_CHECKS = 1;`)
+	tk2.MustExec(fmt.Sprintf(`plan replayer load "%s"`, path))
+	tk2.MustExec("use planReplayerSemicolon")
+	rows = tk2.MustQuery("show create table t")
+	require.True(t, rows.Next(), "unexpected data")
+}
+
 // prepareData4PlanReplayer trigger tidb to dump 2 plan replayer files,
 // one by manual command, the other by capture, and return the filenames.
 func prepareData4PlanReplayer(t *testing.T, client *testserverclient.TestServerClient, dom *domain.Domain) (string, string) {

@@ -34,10 +34,12 @@ func TestVerboseExplain(t *testing.T) {
 	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
 		tk.MustExec("use test")
 		tk.MustExec(`set tidb_opt_limit_push_down_threshold=0`)
-		tk.MustExec("drop table if exists t1, t2, t3")
+		tk.MustExec("drop table if exists t1, t2, t3, t31240, partsupp, supplier, first_range")
 		tk.MustExec("create table t1(a int, b int)")
 		tk.MustExec("create table t2(a int, b int)")
 		tk.MustExec("create table t3(a int, b int, index c(b))")
+		tk.MustExec("create table t31240(a int, b int)")
+		tk.MustExec("create table first_range(a int)")
 		tk.MustExec("insert into t1 values(1,2)")
 		tk.MustExec("insert into t1 values(3,4)")
 		tk.MustExec("insert into t1 values(5,6)")
@@ -57,6 +59,8 @@ func TestVerboseExplain(t *testing.T) {
 		// Create virtual tiflash replica info.
 		testkit.SetTiFlashReplica(t, dom, "test", "t1")
 		testkit.SetTiFlashReplica(t, dom, "test", "t2")
+		testkit.SetTiFlashReplica(t, dom, "test", "t31240")
+		testkit.SetTiFlashReplica(t, dom, "test", "first_range")
 
 		var input []string
 		var output []struct {
@@ -64,44 +68,6 @@ func TestVerboseExplain(t *testing.T) {
 			Plan []string
 		}
 		integrationSuiteData := GetIntegrationSuiteData()
-		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		for i, tt := range input {
-			testdata.OnRecord(func() {
-				output[i].SQL = tt
-				output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			})
-			res := tk.MustQuery(tt)
-			res.Check(testkit.Rows(output[i].Plan...))
-		}
-
-		tk.MustExec("drop table if exists t31240")
-		tk.MustExec("create table t31240(a int, b int);")
-		tk.MustExec("set @@tidb_allow_mpp = 0")
-		tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
-		tbl, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "t31240", L: "t31240"})
-		require.NoError(t, err)
-		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-		var issueInput []string
-		var issueOutput []struct {
-			SQL  string
-			Plan []string
-		}
-		integrationSuiteData.LoadTestCasesByName("TestIssue31240", t, &issueInput, &issueOutput, cascades, caller)
-		for i, tt := range issueInput {
-			testdata.OnRecord(func() {
-				issueOutput[i].SQL = tt
-			})
-			if strings.HasPrefix(tt, "set") {
-				tk.MustExec(tt)
-				continue
-			}
-			testdata.OnRecord(func() {
-				issueOutput[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
-			})
-			tk.MustQuery(tt).Check(testkit.Rows(issueOutput[i].Plan...))
-		}
-		tk.MustExec("drop table if exists t31240")
-
 		tk.MustExec("CREATE TABLE `partsupp` (" +
 			" `PS_PARTKEY` bigint(20) NOT NULL," +
 			"`PS_SUPPKEY` bigint(20) NOT NULL," +
@@ -119,32 +85,38 @@ func TestVerboseExplain(t *testing.T) {
 			"`S_COMMENT` varchar(101) NOT NULL," +
 			"PRIMARY KEY (`S_SUPPKEY`) /*T![clustered_index] CLUSTERED */)")
 		h := dom.StatsHandle()
-		err = statstestutil.HandleNextDDLEventWithTxn(h)
+		err := statstestutil.HandleNextDDLEventWithTxn(h)
 		require.NoError(t, err)
-		tk.MustExec("set @@tidb_allow_mpp = 1")
-		tk.MustExec("set @@tidb_enforce_mpp = 1")
+
+		testkit.SetTiFlashReplica(t, dom, "test", "partsupp")
+		testkit.SetTiFlashReplica(t, dom, "test", "supplier")
 
 		tbl1, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "partsupp", L: "partsupp"})
 		require.NoError(t, err)
 		tbl2, err := dom.InfoSchema().TableByName(context.Background(), ast.CIStr{O: "test", L: "test"}, ast.CIStr{O: "supplier", L: "supplier"})
 		require.NoError(t, err)
-		tbl1.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-		tbl2.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
-
 		statsTbl1 := h.GetPhysicalTableStats(tbl1.Meta().ID, tbl1.Meta())
 		statsTbl1.RealtimeCount = 800000
 		statsTbl2 := h.GetPhysicalTableStats(tbl2.Meta().ID, tbl2.Meta())
 		statsTbl2.RealtimeCount = 10000
-		issueInput = nil
-		issueOutput = nil
-		integrationSuiteData.LoadTestCasesByName("TestIssue32632", t, &issueInput, &issueOutput, cascades, caller)
-		for i, tt := range issueInput {
+
+		integrationSuiteData.LoadTestCases(t, &input, &output, cascades, caller)
+		for i, tt := range input {
+			setStmt := strings.HasPrefix(tt, "set")
 			testdata.OnRecord(func() {
-				issueOutput[i].SQL = tt
-				issueOutput[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				output[i].SQL = tt
+				if !setStmt {
+					output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery(tt).Rows())
+				}
 			})
-			tk.MustQuery(tt).Check(testkit.Rows(issueOutput[i].Plan...))
+			if setStmt {
+				tk.MustExec(tt)
+				continue
+			}
+			tk.MustQuery(tt).Check(testkit.Rows(output[i].Plan...))
 		}
+
+		tk.MustExec("drop table if exists t1, t2, t3, t31240, partsupp, supplier, first_range")
 	})
 }
 
@@ -388,15 +360,15 @@ func TestIndexMergeJSONMemberOf2FlakyPart(t *testing.T) {
 		tk.MustExec(`insert into t value(2,2,2, '{"b":[3,4,5,6]}');`)
 		tk.MustExec(`set tidb_analyze_version=2;`)
 		tk.MustExec(`analyze table t all columns;`)
-		tk.MustQuery("explain select * from t use index (iad) where a = 1;").Check(testkit.Rows(
-			"TableReader_8 1.00 root  data:Selection_7",
-			"└─Selection_7 1.00 cop[tikv]  eq(test.t.a, 1)",
-			"  └─TableFullScan_6 2.00 cop[tikv] table:t keep order:false",
+		tk.MustQuery("explain format = 'brief' select * from t use index (iad) where a = 1;").Check(testkit.Rows(
+			"TableReader 1.00 root  data:Selection",
+			"└─Selection 1.00 cop[tikv]  eq(test.t.a, 1)",
+			"  └─TableFullScan 2.00 cop[tikv] table:t keep order:false",
 		))
-		tk.MustQuery("explain select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
-			"IndexMerge_8 1.00 root  type: union",
-			"├─IndexRangeScan_6(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
-			"└─TableRowIDScan_7(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
+		tk.MustQuery("explain format = 'brief' select * from t use index (iad) where a = 1 and (2 member of (d->'$.b'));").Check(testkit.Rows(
+			"IndexMerge 1.00 root  type: union",
+			"├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:iad(a, cast(json_extract(`d`, _utf8mb4'$.b') as signed array)) range:[1 2,1 2], keep order:false, stats:partial[d:unInitialized]",
+			"└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[d:unInitialized]",
 		))
 	})
 }
@@ -555,7 +527,7 @@ FROM (SELECT DISTINCT balance.portfolio_code AS portfolioCode
 		tk.MustQuery(`select * from t_issue52023 where a = 5`).Check(testkit.Rows())
 		tk.MustQuery(`select * from t_issue52023 where a IN (5,55)`).Check(testkit.Rows())
 		tk.MustQuery(`select * from t_issue52023 where a IN (0x5,55)`).Check(testkit.Rows("\u0005"))
-		tk.MustQuery(`explain select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("Point_Get_1 1.00 root table:t_issue52023, partition:P4, clustered index:PRIMARY(a) "))
+		tk.MustQuery(`explain format='brief' select * from t_issue52023 where a = 0x5`).Check(testkit.Rows("Point_Get 1.00 root table:t_issue52023, partition:P4, clustered index:PRIMARY(a) "))
 		tk.MustQuery(`explain format='brief' select * from t_issue52023 where a = 5`).Check(testkit.Rows(""+
 			"TableReader 1.00 root partition:all data:Selection",
 			"└─Selection 1.00 cop[tikv]  eq(cast(test.t_issue52023.a, double BINARY), 5)",

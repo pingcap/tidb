@@ -3074,16 +3074,16 @@ var defaultSysVars = []*SysVar{
 		s.OptPrefixIndexSingleScan = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPartialOrderedIndexForTopN, Value: BoolToOnOff(vardef.DefTiDBOptPartialOrderedIndexForTopN), Type: vardef.TypeBool, IsHintUpdatableVerified: true,
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBOptPartialOrderedIndexForTopN, Value: vardef.DefTiDBOptPartialOrderedIndexForTopN, Type: vardef.TypeEnum, PossibleValues: []string{"DISABLE", "COST"}, IsHintUpdatableVerified: true,
 		Validation: func(_ *SessionVars, normalizedValue string, originalValue string, _ vardef.ScopeFlag) (string, error) {
-			// Only allow exact values: 0, 1, ON, OFF (case-insensitive)
-			lowerValue := strings.ToLower(strings.TrimSpace(originalValue))
-			if lowerValue != "0" && lowerValue != "1" && lowerValue != "on" && lowerValue != "off" {
+			// Allow DISABLE, COST (case-insensitive)
+			upperValue := strings.ToUpper(strings.TrimSpace(originalValue))
+			if upperValue != "DISABLE" && upperValue != "COST" {
 				return normalizedValue, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBOptPartialOrderedIndexForTopN, originalValue)
 			}
-			return normalizedValue, nil
+			return upperValue, nil
 		}, SetSession: func(s *SessionVars, val string) error {
-			s.OptPartialOrderedIndexForTopN = TiDBOptOn(val)
+			s.OptPartialOrderedIndexForTopN = strings.ToUpper(val)
 			return nil
 		}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBExternalTS, Value: strconv.FormatInt(vardef.DefTiDBExternalTS, 10), SetGlobal: func(ctx context.Context, s *SessionVars, val string) error {

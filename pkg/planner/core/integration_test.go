@@ -176,12 +176,12 @@ func TestTimeToSecPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "10000.00", "root", " MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
-			{"  └─Projection_4", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#4"},
-			{"    └─TableFullScan_8", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
+			{"TableReader", "10000.00", "root", " MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "10000.00", "mpp[tiflash]", " ExchangeType: PassThrough"},
+			{"  └─Projection", "10000.00", "mpp[tiflash]", " time_to_sec(test.t.a)->Column#4"},
+			{"    └─TableFullScan", "10000.00", "mpp[tiflash]", "table:t", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select time_to_sec(a) from t;").Check(rows)
+		testKit.MustQuery("explain format = 'brief' select time_to_sec(a) from t;").Check(rows)
 	})
 }
 
@@ -205,12 +205,12 @@ func TestRightShiftPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "rightshift(test.t.a, test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select a >> b from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select a >> b from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -225,66 +225,66 @@ func TestBitColumnPushDown(t *testing.T) {
 		sql := "select b from t1 where t1.b > (select min(t2.b) from t2 where t2.a < t1.a)"
 		testKit.MustQuery(sql).Sort().Check(testkit.Rows("2", "2", "3", "3", "4", "4"))
 		rows := [][]any{
-			{"Projection_15", "root", "test.t1.b"},
-			{"└─Apply_19", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#9)"},
-			{"  ├─TableReader_22(Build)", "root", "data:Selection_21"},
-			{"  │ └─Selection_21", "cop[tikv]", "not(isnull(test.t1.b))"},
-			{"  │   └─TableFullScan_20", "cop[tikv]", "keep order:false, stats:pseudo"},
-			{"  └─Selection_23(Probe)", "root", "not(isnull(Column#9))"},
-			{"    └─StreamAgg_30", "root", "funcs:min(test.t2.b)->Column#9"},
-			{"      └─TopN_31", "root", "test.t2.b, offset:0, count:1"},
-			{"        └─TableReader_41", "root", "data:TopN_40"},
-			{"          └─TopN_40", "cop[tikv]", "test.t2.b, offset:0, count:1"},
-			{"            └─Selection_39", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
-			{"              └─TableFullScan_38", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"Projection", "root", "test.t1.b"},
+			{"└─Apply", "root", "CARTESIAN inner join, other cond:gt(test.t1.b, Column#9)"},
+			{"  ├─TableReader(Build)", "root", "data:Selection"},
+			{"  │ └─Selection", "cop[tikv]", "not(isnull(test.t1.b))"},
+			{"  │   └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"  └─Selection(Probe)", "root", "not(isnull(Column#9))"},
+			{"    └─StreamAgg", "root", "funcs:min(test.t2.b)->Column#9"},
+			{"      └─TopN", "root", "test.t2.b, offset:0, count:1"},
+			{"        └─TableReader", "root", "data:TopN"},
+			{"          └─TopN", "cop[tikv]", "test.t2.b, offset:0, count:1"},
+			{"            └─Selection", "cop[tikv]", "lt(test.t2.a, test.t1.a), not(isnull(test.t2.b))"},
+			{"              └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 		testKit.MustExec("insert t1 values ('A', 1);")
 		sql = "select a from t1 where ascii(a)=65"
 		testKit.MustQuery(sql).Check(testkit.Rows("A"))
 		rows = [][]any{
-			{"TableReader_7", "root", "data:Selection_6"},
-			{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
-			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "data:Selection"},
+			{"└─Selection", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
+			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = `eq(concat(cast(test.t1.a, var_string(1)), "A"), "AA")`
 		sql = "select a from t1 where concat(a, 'A')='AA'"
 		testKit.MustQuery(sql).Check(testkit.Rows("A"))
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = `eq(cast(test.t1.a, binary(1)), "A")`
 		sql = "select a from t1 where binary a='A'"
 		testKit.MustQuery(sql).Check(testkit.Rows("A"))
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`
 		sql = "select a from t1 where cast(a as char)='A'"
 		testKit.MustQuery(sql).Check(testkit.Rows("A"))
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
 		testKit.MustExec("insert into mysql.expr_pushdown_blacklist values('bit', 'tikv','');")
 		testKit.MustExec("admin reload expr_pushdown_blacklist;")
 		rows = [][]any{
-			{"Selection_5", "root", `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`},
-			{"└─TableReader_7", "root", "data:TableFullScan_6"},
-			{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"Selection", "root", `eq(cast(from_binary(cast(test.t1.a, binary(1))), var_string(1)), "A")`},
+			{"└─TableReader", "root", "data:TableFullScan"},
+			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
 		sql = "select a from t1 where cast(a as char)='A'"
 		testKit.MustQuery(sql).Check(testkit.Rows("A"))
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
 		testKit.MustExec("delete from mysql.expr_pushdown_blacklist where name='bit'")
 		testKit.MustExec("admin reload expr_pushdown_blacklist;")
 		sql = "select a from t1 where ascii(a)=65"
 		testKit.MustQuery(sql).Check(testkit.Rows("A"))
 		rows = [][]any{
-			{"TableReader_7", "root", "data:Selection_6"},
-			{"└─Selection_6", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
-			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "data:Selection"},
+			{"└─Selection", "cop[tikv]", "eq(ascii(cast(test.t1.a, var_string(1))), 65)"},
+			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery(fmt.Sprintf("explain analyze %s", sql)).CheckAt([]int{0, 3, 6}, rows)
+		testKit.MustQuery(fmt.Sprintf("explain analyze format = 'brief' %s", sql)).CheckAt([]int{0, 3, 6}, rows)
 
 		// test collation
 		testKit.MustExec("update mysql.tidb set VARIABLE_VALUE='True' where VARIABLE_NAME='new_collation_enabled'")
@@ -312,15 +312,15 @@ func TestSysdatePushDown(t *testing.T) {
 		tk.MustExec("create table t(id int signed, id2 int unsigned, c varchar(11), d datetime, b double, e bit(10))")
 		tk.MustExec("insert into t(id, id2, c, d) values (-1, 1, 'abc', '2021-12-12')")
 		rows := [][]any{
-			{"TableReader_7", "root", "data:Selection_6"},
-			{"└─Selection_6", "cop[tikv]", "gt(test.t.d, sysdate())"},
-			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "data:Selection"},
+			{"└─Selection", "cop[tikv]", "gt(test.t.d, sysdate())"},
+			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		tk.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 			CheckAt([]int{0, 3, 6}, rows)
 		// assert sysdate isn't now after set global tidb_sysdate_is_now in the same session
 		tk.MustExec("set global tidb_sysdate_is_now='1'")
-		tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		tk.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		// assert sysdate is now after set global tidb_sysdate_is_now in the new session
@@ -330,14 +330,14 @@ func TestSysdatePushDown(t *testing.T) {
 		now := time.Now()
 		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/injectNow", fmt.Sprintf(`return(%d)`, now.Unix())))
 		rows[1][2] = fmt.Sprintf("gt(test.t.d, %v)", now.Format(time.DateTime))
-		tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		tk.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 			CheckAt([]int{0, 3, 6}, rows)
 		failpoint.Disable("github.com/pingcap/tidb/pkg/expression/injectNow")
 
 		// assert sysdate isn't now after set session tidb_sysdate_is_now false in the same session
 		tk.MustExec("set tidb_sysdate_is_now='0'")
 		rows[1][2] = "gt(test.t.d, sysdate())"
-		tk.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		tk.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 			CheckAt([]int{0, 3, 6}, rows)
 	})
 }
@@ -507,68 +507,68 @@ func TestScalarFunctionPushDown(t *testing.T) {
 		testKit.MustExec("create table t(id int signed, id2 int unsigned, c varchar(11), d datetime, b double, e bit(10))")
 		testKit.MustExec("insert into t(id, id2, c, d) values (-1, 1, '{\"a\":1}', '2021-12-12')")
 		rows := [][]any{
-			{"TableReader_7", "root", "data:Selection_6"},
-			{"└─Selection_6", "cop[tikv]", "right(test.t.c, 1)"},
-			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "data:Selection"},
+			{"└─Selection", "cop[tikv]", "right(test.t.c, 1)"},
+			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where right(c,1);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where right(c,1);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "mod(test.t.id, test.t.id)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id);").
 			CheckAt([]int{0, 3, 6}, rows)
 		rows[1][2] = "mod(test.t.id, test.t.id2)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id2);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where mod(id, id2);").
 			CheckAt([]int{0, 3, 6}, rows)
 		rows[1][2] = "mod(test.t.id2, test.t.id)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id);").
 			CheckAt([]int{0, 3, 6}, rows)
 		rows[1][2] = "mod(test.t.id2, test.t.id2)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id2);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where mod(id2, id2);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "sin(cast(test.t.id, double BINARY))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where sin(id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where sin(id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "asin(cast(test.t.id, double BINARY))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where asin(id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where asin(id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "cos(cast(test.t.id, double BINARY))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where cos(id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where cos(id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "acos(cast(test.t.id, double BINARY))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where acos(id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where acos(id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "atan(cast(test.t.id, double BINARY))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where atan(id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where atan(id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "atan2(cast(test.t.id, double BINARY), cast(test.t.id, double BINARY))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where atan2(id,id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where atan2(id,id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "hour(cast(test.t.d, time))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where hour(d);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where hour(d);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "hour(cast(test.t.d, time))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where hour(d);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where hour(d);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "minute(cast(test.t.d, time))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where minute(d);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where minute(d);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "second(cast(test.t.d, time))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where second(d);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where second(d);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "month(test.t.d)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where month(d);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where month(d);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		//rows[1][2] = "dayname(test.t.d)"
@@ -576,11 +576,11 @@ func TestScalarFunctionPushDown(t *testing.T) {
 		//	CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "dayofmonth(test.t.d)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where dayofmonth(d);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where dayofmonth(d);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "from_days(test.t.id)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where from_days(id);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where from_days(id);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		//rows[1][2] = "last_day(test.t.d)"
@@ -588,7 +588,7 @@ func TestScalarFunctionPushDown(t *testing.T) {
 		//	CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "gt(4, test.t.id)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where pi() > id;").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where pi() > id;").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		//rows[1][2] = "truncate(test.t.id, 0)"
@@ -596,35 +596,35 @@ func TestScalarFunctionPushDown(t *testing.T) {
 		//	CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "round(test.t.b)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where round(b)").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where round(b)").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "date(test.t.d)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where date(d)").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where date(d)").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "week(test.t.d)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where week(d)").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where week(d)").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "datediff(test.t.d, test.t.d)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where datediff(d,d)").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where datediff(d,d)").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "gt(test.t.d, sysdate())"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where d > sysdate()").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "ascii(cast(test.t.e, var_string(2)))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where ascii(e);").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where ascii(e);").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "eq(json_valid(test.t.c), 1)"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where json_valid(c)=1;").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where json_valid(c)=1;").
 			CheckAt([]int{0, 3, 6}, rows)
 
 		rows[1][2] = "json_contains(cast(test.t.c, json BINARY), cast(\"1\", json BINARY))"
-		testKit.MustQuery("explain analyze select /*+read_from_storage(tikv[t])*/ * from t where json_contains(c, '1');").
+		testKit.MustQuery("explain analyze format = 'brief' select /*+read_from_storage(tikv[t])*/ * from t where json_contains(c, '1');").
 			CheckAt([]int{0, 3, 6}, rows)
 	})
 }
@@ -648,13 +648,13 @@ func TestReverseUTF8PushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#4"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "reverse(test.t.a)->Column#4"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
 
-		testKit.MustQuery("explain select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -677,13 +677,13 @@ func TestReversePushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "reverse(test.t.a)->Column#4"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "reverse(test.t.a)->Column#4"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
 
-		testKit.MustQuery("explain select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select reverse(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -706,13 +706,13 @@ func TestSpacePushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "space(test.t.a)->Column#4"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "space(test.t.a)->Column#4"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
 
-		testKit.MustQuery("explain select space(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select space(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -991,12 +991,12 @@ func TestRepeatPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "repeat(cast(test.t.a, var_string(20)), test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select repeat(a,b) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1041,28 +1041,28 @@ func TestAggWithJsonPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"HashAgg_6", "root", "funcs:avg(Column#5)->Column#4"},
-			{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#5"},
-			{"  └─TableReader_12", "root", "data:TableFullScan_11"},
-			{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+			{"HashAgg", "root", "funcs:avg(Column#5)->Column#4"},
+			{"└─Projection", "root", "cast(test.t.a, double BINARY)->Column#5"},
+			{"  └─TableReader", "root", "data:TableFullScan"},
+			{"    └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select avg(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 		rows = [][]any{
-			{"HashAgg_6", "root", "funcs:sum(Column#5)->Column#4"},
-			{"└─Projection_19", "root", "cast(test.t.a, double BINARY)->Column#5"},
-			{"  └─TableReader_12", "root", "data:TableFullScan_11"},
-			{"    └─TableFullScan_11", "cop[tiflash]", "keep order:false, stats:pseudo"},
+			{"HashAgg", "root", "funcs:sum(Column#5)->Column#4"},
+			{"└─Projection", "root", "cast(test.t.a, double BINARY)->Column#5"},
+			{"  └─TableReader", "root", "data:TableFullScan"},
+			{"    └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select sum(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 		rows = [][]any{
-			{"HashAgg_6", "root", "funcs:group_concat(Column#5 separator \",\")->Column#4"},
-			{"└─Projection_13", "root", "cast(test.t.a, var_string(4294967295))->Column#5"},
-			{"  └─TableReader_10", "root", "data:TableFullScan_9"},
-			{"    └─TableFullScan_9", "cop[tiflash]", "keep order:false, stats:pseudo"},
+			{"HashAgg", "root", "funcs:group_concat(Column#5 separator \",\")->Column#4"},
+			{"└─Projection", "root", "cast(test.t.a, var_string(4294967295))->Column#5"},
+			{"  └─TableReader", "root", "data:TableFullScan"},
+			{"    └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select /*+ hash_agg() */  group_concat(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1086,12 +1086,12 @@ func TestLeftShiftPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "leftshift(test.t.a, test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select a << b from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select a << b from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1110,20 +1110,20 @@ func TestHexIntOrStrPushDownToTiFlash(t *testing.T) {
 		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.a)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "hex(test.t.a)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select hex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select hex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 		rows = [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "hex(test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "hex(test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select hex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select hex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1142,12 +1142,12 @@ func TestBinPushDownToTiFlash(t *testing.T) {
 		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "bin(test.t.a)->Column#4"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "bin(test.t.a)->Column#4"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select bin(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select bin(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1171,12 +1171,12 @@ func TestEltPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "elt(test.t.a, test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select elt(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select elt(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1199,12 +1199,12 @@ func TestRegexpInstrPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "regexp_instr(test.t.expr, test.t.pattern, 1, 1, 0, test.t.match_type)->Column#9"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "regexp_instr(test.t.expr, test.t.pattern, 1, 1, 0, test.t.match_type)->Column#9"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select regexp_instr(expr, pattern, 1, 1, 0, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select regexp_instr(expr, pattern, 1, 1, 0, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1226,12 +1226,12 @@ func TestRegexpSubstrPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "regexp_substr(test.t.expr, test.t.pattern, 1, 1, test.t.match_type)->Column#8"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "regexp_substr(test.t.expr, test.t.pattern, 1, 1, test.t.match_type)->Column#8"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select regexp_substr(expr, pattern, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select regexp_substr(expr, pattern, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1254,12 +1254,12 @@ func TestRegexpReplacePushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column#9"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "regexp_replace(test.t.expr, test.t.pattern, test.t.repl, 1, 1, test.t.match_type)->Column#9"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select regexp_replace(expr, pattern, repl, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select regexp_replace(expr, pattern, repl, 1, 1, match_type) as res from test.t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1287,12 +1287,12 @@ func TestCastTimeAsDurationToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#5, cast(test.t.b, time BINARY)->Column#6"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "cast(test.t.a, time BINARY)->Column#5, cast(test.t.b, time BINARY)->Column#6"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select cast(a as time), cast(b as time) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1311,20 +1311,20 @@ func TestUnhexPushDownToTiFlash(t *testing.T) {
 		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "unhex(cast(test.t.a, var_string(20)))->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select unhex(a) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 		rows = [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "unhex(test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "unhex(test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select unhex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select unhex(b) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1343,20 +1343,20 @@ func TestLeastGretestStringPushDownToTiFlash(t *testing.T) {
 		tbl.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{Count: 1, Available: true}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "least(test.t.a, test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "least(test.t.a, test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select least(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select least(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
 
 		rows = [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "greatest(test.t.a, test.t.b)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "greatest(test.t.a, test.t.b)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		testKit.MustQuery("explain select greatest(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
+		testKit.MustQuery("explain format = 'brief' select greatest(a, b) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1666,12 +1666,12 @@ func TestIsIPv4ToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "is_ipv4(test.t.v4)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "is_ipv4(test.t.v4)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain select is_ipv4(v4) from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'brief' select is_ipv4(v4) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1696,12 +1696,12 @@ func TestIsIPv6ToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_10", "root", "MppVersion: 3, data:ExchangeSender_9"},
-			{"└─ExchangeSender_9", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_4", "mpp[tiflash]", "is_ipv6(test.t.v6)->Column#5"},
-			{"    └─TableFullScan_8", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "is_ipv6(test.t.v6)->Column#5"},
+			{"    └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain select is_ipv6(v6) from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'brief' select is_ipv6(v6) from t;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1727,21 +1727,21 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 		// Projection to tikv.
 		rows = [][]any{
-			{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#5"},
-			{"└─TableReader_6", "root", "data:TableFullScan_5"},
-			{"  └─TableFullScan_5", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"Projection", "root", "plus(test.t.c1, test.t.c2)->Column#5"},
+			{"└─TableReader", "root", "data:TableFullScan"},
+			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
 		tk.MustExec("set session tidb_opt_projection_push_down='ON';")
-		tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'brief' select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
 		tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
 
 		// Selection to tikv.
 		rows = [][]any{
-			{"Selection_8", "root", "gt(test.t.c2, 1)"},
-			{"└─TableReader_7", "root", "data:TableFullScan_6"},
-			{"  └─TableFullScan_6", "cop[tikv]", "keep order:false, stats:pseudo"},
+			{"Selection", "root", "gt(test.t.c2, 1)"},
+			{"└─TableReader", "root", "data:TableFullScan"},
+			{"  └─TableFullScan", "cop[tikv]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'brief' select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 
 		tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1")
 		tk.MustExec("set @@tidb_isolation_read_engines = 'tiflash'")
@@ -1763,21 +1763,21 @@ func TestVirtualExprPushDown(t *testing.T) {
 
 		// Projection to tiflash.
 		rows = [][]any{
-			{"Projection_3", "root", "plus(test.t.c1, test.t.c2)->Column#5"},
-			{"└─TableReader_6", "root", "data:TableFullScan_5"},
-			{"  └─TableFullScan_5", "cop[tiflash]", "keep order:false, stats:pseudo"},
+			{"Projection", "root", "plus(test.t.c1, test.t.c2)->Column#5"},
+			{"└─TableReader", "root", "data:TableFullScan"},
+			{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
 		tk.MustExec("set session tidb_opt_projection_push_down='ON';")
-		tk.MustQuery("explain select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'brief' select c1 + c2 from t;").CheckAt([]int{0, 2, 4}, rows)
 		tk.MustExec("set session tidb_opt_projection_push_down='OFF';")
 
 		// Selection to tiflash.
 		rows = [][]any{
-			{"Selection_8", "root", "gt(test.t.c2, 1)"},
-			{"└─TableReader_7", "root", "data:TableFullScan_6"},
-			{"  └─TableFullScan_6", "cop[tiflash]", "keep order:false, stats:pseudo"},
+			{"Selection", "root", "gt(test.t.c2, 1)"},
+			{"└─TableReader", "root", "data:TableFullScan"},
+			{"  └─TableFullScan", "cop[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'brief' select * from t where c2 > 1;").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
 
@@ -1801,32 +1801,32 @@ func TestWindowRangeFramePushDownTiflash(t *testing.T) {
 
 		tk.MustExec(`set @@tidb_max_tiflash_threads=20`)
 
-		tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
-			"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-			"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
-			"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
-			"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
-			"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
-			"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'brief' select *, first_value(v) over (partition by p order by o range between 3 preceding and 0 following) as a from test.first_range;").Check(testkit.Rows(
+			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Window 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 0 following), stream_count: 20",
+			"    └─Sort 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
+			"      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 20",
+			"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
+			"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
-		tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9E0 following) as a from test.first_range;").Check(testkit.Rows(
-			"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-			"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
-			"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
-			"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
-			"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
-			"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'brief' select *, first_value(v) over (partition by p order by o range between 3 preceding and 2.9E0 following) as a from test.first_range;").Check(testkit.Rows(
+			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Window 10000.00 mpp[tiflash]  first_value(test.first_range.v)->Column#9 over(partition by test.first_range.p order by test.first_range.o range between 3 preceding and 2.9 following), stream_count: 20",
+			"    └─Sort 10000.00 mpp[tiflash]  test.first_range.p, test.first_range.o, stream_count: 20",
+			"      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 20",
+			"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range.p, collate: binary], stream_count: 20",
+			"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range keep order:false, stats:pseudo"))
 
-		tk.MustQuery("explain select *, first_value(v) over (partition by p order by o range between 2.3 preceding and 0 following) as a from test.first_range_d64;").Check(testkit.Rows(
-			"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
-			"└─ExchangeSender_22 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-			"  └─Window_21 10000.00 mpp[tiflash]  first_value(test.first_range_d64.v)->Column#7 over(partition by test.first_range_d64.p order by test.first_range_d64.o range between 2.3 preceding and 0 following), stream_count: 20",
-			"    └─Sort_13 10000.00 mpp[tiflash]  test.first_range_d64.p, test.first_range_d64.o, stream_count: 20",
-			"      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 20",
-			"        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range_d64.p, collate: binary], stream_count: 20",
-			"          └─TableFullScan_10 10000.00 mpp[tiflash] table:first_range_d64 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain format = 'brief' select *, first_value(v) over (partition by p order by o range between 2.3 preceding and 0 following) as a from test.first_range_d64;").Check(testkit.Rows(
+			"TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+			"└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+			"  └─Window 10000.00 mpp[tiflash]  first_value(test.first_range_d64.v)->Column#7 over(partition by test.first_range_d64.p order by test.first_range_d64.o range between 2.3 preceding and 0 following), stream_count: 20",
+			"    └─Sort 10000.00 mpp[tiflash]  test.first_range_d64.p, test.first_range_d64.o, stream_count: 20",
+			"      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 20",
+			"        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.first_range_d64.p, collate: binary], stream_count: 20",
+			"          └─TableFullScan 10000.00 mpp[tiflash] table:first_range_d64 keep order:false, stats:pseudo"))
 
 		tk.MustQuery("explain select *, first_value(v) over (partition by p order by o_datetime range between interval 1 day preceding and interval 1 day following) as a from test.first_range;").Check(testkit.Rows(
 			"TableReader_23 10000.00 root  MppVersion: 3, data:ExchangeSender_22",
@@ -2073,15 +2073,15 @@ func TestAggregationInWindowFunctionPushDownToTiFlash(t *testing.T) {
 		}
 
 		rows := [][]any{
-			{"TableReader_25", "root", "MppVersion: 3, data:ExchangeSender_24"},
-			{"└─ExchangeSender_24", "mpp[tiflash]", "ExchangeType: PassThrough"},
-			{"  └─Projection_8", "mpp[tiflash]", "Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, Column#15->Column#20, stream_count: 8"},
-			{"    └─Window_23", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#11, count(test.t.v)->Column#12, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#13, min(test.t.v)->Column#14, max(test.t.v)->Column#15 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
-			{"      └─Sort_15", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
-			{"        └─ExchangeReceiver_14", "mpp[tiflash]", "stream_count: 8"},
-			{"          └─ExchangeSender_13", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
-			{"            └─TableFullScan_12", "mpp[tiflash]", "keep order:false, stats:pseudo"},
+			{"TableReader", "root", "MppVersion: 3, data:ExchangeSender"},
+			{"└─ExchangeSender", "mpp[tiflash]", "ExchangeType: PassThrough"},
+			{"  └─Projection", "mpp[tiflash]", "Column#11->Column#16, Column#12->Column#17, Column#13->Column#18, Column#14->Column#19, Column#15->Column#20, stream_count: 8"},
+			{"    └─Window", "mpp[tiflash]", "sum(cast(test.t.v, decimal(10,0) BINARY))->Column#11, count(test.t.v)->Column#12, avg(cast(test.t.v, decimal(10,0) BINARY))->Column#13, min(test.t.v)->Column#14, max(test.t.v)->Column#15 over(partition by test.t.p order by test.t.o range between unbounded preceding and current row), stream_count: 8"},
+			{"      └─Sort", "mpp[tiflash]", "test.t.p, test.t.o, stream_count: 8"},
+			{"        └─ExchangeReceiver", "mpp[tiflash]", "stream_count: 8"},
+			{"          └─ExchangeSender", "mpp[tiflash]", "ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.t.p, collate: binary], stream_count: 8"},
+			{"            └─TableFullScan", "mpp[tiflash]", "keep order:false, stats:pseudo"},
 		}
-		tk.MustQuery("explain select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
+		tk.MustQuery("explain format = 'brief' select sum(v) over w as res1, count(v) over w as res2, avg(v) over w as res3, min(v) over w as res4, max(v) over w as res5 from t window w as (partition by p order by o);").CheckAt([]int{0, 2, 4}, rows)
 	})
 }
