@@ -16,6 +16,7 @@ package bindinfo_test
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"testing"
 	"time"
@@ -245,6 +246,24 @@ func TestSetBindingStatus(t *testing.T) {
 	tk.MustExec("drop global binding for select * from t where a > 10 using select * from t where a > 10")
 	rows = tk.MustQuery("show global bindings").Rows()
 	require.Len(t, rows, 0)
+}
+
+func TestExplainExploreBindingColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(`create table t (a int, b int, c int, key(a), key(b))`)
+
+	// CREATE BINDING USING '<base64>' expects base64 of the hinted query only (not full CREATE statement).
+	hintedQuery := "SELECT /*+ use_index(t, a) */ * FROM t"
+	encodedBindingStmt := base64.StdEncoding.EncodeToString([]byte(hintedQuery))
+	bindingStmt := fmt.Sprintf("CREATE GLOBAL BINDING USING '%s'", encodedBindingStmt)
+	tk.MustExec(bindingStmt)
+	rows := tk.MustQuery("show global bindings").Rows()
+	require.Len(t, rows, 1)
+	bindSQL := rows[0][1].(string)
+	require.Contains(t, bindSQL, "use_index")
+	require.Contains(t, bindSQL, "FROM")
 }
 
 func TestSetBindingStatusWithoutBindingInCache(t *testing.T) {

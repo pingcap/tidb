@@ -1799,17 +1799,17 @@ SplitIndexListOpt:
 	{
 		$$ = nil
 	}
-|   SplitIndexList %prec lowerThanComma
+|	SplitIndexList %prec lowerThanComma
 	{
 		$$ = $1.([]*ast.SplitIndexOption)
 	}
 
 SplitIndexList:
-    SplitIndexOption
+	SplitIndexOption
 	{
 		$$ = []*ast.SplitIndexOption{$1.(*ast.SplitIndexOption)}
 	}
-|   SplitIndexList SplitIndexOption
+|	SplitIndexList SplitIndexOption
 	{
 		$$ = append($1.([]*ast.SplitIndexOption), $2.(*ast.SplitIndexOption))
 	}
@@ -1819,22 +1819,22 @@ SplitIndexOption:
 	{
 		$$ = &ast.SplitIndexOption{
 			PrimaryKey: true,
-			IndexName: ast.NewCIStr(mysql.PrimaryKeyName),
-			SplitOpt: $4.(*ast.SplitOption),
+			IndexName:  ast.NewCIStr(mysql.PrimaryKeyName),
+			SplitOpt:   $4.(*ast.SplitOption),
 		}
 	}
 |	"SPLIT" "INDEX" Identifier SplitOptionBetween
 	{
 		$$ = &ast.SplitIndexOption{
 			IndexName: ast.NewCIStr($3),
-			SplitOpt: $4.(*ast.SplitOption),
+			SplitOpt:  $4.(*ast.SplitOption),
 		}
 	}
 |	"SPLIT" SplitOptionBetween
 	{
 		$$ = &ast.SplitIndexOption{
 			TableLevel: true,
-			SplitOpt: $2.(*ast.SplitOption),
+			SplitOpt:   $2.(*ast.SplitOption),
 		}
 	}
 
@@ -2221,8 +2221,8 @@ AlterTableSpecSingleOpt:
 |	SplitIndexOption
 	{
 		$$ = &ast.AlterTableSpec{
-			Tp:             ast.AlterTableSplitIndex,
-			SplitIndex:		$1.(*ast.SplitIndexOption),
+			Tp:         ast.AlterTableSplitIndex,
+			SplitIndex: $1.(*ast.SplitIndexOption),
 		}
 	}
 |	"SPLIT" "MAXVALUE" "PARTITION" "LESS" "THAN" '(' BitExpr ')'
@@ -14641,7 +14641,7 @@ CreateBindingStmt:
 |	"CREATE" GlobalScope "BINDING" "USING" StringLitOrUserVariable
 	{
 		x := &ast.CreateBindingStmt{
-			GlobalScope:         $2.(bool),
+			GlobalScope:        $2.(bool),
 			EncodedBindingStmt: $5.(*ast.StringOrUserVar),
 		}
 		$$ = x

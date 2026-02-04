@@ -5906,6 +5906,9 @@ func TestBinding(t *testing.T) {
 		// Explain explore for a specified SQL.
 		{"explain explore 'select a from t'", true, "EXPLAIN EXPLORE 'select a from t'"},
 		{"explain explore '23adc8e6f62'", true, "EXPLAIN EXPLORE '23adc8e6f62'"},
+		// Encoded binding
+		{`create global binding using 'xxxxxxxx'`, true, `CREATE GLOBAL BINDING USING 'xxxxxxxx'`},
+		{`create global binding using "xxxxxxxx"`, true, `CREATE GLOBAL BINDING USING 'xxxxxxxx'`},
 	}
 	RunTest(t, table, false)
 

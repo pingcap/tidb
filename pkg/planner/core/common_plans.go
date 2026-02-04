@@ -769,10 +769,10 @@ func (e *Explain) renderResultForExplore() error {
 		if err != nil {
 			return err
 		}
-		// The original binding statement may contain quotes / special chars.
-		// Encode it as base64 and wrap it in a stable "CREATE ... USING '<base64>'" form.
-		originalBindingStmt := fmt.Sprintf("CREATE GLOBAL BINDING FROM HISTORY USING PLAN DIGEST '%v'", p.PlanDigest)
-		encodedBindingStmt := base64.StdEncoding.EncodeToString([]byte(originalBindingStmt))
+		// The binding column uses CREATE BINDING USING '<base64>'. The base64 encodes only the
+		// hinted query (e.g., "select /*+ use_index(t, a) */ * from t"), not the full CREATE statement.
+		// This avoids special-char escaping; the user can run the output to create the binding.
+		encodedBindingStmt := base64.StdEncoding.EncodeToString([]byte(p.Binding.BindSQL))
 
 		e.Rows = append(e.Rows, []string{
 			p.Binding.OriginalSQL,

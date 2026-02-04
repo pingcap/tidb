@@ -1054,12 +1054,19 @@ func (b *PlanBuilder) buildCreateBindPlan(v *ast.CreateBindingStmt) (base.Plan, 
 			if err != nil {
 				return nil, errors.Annotatef(err, "failed to parse decoded SQL for CREATE BINDING USING: %s", decodedSQL)
 			}
-			decodedCreate, ok := stmt.(*ast.CreateBindingStmt)
-			if !ok {
-				return nil, errors.Errorf("decoded SQL is not a CREATE BINDING statement: %T", stmt)
+			// Only SELECT, UPDATE, DELETE, INSERT/REPLACE are bindable.
+			switch stmt.(type) {
+			case *ast.SelectStmt, *ast.SetOprStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.InsertStmt:
+				// OK
+			default:
+				return nil, errors.Errorf("decoded SQL is not a bindable statement (SELECT/UPDATE/DELETE/INSERT): %T", stmt)
 			}
-			if decodedCreate.EncodedBindingStmt != nil {
-				return nil, errors.New("nested CREATE BINDING USING is not allowed")
+			// Ensure Text() returns the decoded SQL for downstream checks.
+			stmt.SetText(nil, decodedSQL)
+			decodedCreate := &ast.CreateBindingStmt{
+				GlobalScope: v.GlobalScope,
+				OriginNode:  stmt,
+				HintedNode:  stmt,
 			}
 			return b.buildCreateBindPlan(decodedCreate)
 		}
