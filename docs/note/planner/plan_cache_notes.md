@@ -17,10 +17,12 @@ was paid on every execution.
 
 ### Fix
 
-Restore normalization caching by calling a dedicated API that accepts `BindingMatchInfo`:
+Restore normalization caching by reusing `BindingMatchInfo` in plan cache key creation:
 
-- Add `bindinfo.MatchSQLBindingForPlanCache(sctx, stmtNode, info)`
-- Use it in `NewPlanCacheKey` with `&stmt.BindingInfo`
+- Export `bindinfo.MatchSQLBindingWithCache(sctx, stmtNode, info)` and share the common
+  cache path with `MatchSQLBinding`.
+- In `NewPlanCacheKey`, call `MatchSQLBindingWithCache` with `&stmt.BindingInfo`
+  and use the matched `BindSQL` for the cache key.
 
 This makes plan cache key creation reuse normalized digest and table name collection.
 
