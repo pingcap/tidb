@@ -1056,7 +1056,7 @@ func (er *expressionRewriter) handleExistSubquery(ctx context.Context, planCtx *
 				Count: ast.NewValueExpr(1, "", ""),
 			}
 			var err error
-			np, err = planCtx.builder.buildLimit(np, limitClause)
+			np, err = planCtx.builder.buildLimit(np, limitClause, np.QueryBlockOffset())
 			if err != nil {
 				er.err = err
 				return v, true

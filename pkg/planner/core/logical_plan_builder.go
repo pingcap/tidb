@@ -2098,7 +2098,7 @@ func extractLimitCountOffset(ctx expression.BuildContext, limit *ast.Limit) (cou
 	return count, offset, nil
 }
 
-func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.LogicalPlan, error) {
+func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit, targetQB ...int) (base.LogicalPlan, error) {
 	b.optFlag = b.optFlag | rule.FlagPushDownTopN
 	// flag it if cte contain limit
 	if b.buildingCTE {
@@ -2115,8 +2115,12 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 	if count > math.MaxUint64-offset {
 		count = math.MaxUint64 - offset
 	}
+	targetQBOffset := b.getSelectOffset()
+	if len(targetQB) > 0 {
+		targetQBOffset = targetQB[0]
+	}
 	if offset+count == 0 {
-		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(b.ctx, b.getSelectOffset())
+		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(b.ctx, targetQBOffset)
 		tableDual.SetSchema(src.Schema())
 		tableDual.SetOutputNames(src.OutputNames())
 		return tableDual, nil
@@ -2124,7 +2128,7 @@ func (b *PlanBuilder) buildLimit(src base.LogicalPlan, limit *ast.Limit) (base.L
 	li := logicalop.LogicalLimit{
 		Offset: offset,
 		Count:  count,
-	}.Init(b.ctx, b.getSelectOffset())
+	}.Init(b.ctx, targetQBOffset)
 	if hint := b.TableHints(); hint != nil {
 		li.PreferLimitToCop = hint.PreferLimitToCop
 	}

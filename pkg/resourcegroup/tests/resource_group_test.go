@@ -346,14 +346,19 @@ func TestResourceGroupRunaway(t *testing.T) {
 	tk.MustExec("insert into t values(1)")
 
 	tk.MustExec("set global tidb_enable_resource_control='on'")
-	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
-	tk.MustExec("create resource group rg2 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1s')")
-	tk.MustExec("create resource group rg3 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION='1s' <nil>"))
-	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg3'").Check(testkit.Rows("rg3 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION=UNLIMITED <nil>"))
+	// Create resource groups without query limit first, since the `EXEC_ELAPSED='50ms'` threshold
+	// can be exceeded on slow/loaded CI machines even for a simple query.
+	tk.MustExec("create resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=()")
+	tk.MustExec("create resource group rg2 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=()")
+	tk.MustExec("create resource group rg3 BURSTABLE=MODERATED RU_PER_SEC=2000 QUERY_LIMIT=()")
 	tk.MustQuery("select /*+ resource_group(rg1) */ * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg2) */ * from t").Check(testkit.Rows("1"))
 	tk.MustQuery("select /*+ resource_group(rg3) */ * from t").Check(testkit.Rows("1"))
+	tk.MustExec("alter resource group rg1 RU_PER_SEC=1000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' ACTION=KILL)")
+	tk.MustExec("alter resource group rg2 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT duration '1s')")
+	tk.MustExec("alter resource group rg3 RU_PER_SEC=2000 QUERY_LIMIT=(EXEC_ELAPSED='50ms' action KILL WATCH EXACT)")
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg2'").Check(testkit.Rows("rg2 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION='1s' <nil>"))
+	tk.MustQuery("select * from information_schema.resource_groups where name = 'rg3'").Check(testkit.Rows("rg3 2000 MEDIUM MODERATED EXEC_ELAPSED='50ms', ACTION=KILL, WATCH=EXACT DURATION=UNLIMITED <nil>"))
 
 	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/sleepCoprRequest", fmt.Sprintf("return(%d)", 60)))
 	err := tk.QueryToErr("select /*+ resource_group(rg1) */ * from t")

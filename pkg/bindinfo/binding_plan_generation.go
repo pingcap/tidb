@@ -134,8 +134,8 @@ func (gp *genedPlan) PlanText() string {
 
 // state represents a state of the optimizer variables and fixes.
 type state struct {
-	leading2  [2]*tableName // leading-2 table names
-	indexHint *indexHint    // optional index hint for a table (one at a time to limit search space)
+	leading2   [2]*tableName // leading-2 table names
+	indexHints []*indexHint  // optional index hints per table
 	// noDecorrelateQB stores the query block name for NO_DECORRELATE() hint.
 	noDecorrelateQB ast.CIStr
 	varNames        []string // relevant variables and their values to generate a certain plan
@@ -156,11 +156,14 @@ func (s *state) Encode() string {
 		}
 		sb.WriteString(t.String())
 	}
-	if s.indexHint != nil {
+	for _, indexHint := range s.indexHints {
+		if indexHint == nil {
+			continue
+		}
 		if sb.Len() > 0 {
 			sb.WriteString(",")
 		}
-		sb.WriteString(s.indexHint.String())
+		sb.WriteString(indexHint.String())
 	}
 	if s.noDecorrelateQB.L != "" {
 		if sb.Len() > 0 {
@@ -192,8 +195,8 @@ func (s *state) Encode() string {
 func newStateWithLeading2(old *state, leading2 [2]*tableName) *state {
 	newState := &state{
 		leading2:        leading2,
-		indexHint:       old.indexHint,
 		noDecorrelateQB: old.noDecorrelateQB,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
 		varNames:        old.varNames,
 		varValues:       old.varValues,
 		fixIDs:          old.fixIDs,
@@ -202,10 +205,14 @@ func newStateWithLeading2(old *state, leading2 [2]*tableName) *state {
 	return newState
 }
 
-func newStateWithIndexHint(old *state, indexHint *indexHint) *state {
+func newStateWithIndexHint(old *state, tableIdx int, hint *indexHint) *state {
+	newHints := append([]*indexHint(nil), old.indexHints...)
+	if tableIdx >= 0 && tableIdx < len(newHints) {
+		newHints[tableIdx] = hint
+	}
 	return &state{
 		leading2:        old.leading2,
-		indexHint:       indexHint,
+		indexHints:      newHints,
 		noDecorrelateQB: old.noDecorrelateQB,
 		varNames:        old.varNames,
 		varValues:       old.varValues,
@@ -217,8 +224,8 @@ func newStateWithIndexHint(old *state, indexHint *indexHint) *state {
 func newStateWithNoDecorrelateQB(old *state, qbName ast.CIStr) *state {
 	return &state{
 		leading2:        old.leading2,
-		indexHint:       old.indexHint,
 		noDecorrelateQB: qbName,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
 		varNames:        old.varNames,
 		varValues:       old.varValues,
 		fixIDs:          old.fixIDs,
@@ -229,8 +236,8 @@ func newStateWithNoDecorrelateQB(old *state, qbName ast.CIStr) *state {
 func newStateWithNewVar(old *state, varName string, varVal any) *state {
 	newState := &state{
 		leading2:        old.leading2,
-		indexHint:       old.indexHint,
 		noDecorrelateQB: old.noDecorrelateQB,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
 		varNames:        old.varNames,
 		varValues:       make([]any, len(old.varValues)),
 		fixIDs:          old.fixIDs,
@@ -249,8 +256,8 @@ func newStateWithNewVar(old *state, varName string, varVal any) *state {
 func newStateWithNewFix(old *state, fixID uint64, fixVal string) *state {
 	newState := &state{
 		leading2:        old.leading2,
-		indexHint:       old.indexHint,
 		noDecorrelateQB: old.noDecorrelateQB,
+		indexHints:      append([]*indexHint(nil), old.indexHints...),
 		varNames:        old.varNames,
 		varValues:       old.varValues,
 		fixIDs:          old.fixIDs,
@@ -288,13 +295,13 @@ func generatePlanWithSCtx(sctx sessionctx.Context, defaultSchema, sql, charset, 
 			possibleLeading2 = append(possibleLeading2, [2]*tableName{tableNames[i], tableNames[j]})
 		}
 	}
-	possibleIndexHints := extractSelectIndexHints(sctx, defaultSchema, stmt)
+	indexHintOptions := extractSelectIndexHints(sctx, defaultSchema, stmt)
 	possibleNoDecorrelateQBs := extractNoDecorrelateQBs(stmt)
-	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2, possibleIndexHints, possibleNoDecorrelateQBs)
+	return breadthFirstPlanSearch(sctx, stmt, vars, fixes, possibleLeading2, indexHintOptions, possibleNoDecorrelateQBs)
 }
 
 func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
-	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName, possibleIndexHints []*indexHint, possibleNoDecorrelateQBs []ast.CIStr) (plans []*genedPlan, err error) {
+	vars []string, fixes []uint64, possibleLeading2 [][2]*tableName, indexHintOptions [][]*indexHint, possibleNoDecorrelateQBs []ast.CIStr) (plans []*genedPlan, err error) {
 	// init BFS structures
 	visitedStates := make(map[string]struct{})  // map[encodedState]struct{}, all visited states
 	visitedPlans := make(map[string]*genedPlan) // map[planDigest]plan, all visited plans
@@ -302,7 +309,7 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 
 	// init the start state and push it into the BFS list
 	// start state: no specified leading hint + default values of all variables and fix-controls
-	startState, err := getStartState(vars, fixes)
+	startState, err := getStartState(vars, fixes, len(indexHintOptions))
 	if err != nil {
 		return nil, err
 	}
@@ -333,11 +340,13 @@ func breadthFirstPlanSearch(sctx sessionctx.Context, stmt ast.StmtNode,
 				stateList.PushBack(newState)
 			}
 		}
-		for _, indexHint := range possibleIndexHints {
-			newState := newStateWithIndexHint(currState, indexHint)
-			if _, ok := visitedStates[newState.Encode()]; !ok {
-				visitedStates[newState.Encode()] = struct{}{}
-				stateList.PushBack(newState)
+		for tableIdx := range indexHintOptions {
+			for _, indexHint := range indexHintOptions[tableIdx] {
+				newState := newStateWithIndexHint(currState, tableIdx, indexHint)
+				if _, ok := visitedStates[newState.Encode()]; !ok {
+					visitedStates[newState.Encode()] = struct{}{}
+					stateList.PushBack(newState)
+				}
 			}
 		}
 		for i := range vars {
@@ -449,38 +458,50 @@ func genPlanUnderState(sctx sessionctx.Context, stmt ast.StmtNode, state *state)
 	sctx.GetSessionVars().OptimizerFixControl = fixControlMap
 
 	if sel, isSel := stmt.(*ast.SelectStmt); isSel {
-		originalHintsLen := len(sel.TableHints)
-		defer func() {
-			sel.TableHints = sel.TableHints[:originalHintsLen]
-		}()
-		if state.leading2[0] != nil && state.leading2[1] != nil {
-			leadingHint := &ast.TableOptimizerHint{
-				HintName: ast.NewCIStr(hint.HintLeading),
-				Tables: []ast.HintTable{
-					{
-						DBName:    ast.NewCIStr(state.leading2[0].schema),
-						TableName: ast.NewCIStr(state.leading2[0].HintName()),
-					},
-					{
-						DBName:    ast.NewCIStr(state.leading2[1].schema),
-						TableName: ast.NewCIStr(state.leading2[1].HintName()),
-					},
-				},
+		hasIndexHint := false
+		for _, indexHint := range state.indexHints {
+			if indexHint != nil {
+				hasIndexHint = true
+				break
 			}
-			sel.TableHints = append(sel.TableHints, leadingHint)
 		}
-		if state.indexHint != nil {
-			indexHint := &ast.TableOptimizerHint{
-				HintName: ast.NewCIStr(hint.HintUseIndex),
-				Tables: []ast.HintTable{
-					{
-						DBName:    ast.NewCIStr(state.indexHint.table.schema),
-						TableName: ast.NewCIStr(state.indexHint.table.HintName()),
+		if (state.leading2[0] != nil && state.leading2[1] != nil) || hasIndexHint {
+			originalHintsLen := len(sel.TableHints)
+			defer func() {
+				sel.TableHints = sel.TableHints[:originalHintsLen]
+			}()
+			if state.leading2[0] != nil && state.leading2[1] != nil {
+				leadingHint := &ast.TableOptimizerHint{
+					HintName: ast.NewCIStr(hint.HintLeading),
+					Tables: []ast.HintTable{
+						{
+							DBName:    ast.NewCIStr(state.leading2[0].schema),
+							TableName: ast.NewCIStr(state.leading2[0].HintName()),
+						},
+						{
+							DBName:    ast.NewCIStr(state.leading2[1].schema),
+							TableName: ast.NewCIStr(state.leading2[1].HintName()),
+						},
 					},
-				},
-				Indexes: []ast.CIStr{ast.NewCIStr(state.indexHint.index)},
+				}
+				sel.TableHints = append(sel.TableHints, leadingHint)
 			}
-			sel.TableHints = append(sel.TableHints, indexHint)
+			for _, indexHint := range state.indexHints {
+				if indexHint == nil {
+					continue
+				}
+				hintNode := &ast.TableOptimizerHint{
+					HintName: ast.NewCIStr(hint.HintUseIndex),
+					Tables: []ast.HintTable{
+						{
+							DBName:    ast.NewCIStr(indexHint.table.schema),
+							TableName: ast.NewCIStr(indexHint.table.HintName()),
+						},
+					},
+					Indexes: []ast.CIStr{ast.NewCIStr(indexHint.index)},
+				}
+				sel.TableHints = append(sel.TableHints, hintNode)
+			}
 		}
 		if state.noDecorrelateQB.L != "" {
 			noDecorrelateHint := &ast.TableOptimizerHint{
@@ -556,9 +577,13 @@ func adjustFix(fixID uint64, fixVal string) (newFixVal string, err error) {
 	}
 }
 
-func getStartState(vars []string, fixes []uint64) (*state, error) {
+func getStartState(vars []string, fixes []uint64, indexHintCount int) (*state, error) {
 	// use the default values of these vars and fix-controls as the initial state.
-	s := &state{varNames: vars, fixIDs: fixes}
+	s := &state{
+		varNames:   vars,
+		fixIDs:     fixes,
+		indexHints: make([]*indexHint, indexHintCount),
+	}
 	for _, varName := range vars {
 		switch varName {
 		case vardef.TiDBOptIndexScanCostFactor:
@@ -888,7 +913,7 @@ func collectJoinPredicates(node ast.ResultSetNode, extractor *predicateColumnExt
 	}
 }
 
-func extractSelectIndexHints(sctx sessionctx.Context, defaultSchema string, node ast.StmtNode) []*indexHint {
+func extractSelectIndexHints(sctx sessionctx.Context, defaultSchema string, node ast.StmtNode) [][]*indexHint {
 	selStmt, isSel := node.(*ast.SelectStmt)
 	if !isSel {
 		return nil
@@ -898,9 +923,10 @@ func extractSelectIndexHints(sctx sessionctx.Context, defaultSchema string, node
 		return nil
 	}
 	allowAnyTable := len(tableNames) == 1
-	hints := make([]*indexHint, 0)
-	seen := make(map[string]struct{})
+	hintOptions := make([][]*indexHint, 0, len(tableNames))
 	for _, target := range tableNames {
+		options := make([]*indexHint, 0, 4)
+		options = append(options, nil) // empty option to avoid forcing index paths
 		extractor := &predicateColumnExtractor{
 			table:         target,
 			columns:       make(map[string]struct{}),
@@ -913,13 +939,16 @@ func extractSelectIndexHints(sctx sessionctx.Context, defaultSchema string, node
 			collectJoinPredicates(selStmt.From.TableRefs, extractor)
 		}
 		if len(extractor.columns) == 0 {
+			hintOptions = append(hintOptions, options)
 			continue
 		}
 		tblInfo, err := sctx.GetLatestInfoSchema().TableInfoByName(ast.NewCIStr(target.schema), ast.NewCIStr(target.name))
 		if err != nil {
+			hintOptions = append(hintOptions, options)
 			continue
 		}
 		useInvisible := sctx.GetSessionVars().OptimizerUseInvisibleIndexes
+		seen := make(map[string]struct{})
 		for _, index := range tblInfo.Indices {
 			if index.State != model.StatePublic {
 				continue
@@ -943,12 +972,13 @@ func extractSelectIndexHints(sctx sessionctx.Context, defaultSchema string, node
 				table: target,
 				index: index.Name.O,
 			}
-			if _, ok := seen[hint.String()]; ok {
+			if _, ok := seen[hint.index]; ok {
 				continue
 			}
-			seen[hint.String()] = struct{}{}
-			hints = append(hints, hint)
+			seen[hint.index] = struct{}{}
+			options = append(options, hint)
 		}
+		hintOptions = append(hintOptions, options)
 	}
-	return hints
+	return hintOptions
 }
