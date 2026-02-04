@@ -765,9 +765,6 @@ const (
 	// CreateTiDBMViewRefreshTable is a table to store current (latest) refresh state for each materialized view.
 	CreateTiDBMViewRefreshTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh (
 		MVIEW_ID bigint NOT NULL,
-		REFRESH_METHOD varchar(32) DEFAULT NULL,
-		START_WITH varchar(256) DEFAULT NULL,
-		NEXT varchar(256) DEFAULT NULL,
 		LAST_REFRESH_RESULT varchar(16) DEFAULT NULL,
 		LAST_REFRESH_TYPE varchar(16) DEFAULT NULL,
 		LAST_REFRESH_TIME datetime DEFAULT NULL,
@@ -778,9 +775,6 @@ const (
 	// CreateTiDBMLogPurgeTable is a table to store current (latest) purge state for each materialized view log.
 	CreateTiDBMLogPurgeTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge (
 		MLOG_ID bigint NOT NULL,
-		PURGE_METHOD varchar(32) NOT NULL,
-		PURGE_START datetime DEFAULT NULL,
-		PURGE_INTERVAL bigint DEFAULT NULL,
 		LAST_PURGE_TIME datetime DEFAULT NULL,
 		LAST_PURGE_ROWS bigint DEFAULT NULL,
 		LAST_PURGE_DURATION bigint DEFAULT NULL,
@@ -797,6 +791,8 @@ const (
 		REFRESH_TIME datetime DEFAULT NULL,
 		REFRESH_ENDTIME datetime DEFAULT NULL,
 		REFRESH_STATUS varchar(16) DEFAULT NULL,
+		REFRESH_READ_TSO bigint DEFAULT NULL,
+		REFRESH_FAILED_REASON text DEFAULT NULL,
 		PRIMARY KEY(REFRESH_JOB_ID),
 		KEY idx_mview_newest(MVIEW_ID, IS_NEWEST_REFRESH))`
 
