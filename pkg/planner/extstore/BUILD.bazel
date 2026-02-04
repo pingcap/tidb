@@ -25,10 +25,11 @@ go_test(
     srcs = ["extstore_test.go"],
     embed = [":extstore"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 5,
     deps = [
         "//pkg/config",
         "//pkg/objstore/storeapi",
+        "//pkg/sessionctx/vardef",
         "//pkg/testkit/testsetup",
         "@com_github_spf13_afero//:afero",
         "@com_github_stretchr_testify//require",
