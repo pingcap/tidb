@@ -43,6 +43,9 @@ var BreakPointBeforeExecutorFirstRun = "beforeExecutorFirstRun"
 // Only for test
 var BreakPointOnStmtRetryAfterLockError = "lockErrorAndThenOnStmtRetryCalled"
 
+// WarmupTsoRequestCount is the key for recording tso request counts in warm up
+var WarmupTsoRequestCount stringutil.StringerStr = "warmupTsoRequestCount"
+
 // TsoRequestCount is the key for recording tso request counts in some places
 var TsoRequestCount stringutil.StringerStr = "tsoRequestCount"
 
@@ -133,6 +136,17 @@ func TsoRequestCountInc(sctx sessionctx.Context) {
 	}
 	count++
 	sctx.SetValue(TsoRequestCount, count)
+}
+
+// WarmupTsoRequestCountInc is used only for test
+// When it is called, there is a tso cmd request in warmup.
+func WarmupTsoRequestCountInc(sctx sessionctx.Context) {
+	count, ok := sctx.Value(WarmupTsoRequestCount).(uint64)
+	if !ok {
+		count = 0
+	}
+	count++
+	sctx.SetValue(WarmupTsoRequestCount, count)
 }
 
 // TsoWaitCountInc is used only for test

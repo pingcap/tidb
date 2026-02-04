@@ -71,6 +71,7 @@ type baseTxnContextProvider struct {
 	txn             kv.Transaction
 	isTxnPrepared   bool
 	enterNewTxnType sessiontxn.EnterNewTxnType
+	currentStmt     ast.StmtNode
 	// constStartTS is only used by point get max ts optimization currently.
 	// When constStartTS != 0, we use constStartTS directly without fetching it from tso.
 	// To save the cpu cycles `PrepareTSFuture` will also not be called when warmup (postpone to activate txn).
@@ -84,6 +85,7 @@ func (p *baseTxnContextProvider) OnInitialize(ctx context.Context, tp sessiontxn
 	}
 
 	p.ctx = ctx
+	p.currentStmt = nil
 	sessVars := p.sctx.GetSessionVars()
 	activeNow := true
 	switch tp {
@@ -209,8 +211,9 @@ func (p *baseTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 }
 
 // OnStmtStart is the hook that should be called when a new statement started
-func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, _ ast.StmtNode) error {
+func (p *baseTxnContextProvider) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	p.ctx = ctx
+	p.currentStmt = node
 	return nil
 }
 
@@ -285,7 +288,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 		return p.txn, nil
 	}
 
-	if err := p.prepareTxn(); err != nil {
+	if err := p.prepareTxn(false); err != nil {
 		return nil, err
 	}
 
@@ -348,7 +351,7 @@ func (p *baseTxnContextProvider) ActivateTxn() (kv.Transaction, error) {
 
 // prepareTxn prepares txn with an oracle ts future. If the snapshotTS is set,
 // the txn is prepared with it.
-func (p *baseTxnContextProvider) prepareTxn() error {
+func (p *baseTxnContextProvider) prepareTxn(inWarmup bool) error {
 	if p.isTxnPrepared {
 		return nil
 	}
@@ -356,6 +359,12 @@ func (p *baseTxnContextProvider) prepareTxn() error {
 	if snapshotTS := p.sctx.GetSessionVars().SnapshotTS; snapshotTS != 0 {
 		return p.replaceTxnTsFuture(sessiontxn.ConstantFuture(snapshotTS))
 	}
+
+	failpoint.Inject("requestTsoFromPD", func() {
+		if inWarmup {
+			sessiontxn.WarmupTsoRequestCountInc(p.sctx)
+		}
+	})
 
 	future := newOracleFuture(p.ctx, p.sctx, p.sctx.GetSessionVars().TxnCtx.TxnScope)
 	return p.replaceTxnTsFuture(future)
@@ -412,13 +421,34 @@ func (p *baseTxnContextProvider) isBeginStmtWithStaleRead() bool {
 	return staleread.IsStmtStaleness(p.sctx)
 }
 
+// shouldStmtOptimizePrefetchTSO indicates whether the current statement should prefetch TSO as an optimization.
+func (p *baseTxnContextProvider) shouldStmtOptimizePrefetchTSO(stmt ast.StmtNode) bool {
+	if stmt != nil {
+		switch stmt.(type) {
+		case *ast.UseStmt, *ast.SetStmt:
+			// Some statements like `USE` or simple `SET` typically won't touch KV, and thus don't need TSO.
+			// We skip preparing TSO in warmup for such statements to avoid unnecessary PD TSO requests.
+			// NOTICE: If GetStmtReadTS or GetStmtForUpdateTS is called later, TSO will still be fetched in sync mode.
+			// Skipping `prepareTxn` only means to avoid the unnecessary prefetch optimization.
+			return false
+		}
+	}
+	return true
+}
+
 // AdviseWarmup provides warmup for inner state
 func (p *baseTxnContextProvider) AdviseWarmup() error {
-	if p.isTxnPrepared || p.isBeginStmtWithStaleRead() {
-		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp
-		return nil
+	if !p.isTxnPrepared &&
+		// When executing `START TRANSACTION READ ONLY AS OF ...` no need to warmUp.
+		!p.isBeginStmtWithStaleRead() &&
+		// For some statements like `USE` or simple `SET`, TiDB typically won't touch KV, so preparing TSO here would trigger
+		// unnecessary PD TSO requests in workloads with lots of such statements.
+		// NOTE: We only skip *preparing* TSO in warmup, but if a statement truly needs TSO later
+		// (e.g. `SET @a=(SELECT ...)`), it will still be fetched when the transaction is activated.
+		p.shouldStmtOptimizePrefetchTSO(p.currentStmt) {
+		return p.prepareTxn(true)
 	}
-	return p.prepareTxn()
+	return nil
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
