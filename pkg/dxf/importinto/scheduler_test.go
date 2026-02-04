@@ -143,14 +143,9 @@ func (s *importIntoSuite) TestGetNextStep() {
 	task.Step = proto.StepInit
 	ext = &importScheduler{GlobalSort: true}
 	var targetSteps []proto.Step
-	if kerneltype.IsClassic() {
-		targetSteps = []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
-			proto.ImportStepWriteAndIngest, proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution,
-			proto.ImportStepPostProcess, proto.StepDone}
-	} else {
-		targetSteps = []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
-			proto.ImportStepWriteAndIngest, proto.ImportStepPostProcess, proto.StepDone}
-	}
+	targetSteps = []proto.Step{proto.ImportStepEncodeAndSort, proto.ImportStepMergeSort,
+		proto.ImportStepWriteAndIngest, proto.ImportStepCollectConflicts, proto.ImportStepConflictResolution,
+		proto.ImportStepPostProcess, proto.StepDone}
 	for _, nextStep := range targetSteps {
 		s.Equal(nextStep, ext.GetNextStep(task))
 		task.Step = nextStep

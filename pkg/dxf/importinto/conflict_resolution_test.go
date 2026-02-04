@@ -78,8 +78,10 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, code
 	localEncoder, err := importer.NewTableKVEncoderForDupResolve(encodeCfg, controller)
 	require.NoError(t, err)
 
+	// total 3 * 2 conflicted data KVs, and 3 conflicted index KVs, they will be
+	// taken as 9 conflicted rows.
 	dupDataKVs := make([]*external.KVPair, 0, 6)
-	dupIndexKVs := make([]*external.KVPair, 0, 6)
+	dupIndexKVs := make([]*external.KVPair, 0, 3)
 	for i := range 3 {
 		dupID := i + 1
 		row := []types.Datum{types.NewDatum(dupID), types.NewDatum(dupID), types.NewDatum(dupID)}
@@ -94,7 +96,7 @@ func generateConflictKVFiles(t *testing.T, tempDir string, tbl table.Table, code
 				require.NoError(t, err)
 				if indexID == 2 {
 					kv := &external.KVPair{Key: pair.Key, Value: pair.Val}
-					dupIndexKVs = append(dupIndexKVs, kv, kv)
+					dupIndexKVs = append(dupIndexKVs, kv)
 				}
 			}
 		}
@@ -164,7 +166,8 @@ func prepareConflictedKVHandleContext(t *testing.T) *conflictedKVHandleContext {
 
 func runConflictedKVHandleStep(t *testing.T, subtask *proto.Subtask, stepExe execute.StepExecutor) {
 	t.Helper()
-	resource := &proto.StepResource{CPU: proto.NewAllocatable(1), Mem: proto.NewAllocatable(units.GiB)}
+	// run in parallel
+	resource := &proto.StepResource{CPU: proto.NewAllocatable(8), Mem: proto.NewAllocatable(units.GiB)}
 	execute.SetFrameworkInfo(stepExe, &proto.Task{TaskBase: proto.TaskBase{ID: 1}}, resource, nil, nil)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/dxf/importinto/createTableImporterForTest", `return(true)`)
 	ctx := context.Background()
