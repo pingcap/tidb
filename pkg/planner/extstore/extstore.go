@@ -64,6 +64,9 @@ func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 	// When classic kernel or cloud storage URI is not set, use local directory.
 	if kerneltype.IsClassic() || uri == "" {
 		localPath := getLocalPathDirName()
+		if absPath, err := filepath.Abs(localPath); err == nil {
+			localPath = absPath
+		}
 		logutil.BgLogger().Warn("using default local storage",
 			zap.String("category", "extstore"),
 			zap.String("localPath", localPath),

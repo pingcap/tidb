@@ -84,7 +84,7 @@ func (eh ExtractTaskServeHandler) ServeHTTP(w http.ResponseWriter, req *http.Req
 	// For dump mode, stream the file content directly
 	err = streamExtractResponse(req.Context(), w, name)
 	if err != nil {
-		logutil.BgLogger().Error("stream extract response failed", zap.Error(err))
+		logutil.BgLogger().Warn("stream extract response failed", zap.Error(err))
 		handler.WriteError(w, err)
 		return
 	}

@@ -169,7 +169,7 @@ func handleDownloadFile(dfHandler downloadFileHandler, w http.ResponseWriter, re
 		url := fmt.Sprintf("%s://%s/%s?forward=true", dfHandler.scheme, remoteAddr, dfHandler.urlPath)
 		resp, err := client.Get(url)
 		if err != nil {
-			logutil.BgLogger().Error("forward request failed",
+			logutil.BgLogger().Warn("forward request failed",
 				zap.String("remote-addr", remoteAddr), zap.Error(err))
 			continue
 		}
@@ -319,7 +319,7 @@ func dumpJSONStatsIntoZipInMemory(tbls map[int64]*tblInfo, content []byte) ([]by
 	for _, f := range zr.File {
 		err = zw.Copy(f)
 		if err != nil {
-			logutil.BgLogger().Error("copy plan replayer zip file failed", zap.Error(err))
+			logutil.BgLogger().Warn("copy plan replayer zip file failed", zap.Error(err))
 			return nil, err
 		}
 	}
@@ -339,7 +339,7 @@ func dumpJSONStatsIntoZipInMemory(tbls map[int64]*tblInfo, content []byte) ([]by
 	}
 	err = zw.Close()
 	if err != nil {
-		logutil.BgLogger().Error("Closing zip writer failed", zap.Error(err))
+		logutil.BgLogger().Warn("Closing zip writer failed", zap.Error(err))
 		return nil, err
 	}
 	return buf.Bytes(), nil
