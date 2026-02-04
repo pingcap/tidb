@@ -37,7 +37,6 @@ import (
 var (
 	globalExtStorage   storeapi.Storage
 	globalExtStorageMu sync.Mutex
-	localPath          string
 )
 
 // GetGlobalExtStorage returns the global external storage instance.
@@ -57,14 +56,17 @@ func GetGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
 }
 
 func createGlobalExtStorage(ctx context.Context) (storeapi.Storage, error) {
+	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 	uri := vardef.CloudStorageURI.Load()
-	if uri == "" {
-		localPath = getLocalPathDirName()
-		logutil.BgLogger().Warn("cloud storage uri is empty, using default local storage",
-			zap.String("category", "extstore"), zap.String("localPath", localPath))
+
+	// When keyspace name is empty (classic TiDB), always use local directory and ignore cloud_storage_uri.
+	if keyspace.IsKeyspaceNameEmpty(keyspaceName) || uri == "" {
+		localPath := getLocalPathDirName()
+		logutil.BgLogger().Warn("using default local storage",
+			zap.String("category", "extstore"), zap.String("localPath", localPath),
+			zap.String("keyspaceName", keyspaceName), zap.String("uri", uri))
 		uri = fmt.Sprintf("file://%s", localPath)
 	}
-	keyspaceName := keyspace.GetKeyspaceNameBySettings()
 
 	storage, err := NewExtStorage(ctx, uri, keyspaceName)
 	if err != nil {
@@ -120,14 +122,14 @@ func getLocalPathDirName(vfs ...afero.Fs) string {
 		fs = vfs[0]
 	}
 	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
-	tidbLogDir = filepath.Join(tidbLogDir, "replayer")
 	tidbLogDir = filepath.Clean(tidbLogDir)
 	if canWriteToFile(fs, tidbLogDir) {
-		logutil.BgLogger().Info("use log dir as local path", zap.String("dir", localPath))
+		logutil.BgLogger().Info("use log dir as local path", zap.String("dir", tidbLogDir))
 		return tidbLogDir
 	}
-	logutil.BgLogger().Info("use temp dir as local path", zap.String("dir", localPath))
-	return filepath.Join(config.GetGlobalConfig().TempDir, "replayer")
+	tempDir := filepath.Dir(config.GetGlobalConfig().TempDir)
+	logutil.BgLogger().Info("use temp dir as local path", zap.String("dir", tempDir))
+	return tempDir
 }
 
 func canWriteToFile(vfs afero.Fs, path string) bool {
