@@ -161,17 +161,8 @@ type AccessPath struct {
 	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
 
-	// PartIdxCondNotAlwaysValid indicates that this index path is not guaranteed to be valid
-	// for all parameter values when a partial index condition is involved.
-	// It's designed for partial indexes with a WHERE condition (for example, idx(b) WHERE a IS NOT NULL)
-	// and tracks whether that condition is always satisfied by the current filter.
-	// e.g. for partial index idx(b) WHERE a IS NOT NULL:
-	//   - if the filter is "b = ? AND a > 0", the partial index condition is always satisfied,
-	//     so PartIdxCondNotAlwaysValid is false (the index path is always valid);
-	//   - if the filter is "b = ?" or "b = ? AND a IS NULL", the partial index condition may not hold,
-	//     so PartIdxCondNotAlwaysValid is true (the index path is not always valid).
-	// We add this field to make the plan cache usable for partial indexes in these limited cases.
-	PartIdxCondNotAlwaysValid bool
+	// Disables plan cache for plans using this Path.
+	NoncacheableReason string
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -211,7 +202,7 @@ func (path *AccessPath) Clone() *AccessPath {
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
-		PartIdxCondNotAlwaysValid:    path.PartIdxCondNotAlwaysValid,
+		NoncacheableReason:           path.NoncacheableReason,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
