@@ -99,6 +99,7 @@ func (la *LogicalApply) PruneColumns(parentUsedCols []*expression.Column) (base.
 		return nil, err
 	}
 	la.MergeSchema()
+	la.appendFullSchemaColumns(parentUsedCols)
 	return la, nil
 }
 

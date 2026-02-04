@@ -1,11 +1,8 @@
-# Plan Cache Notes
+## Plan Cache Notes
 
-## 2026-02-04: Bind Matching Cache for Plan Cache Key
+### Schema Consistency
+- Plan cache matching depends on stable column references across logical and physical plans.
+- When a transformation replaces columns or schemas, rebind derived expressions to the new schema before caching or matching.
 
-### Key Points
-
-- `NewPlanCacheKey` is hot; avoid per-execution normalization/digest work.
-- Reuse cross-execution caches (`PlanCacheStmt.BindingInfo`) for binding normalization.
-- Statement-scoped caches reset per statement and do not help plan cache key cost.
-- Profiling regression signals: higher cum time in `NormalizeStmtForBinding`,
-  `NormalizeDigestForBinding`, and `MatchSQLBinding` under `GetPlanFromPlanCache`.
+### Join Condition Columns
+- Join reordering and projection pruning must keep columns referenced by join conditions in the operator schema (or FullSchema), or resolve-index will fail during plan cache usage.
