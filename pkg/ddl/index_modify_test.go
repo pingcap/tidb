@@ -1924,7 +1924,7 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 	store, _ := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t, sw;")
+	tk.MustExec("drop table if exists t, t_create, sw;")
 
 	tiflash := infosync.NewMockTiFlash()
 	infosync.SetMockTiFlash(tiflash)
@@ -1945,23 +1945,35 @@ func TestFullTextIndexSysvarsPassedToTiCI(t *testing.T) {
 
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`)
 	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/tici/MockCreateTiCIIndexRequest", `return(1)`)
-	tici.ResetMockTiCICreateIndexRequest()
 
 	tk.MustExec("create table sw (value varchar(20))")
 	tk.MustExec("insert into sw values ('a'), ('the'), ('foo'), ('foo')")
-
-	tk.MustExec("create table t (id int, c text)")
-	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
 	tk.MustExec("set @@global.innodb_ft_min_token_size=1")
 	tk.MustExec("set @@global.innodb_ft_max_token_size=10")
 	tk.MustExec("set @@innodb_ft_enable_stopword=on")
 	tk.MustExec("set @@innodb_ft_user_stopword_table='test/sw'")
 
-	tk.MustExec("alter table t add fulltext index fts_idx(c)")
-
+	// CREATE TABLE with FULLTEXT INDEX should also pass sysvars + stopwords.
+	tici.ResetMockTiCICreateIndexRequest()
+	tk.MustExec("create table t_create (id int, c text, fulltext index fts_idx(c))")
 	raw := tici.GetMockTiCICreateIndexRequest()
 	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+
+	tk.MustExec("create table t (id int, c text)")
+	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
+
+	tici.ResetMockTiCICreateIndexRequest()
+	tk.MustExec("alter table t add fulltext index fts_idx(c)")
+
+	raw = tici.GetMockTiCICreateIndexRequest()
+	require.NotEmpty(t, raw)
+	assertTiCIFulltextParserInfo(t, raw)
+}
+
+func assertTiCIFulltextParserInfo(t *testing.T, raw []byte) {
+	t.Helper()
 
 	var req tici.CreateIndexRequest
 	require.NoError(t, req.Unmarshal(raw))

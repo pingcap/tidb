@@ -1143,6 +1143,9 @@ func (e *executor) createTableWithInfoJob(
 		SessionVars:         make(map[string]string),
 	}
 	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	if err := e.captureFullTextIndexSysvarsToJobFromTableInfo(ctx, job, tbInfo); err != nil {
+		return nil, errors.Trace(err)
+	}
 	args := &model.CreateTableArgs{
 		TableInfo:      tbInfo,
 		OnExistReplace: cfg.OnExist == OnExistReplace,
@@ -1231,6 +1234,11 @@ func (e *executor) BatchCreateTableWithInfo(ctx sessionctx.Context,
 		SessionVars:    make(map[string]string),
 	}
 	job.AddSystemVars(vardef.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	for _, info := range infos {
+		if err := e.captureFullTextIndexSysvarsToJobFromTableInfo(ctx, job, info); err != nil {
+			return errors.Trace(err)
+		}
+	}
 
 	var err error
 
@@ -5102,6 +5110,22 @@ func (e *executor) captureFullTextIndexSysvarsToJob(sctx sessionctx.Context, job
 	job.AddSystemVars(vardef.InnodbFtEnableStopword, enableStopword)
 	job.AddSystemVars(vardef.InnodbFtServerStopwordTable, serverStopwordTable)
 	job.AddSystemVars(vardef.InnodbFtUserStopwordTable, userStopwordTable)
+	return nil
+}
+
+func (e *executor) captureFullTextIndexSysvarsToJobFromTableInfo(sctx sessionctx.Context, job *model.Job, tblInfo *model.TableInfo) error {
+	if tblInfo == nil {
+		return nil
+	}
+	for _, index := range tblInfo.Indices {
+		if index == nil || index.FullTextInfo == nil {
+			continue
+		}
+		indexOption := &ast.IndexOption{ParserName: ast.NewCIStr(index.FullTextInfo.ParserType.SQLName())}
+		if err := e.captureFullTextIndexSysvarsToJob(sctx, job, indexOption); err != nil {
+			return errors.Trace(err)
+		}
+	}
 	return nil
 }
 
