@@ -159,6 +159,8 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 		// are putting column equal condition converted from `in (subq)` into
 		// `OtherConditions`(@sa https://github.com/pingcap/tidb/pull/9051), then it would
 		// cause wrong results, so we disable this optimization for outer semi joins now.
+	case base.SemiJoin, base.InnerJoin:
+		// It will be better to simplify OtherConditions through predicate pushdown for SemiJoin and InnerJoin,
 	default:
 		// Join ON conditions are not simplified through predicate pushdown.
 		// However, we still need to eliminate obvious logical constants in OtherConditions
