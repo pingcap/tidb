@@ -342,6 +342,18 @@ HashJoin	root		CARTESIAN left outer join, left side:HashJoin, left cond:[eq(sele
   │   └─TableFullScan	cop[tikv]	table:t2	keep order:false, stats:pseudo
   └─TableReader(Probe)	root		data:TableFullScan
     └─TableFullScan	cop[tikv]	table:t1	keep order:false, stats:pseudo
+drop table if exists t1_65994;
+drop table if exists t2_65994;
+create table t1_65994 (a int, b int);
+create table t2_65994 (a int, b int);
+explain format = 'plan_tree' select /* issue:65994 */ * from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a or 0);
+id	task	access object	operator info
+HashJoin	root		left outer join, left side:TableReader, equal:[eq(select.t1_65994.a, select.t2_65994.a)]
+├─TableReader(Build)	root		data:Selection
+│ └─Selection	cop[tikv]		not(isnull(select.t2_65994.a))
+│   └─TableFullScan	cop[tikv]	table:t2_65994	keep order:false, stats:pseudo
+└─TableReader(Probe)	root		data:TableFullScan
+  └─TableFullScan	cop[tikv]	table:t1_65994	keep order:false, stats:pseudo
 drop table if exists t;
 create table t(a bigint primary key, b bigint);
 desc select * from t where a = 1;

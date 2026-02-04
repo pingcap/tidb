@@ -172,6 +172,13 @@ drop table if exists t;
 create table t (id int primary key, a int, b int);
 explain format = 'plan_tree' select * from (t t1 left join t t2 on t1.a = t2.a) left join (t t3 left join t t4 on t3.a = t4.a) on t2.b = 1;
 
+# test outer join other condition simplification, issue #65994
+drop table if exists t1_65994;
+drop table if exists t2_65994;
+create table t1_65994 (a int, b int);
+create table t2_65994 (a int, b int);
+explain format = 'plan_tree' select /* issue:65994 */ * from t1_65994 left join t2_65994 on (t1_65994.a = t2_65994.a or 0);
+
 drop table if exists t;
 create table t(a bigint primary key, b bigint);
 desc select * from t where a = 1;

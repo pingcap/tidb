@@ -273,14 +273,16 @@ func (p *LogicalJoin) normalizeJoinConditionsForOuterJoin() {
 		return
 	}
 	// Outer join ON conditions are not simplified through predicate pushdown.
-	// Normalize only double NOT here to avoid cartesian joins caused by other conditions.
-	exprCtx := p.SCtx().GetExprCtx()
-	for i := range p.OtherConditions {
-		if !expression.ContainOuterNot(p.OtherConditions[i]) {
-			continue
-		}
-		p.OtherConditions[i] = expression.PushDownNot(exprCtx, p.OtherConditions[i])
-	}
+	// However, we still need to eliminate obvious logical constants in OtherConditions
+	// (e.g. "a = b OR 0") to avoid losing join keys.
+	p.OtherConditions = ruleutil.ApplyPredicateSimplificationForJoin(
+		p.SCtx(),
+		p.OtherConditions,
+		p.Children()[0].Schema(),
+		p.Children()[1].Schema(),
+		false,
+		nil,
+	)
 }
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
