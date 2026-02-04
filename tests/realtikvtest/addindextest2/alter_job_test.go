@@ -139,7 +139,7 @@ func TestAlterJobOnDXF(t *testing.T) {
 	tk.MustExec("admin check index t1 idx;")
 }
 
-func TestLocalSortRetryAfterEngineOpenError(t *testing.T) {
+func TestLocalSortRetryAfterBuildIngestPipelineError(t *testing.T) {
 	testutil.ReduceCheckInterval(t)
 
 	store := realtikvtest.CreateMockStoreAndSetup(t)
@@ -157,9 +157,9 @@ func TestLocalSortRetryAfterEngineOpenError(t *testing.T) {
 	tk.MustExec("insert into t values (1, 1), (2, 2), (3, 3);")
 
 	var injected atomic.Bool
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/afterOpenEngineInRegister", func(errPtr *error) {
+	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/mockNewAddIndexIngestPipelineError", func(errPtr *error) {
 		if injected.CompareAndSwap(false, true) {
-			*errPtr = errors.New("failpoint: afterOpenEngineInRegister")
+			*errPtr = errors.New("failpoint: mockNewAddIndexIngestPipelineError")
 		}
 	})
 
