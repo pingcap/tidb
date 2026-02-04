@@ -43,6 +43,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/utils"
 	"github.com/pingcap/tidb/br/pkg/version"
 	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/domain"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -1152,6 +1153,17 @@ func (s *SnapshotRestoreConfig) isPiTR() (bool, error) {
 	return false, errors.New(errMsg)
 }
 
+func isRestoreSysTablesPhysically(cfg *SnapshotRestoreConfig) (loadSysTablePhysical, loadStatsPhysical bool) {
+	if kerneltype.IsNextGen() {
+		// physical restore system tables requires rename table, while in
+		// next-gen kernel, wo forbid rename table on system tables.
+		return false, false
+	}
+	loadSysTablePhysical = cfg.FastLoadSysTables && cfg.WithSysTable
+	loadStatsPhysical = cfg.FastLoadSysTables && cfg.LoadStats
+	return
+}
+
 func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName string, cfg *SnapshotRestoreConfig) error {
 	cfg.Adjust()
 	defer summary.Summary(cmdName)
@@ -1165,8 +1177,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	loadSysTablePhysical := cfg.FastLoadSysTables && cfg.WithSysTable
-	loadStatsPhysical := cfg.FastLoadSysTables && cfg.LoadStats
+	loadSysTablePhysical, loadStatsPhysical := isRestoreSysTablesPhysically(cfg)
 
 	// check if this is part of the PiTR operation
 	isPiTR, err := cfg.isPiTR()
@@ -1429,7 +1440,7 @@ func runSnapshotRestore(c context.Context, mgr *conn.Mgr, g glue.Glue, cmdName s
 		log.Info("checking ongoing conflicting restore task using restore registry",
 			zap.Int("tables_count", len(tables)),
 			zap.Uint64("current_restore_id", cfg.RestoreID))
-		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, tables)
+		err := cfg.RestoreRegistry.CheckTablesWithRegisteredTasks(ctx, cfg.RestoreID, cfg.PiTRTableTracker, dbs, tables)
 		if err != nil {
 			return errors.Trace(err)
 		}

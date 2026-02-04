@@ -191,6 +191,13 @@ func (op *PhysicalTopN) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, b
 	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.ByItems = sliceutil.DeepClone(op.ByItems)
 	cloned.PartitionBy = sliceutil.DeepClone(op.PartitionBy)
+	if op.PrefixCol != nil {
+		if op.PrefixCol.SafeToShareAcrossSession() {
+			cloned.PrefixCol = op.PrefixCol
+		} else {
+			cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+		}
+	}
 	return cloned, true
 }
 
@@ -204,6 +211,13 @@ func (op *PhysicalLimit) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, 
 	}
 	cloned.PhysicalSchemaProducer = *basePlan
 	cloned.PartitionBy = sliceutil.DeepClone(op.PartitionBy)
+	if op.PrefixCol != nil {
+		if op.PrefixCol.SafeToShareAcrossSession() {
+			cloned.PrefixCol = op.PrefixCol
+		} else {
+			cloned.PrefixCol = op.PrefixCol.Clone().(*expression.Column)
+		}
+	}
 	return cloned, true
 }
 

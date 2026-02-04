@@ -3725,9 +3725,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, plannererrors.ErrCTERecursiveForbidsAggregation.FastGenByArgs(b.genCTETableNameForError())
 		}
 	}
-	if sel.SelectStmtOpts != nil {
+	// Handle STRAIGHT_JOIN - both keyword and hint forms
+	straightJoinFromKeyword := sel.SelectStmtOpts != nil && sel.SelectStmtOpts.StraightJoin
+	straightJoinFromHint := false
+	if hints := b.TableHints(); hints != nil {
+		straightJoinFromHint = hints.StraightJoinOrder
+	}
+	if straightJoinFromKeyword || straightJoinFromHint {
 		origin := b.inStraightJoin
-		b.inStraightJoin = sel.SelectStmtOpts.StraightJoin
+		b.inStraightJoin = true
 		defer func() { b.inStraightJoin = origin }()
 	}
 
@@ -4640,7 +4646,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if tableInfo.IsCommonHandle {
 			primaryIdx := tables.FindPrimaryIndex(tableInfo)
 			handleCols = util.NewCommonHandleCols(tableInfo, primaryIdx, ds.TblCols)
-		} else {
+		} else if !tbl.Type().IsClusterTable() {
+			// Cluster tables are memory tables that don't support ExtraHandleID.
+			// ExtraHandleID would cause "Column ID -1 not found" errors when
+			// coprocessor requests are sent to other TiDB nodes.
 			extraCol := ds.NewExtraHandleSchemaCol()
 			handleCols = util.NewIntHandleCols(extraCol)
 			ds.Columns = append(ds.Columns, model.NewExtraHandleColInfo())
@@ -4655,8 +4664,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		}
 	}
 	// Append extra commit ts column to the schema.
+	// Cluster tables are memory tables that don't support extra column IDs.
 	// Temporary table doesn't have the column _tidb_commit_ts.
-	if tbl.Meta().TempTableType == model.TempTableNone {
+	if !tbl.Type().IsClusterTable() && tbl.Meta().TempTableType == model.TempTableNone {
 		commitTSCol := ds.NewExtraCommitTSSchemaCol()
 		ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
 		schema.Append(commitTSCol)

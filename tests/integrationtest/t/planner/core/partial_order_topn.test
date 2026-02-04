@@ -1,0 +1,461 @@
+# Test cases for Partial Order TopN Optimization
+# This feature allows optimizer to use prefix index for ORDER BY ... LIMIT queries
+# Related PRs: #65799, #65533
+
+# ==========================================
+# Section 1: Table Setup (various column types)
+# ==========================================
+
+drop table if exists t_varchar, t_char, t_text, t_multi_col, t_no_prefix;
+
+# Table with VARCHAR prefix index
+create table t_varchar (
+    id int primary key auto_increment,
+    name varchar(255),
+    data varchar(100),
+    index idx_name_prefix (name(10))
+);
+
+# Table with CHAR prefix index
+create table t_char (
+    id int primary key auto_increment,
+    code char(50),
+    value int,
+    index idx_code_prefix (code(8))
+);
+
+# Table with TEXT prefix index
+create table t_text (
+    id int primary key auto_increment,
+    content text,
+    score int,
+    index idx_content_prefix (content(20))
+);
+
+# Table with multi-column index (last column is prefix)
+create table t_multi_col (
+    id int primary key auto_increment,
+    a int,
+    b varchar(100),
+    c varchar(100),
+    index idx_a_b_prefix (a, b(15)),
+    index idx_a_b_c_prefix (a, b, c(10))
+);
+
+# Table without prefix index (for comparison)
+create table t_no_prefix (
+    id int primary key auto_increment,
+    name varchar(255),
+    data varchar(100),
+    index idx_name (name)
+);
+
+# Insert test data
+insert into t_varchar (name, data) values
+('apple', 'fruit'),
+('apricot', 'fruit'),
+('application', 'software'),
+('banana', 'fruit'),
+('blueberry', 'fruit'),
+('cherry', 'fruit'),
+('date', 'fruit'),
+('elderberry', 'fruit'),
+('fig', 'fruit'),
+('grape', 'fruit');
+
+insert into t_char (code, value) values
+('ABC12345', 100),
+('ABC12346', 200),
+('ABC12347', 300),
+('DEF12345', 400),
+('DEF12346', 500),
+('GHI12345', 600),
+('GHI12346', 700),
+('JKL12345', 800),
+('JKL12346', 900),
+('MNO12345', 1000);
+
+insert into t_text (content, score) values
+('This is a long text content for testing', 10),
+('Another long text content here', 20),
+('Some more text data for testing purposes', 30),
+('Text content with different prefix', 40),
+('Testing partial order optimization', 50),
+('More test data with various lengths', 60),
+('Short text', 70),
+('Medium length text content', 80),
+('Very long text content that exceeds the prefix length significantly', 90),
+('Final test text content', 100);
+
+insert into t_multi_col (a, b, c) values
+(1, 'alpha', 'first'),
+(1, 'beta', 'second'),
+(1, 'gamma', 'third'),
+(2, 'alpha', 'fourth'),
+(2, 'beta', 'fifth'),
+(2, 'gamma', 'sixth'),
+(3, 'alpha', 'seventh'),
+(3, 'beta', 'eighth'),
+(3, 'gamma', 'ninth'),
+(3, 'delta', 'tenth');
+
+insert into t_no_prefix (name, data) values
+('apple', 'fruit'),
+('apricot', 'fruit'),
+('application', 'software'),
+('banana', 'fruit'),
+('blueberry', 'fruit');
+
+# ==========================================
+# Section 2: Session Variable DISABLE (baseline - no optimization)
+# ==========================================
+
+# Verify default value is DISABLE
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+# With DISABLE, partial order optimization should NOT be used
+set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE';
+
+# Basic TopN with prefix index - should NOT show prefix_col/prefix_len
+explain format='brief' select * from t_varchar order by name limit 5;
+explain format='brief' select * from t_varchar where data = 'fruit' order by name limit 5;
+
+# Multi-column index - should NOT show partial order optimization
+explain format='brief' select * from t_multi_col where a = 1 order by b limit 5;
+
+# ==========================================
+# Section 3: Session Variable COST (optimization enabled)
+# To ensure the test results are stable (rather than based on data volume),
+# the planner testing will currently use a combination of Session Variable and Hint "use index".
+# TODO: After completing the dynamic selection of the optimal plan based on the cost model,
+# we will add testing for the cost model.
+# ==========================================
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'COST';
+
+# Verify setting
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+# ==========================================
+# Section 3.1: Supported Query Pattern - TopN -> DataSource
+# ==========================================
+
+# Single column prefix index on VARCHAR
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# Single column prefix index on CHAR
+explain format='brief' select /*+ use_index(t_char, idx_code_prefix) */ * from t_char order by code limit 5;
+
+# Single column prefix index on TEXT
+explain format='brief' select /*+ use_index(t_text, idx_content_prefix) */ * from t_text order by content limit 5;
+
+# ==========================================
+# Section 3.2: Supported Query Pattern - TopN -> Selection -> DataSource
+# ==========================================
+
+# Selection can be push down to Index Scan side
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where id=1 order by name limit 5;
+
+# Selection keep in TiDB side
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where left(name, 2) = 'ap' order by name limit 5;
+
+# Selection with equality condition
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar where data = 'fruit' order by name limit 5;
+
+# Selection with range condition
+explain format='brief' select /*+ use_index(t_char, idx_code_prefix) */ * from t_char where value > 300 order by code limit 5;
+
+# Selection with LIKE condition
+explain format='brief' select /*+ use_index(t_text, idx_content_prefix) */ * from t_text where score < 80 order by content limit 3;
+
+# ==========================================
+# Section 3.3: Supported Query Pattern - TopN -> Projection -> DataSource
+# ==========================================
+
+# Simple projection (subquery projection)
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ id, inner_name from (select id, name as inner_name from t_varchar) tmp order by inner_name limit 5;
+
+# Projection with column alias
+explain format='brief' select /*+ use_index(t_char, idx_code_prefix) */ id, code as c from t_char order by code limit 5;
+
+# ==========================================
+# Section 3.4: Supported Query Pattern - TopN -> Projection -> Selection -> DataSource
+# ==========================================
+
+explain format='brief' select  /*+ use_index(t_varchar, idx_name_prefix) */ id, name from t_varchar where data = 'fruit' order by name limit 5;
+explain format='brief' select  /*+ use_index(t_char, idx_code_prefix) */ id, code as c from t_char where value > 200 order by code limit 5;
+
+# ==========================================
+# Section 3.5: Supported Query Pattern - TopN -> Selection -> Projection -> DataSource
+# ==========================================
+
+# This pattern is also supported
+explain format='brief' select  /*+ use_index(t_varchar, idx_name_prefix) */ id, name from t_varchar where data = 'fruit' order by name limit 5;
+
+# ==========================================
+# Section 3.6: Multi-column Index with Last Column as Prefix
+# ==========================================
+
+# ORDER BY matches prefix of multi-column index
+explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col where a = 1 order by b limit 5;
+
+# ORDER BY a, b with index (a, b(15))
+explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */  * from t_multi_col order by a, b limit 5;
+
+# ORDER BY a, b, c with index (a, b, c(10))
+explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_c_prefix) */  * from t_multi_col order by a, b, c limit 5;
+
+# ==========================================
+# Section 3.7: With OFFSET
+# ==========================================
+
+# LIMIT with OFFSET
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */  * from t_varchar order by name limit 5 offset 3;
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */  * from t_varchar order by name limit 10 offset 5;
+
+# ==========================================
+# Section 3.8: DESC Order
+# ==========================================
+
+# DESC order should also work
+explain format='brief' select  /*+ use_index(t_varchar, idx_name_prefix) */  * from t_varchar order by name desc limit 5;
+explain format='brief' select   /*+ use_index(t_char, idx_code_prefix) */ * from t_char order by code desc limit 5;
+
+# ==========================================
+# Section 4: USE INDEX hint + COST mode
+# ==========================================
+
+# use_index hint with matching prefix index - should use partial order
+explain format='brief' select /*+ use_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# use_index hint with non-matching index - should degenerate to normal behavior
+explain format='brief' select /*+ use_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+explain format='brief' select /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a, c limit 5;
+
+# force_index hint with prefix index
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# ==========================================
+# Section 5: Unsupported patterns (should fallback to normal plan)
+# ==========================================
+
+# ==========================================
+# Section 5.1: Mixed ASC/DESC in ORDER BY
+# ==========================================
+
+# Mixed order direction - NOT supported
+explain format='brief' select  /*+ use_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a asc, b desc limit 5;
+
+# ==========================================
+# Section 5.2: ORDER BY with expressions (not simple column references)
+# ==========================================
+
+# Expression in ORDER BY - NOT supported
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by upper(name) limit 5;
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by concat(name, data) limit 5;
+
+# ==========================================
+# Section 5.3: Index columns > ORDER BY columns
+# ==========================================
+
+# When index has more columns than ORDER BY, partial order not applicable
+# index idx_a_b_prefix (a, b(15)) but ORDER BY only a
+explain format='brief' select /*+ force_index(t_multi_col, idx_a_b_prefix) */ * from t_multi_col order by a limit 5;
+
+# ==========================================
+# Section 5.4: Non-prefix index (last column not prefix)
+# ==========================================
+
+# Table with normal index (no prefix) - should NOT use partial order
+explain format='brief' select  /*+ force_index(t_no_prefix, idx_name) */ * from t_no_prefix order by name limit 5;
+
+# ==========================================
+# Section 5.5: Unsupported plan patterns
+# ==========================================
+
+# TopN with JOIN - NOT supported
+drop table if exists t_join1, t_join2;
+create table t_join1 (id int primary key, name varchar(100), index idx_name(name(10)));
+create table t_join2 (id int primary key, ref_id int);
+insert into t_join1 values (1, 'alpha'), (2, 'beta'), (3, 'gamma');
+insert into t_join2 values (1, 1), (2, 2), (3, 3);
+
+explain format='brief' select t_join1.* from t_join1 join t_join2 on t_join1.id = t_join2.ref_id order by t_join1.name limit 5;
+
+# TopN with Aggregation - NOT supported
+explain format='brief' select name, count(*) from t_varchar group by name order by name limit 5;
+
+# TopN with UNION - NOT supported
+explain format='brief' (select name from t_varchar order by name limit 3) union all (select name from t_no_prefix order by name limit 3) order by name limit 5;
+
+# ==========================================
+# Section 5.6: Projection with function compute - NOT supported
+# ==========================================
+
+# Projection with computed column
+explain format='brief' select  /*+ force_index(t_varchar, idx_name_prefix) */ id, upper(name) as upper_name from t_varchar order by upper_name limit 5;
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ id, length(name) as name_len from t_varchar order by name_len limit 5;
+
+# ==========================================
+# Section 6: Dirty write scenarios (uncommitted data)
+# ==========================================
+
+# When there are uncommitted writes in the transaction, partial order optimization
+# should NOT be used because LogicalUnionScan is present
+
+# Start a transaction and insert uncommitted data
+begin;
+insert into t_varchar (name, data) values ('zebra', 'animal');
+
+# Query with uncommitted data - should NOT show partial order optimization
+# because LogicalUnionScan blocks the optimization
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# Rollback the transaction
+rollback;
+
+# After rollback, partial order should work again
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+# Test with UPDATE in transaction
+begin;
+update t_varchar set data = 'modified' where id = 1;
+
+# Query with uncommitted update - should NOT use partial order
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+rollback;
+
+# Test with DELETE in transaction
+begin;
+delete from t_varchar where id = 1;
+
+# Query with uncommitted delete - should NOT use partial order
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 5;
+
+rollback;
+
+# ==========================================
+# Section 7: Edge cases
+# ==========================================
+
+# ==========================================
+# Section 7.1: Various LIMIT values
+# ==========================================
+
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 1;
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 100;
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */ * from t_varchar order by name limit 1000;
+
+# ==========================================
+# Section 7.2: Empty table
+# ==========================================
+
+drop table if exists t_empty;
+create table t_empty (id int primary key, name varchar(100), index idx_name(name(10)));
+
+explain format='brief' select /*+ force_index(t_empty, idx_name) */ * from t_empty order by name limit 5;
+
+# ==========================================
+# Section 7.3: Different prefix lengths
+# ==========================================
+
+drop table if exists t_prefix_len;
+create table t_prefix_len (
+    id int primary key auto_increment,
+    short_prefix varchar(100),
+    long_prefix varchar(100),
+    index idx_short (short_prefix(5)),
+    index idx_long (long_prefix(50))
+);
+
+insert into t_prefix_len (short_prefix, long_prefix) values
+('abcdefghij', 'abcdefghijklmnopqrstuvwxyz'),
+('abcdefghik', 'abcdefghijklmnopqrstuvwxya'),
+('abcdefghil', 'abcdefghijklmnopqrstuvwxyb'),
+('xyzdefghij', 'xyzdefghijklmnopqrstuvwxyz'),
+('xyzdefghik', 'xyzdefghijklmnopqrstuvwxya');
+
+# Short prefix (5 bytes)
+explain format='brief' select  /*+ force_index(t_prefix_len, idx_short) */  * from t_prefix_len order by short_prefix limit 3;
+
+# Long prefix (50 bytes)
+explain format='brief' select  /*+ force_index(t_prefix_len, long_prefix) */  * from t_prefix_len order by long_prefix limit 3;
+
+# ==========================================
+# Section 7.4: Verify actual query results are correct
+# TODO: Verify it after executor PR merged
+# ==========================================
+
+# Verify results with partial order optimization
+# select * from t_varchar order by name limit 5;
+# select * from t_char order by code limit 5;
+# select * from t_multi_col where a = 1 order by b limit 3;
+
+# Verify DESC results
+# select * from t_varchar order by name desc limit 5;
+
+# Verify with OFFSET
+# select * from t_varchar order by name limit 3 offset 2;
+
+# ==========================================
+# Section 8: Comparison between DISABLE and COST modes
+# ==========================================
+
+# DISABLE mode - baseline
+set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE';
+explain format='brief' select /*+ force_index(t_varchar, idx_name_prefix) */  * from t_varchar order by name limit 5;
+
+# COST mode - with optimization
+set @@tidb_opt_partial_ordered_index_for_topn = 'COST';
+explain format='brief' select  /*+ force_index(t_varchar, idx_name_prefix) */   * from t_varchar order by name limit 5;
+
+# Reset to default
+set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT;
+
+# ==========================================
+# Section 9: Case sensitivity of session variable
+# ==========================================
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'cost';
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'Cost';
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'COST';
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'disable';
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'Disable';
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+set @@tidb_opt_partial_ordered_index_for_topn = 'DISABLE';
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+# Invalid values should error
+--error 1231
+set @@tidb_opt_partial_ordered_index_for_topn = 'ON';
+
+--error 1231
+set @@tidb_opt_partial_ordered_index_for_topn = 'OFF';
+
+--error 1231
+set @@tidb_opt_partial_ordered_index_for_topn = 1;
+
+--error 1231
+set @@tidb_opt_partial_ordered_index_for_topn = 0;
+
+# Reset to default
+set @@tidb_opt_partial_ordered_index_for_topn = DEFAULT;
+select @@tidb_opt_partial_ordered_index_for_topn;
+
+# ==========================================
+# Cleanup
+# ==========================================
+
+drop table if exists t_varchar, t_char, t_text, t_multi_col, t_no_prefix;
+drop table if exists t_join1, t_join2, t_empty, t_prefix_len, t_null;
+

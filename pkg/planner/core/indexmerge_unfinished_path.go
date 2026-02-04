@@ -549,7 +549,7 @@ func estimateCountAfterAccessForIndexMergeOR(ds *logicalop.DataSource, decidedPa
 		)
 	} else {
 		var err error
-		sel, _, err = cardinality.Selectivity(
+		sel, err = cardinality.Selectivity(
 			ds.SCtx(),
 			ds.TableStats.HistColl,
 			[]expression.Expression{accessDNF},

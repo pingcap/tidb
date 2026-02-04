@@ -247,6 +247,7 @@ go_library(
         "//pkg/util/logutil/consistency",
         "//pkg/util/mathutil",
         "//pkg/util/memory",
+        "//pkg/util/parser",
         "//pkg/util/password-validation",
         "//pkg/util/plancodec",
         "//pkg/util/printer",

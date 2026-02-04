@@ -597,10 +597,23 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			// it has never been written.
 			continue
 		}
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
+			untouched = false
+			break
+		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
+
+		if !untouched {
 			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return err
@@ -608,7 +621,6 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if err = idx.Delete(ctx, txn, oldVs, h); err != nil {
 				return err
 			}
-			break
 		}
 	}
 	createIdxOpt := opt.GetCreateIdxOpt()

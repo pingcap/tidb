@@ -152,6 +152,9 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
+	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
+		p.normalizeJoinConditionsForOuterJoin()
+	}
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
 	var leftPushCond, rightPushCond, otherCond, leftCond, rightCond []expression.Expression
@@ -263,6 +266,21 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
 	return ret, newnChild, err
+}
+
+func (p *LogicalJoin) normalizeJoinConditionsForOuterJoin() {
+	if len(p.OtherConditions) == 0 {
+		return
+	}
+	// Outer join ON conditions are not simplified through predicate pushdown.
+	// Normalize only double NOT here to avoid cartesian joins caused by other conditions.
+	exprCtx := p.SCtx().GetExprCtx()
+	for i := range p.OtherConditions {
+		if !expression.ContainOuterNot(p.OtherConditions[i]) {
+			continue
+		}
+		p.OtherConditions[i] = expression.PushDownNot(exprCtx, p.OtherConditions[i])
+	}
 }
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.

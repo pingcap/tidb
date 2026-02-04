@@ -649,7 +649,8 @@ const (
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
 		INDEX sql_index(resource_group_name,watch_text(700)) COMMENT "accelerate the speed when select quarantined query",
-		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch"
+		INDEX time_index(end_time) COMMENT "accelerate the speed when querying with active watch",
+		INDEX idx_start_time(start_time) COMMENT "accelerate the speed when syncing new watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateTiDBRunawayWatchDoneTable stores the condition which is used to check whether query should be quarantined.
@@ -665,7 +666,8 @@ const (
 		action bigint(10),
 		switch_group_name VARCHAR(32) DEFAULT '',
 		rule VARCHAR(512) DEFAULT '',
-		done_time TIMESTAMP(6) NOT NULL
+		done_time TIMESTAMP(6) NOT NULL,
+		INDEX idx_done_time(done_time) COMMENT "accelerate the speed when syncing done watch records"
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`
 
 	// CreateRequestUnitByGroupTable stores the historical RU consumption by resource group.
