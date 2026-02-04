@@ -22,7 +22,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/recording"
@@ -87,6 +87,9 @@ type WalkOption struct {
 	//
 	// The size of a deleted file should be `TombstoneSize`.
 	IncludeTombstone bool
+	// StartAfter is the key to start after. If not empty, the walk will start
+	// after the key. Currently only S3-like storage supports this option.
+	StartAfter string
 }
 
 // ReadSeekCloser is the interface that groups the basic Read, Seek and Close methods.
@@ -191,7 +194,7 @@ type Options struct {
 
 	// S3Retryer is the retryer for create s3 storage, if it is nil,
 	// defaultS3Retryer() will be used.
-	S3Retryer retry.Standard
+	S3Retryer aws.Retryer
 
 	// CheckObjectLockOptions check the s3 bucket has enabled the ObjectLock.
 	// if enabled. it will send the options to tikv.

@@ -88,3 +88,10 @@ func TestFixControl(t *testing.T) {
 		require.Equal(t, output[i].Variable, rows)
 	}
 }
+
+func TestParseToMapEmptyValue(t *testing.T) {
+	m, warns, err := fixcontrol.ParseToMap("123:")
+	require.NoError(t, err)
+	require.Len(t, warns, 0)
+	require.Equal(t, "", m[123])
+}

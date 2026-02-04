@@ -89,7 +89,7 @@ func (p *PhysicalCTE) ExplainInfo() string {
 
 // ExplainID overrides the ExplainID.
 func (p *PhysicalCTE) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		if p.SCtx() != nil && p.SCtx().GetSessionVars().StmtCtx.IgnoreExplainIDSuffix {
 			return p.TP()
 		}
@@ -196,7 +196,7 @@ func (p *CTEDefinition) ExplainInfo() string {
 
 // ExplainID overrides the ExplainID.
 func (p *CTEDefinition) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
 }
@@ -230,7 +230,7 @@ func (*PhysicalCTEStorage) ExplainInfo() string {
 
 // ExplainID overrides the ExplainID.
 func (p *PhysicalCTEStorage) ExplainID(_ ...bool) fmt.Stringer {
-	return stringutil.MemoizeStr(func() string {
+	return stringutil.StringerFunc(func() string {
 		return "CTE_" + strconv.Itoa(p.CTE.IDForStorage)
 	})
 }

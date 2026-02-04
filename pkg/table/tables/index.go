@@ -235,15 +235,6 @@ out:
 
 // MeetPartialCondition checks whether the row meets the partial index condition of the index.
 func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			err = errors.Errorf("panic in MeetPartialCondition: %v", r)
-			intest.Assert(false, "should never panic in MeetPartialCondition")
-			logutil.BgLogger().Warn("panic in MeetPartialCondition", zap.Error(err), zap.Any("recover message", r))
-		}
-	}()
-
 	if c.conditionExpr == nil {
 		return true, nil
 	}
@@ -252,7 +243,20 @@ func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
 	defer c.conditionEvalBufferPool.Put(evalBuffer)
 	evalBuffer.SetDatums(row...)
 
-	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), evalBuffer.ToRow())
+	return c.MeetPartialConditionWithChunk(evalBuffer.ToRow())
+}
+
+func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
+	defer func() {
+		r := recover()
+		if r != nil {
+			err = errors.Errorf("panic in MeetPartialConditionWithChunk: %v", r)
+			intest.Assert(false, "should never panic in MeetPartialConditionWithChunk")
+			logutil.BgLogger().Warn("panic in MeetPartialConditionWithChunk", zap.Error(err), zap.Any("recover message", r))
+		}
+	}()
+
+	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), row)
 	if err != nil {
 		return false, err
 	}

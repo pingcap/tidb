@@ -136,6 +136,10 @@ type AccessPath struct {
 	Forced           bool
 	ForceKeepOrder   bool
 	ForceNoKeepOrder bool
+	// ForcePartialOrder means whether to force using "current path + partial order optimize".
+	// Only when "Index is Force", "Partial Order is enable" and "Index can match partial order property"
+	// this flag will be set to true.
+	ForcePartialOrder bool
 	// IsSingleScan indicates whether the path is a single index/table scan or table access after index scan.
 	IsSingleScan bool
 
@@ -156,6 +160,9 @@ type AccessPath struct {
 	// This field is used to rebuild GroupedRanges from ranges using GroupRangesByCols().
 	// It's used in plan cache or Apply.
 	GroupByColIdxs []int
+
+	// Disables plan cache for plans using this Path.
+	NoncacheableReason string
 }
 
 // Clone returns a deep copy of the original AccessPath.
@@ -189,11 +196,13 @@ func (path *AccessPath) Clone() *AccessPath {
 		Forced:                       path.Forced,
 		ForceKeepOrder:               path.ForceKeepOrder,
 		ForceNoKeepOrder:             path.ForceNoKeepOrder,
+		ForcePartialOrder:            path.ForcePartialOrder,
 		IsSingleScan:                 path.IsSingleScan,
 		IsUkShardIndexPath:           path.IsUkShardIndexPath,
 		KeepIndexMergeORSourceFilter: path.KeepIndexMergeORSourceFilter,
 		GroupedRanges:                make([][]*ranger.Range, 0, len(path.GroupedRanges)),
 		GroupByColIdxs:               slices.Clone(path.GroupByColIdxs),
+		NoncacheableReason:           path.NoncacheableReason,
 	}
 	if path.IndexMergeORSourceFilter != nil {
 		ret.IndexMergeORSourceFilter = path.IndexMergeORSourceFilter.Clone()
@@ -473,4 +482,29 @@ func (path *AccessPath) IsFullScanRange(tableInfo *model.TableInfo) bool {
 		return true
 	}
 	return false
+}
+
+// IsUndetermined checks if the path is undetermined.
+// The undetermined path is the one that may not be always valid.
+// e.g. The multi value index for JSON is not always valid, because the index must be used with JSON functions.
+func (path *AccessPath) IsUndetermined() bool {
+	if path.IsTablePath() || path.Index == nil {
+		return false
+	}
+	if path.Index.MVIndex || path.Index.ConditionExprString != "" {
+		return true
+	}
+	return false
+}
+
+// IsIndexJoinUnapplicable checks if the path is unapplicable for index join.
+// If path is mv index path:
+// for mv index like mvi(a, json, b), if driving condition is a=1, and we build a prefix scan with range [1,1]
+// on mvi, it will return many index rows which breaks handle-unique attribute here.
+// So we cannot use mv index path for index join.
+// If path is partial index path:
+// We need to first determine whether we already meet the partial index condition.
+// Currently we don't support that, so we conservatively return true here.
+func (path *AccessPath) IsIndexJoinUnapplicable() bool {
+	return path.IsUndetermined()
 }

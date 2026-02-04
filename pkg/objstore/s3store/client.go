@@ -66,12 +66,12 @@ func (c *s3Client) CheckBucketExistence(ctx context.Context) error {
 }
 
 func (c *s3Client) CheckListObjects(ctx context.Context) error {
-	input := &s3.ListObjectsInput{
+	input := &s3.ListObjectsV2Input{
 		Bucket:  aws.String(c.Bucket),
 		Prefix:  aws.String(c.PrefixStr()),
 		MaxKeys: aws.Int32(1),
 	}
-	_, err := c.svc.ListObjects(ctx, input)
+	_, err := c.svc.ListObjectsV2(ctx, input)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -253,45 +253,34 @@ func (c *s3Client) IsObjectExists(ctx context.Context, name string) (bool, error
 	return true, nil
 }
 
-func (c *s3Client) ListObjects(ctx context.Context, extraPrefix string, marker *string, maxKeys int) (*s3like.ListResp, error) {
+func (c *s3Client) ListObjects(ctx context.Context, extraPrefix, startAfter string, continuationToken *string, maxKeys int) (*s3like.ListResp, error) {
 	prefix := c.ObjectKey(extraPrefix)
-	req := &s3.ListObjectsInput{
-		Bucket:  aws.String(c.Bucket),
-		Prefix:  aws.String(prefix),
-		MaxKeys: aws.Int32(int32(maxKeys)),
-		Marker:  marker,
+	var startAfterKey *string
+	if len(startAfter) > 0 {
+		startAfterKey = aws.String(c.ObjectKey(startAfter))
 	}
-	// FIXME: We can't use ListObjectsV2, it is not universally supported.
-	// (Ceph RGW supported ListObjectsV2 since v15.1.0, released 2020 Jan 30th)
-	// (as of 2020, DigitalOcean Spaces still does not support V2 - https://developers.digitalocean.com/documentation/spaces/#list-bucket-contents)
-	res, err := c.svc.ListObjects(ctx, req)
+	req := &s3.ListObjectsV2Input{
+		Bucket:            aws.String(c.Bucket),
+		Prefix:            aws.String(prefix),
+		MaxKeys:           aws.Int32(int32(maxKeys)),
+		ContinuationToken: continuationToken,
+		StartAfter:        startAfterKey,
+	}
+	res, err := c.svc.ListObjectsV2(ctx, req)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	var (
-		nextMarker *string
-		objects    = make([]s3like.Object, 0, len(res.Contents))
-	)
+	objects := make([]s3like.Object, 0, len(res.Contents))
 	for _, obj := range res.Contents {
-		// https://docs.aws.amazon.com/AmazonS3/latest/API/API_ListObjects.html#AmazonS3-ListObjects-response-NextMarker -
-		//
-		// `res.NextMarker` is populated only if we specify req.Delimiter.
-		// Aliyun OSS and minio will populate NextMarker no matter what,
-		// but this documented behavior does apply to AWS S3:
-		//
-		// "If response does not include the NextMarker and it is truncated,
-		// you can use the value of the last Key in the response as the marker
-		// in the subsequent request to get the next set of object keys."
-		nextMarker = obj.Key
 		objects = append(objects, s3like.Object{
 			Key:  aws.ToString(obj.Key),
 			Size: aws.ToInt64(obj.Size),
 		})
 	}
 	return &s3like.ListResp{
-		NextMarker:  nextMarker,
-		IsTruncated: aws.ToBool(res.IsTruncated),
-		Objects:     objects,
+		NextContinuationToken: res.NextContinuationToken,
+		IsTruncated:           aws.ToBool(res.IsTruncated),
+		Objects:               objects,
 	}, nil
 }
 
@@ -347,6 +336,7 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 		u.Concurrency = concurrency
 		u.BufferProvider = manager.NewBufferedReadSeekerWriteToPool(concurrency * s3like.HardcodedChunkSize)
 		if c.s3Compatible {
+			u.RequestChecksumCalculation = aws.RequestChecksumCalculationWhenRequired
 			u.ClientOptions = append(u.ClientOptions, withContentMD5)
 		}
 	})
@@ -357,7 +347,7 @@ func (c *s3Client) MultipartUploader(name string, partSize int64, concurrency in
 	}
 }
 
-// withContentMD5 removes all flexible checksum procecdures from an operation,
+// withContentMD5 removes flexible checksum procedures from an operation,
 // instead computing an MD5 checksum for the request payload.
 func withContentMD5(o *s3.Options) {
 	o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
