@@ -133,6 +133,39 @@ type BindingMatchInfo struct {
 	TableNames []*ast.TableName
 }
 
+// MatchSQLBindingForPlanCache matches binding for plan cache with normalization cache.
+func MatchSQLBindingForPlanCache(sctx sessionctx.Context, stmtNode ast.StmtNode, info *BindingMatchInfo) (bindingSQL string) {
+	sessionVars := sctx.GetSessionVars()
+	useBinding := sessionVars.UsePlanBaselines
+	if !useBinding || stmtNode == nil {
+		return
+	}
+	// When the domain is initializing, the bind will be nil.
+	if sctx.Value(SessionBindInfoKeyType) == nil {
+		return
+	}
+	cache := getMatchSQLBindingCache(sessionVars, stmtNode)
+	if intest.InTest {
+		binding, matched, scope := matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+		assertMatchSQLBinding(cache, matched, binding, scope)
+		if matched {
+			bindingSQL = binding.BindSQL
+		}
+		return
+	}
+	if cache != nil {
+		if cache.matched {
+			bindingSQL = cache.binding.BindSQL
+		}
+		return
+	}
+	binding, matched, _ := matchSQLBindingCore(sctx, sessionVars, stmtNode, info)
+	if matched {
+		bindingSQL = binding.BindSQL
+	}
+	return
+}
+
 // MatchSQLBinding returns the matched binding for this statement.
 func MatchSQLBinding(sctx sessionctx.Context, stmtNode ast.StmtNode) (binding *Binding, matched bool, scope string) {
 	sessionVars := sctx.GetSessionVars()
