@@ -2,31 +2,26 @@
 
 ## 2026-02-04: Bind Matching Cache for Plan Cache Key
 
-### Background
+### Key Learnings
 
-Two changes (PRs #65484 and #65766) introduced a performance regression in `BenchmarkNonPartitionPointGetPlanCacheOn`.
-Profiling showed the hot path moved into `core.GetPlanFromPlanCache`, dominated by repeated
-`NormalizeStmtForBinding` / `NormalizeDigestForBinding` and `bindinfo.MatchSQLBinding` work.
+- `NewPlanCacheKey` is a hot path. Any extra normalization or digest work here is amplified.
+- Use cross-execution caches for binding normalization. `PlanCacheStmt.BindingInfo` can reuse
+  `NormalizeStmtForBinding` and `CollectTableNames` results across executions.
+- Statement-scoped caches (`StmtCtx.MatchSQLBindingCache`) reset every statement and do not
+  reduce plan cache key costs in single-call paths.
+- Avoid calling `MatchSQLBinding` without reuse when building cache keys; pass an explicit
+  normalization cache instead.
+- In profiling, a regression will show up as higher cum time in
+  `NormalizeStmtForBinding`, `NormalizeDigestForBinding`, and `MatchSQLBinding`
+  under `GetPlanFromPlanCache`.
 
-### Root Cause
+### Practices
 
-`NewPlanCacheKey` switched to `bindinfo.MatchSQLBinding` which does not reuse
-`PlanCacheStmt.BindingInfo` (normalization cache). The stmt-level cache (`StmtCtx.MatchSQLBindingCache`)
-is reset per statement and does not help for plan cache key creation, so the normalization cost
-was paid on every execution.
+- Provide a cache-aware entry point (for example `MatchSQLBindingWithCache(sctx, stmtNode, info)`),
+  and keep `MatchSQLBinding` on the shared code path.
+- Keep cache ownership with `PlanCacheStmt` for plan cache key construction.
 
-### Fix
-
-Restore normalization caching by reusing `BindingMatchInfo` in plan cache key creation:
-
-- Export `bindinfo.MatchSQLBindingWithCache(sctx, stmtNode, info)` and share the common
-  cache path with `MatchSQLBinding`.
-- In `NewPlanCacheKey`, call `MatchSQLBindingWithCache` with `&stmt.BindingInfo`
-  and use the matched `BindSQL` for the cache key.
-
-This makes plan cache key creation reuse normalized digest and table name collection.
-
-### Verification
+### Validation (Example)
 
 Benchmark:
 
@@ -44,16 +39,9 @@ go tool pprof -top -cum -focus GetPlanFromPlanCache partition.test \
   /tmp/bench_non_partition_point_get_plan_cache_on_50_fixed.cpu
 ```
 
-Expected outcome: time under `GetPlanFromPlanCache` drops back near pre-regression levels.
-
-### Regression Evidence
-
-Compare the slow profile (post-PRs) against the fixed profile:
+Regression evidence (slow vs fixed):
 
 ```bash
 go tool pprof -top -cum -focus GetPlanFromPlanCache -base bench_non_partition_point_get_plan_cache_on_50.cpu \
   partition.test /tmp/bench_non_partition_point_get_plan_cache_on_50_fixed.cpu
 ```
-
-Expected outcome: negative deltas in `MatchSQLBinding`, `NormalizeStmtForBinding`,
-and `NormalizeDigestForBinding`, indicating the regression is removed.
