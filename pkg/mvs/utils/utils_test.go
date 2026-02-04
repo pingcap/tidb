@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"container/heap"
 	"reflect"
 	"sort"
 	"testing"
@@ -118,17 +117,18 @@ func (t node) Less(other node) bool {
 func TestPriorityQueue(t *testing.T) {
 	base := time.Now()
 	pq := &PriorityQueue[node]{}
-	heap.Init(pq)
+	pq.Push(node{v: "b", ts: base.Add(2 * time.Second)})
+	pq.Push(node{v: "a", ts: base.Add(time.Second)})
+	pq.Push(node{v: "c", ts: base.Add(3 * time.Second)})
+	require.True(t, pq.Front().Value.v == "a")
 
-	heap.Push(pq, &Item[node]{Value: node{v: "b", ts: base.Add(2 * time.Second)}})
-	heap.Push(pq, &Item[node]{Value: node{v: "a", ts: base.Add(time.Second)}})
-	item := &Item[node]{Value: node{v: "c", ts: base.Add(3 * time.Second)}}
-	heap.Push(pq, item)
-	pq.Update(item, node{v: "c", ts: base.Add(500 * time.Millisecond)})
-	popRes := make([]string, 0, 3)
+	pq.Update(pq.Front(), node{v: "d", ts: base.Add(5 * time.Second)})
+	pq.Push(node{v: "c", ts: base.Add(500 * time.Millisecond)})
+
+	popRes := make([]string, 0, 4)
 	for pq.Len() > 0 {
-		it := heap.Pop(pq).(*Item[node])
+		it := pq.Pop()
 		popRes = append(popRes, it.Value.v)
 	}
-	require.Equal(t, []string{"c", "a", "b"}, popRes)
+	require.Equal(t, []string{"c", "b", "c", "d"}, popRes)
 }
