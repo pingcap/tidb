@@ -1,0 +1,48 @@
+# Materialized View (scheme2) systables + parser/DDL smoke test
+
+use ddl__materialized_view_systables;
+
+drop table if exists t;
+
+create table t (k int, v int);
+create materialized view log on t (k, v);
+
+# MV DDL lifecycle
+create materialized view mv1 (k, cnt, sum_v) as select k, count(*), sum(v) from t group by k;
+select table_schema, mview_name, mview_id > 0 as has_id, refresh_method, start_with, `next`
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+
+alter materialized view mv1 comment = 'c1';
+select mview_comment
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+
+alter materialized view mv1 refresh start with now() next 600;
+select start_with, `next`
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+
+alter materialized view mv1 refresh;
+select start_with is null as start_is_null, `next` is null as next_is_null
+from information_schema.tidb_mviews
+where table_schema='ddl__materialized_view_systables' and mview_name='mv1';
+
+# MV LOG DDL lifecycle + DROP TABLE guard
+select base_table_schema, base_table_name, mlog_id > 0 as has_id, mlog_name, mlog_columns, purge_method, purge_interval
+from information_schema.tidb_mlogs
+where base_table_schema='ddl__materialized_view_systables' and base_table_name='t';
+
+--error 1105
+drop table t;
+
+--error 1105
+drop materialized view log on t;
+
+drop materialized view mv1;
+drop materialized view log on t;
+drop table t;
+
+# REFRESH MATERIALIZED VIEW is not implemented in this PR.
+--error 8200
+refresh materialized view mv1 fast;

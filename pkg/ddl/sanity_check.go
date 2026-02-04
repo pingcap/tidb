@@ -237,7 +237,12 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateTable:
-			if _, ok := st.(*ast.CreateTableStmt); !ok {
+			// Some statements (e.g. CREATE MATERIALIZED VIEW/LOG) create physical tables too.
+			// They are implemented on top of ActionCreateTable jobs, but their original queries are not CREATE TABLE.
+			switch st.(type) {
+			case *ast.CreateTableStmt, *ast.CreateMaterializedViewStmt, *ast.CreateMaterializedViewLogStmt:
+				// ok
+			default:
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateSchema:

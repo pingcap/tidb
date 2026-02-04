@@ -231,6 +231,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
+		case infoschema.TableTiDBMViews:
+			err = e.setDataFromTiDBMViews(ctx, sctx)
+		case infoschema.TableTiDBMLogs:
+			err = e.setDataFromTiDBMLogs(ctx, sctx)
 		}
 		if err != nil {
 			return nil, err
@@ -371,6 +375,180 @@ func (e *memtableRetriever) setDataForUserAttributes(ctx context.Context, sctx s
 		rows = append(rows, row)
 	}
 
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	refreshRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil,
+		"SELECT MVIEW_ID, REFRESH_METHOD, START_WITH, NEXT FROM mysql.tidb_mview_refresh")
+	if err != nil {
+		return err
+	}
+	type refreshInfo struct {
+		method    any
+		startWith any
+		next      any
+	}
+	refreshMap := make(map[int64]refreshInfo, len(refreshRows))
+	for _, r := range refreshRows {
+		var method any
+		if !r.IsNull(1) {
+			method = r.GetString(1)
+		}
+		var startWith any
+		if !r.IsNull(2) {
+			startWith = r.GetString(2)
+		}
+		var next any
+		if !r.IsNull(3) {
+			next = r.GetString(3)
+		}
+		refreshMap[r.GetInt64(0)] = refreshInfo{
+			method:    method,
+			startWith: startWith,
+			next:      next,
+		}
+	}
+
+	loc := sctx.GetSessionVars().TimeZone
+	rows := make([][]types.Datum, 0, 8)
+	for _, db := range e.is.AllSchemas() {
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, db.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		tblInfos, err := e.is.SchemaTableInfos(ctx, db.Name)
+		if err != nil {
+			return err
+		}
+		for _, tblInfo := range tblInfos {
+			if tblInfo.MaterializedView == nil {
+				continue
+			}
+			var comment any
+			if tblInfo.Comment != "" {
+				comment = tblInfo.Comment
+			}
+			modifyTime := types.NewTime(types.FromGoTime(tblInfo.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+			r := refreshMap[tblInfo.ID]
+			row := types.MakeDatums(
+				"def",                               // TABLE_CATALOG
+				db.Name.O,                           // TABLE_SCHEMA
+				tblInfo.ID,                          // MVIEW_ID
+				tblInfo.Name.O,                      // MVIEW_NAME
+				tblInfo.MaterializedView.SQLContent, // MVIEW_SQL_CONTENT
+				comment,                             // MVIEW_COMMENT
+				modifyTime,                          // MVIEW_MODIFY_TIME
+				r.method,                            // REFRESH_METHOD
+				r.startWith,                         // START_WITH
+				r.next,                              // NEXT
+			)
+			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	exec := sctx.GetRestrictedSQLExecutor()
+	wrappedCtx := kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+	purgeRows, _, err := exec.ExecRestrictedSQL(wrappedCtx, nil,
+		"SELECT MLOG_ID, PURGE_METHOD, PURGE_START, PURGE_INTERVAL, LAST_PURGE_TIME, LAST_PURGE_ROWS, LAST_PURGE_DURATION FROM mysql.tidb_mlog_purge")
+	if err != nil {
+		return err
+	}
+	type purgeInfo struct {
+		method   any
+		start    any
+		interval any
+		lastTime any
+		lastRows any
+		lastDur  any
+	}
+	purgeMap := make(map[int64]purgeInfo, len(purgeRows))
+	for _, r := range purgeRows {
+		var start any
+		if !r.IsNull(2) {
+			start = r.GetTime(2)
+		}
+		var interval any
+		if !r.IsNull(3) {
+			interval = r.GetInt64(3)
+		}
+		var lastTime any
+		if !r.IsNull(4) {
+			lastTime = r.GetTime(4)
+		}
+		var lastRows any
+		if !r.IsNull(5) {
+			lastRows = r.GetInt64(5)
+		}
+		var lastDur any
+		if !r.IsNull(6) {
+			lastDur = r.GetInt64(6)
+		}
+		purgeMap[r.GetInt64(0)] = purgeInfo{
+			method:   r.GetString(1),
+			start:    start,
+			interval: interval,
+			lastTime: lastTime,
+			lastRows: lastRows,
+			lastDur:  lastDur,
+		}
+	}
+
+	rows := make([][]types.Datum, 0, 8)
+	for _, db := range e.is.AllSchemas() {
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, db.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		tblInfos, err := e.is.SchemaTableInfos(ctx, db.Name)
+		if err != nil {
+			return err
+		}
+		for _, tblInfo := range tblInfos {
+			if tblInfo.MaterializedViewLog == nil {
+				continue
+			}
+			baseTable, ok := e.is.TableByID(ctx, tblInfo.MaterializedViewLog.BaseTableID)
+			if !ok {
+				continue
+			}
+			baseSchema, ok := e.is.SchemaByID(baseTable.Meta().DBID)
+			if !ok {
+				continue
+			}
+			p := purgeMap[tblInfo.ID]
+			mlogCols := make([]string, 0, len(tblInfo.MaterializedViewLog.Columns))
+			for _, col := range tblInfo.MaterializedViewLog.Columns {
+				mlogCols = append(mlogCols, col.O)
+			}
+			row := types.MakeDatums(
+				"def",                                   // TABLE_CATALOG
+				db.Name.O,                               // TABLE_SCHEMA
+				tblInfo.ID,                              // MLOG_ID
+				tblInfo.Name.O,                          // MLOG_NAME
+				strings.Join(mlogCols, ","),             // MLOG_COLUMNS
+				"def",                                   // BASE_TABLE_CATALOG
+				baseSchema.Name.O,                       // BASE_TABLE_SCHEMA
+				tblInfo.MaterializedViewLog.BaseTableID, // BASE_TABLE_ID
+				baseTable.Meta().Name.O,                 // BASE_TABLE_NAME
+				p.method,                                // PURGE_METHOD
+				p.start,                                 // PURGE_START
+				p.interval,                              // PURGE_INTERVAL
+				p.lastTime,                              // LAST_PURGE_TIME
+				p.lastRows,                              // LAST_PURGE_ROWS
+				p.lastDur,                               // LAST_PURGE_DURATION
+			)
+			rows = append(rows, row)
+		}
+	}
 	e.rows = rows
 	return nil
 }

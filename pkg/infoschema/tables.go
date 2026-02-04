@@ -219,6 +219,10 @@ const (
 	TableKeywords = "KEYWORDS"
 	// TableTiDBIndexUsage is a table to show the usage stats of indexes in the current instance.
 	TableTiDBIndexUsage = "TIDB_INDEX_USAGE"
+	// TableTiDBMViews is the metadata of materialized views.
+	TableTiDBMViews = "TIDB_MVIEWS"
+	// TableTiDBMLogs is the metadata of materialized view logs.
+	TableTiDBMLogs = "TIDB_MLOGS"
 )
 
 const (
@@ -341,6 +345,8 @@ var tableIDMap = map[string]int64{
 	TableTiDBIndexUsage:                  autoid.InformationSchemaDBID + 93,
 	ClusterTableTiDBIndexUsage:           autoid.InformationSchemaDBID + 94,
 	TableTiFlashIndexes:                  autoid.InformationSchemaDBID + 95,
+	TableTiDBMViews:                      autoid.InformationSchemaDBID + 96,
+	TableTiDBMLogs:                       autoid.InformationSchemaDBID + 97,
 }
 
 // columnInfo represents the basic column information of all kinds of INFORMATION_SCHEMA tables
@@ -1740,6 +1746,37 @@ var tableTiDBIndexUsage = []columnInfo{
 	{name: "LAST_ACCESS_TIME", tp: mysql.TypeDatetime, size: 21},
 }
 
+var tableTiDBMViewsCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MVIEW_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MVIEW_SQL_CONTENT", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "MVIEW_COMMENT", tp: mysql.TypeVarchar, size: 128},
+	{name: "MVIEW_MODIFY_TIME", tp: mysql.TypeDatetime, size: 21, flag: mysql.NotNullFlag},
+	{name: "REFRESH_METHOD", tp: mysql.TypeVarchar, size: 32},
+	{name: "START_WITH", tp: mysql.TypeVarchar, size: 256},
+	{name: "NEXT", tp: mysql.TypeVarchar, size: 256},
+}
+
+var tableTiDBMLogsCols = []columnInfo{
+	{name: "TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "MLOG_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "MLOG_COLUMNS", tp: mysql.TypeLongBlob, size: types.UnspecifiedLength, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_CATALOG", tp: mysql.TypeVarchar, size: 512, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_SCHEMA", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_ID", tp: mysql.TypeLonglong, size: 21, flag: mysql.NotNullFlag},
+	{name: "BASE_TABLE_NAME", tp: mysql.TypeVarchar, size: 64, flag: mysql.NotNullFlag},
+	{name: "PURGE_METHOD", tp: mysql.TypeVarchar, size: 32},
+	{name: "PURGE_START", tp: mysql.TypeDatetime, size: 21},
+	{name: "PURGE_INTERVAL", tp: mysql.TypeLonglong, size: 21},
+	{name: "LAST_PURGE_TIME", tp: mysql.TypeDatetime, size: 21},
+	{name: "LAST_PURGE_ROWS", tp: mysql.TypeLonglong, size: 21},
+	{name: "LAST_PURGE_DURATION", tp: mysql.TypeLonglong, size: 21},
+}
+
 // GetShardingInfo returns a nil or description string for the sharding information of given TableInfo.
 // The returned description string may be:
 //   - "NOT_SHARDED": for tables that SHARD_ROW_ID_BITS is not specified.
@@ -2387,6 +2424,8 @@ var tableNameToColumns = map[string][]columnInfo{
 	TableTiDBCheckConstraints:               tableTiDBCheckConstraintsCols,
 	TableKeywords:                           tableKeywords,
 	TableTiDBIndexUsage:                     tableTiDBIndexUsage,
+	TableTiDBMViews:                         tableTiDBMViewsCols,
+	TableTiDBMLogs:                          tableTiDBMLogsCols,
 }
 
 func createInfoSchemaTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {

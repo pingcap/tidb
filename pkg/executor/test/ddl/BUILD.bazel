@@ -6,9 +6,11 @@ go_test(
     srcs = [
         "ddl_test.go",
         "main_test.go",
+        "mview_infoschema_test.go",
+        "mview_systable_test.go",
     ],
     flaky = True,
-    shard_count = 21,
+    shard_count = 38,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",
@@ -20,6 +22,7 @@ go_test(
         "//pkg/kv",
         "//pkg/meta",
         "//pkg/meta/autoid",
+        "//pkg/parser/auth",
         "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx/variable",
