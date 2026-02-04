@@ -152,8 +152,18 @@ func (p *LogicalJoin) ReplaceExprColumns(replace map[string]*expression.Column) 
 
 // PredicatePushDown implements the base.LogicalPlan.<1st> interface.
 func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret []expression.Expression, retPlan base.LogicalPlan, err error) {
-	if p.JoinType == base.LeftOuterJoin || p.JoinType == base.RightOuterJoin {
-		p.normalizeJoinConditionsForOuterJoin()
+	if len(p.OtherConditions) > 0 {
+		// Join ON conditions are not simplified through predicate pushdown.
+		// However, we still need to eliminate obvious logical constants in OtherConditions
+		// (e.g. "a = b OR 0") to avoid losing join keys.
+		p.OtherConditions = ruleutil.ApplyPredicateSimplificationForJoin(
+			p.SCtx(),
+			p.OtherConditions,
+			nil,
+			nil,
+			false,
+			nil,
+		)
 	}
 	simplifyOuterJoin(p, predicates)
 	var equalCond []*expression.ScalarFunction
@@ -266,23 +276,6 @@ func (p *LogicalJoin) PredicatePushDown(predicates []expression.Expression) (ret
 	ruleutil.BuildKeyInfoPortal(p)
 	newnChild, err := p.SemiJoinRewrite()
 	return ret, newnChild, err
-}
-
-func (p *LogicalJoin) normalizeJoinConditionsForOuterJoin() {
-	if len(p.OtherConditions) == 0 {
-		return
-	}
-	// Outer join ON conditions are not simplified through predicate pushdown.
-	// However, we still need to eliminate obvious logical constants in OtherConditions
-	// (e.g. "a = b OR 0") to avoid losing join keys.
-	p.OtherConditions = ruleutil.ApplyPredicateSimplificationForJoin(
-		p.SCtx(),
-		p.OtherConditions,
-		p.Children()[0].Schema(),
-		p.Children()[1].Schema(),
-		false,
-		nil,
-	)
 }
 
 // simplifyOuterJoin transforms "LeftOuterJoin/RightOuterJoin" to "InnerJoin" if possible.
