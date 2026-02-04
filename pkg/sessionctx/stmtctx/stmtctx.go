@@ -261,6 +261,7 @@ type StatementContext struct {
 	InCreateOrAlterStmt    bool
 	InSetSessionStatesStmt bool
 	InShowWarning          bool
+	InRecoverValuesStmt    bool
 
 	contextutil.PlanCacheTracker
 	contextutil.RangeFallbackHandler

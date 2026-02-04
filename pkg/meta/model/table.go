@@ -97,6 +97,32 @@ var ExtraPhysTblIDName = ast.NewCIStr("_tidb_tid")
 // ExtraCommitTSName is the name of ExtraCommitTSID Column.
 var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 
+// ExtraOriginTSName is the name of ExtraOriginTSID Column.
+var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
+
+// ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
+var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
+
+// IsInternalColumn will check if a column name is reserved.
+func IsInternalColumn(x ast.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x == ExtraHandleName || x == ExtraCommitTSName
+}
+
+// IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
+func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
+	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x)
+}
+
+// IsActiveActiveColumn will check if a column name is reserved.
+func IsActiveActiveColumn(x ast.CIStr) bool {
+	return x == ExtraOriginTSName
+}
+
+// IsSoftDeleteColumn will check if a column name is reserved.
+func IsSoftDeleteColumn(x ast.CIStr) bool {
+	return x == ExtraSoftDeleteTimeName
+}
+
 // VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
 // When read column by vector index, sometimes there is no need to read vector column just need distance,
 // so a distance column will be added to table_scan. this field is used in the action.
@@ -206,11 +232,6 @@ type TableInfo struct {
 
 	TTLInfo *TTLInfo `json:"ttl_info"`
 
-	// IsActiveActive means the table is active-active table.
-	IsActiveActive bool `json:"is_active_active,omitempty"`
-	// SoftdeleteInfo is softdelete TTL. It is required if IsActiveActive == true.
-	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
-
 	// Affinity stores the affinity info for the table
 	// If it is nil, it means no affinity
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
@@ -221,6 +242,12 @@ type TableInfo struct {
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
+
+	// IsActiveActive indicates if the table has active-active replication enabled
+	IsActiveActive bool `json:"is_active_active,omitempty"`
+
+	// SoftdeleteInfo holds the soft delete configuration for this table
+	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 }
 
 // Hash64 implement HashEquals interface.
@@ -1443,6 +1470,12 @@ const DefaultTTLJobInterval = "24h"
 // It is used by some codes to keep compatible with the previous versions.
 const OldDefaultTTLJobInterval = "1h"
 
+// DefaultSoftDeleteRetention is the default retention period for soft deleted data
+const DefaultSoftDeleteRetention = "7d"
+
+// DefaultSoftDeleteJobInterval is the default interval of soft delete cleanup jobs
+const DefaultSoftDeleteJobInterval = "24h"
+
 // TTLInfo records the TTL config
 type TTLInfo struct {
 	ColumnName      ast.CIStr `json:"column"`
@@ -1483,16 +1516,58 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 
 // SoftdeleteInfo records the Softdelete config.
 type SoftdeleteInfo struct {
-	Retention string `json:"retention,omitempty"`
-	// JobEnable is used to control the cleanup JobEnable
-	JobEnable   bool   `json:"job_enable,omitempty"`
-	JobInterval string `json:"job_interval,omitempty"`
+	// Retention specifies how long soft-deleted data is kept.
+	Retention     string           `json:"retention,omitempty"`
+	RetentionUnit ast.TimeUnitType `json:"retention_unit,omitempty"`
+	JobEnable     bool             `json:"job_enable,omitempty"`
+	JobInterval   string           `json:"job_interval,omitempty"`
 }
 
-// Clone clones TTLInfo
-func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
-	cloned := *t
+// SoftDeleteInfoArg is not part of meta info.
+// It is used by all DDL parts to generate info from table/db options.
+type SoftDeleteInfoArg struct {
+	SoftdeleteInfo
+	Enable       bool `json:"enable,omitempty"`
+	HasEnable    bool `json:"has_enable,omitempty"`
+	HasJobEnable bool `json:"has_job_enable,omitempty"`
+	// Handled means if any softdelete arg present
+	Handled bool `json:"handled,omitempty"`
+}
+
+// Clone clones SoftdeleteInfo
+func (s *SoftdeleteInfo) Clone() *SoftdeleteInfo {
+	if s == nil {
+		return nil
+	}
+	cloned := *s
 	return &cloned
+}
+
+// GetRetention parses the retention duration and returns it
+// If retention is empty, returns DefaultSoftDeleteRetention for compatibility
+func (s *SoftdeleteInfo) GetRetention() (time.Duration, error) {
+	d, err := s.RetentionUnit.Duration()
+	if err != nil {
+		return 0, err
+	}
+	n, err := strconv.Atoi(s.Retention)
+	if err != nil {
+		return 0, err
+	}
+	return time.Duration(n) * d, nil
+}
+
+// GetJobInterval parses the job interval and returns it
+// If job interval is empty, returns DefaultSoftDeleteJobInterval for compatibility
+func (s *SoftdeleteInfo) GetJobInterval() (time.Duration, error) {
+	failpoint.Inject("overwrite-ttl-job-interval", func(val failpoint.Value) (time.Duration, error) {
+		return time.Duration(val.(int)), nil
+	})
+
+	if len(s.JobInterval) == 0 {
+		return duration.ParseDuration(DefaultSoftDeleteJobInterval)
+	}
+	return duration.ParseDuration(s.JobInterval)
 }
 
 // TableAffinityInfo indicates the data affinity information of the table.

@@ -362,6 +362,9 @@ var defaultSysVars = []*SysVar{
 		s.lowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBCDCActiveActiveSyncStats, Value: "", Type: vardef.TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return fmt.Sprintf("{\"conflict_skip_rows\": %d}", s.ActiveActiveConflictSkipRows.Load()), nil
+	}},
 	{Scope: vardef.ScopeSession, Name: vardef.TiDBAllowRemoveAutoInc, Value: BoolToOnOff(vardef.DefTiDBAllowRemoveAutoInc), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
@@ -663,6 +666,10 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableRCReadCheckTS.Load()), nil
+	}},
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTranslateSoftDeleteSQL, Type: vardef.TypeBool, Value: BoolToOnOff(vardef.DefTiDBTranslateSoftdeleteSQL), SetSession: func(s *SessionVars, val string) error {
+		s.SoftDeleteRewrite = TiDBOptOn(val)
+		return nil
 	}},
 	{Scope: vardef.ScopeInstance, Name: vardef.TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent), nil
@@ -3115,6 +3122,12 @@ var defaultSysVars = []*SysVar{
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.EnableTTLJob.Load()), nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSoftDeleteJobEnable, Value: BoolToOnOff(vardef.DefTiDBSoftDeleteJobEnable), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		vardef.SoftDeleteJobEnable.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.SoftDeleteJobEnable.Load()), nil
 	}},
 	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLScanBatchSize, Value: strconv.Itoa(vardef.DefTiDBTTLScanBatchSize), Type: vardef.TypeInt, MinValue: vardef.DefTiDBTTLScanBatchMinSize, MaxValue: vardef.DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)

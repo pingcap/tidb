@@ -80,6 +80,9 @@ type Insert struct {
 	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
 	Names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
 
+	ReplaceConflictIfExpr []expression.Expression
+	NeedExtraCommitTS     bool
+
 	GenCols InsertGeneratedColumns
 
 	SelectPlan base.PhysicalPlan
@@ -143,6 +146,23 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	}
 
 	return
+}
+
+// ExplainInfo returns the explain information of Insert.
+func (p *Insert) ExplainInfo() string {
+	if len(p.ReplaceConflictIfExpr) > 0 {
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+		return "ReplaceConflictIfExpr: " + string(expression.SortedExplainExpressionList(evalCtx, p.ReplaceConflictIfExpr))
+	}
+	return "N/A"
+}
+
+// ExplainNormalizedInfo returns the normalized explain information of Insert.
+func (p *Insert) ExplainNormalizedInfo() string {
+	if len(p.ReplaceConflictIfExpr) > 0 {
+		return "ReplaceConflictIfExpr: " + string(expression.SortedExplainNormalizedExpressionList(p.ReplaceConflictIfExpr))
+	}
+	return "N/A"
 }
 
 // Update represents Update plan.
@@ -296,6 +316,10 @@ type TblColPosInfo struct {
 	// IndexesRowLayout store the row layout of indexes. We need it if column pruning happens.
 	// If it's nil, means no column pruning happens.
 	IndexesRowLayout table.IndexesLayout
+
+	// ExtraOriginTSOffset stores the offset of _tidb_origin_ts column in the pruned row for active-active tables.
+	// -1 means the column is not present or not an active-active table.
+	ExtraOriginTSOffset table.ExtraOriginTSOffset
 }
 
 // MemoryUsage return the memory usage of TblColPosInfo
@@ -304,7 +328,7 @@ func (t *TblColPosInfo) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfInt64 + size.SizeOfInt*2
+	sum = size.SizeOfInt64 + size.SizeOfInt*3
 	if t.HandleCols != nil {
 		sum += t.HandleCols.MemoryUsage()
 	}
@@ -392,6 +416,13 @@ func (p *Insert) ResolveIndices() (err error) {
 		}
 		asgn.Col = newCol.(*expression.Column)
 		asgn.Expr, err = asgn.Expr.ResolveIndices(p.Schema4OnDuplicate)
+		if err != nil {
+			return err
+		}
+	}
+	// Resolve ReplaceConflictIfExpr for soft delete
+	for i, expr := range p.ReplaceConflictIfExpr {
+		p.ReplaceConflictIfExpr[i], err = expr.ResolveIndices(p.TableSchema)
 		if err != nil {
 			return err
 		}

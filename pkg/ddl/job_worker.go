@@ -961,6 +961,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onRecoverSchema(jobCtx, job)
 	case model.ActionModifySchemaDefaultPlacement:
 		ver, err = onModifySchemaDefaultPlacement(jobCtx, job)
+	case model.ActionModifySchemaSoftDeleteAndActiveActive:
+		ver, err = onModifySchemaSoftDeleteAndActiveActive(jobCtx, job)
 	case model.ActionCreateTable:
 		ver, err = w.onCreateTable(jobCtx, job)
 	case model.ActionCreateTables:
@@ -1072,6 +1074,8 @@ func (w *worker) runOneJobStep(
 		ver, err = onTTLInfoChange(jobCtx, job)
 	case model.ActionAlterTTLRemove:
 		ver, err = onTTLInfoRemove(jobCtx, job)
+	case model.ActionAlterTableSoftDeleteInfo:
+		ver, err = onSoftDeleteInfoChange(jobCtx, job)
 	case model.ActionAddCheckConstraint:
 		ver, err = w.onAddCheckConstraint(jobCtx, job)
 	case model.ActionDropCheckConstraint:

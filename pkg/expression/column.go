@@ -297,6 +297,10 @@ type Column struct {
 	OrigName string
 	IsHidden bool
 
+	// IsInvisible is similar to invisible column in MySQL (though we don't support it yet), which means it doesn't show
+	// in select *, and isn't considered as join conditions for NATURAL JOIN.
+	IsInvisible bool
+
 	// IsPrefix indicates whether this column is a prefix column in index.
 	//
 	// for example:

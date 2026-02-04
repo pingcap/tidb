@@ -54,7 +54,8 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 	cli := timerapi.NewDefaultTimerClient(timerStore)
 	pool := wrapPoolForTest(do.AdvancedSysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
-	sync := ttlworker.NewTTLTimerSyncer(pool, cli)
+	sync, err := ttlworker.NewTTLTimerSyncer(pool, cli)
+	require.NoError(t, err)
 
 	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
 	tk.MustExec("create table tp1(a int, t timestamp) TTL=`t`+interval 1 HOUR ttl_job_interval='3h' partition by range(a) (" +
@@ -64,7 +65,7 @@ func TestTTLManualTriggerOneTimer(t *testing.T) {
 		")")
 
 	key, physical := getPhysicalTableInfo(t, do, "test", "tp1", "p0")
-	_, err := cli.GetTimerByKey(context.TODO(), key)
+	_, err = cli.GetTimerByKey(context.TODO(), key)
 	require.True(t, errors.ErrorEqual(err, timerapi.ErrTimerNotExist))
 
 	startTrigger := func(ctx context.Context, expectErr string) (func() (string, bool, error), timerapi.ManualRequest) {
@@ -248,7 +249,8 @@ func TestTTLTimerSync(t *testing.T) {
 	cli := timerapi.NewDefaultTimerClient(timerStore)
 	pool := wrapPoolForTest(do.AdvancedSysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
-	sync := ttlworker.NewTTLTimerSyncer(pool, cli)
+	sync, err := ttlworker.NewTTLTimerSyncer(pool, cli)
+	require.NoError(t, err)
 
 	lastSyncTime, lastSyncVer := sync.GetLastSyncInfo()
 	require.True(t, lastSyncTime.IsZero())
@@ -407,6 +409,77 @@ func TestTTLTimerSync(t *testing.T) {
 	checkTimersNotChange(t, cli, timer2, timer4, timer5, timerP10, timerP11, timerP12)
 }
 
+func TestSoftDeleteTimerSync(t *testing.T) {
+	origFullRefreshTimerCounter := metrics.TTLFullRefreshTimersCounter
+	origSyncTimerCounter := metrics.TTLSyncTimerCounter
+	defer func() {
+		metrics.TTLFullRefreshTimersCounter = origFullRefreshTimerCounter
+		metrics.TTLSyncTimerCounter = origSyncTimerCounter
+	}()
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	waitAndStopTTLManager(t, do)
+
+	fullRefreshTimersCounter := &mockutil.MetricsCounter{}
+	metrics.TTLFullRefreshTimersCounter = fullRefreshTimersCounter
+	syncTimersCounter := &mockutil.MetricsCounter{}
+	metrics.TTLSyncTimerCounter = syncTimersCounter
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec(createTimerTableSQL("test", "test_timers"))
+	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), "test", "test_timers", nil)
+	defer timerStore.Close()
+	cli := timerapi.NewDefaultTimerClient(timerStore)
+	pool := wrapPoolForTest(do.AdvancedSysSessionPool())
+	defer pool.AssertNoSessionInUse(t)
+	sync, err := ttlworker.NewSoftDeleteTimerSyncer(pool, cli)
+	require.NoError(t, err)
+
+	// Create a softdelete table with partitions
+	tk.MustExec("create table sd1(a int primary key, name varchar(10)) softdelete retention 7 day partition by range(a) (partition p0 values less than (10), partition p1 values less than (100))")
+
+	// sync once
+	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	require.Equal(t, float64(1), fullRefreshTimersCounter.Val())
+
+	is := do.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("sd1"))
+	require.NoError(t, err)
+	tblInfo := tbl.Meta()
+	require.NotNil(t, tblInfo.Partition)
+
+	var p0ID, p1ID int64
+	for i := range tblInfo.Partition.Definitions {
+		par := &tblInfo.Partition.Definitions[i]
+		switch par.Name.L {
+		case "p0":
+			p0ID = par.ID
+		case "p1":
+			p1ID = par.ID
+		}
+	}
+	require.NotZero(t, p0ID)
+	require.NotZero(t, p1ID)
+
+	key0 := fmt.Sprintf("/tidb/softdelete/physical_table/%d/%d", tblInfo.ID, p0ID)
+	key1 := fmt.Sprintf("/tidb/softdelete/physical_table/%d/%d", tblInfo.ID, p1ID)
+	_, err = cli.GetTimerByKey(context.TODO(), key0)
+	require.NoError(t, err)
+	_, err = cli.GetTimerByKey(context.TODO(), key1)
+	require.NoError(t, err)
+
+	// disable job enable at table level, timers should be disabled after sync
+	tk.MustExec("alter table sd1 softdelete_job_enable='OFF'")
+	sync.SyncTimers(context.TODO(), do.InfoSchema())
+	t0, err := cli.GetTimerByKey(context.TODO(), key0)
+	require.NoError(t, err)
+	t1, err := cli.GetTimerByKey(context.TODO(), key1)
+	require.NoError(t, err)
+	require.False(t, t0.Enable)
+	require.False(t, t1.Enable)
+}
+
 func insertTTLTableStatusWatermark(t *testing.T, do *domain.Domain, tk *testkit.TestKit, db, table, partition string, watermark time.Time, jobRunning bool) {
 	_, physical := getPhysicalTableInfo(t, do, db, table, partition)
 	if watermark.IsZero() {
@@ -465,7 +538,7 @@ func getPhysicalTableInfo(t *testing.T, do *domain.Domain, db, table, partition 
 	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-	physical, err := cache.NewPhysicalTable(ast.NewCIStr(db), tblInfo, ast.NewCIStr(partition))
+	physical, err := cache.NewPhysicalTable(ast.NewCIStr(db), tblInfo, ast.NewCIStr(partition), true, false)
 	require.NoError(t, err)
 	return fmt.Sprintf("/tidb/ttl/physical_table/%d/%d", tblInfo.ID, physical.ID), physical
 }

@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -25,6 +26,7 @@ import (
 
 const selectFromTTLTask = `SELECT LOW_PRIORITY
 	job_id,
+	job_type,
 	table_id,
 	scan_id,
 	scan_range_start,
@@ -39,6 +41,7 @@ const selectFromTTLTask = `SELECT LOW_PRIORITY
 	created_time FROM mysql.tidb_ttl_task`
 const insertIntoTTLTask = `INSERT LOW_PRIORITY INTO mysql.tidb_ttl_task SET
 	job_id = %?,
+	job_type = %?,
 	table_id = %?,
 	scan_id = %?,
 	scan_range_start = %?,
@@ -57,7 +60,7 @@ func SelectFromTTLTaskWithID(jobID string, scanID int64) (string, []any) {
 	return selectFromTTLTask + " WHERE job_id = %? AND scan_id = %?", []any{jobID, scanID}
 }
 
-// PeekWaitingTTLTask returns an SQL statement to get `limit` waiting ttl task
+// PeekWaitingTTLTask returns an SQL statement to get `limit` waiting ttl tasks.
 func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 	return selectFromTTLTask +
 			" WHERE status = 'waiting' OR (owner_hb_time < %? AND status = 'running') ORDER BY created_time ASC",
@@ -65,8 +68,10 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
-	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
+func InsertIntoTTLTask(loc *time.Location, jobID string, jobType session.TTLJobType, tableID int64, scanID int,
+
+	scanRangeStart []types.Datum, scanRangeEnd []types.Datum,
+	expireTime time.Time, createdTime time.Time) (string, []any, error) {
 	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
@@ -75,7 +80,7 @@ func InsertIntoTTLTask(loc *time.Location, jobID string, tableID int64, scanID i
 	if err != nil {
 		return "", nil, err
 	}
-	return insertIntoTTLTask, []any{jobID, tableID, int64(scanID),
+	return insertIntoTTLTask, []any{jobID, jobType, tableID, int64(scanID),
 		rangeStart, rangeEnd, expireTime, createdTime}, nil
 }
 
@@ -93,7 +98,9 @@ const (
 
 // TTLTask is a row recorded in mysql.tidb_ttl_task
 type TTLTask struct {
-	JobID            string
+	JobID   string
+	JobType session.TTLJobType // the type of this job: ttl or softdelete
+
 	TableID          int64
 	ScanID           int64
 	ScanRangeStart   []types.Datum
@@ -126,11 +133,13 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 
 	task := &TTLTask{
 		JobID:   row.GetString(0),
-		TableID: row.GetInt64(1),
-		ScanID:  row.GetInt64(2),
+		JobType: row.GetString(1),
+		TableID: row.GetInt64(2),
+		ScanID:  row.GetInt64(3),
 	}
-	if !row.IsNull(3) {
-		scanRangeStartBuf := row.GetBytes(3)
+
+	if !row.IsNull(4) {
+		scanRangeStartBuf := row.GetBytes(4)
 		// it's still posibble to be empty even this column is not NULL
 		if len(scanRangeStartBuf) > 0 {
 			task.ScanRangeStart, err = codec.Decode(scanRangeStartBuf, len(scanRangeStartBuf))
@@ -139,8 +148,8 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 			}
 		}
 	}
-	if !row.IsNull(4) {
-		scanRangeEndBuf := row.GetBytes(4)
+	if !row.IsNull(5) {
+		scanRangeEndBuf := row.GetBytes(5)
 		// it's still posibble to be empty even this column is not NULL
 		if len(scanRangeEndBuf) > 0 {
 			task.ScanRangeEnd, err = codec.Decode(scanRangeEndBuf, len(scanRangeEndBuf))
@@ -150,38 +159,38 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 		}
 	}
 
-	task.ExpireTime, err = row.GetTime(5).GoTime(timeZone)
+	task.ExpireTime, err = row.GetTime(6).GoTime(timeZone)
 	if err != nil {
 		return nil, err
 	}
 
-	if !row.IsNull(6) {
-		task.OwnerID = row.GetString(6)
-	}
 	if !row.IsNull(7) {
-		task.OwnerAddr = row.GetString(7)
+		task.OwnerID = row.GetString(7)
 	}
 	if !row.IsNull(8) {
-		task.OwnerHBTime, err = row.GetTime(8).GoTime(timeZone)
+		task.OwnerAddr = row.GetString(8)
+	}
+	if !row.IsNull(9) {
+		task.OwnerHBTime, err = row.GetTime(9).GoTime(timeZone)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if !row.IsNull(9) {
-		status := row.GetString(9)
+	if !row.IsNull(10) {
+		status := row.GetString(10)
 		if len(status) == 0 {
 			status = "waiting"
 		}
 		task.Status = TaskStatus(status)
 	}
-	if !row.IsNull(10) {
-		task.StatusUpdateTime, err = row.GetTime(10).GoTime(timeZone)
+	if !row.IsNull(11) {
+		task.StatusUpdateTime, err = row.GetTime(11).GoTime(timeZone)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if !row.IsNull(11) {
-		stateStr := row.GetString(11)
+	if !row.IsNull(12) {
+		stateStr := row.GetString(12)
 		state := &TTLTaskState{}
 		err = json.Unmarshal([]byte(stateStr), state)
 		if err != nil {
@@ -190,7 +199,7 @@ func RowToTTLTask(timeZone *time.Location, row chunk.Row) (*TTLTask, error) {
 		task.State = state
 	}
 
-	task.CreatedTime, err = row.GetTime(12).GoTime(timeZone)
+	task.CreatedTime, err = row.GetTime(13).GoTime(timeZone)
 	if err != nil {
 		return nil, err
 	}

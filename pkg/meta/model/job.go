@@ -118,8 +118,8 @@ const (
 	ActionRefreshMeta                           ActionType = 76
 	ActionModifySchemaReadOnly                  ActionType = 77 // reserve for database read-only feature
 	ActionAlterTableAffinity                    ActionType = 78
-	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
-	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
+	ActionAlterTableSoftDeleteInfo              ActionType = 79
+	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -826,6 +826,7 @@ func (job *Job) IsRollbackable() bool {
 		ActionTruncateTable, ActionAddForeignKey, ActionRenameTable, ActionRenameTables,
 		ActionModifyTableCharsetAndCollate,
 		ActionModifySchemaCharsetAndCollate, ActionRepairTable,
+		ActionModifySchemaSoftDeleteAndActiveActive,
 		ActionModifyTableAutoIDCache, ActionModifySchemaDefaultPlacement, ActionDropCheckConstraint:
 		return job.SchemaState == StateNone
 	case ActionMultiSchemaChange:

@@ -64,6 +64,7 @@ go_library(
         "schema.go",
         "schema_version.go",
         "sequence.go",
+        "soft_delete.go",
         "split_region.go",
         "stat.go",
         "table.go",

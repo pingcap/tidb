@@ -1,0 +1,10 @@
+create table t (id int primary key clustered) softdelete retention 7 day;
+set @@tidb_translate_softdelete_sql = true;
+insert into t(id) values (1), (2);
+delete from t;
+select * from t;
+prepare stmt from 'select * from t';
+execute stmt;
+set @@tidb_translate_softdelete_sql = false;
+select * from t;
+execute stmt;

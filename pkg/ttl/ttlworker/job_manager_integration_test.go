@@ -277,11 +277,11 @@ func TestFinishJob(t *testing.T) {
 	job, err := m.LockJob(context.Background(), se, testTable, startTime, uuid.NewString(), false)
 	require.NoError(t, err)
 
-	expireTime, err := testTable.EvalExpireTime(context.Background(), se, startTime)
+	expireTime, err := testTable.EvalExpireTimeForJob(context.Background(), se, startTime, session.TTLJobTypeTTL)
 	require.NoError(t, err)
 	tkTZ := tk.Session().GetSessionVars().Location()
 	tk.MustQuery("select * from mysql.tidb_ttl_job_history").Check(testkit.Rows(strings.Join([]string{
-		job.ID(), "2", "1", "db1", "t1", "<nil>",
+		job.ID(), "ttl", "2", "1", "db1", "t1", "<nil>",
 		startTime.In(tkTZ).Format(timeFormat),
 		time.Unix(1, 0).Format(timeFormat),
 		expireTime.In(tkTZ).Format(timeFormat),
@@ -304,7 +304,7 @@ func TestFinishJob(t *testing.T) {
 	tk.MustQuery("select table_id, last_job_summary from mysql.tidb_ttl_table_status").Check(testkit.Rows("2 " + summary.SummaryText))
 	tk.MustQuery("select * from mysql.tidb_ttl_task").Check(testkit.Rows())
 	expectedRow := []string{
-		job.ID(), "2", "1", "db1", "t1", "<nil>",
+		job.ID(), "ttl", "2", "1", "db1", "t1", "<nil>",
 		startTime.In(tkTZ).Format(timeFormat), endTime.In(tkTZ).Format(timeFormat), expireTime.In(tkTZ).Format(timeFormat),
 		summary.SummaryText, "128", "120", "8", "finished",
 	}
@@ -577,7 +577,7 @@ func TestSubmitJob(t *testing.T) {
 	now := time.Now()
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	require.NoError(t, m.SubmitJob(se, tableID, physicalID, "request1"))
-	sql, args := cache.SelectFromTTLTableStatusWithID(physicalID)
+	sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, physicalID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
 	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
@@ -626,7 +626,7 @@ func TestRescheduleJobs(t *testing.T) {
 	require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 	// submit job
 	require.NoError(t, m.SubmitJob(se, table.Meta().ID, table.Meta().ID, "request1"))
-	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+	sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
 	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
@@ -645,7 +645,7 @@ func TestRescheduleJobs(t *testing.T) {
 	require.NoError(t, anotherManager.InfoSchemaCache().Update(se))
 	require.NoError(t, anotherManager.TableStatusCache().Update(context.Background(), se))
 	anotherManager.RescheduleJobs(se, now.Add(time.Hour))
-	sql, args = cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+	sql, args = cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
 	rows, err = se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
 	tableStatus, err = cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
@@ -697,7 +697,7 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 			require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 			// submit job
 			require.NoError(t, m.SubmitJob(se, table.Meta().ID, table.Meta().ID, fmt.Sprintf("request%d", i)))
-			sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+			sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
 			rows, err := se.ExecuteSQL(ctx, sql, args...)
 			require.NoError(t, err)
 			tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
@@ -711,7 +711,7 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 			require.NoError(t, m.InfoSchemaCache().Update(se))
 			require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
 			m.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
-			tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or the TTL on this table has been stopped"))
+			tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or TTL on this table has been stopped"))
 
 			// resume the table
 			tk.MustExec(rb.resume)
@@ -753,7 +753,7 @@ func TestJobTimeout(t *testing.T) {
 	// set the worker to be empty, so none of the tasks will be scheduled
 	m.TaskManager().ResizeWorkersToZero(t)
 
-	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+	sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
 	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
@@ -778,7 +778,7 @@ func TestJobTimeout(t *testing.T) {
 	require.Equal(t, jobs[0].ID(), tableStatus.CurrentJobID)
 
 	// check job has taken by another manager
-	sql, args = cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+	sql, args = cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
 	rows, err = se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
 	newTableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
@@ -1014,7 +1014,7 @@ func TestJobMetrics(t *testing.T) {
 	// set the worker to be empty, so none of the tasks will be scheduled
 	m.TaskManager().ResizeWorkersToZero(t)
 
-	sql, args := cache.SelectFromTTLTableStatusWithID(table.Meta().ID)
+	sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
 	rows, err := se.ExecuteSQL(ctx, sql, args...)
 	require.NoError(t, err)
 	tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
@@ -1026,7 +1026,7 @@ func TestJobMetrics(t *testing.T) {
 
 	m.ReportMetrics(se)
 	out := &dto.Metric{}
-	require.NoError(t, metrics.RunningJobsCnt.Write(out))
+	require.NoError(t, metrics.JobStatus(metrics.JobStatusRunning, session.TTLJobTypeTTL).Write(out))
 	require.Equal(t, float64(1), out.GetGauge().GetValue())
 }
 
@@ -1274,7 +1274,7 @@ func TestManagerJobAdapterCanSubmitJob(t *testing.T) {
 	defer tk.MustExec("set @@global.tidb_ttl_running_tasks=-1")
 	for i := 1; i <= 16; i++ {
 		jobID := strconv.Itoa(i)
-		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), jobID, int64(1000+i), i, nil, nil, time.Now(), time.Now())
+		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), jobID, session.TTLJobTypeTTL, int64(1000+i), i, nil, nil, time.Now(), time.Now())
 		require.NoError(t, err)
 		ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 		_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
@@ -1331,6 +1331,7 @@ func TestManagerJobAdapterSubmitJob(t *testing.T) {
 	require.Equal(t, int64(1), req.TableID)
 	require.Equal(t, int64(2), req.PhysicalID)
 	require.Equal(t, "req1", req.RequestID)
+	require.Equal(t, session.TTLJobTypeTTL, req.JobType)
 
 	// submit but reply error
 	go responseRequest(errors.New("mockErr"))

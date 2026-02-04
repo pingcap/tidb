@@ -26,6 +26,7 @@
 package parser
 
 import (
+	"strconv"
 	"strings"
 	"time"
 
@@ -311,6 +312,7 @@ import (
 	/* The following tokens belong to UnReservedKeyword. Notice: make sure these tokens are contained in UnReservedKeyword. */
 	account                    "ACCOUNT"
 	action                     "ACTION"
+	activeActive               "ACTIVE_ACTIVE"
 	addColumnarReplicaOnDemand "ADD_COLUMNAR_REPLICA_ON_DEMAND"
 	advise                     "ADVISE"
 	affinity                   "AFFINITY"
@@ -589,6 +591,7 @@ import (
 	restore                    "RESTORE"
 	restores                   "RESTORES"
 	resume                     "RESUME"
+	retention                  "RETENTION"
 	reuse                      "REUSE"
 	reverse                    "REVERSE"
 	role                       "ROLE"
@@ -626,6 +629,9 @@ import (
 	slave                      "SLAVE"
 	slow                       "SLOW"
 	snapshot                   "SNAPSHOT"
+	softdelete                 "SOFTDELETE"
+	softdeleteJobEnable        "SOFTDELETE_JOB_ENABLE"
+	softdeleteJobInterval      "SOFTDELETE_JOB_INTERVAL"
 	some                       "SOME"
 	source                     "SOURCE"
 	sqlBufferResult            "SQL_BUFFER_RESULT"
@@ -1063,6 +1069,7 @@ import (
 	RenameUserStmt             "rename user statement"
 	ReplaceIntoStmt            "REPLACE INTO statement"
 	RecoverTableStmt           "recover table statement"
+	RecoverValuesStmt          "recover values statement"
 	RevokeStmt                 "Revoke statement"
 	RevokeRoleStmt             "Revoke role statement"
 	RollbackStmt               "ROLLBACK statement"
@@ -1722,6 +1729,7 @@ import (
 %right encryption
 %left labels
 %precedence quick
+%precedence hard
 %precedence escape
 %precedence lowerThanComma
 %precedence ','
@@ -3144,6 +3152,26 @@ RecoverTableStmt:
 			Table:  $3.(*ast.TableName),
 			JobNum: $4.(int64),
 		}
+	}
+
+/*******************************************************************
+ *
+ *  Recover Values Statement
+ *  (Only works for softdelete tables)
+ *  Example:
+ *      RECOVER VALUES FROM t1 WHERE id = 1;
+ *
+ *******************************************************************/
+RecoverValuesStmt:
+	"RECOVER" "VALUES" "FROM" TableName WhereClauseOptional
+	{
+		x := &ast.RecoverValuesStmt{
+			Table: $4.(*ast.TableName),
+		}
+		if $5 != nil {
+			x.Where = $5.(ast.ExprNode)
+		}
+		$$ = x
 	}
 
 /*******************************************************************
@@ -4609,6 +4637,53 @@ DatabaseOption:
 			Tp:             ast.DatabaseSetTiFlashReplica,
 			TiFlashReplica: tiflashReplicaSpec,
 		}
+	}
+|	"ACTIVE_ACTIVE" EqOpt stringLit
+	{
+		val := strings.ToUpper($3)
+		if val != "ON" && val != "OFF" {
+			yylex.AppendError(yylex.Errorf("The ACTIVE_ACTIVE option must be 'ON' or 'OFF'"))
+			return 1
+		}
+		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionActiveActive, BoolValue: val == "ON"}
+	}
+|	"SOFTDELETE" EqOpt "RETENTION" NUM TimeUnit
+	{
+		$$ = &ast.DatabaseOption{
+			Tp:            ast.DatabaseOptionSoftDeleteRetention,
+			Value:         strconv.Itoa(int($4.(int64))),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: $5.(ast.TimeUnitType)},
+		}
+	}
+|	"SOFTDELETE" EqOpt stringLit
+	{
+		val := strings.ToUpper($3)
+		if val != "OFF" {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE option must be RETENTION XXX or 'OFF'"))
+			return 1
+		}
+		$$ = &ast.DatabaseOption{
+			Tp:        ast.DatabaseOptionSoftDelete,
+			BoolValue: val == "ON",
+		}
+	}
+|	"SOFTDELETE_JOB_ENABLE" EqOpt stringLit
+	{
+		val := strings.ToUpper($3)
+		if val != "ON" && val != "OFF" {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF'"))
+			return 1
+		}
+		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionSoftDeleteJobEnable, BoolValue: val == "ON"}
+	}
+|	"SOFTDELETE_JOB_INTERVAL" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE_JOB_INTERVAL option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.DatabaseOption{Tp: ast.DatabaseOptionSoftDeleteJobInterval, Value: $3}
 	}
 
 DatabaseOptionListOpt:
@@ -7398,6 +7473,11 @@ UnReservedKeyword:
 |	"TTL"
 |	"TTL_ENABLE"
 |	"TTL_JOB_INTERVAL"
+|	"SOFTDELETE"
+|	"RETENTION"
+|	"SOFTDELETE_JOB_INTERVAL"
+|	"SOFTDELETE_JOB_ENABLE"
+|	"ACTIVE_ACTIVE"
 |	"FAILED_LOGIN_ATTEMPTS"
 |	"PASSWORD_LOCK_TIME"
 |	"DIGEST"
@@ -12691,6 +12771,7 @@ Statement:
 |	RenameUserStmt
 |	ReplaceIntoStmt
 |	RecoverTableStmt
+|	RecoverValuesStmt
 |	ReleaseSavepointStmt
 |	RevokeStmt
 |	RevokeRoleStmt
@@ -13134,6 +13215,55 @@ TableOption:
 			return 1
 		}
 		$$ = &ast.TableOption{Tp: ast.TableOptionTTLJobInterval, StrValue: $3}
+	}
+|	"SOFTDELETE" EqOpt "RETENTION" NUM TimeUnit
+	{
+		$$ = &ast.TableOption{
+			Tp:            ast.TableOptionSoftDeleteRetention,
+			StrValue:      strconv.Itoa(int($4.(int64))),
+			TimeUnitValue: &ast.TimeUnitExpr{Unit: $5.(ast.TimeUnitType)},
+		}
+	}
+|	"SOFTDELETE" EqOpt stringLit
+	{
+		val := strings.ToUpper($3)
+		if val != "OFF" {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE option must be RETENTION XXX or 'OFF'"))
+			return 1
+		}
+		$$ = &ast.TableOption{
+			Tp:        ast.TableOptionSoftDelete,
+			BoolValue: val == "ON",
+		}
+	}
+|	"SOFTDELETE_JOB_INTERVAL" EqOpt stringLit
+	{
+		_, err := duration.ParseDuration($3)
+		if err != nil {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE_JOB_INTERVAL option is not a valid duration: %s", err.Error()))
+			return 1
+		}
+		$$ = &ast.TableOption{Tp: ast.TableOptionSoftDeleteJobInterval, StrValue: $3}
+	}
+|	"SOFTDELETE_JOB_ENABLE" EqOpt stringLit
+	{
+		onOrOff := strings.ToUpper($3)
+		if onOrOff == "ON" || onOrOff == "OFF" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionSoftDeleteJobEnable, BoolValue: onOrOff == "ON"}
+		} else {
+			yylex.AppendError(yylex.Errorf("The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF'"))
+			return 1
+		}
+	}
+|	"ACTIVE_ACTIVE" EqOpt stringLit
+	{
+		onOrOff := strings.ToUpper($3)
+		if onOrOff == "ON" || onOrOff == "OFF" {
+			$$ = &ast.TableOption{Tp: ast.TableOptionActiveActive, BoolValue: onOrOff == "ON"}
+		} else {
+			yylex.AppendError(yylex.Errorf("The ACTIVE_ACTIVE option must be 'ON' or 'OFF'"))
+			return 1
+		}
 	}
 |	"AUTOEXTEND_SIZE" EqOpt StringName
 	{

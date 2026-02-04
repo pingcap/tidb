@@ -94,7 +94,12 @@ func TestString(t *testing.T) {
 			PrewriteTime:    time.Second,
 			CommitTime:      time.Second,
 			LocalLatchTime:  time.Second,
-
+			LagDetails: util.CommitTSLagDetails{
+				WaitTime:    time.Millisecond * 1234,
+				BackoffCnt:  3,
+				FirstLagTS:  463593042683887616,
+				WaitUntilTS: 463593042839601152,
+			},
 			Mu: struct {
 				sync.Mutex
 				CommitBackoffTime    int64
@@ -209,7 +214,9 @@ func TestString(t *testing.T) {
 			}},
 	}
 	expected := "Cop_time: 1.003 Process_time: 2.005 Wait_time: 1 Backoff_time: 1 LockKeys_time: 1 Request_count: 1 Prewrite_time: 1 Commit_time: " +
-		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 Commit_backoff_time: 1 " +
+		"1 Get_commit_ts_time: 1 Get_latest_ts_time: 1 " +
+		"Commit_ts_lag: {wait_time: 1.234, backoff_count: 3, first_lag_ts: 463593042683887616, wait_until_ts: 463593042839601152} " +
+		"Commit_backoff_time: 1 " +
 		"Prewrite_Backoff_types: [backoff1 backoff2] Commit_Backoff_types: [commit1 commit2] " +
 		"Slowest_prewrite_rpc_detail: {total:1.000s, region_id: 1000, " +
 		"store: tikv-1:20160, time_detail: {tikv_wall_time: 500ms}, scan_detail: {total_process_keys: 10, total_keys: 100, " +

@@ -873,6 +873,9 @@ const (
 	// TiDBIgnorePreparedCacheCloseStmt indicates whether to ignore close-stmt commands for prepared statements.
 	TiDBIgnorePreparedCacheCloseStmt = "tidb_ignore_prepared_cache_close_stmt"
 
+	// TiDBTranslateSoftDeleteSQL indicates whether to rewrite SQL for softdelete tables.
+	TiDBTranslateSoftDeleteSQL = "tidb_translate_softdelete_sql"
+
 	// TiDBEnableNewCostInterface is a internal switch to indicates whether to use the new cost calculation interface.
 	TiDBEnableNewCostInterface = "tidb_enable_new_cost_interface"
 
@@ -1214,6 +1217,8 @@ const (
 	TiDBExternalTS = "tidb_external_ts"
 	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
 	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBSoftDeleteJobEnable is used to enable/disable scheduling softdelete cleanup job
+	TiDBSoftDeleteJobEnable = "tidb_softdelete_job_enable"
 	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
 	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
 	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
@@ -1347,6 +1352,9 @@ const (
 	// TiDBAdvancerCheckPointLagLimit controls the maximum lag could be tolerated for the checkpoint lag.
 	// The log backup task will be paused if the checkpoint lag is larger than it.
 	TiDBAdvancerCheckPointLagLimit = "tidb_advancer_check_point_lag_limit"
+
+	// TiDBCDCActiveActiveSyncStats is a read-only variable to show the status of active-active sync.
+	TiDBCDCActiveActiveSyncStats = "tidb_cdc_active_active_sync_stats"
 
 	// TiDBIndexLookUpPushDownPolicy controls the push down policy of index lookup.
 	TiDBIndexLookUpPushDownPolicy = "tidb_index_lookup_pushdown_policy"
@@ -1488,6 +1496,7 @@ const (
 	DefTiDBAllowTiFlashCop                  = false
 	DefTiDBHashExchangeWithNewCollation     = true
 	DefTiDBEnforceMPPExecution              = false
+	DefTiDBTranslateSoftdeleteSQL           = true
 	DefTiFlashMaxThreads                    = -1
 	DefTiFlashMaxBytesBeforeExternalJoin    = -1
 	DefTiFlashMaxBytesBeforeExternalGroupBy = -1
@@ -1687,6 +1696,7 @@ const (
 	DefTiDBEnablePlanReplayerCapture                  = true
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
+	DefTiDBSoftDeleteJobEnable                        = true
 	DefTiDBTTLScanBatchSize                           = 500
 	DefTiDBTTLScanBatchMaxSize                        = 10240
 	DefTiDBTTLScanBatchMinSize                        = 1
@@ -1857,6 +1867,7 @@ var (
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	SoftDeleteJobEnable                = atomic.NewBool(DefTiDBSoftDeleteJobEnable)
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)

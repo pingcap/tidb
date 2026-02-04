@@ -1034,6 +1034,7 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		SelectExec:                selectExec,
 		rowLen:                    v.RowLen,
 		ignoreErr:                 v.IgnoreErr,
+		activeActive:              newActiveActiveTableInfo(v.Table.Meta()),
 	}
 	err := ivs.initInsertColumns()
 	if err != nil {
@@ -1053,8 +1054,10 @@ func (b *executorBuilder) buildInsert(v *physicalop.Insert) exec.Executor {
 		return b.buildReplace(ivs)
 	}
 	insert := &InsertExec{
-		InsertValues: ivs,
-		OnDuplicate:  append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		InsertValues:          ivs,
+		OnDuplicate:           append(v.OnDuplicate, v.GenCols.OnDuplicates...),
+		replaceConflictIfExpr: v.ReplaceConflictIfExpr,
+		needExtraCommitTS:     v.NeedExtraCommitTS,
 	}
 	return insert
 }
@@ -1617,21 +1620,31 @@ type bypassDataSourceExecutor interface {
 
 func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
 	tbl := x.Table()
-	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-		cachedTable := tbl.(table.CachedTable)
-		// Determine whether the cache can be used.
-		leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
-		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
-		if cacheData != nil {
-			vars.StmtCtx.ReadFromTableCache = true
-			x.setDummy()
-			us.cacheTable = cacheData
-		} else if loading {
+	if tbl.Meta().TableCacheStatusType != model.TableCacheStatusEnable {
+		return
+	}
+
+	for _, col := range us.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			// Cached table uses mem-buffer scan APIs, which can't provide `_tidb_commit_ts`.
+			// For correctness, bypass the cached table if `_tidb_commit_ts` is required.
 			return
-		} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
-			store := b.ctx.GetStore()
-			cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 		}
+	}
+
+	cachedTable := tbl.(table.CachedTable)
+	// Determine whether the cache can be used.
+	leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
+	cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
+	if cacheData != nil {
+		vars.StmtCtx.ReadFromTableCache = true
+		x.setDummy()
+		us.cacheTable = cacheData
+	} else if loading {
+		return
+	} else if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
+		store := b.ctx.GetStore()
+		cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
 	}
 }
 
@@ -2528,7 +2541,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 			strings.ToLower(infoschema.TableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-			strings.ToLower(infoschema.TableKeyspaceMeta):
+			strings.ToLower(infoschema.TableKeyspaceMeta),
+			strings.ToLower(infoschema.TableSoftDeleteTableStats):
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -2904,6 +2918,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 	b.inUpdateStmt = true
 	tblID2table := make(map[int64]table.Table, len(v.TblColPosInfos))
 	multiUpdateOnSameTable := make(map[int64]bool)
+	var tblID2ActiveActive map[int64]ActiveActiveTableInfo
 	for _, info := range v.TblColPosInfos {
 		tbl, _ := b.is.TableByID(context.Background(), info.TblID)
 		if _, ok := tblID2table[info.TblID]; ok {
@@ -2920,6 +2935,12 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 					tblID2table[info.TblID] = p
 				}
 			}
+		}
+		if tblInfo := tbl.Meta(); tblInfo.IsActiveActive {
+			if tblID2ActiveActive == nil {
+				tblID2ActiveActive = make(map[int64]ActiveActiveTableInfo, len(v.TblColPosInfos))
+			}
+			tblID2ActiveActive[info.TblID] = newActiveActiveTableInfo(tblInfo)
 		}
 	}
 	if b.err = b.updateForUpdateTS(); b.err != nil {
@@ -2952,6 +2973,7 @@ func (b *executorBuilder) buildUpdate(v *physicalop.Update) exec.Executor {
 		tblColPosInfos:            v.TblColPosInfos,
 		assignFlag:                assignFlag,
 		IgnoreError:               v.IgnoreError,
+		tblID2ActiveActive:        tblID2ActiveActive,
 	}
 	updateExec.fkChecks, b.err = buildTblID2FKCheckExecs(b.ctx, tblID2table, v.FKChecks)
 	if b.err != nil {
@@ -5722,6 +5744,7 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		handles:            handles,
 		idxVals:            plan.IndexValues,
 		partitionNames:     plan.PartitionNames,
+		commitTSOffset:     -1,
 	}
 
 	e.snapshot, err = b.getSnapshot()
@@ -5757,7 +5780,17 @@ func (b *executorBuilder) buildBatchPointGet(plan *physicalop.BatchPointGetPlan)
 		b.err = err
 		return nil
 	}
-	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable {
+
+	for i, col := range e.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			e.commitTSOffset = i
+			break
+		}
+	}
+
+	// Cached table uses mem-buffer scan/get APIs, which can't provide `_tidb_commit_ts`.
+	// For correctness, bypass the cached table if `_tidb_commit_ts` is required.
+	if plan.TblInfo.TableCacheStatusType == model.TableCacheStatusEnable && e.commitTSOffset < 0 {
 		if cacheTable := b.getCacheTable(plan.TblInfo, snapshotTS); cacheTable != nil {
 			e.snapshot = cacheTableSnapshot{e.snapshot, cacheTable}
 		}

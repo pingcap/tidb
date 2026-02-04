@@ -1,0 +1,86 @@
+create table t (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t values (1, 'a'), (2, 'b'), (3, 'c');
+set tidb_translate_softdelete_sql = false;
+select id, _tidb_softdelete_time from t order by id;
+id	_tidb_softdelete_time
+1	NULL
+2	NULL
+3	NULL
+update t set _tidb_softdelete_time = now() where id = 1;
+select id from t where _tidb_softdelete_time is null order by id;
+id
+2
+3
+set tidb_translate_softdelete_sql = true;
+select id, _tidb_softdelete_time from t;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+select * from t where _tidb_softdelete_time is null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+select id from t order by _tidb_softdelete_time;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+select * from t where _tidb_softdelete_time is null union all select id from t where _tidb_softdelete_time is not null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+select * from t where _tidb_softdelete_time is null except select id from t where _tidb_softdelete_time is not null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+set @@tidb_translate_softdelete_sql = false;
+prepare stmt from 'select id from t where _tidb_softdelete_time > ?';
+set @a = now();
+execute stmt using @a;
+id
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+execute stmt using @a;
+id
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+1
+set tidb_translate_softdelete_sql = true;
+execute stmt using @a;
+id
+select @@last_plan_from_cache;
+@@last_plan_from_cache
+0
+deallocate prepare stmt;
+update t set _tidb_softdelete_time = now() where id = 2;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+update t set name = 'updated' where _tidb_softdelete_time is null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+delete from t where _tidb_softdelete_time is not null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+insert into t values (1, 'new') on duplicate key update _tidb_softdelete_time = null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+insert into t (id, name, _tidb_softdelete_time) values (1, 'new', null);
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+batch on id limit 10 delete from t where _tidb_softdelete_time is not null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+batch on id limit 10 update t set name = 'batch' where _tidb_softdelete_time is null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+load data local infile 'non_existing_file' into table t(id, name, _tidb_softdelete_time);
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+import into t(id, name, _tidb_softdelete_time) from 'non_existing_file';
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+select id, name from t order by id;
+id	name
+2	b
+3	c
+insert into t values (4, 'd');
+update t set name = 'updated' where id = 4;
+delete from t where id = 4;
+select id, name from t order by id;
+id	name
+2	b
+3	c
+set tidb_translate_softdelete_sql = false;
+drop table t;
+create table t2 (id int primary key nonclustered, val int) softdelete retention 7 day;
+insert into t2 values (1, 10), (2, 20);
+set tidb_translate_softdelete_sql = true;
+select _tidb_softdelete_time from t2;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+update t2 set val = 100 where _tidb_softdelete_time is null;
+Error 1815 (HY000): column '_tidb_softdelete_time' cannot be referenced when tidb_translate_softdelete_sql is enabled
+set tidb_translate_softdelete_sql = false;
+drop table t2;

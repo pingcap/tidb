@@ -28,6 +28,7 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
@@ -38,10 +39,11 @@ func newMockDeleteTask(tbl *cache.PhysicalTable, rows [][]types.Datum, expire ti
 	task := &ttlDeleteTask{
 		tbl:        tbl,
 		expire:     expire,
+		jobType:    session.TTLJobTypeTTL,
 		rows:       rows,
 		statistics: &ttlStatistics{},
 	}
-	task.statistics.IncTotalRows(len(rows))
+	task.statistics.IncTotalRows(task.jobType, len(rows))
 	return task
 }
 
@@ -113,7 +115,7 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 	tasks := make([]*ttlDeleteTask, 0)
 	doRetrySuccess := func(item *ttlDelRetryItem) [][]types.Datum {
 		task := item.task
-		task.statistics.IncSuccessRows(len(task.rows))
+		task.statistics.IncSuccessRows(task.jobType, len(task.rows))
 		tasks = append(tasks, task)
 		return nil
 	}

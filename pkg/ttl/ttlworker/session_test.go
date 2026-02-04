@@ -63,7 +63,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 		State: model.StatePublic,
 	}
 
-	tbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""))
+	tbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""), true, false)
 	require.NoError(t, err)
 	return tbl
 }
@@ -197,6 +197,10 @@ func (s *mockSession) GetLatestInfoSchema() infoschemactx.MetaOnlyInfoSchema {
 	return s.sessionInfoSchema
 }
 
+func (s *mockSession) GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error) {
+	return 0, nil
+}
+
 func (s *mockSession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
 	return s.GetLatestInfoSchema()
 }
@@ -281,7 +285,8 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	s := newMockSession(t, tbl)
 	s.execErr = errors.New("mockErr")
 	s.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
-	tblSe := newTableSession(s, tbl, time.UnixMilli(0).In(time.UTC))
+	tblSe, err := newTableSession(s, tbl, time.UnixMilli(0).In(time.UTC), session.TTLJobTypeTTL)
+	require.NoError(t, err)
 
 	rows, shouldRetry, err := tblSe.ExecuteSQLWithCheck(ctx, "select 1")
 	require.EqualError(t, err, "mockErr")
@@ -313,6 +318,23 @@ func TestExecuteSQLWithCheck(t *testing.T) {
 	require.Equal(t, 4, s.resetTimeZoneCalls)
 }
 
+func TestNewTableSessionDisablesSoftDeleteRewriteForTTL(t *testing.T) {
+	tbl := newMockTTLTbl(t, "t1")
+	expire := time.UnixMilli(0).In(time.UTC)
+
+	s := newMockSession(t, tbl)
+	s.sessionVars.SoftDeleteRewrite = true
+	_, err := newTableSession(s, tbl, expire, session.TTLJobTypeTTL)
+	require.NoError(t, err)
+	require.True(t, s.sessionVars.SoftDeleteRewrite)
+
+	s2 := newMockSession(t, tbl)
+	s2.sessionVars.SoftDeleteRewrite = true
+	_, err = newTableSession(s2, tbl, expire, session.TTLJobTypeSoftDelete)
+	require.NoError(t, err)
+	require.False(t, s2.sessionVars.SoftDeleteRewrite)
+}
+
 func TestValidateTTLWork(t *testing.T) {
 	ctx := context.TODO()
 	tbl := newMockTTLTbl(t, "t1")
@@ -324,35 +346,37 @@ func TestValidateTTLWork(t *testing.T) {
 
 	// test table dropped
 	s.sessionInfoSchema = newMockInfoSchema()
-	err := validateTTLWork(ctx, s, tbl, expire)
+	tblSe, err := newTableSession(s, tbl, expire, session.TTLJobTypeTTL)
+	require.NoError(t, err)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
 
 	// test TTL option removed
 	tbl2 := tbl.TableInfo.Clone()
 	tbl2.TTLInfo = nil
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "table 'test.t1' is not a ttl table")
 
 	// test table state not public
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.State = model.StateDeleteOnly
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "table 'test.t1' is not a public table")
 
 	// test table name changed
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.Name = ast.NewCIStr("testcc")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "[schema:1146]Table 'test.t1' doesn't exist")
 
 	// test table id changed
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.ID = 123
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "table id changed")
 
 	// test time column name changed
@@ -361,7 +385,7 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.Columns[0].Name = ast.NewCIStr("time2")
 	tbl2.TTLInfo.ColumnName = ast.NewCIStr("time2")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "time column name changed")
 
 	// test interval changed and expire time before previous
@@ -369,14 +393,14 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.TTLInfo.IntervalExprStr = "10"
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
 	ctx = cache.SetMockExpireTime(ctx, time.UnixMilli(-1))
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "expire interval changed")
 
 	tbl2 = tbl.TableInfo.Clone()
 	tbl2.TTLInfo.IntervalTimeUnit = int(ast.TimeUnitDay)
 	ctx = cache.SetMockExpireTime(ctx, time.UnixMilli(-1))
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "expire interval changed")
 
 	// test for safe meta change
@@ -387,7 +411,7 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.TTLInfo.IntervalExprStr = "100"
 	ctx = cache.SetMockExpireTime(ctx, time.UnixMilli(1000))
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.NoError(t, err)
 
 	// test table partition name changed
@@ -397,13 +421,15 @@ func TestValidateTTLWork(t *testing.T) {
 			{ID: 1023, Name: ast.NewCIStr("p0")},
 		},
 	}
-	tbl, err = cache.NewPhysicalTable(ast.NewCIStr("test"), tp, ast.NewCIStr("p0"))
+	tbl, err = cache.NewPhysicalTable(ast.NewCIStr("test"), tp, ast.NewCIStr("p0"), true, false)
 	require.NoError(t, err)
 	tbl2 = tp.Clone()
 	tbl2.Partition = tp.Partition.Clone()
 	tbl2.Partition.Definitions[0].Name = ast.NewCIStr("p1")
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	tblSe, err = newTableSession(s, tbl, expire, session.TTLJobTypeTTL)
+	require.NoError(t, err)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "partition 'p0' is not found in ttl table 'test.t1'")
 
 	// test table partition id changed
@@ -411,6 +437,6 @@ func TestValidateTTLWork(t *testing.T) {
 	tbl2.Partition = tp.Partition.Clone()
 	tbl2.Partition.Definitions[0].ID += 100
 	s.sessionInfoSchema = newMockInfoSchema(tbl2)
-	err = validateTTLWork(ctx, s, tbl, expire)
+	err = tblSe.validateTTLWork(ctx)
 	require.EqualError(t, err, "physical id changed")
 }

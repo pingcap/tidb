@@ -44,6 +44,7 @@ func (e *ReplaceExec) Close() error {
 	if e.RuntimeStats() != nil && e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	e.reportActiveActiveStats("Replace")
 	if e.SelectExec != nil {
 		return exec.Close(e.SelectExec)
 	}
@@ -173,7 +174,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	prefetchStart := time.Now()
 	// Use BatchGet to fill cache.
 	// It's an optimization and could be removed without affecting correctness.
-	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows); err != nil {
+	if err = e.prefetchDataCache(ctx, txn, toBeCheckedRows, false); err != nil {
 		return err
 	}
 

@@ -120,9 +120,10 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb_runaway_watch_done": {},
 
 		// TiDB internal ttl information.
-		"tidb_ttl_job_history":  {},
-		"tidb_ttl_table_status": {},
-		"tidb_ttl_task":         {},
+		"tidb_ttl_job_history":         {},
+		"tidb_ttl_table_status":        {},
+		"tidb_softdelete_table_status": {},
+		"tidb_ttl_task":                {},
 
 		// TiDB internal timers.
 		"tidb_timers": {},

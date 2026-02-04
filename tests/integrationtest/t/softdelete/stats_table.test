@@ -1,0 +1,75 @@
+# Test error when no filter condition is provided
+drop table if exists t1;
+create table t1 (id int primary key, name varchar(50)) softdelete retention 7 day;
+insert into t1 values (1, 'aaa'), (2, 'bbb'), (3, 'ccc'), (4, 'ddd'), (5, 'eee');
+# Force evicting stats cache by setting a low memory quota so we can test the stats reading logic.
+set global tidb_stats_cache_mem_quota = 1;
+analyze table t1 all columns;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't1' and partition_name = 'p1';
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't1' and partition_name is null;
+delete from t1 where id <= 2;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+delete from t1 where id = 3;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+analyze table t1 all columns;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+# Restore stats cache memory quota to test the read from stats cache path.
+set global tidb_stats_cache_mem_quota = default;
+analyze table t1 all columns;
+# Note that because stats lease is set to 0 in config, column stats are directly fully loaded into memory, and we don't
+# need to trigger stats loading.
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+
+# Test non-softdelete table is not shown
+drop table if exists t2;
+create table t2 (id int primary key, name varchar(50));
+insert into t2 values (1, 'a'), (2, 'b');
+analyze table t2 all columns;
+select count(*) from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't2';
+
+# Test partitioned softdelete table
+drop table if exists t3;
+create table t3 (id int primary key, val int) softdelete retention 7 day
+partition by range(id) (
+    partition p0 values less than (10),
+    partition p1 values less than (20),
+    partition p2 values less than (maxvalue)
+);
+insert into t3 values (1, 1), (5, 5), (11, 11), (15, 15), (21, 21), (25, 25);
+delete from t3 where id in (1, 11, 21);
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't3';
+set global tidb_stats_cache_mem_quota = 1;
+analyze table t3 all columns;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't3';
+select db_name, table_name, partition_name, estimated_total_row_count, estimated_softdeleted_row_count from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't3' and partition_name = 'p0';
+set global tidb_stats_cache_mem_quota = default;
+analyze table t3 all columns;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS where db_name = 'softdelete__stats_table' and table_name = 't3';
+
+# Test privilege checking
+CREATE USER 'only_t1'@'localhost';
+CREATE USER 'only_t2'@'localhost';
+CREATE USER 'only_t3'@'localhost';
+
+GRANT SELECT ON softdelete__stats_table.t1 TO 'only_t1'@'localhost';
+GRANT SELECT ON softdelete__stats_table.t2 TO 'only_t2'@'localhost';
+GRANT SELECT ON softdelete__stats_table.t3 TO 'only_t3'@'localhost';
+
+connect (only_t1,localhost,only_t1,,);
+connection only_t1;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+disconnect only_t1;
+
+connect (only_t2,localhost,only_t2,,);
+connection only_t2;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+disconnect only_t2;
+
+connect (only_t3,localhost,only_t3,,);
+connection only_t3;
+select * from information_schema.TIDB_SOFTDELETE_TABLE_STATS;
+disconnect only_t3;
+
+connection default;
+drop table t1, t2, t3;

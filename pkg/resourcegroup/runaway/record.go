@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -29,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -206,6 +208,9 @@ func (r *QuarantineRecord) genDeletionStmt() (string, []any) {
 	return builder.String(), params
 }
 
+// hasDeletedExpiredRows is only used in test.
+var hasDeletedExpiredRows = atomic.Bool{}
+
 func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 	const (
 		tableName = "tidb_runaway_queries"
@@ -227,6 +232,16 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		deleteSize = 2
 		batchSize = 5 * deleteSize
 	})
+
+	failpoint.Inject("deleteExpiredRows", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return()
+		}
+		if hasDeletedExpiredRows.Load() {
+			return
+		}
+	})
+
 	expiredTime := time.Now().Add(-expiredDuration)
 	tbCIStr := ast.NewCIStr(tableName)
 	tbl, err := rm.infoCache.GetLatest().TableByName(context.Background(), systemSchemaCIStr, tbCIStr)
@@ -240,12 +255,12 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), col)
+	tb, err := cache.NewPhysicalTableWithTimeColumnForJob(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), session.TTLJobTypeRunawayGC, col)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
 	}
-	generator, err := sqlbuilder.NewScanQueryGenerator(tb, expiredTime, nil, nil)
+	generator, err := sqlbuilder.NewScanQueryGenerator(session.TTLJobTypeRunawayGC, tb, expiredTime, nil, nil)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return
@@ -284,7 +299,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 				endIndex = len(leftRows)
 			}
 			delBatch := leftRows[startIndex:endIndex]
-			sql, err := sqlbuilder.BuildDeleteSQL(tb, delBatch, expiredTime)
+			sql, err := sqlbuilder.BuildDeleteSQL(tb, session.TTLJobTypeRunawayGC, delBatch, expiredTime, 0)
 			if err != nil {
 				logutil.BgLogger().Error(
 					"build delete SQL failed when deleting system table",

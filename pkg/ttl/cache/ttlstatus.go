@@ -40,10 +40,18 @@ const (
 	JobStatusFinished JobStatus = "finished"
 )
 
-const selectFromTTLTableStatus = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statistics,last_job_id,last_job_start_time,last_job_finish_time,last_job_ttl_expire,last_job_summary,current_job_id,current_job_owner_id,current_job_owner_addr,current_job_owner_hb_time,current_job_start_time,current_job_ttl_expire,current_job_state,current_job_status,current_job_status_update_time FROM mysql.tidb_ttl_table_status"
+const selectFromTableStatusPrefix = "SELECT LOW_PRIORITY table_id,parent_table_id,table_statistics,last_job_id,last_job_start_time,last_job_finish_time,last_job_ttl_expire,last_job_summary,current_job_id,current_job_owner_id,current_job_owner_addr,current_job_owner_hb_time,current_job_start_time,current_job_ttl_expire,current_job_state,current_job_status,current_job_status_update_time FROM "
 
-// SelectFromTTLTableStatusWithID returns an SQL statement to get the table status from table id
-func SelectFromTTLTableStatusWithID(tableID int64) (string, []any) {
+var (
+	selectFromTTLTableStatus        = selectFromTableStatusPrefix + "mysql.tidb_ttl_table_status"
+	selectFromSoftDeleteTableStatus = selectFromTableStatusPrefix + "mysql.tidb_softdelete_table_status"
+)
+
+// SelectFromTableStatusWithID returns an SQL statement to get the table status by table id for the specified job type.
+func SelectFromTableStatusWithID(jobType session.TTLJobType, tableID int64) (string, []any) {
+	if jobType == session.TTLJobTypeSoftDelete {
+		return selectFromSoftDeleteTableStatus + " WHERE table_id = %?", []any{tableID}
+	}
 	return selectFromTTLTableStatus + " WHERE table_id = %?", []any{tableID}
 }
 
@@ -72,40 +80,79 @@ type TableStatus struct {
 	CurrentJobStatusUpdateTime time.Time
 }
 
-// TableStatusCache is the cache for ttl table status, it builds a map from physical table id to the table status
-type TableStatusCache struct {
+// TTLTableStatusCache is the cache for ttl table status, it builds a map from physical table id to the table status
+type TTLTableStatusCache struct {
 	baseCache
 
 	Tables map[int64]*TableStatus
 }
 
 // NewTableStatusCache creates cache for ttl table status
-func NewTableStatusCache(updateInterval time.Duration) *TableStatusCache {
-	return &TableStatusCache{
+func NewTableStatusCache(updateInterval time.Duration) *TTLTableStatusCache {
+	return &TTLTableStatusCache{
 		baseCache: newBaseCache(updateInterval),
 		Tables:    make(map[int64]*TableStatus),
 	}
 }
 
 // Update updates the table status cache
-func (tsc *TableStatusCache) Update(ctx context.Context, se session.Session) error {
-	rows, err := se.ExecuteSQL(ctx, selectFromTTLTableStatus)
+func (tsc *TTLTableStatusCache) Update(ctx context.Context, se session.Session) error {
+	newTables, err := updateTableStatusCache(ctx, se, selectFromTTLTableStatus, RowToTableStatus)
 	if err != nil {
 		return err
-	}
-
-	newTables := make(map[int64]*TableStatus, len(rows))
-	for _, row := range rows {
-		status, err := RowToTableStatus(se.GetSessionVars().Location(), row)
-		if err != nil {
-			return err
-		}
-
-		newTables[status.TableID] = status
 	}
 	tsc.Tables = newTables
 	tsc.updateTime = time.Now()
 	return nil
+}
+
+// SoftDeleteTableStatusCache is the cache for softdelete table status, it builds a map from table id to the table status.
+type SoftDeleteTableStatusCache struct {
+	baseCache
+
+	Tables map[int64]*TableStatus
+}
+
+// NewSoftDeleteTableStatusCache creates cache for softdelete table status.
+func NewSoftDeleteTableStatusCache(updateInterval time.Duration) *SoftDeleteTableStatusCache {
+	return &SoftDeleteTableStatusCache{
+		baseCache: newBaseCache(updateInterval),
+		Tables:    make(map[int64]*TableStatus),
+	}
+}
+
+// Update updates the softdelete table status cache.
+func (sc *SoftDeleteTableStatusCache) Update(ctx context.Context, se session.Session) error {
+	newTables, err := updateTableStatusCache(ctx, se, selectFromSoftDeleteTableStatus, RowToTableStatus)
+	if err != nil {
+		return err
+	}
+	sc.Tables = newTables
+	sc.updateTime = time.Now()
+	return nil
+}
+
+func updateTableStatusCache(
+	ctx context.Context,
+	se session.Session,
+	selectSQL string,
+	rowToStatus func(timeZone *time.Location, row chunk.Row) (*TableStatus, error),
+) (map[int64]*TableStatus, error) {
+	rows, err := se.ExecuteSQL(ctx, selectSQL)
+	if err != nil {
+		return nil, err
+	}
+
+	newTables := make(map[int64]*TableStatus, len(rows))
+	for _, row := range rows {
+		status, err := rowToStatus(se.GetSessionVars().Location(), row)
+		if err != nil {
+			return nil, err
+		}
+		newTables[status.TableID] = status
+	}
+
+	return newTables, nil
 }
 
 // RowToTableStatus converts a row to table status

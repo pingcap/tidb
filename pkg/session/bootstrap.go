@@ -325,6 +325,8 @@ var tablesInSystemDatabase = []TableBasicInfo{
 	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
 	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
 	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
+	{ID: metadef.TiDBSoftDeleteTableStatusTableID, Name: "tidb_softdelete_table_status", SQL: metadef.CreateTiDBSoftDeleteTableStatusTable},
+
 	// NOTE: if you need to add more tables to 'mysql' database, please also add
 	// an entry to versionedBootstrapSchemas, to make sure the table is created
 	// correctly in nextgen kennel.
@@ -344,6 +346,8 @@ const (
 	// if we add more system tables later, we should increase the version, and
 	// add another versionedBootstrapSchema entry.
 	tableCountInFirstVerOnNextGen = 52
+	// added tidb_softdelete_table_status
+	tableCountInSecondVerOnNextGen = 53
 )
 
 // used in nextgen, to create system tables directly through meta kv, without
@@ -352,6 +356,9 @@ var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[:tableCountInFirstVerOnNextGen]},
 		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
+	}},
+	{ver: meta.SecondNextGenBootTableVersion, databases: []DatabaseBasicInfo{
+		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[tableCountInFirstVerOnNextGen:tableCountInSecondVerOnNextGen]},
 	}},
 }
 

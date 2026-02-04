@@ -1121,3 +1121,64 @@ func TestResourceGroupDDLStmtRestore(t *testing.T) {
 	}
 	runNodeRestoreTest(t, alterTestCase, "%s", extractNodeFunc)
 }
+
+func TestActiveActiveAndSoftDeleteRestore(t *testing.T) {
+	// Test with default restore flags
+	sourceSQLBasic := []NodeRestoreTestCase{
+		{"create table t (id int) softdelete 'OFF'",
+			"CREATE TABLE `t` (`id` INT) SOFTDELETE = 'OFF'"},
+		{"create table t (id int) softdelete retention 7 DAY",
+			"CREATE TABLE `t` (`id` INT) SOFTDELETE = RETENTION 7 DAY"},
+		{"alter table t softdelete_job_interval = '1h'",
+			"ALTER TABLE `t` SOFTDELETE_JOB_INTERVAL = '1h'"},
+		{"alter table t softdelete_job_enable = 'on'",
+			"ALTER TABLE `t` SOFTDELETE_JOB_ENABLE = 'ON'"},
+		{"create table t (id int) active_active = 'on'",
+			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON'"},
+		{"create table t (id int) active_active = 'off'",
+			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'OFF'"},
+
+		{"create database db1 softdelete = 'OFF'",
+			"CREATE DATABASE `db1` SOFTDELETE = 'OFF'"},
+		{"create database db1 softdelete retention 7 DAY",
+			"CREATE DATABASE `db1` SOFTDELETE = RETENTION 7 DAY"},
+		{"create database db1 active_active = 'on'",
+			"CREATE DATABASE `db1` ACTIVE_ACTIVE = 'ON'"},
+		{"alter database db1 active_active = 'on'",
+			"ALTER DATABASE `db1` ACTIVE_ACTIVE = 'ON'"},
+		{"alter database db1 active_active = 'on' softdelete = retention 7 HOUR",
+			"ALTER DATABASE `db1` ACTIVE_ACTIVE = 'ON' SOFTDELETE = RETENTION 7 HOUR"},
+
+		{"create table t (id int) active_active = 'on' softdelete retention 7 DAY",
+			"CREATE TABLE `t` (`id` INT) ACTIVE_ACTIVE = 'ON' SOFTDELETE = RETENTION 7 DAY"},
+	}
+
+	// Test with special comment flags (like TTL does)
+	sourceSQLSpecial := []NodeRestoreTestCase{
+		{"create table t (id int) softdelete 'OFF'",
+			"CREATE TABLE `t` (`id` INT) /*T![softdelete] SOFTDELETE = 'OFF' */"},
+		{"create table t (id int) softdelete retention 168 HOUR",
+			"CREATE TABLE `t` (`id` INT) /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
+		{"alter table t softdelete_job_interval = '1h'",
+			"ALTER TABLE `t` /*T![softdelete] SOFTDELETE_JOB_INTERVAL = '1h' */"},
+		{"create table t (id int) active_active = 'on'",
+			"CREATE TABLE `t` (`id` INT) /*T![active_active] ACTIVE_ACTIVE = 'ON' */"},
+		{"create table t (id int) active_active = 'on' softdelete = retention 168 HOUR ",
+			"CREATE TABLE `t` (`id` INT) /*T![active_active] ACTIVE_ACTIVE = 'ON' */ /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
+
+		{"create database db1 softdelete retention 168 HOUR",
+			"CREATE DATABASE `db1` /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
+		{"create database db1 active_active = 'on'",
+			"CREATE DATABASE `db1` /*T![active_active] ACTIVE_ACTIVE = 'ON' */"},
+		{"alter database db1 active_active = 'on' softdelete = retention 168 HOUR",
+			"ALTER DATABASE `db1` /*T![active_active] ACTIVE_ACTIVE = 'ON' */ /*T![softdelete] SOFTDELETE = RETENTION 168 HOUR */"},
+	}
+
+	extractNodeFunc := func(node Node) Node {
+		return node
+	}
+
+	runNodeRestoreTestWithFlags(t, sourceSQLBasic, "%s", extractNodeFunc, format.DefaultRestoreFlags)
+	runNodeRestoreTestWithFlags(t, sourceSQLSpecial, "%s", extractNodeFunc,
+		format.DefaultRestoreFlags|format.RestoreTiDBSpecialComment)
+}

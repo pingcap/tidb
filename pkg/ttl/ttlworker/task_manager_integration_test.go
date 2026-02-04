@@ -31,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit/testflag"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/ttlworker"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -65,13 +66,14 @@ func TestParallelLockNewTask(t *testing.T) {
 	m := ttlworker.NewTaskManager(context.Background(), nil, isc, "test-id", store)
 
 	// insert and lock a new task
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", session.TTLJobTypeTTL, testTable.Meta().ID, 1, nil, nil, now, now)
 	require.NoError(t, err)
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
 	require.NoError(t, err)
 	_, err = m.LockScanTask(se, &cache.TTLTask{
 		ScanID:  1,
 		JobID:   "test-job",
+		JobType: session.TTLJobTypeTTL,
 		TableID: testTable.Meta().ID,
 	}, now)
 	require.NoError(t, err)
@@ -88,7 +90,7 @@ func TestParallelLockNewTask(t *testing.T) {
 	testStart := time.Now()
 	for time.Since(testStart) < testDuration {
 		now := se.Now()
-		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", testTable.Meta().ID, 1, nil, nil, now, now)
+		sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", session.TTLJobTypeTTL, testTable.Meta().ID, 1, nil, nil, now, now)
 		require.NoError(t, err)
 		_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
 		require.NoError(t, err)
@@ -271,7 +273,7 @@ func TestTaskMetrics(t *testing.T) {
 
 	m.ReportMetrics()
 	out := &dto.Metric{}
-	require.NoError(t, metrics.DeletingTaskCnt.Write(out))
+	require.NoError(t, metrics.TaskStatus(metrics.TaskStatusDel, session.TTLJobTypeTTL).Write(out))
 	require.Equal(t, float64(1), out.GetGauge().GetValue())
 }
 

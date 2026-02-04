@@ -1,0 +1,134 @@
+set @@global.tidb_enable_global_index = 1;
+
+drop database if exists test_sd;
+create database test_sd softdelete = RETENTION 7 DAY;
+show create database test_sd;
+drop database test_sd;
+create database test_sd softdelete retention 7 DAY softdelete_job_enable = 'ON' softdelete_job_interval = '1h';
+show create database test_sd;
+
+alter database test_sd softdelete = 'OFF';
+show create database test_sd;
+-- error 8200
+alter database test_sd softdelete_job_interval = '3h';
+alter database test_sd softdelete retention 8 DAY softdelete_job_interval = '3h';
+show create database test_sd;
+
+drop database test_sd;
+create database test_sd;
+use test_sd;
+
+# Create table
+create table t1 (id int primary key, name varchar(50)) softdelete = retention 7 day;
+show create table t1;
+select COLUMN_NAME, COLUMN_DEFAULT, IS_NULLABLE, DATA_TYPE, CHARACTER_MAXIMUM_LENGTH, CHARACTER_OCTET_LENGTH, NUMERIC_PRECISION, NUMERIC_SCALE, DATETIME_PRECISION, CHARACTER_SET_NAME, COLLATION_NAME, COLUMN_TYPE, COLUMN_KEY from information_schema.columns
+  where table_schema = 'test_sd' and table_name = 't1' and column_name = '_tidb_softdelete_time';
+
+create table t2 (id int primary key, name varchar(50)) softdelete retention 7 hour;
+show create table t2;
+create table t3 (id int primary key, name varchar(50)) softdelete retention 4 hour softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
+show create table t3;
+alter database test_sd softdelete retention 7 hour;
+create table t4 (id int primary key, name varchar(50));
+show create table t4;
+
+drop table if exists t4_gi;
+create table t4_gi (id int primary key) /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ partition by hash(id) partitions 4;
+alter table t4_gi add index i1(_tidb_softdelete_time) global;
+show create table t4_gi;
+drop table if exists t4_gi;
+
+alter database test_sd softdelete = 'off';
+create table t5 (id int primary key, name varchar(50)) /*T![active_active] ACTIVE_ACTIVE='ON' */ /*T![softdelete] SOFTDELETE=RETENTION 7 DAY */ /*T![softdelete] SOFTDELETE_JOB_ENABLE='ON' */ /*T![softdelete] SOFTDELETE_JOB_INTERVAL='24h' */;
+show create table t5;
+
+-- error 8200
+create table t6 (id int primary key, name varchar(50)) softdelete_job_interval = '2h' softdelete_job_enable = 'ON' softdelete = 'OFF';
+-- error 8200
+create table t6 (id int primary key, name varchar(50)) softdelete_job_interval = '2h' softdelete_job_enable = 'ON';
+
+# Alter table
+insert into t4 values (0, 's');
+alter table t4 softdelete retention 30 DAY;
+set @@tidb_translate_softdelete_sql = true;
+insert into t4 values (1, 's');
+set @@tidb_translate_softdelete_sql = false;
+select *,_tidb_softdelete_time from t4;
+insert into t4(id,name,_tidb_softdelete_time) values (2, 's', '2013-08-05 18:19:03');
+select *,_tidb_softdelete_time from t4;
+set @@tidb_translate_softdelete_sql = default;
+show create table t4;
+-- error 8200
+alter table t4 drop column _tidb_softdelete_time;
+alter table t4 softdelete_job_enable = 'OFF' softdelete_job_interval = '9h';
+show create table t4;
+alter table t4 softdelete = 'OFF';
+show create table t4;
+alter table t4 drop column _tidb_softdelete_time;
+show create table t4;
+
+# Invalid value
+-- error 1064
+alter database test_sd softdelete = 'INVALID';
+
+-- error 1064
+create table t5 (id int) softdelete = 'YES';
+
+-- error 1064
+alter table t1 softdelete_job_enable = 'MAYBE';
+
+-- error 1064
+create table t6 (id int) softdelete = retention 'invalid_duration' DAY;
+
+# softdelete should not be supported for temporary tables
+-- error 8200
+create global temporary table tmp_aa (id int) softdelete = retention 7 day on commit delete rows;
+-- error 1347
+create global temporary table tmp_aa like t3 on commit delete rows;
+-- error 8200
+create temporary table tmp_sd2 (id int) softdelete = retention 7 day;
+
+# should not enable softdelete on a table with foreign key
+create table parent_fk (id int primary key);
+create table child_fk (id int primary key, pid int);
+alter table child_fk add constraint fk_child foreign key(pid) references parent_fk(id);
+-- error 8200
+alter table parent_fk softdelete retention 7 day;
+-- error 8200
+alter table child_fk softdelete retention 7 day;
+
+# Softdelete internal column index should be creatable at CREATE TABLE time.
+drop table if exists t;
+create table `t` (
+  `id` int not null,
+  primary key (`id`),
+  _tidb_softdelete_time timestamp(6) NULL DEFAULT NULL
+);
+show create table t;
+drop table if exists t;
+-- error 1060
+create table `t` (
+  `id` int not null,
+  primary key (`id`),
+  _tidb_softdelete_time timestamp(6) NULL DEFAULT NULL,
+  key `i1` (`_tidb_softdelete_time`)
+) softdelete = retention 7 day;
+create table `t` (
+  `id` int not null,
+  primary key (`id`),
+  key `i1` (`_tidb_softdelete_time`)
+) softdelete = retention 7 day;
+alter table t add index i3 (`_tidb_softdelete_time`);
+show create table t;
+
+# should not enable softdelete on temporary tables via ALTER TABLE
+create global temporary table tmp_sd3 (id int) on commit delete rows;
+-- error 8200
+alter table tmp_sd3 softdelete retention 7 day;
+create temporary table tmp_sd4 (id int);
+-- error 8200
+alter table tmp_sd4 softdelete retention 7 day;
+
+drop database test_sd;
+
+set @@global.tidb_enable_global_index = default;

@@ -1602,7 +1602,7 @@ func GetModifiableColumnJob(
 		return nil, errors.Trace(err)
 	}
 	newColName := specNewColumn.Name.Name
-	if newColName.L == model.ExtraHandleName.L {
+	if model.IsInternalColumn(newColName) {
 		return nil, dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 	errG := checkModifyColumnWithGeneratedColumnsConstraint(t.Cols(), originalColName)

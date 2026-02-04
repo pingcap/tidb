@@ -613,6 +613,35 @@ func NewInfoSchemaSequenceExtractor() *InfoSchemaSequenceExtractor {
 	return e
 }
 
+// InfoSchemaSoftDeleteTableStatsExtractor is the predicate extractor for information_schema.tidb_softdelete_table_stats.
+type InfoSchemaSoftDeleteTableStatsExtractor struct {
+	InfoSchemaBaseExtractor
+}
+
+// NewInfoSchemaSoftDeleteTableStatsExtractor creates a new InfoSchemaSoftDeleteTableStatsExtractor.
+func NewInfoSchemaSoftDeleteTableStatsExtractor() *InfoSchemaSoftDeleteTableStatsExtractor {
+	e := &InfoSchemaSoftDeleteTableStatsExtractor{}
+	e.extractableColumns = extractableCols{
+		schema:        DBName,
+		table:         TableName,
+		partitionName: PartitionName,
+		tableID:       TidbTableID,
+		partitionID:   TidbPartitionID,
+	}
+	e.colNames = []string{DBName, TableName, PartitionName, TidbTableID, TidbPartitionID}
+	return e
+}
+
+// HasPartition returns true if partition name matches the one in predicates.
+func (e *InfoSchemaSoftDeleteTableStatsExtractor) HasPartition(name string) bool {
+	return !e.filter(PartitionName, name)
+}
+
+// HasPartitionPred returns true if partition name is specified in predicates.
+func (e *InfoSchemaSoftDeleteTableStatsExtractor) HasPartitionPred() bool {
+	return len(e.ColPredicates[PartitionName]) > 0
+}
+
 // findTablesByID finds tables by table IDs and append them to table map.
 func findTablesByID(
 	is infoschema.InfoSchema,

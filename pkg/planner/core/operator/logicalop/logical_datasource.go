@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -128,6 +129,8 @@ type DataSource struct {
 	// AskedColumnGroup is upper asked column groups for maintained of group ndv from composite index.
 	AskedColumnGroup [][]*expression.Column
 
+	DisableSoftDeleteFilter bool
+
 	// InterestingColumns stores columns from this DataSource that are used in the query.
 	// NOTE: This list does not distinguish between the type of predicate or usage. It is used in
 	// index pruning early in the planning phase - which is an approximate heuristic.
@@ -189,19 +192,38 @@ func (ds *DataSource) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	originSchemaColumns := ds.Schema().Columns
 	originColumns := ds.Columns
 
+	nonPrunableCols := intset.NewFastIntSet()
+	for i, col := range ds.Schema().Columns {
+		// If ds has a shard index, and the column is generated column by `tidb_shard()` it can't prune the generated
+		// column of shard index
+		if ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr) {
+			nonPrunableCols.Insert(i)
+			continue
+		}
+
+		// For softdelete table, we need an extra isnull(_tidb_softdelete_time) filter to satisfy the softdelete
+		// semantics. So we can't prune the _tidb_softdelete_time column even if it's not used by parent operators.
+
+		// We should have used ds.OutputNames() to check the ExtraSoftDeleteTimeName column here, but the current
+		// implementation doesn't correctly maintain the output names during optimizations, so use col.OrigName for now.
+		if ds.TableInfo.SoftdeleteInfo != nil &&
+			strings.HasSuffix(col.OrigName, model.ExtraSoftDeleteTimeName.L) &&
+			ds.SCtx().GetSessionVars().SoftDeleteRewrite {
+			nonPrunableCols.Insert(i)
+			continue
+		}
+	}
+
 	ds.ColsRequiringFullLen = make([]*expression.Column, 0, len(used))
 	for i, col := range ds.Schema().Columns {
-		if used[i] || (ds.ContainExprPrefixUk && expression.GcColumnExprIsTidbShard(col.VirtualExpr)) {
+		if used[i] || nonPrunableCols.Has(i) {
 			ds.ColsRequiringFullLen = append(ds.ColsRequiringFullLen, col)
 		}
 	}
 
 	for i := len(used) - 1; i >= 0; i-- {
 		if !used[i] && !exprUsed[i] {
-			// If ds has a shard index, and the column is generated column by `tidb_shard()`
-			// it can't prune the generated column of shard index
-			if ds.ContainExprPrefixUk &&
-				expression.GcColumnExprIsTidbShard(ds.Schema().Columns[i].VirtualExpr) {
+			if nonPrunableCols.Has(i) {
 				continue
 			}
 			// TODO: investigate why we cannot use slices.Delete for these two:
@@ -568,10 +590,11 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	tp.SetFlag(mysql.NotNullFlag | mysql.PriKeyFlag)
 	return &expression.Column{
-		RetType:  tp,
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraHandleID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
+		RetType:     tp,
+		UniqueID:    ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:          model.ExtraHandleID,
+		OrigName:    fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraHandleName),
+		IsInvisible: true,
 	}
 }
 
@@ -579,10 +602,11 @@ func (ds *DataSource) NewExtraHandleSchemaCol() *expression.Column {
 func (ds *DataSource) NewExtraCommitTSSchemaCol() *expression.Column {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	return &expression.Column{
-		RetType:  tp,
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraCommitTSID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
+		RetType:     tp,
+		UniqueID:    ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:          model.ExtraCommitTSID,
+		OrigName:    fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraCommitTSName),
+		IsInvisible: true,
 	}
 }
 

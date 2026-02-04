@@ -16,6 +16,7 @@ package ttlworker
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -25,25 +26,33 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
-const finishJobTemplate = `UPDATE mysql.tidb_ttl_table_status
+const finishJobTemplateBody = `UPDATE %s
 	SET last_job_id = current_job_id,
 		last_job_start_time = current_job_start_time,
-		last_job_finish_time = %?,
-		last_job_ttl_expire = current_job_ttl_expire,
-		last_job_summary = %?,
+		last_job_finish_time = %%?,
+		%s
+		last_job_summary = %%?,
 		current_job_id = NULL,
 		current_job_owner_id = NULL,
+		current_job_owner_addr = NULL,
 		current_job_owner_hb_time = NULL,
 		current_job_start_time = NULL,
 		current_job_ttl_expire = NULL,
 		current_job_state = NULL,
 		current_job_status = NULL,
 		current_job_status_update_time = NULL
-	WHERE table_id = %? AND current_job_id = %?`
+	WHERE table_id = %%? AND current_job_id = %%?`
+
+var (
+	finishJobTemplateSoftdelete = fmt.Sprintf(finishJobTemplateBody, "mysql.tidb_softdelete_table_status", "")
+	finishJobTemplateTTL        = fmt.Sprintf(finishJobTemplateBody, "mysql.tidb_ttl_table_status", "last_job_ttl_expire = current_job_ttl_expire,")
+)
+
 const removeTaskForJobTemplate = "DELETE FROM mysql.tidb_ttl_task WHERE job_id = %?"
 const createJobHistoryRowTemplate = `INSERT INTO
     mysql.tidb_ttl_job_history (
         job_id,
+        job_type,
         table_id,
         parent_table_id,
         table_schema,
@@ -55,7 +64,7 @@ const createJobHistoryRowTemplate = `INSERT INTO
         status
     )
 VALUES
-    (%?, %?, %?, %?, %?, %?, %?, FROM_UNIXTIME(1), %?, %?)`
+    (%?, %?, %?, %?, %?, %?, %?, %?, FROM_UNIXTIME(1), %?, %?)`
 const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
 	SET finish_time = %?,
 	    summary_text = %?,
@@ -65,15 +74,19 @@ const finishJobHistoryTemplate = `UPDATE mysql.tidb_ttl_job_history
 	    status = %?
 	WHERE job_id = %?`
 
-func finishJobSQL(tableID int64, finishTime time.Time, summary string, jobID string) (string, []any) {
-	return finishJobTemplate, []any{finishTime.Format(timeFormat), summary, tableID, jobID}
+func finishJobSQL(jobType session.TTLJobType, tableID int64, finishTime time.Time, summary string, jobID string) (string, []any) {
+	sql := finishJobTemplateTTL
+	if jobType == session.TTLJobTypeSoftDelete {
+		sql = finishJobTemplateSoftdelete
+	}
+	return sql, []any{finishTime.Format(timeFormat), summary, tableID, jobID}
 }
 
 func removeTaskForJob(jobID string) (string, []any) {
 	return removeTaskForJobTemplate, []any{jobID}
 }
 
-func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []any) {
+func createJobHistorySQL(jobID string, jobType session.TTLJobType, tbl *cache.PhysicalTable, expire time.Time, now time.Time) (string, []any) {
 	var partitionName any
 	if tbl.Partition.O != "" {
 		partitionName = tbl.Partition.O
@@ -81,6 +94,7 @@ func createJobHistorySQL(jobID string, tbl *cache.PhysicalTable, expire time.Tim
 
 	return createJobHistoryRowTemplate, []any{
 		jobID,
+		jobType,
 		tbl.ID,
 		tbl.TableInfo.ID,
 		tbl.Schema.O,
@@ -106,6 +120,7 @@ func finishJobHistorySQL(jobID string, finishTime time.Time, summary *TTLSummary
 
 type ttlJob struct {
 	id      string
+	jobType session.TTLJobType
 	ownerID string
 
 	createTime    time.Time
@@ -129,7 +144,7 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {
-		sql, args := finishJobSQL(job.tableID, now, summary.SummaryText, job.id)
+		sql, args := finishJobSQL(job.jobType, job.tableID, now, summary.SummaryText, job.id)
 		_, err := se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)

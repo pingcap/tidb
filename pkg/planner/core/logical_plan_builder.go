@@ -72,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/intset"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/plancodec"
@@ -783,11 +784,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 		commonNames := make([]string, 0, len(lNames))
 		lNameMap := make(map[string]int, len(lNames))
 		rNameMap := make(map[string]int, len(rNames))
-		for _, name := range lNames {
+		for i, name := range lNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L ||
-				name.ColName.L == model.ExtraPhysTblIDName.L {
+			if lColumns[i].IsInvisible {
 				continue
 			}
 			// record left map
@@ -797,11 +796,9 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 				lNameMap[name.ColName.L] = 1
 			}
 		}
-		for _, name := range rNames {
+		for i, name := range rNames {
 			// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-			if name.ColName.L == model.ExtraHandleName.L ||
-				name.ColName.L == model.ExtraCommitTSName.L ||
-				name.ColName.L == model.ExtraPhysTblIDName.L {
+			if rColumns[i].IsInvisible {
 				continue
 			}
 			// record right map
@@ -830,9 +827,7 @@ func (b *PlanBuilder) coalesceCommonColumns(p *logicalop.LogicalJoin, leftPlan, 
 	commonLen := 0
 	for i, lName := range lNames {
 		// Natural join should ignore _tidb_rowid and _tidb_commit_ts
-		if lName.ColName.L == model.ExtraHandleName.L ||
-			lName.ColName.L == model.ExtraCommitTSName.L ||
-			lName.ColName.L == model.ExtraPhysTblIDName.L {
+		if lColumns[i].IsInvisible {
 			continue
 		}
 		for j := commonLen; j < len(rNames); j++ {
@@ -3585,7 +3580,7 @@ func unfoldWildStar(field *ast.SelectField, outputName types.NameSlice, column [
 		}
 		if (dbName.L == "" || dbName.L == name.DBName.L) &&
 			(tblName.L == "" || tblName.L == name.TblName.L) &&
-			col.ID != model.ExtraHandleID && col.ID != model.ExtraPhysTblID && col.ID != model.ExtraCommitTSID {
+			!col.IsInvisible {
 			colName := &ast.ColumnNameExpr{
 				Name: &ast.ColumnName{
 					Schema: name.DBName,
@@ -3812,6 +3807,15 @@ func (b *PlanBuilder) buildSelect(ctx context.Context, sel *ast.SelectStmt) (p b
 			return nil, err
 		}
 		originalFields = sel.Fields.Fields
+	}
+
+	// After unfolding wildstar and all join conditions are handled, we need to reset the IsInvisible flag of columns
+	// in the schema. This is because this flag will be passed to upper operators, but in the outer select block of the
+	// original SQL, these columns should not be invisible. For example:
+	// SELECT * FROM (SELECT _tidb_rowid FROM t) as tmp;
+	// The _tidb_rowid column should be visible in the outer select block.
+	for _, col := range p.Schema().Columns {
+		col.IsInvisible = false
 	}
 
 	var gbyExprs []ast.ExprNode
@@ -4107,10 +4111,11 @@ func addExtraPhysTblIDColumn4DS(ds *logicalop.DataSource) *expression.Column {
 		}
 	}
 	pidCol := &expression.Column{
-		RetType:  types.NewFieldType(mysql.TypeLonglong),
-		UniqueID: ds.SCtx().GetSessionVars().AllocPlanColumnID(),
-		ID:       model.ExtraPhysTblID,
-		OrigName: fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIDName),
+		RetType:     types.NewFieldType(mysql.TypeLonglong),
+		UniqueID:    ds.SCtx().GetSessionVars().AllocPlanColumnID(),
+		ID:          model.ExtraPhysTblID,
+		OrigName:    fmt.Sprintf("%v.%v.%v", ds.DBName, ds.TableInfo.Name, model.ExtraPhysTblIDName),
+		IsInvisible: true,
 	}
 
 	ds.Columns = append(ds.Columns, model.NewExtraPhysTblIDColInfo())
@@ -4628,6 +4633,10 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		if col.IsPKHandleColumn(tableInfo) {
 			handleCols = util.NewIntHandleCols(newCol)
 		}
+		if (tableInfo.SoftdeleteInfo != nil && col.Name.L == model.ExtraSoftDeleteTimeName.L) ||
+			(tableInfo.IsActiveActive && col.Name.L == model.ExtraOriginTSName.L) {
+			newCol.IsInvisible = true
+		}
 		schema.Append(newCol)
 		ds.AppendTableCol(newCol)
 	}
@@ -4656,7 +4665,8 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 	}
 	// Append extra commit ts column to the schema.
 	// Cluster tables are memory tables that don't support extra column IDs.
-	if !tbl.Type().IsClusterTable() {
+	// Temporary table doesn't have the column _tidb_commit_ts.
+	if !tbl.Type().IsClusterTable() && tbl.Meta().TempTableType == model.TempTableNone {
 		commitTSCol := ds.NewExtraCommitTSSchemaCol()
 		ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
 		schema.Append(commitTSCol)
@@ -4668,6 +4678,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 		})
 		ds.AppendTableCol(commitTSCol)
 	}
+
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
@@ -4891,6 +4902,8 @@ func (b *PlanBuilder) buildMemTable(_ context.Context, dbName ast.CIStr, tableIn
 			p.Extractor = NewInfoSchemaTableConstraintsExtractor()
 		case infoschema.TableTiKVRegionStatus:
 			p.Extractor = &TiKVRegionStatusExtractor{tablesID: make([]int64, 0)}
+		case infoschema.TableSoftDeleteTableStats:
+			p.Extractor = NewInfoSchemaSoftDeleteTableStatsExtractor()
 		}
 	}
 	return p, nil
@@ -5268,6 +5281,7 @@ func pruneAndBuildColPositionInfoForDelete(
 	slices.SortFunc(cols2PosInfos, func(a, b physicalop.TblColPosInfo) int {
 		return a.Cmp(b)
 	})
+
 	nonPruned := bitset.New(uint(len(names)))
 	nonPruned.SetAll()
 	// Always prune the `_tidb_commit_ts` column.
@@ -5331,9 +5345,10 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 		return physicalop.TblColPosInfo{}, err
 	}
 	return physicalop.TblColPosInfo{
-		TblID:      tid,
-		Start:      offset,
-		HandleCols: handleCol,
+		TblID:               tid,
+		Start:               offset,
+		HandleCols:          handleCol,
+		ExtraOriginTSOffset: -1,
 	}, nil
 }
 
@@ -5350,7 +5365,7 @@ func buildSingleTableColPosInfoForDelete(tbl table.Table, colPosInfo *physicalop
 }
 
 // pruneAndBuildSingleTableColPosInfoForDelete builds columns mapping for delete.
-// And it will try to prune columns that not used in pk or indexes.
+// And it will try to prune columns that not used.
 func pruneAndBuildSingleTableColPosInfoForDelete(
 	t table.Table,
 	tableName string,
@@ -5368,8 +5383,10 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	originalStart := colPosInfo.Start
 	colPosInfo.Start -= prePrunedCount
 
-	// Mark the columns in handle.
+	// fixedPos records the columns that can not be pruned and their new positions in the row after pruning.
 	fixedPos := make(map[int]int, len(deletableCols))
+
+	// Mark the columns in handle.
 	for col := range colPosInfo.HandleCols.IterColumns() {
 		fixedPos[col.Index-originalStart] = 0
 	}
@@ -5381,6 +5398,20 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 				return plannererrors.ErrDeleteNotFoundColumn.GenWithStackByArgs(col.Name.O, tableName)
 			}
 			fixedPos[col.Offset] = 0
+		}
+	}
+
+	// Mark the _tidb_origin_ts column for active-active tables.
+	// For active-active tables, the _tidb_origin_ts column is always needed (see (t *TableCommon) removeRecord()), so
+	// we need to make sure it is not pruned here.
+	extraOriginTSColOffset := -1
+	if t.Meta().IsActiveActive {
+		for _, col := range deletableCols {
+			if col.Name.Equals(&model.ExtraOriginTSName) {
+				fixedPos[col.Offset] = 0
+				extraOriginTSColOffset = col.Offset
+				break
+			}
 		}
 	}
 
@@ -5425,6 +5456,11 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	colPosInfo.End = colPosInfo.Start + tblLen - pruned
 	colPosInfo.IndexesRowLayout = indexColMap
 
+	// Fix the ExtraOriginTS column offset for active-active tables
+	if extraOriginTSColOffset >= 0 {
+		colPosInfo.ExtraOriginTSOffset = table.ExtraOriginTSOffset(fixedPos[extraOriginTSColOffset])
+	}
+
 	return nil
 }
 
@@ -5437,21 +5473,16 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		b.popTableHints()
 	}()
 
-	b.inUpdateStmt = true
-	b.isForUpdateRead = true
-
-	if update.With != nil {
-		l := len(b.outerCTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:l]
-		}()
-		_, err := b.buildWith(ctx, update.With)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	p, err := b.buildResultSetNode(ctx, update.TableRefs.TableRefs, false)
+	p, oldSchemaLen, err := b.buildDMLSelectPlan(
+		ctx,
+		update.With,
+		update.TableRefs.TableRefs,
+		update.Where,
+		update.Order,
+		update.Limit,
+		update.TableRefs.TableRefs.Right == nil,
+		true,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5466,46 +5497,188 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 		}
 	}
 
-	oldSchemaLen := p.Schema().Len()
-	if update.Where != nil {
-		p, err = b.buildSelection(ctx, p, update.Where, nil)
-		if err != nil {
-			return nil, err
-		}
+	utlr := &updatableTableListResolver{
+		resolveCtx: b.resolveCtx,
 	}
-	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if update.TableRefs.TableRefs.Right == nil {
-			// buildSelectLock is an optimization that can reduce RPC call.
-			// We only need do this optimization for single table update which is the most common case.
-			// When TableRefs.Right is nil, it is single table update.
-			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
-				LockType: ast.SelectLockForUpdate,
-			})
-			if err != nil {
-				return nil, err
-			}
+	update.Accept(utlr)
+
+	return b.buildUpdatePlan(ctx, p, oldSchemaLen, utlr.updatableTableList, update.List, update.IgnoreErr)
+}
+
+// buildRecoverValues builds an execution plan for RECOVER VALUES statement.
+// RECOVER VALUES FROM <table> WHERE <expr> is semantically equivalent to
+// UPDATE <table> SET _tidb_softdelete_time = NULL WHERE <expr>
+// but only works on tables with soft delete enabled.
+func (b *PlanBuilder) buildRecoverValues(ctx context.Context, recoverStmt *ast.RecoverValuesStmt) (base.Plan, error) {
+	// Get the table info to verify it's a soft delete table
+	dbName := recoverStmt.Table.Schema
+	if dbName.L == "" {
+		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+	}
+	tbl, err := b.is.TableByName(ctx, dbName, recoverStmt.Table.Name)
+	if err != nil {
+		return nil, err
+	}
+	tableInfo := tbl.Meta()
+
+	// RECOVER VALUES only works on soft delete tables
+	if tableInfo.SoftdeleteInfo == nil {
+		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
+			"RECOVER VALUES on table without soft delete enabled")
+	}
+
+	// Build an equivalent UPDATE statement ast to reuse the logic.
+	tableRef := &ast.TableRefsClause{
+		TableRefs: &ast.Join{
+			Left: &ast.TableSource{
+				Source: recoverStmt.Table,
+			},
+		},
+	}
+	assignment := &ast.Assignment{
+		Column: &ast.ColumnName{
+			Name: model.ExtraSoftDeleteTimeName,
+		},
+		Expr: ast.NewValueExpr(nil, "", ""),
+	}
+
+	// Append an extra _tidb_softdelete_time IS NOT NULL condition.
+	softDeleteNotNull := &ast.IsNullExpr{
+		Expr: &ast.ColumnNameExpr{
+			Name: &ast.ColumnName{
+				Name: model.ExtraSoftDeleteTimeName,
+			},
+		},
+		Not: true,
+	}
+	var whereClause ast.ExprNode
+	if recoverStmt.Where != nil {
+		whereClause = &ast.BinaryOperationExpr{
+			Op: opcode.LogicAnd,
+			L:  softDeleteNotNull,
+			R:  recoverStmt.Where,
+		}
+	} else {
+		whereClause = softDeleteNotNull
+	}
+
+	updateStmt := &ast.UpdateStmt{
+		TableRefs: tableRef,
+		List:      []*ast.Assignment{assignment},
+		Where:     whereClause,
+	}
+	return b.buildUpdate(ctx, updateStmt)
+}
+
+// buildDMLSelectPlan builds the common select plan for DML statements (UPDATE, DELETE).
+// It handles WITH clause, builds the result set from TableRefs, WHERE clause, pessimistic lock,
+// ORDER BY, and LIMIT.
+func (b *PlanBuilder) buildDMLSelectPlan(
+	ctx context.Context,
+	with *ast.WithClause,
+	tableRefs *ast.Join,
+	where ast.ExprNode,
+	orderBy *ast.OrderByClause,
+	limit *ast.Limit,
+	isSingleTable bool,
+	isUpdate bool,
+) (p base.LogicalPlan, oldSchemaLen int, err error) {
+	if isUpdate {
+		b.inUpdateStmt = true
+	} else {
+		b.inDeleteStmt = true
+	}
+	b.isForUpdateRead = true
+
+	if with != nil {
+		l := len(b.outerCTEs)
+		defer func() {
+			b.outerCTEs = b.outerCTEs[:l]
+		}()
+		_, err := b.buildWith(ctx, with)
+		if err != nil {
+			return nil, 0, err
 		}
 	}
 
-	if update.Order != nil {
-		p, err = b.buildSort(ctx, p, update.Order.Items, nil, nil)
-		if err != nil {
-			return nil, err
-		}
+	// Build the result set from TableRefs
+	p, err = b.buildResultSetNode(ctx, tableRefs, false)
+	if err != nil {
+		return nil, 0, err
 	}
-	if update.Limit != nil {
-		p, err = b.buildLimit(p, update.Limit)
-		if err != nil {
-			return nil, err
+
+	// For UPDATE statements translated from RECOVER VALUES, we shouldn't apply the soft delete filter no matter
+	// whether @@tidb_translate_softdelete_sql is true or false. This is implemented by setting DisableSoftDeleteFilter
+	// to true in DataSource.
+	// Note that this flag only affects this DataSource, consider this case:
+	// RECOVER VALUES FROM t1 WHERE t1.a IN (SELECT t2.a FROM t2 WHERE t2.b > 0);
+	// In this case, t1 should have the soft delete filter disabled, but t2 should add the soft delete filter or not
+	// according to @@tidb_translate_softdelete_sql.
+	if b.ctx.GetSessionVars().StmtCtx.InRecoverValuesStmt {
+		ds, ok := p.(*logicalop.DataSource)
+		intest.Assert(ok, "expected DataSource in RECOVER VALUES plan")
+		if ok {
+			ds.DisableSoftDeleteFilter = true
 		}
 	}
 
+	oldSchemaLen = p.Schema().Len()
+
+	// Build WHERE clause
+	if where != nil {
+		p, err = b.buildSelection(ctx, p, where, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	// buildSelectLock is an optimization that can reduce RPC call.
+	// We only need do this optimization for single table operation which is the most common case.
+	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic && isSingleTable {
+		p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
+			LockType: ast.SelectLockForUpdate,
+		})
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	// Build ORDER BY
+	if orderBy != nil {
+		p, err = b.buildSort(ctx, p, orderBy.Items, nil, nil)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	// Build LIMIT
+	if limit != nil {
+		p, err = b.buildLimit(p, limit)
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+
+	return p, oldSchemaLen, nil
+}
+
+// buildUpdatePlan builds the Update physical plan from a select plan.
+// This is shared by buildUpdate and buildSoftdeleteAsUpdate.
+func (b *PlanBuilder) buildUpdatePlan(
+	ctx context.Context,
+	p base.LogicalPlan,
+	oldSchemaLen int,
+	tableList []*ast.TableName,
+	assignList []*ast.Assignment,
+	ignoreErr bool,
+) (base.Plan, error) {
 	// Add project to freeze the order of output columns.
 	proj := logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns[:oldSchemaLen])}.Init(b.ctx, b.getSelectOffset())
 	proj.SetSchema(expression.NewSchema(make([]*expression.Column, oldSchemaLen)...))
 	proj.SetOutputNames(make(types.NameSlice, len(p.OutputNames())))
 	copy(proj.OutputNames(), p.OutputNames())
 	copy(proj.Schema().Columns, p.Schema().Columns[:oldSchemaLen])
+	// Remove _tidb_commit_ts columns from projection
 	for i := len(proj.OutputNames()) - 1; i >= 0; i-- {
 		if proj.OutputNames()[i].ColName.L == model.ExtraCommitTSName.L {
 			proj.SetOutputNames(slices.Delete(proj.OutputNames(), i, i+1))
@@ -5516,11 +5689,7 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	proj.SetChildren(p)
 	p = proj
 
-	utlr := &updatableTableListResolver{
-		resolveCtx: b.resolveCtx,
-	}
-	update.Accept(utlr)
-	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, utlr.updatableTableList, update.List, p)
+	orderedList, np, allAssignmentsAreConstant, err := b.buildUpdateLists(ctx, tableList, assignList, p)
 	if err != nil {
 		return nil, err
 	}
@@ -5529,10 +5698,11 @@ func (b *PlanBuilder) buildUpdate(ctx context.Context, update *ast.UpdateStmt) (
 	updt := physicalop.Update{
 		OrderedList:               orderedList,
 		AllAssignmentsAreConstant: allAssignmentsAreConstant,
-		VirtualAssignmentsOffset:  len(update.List),
-		IgnoreError:               update.IgnoreErr,
+		VirtualAssignmentsOffset:  len(assignList),
+		IgnoreError:               ignoreErr,
 	}.Init(b.ctx)
 	updt.SetOutputNames(p.OutputNames())
+
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved. (^flagEliminateProjection should also be applied in postOptimize)
 	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^rule.FlagEliminateProjection, p)
@@ -5817,86 +5987,20 @@ func (b *PlanBuilder) buildUpdateLists(ctx context.Context, tableList []*ast.Tab
 }
 
 func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base.Plan, error) {
-	b.pushSelectOffset(0)
-	b.pushTableHints(ds.TableHints, 0)
-	defer func() {
-		b.popSelectOffset()
-		// table hints are only visible in the current DELETE statement.
-		b.popTableHints()
-	}()
-
-	b.inDeleteStmt = true
-	b.isForUpdateRead = true
-
-	if ds.With != nil {
-		l := len(b.outerCTEs)
-		defer func() {
-			b.outerCTEs = b.outerCTEs[:l]
-		}()
-		_, err := b.buildWith(ctx, ds.With)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	p, err := b.buildResultSetNode(ctx, ds.TableRefs.TableRefs, false)
-	if err != nil {
-		return nil, err
-	}
-	oldSchema := p.Schema()
-	oldLen := oldSchema.Len()
-
-	// For explicit column usage, should use the all-public columns.
-	if ds.Where != nil {
-		p, err = b.buildSelection(ctx, p, ds.Where, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-	if b.ctx.GetSessionVars().TxnCtx.IsPessimistic {
-		if !ds.IsMultiTable {
-			p, err = b.buildSelectLock(p, &ast.SelectLockInfo{
-				LockType: ast.SelectLockForUpdate,
-			})
-			if err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if ds.Order != nil {
-		p, err = b.buildSort(ctx, p, ds.Order.Items, nil, nil)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	if ds.Limit != nil {
-		p, err = b.buildLimit(p, ds.Limit)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// If the delete is non-qualified it does not require Select Priv
-	if ds.Where == nil && ds.Order == nil {
-		b.popVisitInfo()
-	}
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
-
-	del := physicalop.Delete{
-		IsMultiTable: ds.IsMultiTable,
-		IgnoreErr:    ds.IgnoreErr,
-	}.Init(b.ctx)
-
 	localResolveCtx := resolve.NewContext()
+	// softdeleteTables collects tables that have soft delete enabled.
+	// It's only used when SoftDeleteRewrite is enabled.
+	var softdeleteTables []*resolve.TableNameW
+	var tablesToDelete []*ast.TableName
 	// Collect visitInfo.
 	if ds.Tables != nil {
 		// Delete a, b from a, b, c, d... add a and b.
 		updatableList := make(map[string]bool)
 		tbInfoList := make(map[string]*ast.TableName)
 		collectTableName(ds.TableRefs.TableRefs, &updatableList, &tbInfoList)
+		tablesToDelete = ds.Tables.Tables
 		for _, tn := range ds.Tables.Tables {
 			var canUpdate, foundMatch = false, false
 			name := tn.Name.L
@@ -5938,12 +6042,16 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, tb.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, tnW.DBInfo.Name.L, tb.Name.L, "", authErr)
+			// Check for soft delete tables when SoftDeleteRewrite is enabled.
+			if sessionVars.SoftDeleteRewrite && tableInfo.SoftdeleteInfo != nil {
+				softdeleteTables = append(softdeleteTables, tnW)
+			}
 		}
 	} else {
 		// Delete from a, b, c, d.
 		nodeW := resolve.NewNodeWWithCtx(ds.TableRefs.TableRefs, b.resolveCtx)
-		tableList := ExtractTableList(nodeW, false)
-		for _, v := range tableList {
+		tablesToDelete = ExtractTableList(nodeW, false)
+		for _, v := range tablesToDelete {
 			tblW := b.resolveCtx.GetTableName(v)
 			if isCTE(tblW) {
 				return nil, plannererrors.ErrNonUpdatableTable.GenWithStackByArgs(v.Name.O, "DELETE")
@@ -5962,8 +6070,54 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 				authErr = plannererrors.ErrTableaccessDenied.FastGenByArgs("DELETE", sessionVars.User.AuthUsername, sessionVars.User.AuthHostname, v.Name.L)
 			}
 			b.visitInfo = appendVisitInfo(b.visitInfo, mysql.DeletePriv, dbName, v.Name.L, "", authErr)
+			// Check for soft delete tables when SoftDeleteRewrite is enabled.
+			if sessionVars.SoftDeleteRewrite && tblW.TableInfo.SoftdeleteInfo != nil {
+				softdeleteTables = append(softdeleteTables, tblW)
+			}
 		}
 	}
+
+	// If soft delete tables exist and SoftDeleteRewrite is enabled, rewrite DELETE as UPDATE.
+	if len(softdeleteTables) > 0 && sessionVars.SoftDeleteRewrite {
+		// When SoftDeleteRewrite is enabled, if any table has soft delete, all tables must have soft delete.
+		if len(softdeleteTables) != len(tablesToDelete) {
+			return nil, errors.Errorf("cannot mix soft delete and non-soft delete tables in DELETE statement")
+		}
+		return b.buildSoftdeleteAsUpdate(ctx, ds, softdeleteTables)
+	}
+
+	b.pushSelectOffset(0)
+	b.pushTableHints(ds.TableHints, 0)
+	defer func() {
+		b.popSelectOffset()
+		// table hints are only visible in the current DELETE statement.
+		b.popTableHints()
+	}()
+
+	p, oldLen, err := b.buildDMLSelectPlan(
+		ctx,
+		ds.With,
+		ds.TableRefs.TableRefs,
+		ds.Where,
+		ds.Order,
+		ds.Limit,
+		!ds.IsMultiTable,
+		false, // isUpdate = false (this is DELETE)
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// If the delete is non-qualified it does not require Select Priv
+	if ds.Where == nil && ds.Order == nil {
+		b.popVisitInfo()
+	}
+
+	del := physicalop.Delete{
+		IsMultiTable: ds.IsMultiTable,
+		IgnoreErr:    ds.IgnoreErr,
+	}.Init(b.ctx)
+
 	handleColsMap := b.handleHelper.tailMap()
 	tblID2Handle, err := resolveIndicesForTblID2Handle(handleColsMap, p.Schema())
 	if err != nil {
@@ -6024,6 +6178,59 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 	del.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag, p)
 
 	return del, err
+}
+
+// buildSoftdeleteAsUpdate builds an UPDATE plan from a DELETE statement for soft delete tables.
+// This is called when SoftDeleteRewrite is enabled and all tables involved have soft delete enabled.
+// The DELETE is rewritten to: UPDATE ... SET _tidb_softdelete_time = NOW(6)
+func (b *PlanBuilder) buildSoftdeleteAsUpdate(
+	ctx context.Context,
+	ds *ast.DeleteStmt,
+	softdeleteTables []*resolve.TableNameW) (base.Plan, error) {
+	b.pushSelectOffset(0)
+	b.pushTableHints(ds.TableHints, 0)
+	defer func() {
+		b.popSelectOffset()
+		b.popTableHints()
+	}()
+
+	p, oldSchemaLen, err := b.buildDMLSelectPlan(
+		ctx,
+		ds.With,
+		ds.TableRefs.TableRefs,
+		ds.Where,
+		ds.Order,
+		ds.Limit,
+		!ds.IsMultiTable,
+		true, // isUpdate (we're building an UPDATE plan)
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Generate assignment list for soft delete: SET _tidb_softdelete_time = NOW(6)
+	assignList := make([]*ast.Assignment, 0, len(softdeleteTables))
+	tableList := make([]*ast.TableName, 0, len(softdeleteTables))
+	for _, tbl := range softdeleteTables {
+		assignList = append(assignList, &ast.Assignment{
+			Column: &ast.ColumnName{
+				Schema: tbl.Schema,
+				Table:  tbl.Name,
+				Name:   model.ExtraSoftDeleteTimeName,
+			},
+			Expr: &ast.FuncCallExpr{
+				FnName: ast.NewCIStr(ast.Now),
+				Args: []ast.ExprNode{
+					&driver.ValueExpr{
+						Datum: types.NewIntDatum(6),
+					},
+				},
+			},
+		})
+		tableList = append(tableList, tbl.TableName)
+	}
+
+	return b.buildUpdatePlan(ctx, p, oldSchemaLen, tableList, assignList, ds.IgnoreErr)
 }
 
 func resolveIndicesForTblID2Handle(tblID2Handle map[int64][]util.HandleCols, schema *expression.Schema) (map[int64][]util.HandleCols, error) {

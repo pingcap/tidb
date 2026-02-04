@@ -30,6 +30,11 @@ var TTLAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.State == model.StatePublic && t.TTLInfo != nil
 }
 
+// SoftDeleteAttribute is the softdelete attribute filter used by ListTablesWithSpecialAttribute.
+var SoftDeleteAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
+	return t.State == model.StatePublic && t.SoftdeleteInfo != nil
+}
+
 // TiFlashAttribute is the TiFlashReplica attribute filter used by ListTablesWithSpecialAttribute.
 var TiFlashAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 	return t.TiFlashReplica != nil
@@ -83,7 +88,7 @@ var AffinityAttribute SpecialAttributeFilter = func(t *model.TableInfo) bool {
 
 // HasSpecialAttributes checks if a table has any special attributes.
 func HasSpecialAttributes(t *model.TableInfo) bool {
-	return TTLAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || AffinityAttribute(t)
+	return TTLAttribute(t) || SoftDeleteAttribute(t) || TiFlashAttribute(t) || PlacementPolicyAttribute(t) || PartitionAttribute(t) || TableLockAttribute(t) || AffinityAttribute(t)
 }
 
 // AllSpecialAttribute marks a model.TableInfo with any special attributes.

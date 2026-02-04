@@ -118,6 +118,8 @@ const (
 	BackgroundGoroutineLifecycleHooks
 	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
 	PrewriteEncounterLockPolicy
+	// CommitWaitUntilTSO is an option to require get commit ts wait until the obtained TSO larger than the specified value
+	CommitWaitUntilTSO
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option

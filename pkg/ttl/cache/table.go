@@ -110,15 +110,18 @@ type PhysicalTable struct {
 	KeyColumns []*model.ColumnInfo
 	// KeyColumnTypes is the types of the key columns
 	KeyColumnTypes []*types.FieldType
-	// TimeColum is the time column used for TTL
-	TimeColumn *model.ColumnInfo
+	// TTLTimeColumn is the time column used for TTL jobs.
+	TTLTimeColumn *model.ColumnInfo
+	// SoftDeleteTimeColumn is the time column used for softdelete jobs.
+	SoftDeleteTimeColumn *model.ColumnInfo
+	// RunawayGCTimeColumn is the time column used for runaway GC jobs.
+	RunawayGCTimeColumn *model.ColumnInfo
 }
 
-// NewBasePhysicalTable create a new PhysicalTable with specific timeColumn.
+// NewBasePhysicalTable create a new PhysicalTable.
 func NewBasePhysicalTable(schema ast.CIStr,
 	tbl *model.TableInfo,
 	partition ast.CIStr,
-	timeColumn *model.ColumnInfo,
 ) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
@@ -163,23 +166,94 @@ func NewBasePhysicalTable(schema ast.CIStr,
 		PartitionDef:   partitionDef,
 		KeyColumns:     keyColumns,
 		KeyColumnTypes: keyColumTypes,
-		TimeColumn:     timeColumn,
 	}, nil
 }
 
-// NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema ast.CIStr, tbl *model.TableInfo, partition ast.CIStr) (*PhysicalTable, error) {
-	ttlInfo := tbl.TTLInfo
-	if ttlInfo == nil {
-		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
+// NewPhysicalTable creates a new PhysicalTable for TTL/softdelete.
+func NewPhysicalTable(
+	schema ast.CIStr,
+	tbl *model.TableInfo,
+	partition ast.CIStr,
+	checkTTL bool,
+	checkSoftdelete bool) (*PhysicalTable, error) {
+	var ttlTimeColumn *model.ColumnInfo
+	var softdeleteTimeColumn *model.ColumnInfo
+	if checkTTL {
+		ttlInfo := tbl.TTLInfo
+		if ttlInfo == nil {
+			return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
+		}
+		ttlTimeColumn = tbl.FindPublicColumnByName(ttlInfo.ColumnName.L)
+		if ttlTimeColumn == nil {
+			return nil, errors.Errorf("time column '%s' is not public in ttl table '%s.%s'",
+				ttlInfo.ColumnName,
+				schema,
+				tbl.Name)
+		}
 	}
 
-	timeColumn := tbl.FindPublicColumnByName(ttlInfo.ColumnName.L)
+	if checkSoftdelete {
+		if tbl.SoftdeleteInfo == nil {
+			return nil, errors.Errorf("table '%s.%s' softdelete info is nil", schema, tbl.Name)
+		}
+		softdeleteTimeColumn = model.NewExtraSoftDeleteTimeColInfo()
+	}
+
+	pt, err := NewBasePhysicalTable(schema, tbl, partition)
+	if err != nil {
+		return nil, err
+	}
+	pt.TTLTimeColumn = ttlTimeColumn
+	pt.SoftDeleteTimeColumn = softdeleteTimeColumn
+	return pt, nil
+}
+
+// NewPhysicalTableWithTimeColumnForJob creates a PhysicalTable with a custom time column for a specific job type.
+// It is used for non-TTL/softdelete system tables which still need to reuse TTL SQL builder.
+func NewPhysicalTableWithTimeColumnForJob(
+	schema ast.CIStr,
+	tbl *model.TableInfo,
+	partition ast.CIStr,
+	jobType session.TTLJobType,
+	timeColumn *model.ColumnInfo,
+) (*PhysicalTable, error) {
 	if timeColumn == nil {
-		return nil, errors.Errorf("time column '%s' is not public in ttl table '%s.%s'", ttlInfo.ColumnName, schema, tbl.Name)
+		return nil, errors.New("time column is nil")
 	}
+	pt, err := NewBasePhysicalTable(schema, tbl, partition)
+	if err != nil {
+		return nil, err
+	}
+	switch jobType {
+	case session.TTLJobTypeRunawayGC:
+		pt.RunawayGCTimeColumn = timeColumn
+		return pt, nil
+	default:
+		return nil, errors.New("unsupported job type for custom time column")
+	}
+}
 
-	return NewBasePhysicalTable(schema, tbl, partition, timeColumn)
+// TimeColumnForJob returns the time column for the given job type.
+func (t *PhysicalTable) TimeColumnForJob(jobType session.TTLJobType) (*model.ColumnInfo, error) {
+	switch jobType {
+	case session.TTLJobTypeSoftDelete:
+		if t.SoftDeleteTimeColumn == nil {
+			return nil, errors.New("softdelete time column is nil")
+		}
+		return t.SoftDeleteTimeColumn, nil
+	case session.TTLJobTypeTTL:
+		if t.TTLTimeColumn == nil {
+			return nil, errors.New("ttl time column is nil")
+		}
+		return t.TTLTimeColumn, nil
+	case session.TTLJobTypeRunawayGC:
+		if t.RunawayGCTimeColumn == nil {
+			return nil, errors.New("runaway gc time column is nil")
+		}
+		return t.RunawayGCTimeColumn, nil
+	default:
+		return nil, errors.New("can not fetch time column, unknown job type")
+	}
 }
 
 // ValidateKeyPrefix validates a key prefix
@@ -251,11 +325,11 @@ func (t *PhysicalTable) FullName() string {
 	return fmt.Sprintf("%s.%s", t.Schema.O, t.Name.O)
 }
 
-// EvalExpireTime returns the expired time for the current time.
-// It uses the global timezone in session to evaluation the context
-// and the return time is in the same timezone of now argument.
-func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
-	now time.Time) (time.Time, error) {
+// EvalExpireTimeForJob evaluates the expire time for the given job type.
+// For TTL jobs, it uses the TTL definition in table meta.
+// For softdelete jobs, it uses the retention in `SoftdeleteInfo`.
+func (t *PhysicalTable) EvalExpireTimeForJob(ctx context.Context, se session.Session,
+	now time.Time, jobType session.TTLJobType) (time.Time, error) {
 	if intest.InTest {
 		if tm, ok := ctx.Value(mockExpireTimeKey{}).(time.Time); ok {
 			return tm, nil
@@ -274,13 +348,24 @@ func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
 		return time.Time{}, err
 	}
 
-	start := now.In(globalTz)
-	expire, err := EvalExpireTime(start, t.TTLInfo.IntervalExprStr, ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit))
-	if err != nil {
-		return time.Time{}, err
+	switch jobType {
+	case session.TTLJobTypeSoftDelete:
+		retention, err := t.SoftdeleteInfo.GetRetention()
+		if err != nil {
+			return time.Time{}, err
+		}
+		expire := now.In(globalTz).Add(-retention)
+		return expire.In(now.Location()), nil
+	case session.TTLJobTypeTTL:
+		start := now.In(globalTz)
+		expire, err := EvalExpireTime(start, t.TTLInfo.IntervalExprStr, ast.TimeUnitType(t.TTLInfo.IntervalTimeUnit))
+		if err != nil {
+			return time.Time{}, err
+		}
+		return expire.In(now.Location()), nil
+	default:
+		return time.Time{}, errors.New("can not eval expire time, unknown job type")
 	}
-
-	return expire.In(now.Location()), nil
 }
 
 // SplitScanRanges split ranges for TTL scan

@@ -16,9 +16,11 @@ package cardinality
 
 import (
 	"math"
+	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
 	"github.com/pingcap/tidb/pkg/statistics"
@@ -62,6 +64,11 @@ func GetTableAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols
 // GetAvgRowSize computes average row size for given columns.
 func GetAvgRowSize(ctx planctx.PlanContext, coll *statistics.HistColl, cols []*expression.Column, isEncodedKey bool, isForScan bool) (size float64) {
 	sessionVars := ctx.GetSessionVars()
+	// _tidb_commit_ts is not a real extra column stored in the disk, and it should not bring extra cost, so we exclude
+	// it from the cost here.
+	cols = slices.DeleteFunc(slices.Clone(cols), func(col *expression.Column) bool {
+		return col.ID == model.ExtraCommitTSID
+	})
 	if coll.Pseudo || coll.ColNum() == 0 || coll.RealtimeCount == 0 {
 		size = pseudoColSize * float64(len(cols))
 	} else {

@@ -1307,6 +1307,9 @@ type SessionVars struct {
 	// EnableIndexMerge enables the generation of IndexMergePath.
 	enableIndexMerge bool
 
+	// SoftDeleteRewrite enables SQL rewritting for softdelete tables.
+	SoftDeleteRewrite bool
+
 	// replicaRead is used for reading data from replicas, only follower is supported at this time.
 	replicaRead kv.ReplicaReadType
 	// ReplicaClosestReadThreshold is the minimum response body size that a cop request should be sent to the closest replica.
@@ -1813,6 +1816,12 @@ type SessionVars struct {
 
 	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
 	OutPacketBytes atomic.Uint64
+
+	// Used in ActiveActive replication, providing value for @@tidb_active_active_sync_stats
+	// When CDC replicate upstream cluster to downstream cluster in active-active mode, some rows
+	// may be skipped due to conflict. And this counter is used to record the number of rows skipped
+	// by such kind of conflict.
+	ActiveActiveConflictSkipRows atomic.Uint64
 
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
@@ -3073,6 +3082,8 @@ func (s *SessionVars) EncodeSessionStates(_ context.Context, sessionStates *sess
 	sessionStates.LastAffectedRows = s.StmtCtx.PrevAffectedRows
 	sessionStates.LastInsertID = s.StmtCtx.PrevLastInsertID
 	sessionStates.Warnings = s.StmtCtx.GetWarnings()
+
+	sessionStates.ActiveActiveConflictSkipRows = s.ActiveActiveConflictSkipRows.Load()
 	return
 }
 
@@ -3103,6 +3114,7 @@ func (s *SessionVars) DecodeSessionStates(_ context.Context, sessionStates *sess
 	s.FoundInBinding = sessionStates.FoundInBinding
 	s.HypoIndexes = sessionStates.HypoIndexes
 	s.HypoTiFlashReplicas = sessionStates.HypoTiFlashReplicas
+	s.ActiveActiveConflictSkipRows.Store(sessionStates.ActiveActiveConflictSkipRows)
 
 	// Decode StatementContext.
 	s.StmtCtx.SetAffectedRows(uint64(sessionStates.LastAffectedRows))

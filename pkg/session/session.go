@@ -4750,7 +4750,9 @@ func (s *session) isDMLStatement(stmtNode ast.StmtNode) bool {
 	// Only these DML statements should use pessimistic-auto-commit
 	// Note: LOAD DATA and IMPORT are intentionally excluded
 	switch actualStmt.(type) {
-	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
+	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt,
+		// RecoverValuesStmt is essentially a special UPDATE statement for softdelete tables
+		*ast.RecoverValuesStmt:
 		return true
 	default:
 		return false

@@ -380,7 +380,7 @@ func TestNewScanSession(t *testing.T) {
 			called := false
 			require.NoError(t, ttlworker.WithSessionForTest(pool, func(se session.Session) error {
 				require.False(t, called)
-				tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+				tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now(), session.TTLJobTypeTTL)
 				called = true
 				if errSQL == "" {
 					// success case
@@ -424,7 +424,7 @@ func TestNewScanSession(t *testing.T) {
 		}, newFaultAfterCount(0)))
 		require.NoError(t, ttlworker.WithSessionForTest(pool, func(se session.Session) error {
 			require.False(t, called)
-			tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now())
+			tblSe, restore, err := ttlworker.NewScanSession(se, &cache.PhysicalTable{}, time.Now(), session.TTLJobTypeTTL)
 			called = true
 			require.NoError(t, err)
 			require.NotNil(t, tblSe)
