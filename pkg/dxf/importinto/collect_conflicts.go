@@ -56,8 +56,14 @@ type collectConflictsStepExecutor struct {
 	sizeOfHandlesFromIndex      atomic.Int64
 	sizeLimitOfHandlesFromIndex int64
 	result                      *conflictedkv.CollectResult
-	sharedHandleSet             *conflictedkv.BoundedHandleSet
-	summary                     execute.SubtaskSummary
+	// one conflicted row might generate multiple conflicted UK KV, this set is
+	// used to avoid collecting checksum for this row multiple times.
+	// such as for `create table t(id int primary key, c1 int, c2 int, unique u1(c1), unique u2(c2))`
+	// if we have 2 rows (1, 3, 4), (2, 3, 4), one pair of conflicted UK KV will
+	// be generated for kv group u1 and u2 respectively.
+	// this also means we need to process conflicted UK KV group one by one.
+	sharedHandleSet *conflictedkv.BoundedHandleSet
+	summary         execute.SubtaskSummary
 }
 
 var _ execute.StepExecutor = &collectConflictsStepExecutor{}
@@ -172,7 +178,10 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		return err
 	}
 
-	var mu sync.Mutex
+	var (
+		mu             sync.Mutex
+		mergedLocalSet = conflictedkv.NewBoundedHandleSet(e.logger, &e.sizeOfHandlesFromIndex, e.sizeLimitOfHandlesFromIndex)
+	)
 	for i := range concurrency {
 		encoder := encoders[i]
 		uid := uuid.New().String()
@@ -186,7 +195,7 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 					err = err2
 				}
 				mu.Lock()
-				e.sharedHandleSet.Merge(localSet)
+				mergedLocalSet.Merge(localSet)
 				e.result.Merge(collector.GetCollectResult())
 				mu.Unlock()
 			}()
@@ -194,7 +203,12 @@ func (e *collectConflictsStepExecutor) collectConflictsOfKVGroup(
 		})
 	}
 
-	return eg.Wait()
+	if err = eg.Wait(); err != nil {
+		return err
+	}
+
+	e.sharedHandleSet.Merge(mergedLocalSet)
+	return nil
 }
 
 // right now we only have 1 subtask, but later we might have multiple subtasks
