@@ -84,10 +84,21 @@ func InterpretVectorSearchExpr(expr Expression) *VSInfo {
 
 	intest.Assert(vectorConstant.Value.Kind() == types.KindVectorFloat32, "internal: expect vectorFloat32 constant, but got %s", vectorConstant.Value.String())
 
+	// Vector index can only be defined on fixed-dimension vector columns, and TiFlash
+	// expects the query vector to have exactly the same dimension as the indexed column.
+	expectedDims := vectorColumn.RetType.GetFlen()
+	if expectedDims <= 0 {
+		return nil
+	}
+	queryVec := vectorConstant.Value.GetVectorFloat32()
+	if queryVec.Len() != expectedDims {
+		return nil
+	}
+
 	return &VSInfo{
 		DistanceFnName: x.FuncName,
 		FnPbCode:       x.Function.PbCode(),
-		Vec:            vectorConstant.Value.GetVectorFloat32(),
+		Vec:            queryVec,
 		Column:         vectorColumn,
 	}
 }

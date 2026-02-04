@@ -2573,6 +2573,11 @@ func convertToTableScan(ds *logicalop.DataSource, prop *property.PhysicalPropert
 			distanceMetric := model.IndexableFnNameToDistanceMetric[prop.VectorProp.DistanceFnName.L]
 			distanceMetricPB := tipb.VectorDistanceMetric_value[string(distanceMetric)]
 			intest.Assert(distanceMetricPB != 0, "unexpected distance metric")
+			// TiFlash vector index expects the query vector dimension to match index dimension.
+			expectedDims := candidate.path.Index.VectorInfo.Dimension
+			if expectedDims == 0 || uint64(prop.VectorProp.Vec.Len()) != expectedDims {
+				return base.InvalidTask, nil
+			}
 
 			ts.UsedColumnarIndexes = append(ts.UsedColumnarIndexes, buildVectorIndexExtra(
 				candidate.path.Index,
