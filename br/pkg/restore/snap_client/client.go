@@ -19,9 +19,7 @@ import (
 	"cmp"
 	"context"
 	"crypto/tls"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"math"
 	"slices"
 	"sort"
@@ -64,9 +62,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/tablecodec"
 	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/pingcap/tidb/pkg/util/redact"
 	kvutil "github.com/tikv/client-go/v2/util"
 	pd "github.com/tikv/pd/client"
@@ -1179,24 +1175,13 @@ func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables
 			// Use .L (lowercase) to match DDL behavior for case-insensitive matching
 			dbName := table.DB.Name.L
 			tableName := table.Info.Name.L
-			rule.ID = fmt.Sprintf(label.TableIDFormat, label.IDPrefix, dbName, tableName)
+			// Set labels including merge_option before calling Reset()
 			rule.Labels = []pdhttp.RegionLabel{
-				{Key: "db", Value: dbName},
-				{Key: "table", Value: tableName},
 				{Key: "merge_option", Value: "allow"},
 			}
-			rule.RuleType = "key-range"
-
-			// Set the key range for this table using the NEW table ID (after restore)
-			startKey := tablecodec.EncodeTablePrefix(newTableInfo.ID)
-			endKey := tablecodec.EncodeTablePrefix(newTableInfo.ID + 1)
-			rule.Data = []any{
-				map[string]string{
-					"start_key": hex.EncodeToString(codec.EncodeBytes([]byte{}, startKey)),
-					"end_key":   hex.EncodeToString(codec.EncodeBytes([]byte{}, endKey)),
-				},
-			}
-			rule.Index = label.RuleIndexTable
+			// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table labels
+			// Reset() uses the NEW table ID (after restore)
+			rule.Reset(dbName, tableName, "", newTableInfo.ID)
 
 			rulesToSet = append(rulesToSet, rule)
 		}
@@ -1228,25 +1213,13 @@ func (rc *SnapClient) setMergeOptionForTables(ctx context.Context, createdTables
 					dbName := table.DB.Name.L
 					tableName := table.Info.Name.L
 					partitionName := oldDef.Name.L
-					rule.ID = fmt.Sprintf(label.PartitionIDFormat, label.IDPrefix, dbName, tableName, partitionName)
+					// Set labels including merge_option before calling Reset()
 					rule.Labels = []pdhttp.RegionLabel{
-						{Key: "db", Value: dbName},
-						{Key: "table", Value: tableName},
-						{Key: "partition", Value: partitionName},
 						{Key: "merge_option", Value: "allow"},
 					}
-					rule.RuleType = "key-range"
-
-					// Set the key range for this partition using the NEW partition ID (after restore)
-					startKey := tablecodec.EncodeTablePrefix(newDef.ID)
-					endKey := tablecodec.EncodeTablePrefix(newDef.ID + 1)
-					rule.Data = []any{
-						map[string]string{
-							"start_key": hex.EncodeToString(codec.EncodeBytes([]byte{}, startKey)),
-							"end_key":   hex.EncodeToString(codec.EncodeBytes([]byte{}, endKey)),
-						},
-					}
-					rule.Index = label.RuleIndexPartition
+					// Use Reset() to set ID, RuleType, Data, Index, and add/update db/table/partition labels
+					// Reset() uses the NEW partition ID (after restore)
+					rule.Reset(dbName, tableName, partitionName, newDef.ID)
 
 					rulesToSet = append(rulesToSet, rule)
 				}

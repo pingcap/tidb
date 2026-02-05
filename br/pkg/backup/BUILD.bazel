@@ -102,7 +102,6 @@ go_test(
         "@com_github_tikv_client_go_v2//testutils",
         "@com_github_tikv_client_go_v2//tikv",
         "@com_github_tikv_pd_client//:client",
-        "@com_github_tikv_pd_client//http",
         "@io_opencensus_go//stats/view",
         "@org_golang_google_grpc//:grpc",
         "@org_uber_go_goleak//:goleak",
