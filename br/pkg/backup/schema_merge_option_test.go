@@ -17,60 +17,7 @@ import (
 	"github.com/pingcap/tidb/pkg/testkit"
 	filter "github.com/pingcap/tidb/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client/http"
 )
-
-// mockLabelManagerForTest is a mock label manager for testing
-type mockLabelManagerForTest struct {
-	rules map[string]*label.Rule
-}
-
-func newMockLabelManagerForTest() *mockLabelManagerForTest {
-	return &mockLabelManagerForTest{
-		rules: make(map[string]*label.Rule),
-	}
-}
-
-func (m *mockLabelManagerForTest) PutLabelRule(_ context.Context, rule *label.Rule) error {
-	if rule == nil {
-		return nil
-	}
-	m.rules[rule.ID] = rule
-	return nil
-}
-
-func (m *mockLabelManagerForTest) UpdateLabelRules(_ context.Context, patch *pd.LabelRulePatch) error {
-	if patch == nil {
-		return nil
-	}
-	for _, id := range patch.DeleteRules {
-		delete(m.rules, id)
-	}
-	for _, r := range patch.SetRules {
-		if r != nil {
-			m.rules[r.ID] = (*label.Rule)(r)
-		}
-	}
-	return nil
-}
-
-func (m *mockLabelManagerForTest) GetAllLabelRules(_ context.Context) ([]*label.Rule, error) {
-	rules := make([]*label.Rule, 0, len(m.rules))
-	for _, rule := range m.rules {
-		rules = append(rules, rule)
-	}
-	return rules, nil
-}
-
-func (m *mockLabelManagerForTest) GetLabelRules(_ context.Context, ruleIDs []string) (map[string]*label.Rule, error) {
-	result := make(map[string]*label.Rule)
-	for _, ruleID := range ruleIDs {
-		if rule, exists := m.rules[ruleID]; exists {
-			result[ruleID] = rule
-		}
-	}
-	return result, nil
-}
 
 // TestBackupSchemaMergeOptionRuleIDFormat tests the rule ID format generation
 func TestBackupSchemaMergeOptionRuleIDFormat(t *testing.T) {

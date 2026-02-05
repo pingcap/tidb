@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
@@ -39,13 +41,15 @@ const (
 )
 
 type schemaInfo struct {
-	tableInfo  *model.TableInfo
-	dbInfo     *model.DBInfo
-	crc64xor   uint64
-	totalKvs   uint64
-	totalBytes uint64
-	stats      *util.JSONTable
-	statsIndex []*backuppb.StatsFileIndex
+	tableInfo                   *model.TableInfo
+	dbInfo                      *model.DBInfo
+	crc64xor                    uint64
+	totalKvs                    uint64
+	totalBytes                  uint64
+	stats                       *util.JSONTable
+	statsIndex                  []*backuppb.StatsFileIndex
+	isMergeOptionAllowed        bool
+	partitionMergeOptionAllowed map[string]bool
 }
 
 type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error
@@ -165,9 +169,17 @@ func (ss *Schemas) BackupSchemas(
 						return errors.Trace(err)
 					}
 				}
+				// Check merge option allowed (network I/O)
+				isMergeOptionAllowed, partitionMergeOptionAllowed, err := schema.checkMergeOptionAllowed(ectx)
+				if err != nil {
+					logger.Warn("failed to check merge_option for table", logutil.ShortError(err))
+				} else {
+					schema.isMergeOptionAllowed = isMergeOptionAllowed
+					schema.partitionMergeOptionAllowed = partitionMergeOptionAllowed
+				}
 			}
 			// Send schema to metawriter
-			s, err := schema.encodeToSchema(ctx)
+			s, err := schema.encodeToSchema()
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -275,7 +287,7 @@ func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.
 	return nil
 }
 
-func (s *schemaInfo) encodeToSchema(ctx context.Context) (*backuppb.Schema, error) {
+func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 	dbBytes, err := json.Marshal(s.dbInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
@@ -296,15 +308,6 @@ func (s *schemaInfo) encodeToSchema(ctx context.Context) (*backuppb.Schema, erro
 		}
 	}
 
-	isMergeOptionAllowed := false
-	var partitionMergeOptionAllowed map[string]bool
-	if s.tableInfo != nil {
-		isMergeOptionAllowed, partitionMergeOptionAllowed, err = s.checkMergeOptionAllowed(ctx)
-		if err != nil {
-			log.Warn("failed to check merge_option for table", zap.Stringer("table", s.tableInfo.Name), zap.Error(err))
-		}
-	}
-
 	return &backuppb.Schema{
 		Db:                          dbBytes,
 		Table:                       tableBytes,
@@ -313,8 +316,8 @@ func (s *schemaInfo) encodeToSchema(ctx context.Context) (*backuppb.Schema, erro
 		TotalBytes:                  s.totalBytes,
 		Stats:                       statsBytes,
 		StatsIndex:                  s.statsIndex,
-		IsMergeOptionAllowed:        isMergeOptionAllowed,
-		PartitionMergeOptionAllowed: partitionMergeOptionAllowed,
+		IsMergeOptionAllowed:        s.isMergeOptionAllowed,
+		PartitionMergeOptionAllowed: s.partitionMergeOptionAllowed,
 	}, nil
 }
 
@@ -343,23 +346,14 @@ func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context) (bool, map[str
 	// Get the specific label rules for this table and its partitions in batches
 	// to avoid overwhelming PD with too many requests at once
 	rules := make(map[string]*label.Rule)
-	totalRuleIDs := len(ruleIDs)
-	for i := 0; i < totalRuleIDs; i += utils.LabelRuleBatchSize {
-		end := i + utils.LabelRuleBatchSize
-		if end > totalRuleIDs {
-			end = totalRuleIDs
-		}
-		batch := ruleIDs[i:end]
-
+	for batch := range slices.Chunk(ruleIDs, utils.LabelRuleBatchSize) {
 		batchRules, err := infosync.GetLabelRules(ctx, batch)
 		if err != nil {
 			return false, nil, errors.Trace(err)
 		}
 
 		// Merge batch results into the main rules map
-		for id, rule := range batchRules {
-			rules[id] = rule
-		}
+		maps.Copy(rules, batchRules)
 	}
 
 	// Check if the table rule exists and has merge_option=allow
