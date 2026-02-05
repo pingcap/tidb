@@ -144,35 +144,30 @@ func TestSetVarPartialOrderedIndexForTopN(t *testing.T) {
 		testKit.MustExec(`use test`)
 
 		// Test default value
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("0"))
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 
 		// Test set_var hint changes the value during query execution
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = 0`)
-		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=ON) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("1"))
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
 		// Value should be restored after query
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("0"))
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 
 		// Test set_var hint with OFF
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = 1`)
-		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=OFF) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("0"))
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = COST`)
+		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=DISABLE) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 		// Value should be restored after query
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("1"))
-
-		// Test set_var hint with numeric values
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = 0`)
-		testKit.MustQuery(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=1) */ @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("1"))
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("0"))
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("COST"))
 
 		// Test set_var hint with multiple queries
 		testKit.MustExec(`create table t(a int, b varchar(10), index idx_b(b(5)));`)
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = 0`)
-		testKit.MustExec(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=ON) */ * from t order by b limit 10;`)
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("0"))
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+		testKit.MustExec(`select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 
 		// Test with EXPLAIN (should not change the value)
-		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = 0`)
-		testKit.MustExec(`explain select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=ON) */ * from t order by b limit 10;`)
-		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("0"))
+		testKit.MustExec(`set @@tidb_opt_partial_ordered_index_for_topn = DISABLE`)
+		testKit.MustExec(`explain select /*+ set_var(tidb_opt_partial_ordered_index_for_topn=COST) */ * from t order by b limit 10;`)
+		testKit.MustQuery(`select @@tidb_opt_partial_ordered_index_for_topn`).Check(testkit.Rows("DISABLE"))
 	})
 }
 
