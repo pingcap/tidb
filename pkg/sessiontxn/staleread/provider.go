@@ -66,6 +66,20 @@ func (p *StalenessTxnContextProvider) GetReadReplicaScope() string {
 
 // GetStmtReadTS returns the read timestamp
 func (p *StalenessTxnContextProvider) GetStmtReadTS() (uint64, error) {
+	// When autocommit is disabled and in txn flag is flase, activate the txn here to make sure
+	// subsequent reads can reuse the snapshot. This is to support usage like:
+	//   set @@tidb_read_staleness = -1;
+	//   set autocommit = 0;
+	//   select x fromt t1; -- create a stale read ts
+	//   select y from t2;  -- using the same stale read ts
+	//   commit;
+	// Related issue: https://github.com/pingcap/tidb/issues/64198
+	if !p.sctx.GetSessionVars().IsAutocommit() && !p.sctx.GetSessionVars().InTxn() {
+		if _, err := p.ActivateTxn(); err != nil {
+			return 0, err
+		}
+		p.sctx.GetSessionVars().SetInTxn(true)
+	}
 	return p.ts, nil
 }
 
@@ -227,21 +241,29 @@ func (p *StalenessTxnContextProvider) AdviseOptimizeWithPlan(_ any) error {
 // GetSnapshotWithStmtReadTS gets snapshot with read ts and set the transaction related options
 // before return
 func (p *StalenessTxnContextProvider) GetSnapshotWithStmtReadTS() (kv.Snapshot, error) {
+	// Keep behavior consistent with GetStmtReadTS: when autocommit is disabled and in txn flag is
+	// not set, activate a staleness txn so subsequent reads can reuse the snapshot.
+	if _, err := p.GetStmtReadTS(); err != nil {
+		return nil, err
+	}
+
 	txn, err := p.sctx.Txn(false)
 	if err != nil {
 		return nil, err
 	}
 
-	if txn.Valid() {
-		return txn.GetSnapshot(), nil
-	}
-
 	sessVars := p.sctx.GetSessionVars()
-	snapshot := internal.GetSnapshotWithTS(
-		p.sctx,
-		p.ts,
-		temptable.SessionSnapshotInterceptor(p.sctx, p.is),
-	)
+
+	var snapshot kv.Snapshot
+	if txn.Valid() {
+		snapshot = txn.GetSnapshot()
+	} else {
+		snapshot = internal.GetSnapshotWithTS(
+			p.sctx,
+			p.ts,
+			temptable.SessionSnapshotInterceptor(p.sctx, p.is),
+		)
+	}
 
 	replicaReadType := sessVars.GetReplicaRead()
 	if replicaReadType.IsFollowerRead() {
