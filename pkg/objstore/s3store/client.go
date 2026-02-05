@@ -30,7 +30,6 @@ import (
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -218,7 +217,7 @@ func (c *s3Client) PresignObject(ctx context.Context, name string, expire time.D
 	// PresignClient requires *s3.Client; S3API is implemented by *s3.Client in production.
 	client, ok := c.svc.(*s3.Client)
 	if !ok {
-		return "", errors.Annotate(berrors.ErrUnsupportedOperation, "PresignObject requires concrete S3 client")
+		return "", errors.New("PresignObject requires concrete S3 client")
 	}
 	presignClient := s3.NewPresignClient(client)
 	result, err := presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(expire))

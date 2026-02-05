@@ -171,7 +171,7 @@ type Storage interface {
 
 	// PresignFile creates a presigned URL for sharing a file without writing any code.
 	// For S3, it returns a presigned URL. For local storage, it returns the file name only.
-	// Unsupported backends (GCS, Azure, HDFS, etc.) return an error.
+	// Unsupported backends (Azure, HDFS, etc.) return an error.
 	// See https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
 	PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error)
 

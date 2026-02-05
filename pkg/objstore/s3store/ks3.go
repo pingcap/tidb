@@ -758,12 +758,12 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *storeapi.
 	return uploaderWriter, nil
 }
 
-// Rename implements Storage interface.
 // PresignFile implements storeapi.Storage interface.
 func (*KS3Storage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
-	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "KS3 backend does not support PresignFile")
+	return "", errors.New("KS3 backend does not support PresignFile")
 }
 
+// Rename implements the StorageWriter interface.
 func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	content, err := rs.ReadFile(ctx, oldFileName)
 	if err != nil {

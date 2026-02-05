@@ -643,7 +643,7 @@ func (rs *Storage) PresignFile(ctx context.Context, fileName string, expire time
 	if pc, ok := rs.s3Cli.(presignableClient); ok {
 		return pc.PresignObject(ctx, fileName, expire)
 	}
-	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "S3-compatible storage does not support PresignFile")
+	return "", errors.New("S3-compatible storage does not support PresignFile")
 }
 
 // Close implements Storage interface.

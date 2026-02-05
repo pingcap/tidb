@@ -749,7 +749,7 @@ func (s *AzureBlobStorage) Rename(ctx context.Context, oldFileName, newFileName 
 
 // PresignFile implements storeapi.Storage interface.
 func (*AzureBlobStorage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
-	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "AzureBlobStorage backend does not support PresignFile")
+	return "", errors.New("AzureBlobStorage backend does not support PresignFile")
 }
 
 // Close implements the Storage interface.

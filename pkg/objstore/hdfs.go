@@ -154,7 +154,7 @@ func (*HDFSStorage) Rename(_ context.Context, _, _ string) error {
 
 // PresignFile implements storeapi.Storage interface.
 func (*HDFSStorage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
-	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "HDFS backend does not support PresignFile")
+	return "", errors.New("HDFS backend does not support PresignFile")
 }
 
 // Close implements Storage interface.
