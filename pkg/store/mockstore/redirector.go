@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 )
 
 type clientRedirector struct {
@@ -74,4 +75,8 @@ func (c *clientRedirector) SendRequest(ctx context.Context, addr string, req *ti
 
 func (c *clientRedirector) SetEventListener(listener tikv.ClientEventListener) {
 	c.mockClient.SetEventListener(listener)
+}
+
+func (c *clientRedirector) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	panic("Not implemented")
 }

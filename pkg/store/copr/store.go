@@ -29,6 +29,7 @@ import (
 	"github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 )
 
 type kvStore struct {
@@ -75,6 +76,10 @@ func (c *tikvClient) SendRequest(ctx context.Context, addr string, req *tikvrpc.
 
 func (c *tikvClient) SetEventListener(listener tikv.ClientEventListener) {
 	c.c.SetEventListener(listener)
+}
+
+func (c *tikvClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	panic("Not implemented")
 }
 
 // Store wraps tikv.KVStore and provides coprocessor utilities.

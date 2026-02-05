@@ -47,7 +47,7 @@ check-setup:tools/bin/revive
 precheck: fmt bazel_prepare
 
 .PHONY: check
-check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license
+check: check-bazel-prepare parser_yacc check-parallel lint tidy testSuite errdoc license bazel_check_abi
 
 .PHONY: fmt
 fmt:
@@ -640,6 +640,14 @@ bazel_coverage_test_ddlargsv1: failpoint-enable bazel_ci_simple_prepare
 		-- //... -//cmd/... -//tests/graceshutdown/... \
 		-//tests/globalkilltest/... -//tests/readonlytest/... -//br/pkg/task:task_test -//tests/realtikvtest/...
 
+.PHONY: bazel_bin
+bazel_bin: ## Build importer/tidb binary files with Bazel build system
+	mkdir -p bin; \
+	bazel $(BAZEL_GLOBAL_CONFIG) build $(BAZEL_CMD_CONFIG) \
+		//cmd/importer:importer //cmd/tidb-server:tidb-server --define gotags=$(BUILD_TAGS) --norun_validations ;\
+ 	cp -f ${TIDB_SERVER_PATH} ./bin/ ; \
+ 	cp -f ${IMPORTER_PATH} ./bin/ ;
+
 .PHONY: bazel_build
 bazel_build:
 	mkdir -p bin
@@ -826,3 +834,8 @@ bazel_sync:
 .PHONY: bazel_mirror_upload
 bazel_mirror_upload:
 	bazel $(BAZEL_GLOBAL_CONFIG) run $(BAZEL_CMD_CONFIG)  //cmd/mirror -- --mirror --upload
+
+.PHONY: bazel_check_abi
+bazel_check_abi:
+	@echo "check ABI compatibility"
+	./tools/check/bazel-check-abi.sh

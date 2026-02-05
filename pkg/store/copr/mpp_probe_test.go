@@ -24,6 +24,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
+	"github.com/tikv/client-go/v2/util/async"
 )
 
 const (
@@ -42,6 +43,10 @@ func (t *mockDetectClient) CloseAddr(string) error {
 
 func (t *mockDetectClient) Close() error {
 	return nil
+}
+
+func (t *mockDetectClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
+	panic("Not implemented")
 }
 
 func (t *mockDetectClient) SendRequest(
