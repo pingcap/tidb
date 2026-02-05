@@ -45,7 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -160,14 +159,18 @@ func TestVerifyChecksum(t *testing.T) {
 }
 
 func TestGetTargetNodeCpuCnt(t *testing.T) {
-	store, tm, ctx := testutil.InitTableTest(t)
-	tk := testkit.NewTestKit(t, store)
+	_, tm, ctx := testutil.InitTableTest(t)
+	old := variable.EnableDistTask.Load()
 
-	tk.MustExec("set @@global.tidb_enable_dist_task = off;")
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)")
+	variable.EnableDistTask.Store(false)
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(16)"))
+	t.Cleanup(func() {
+		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu"))
+		variable.EnableDistTask.Store(old)
+	})
 	require.NoError(t, tm.InitMeta(ctx, "tidb1", ""))
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)")
+	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/cpu/mockNumCpu", "return(8)"))
 	targetNodeCPUCnt, err := importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeQuery, "")
 	require.NoError(t, err)
 	require.Equal(t, 8, targetNodeCPUCnt)
@@ -184,7 +187,7 @@ func TestGetTargetNodeCpuCnt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 8, targetNodeCPUCnt)
 	// disttask enabled
-	tk.MustExec("set @@global.tidb_enable_dist_task = on;")
+	variable.EnableDistTask.Store(true)
 
 	targetNodeCPUCnt, err = importer.GetTargetNodeCPUCnt(ctx, importer.DataSourceTypeFile, "s3://path/to/xxx.csv")
 	require.NoError(t, err)
