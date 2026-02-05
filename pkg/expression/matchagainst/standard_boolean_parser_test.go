@@ -68,7 +68,11 @@ func TestParseStandardBooleanMode(t *testing.T) {
 			input:  `-"foo"`,
 			output: `M[] S[] N["foo"]`,
 		},
-
+		{
+			name:   "phrase: two phrase without spaces",
+			input:  `"foo""bar"`,
+			output: `M[] S["foo", "bar"] N[]`,
+		},
 		{
 			name:   "term: basic TERM",
 			input:  `foo`,
@@ -119,6 +123,11 @@ func TestParseStandardBooleanMode(t *testing.T) {
 			input:  `*foo*`,
 			output: "M[] S[foo*] N[]",
 		},
+		{
+			name:   "term: digits and letters are one TERM",
+			input:  "123foo",
+			output: "M[] S[123foo] N[]",
+		},
 
 		{
 			name:   "prefix: '+' and '-' split into MUST / MUST_NOT",
@@ -166,7 +175,11 @@ func TestParseStandardBooleanMode(t *testing.T) {
 			input:  "foo\nbar",
 			output: "M[] S[foo, bar] N[]",
 		},
-
+		{
+			name:   "underscore: '_' is part of TERM",
+			input:  `foo_bar baz_qux`,
+			output: "M[] S[foo_bar, baz_qux] N[]",
+		},
 		{
 			name:        "error: lone '*' expects a term",
 			input:       `*`,
