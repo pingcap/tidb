@@ -688,8 +688,11 @@ func (s *baseSingleGroupJoinOrderSolver) findAndRemovePlanByAstHint(
 		}
 	}
 	if matchIdx != -1 {
+		// take the matched plan before slice manipulation. `append(plans[:matchIdx], ...)`
+		// may overwrite `plans[matchIdx]` due to shared backing arrays.
+		matched := plans[matchIdx]
 		newPlans := append(plans[:matchIdx], plans[matchIdx+1:]...)
-		return plans[matchIdx], newPlans, true
+		return matched, newPlans, true
 	}
 
 	return nil, plans, false
