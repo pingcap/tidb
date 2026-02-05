@@ -118,6 +118,10 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 				logutil.BgLogger().Warn("remove file failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
 				return nil
 			}
+			if isPlanReplayer && p.sctx != nil {
+				deletePlanReplayerStatus(ctx, p.sctx, baseName)
+				p.planReplayerTaskStatus.clearFinishedTask()
+			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 		}
 		return nil
@@ -125,21 +129,14 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 	if err != nil {
 		logutil.BgLogger().Warn("walk dir failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("path", path))
 	}
-	// The token of the table mysql.plan_replayer_status is different for different storage.
-	// For local, the token is the file name. For s3, the token is the presigned URL.
-	// So we can't delete the record in the table mysql.plan_replayer_status by the file name.
-	if path == replayer.GetPlanReplayerDirName() && p.sctx != nil {
-		deletePlanReplayerStatus(ctx, p.sctx, gcTargetTimeForCapture)
-		p.planReplayerTaskStatus.clearFinishedTask()
-	}
 }
 
-func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, targetTime time.Time) {
+func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	exec := sctx.GetRestrictedSQLExecutor()
-	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where update_time < %?", targetTime)
+	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where token = %?", token)
 	if err != nil {
-		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.Time("target-time", targetTime), zap.Error(err))
+		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
 	}
 }
 
@@ -186,8 +183,8 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 	_, _, err := exec.ExecRestrictedSQL(
 		ctx,
 		nil,
-		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, instance) values (%?,%?,%?,%?,%?)",
-		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, instance,
+		"insert into mysql.plan_replayer_status (sql_digest, plan_digest, origin_sql, token, presigned_url, instance) values (%?,%?,%?,%?,%?,%?)",
+		record.SQLDigest, record.PlanDigest, record.OriginSQL, record.Token, record.PresignedURL, instance,
 	)
 	if err != nil {
 		logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
@@ -202,8 +199,8 @@ func insertPlanReplayerSuccessStatusRecord(ctx context.Context, sctx sessionctx.
 		_, _, err = exec.ExecRestrictedSQL(
 			ctx,
 			nil,
-			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, instance) values (%?,%?,%?,%?)",
-			record.SQLDigest, record.PlanDigest, record.Token, instance,
+			"insert into mysql.plan_replayer_status (sql_digest, plan_digest, token, presigned_url, instance) values (%?,%?,%?,%?,%?)",
+			record.SQLDigest, record.PlanDigest, record.Token, record.PresignedURL, instance,
 		)
 		if err != nil {
 			logutil.BgLogger().Warn("insert mysql.plan_replayer_status record failed",
@@ -567,7 +564,8 @@ type PlanReplayerStatusRecord struct {
 	SQLDigest    string
 	PlanDigest   string
 	OriginSQL    string
-	Token        string
+	Token        string // file name of the dump
+	PresignedURL string // presigned URL for external storage; empty for local
 	FailedReason string
 }
 

@@ -288,25 +288,27 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 			errMsg = errMsg + "," + err2.Error()
 		}
 		storage, err3 := extstore.GetGlobalExtStorage(ctx)
+		var presignedURL string
 		if err3 != nil {
 			logutil.BgLogger().Error("[plan-replayer-dump] get storage failed", zap.Error(err3), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err3.Error()
 		} else {
-			token, err4 := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour)
+			url, err4 := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour)
 			if err4 != nil {
 				logutil.BgLogger().Error("[plan-replayer-dump] presign file failed", zap.Error(err4), zap.String("filename", fileName))
 				errMsg = errMsg + "," + err4.Error()
 			} else {
-				task.Token = token
+				presignedURL = url
 			}
 		}
+		// token stores file name; presigned_url stores URL for external storage
+		task.Token = task.FileName
 		for i, record := range records {
 			if len(errMsg) > 0 {
 				record.FailedReason = errMsg
 			}
-			if task.Token != "" {
-				record.Token = task.Token
-			}
+			record.Token = task.FileName
+			record.PresignedURL = presignedURL
 			records[i] = record
 		}
 		insertPlanReplayerStatus(ctx, sctx, records)

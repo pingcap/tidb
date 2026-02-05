@@ -443,7 +443,8 @@ const (
 		sql_digest VARCHAR(128),
 		plan_digest VARCHAR(128),
 		origin_sql TEXT,
-		token TEXT,
+		token VARCHAR(128) comment 'file name of the dump',
+		presigned_url TEXT comment 'presigned URL for external storage; empty for local',
 		update_time TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 		fail_reason TEXT,
 		instance VARCHAR(512) NOT NULL comment 'address of the TiDB instance executing the plan replayer job');`

@@ -479,8 +479,7 @@ const (
 	// to improve the performance of runaway watch sync loop.
 	version254 = 254
 
-	// version255 modify column `token` of table `mysql.plan_replayer_status` from VARCHAR(128) to TEXT
-	// to support presigned URL for plan replayer files on S3.
+	// version255 add column `presigned_url` to table `mysql.plan_replayer_status` for presigned URL.
 	version255 = 255
 )
 
@@ -2056,5 +2055,5 @@ func upgradeToVer254(s sessionapi.Session, _ int64) {
 }
 
 func upgradeToVer255(s sessionapi.Session, _ int64) {
-	doReentrantDDL(s, "ALTER TABLE mysql.plan_replayer_status MODIFY COLUMN `token` TEXT")
+	doReentrantDDL(s, "ALTER TABLE mysql.plan_replayer_status ADD COLUMN `presigned_url` TEXT COMMENT 'presigned URL for external storage; empty for local'")
 }
