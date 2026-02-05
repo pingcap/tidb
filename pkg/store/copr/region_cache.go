@@ -25,6 +25,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
+	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -34,6 +35,16 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
+
+type bucketSplitFallbackInfo struct {
+	reason   string
+	startKey []byte
+
+	bucketStart []byte
+	bucketEnd   []byte
+
+	remainingRangeCount int
+}
 
 // Helper functions for logging
 func formatLocation(loc *tikv.KeyLocation) zap.Field {
@@ -419,17 +430,14 @@ func (l *LocationKeyRanges) getBucketVersion() uint64 {
 }
 
 // splitKeyRangeByBuckets splits ranges in the same location by buckets and returns a LocationKeyRanges array.
-func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*LocationKeyRanges {
+func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) ([]*LocationKeyRanges, *bucketSplitFallbackInfo) {
 	if l.Location.Buckets == nil || len(l.Location.Buckets.Keys) == 0 {
-		return []*LocationKeyRanges{l}
+		return []*LocationKeyRanges{l}, nil
 	}
 
 	ranges := l.Ranges
 	loc := l.Location
 	res := []*LocationKeyRanges{}
-	processedRangeCount := 0
-	var continueSplit bool
-	var expectedNextStart []byte
 
 	for ranges.Len() > 0 {
 		startKey := ranges.At(0).StartKey
@@ -442,86 +450,24 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 		// - Bucket structure issues (gaps, sorting, etc.) cannot cause nil
 		//   because fallback logic creates synthetic buckets
 		if bucket == nil {
-			// Prepare comprehensive diagnostics
-			beforeLocation := bytes.Compare(startKey, loc.StartKey) < 0
-			afterLocation := len(loc.EndKey) > 0 && bytes.Compare(startKey, loc.EndKey) >= 0
-
-			// Bucket structure info
-			bucketKeys := func() []string {
-				if loc.Buckets == nil {
-					return []string{"<nil buckets>"}
-				}
-				keys := make([]string, len(loc.Buckets.Keys))
-				for i, k := range loc.Buckets.Keys {
-					keys[i] = redact.Key(k)
-				}
-				return keys
-			}()
-
-			// Queue state - log remaining ranges to see if upstream already wrong
-			queueSummary := formatRanges(ranges)
-
-			// Check if this is a gap from previous bucket split
-			// Only flag gap if we actually split a range in previous iteration
-			var gapDetected bool
-			if continueSplit && !bytes.Equal(startKey, expectedNextStart) {
-				gapDetected = true
+			return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
+				reason:              "locate_bucket_nil",
+				startKey:            startKey,
+				remainingRangeCount: ranges.Len(),
 			}
-
-			// PD metadata - needed to correlate with PD logs and prove/disprove PD bug
-			regionVer := loc.Region.GetVer()
-			regionConfVer := loc.Region.GetConfVer()
-
-			// Log comprehensive diagnostics
-			fields := []zap.Field{
-				// Basic identification
-				keyField("startKey", startKey),
-				zap.Uint64("regionID", loc.Region.GetID()),
-				zap.Bool("keyInRegion", loc.Contains(startKey)),
-
-				// Direction diagnostics
-				zap.Bool("beforeLocation", beforeLocation),
-				zap.Bool("afterLocation", afterLocation),
-
-				// Loop state - shows where we are in processing
-				zap.Int("processedRangeCount", processedRangeCount),
-				zap.Int("remainingRangeCount", ranges.Len()),
-				queueSummary, // All remaining ranges, not just first
-
-				// Gap detection from bucket slicing
-				zap.Bool("gapDetected", gapDetected),
-			}
-
-			if gapDetected {
-				fields = append(fields,
-					keyField("expectedNextStart", expectedNextStart))
-			}
-
-			fields = append(fields,
-				// Location boundaries
-				keyField("locationStart", loc.StartKey),
-				keyField("locationEnd", loc.EndKey),
-
-				// PD metadata - to correlate with PD logs
-				zap.Uint64("regionVer", regionVer),
-				zap.Uint64("regionConfVer", regionConfVer),
-
-				// Bucket information
-				zap.Int("bucketCount", len(loc.Buckets.Keys)),
-				zap.Uint64("bucketVersion", loc.GetBucketVersion()),
-				zap.Strings("bucketKeys", bucketKeys),
-			)
-
-			logutil.Logger(ctx).Warn("LocateBucket returned nil - falling back to unsplit ranges", fields...)
-
-			// Fallback: return original LocationKeyRanges without bucket splitting.
-			// This is safer than panicking - the request will still work, just without
-			// bucket-level parallelism. The root cause (stale bucket metadata or
-			// incorrect location assignment) should be investigated separately.
-			return []*LocationKeyRanges{l}
 		}
 
-		processedRangeCount++
+		// Input consistency guard: Bucket splitting assumes the first range starts inside this location.
+		// If it doesn't, continuing can livelock (no progress) and/or over-split incorrectly.
+		if !loc.Contains(startKey) {
+			return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
+				reason:              "range_start_outside_location",
+				startKey:            startKey,
+				bucketStart:         bucket.StartKey,
+				bucketEnd:           bucket.EndKey,
+				remainingRangeCount: ranges.Len(),
+			}
+		}
 
 		// Iterate to the first range that is not complete in the bucket.
 		var r kv.KeyRange
@@ -552,18 +498,26 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) []*Loca
 				StartKey: bucket.EndKey,
 				EndKey:   r.EndKey,
 			}
-			// We split a range - track expected next start
-			continueSplit = true
-			expectedNextStart = bucket.EndKey
 		} else {
-			// Range start is not in this bucket, move to next bucket
+			// Range start is not in this bucket. This indicates stale bucket metadata or
+			// location/range mismatch. If i==0, slicing would not make progress and can
+			// livelock (allocating forever). Fall back to unsplit ranges.
+			if i == 0 {
+				return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
+					reason:              "bucket_not_contain_start_no_progress",
+					startKey:            r.StartKey,
+					bucketStart:         bucket.StartKey,
+					bucketEnd:           bucket.EndKey,
+					remainingRangeCount: ranges.Len(),
+				}
+			}
+			// Move to next bucket.
 			taskRanges := ranges.Slice(0, i)
 			res = append(res, &LocationKeyRanges{l.Location, taskRanges})
 			ranges = ranges.Slice(i, ranges.Len())
-			continueSplit = false
 		}
 	}
-	return res
+	return res, nil
 }
 
 func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.KeyLocation, ranges *KeyRanges, res []*LocationKeyRanges) ([]*LocationKeyRanges, *KeyRanges, bool) {
@@ -774,13 +728,59 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 	}()
 
 	res := make([]*LocationKeyRanges, 0, len(locs))
+	var fallback *bucketSplitFallbackInfo
 	for ; locIdx < len(locs); locIdx++ {
 		failpoint.Inject("panicInSplitKeyRangesByBuckets", func(val failpoint.Value) {
 			if val.(int) == locIdx {
 				panic("failpoint triggered panic in bucket splitting")
 			}
 		})
-		res = append(res, locs[locIdx].splitKeyRangesByBuckets(ctx)...)
+		var r []*LocationKeyRanges
+		r, fallback = locs[locIdx].splitKeyRangesByBuckets(ctx)
+		if fallback != nil {
+			break
+		}
+		res = append(res, r...)
+	}
+	if fallback != nil {
+		// Buckets are a performance optimization. If bucket splitting encounters inconsistent
+		// metadata (or would make no progress), fall back to region-only splitting to maximize
+		// correctness and stability.
+		tikvLocs := make([]*tikv.KeyLocation, 0, len(locs))
+		for _, l := range locs {
+			tikvLocs = append(tikvLocs, l.Location)
+		}
+		coverageValid := validateLocationCoverage(ctx, kvRanges, tikvLocs)
+		tidbmetrics.DistSQLCoprBucketSplitFallback.Inc()
+		if !coverageValid {
+			fields := []zap.Field{
+				zap.String("reason", fallback.reason),
+				zap.Int("locationIndex", locIdx),
+				zap.Int("locationCount", len(locs)),
+				zap.Int("rangeCount", len(kvRanges)),
+				zap.Bool("coverageValid", coverageValid),
+				keyField("startKey", fallback.startKey),
+				zap.Uint64("regionID", locs[locIdx].Location.Region.GetID()),
+				zap.Uint64("regionVer", locs[locIdx].Location.Region.GetVer()),
+				zap.Uint64("regionConfVer", locs[locIdx].Location.Region.GetConfVer()),
+				keyField("locationStart", locs[locIdx].Location.StartKey),
+				keyField("locationEnd", locs[locIdx].Location.EndKey),
+				zap.Int("remainingRangeCount", fallback.remainingRangeCount),
+			}
+			if fallback.bucketStart != nil || fallback.bucketEnd != nil {
+				fields = append(fields,
+					keyField("bucketStart", fallback.bucketStart),
+					keyField("bucketEnd", fallback.bucketEnd),
+				)
+			}
+			logutil.Logger(ctx).Warn("SplitKeyRangesByBuckets fell back to region-only splitting", fields...)
+		}
+
+		locs, err := c.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, false)
+		if err != nil {
+			return nil, derr.ToTiDBErr(err)
+		}
+		return locs, nil
 	}
 	return res, nil
 }
