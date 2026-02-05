@@ -105,9 +105,6 @@ func newConflictDetector(ctx base.PlanContext) *ConflictDetector {
 
 // Build will construct the conflict detector from the given join group.
 func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
-	if len(group.vertexes) > 64 {
-		return nil, errors.Errorf("too many vertexes in join group: %d, exceeds maximum supported 64", len(group.vertexes))
-	}
 	d.groupRoot = group.root
 	d.allInnerJoin = group.allInnerJoin
 
@@ -123,13 +120,13 @@ func (d *ConflictDetector) Build(group *joinGroup) ([]*Node, error) {
 		}
 	}
 
-	if _, _, err := d.buildRecursive(group.root, group.vertexes, vertexMap); err != nil {
+	if _, _, err := d.buildRecursive(group.root, vertexMap); err != nil {
 		return nil, err
 	}
 	return d.groupVertexes, nil
 }
 
-func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
+func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexMap map[int]*Node) ([]*edge, intset.FastIntSet, error) {
 	if vertexNode, ok := vertexMap[p.ID()]; ok {
 		d.groupVertexes = append(d.groupVertexes, vertexNode)
 		return nil, vertexNode.bitSet, nil
@@ -142,11 +139,11 @@ func (d *ConflictDetector) buildRecursive(p base.LogicalPlan, vertexes []base.Lo
 		return nil, intset.FastIntSet{}, errors.New("unexpected plan type in conflict detector")
 	}
 
-	leftEdges, leftVertexes, err := d.buildRecursive(joinop.Children()[0], vertexes, vertexMap)
+	leftEdges, leftVertexes, err := d.buildRecursive(joinop.Children()[0], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
-	rightEdges, rightVertexes, err := d.buildRecursive(joinop.Children()[1], vertexes, vertexMap)
+	rightEdges, rightVertexes, err := d.buildRecursive(joinop.Children()[1], vertexMap)
 	if err != nil {
 		return nil, curVertexes, err
 	}
