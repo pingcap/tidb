@@ -108,8 +108,6 @@ type PhysicalIndexScan struct {
 
 	GroupedRanges  [][]*ranger.Range `plan-cache-clone:"shallow"`
 	GroupByColIdxs []int             `plan-cache-clone:"shallow"`
-
-	NotAlwaysValid bool
 }
 
 // FullRange represent used all partitions.
@@ -657,8 +655,10 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 		PkIsHandleCol:    ds.GetPKIsHandleCol(),
 		ConstColsByCond:  path.ConstCols,
 		Prop:             prop,
-		NotAlwaysValid:   path.PartIdxCondNotAlwaysValid,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+
+	is.SetNoncacheableReason(path.NoncacheableReason)
+
 	rowCount := path.CountAfterAccess
 	is.InitSchema(append(path.FullIdxCols, ds.CommonHandleCols...), !isSingleScan)
 
@@ -688,8 +688,9 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 	if usedStats != nil && usedStats.GetUsedInfo(is.PhysicalTableID) != nil {
 		is.UsedStatsInfo = usedStats.GetUsedInfo(is.PhysicalTableID)
 	}
-	if isMatchProp {
-		is.Desc = prop.SortItems[0].Desc
+	// Index scan should maintain order (true for both normal sorting via SortItems and partial order via PartialOrderInfo)
+	if prop.NeedKeepOrder() {
+		is.Desc = prop.GetSortDescForKeepOrder()
 		is.KeepOrder = true
 	}
 	return is

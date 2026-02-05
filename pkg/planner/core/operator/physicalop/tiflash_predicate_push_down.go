@@ -105,7 +105,7 @@ func groupByColumnsSortBySelectivity(sctx base.PlanContext, conds []expression.E
 	// Estimate the selectivity of each group and check if it is larger than the selectivityThreshold
 	var exprGroups []expressionGroup
 	for _, group := range groupMap {
-		selectivity, _, err := cardinality.Selectivity(sctx, ts.TblColHists, group, nil)
+		selectivity, err := cardinality.Selectivity(sctx, ts.TblColHists, group, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -201,7 +201,7 @@ func predicatePushDownToTableScan(sctx base.PlanContext, conds []expression.Expr
 
 	for _, exprGroup := range sortedConds {
 		mergedConds := append(selectedConds, exprGroup.exprs...)
-		selectivity, _, err := cardinality.Selectivity(sctx, ts.TblColHists, mergedConds, nil)
+		selectivity, err := cardinality.Selectivity(sctx, ts.TblColHists, mergedConds, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed, do not push down the conditions group", zap.Error(err))
 			continue
@@ -333,7 +333,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 			continue
 		}
 		// 3. The selectivity of the predicate is less than 60%.
-		selectivity, _, err := cardinality.Selectivity(pctx, ts.TblColHists, []expression.Expression{cond}, nil)
+		selectivity, err := cardinality.Selectivity(pctx, ts.TblColHists, []expression.Expression{cond}, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			continue
@@ -376,7 +376,7 @@ func handleTiFlashPredicatePushDown(pctx base.PlanContext, ts *PhysicalTableScan
 	// Update the row count of table scan.
 	if len(selectedConditions)+len(ts.LateMaterializationFilterCondition) != 0 {
 		selectedConditions = append(selectedConditions, ts.LateMaterializationFilterCondition...)
-		selectivity, _, err := cardinality.Selectivity(ts.SCtx(), ts.TblColHists, selectedConditions, nil)
+		selectivity, err := cardinality.Selectivity(ts.SCtx(), ts.TblColHists, selectedConditions, nil)
 		if err != nil {
 			logutil.BgLogger().Warn("calculate selectivity failed", zap.Error(err))
 			selectivity = selectivityThreshold

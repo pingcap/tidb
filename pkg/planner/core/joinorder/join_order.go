@@ -715,31 +715,27 @@ func FindAndRemovePlanByAstHint[T any](
 
 	// Step 2: Match by query-block alias (subquery name)
 	// Only execute this step if no direct table name match was found
-	groupIdx := -1
+	matchIdx := -1
 	for i, joinGroup := range plans {
-		plan := getPlan(joinGroup)
-		blockOffset := plan.QueryBlockOffset()
+		blockOffset := joinGroup.QueryBlockOffset()
 		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
 			blockName := queryBlockNames[blockOffset]
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
 			tableMatch := astTbl.TableName.L == blockName.TableName.L
 			if dbMatch && tableMatch {
-				// this can happen when multiple join groups are from the same block, for example:
-				//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
-				// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
-				// TODO: currently we skip this case for simplification, we can support it in the future.
-				if groupIdx != -1 {
-					groupIdx = -1
-					break
+				if matchIdx != -1 {
+					intest.Assert(false, "leading subquery alias matches multiple join groups")
+					return nil, plans, false
 				}
-				groupIdx = i
+				matchIdx = i
 			}
 		}
 	}
-
-	if groupIdx != -1 {
-		matched := plans[groupIdx]
-		newPlans := append(plans[:groupIdx], plans[groupIdx+1:]...)
+	if matchIdx != -1 {
+		// take the matched plan before slice manipulation. `append(plans[:matchIdx], ...)`
+		// may overwrite `plans[matchIdx]` due to shared backing arrays.
+		matched := plans[matchIdx]
+		newPlans := append(plans[:matchIdx], plans[matchIdx+1:]...)
 		return matched, newPlans, true
 	}
 
