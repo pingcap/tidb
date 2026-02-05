@@ -378,7 +378,8 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 		flen int
 	}{
 		{name: "dml_type", ft: mysql.TypeVarchar, flen: 1},
-		{name: "old_new", ft: mysql.TypeVarchar, flen: 1},
+		// old_new is a signed tinyint: NEW=1, OLD=-1.
+		{name: "old_new", ft: mysql.TypeTiny, flen: 4},
 	}
 	for _, metaCol := range metaCols {
 		ft := ptypes.NewFieldType(metaCol.ft)
@@ -438,19 +439,11 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 		PurgeNext:      purgeNext,
 	}
 
+	if s.TiFlashReplicas > 0 {
+		mlogTableInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: s.TiFlashReplicas}
+	}
 	if err := e.ddlExecutor.CreateTableWithInfo(e.Ctx(), schemaName, mlogTableInfo, nil); err != nil {
 		return err
-	}
-
-	if s.TiFlashReplicas > 0 {
-		alterStmt := &ast.AlterTableStmt{
-			Table: &ast.TableName{Schema: schemaName, Name: pmodel.NewCIStr(mlogName)},
-			Specs: []*ast.AlterTableSpec{{
-				Tp:             ast.AlterTableSetTiFlashReplica,
-				TiFlashReplica: &ast.TiFlashReplicaSpec{Count: s.TiFlashReplicas},
-			}},
-		}
-		return e.ddlExecutor.AlterTable(ctx, e.Ctx(), alterStmt)
 	}
 	return nil
 }

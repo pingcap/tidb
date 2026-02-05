@@ -20,6 +20,7 @@ import (
 	"time"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
@@ -58,6 +59,7 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 		}
 		if c.Name.L == "old_new" {
 			hasOldNew = true
+			require.Equal(t, mysql.TypeTiny, c.FieldType.GetType())
 		}
 	}
 	require.True(t, hasDMLType)
