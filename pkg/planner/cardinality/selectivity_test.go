@@ -799,12 +799,12 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a >= 1 and c > 1 and a < 2",
 			selectivity:              0.006358024691358024,
-			selectivityAfterIncrease: 0.01117283950617284,
+			selectivityAfterIncrease: 0.011302469135802469,
 		},
 		{
 			exprs:                    "a >= 1 and c >= 1 and a < 2",
 			selectivity:              0.012530864197530862,
-			selectivityAfterIncrease: 0.01734567901234568,
+			selectivityAfterIncrease: 0.017475308641975308,
 		},
 		{
 			exprs:                    "d = 0 and e = 1",
@@ -819,7 +819,7 @@ func TestSelectivity(t *testing.T) {
 		{
 			exprs:                    "a > 1 and b < 2 and c > 3 and d < 4 and e > 5",
 			selectivity:              0.001851851851851852,
-			selectivityAfterIncrease: 0.0829,
+			selectivityAfterIncrease: 0.11122575925925926,
 		},
 		{
 			exprs:                    longExpr,
@@ -1367,7 +1367,7 @@ func TestIssue39593(t *testing.T) {
 	countResult, err = cardinality.GetRowCountByIndexRanges(sctx.GetPlanCtx(), &statsTbl.HistColl, idxID, getRanges(vals, vals), nil)
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
-	require.InDelta(t, float64(3702.6), countResult.Est, float64(1))
+	require.InDelta(t, float64(5400), countResult.Est, float64(1))
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
@@ -2086,6 +2086,89 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	require.NoError(t, err3)
 	// Result of count3 should be larger because the risk ratio is higher
 	require.Less(t, count2, count3)
+}
+
+// TestOutOfRangeGeVsBetween tests two out-of-range queries: col >= 100 and col BETWEEN 100 AND 102.
+// Histogram has values 1-100 so the right uncertainty band (histR, boundR) is (100, 199).
+// [100, 102] overlaps that band (bounded gets a fraction); [100, MaxInt64] is unbounded and gets the full band.
+// Uses mock statistics only (no store/table/analyze). We verify:
+// 1. MaxEst for "col >= 100" is strictly larger than MaxEst for "col BETWEEN 100 AND 102".
+// 2. For every skewRatio, Est for "col >= 100" is strictly larger than Est for "col BETWEEN 100 AND 102".
+func TestOutOfRangeGeVsBetween(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0, Length: -1},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Histogram 1-100 so boundR = 199; [100, 102] overlaps (100, 199), unbounded [100, MaxInt64] gets full band.
+	rowCount := int64(100)
+	statsTbl := mockStatsTable(tblInfo, rowCount)
+
+	colValues, err := generateIntDatum(1, 100)
+	require.NoError(t, err)
+	for i := range colValues {
+		colValues[i].SetInt64(int64(i) + 1)
+	}
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+	realtimeCount := rowCount * 10
+	modifyCount := realtimeCount * 2
+
+	rangeGe100 := getRange(100, math.MaxInt64)
+	rangeBetween100102 := getRange(100, 102)
+
+	sctx.GetSessionVars().RiskRangeSkewRatio = 0.5
+	est1, err := getColumnRowCount(sctx, col, rangeGe100, realtimeCount, modifyCount, false)
+	require.NoError(t, err)
+	est2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
+	require.NoError(t, err)
+
+	t.Logf("col >= 100 (unbounded): Est=%.2f MinEst=%.2f MaxEst=%.2f", est1.Est, est1.MinEst, est1.MaxEst)
+	t.Logf("col BETWEEN 100 AND 102 (bounded): Est=%.2f MinEst=%.2f MaxEst=%.2f", est2.Est, est2.MinEst, est2.MaxEst)
+
+	for _, ratio := range []float64{0, 0.3, 0.5, 0.7, 1} {
+		sctx.GetSessionVars().RiskRangeSkewRatio = ratio
+		e1, err := getColumnRowCount(sctx, col, rangeGe100, realtimeCount, modifyCount, false)
+		require.NoError(t, err)
+		e2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
+		require.NoError(t, err)
+		t.Logf("skew_ratio=%.1f: col >= 100 Est=%.2f MinEst=%.2f MaxEst=%.2f | BETWEEN 100 AND 102 Est=%.2f MinEst=%.2f MaxEst=%.2f",
+			ratio, e1.Est, e1.MinEst, e1.MaxEst, e2.Est, e2.MinEst, e2.MaxEst)
+		require.Greaterf(t, e1.Est, e2.Est,
+			"skew_ratio=%v: Est for col >= 100 (%v) must be larger than Est for col BETWEEN 100 AND 102 (%v)",
+			ratio, e1.Est, e2.Est)
+	}
+	require.Greaterf(t, est1.MaxEst, est2.MaxEst,
+		"MaxEst for col >= 100 (%v) must be larger than MaxEst for col BETWEEN 100 AND 102 (%v)",
+		est1.MaxEst, est2.MaxEst)
 }
 
 func TestLastBucketEndValueHeuristic(t *testing.T) {
