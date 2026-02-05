@@ -9,7 +9,7 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 2,
+    shard_count = 3,
     deps = [
         "//pkg/config",
         "//pkg/ddl/ingest/testutil",

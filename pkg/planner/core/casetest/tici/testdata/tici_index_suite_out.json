@@ -460,6 +460,49 @@
           "    └─IndexRangeScan 1000.00 cop[tici] table:t5, index:idx1(ts, d, t) range:[-inf,2025-11-30 00:00:00.00000), search func:eq(test.t5.t, \"apple\"), lt(test.t5.ts, 2025-11-30 00:00:00.000000), keep order:false, stats:pseudo"
         ],
         "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where match(title) against ('hello' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_word(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where match(title) against ('hello*' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_prefix(\"hello\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select * from t1 where match(title) against ('\\\"hello world\\\"' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexLookUp 1000.00 root  ",
+          "├─IndexRangeScan(Build) 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:fts_match_phrase(\"hello world\", test.t1.title), keep order:false, stats:pseudo",
+          "└─TableRowIDScan(Probe) 1000.00 cop[tikv] table:t1 keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where match(title) against ('+apple -banana' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:and(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), not(fts_match_word(\"banana\", test.t1.title))), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
+      },
+      {
+        "SQL": "explain format='brief' select id from t1 where match(title) against ('apple' IN BOOLEAN MODE) or match(title) against ('banana' IN BOOLEAN MODE)",
+        "Plan": [
+          "IndexReader 1000.00 root  index:IndexRangeScan",
+          "└─IndexRangeScan 1000.00 cop[tici] table:t1, index:idx_title(title) range:[-inf,+inf], search func:or(istrue_with_null(fts_match_word(\"apple\", test.t1.title)), istrue_with_null(fts_match_word(\"banana\", test.t1.title))), keep order:false, stats:pseudo"
+        ],
+        "Warn": null
       }
     ]
   },
