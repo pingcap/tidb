@@ -1791,6 +1791,10 @@ func getIndexJoinSideAndMethod(join base.PhysicalPlan) (innerSide, joinMethod in
 // tryToEnumerateIndexJoin returns all available index join plans, which will require inner indexJoinProp downside
 // compared with original tryToGetIndexJoin.
 func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProperty) []base.PhysicalPlan {
+	if prop.IndexJoinProp != nil {
+		// Avoid nested index join enumeration under an index join inner side.
+		return nil
+	}
 	_, p := base.GetGEAndLogicalOp[*logicalop.LogicalJoin](super)
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
@@ -1835,6 +1839,10 @@ func tryToEnumerateIndexJoin(super base.LogicalPlan, prop *property.PhysicalProp
 
 // tryToGetIndexJoin returns all available index join plans, and the second returned value indicates whether this plan is enforced by hints.
 func tryToGetIndexJoin(p *logicalop.LogicalJoin, prop *property.PhysicalProperty) (indexJoins []base.PhysicalPlan, canForced bool) {
+	if prop.IndexJoinProp != nil {
+		// Avoid nested index join enumeration under an index join inner side.
+		return nil, false
+	}
 	// supportLeftOuter and supportRightOuter indicates whether this type of join
 	// supports the left side or right side to be the outer side.
 	var supportLeftOuter, supportRightOuter bool
