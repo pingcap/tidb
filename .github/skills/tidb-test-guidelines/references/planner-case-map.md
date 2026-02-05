@@ -120,11 +120,10 @@
 ## pkg/planner/core/casetest
 
 ### Tests
-- `pkg/planner/core/casetest/integration_test.go` - planner/core/casetest: Cascades integration cases for verbose explain outputs, TiFlash isolation/MPP/partition behaviors, fix-control regressions, and issue-specific plan checks.
+- `pkg/planner/core/casetest/integration_test.go` - planner/core/casetest: Cascades integration cases for verbose explain outputs, TiFlash isolation/MPP/partition behaviors, fix-control regressions, and merged issue regressions.
 - `pkg/planner/core/casetest/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/planner/core/casetest/plan_test.go` - planner/core/casetest: Tests prefer range scan and normalized plan output.
+- `pkg/planner/core/casetest/plan_test.go` - planner/core/casetest: Tests plan digest stability, normalized plan output, and related regressions.
 - `pkg/planner/core/casetest/stats_test.go` - planner/core/casetest: Tests group NDVs.
-- `pkg/planner/core/casetest/tiflash_predicate_push_down_test.go` - planner/core/casetest: Tests TiFlash late materialization and inverted index plans.
 
 ### Testdata
 - `pkg/planner/core/casetest/testdata/integration_suite_in.json`
@@ -167,7 +166,7 @@
 ## pkg/planner/core/casetest/cbotest
 
 ### Tests
-- `pkg/planner/core/casetest/cbotest/cbo_test.go` - planner/core/casetest/cbotest: Tests CBO regressions, no-analyze stats, and straight join cases.
+- `pkg/planner/core/casetest/cbotest/cbo_test.go` - planner/core/casetest/cbotest: Tests CBO analyze suites, no-analyze stats, straight join cases, and merged issue regressions.
 - `pkg/planner/core/casetest/cbotest/main_test.go` - Configures default goleak settings and registers testdata.
 
 ### Testdata
@@ -293,7 +292,7 @@
 ## pkg/planner/core/casetest/join
 
 ### Tests
-- `pkg/planner/core/casetest/join/join_test.go` - planner/core/casetest/join: Tests semijoin order, NULL-safe join EQ, join condition simplification, join key preservation, and issue regressions.
+- `pkg/planner/core/casetest/join/join_test.go` - planner/core/casetest/join: Tests semijoin order, NULL-safe join EQ, join condition simplification, join key preservation, and merged issue regressions.
 - `pkg/planner/core/casetest/join/main_test.go` - Configures default goleak settings and registers testdata.
 
 ## pkg/planner/core/casetest/logicalplan
@@ -306,7 +305,7 @@
 
 ### Tests
 - `pkg/planner/core/casetest/mpp/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/planner/core/casetest/mpp/mpp_test.go` - planner/core/casetest/mpp: Tests MPP joins (broadcast/shuffle), exchange pruning, fine-grained join/agg, pushdown rules, versioning, and issue regressions.
+- `pkg/planner/core/casetest/mpp/mpp_test.go` - planner/core/casetest/mpp: Tests MPP joins (broadcast/shuffle), exchange pruning, join/agg pushdown, versioning, and merged issue regressions.
 
 ### Testdata
 - `pkg/planner/core/casetest/mpp/testdata/integration_suite_in.json`
@@ -324,7 +323,7 @@
 ### Tests
 - `pkg/planner/core/casetest/partition/integration_partition_test.go` - planner/core/casetest/partition: Tests list/list-columns pruning and dynamic/static plan differences.
 - `pkg/planner/core/casetest/partition/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/planner/core/casetest/partition/partition_pruner_test.go` - planner/core/casetest/partition: Tests hash/list partition pruning and partition info extraction.
+- `pkg/planner/core/casetest/partition/partition_pruner_test.go` - planner/core/casetest/partition: Tests partition pruning rules, extract functions, and merged issue regressions.
 
 ### Testdata
 - `pkg/planner/core/casetest/partition/testdata/integration_partition_suite_in.json`
@@ -338,7 +337,7 @@
 
 ### Tests
 - `pkg/planner/core/casetest/physicalplantest/main_test.go` - Configures default goleak settings and registers testdata.
-- `pkg/planner/core/casetest/physicalplantest/physical_plan_test.go` - planner/core/casetest/physicalplantest: Tests refine/agg eliminator with plan suite data.
+- `pkg/planner/core/casetest/physicalplantest/physical_plan_test.go` - planner/core/casetest/physicalplantest: Tests plan suite cases, MPP hints, agg elimination, and merged issue regressions.
 
 ### Testdata
 - `pkg/planner/core/casetest/physicalplantest/testdata/cascades_template_in.json`
@@ -358,7 +357,7 @@
 - `pkg/planner/core/casetest/plancache/plan_cache_rebuild_test.go` - planner/core/casetest/plancache: Tests cached-plan clone/rebuild correctness and fast point get cloning.
 - `pkg/planner/core/casetest/plancache/plan_cache_suite_test.go` - planner/core/casetest/plancache: Tests prepared/non-prepared plan cache regressions, bindings, MV index, and resource groups.
 - `pkg/planner/core/casetest/plancache/plan_cache_test.go` - planner/core/casetest/plancache: Tests deallocate prepare cache separation and cache key benchmarks.
-- `pkg/planner/core/casetest/plancache/plan_cacheable_checker_test.go` - planner/core/casetest/plancache: Tests cacheable checks, IN-list fix control, and issue regressions.
+- `pkg/planner/core/casetest/plancache/plan_cacheable_checker_test.go` - planner/core/casetest/plancache: Tests cacheable checks, IN-list fix control, and merged issue regressions.
 
 ### Testdata
 - `pkg/planner/core/casetest/plancache/testdata/plan_cache_suite_in.json`
@@ -396,9 +395,9 @@
 - `pkg/planner/core/casetest/rule/rule_eliminate_projection_test.go` - planner/core/casetest/rule: Tests projection elimination with expression indexes.
 - `pkg/planner/core/casetest/rule/rule_inject_extra_projection_test.go` - planner/core/casetest/rule: Tests cast injection for aggregate function modes.
 - `pkg/planner/core/casetest/rule/rule_join_reorder_test.go` - planner/core/casetest/rule: Tests join reorder hints, hash-join toggle, and TiFlash/dynamic partitions.
-- `pkg/planner/core/casetest/rule/rule_outer2inner_test.go` - planner/core/casetest/rule: Tests outer-to-inner rewrites with regressions.
+- `pkg/planner/core/casetest/rule/rule_outer2inner_test.go` - planner/core/casetest/rule: Tests outer-to-inner rewrites with merged issue regressions.
 - `pkg/planner/core/casetest/rule/rule_outer_to_semi_join_test.go` - planner/core/casetest/rule: Tests outer-to-semi join rewrite correctness.
-- `pkg/planner/core/casetest/rule/rule_predicate_pushdown_test.go` - planner/core/casetest/rule: Tests predicate pushdown cases with collation-sensitive constants.
+- `pkg/planner/core/casetest/rule/rule_predicate_pushdown_test.go` - planner/core/casetest/rule: Tests predicate pushdown cases and records plan+result for selected cases.
 - `pkg/planner/core/casetest/rule/rule_predicate_simplification_test.go` - planner/core/casetest/rule: Tests predicate simplification across complex schemas.
 
 ### Testdata
@@ -477,7 +476,7 @@
 ### Tests
 - `pkg/planner/core/casetest/windows/main_test.go` - Configures default goleak settings and registers testdata.
 - `pkg/planner/core/casetest/windows/widow_with_exist_subquery_test.go` - planner/core/casetest/windows: Tests window functions with correlated EXISTS subqueries.
-- `pkg/planner/core/casetest/windows/window_push_down_test.go` - planner/core/casetest/windows: Tests TiFlash window pushdown plans and warnings.
+- `pkg/planner/core/casetest/windows/window_push_down_test.go` - planner/core/casetest/windows: Tests TiFlash window pushdown plans, warnings, and merged issue regressions.
 
 ### Testdata
 - `pkg/planner/core/casetest/windows/testdata/window_push_down_suite_in.json`

@@ -24,6 +24,8 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 - If a test must use multiple sessions or domains (for example, cross-session cache behavior), keep the extra stores/testkits but document why in the test.
 - Keep per-test runtime short; consolidate similar checks only if runtime stays reasonable.
 - Use behavior-based test names; never use issue-id-only names.
+- In test code, use the variable name `tk` for `*testkit.TestKit` (avoid `testKit`).
+- When merging multiple tests into one, keep a single `store` and a single `tk` unless multi-session behavior is required; do not create a new store/tk inside the same test body without a documented reason.
 
 ## Placement rules
 
@@ -38,9 +40,11 @@ description: Decide where to place TiDB tests and how to write them (basic struc
 
 - Apply the same rules (placement, shard_count, naming) to other packages beyond `pkg/planner`.
 - Use existing testdata patterns (`*_in.json`, `*_out.json`, `*_xut.json`) in the same directory when extending suites. When tests use testdata, run with `-record --tags=intest` as needed.
+- For `pkg/planner/core/casetest/rule` predicate pushdown cases, keep SQL in `predicate_pushdown_suite_in.json` and record both `EXPLAIN format='brief'` and query results via the test runner (see `rule_predicate_pushdown_test.go`).
 - When moving benchmarks between packages, update any `TestBenchDaily` wrappers that list them and keep `Makefile` `bench-daily` entries aligned with the new package location.
 - When updating tests in any `pkg/*` package, ask AI to update the corresponding case map under `references/`.
 - When updating tests in any other directory, also update this skill: add or extend a case map under `references/` and add guidance in this `SKILL.md` so future changes stay consistent.
+- When merging issue regression tests into existing behavior tests, keep the issue id in SQL comments (e.g. `/* issue:12345 */`) or nearby comments for traceability.
 - Prefer unit tests over `tests/integrationtest` for end-to-end coverage unless you need to avoid union-storage executor differences or require full workflow validation.
 - When tests read source files under Bazel, use `go/runfiles` and ensure the target file is exported via `exports_files()` in its owning `BUILD.bazel`.
 - For Bazel runfiles, be ready to include the workspace prefix (from `TEST_WORKSPACE`) in the runfile path if needed.

@@ -128,5 +128,22 @@ func TestJoinOrderHint4NestedLeadingPK(t *testing.T) {
 		testKit.MustExec("create table t3(a int not null, b int not null, primary key(a));")
 		testKit.MustExec("create table t4(a int not null, b int not null, primary key(b));")
 		runJoinReorderTestData(t, testKit, "TestJoinOrderHint4NestedLeadingPK")
+func TestLeadingHintInapplicableKeepsOtherConds(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, testKit *testkit.TestKit, cascades, caller string) {
+		testKit.MustExec("use test")
+		testKit.MustExec("set @@tidb_enable_outer_join_reorder=true")
+		testKit.MustExec("drop table if exists t0_lh, t1_lh, t2_lh, t3_lh;")
+		testKit.MustExec("create table t0_lh(k0 int, k1 int, k2 int);")
+		testKit.MustExec("create table t1_lh(k0 int, k1 int, k2 int);")
+		testKit.MustExec("create table t2_lh(k0 int, k1 int, k2 int);")
+		testKit.MustExec("create table t3_lh(k0 int, k1 int, k2 int);")
+
+		testKit.MustQuery("explain format = 'brief' " +
+			"select /*+ leading(t0_lh, t2_lh, t3_lh, t1_lh) */ t1_lh.k0 " +
+			"from t0_lh right join t2_lh on (t0_lh.k1 = t2_lh.k1) " +
+			"join t3_lh on (t0_lh.k2 = t3_lh.k2 and t2_lh.k1 < t3_lh.k2) " +
+			"left join t1_lh on (t0_lh.k0 <=> t1_lh.k0);").
+			CheckContain("lt(test.t2_lh.k1, test.t3_lh.k2)")
+		testKit.MustQuery("show warnings").CheckContain("leading hint is inapplicable")
 	})
 }

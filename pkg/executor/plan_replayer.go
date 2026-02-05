@@ -20,7 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
+	"io"
 	"strings"
 
 	"github.com/pingcap/errors"
@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
@@ -36,6 +37,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/config"
 	"github.com/pingcap/tidb/pkg/util/logutil"
+	parserutil "github.com/pingcap/tidb/pkg/util/parser"
 	"github.com/pingcap/tidb/pkg/util/replayer"
 	"go.uber.org/zap"
 )
@@ -65,13 +67,13 @@ type PlanReplayerDumpInfo struct {
 	HistoricalStatsTS uint64
 	StartTS           uint64
 	Path              string
-	File              *os.File
+	File              io.WriteCloser
 	FileName          string
 	ctx               sessionctx.Context
 }
 
 // Next implements the Executor Next interface.
-func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
+func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) (err error) {
 	req.GrowAndReset(e.MaxChunkSize())
 	if e.endFlag {
 		return nil
@@ -82,10 +84,16 @@ func (e *PlanReplayerExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		return e.registerCaptureTask(ctx)
 	}
-	err := e.createFile()
+	err = e.createFile(ctx)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if err != nil && e.DumpInfo != nil && e.DumpInfo.File != nil {
+			_ = e.DumpInfo.File.Close()
+			e.DumpInfo.File = nil
+		}
+	}()
 	// Note:
 	// For the dumping for SQL file case (len(e.DumpInfo.Path) > 0), the DumpInfo.dump() is called in
 	// handleFileTransInConn(), which is after TxnManager.OnTxnEnd(), where we can't access the TxnManager anymore.
@@ -162,9 +170,12 @@ func (e *PlanReplayerExec) registerCaptureTask(ctx context.Context) error {
 	return nil
 }
 
-func (e *PlanReplayerExec) createFile() error {
-	var err error
-	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(false, false, false)
+func (e *PlanReplayerExec) createFile(ctx context.Context) error {
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		return err
+	}
+	e.DumpInfo.File, e.DumpInfo.FileName, err = replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
 	if err != nil {
 		return err
 	}
@@ -405,24 +416,34 @@ func createSchemaAndItems(ctx sessionctx.Context, f *zip.File) error {
 		return errors.AddStack(err)
 	}
 	originText := buf.String()
-	index1 := strings.Index(originText, ";")
-	createDatabaseSQL := originText[:index1+1]
-	index2 := strings.Index(originText[index1+1:], ";")
-	useDatabaseSQL := originText[index1+1:][:index2+1]
-	createTableSQL := originText[index1+1:][index2+1:]
 	c := context.Background()
-	// create database if not exists
-	_, err = ctx.GetSQLExecutor().Execute(c, createDatabaseSQL)
-	logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
-	// use database
-	_, err = ctx.GetSQLExecutor().Execute(c, useDatabaseSQL)
+	p := parserutil.GetParser()
+	defer parserutil.DestroyParser(p)
+	vars := ctx.GetSessionVars()
+	p.SetSQLMode(vars.SQLMode)
+	p.SetParserConfig(vars.BuildParserConfig())
+	stmts, _, err := p.ParseSQL(originText, vars.GetParseParams()...)
 	if err != nil {
-		return err
+		return errors.AddStack(err)
 	}
-	// create table or view
-	_, err = ctx.GetSQLExecutor().Execute(c, createTableSQL)
-	if err != nil {
-		return err
+	if len(stmts) == 0 {
+		return errors.New("plan replayer: empty schema file")
+	}
+	for i, stmt := range stmts {
+		sqlText := stmt.Text()
+		if len(strings.TrimSpace(sqlText)) == 0 {
+			continue
+		}
+		if i == 0 {
+			// create database if not exists
+			_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
+			logutil.BgLogger().Debug("plan replayer: skip error", zap.Error(err))
+			continue
+		}
+		_, err = ctx.GetSQLExecutor().Execute(c, sqlText)
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }

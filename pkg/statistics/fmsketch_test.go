@@ -29,7 +29,7 @@ import (
 func extractSampleItemsDatums(items []*SampleItem) []types.Datum {
 	datums := make([]types.Datum, len(items))
 	for i, item := range items {
-		datums[i] = item.Value
+		datums[i] = *item.Value
 	}
 	return datums
 }

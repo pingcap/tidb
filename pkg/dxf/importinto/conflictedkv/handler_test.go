@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/dxf/importinto/conflictedkv"
 	"github.com/pingcap/tidb/pkg/executor/importer"
 	tidbkv "github.com/pingcap/tidb/pkg/kv"
@@ -61,9 +60,6 @@ func getEncoder(t *testing.T, tbl table.Table) *importer.TableKVEncoder {
 }
 
 func TestHandler(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("skip test for next-gen kernel temporarily, we need to adapt the test later")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -119,7 +115,7 @@ func TestHandler(t *testing.T) {
 					}
 					// completely same row repeat 10 times
 					for range 10 {
-						ch <- &external.KVPair{Key: pair.Key, Value: pair.Val}
+						ch <- &external.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 					}
 				}
 				close(ch)
@@ -206,7 +202,7 @@ func TestHandler(t *testing.T) {
 						require.NoError(t, err)
 						// only send unique index kv pairs
 						if indexID == targetIndexID {
-							ch <- &external.KVPair{Key: pair.Key, Value: pair.Val}
+							ch <- &external.KVPair{Key: store.GetCodec().EncodeKey(pair.Key), Value: pair.Val}
 						}
 					}
 				}

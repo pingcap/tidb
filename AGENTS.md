@@ -49,6 +49,15 @@ This file provides guidance to agents when working with code in this repository.
 
 - When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
 
+### Notes
+
+- Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
+- Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
+- Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
+- If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
+- Predicate pushdown testdata (`pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`) should contain SQL-only cases; put DDL in the test setup to avoid `EXPLAIN` parsing DDL during record runs.
+- Integration test recording uses `./run-tests.sh -r <name>` (not `-record`).
+
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
@@ -68,7 +77,7 @@ Recommended local build flow:
 make bazel_prepare
 
 # build
-make
+make bazel_bin
 
 # optional: regenerate generated code if needed
 make gogenerate
@@ -135,6 +144,13 @@ The following points must be achieved:
 1. Within the same package, there should not be more than 50 unit tests. The exact number can be referenced from the `shard_count` in the `BUILD.bazel` file under the test path.
 2. Existing tests should be reused as much as possible, and existing test data and table structures should be utilized. Modifications should be made on this basis to accommodate the new tests.
 3. Some tests use the JSON files in `testdata` as the test set (`xxxx_in.json`) and the validation set (`xxxx_out.json` and `xxxx_xut.json`). It is necessary to modify the test set before running the unit test.
+
+#### Regression tests for bug fixes
+
+- A bug fix should include a regression test that reproduces the issue.
+- Verify the new/updated test fails on the buggy code (before the fix), and passes after the fix.
+  - Example approaches: run the test on `upstream/master` (or the target base commit) before applying the fix, or temporarily revert the fix and confirm the test fails.
+- Include the exact test command in the PR description under `Tests` (for example: `go test -run TestXxx --tags=intest ./pkg/...`).
 
 ### Integration Tests
 
@@ -249,6 +265,17 @@ curl -f "http://${PD_ADDR}/pd/api/v1/version"
 - **Environment check**: Check for running playground processes before starting.
 - **Fmt-only changes**: If PR only involves code formatting (gofmt, indentation), do NOT run time-consuming `realtikvtest`. Just ensure local compilation passes.
 
+## Issue Instructions
+
+- When submitting an issue, follow the GitHub templates under `.github/ISSUE_TEMPLATE/` and fill in all required fields.
+- Bug reports should include minimal reproduction steps, expected/actual behavior, and the TiDB version (for example: the output of `SELECT tidb_version()`).
+- Search existing issues/PRs first to avoid duplicates (try `gh` first; for example: `gh search issues --repo pingcap/tidb --include-prs "<keywords>"`), and include any relevant logs/configuration/SQL plans to help diagnosis.
+- Apply labels to help triage:
+  - `type/*` is usually applied by the issue template; add `type/regression` when applicable.
+  - Add at least one `component/*` label (for example: `component/ddl`, `component/br`, `component/parser`).
+  - For bug/regression issues, `severity/*` and affected-version label(s) are required (for example: `affects-8.5`; use `may-affects-*` if unsure).
+  - If you don't have permission to add labels, include a `Suggested labels: ...` line in the issue body.
+
 ## Pull Request Instructions
 
 ### PR title
@@ -262,3 +289,11 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 ### PR description
 
 The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
+
+### Language
+
+Issues and PRs **must** be written in English (title and description).
+
+### Force push
+
+Avoid force-push whenever possible; prefer adding follow-up commits and letting GitHub squash-merge. If a force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.

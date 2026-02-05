@@ -566,7 +566,7 @@ func (b *executorBuilder) buildCheckTable(v *plannercore.CheckTable) exec.Execut
 	return e
 }
 
-func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, hasGenedCol bool) []*model.ColumnInfo {
+func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.IndexInfo, hasGenedColOrPartialIndex bool) []*model.ColumnInfo {
 	var pkCols []*model.IndexColumn
 	if tblInfo.IsCommonHandle {
 		pkIdx := tables.FindPrimaryIndex(tblInfo)
@@ -574,7 +574,7 @@ func buildIdxColsConcatHandleCols(tblInfo *model.TableInfo, indexInfo *model.Ind
 	}
 
 	columns := make([]*model.ColumnInfo, 0, len(indexInfo.Columns)+len(pkCols))
-	if hasGenedCol {
+	if hasGenedColOrPartialIndex {
 		columns = tblInfo.Columns
 	} else {
 		for _, idxCol := range indexInfo.Columns {
@@ -621,20 +621,23 @@ func (b *executorBuilder) buildRecoverIndex(v *plannercore.RecoverIndex) exec.Ex
 		b.err = errors.Errorf("secondary index `%v` is not found in table `%v`", v.IndexName, v.Table.Name.O)
 		return nil
 	}
-	var hasGenedCol bool
+	var hasGenedColOrPartialIndex bool
 	for _, iCol := range index.Meta().Columns {
 		if tblInfo.Columns[iCol.Offset].IsGenerated() {
-			hasGenedCol = true
+			hasGenedColOrPartialIndex = true
 		}
 	}
-	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), hasGenedCol)
+	if index.Meta().HasCondition() {
+		hasGenedColOrPartialIndex = true
+	}
+	cols := buildIdxColsConcatHandleCols(tblInfo, index.Meta(), hasGenedColOrPartialIndex)
 	e := &RecoverIndexExec{
-		BaseExecutor:     exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
-		columns:          cols,
-		containsGenedCol: hasGenedCol,
-		index:            index,
-		table:            t,
-		physicalID:       t.Meta().ID,
+		BaseExecutor:                   exec.NewBaseExecutor(b.ctx, v.Schema(), v.ID()),
+		columns:                        cols,
+		containsGenedColOrPartialIndex: hasGenedColOrPartialIndex,
+		index:                          index,
+		table:                          t,
+		physicalID:                     t.Meta().ID,
 	}
 	e.handleCols = buildHandleColsForExec(tblInfo, e.columns)
 	return e
@@ -2255,6 +2258,10 @@ func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec
 	if b.err != nil {
 		return nil
 	}
+	return b.newProjectionExec(childExec, v)
+}
+
+func (b *executorBuilder) newProjectionExec(childExec exec.Executor, v *physicalop.PhysicalProjection) *ProjectionExec {
 	e := &ProjectionExec{
 		projectionExecutorContext: newProjectionExecutorContext(b.ctx),
 		BaseExecutorV2:            exec.NewBaseExecutorV2(b.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
@@ -2266,6 +2273,7 @@ func (b *executorBuilder) buildProjection(v *physicalop.PhysicalProjection) exec
 	// If the calculation row count for this Projection operator is smaller
 	// than a Chunk size, we turn back to the un-parallel Projection
 	// implementation to reduce the goroutine overhead.
+	// index join would use the same logic.
 	if int64(v.StatsCount()) < int64(b.ctx.GetSessionVars().MaxChunkSize) {
 		e.numWorkers = 0
 	}
@@ -2592,6 +2600,7 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				},
 			}
 		case strings.ToLower(infoschema.TableSlowQuery), strings.ToLower(infoschema.ClusterTableSlowLog):
+			extractor := v.Extractor.(*plannercore.SlowQueryExtractor)
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{
@@ -2600,7 +2609,8 @@ func (b *executorBuilder) buildMemTable(v *physicalop.PhysicalMemTable) exec.Exe
 				retriever: &slowQueryRetriever{
 					table:      v.Table,
 					outputCols: v.Columns,
-					extractor:  v.Extractor.(*plannercore.SlowQueryExtractor),
+					extractor:  extractor,
+					limit:      extractor.Limit,
 					memTracker: memTracker,
 				},
 			}
@@ -4090,6 +4100,53 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 	return keyColOffsets
 }
 
+type indexJoinPartitionRanges struct {
+	partitions []table.PhysicalTable
+	rangeMap   map[int64][]*ranger.Range
+	ranges     []*ranger.Range
+	empty      bool
+	canPrune   bool
+}
+
+func (builder *dataReaderBuilder) buildIndexJoinPartitionRanges(
+	ctx context.Context,
+	tableID int64,
+	physPlanPartInfo *physicalop.PhysPlanPartInfo,
+	rctx *rangerctx.RangerContext,
+	lookUpContents []*join.IndexJoinLookUpContent,
+	indexRanges []*ranger.Range,
+	keyOff2IdxOff []int,
+	cwc *physicalop.ColWithCmpFuncManager,
+) (*indexJoinPartitionRanges, error) {
+	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tableID)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, physPlanPartInfo, lookUpContents)
+	if err != nil {
+		return nil, err
+	}
+	if len(usedPartition) == 0 {
+		return &indexJoinPartitionRanges{empty: true}, nil
+	}
+	res := &indexJoinPartitionRanges{
+		partitions: usedPartition,
+		canPrune:   canPrune,
+	}
+	if canPrune {
+		rangeMap, err := buildIndexRangeForEachPartition(rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		res.rangeMap = rangeMap
+		res.ranges = indexRanges
+		return res, nil
+	}
+	ranges, err := buildRangesForIndexJoin(rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+	if err != nil {
+		return nil, err
+	}
+	res.ranges = ranges
+	return res, nil
+}
+
 func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *physicalop.PhysPlanPartInfo,
 	lookUpContent []*join.IndexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
@@ -5113,34 +5170,24 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, nil
 	}
 
-	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
+	rangeResult, err := builder.buildIndexJoinPartitionRanges(ctx, tbInfo.ID, v.PlanPartInfo, e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err
 	}
-	if len(usedPartition) != 0 {
-		if canPrune {
-			rangeMap, err := buildIndexRangeForEachPartition(e.rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-			if err != nil {
-				return nil, err
-			}
-			e.partitions = usedPartition
-			e.ranges = indexRanges
-			e.partRangeMap = rangeMap
-		} else {
-			e.partitions = usedPartition
-			if e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
-				return nil, err
-			}
-		}
-		if err := exec.Open(ctx, e); err != nil {
-			return nil, err
-		}
-		return e, nil
+	if rangeResult.empty {
+		ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
+		err = exec.Open(ctx, ret)
+		return ret, err
 	}
-	ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
-	err = exec.Open(ctx, ret)
-	return ret, err
+	e.partitions = rangeResult.partitions
+	e.ranges = rangeResult.ranges
+	if rangeResult.canPrune {
+		e.partRangeMap = rangeResult.rangeMap
+	}
+	if err := exec.Open(ctx, e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *physicalop.PhysicalIndexLookUpReader,
@@ -5184,36 +5231,25 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return e, err
 	}
 
-	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
+	rangeResult, err := builder.buildIndexJoinPartitionRanges(ctx, tbInfo.ID, v.PlanPartInfo, e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err
 	}
-	if len(usedPartition) != 0 {
-		if canPrune {
-			rangeMap, err := buildIndexRangeForEachPartition(e.rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-			if err != nil {
-				return nil, err
-			}
-			e.prunedPartitions = usedPartition
-			e.ranges = indexRanges
-			e.partitionRangeMap = rangeMap
-		} else {
-			e.prunedPartitions = usedPartition
-			e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-			if err != nil {
-				return nil, err
-			}
-		}
-		e.partitionTableMode = true
-		if err := exec.Open(ctx, e); err != nil {
-			return nil, err
-		}
-		return e, err
+	if rangeResult.empty {
+		ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
+		err = exec.Open(ctx, ret)
+		return ret, err
 	}
-	ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
-	err = exec.Open(ctx, ret)
-	return ret, err
+	e.prunedPartitions = rangeResult.partitions
+	e.ranges = rangeResult.ranges
+	if rangeResult.canPrune {
+		e.partitionRangeMap = rangeResult.rangeMap
+	}
+	e.partitionTableMode = true
+	if err := exec.Open(ctx, e); err != nil {
+		return nil, err
+	}
+	return e, err
 }
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
@@ -5241,20 +5277,7 @@ func (builder *dataReaderBuilder) buildProjectionForIndexJoin(
 		}
 	}()
 
-	e := &ProjectionExec{
-		projectionExecutorContext: newProjectionExecutorContext(builder.ctx),
-		BaseExecutorV2:            exec.NewBaseExecutorV2(builder.ctx.GetSessionVars(), v.Schema(), v.ID(), childExec),
-		numWorkers:                int64(builder.ctx.GetSessionVars().ProjectionConcurrency()),
-		evaluatorSuit:             expression.NewEvaluatorSuite(v.Exprs, v.AvoidColumnEvaluator),
-		calculateNoDelay:          v.CalculateNoDelay,
-	}
-
-	// If the calculation row count for this Projection operator is smaller
-	// than a Chunk size, we turn back to the un-parallel Projection
-	// implementation to reduce the goroutine overhead.
-	if int64(v.StatsCount()) < int64(builder.ctx.GetSessionVars().MaxChunkSize) {
-		e.numWorkers = 0
-	}
+	e := builder.newProjectionExec(childExec, v)
 	failpoint.Inject("buildProjectionForIndexJoinPanic", func(val failpoint.Value) {
 		if v, ok := val.(bool); ok && v {
 			panic("buildProjectionForIndexJoinPanic")
