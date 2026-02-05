@@ -171,16 +171,6 @@ func (e *DDLExec) executeCreateMaterializedView(ctx context.Context, s *ast.Crea
 	if err := e.ddlExecutor.CreateTableWithInfo(e.Ctx(), schemaName, mvTableInfo, nil); err != nil {
 		return err
 	}
-	if s.TiFlashReplicas > 0 {
-		alterStmt := &ast.AlterTableStmt{
-			Table: &ast.TableName{Schema: schemaName, Name: s.ViewName.Name},
-			Specs: []*ast.AlterTableSpec{{
-				Tp:             ast.AlterTableSetTiFlashReplica,
-				TiFlashReplica: &ast.TiFlashReplicaSpec{Count: s.TiFlashReplicas},
-			}},
-		}
-		return e.ddlExecutor.AlterTable(ctx, e.Ctx(), alterStmt)
-	}
 	return nil
 }
 
@@ -303,8 +293,12 @@ func hasMaterializedViewDependsOnBaseTable(ctx context.Context, is infoschema.In
 func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.AlterMaterializedViewStmt) error {
 	// Keep the execution atomic: if there are unsupported actions, fail fast before any DDL.
 	for _, action := range s.Actions {
-		if action.Tp == ast.AlterMaterializedViewActionRefresh {
+		switch action.Tp {
+		case ast.AlterMaterializedViewActionComment:
+		case ast.AlterMaterializedViewActionRefresh:
 			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW ... REFRESH is not supported")
+		default:
+			return errors.Errorf("unknown alter materialized view action type: %d", action.Tp)
 		}
 	}
 
@@ -339,17 +333,6 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 						Tp:       ast.TableOptionComment,
 						StrValue: action.Comment,
 					}},
-				}},
-			}
-			if err := e.ddlExecutor.AlterTable(ctx, e.Ctx(), alterStmt); err != nil {
-				return err
-			}
-		case ast.AlterMaterializedViewActionTiFlashReplica:
-			alterStmt := &ast.AlterTableStmt{
-				Table: &ast.TableName{Schema: schemaName, Name: s.ViewName.Name},
-				Specs: []*ast.AlterTableSpec{{
-					Tp:             ast.AlterTableSetTiFlashReplica,
-					TiFlashReplica: &ast.TiFlashReplicaSpec{Count: action.TiFlashReplicas},
 				}},
 			}
 			if err := e.ddlExecutor.AlterTable(ctx, e.Ctx(), alterStmt); err != nil {
