@@ -102,7 +102,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 	require.Equal(t, int64(0), exec.metrics.timeoutCount.Load())
 	require.Equal(t, int64(0), exec.metrics.rejectedCount.Load())
 
-	exec.SetMaxConcurrency(2)
+	exec.setMaxConcurrency(2)
 
 	waitForSignal(t, started, 200*time.Millisecond)
 
@@ -173,7 +173,7 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 	exec := NewTaskExecutor(1, 0)
 	defer exec.Close()
 
-	exec.SetTimeout(40 * time.Millisecond)
+	exec.setTimeout(40 * time.Millisecond)
 
 	started := make(chan string, 2)
 	block := make(chan struct{})

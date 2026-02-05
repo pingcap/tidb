@@ -63,11 +63,11 @@ func (e *TaskExecutor) UpdateConfig(maxConcurrency int, timeout time.Duration) {
 	}
 }
 
-func (e *TaskExecutor) SetMaxConcurrency(maxConcurrency int) {
+func (e *TaskExecutor) setMaxConcurrency(maxConcurrency int) {
 	e.UpdateConfig(maxConcurrency, -1)
 }
 
-func (e *TaskExecutor) SetTimeout(timeout time.Duration) {
+func (e *TaskExecutor) setTimeout(timeout time.Duration) {
 	e.UpdateConfig(0, timeout)
 }
 
