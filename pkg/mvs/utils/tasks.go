@@ -22,28 +22,58 @@ type MVJobsManager struct {
 	lastRefresh    time.Time
 	running        atomic.Bool
 	sch            *ServerConsistentHash
+	maxConcurrency int
+	taskTimeout    time.Duration
+	executor       *TaskExecutor
+	mvDDLEventCh   Notifier
 
-	mvMu struct {
+	metrics struct {
+		mvCount                atomic.Int64
+		mvLogCount             atomic.Int64
+		pendingMVRefreshCount  atomic.Int64
+		pendingMVLogPurgeCount atomic.Int64
+		runningMVRefreshCount  atomic.Int64
+		runningMVLogPurgeCount atomic.Int64
+	}
+
+	mvRefreshMu struct {
 		sync.Mutex
 		pending map[string]mvItem
 		prio    PriorityQueue[*mv]
 	}
-	mvLogMu struct {
+	mvLogPurgeMu struct {
 		sync.Mutex
 		pending map[string]mvLogItem
 		prio    PriorityQueue[*mvLog]
 	}
 }
 
-var mvDDLEventCh = NewNotifier()
+const (
+	defaultMVTaskMaxConcurrency = 10
+	defaultMVTaskTimeout        = 60 * time.Second
+)
 
 // NewMVJobsManager creates a MVJobsManager with a SQL executor.
 func NewMVJobsManager(se basic.SessionPool) *MVJobsManager {
 	mgr := &MVJobsManager{
 		sysSessionPool: se,
 		sch:            NewServerConsistentHash(10),
+		maxConcurrency: defaultMVTaskMaxConcurrency,
+		taskTimeout:    defaultMVTaskTimeout,
+		mvDDLEventCh:   NewNotifier(),
 	}
 	return mgr
+}
+
+// SetTaskExecConfig sets the execution config for MV tasks.
+// It should be called before Start.
+func (t *MVJobsManager) SetTaskExecConfig(maxConcurrency int, timeout time.Duration) {
+	if maxConcurrency > 0 {
+		t.maxConcurrency = maxConcurrency
+	}
+	if timeout >= 0 {
+		t.taskTimeout = timeout
+	}
 }
 
 type mv struct {
@@ -196,33 +226,30 @@ CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge
 /*
 
 CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge (
-    MLOG_ID bigint NOT NULL,
-    PURGE_METHOD varchar(32) NOT NULL,
-    PURGE_START datetime DEFAULT NULL,
-    PURGE_INTERVAL bigint DEFAULT NULL,
-    LAST_PURGE_TIME datetime DEFAULT NULL,
-    LAST_PURGE_ROWS bigint DEFAULT NULL,
-    LAST_PURGE_DURATION bigint DEFAULT NULL,
-    PRIMARY KEY(MLOG_ID)
+	MLOG_ID bigint NOT NULL,
+	LAST_PURGE_TIME datetime DEFAULT NULL,
+	LAST_PURGE_ROWS bigint DEFAULT NULL,
+	LAST_PURGE_DURATION bigint DEFAULT NULL,
+	PRIMARY KEY(MLOG_ID)
 )
 
 CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh (
-    MVIEW_ID bigint NOT NULL,
-    REFRESH_METHOD varchar(32) DEFAULT NULL,
-    START_WITH varchar(256) DEFAULT NULL,
-    REFRESH_INTERVAL bigint DEFAULT NULL,
-    LAST_REFRESH_RESULT varchar(16) DEFAULT NULL,
-    LAST_REFRESH_TYPE varchar(16) DEFAULT NULL,
-    LAST_REFRESH_TIME datetime DEFAULT NULL,
-    LAST_REFRESH_READ_TSO bigint DEFAULT NULL,
-    LAST_REFRESH_FAILED_REASON longtext DEFAULT NULL,
-    PRIMARY KEY(MVIEW_ID)
+	MVIEW_ID bigint NOT NULL,
+	LAST_REFRESH_RESULT varchar(16) DEFAULT NULL,
+	LAST_REFRESH_TYPE varchar(16) DEFAULT NULL,
+	LAST_REFRESH_TIME datetime DEFAULT NULL,
+	LAST_SUCCESSFUL_REFRESH_READ_TSO bigint DEFAULT NULL,
+	LAST_REFRESH_FAILED_REASON longtext DEFAULT NULL,
+	PRIMARY KEY(MVIEW_ID)
 )
 */
 
 func (t *MVJobsManager) Start() {
 	if t.running.Swap(true) {
 		return
+	}
+	if t.executor == nil {
+		t.executor = NewTaskExecutor(t.maxConcurrency, t.taskTimeout)
 	}
 	ticker := time.NewTicker(time.Second)
 	go func() {
@@ -231,14 +258,14 @@ func (t *MVJobsManager) Start() {
 			select {
 			case <-ticker.C:
 				if time.Since(t.lastRefresh) >= time.Second*30 {
-					mvDDLEventCh.Wake()
+					t.mvDDLEventCh.Wake()
 				}
-			case <-mvDDLEventCh.C:
-				mvDDLEventCh.clear()
+			case <-t.mvDDLEventCh.C:
+				t.mvDDLEventCh.clear()
 				if !t.running.Load() {
 					return
 				}
-				t.RefreshAll()
+				t.FetchAll()
 				mvLogToPurge, mvToRefresh := t.fetchExecTasks()
 				t.purge_mvLog(mvLogToPurge)
 				t.refreshMV(mvToRefresh)
@@ -250,86 +277,93 @@ func (t *MVJobsManager) Start() {
 // Close stops the background refresh loop.
 func (t *MVJobsManager) Close() {
 	if t.running.Swap(false) {
-		mvDDLEventCh.Wake()
+		t.mvDDLEventCh.Wake()
+	}
+	if t.executor != nil {
+		t.executor.Close()
+		t.executor = nil
 	}
 }
 
 func (t *MVJobsManager) fetchExecTasks() (mvLogToPurge []*mvLog, mvToRefresh []*mv) {
 	now := time.Now()
 	{
-		t.mvLogMu.Lock()
-		for t.mvLogMu.prio.Len() > 0 {
-			l := t.mvLogMu.prio.Front().Value
+		t.mvLogPurgeMu.Lock() // guard mvlog purge queue
+		for t.mvLogPurgeMu.prio.Len() > 0 {
+			l := t.mvLogPurgeMu.prio.Front().Value
 			if l.nextPurge.Before(now) {
 				mvLogToPurge = append(mvLogToPurge, l)
-				t.mvLogMu.prio.Pop()
+				t.mvLogPurgeMu.prio.Pop()
 			} else {
 				break
 			}
 		}
-		t.mvLogMu.Unlock()
+		t.metrics.pendingMVLogPurgeCount.Store(int64(t.mvLogPurgeMu.prio.Len()))
+		t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 	}
 	{
-		t.mvMu.Lock()
-		for t.mvMu.prio.Len() > 0 {
-			m := t.mvMu.prio.Front().Value
+		t.mvRefreshMu.Lock() // guard mv refresh queue
+		for t.mvRefreshMu.prio.Len() > 0 {
+			m := t.mvRefreshMu.prio.Front().Value
 			if m.nextRefresh.Before(now) {
 				mvToRefresh = append(mvToRefresh, m)
-				t.mvMu.prio.Pop()
+				t.mvRefreshMu.prio.Pop()
 			} else {
 				break
 			}
 		}
-		t.mvMu.Unlock()
+		t.metrics.pendingMVRefreshCount.Store(int64(t.mvRefreshMu.prio.Len()))
+		t.mvRefreshMu.Unlock() // release mv refresh queue guard
 	}
 	return
 }
 
 func (t *MVJobsManager) refreshMV(mvToRefresh []*mv) {
-	if len(mvToRefresh) > 0 {
-		for _, m := range mvToRefresh {
-			go func() {
-				_, nextRefresh, err := m.refresh()
-				if err != nil {
-					return
-				}
-				{
-					t.mvMu.Lock()
-
-					if p, ok := t.mvMu.pending[m.ID]; ok && p.Value == m {
-						m.nextRefresh = nextRefresh
-						t.mvMu.prio.Push(m)
-					}
-
-					t.mvMu.Unlock()
-				}
-			}()
-		}
+	if len(mvToRefresh) == 0 {
+		return
+	}
+	for _, m := range mvToRefresh {
+		t.executor.Submit("mv-refresh/"+m.ID, func() error {
+			t.metrics.runningMVRefreshCount.Add(1)
+			defer t.metrics.runningMVRefreshCount.Add(-1)
+			_, nextRefresh, err := m.refresh()
+			if err != nil {
+				return err
+			}
+			t.mvRefreshMu.Lock() // guard mv refresh queue
+			if p, ok := t.mvRefreshMu.pending[m.ID]; ok && p.Value == m {
+				m.nextRefresh = nextRefresh
+				t.mvRefreshMu.pending[m.ID] = t.mvRefreshMu.prio.Push(m)
+			}
+			t.metrics.pendingMVRefreshCount.Store(int64(t.mvRefreshMu.prio.Len()))
+			t.mvRefreshMu.Unlock() // release mv refresh queue guard
+			return nil
+		})
 	}
 }
 
 func (t *MVJobsManager) purge_mvLog(mvLogToPurge []*mvLog) {
-	if len(mvLogToPurge) > 0 {
-		for _, l := range mvLogToPurge {
-			go func() {
-				nextPurge, err := l.purge()
-				if err != nil {
-					return
-				}
-				{
-					t.mvLogMu.Lock()
-
-					if p, ok := t.mvLogMu.pending[l.ID]; ok && p.Value == l {
-						l.nextPurge = nextPurge
-						t.mvLogMu.prio.Push(l)
-					}
-
-					t.mvLogMu.Unlock()
-				}
-			}()
-		}
+	if len(mvLogToPurge) == 0 {
+		return
 	}
-	return
+	for _, l := range mvLogToPurge {
+		t.executor.Submit("mvlog-purge/"+l.ID, func() error {
+			t.metrics.runningMVLogPurgeCount.Add(1)
+			defer t.metrics.runningMVLogPurgeCount.Add(-1)
+			nextPurge, err := l.purge()
+			if err != nil {
+				return err
+			}
+			t.mvLogPurgeMu.Lock() // guard mvlog purge queue
+			if p, ok := t.mvLogPurgeMu.pending[l.ID]; ok && p.Value == l {
+				l.nextPurge = nextPurge
+				t.mvLogPurgeMu.pending[l.ID] = t.mvLogPurgeMu.prio.Push(l)
+			}
+			t.metrics.pendingMVLogPurgeCount.Store(int64(t.mvLogPurgeMu.prio.Len()))
+			t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
+			return nil
+		})
+	}
 }
 
 // ExecRCRestrictedSQL is used to execute a restricted SQL which related to resource control.
@@ -350,8 +384,9 @@ func ExecRCRestrictedSQL(sysSessionPool basic.SessionPool, sql string, params []
 	return r, err
 }
 
-func (t *MVJobsManager) refreshAllTiDBMLogPurge() error {
-	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlog_purge", nil)
+func (t *MVJobsManager) fetchAllTiDBMLogPurge() error {
+	const SQL = `SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlog_purge t join mysql.tidb_mlogs l on t.MLOG_ID = l.MLOG_ID`
+	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, SQL, nil)
 	if err != nil {
 		return err
 	}
@@ -372,36 +407,40 @@ func (t *MVJobsManager) refreshAllTiDBMLogPurge() error {
 	}
 
 	{
-		t.mvLogMu.Lock()
+		t.mvLogPurgeMu.Lock() // guard mvlog purge queue
 
-		if t.mvLogMu.pending == nil {
-			t.mvLogMu.pending = make(map[string]mvLogItem, len(newPending))
+		if t.mvLogPurgeMu.pending == nil {
+			t.mvLogPurgeMu.pending = make(map[string]mvLogItem, len(newPending))
 		}
 		for id, nl := range newPending {
-			if ol, ok := t.mvLogMu.pending[id]; ok {
+			if ol, ok := t.mvLogPurgeMu.pending[id]; ok {
 				if ol.Value.nextPurge != nl.nextPurge {
 					ol.Value.nextPurge = nl.nextPurge
-					t.mvLogMu.prio.Update(ol, ol.Value)
+					t.mvLogPurgeMu.prio.Update(ol, ol.Value)
 				}
 				continue
 			}
-			t.mvLogMu.pending[id] = t.mvLogMu.prio.Push(nl)
+			t.mvLogPurgeMu.pending[id] = t.mvLogPurgeMu.prio.Push(nl)
 		}
-		for id, item := range t.mvLogMu.pending {
+		for id, item := range t.mvLogPurgeMu.pending {
 			if _, ok := newPending[id]; ok {
 				continue
 			}
-			delete(t.mvLogMu.pending, id)
-			t.mvLogMu.prio.Remove(item)
+			delete(t.mvLogPurgeMu.pending, id)
+			t.mvLogPurgeMu.prio.Remove(item)
 		}
 
-		t.mvLogMu.Unlock()
+		t.metrics.mvLogCount.Store(int64(len(t.mvLogPurgeMu.pending)))
+		t.metrics.pendingMVLogPurgeCount.Store(int64(t.mvLogPurgeMu.prio.Len()))
+
+		t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
 	}
 	return nil
 }
 
-func (t *MVJobsManager) refreshAllTiDBMViews() error {
-	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, "SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mview_refresh", nil)
+func (t *MVJobsManager) fetchAllTiDBMViews() error {
+	const SQL = `SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mview_refresh t JOIN mysql.tidb_mviews v ON t.MVIEW_ID = v.MVIEW_ID`
+	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, SQL, nil)
 
 	if err != nil {
 		return err
@@ -426,40 +465,42 @@ func (t *MVJobsManager) refreshAllTiDBMViews() error {
 	}
 
 	{
-		t.mvMu.Lock()
+		t.mvRefreshMu.Lock() // guard mv refresh queue
 
-		if t.mvMu.pending == nil {
-			t.mvMu.pending = make(map[string]mvItem, len(newPending))
+		if t.mvRefreshMu.pending == nil {
+			t.mvRefreshMu.pending = make(map[string]mvItem, len(newPending))
 		}
 		for id, nm := range newPending {
-			if om, ok := t.mvMu.pending[id]; ok {
+			if om, ok := t.mvRefreshMu.pending[id]; ok {
 				if om.Value.nextRefresh != nm.nextRefresh {
 					om.Value.nextRefresh = nm.nextRefresh
-					t.mvMu.prio.Update(om, om.Value)
+					t.mvRefreshMu.prio.Update(om, om.Value)
 				}
 				continue
 			}
-			t.mvMu.pending[id] = t.mvMu.prio.Push(nm)
+			t.mvRefreshMu.pending[id] = t.mvRefreshMu.prio.Push(nm)
 		}
-		for id, item := range t.mvMu.pending {
+		for id, item := range t.mvRefreshMu.pending {
 			if _, ok := newPending[id]; ok {
 				continue
 			}
-			delete(t.mvMu.pending, id)
-			t.mvMu.prio.Remove(item)
+			delete(t.mvRefreshMu.pending, id)
+			t.mvRefreshMu.prio.Remove(item)
 		}
 
-		t.mvMu.Unlock()
+		t.metrics.mvCount.Store(int64(len(t.mvRefreshMu.pending)))
+		t.metrics.pendingMVRefreshCount.Store(int64(t.mvRefreshMu.prio.Len()))
+		t.mvRefreshMu.Unlock() // release mv refresh queue guard
 	}
 
 	return nil
 }
 
-func (t *MVJobsManager) RefreshAll() error {
-	if err := t.refreshAllTiDBMLogPurge(); err != nil {
+func (t *MVJobsManager) FetchAll() error {
+	if err := t.fetchAllTiDBMLogPurge(); err != nil {
 		return err
 	}
-	if err := t.refreshAllTiDBMViews(); err != nil {
+	if err := t.fetchAllTiDBMViews(); err != nil {
 		return err
 	}
 
@@ -488,7 +529,7 @@ func RegisterMVS(ddlNotifier *notifier.DDLNotifier, se basic.SessionPool) {
 	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		switch event.GetType() {
 		case ActionAddMV, ActionDropMVLog, ActionAlterMV, ActionAddMVLog, ActionDropMV:
-			mvDDLEventCh.Wake()
+			mvs.mvDDLEventCh.Wake()
 		}
 		return nil
 	})

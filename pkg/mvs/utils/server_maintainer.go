@@ -72,8 +72,8 @@ func (sch *ServerConsistentHash) Refresh(ctx context.Context) error {
 		}
 	}
 
-	sch.mu.Lock()
-	defer sch.mu.Unlock()
+	sch.mu.Lock()         // guard server map and hash ring rebuild
+	defer sch.mu.Unlock() // release guard after rebuild
 
 	RebuildFromMap(&sch.chash, sch.servers)
 
