@@ -1432,6 +1432,7 @@ func TestIssue39593(t *testing.T) {
 	require.NoError(t, err)
 	// estimated row count after mock modify on the table, use range to reduce test flakiness
 	require.InDelta(t, float64(5400), countResult.Est, float64(1))
+<<<<<<< HEAD
 }
 
 func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
@@ -1476,6 +1477,8 @@ func TestIndexRangeEstimationWithAppendedHandleColumn(t *testing.T) {
 				`├─IndexRangeScan(Build) 1.00 cop[tikv] table:t, index:idx_ab(a, b) range:[1 2 3,1 2 3], keep order:false, stats:partial[idx_ab:missing]`,
 				`└─TableRowIDScan(Probe) 1.00 cop[tikv] table:t keep order:false, stats:partial[idx_ab:missing]`))
 	})
+=======
+>>>>>>> 229a104ba41 (planner: bound the max out of range estimate (#65888))
 }
 
 func TestDeriveTablePathStatsNoAccessConds(t *testing.T) {
