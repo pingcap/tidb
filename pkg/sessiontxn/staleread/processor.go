@@ -156,9 +156,10 @@ func NewStaleReadProcessor(ctx context.Context, sctx sessionctx.Context) Process
 
 // OnSelectTable will be called when process table in select statement
 func (p *staleReadProcessor) OnSelectTable(tn *ast.TableName) error {
-	if p.sctx.GetSessionVars().InTxn() {
+	sessVars := p.sctx.GetSessionVars()
+	if sessVars.InTxn() || !sessVars.IsAutocommit() {
 		if tn.AsOf != nil {
-			return plannererrors.ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return plannererrors.ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction or when autocommit is disabled.")
 		}
 
 		if !p.evaluated {
@@ -191,9 +192,10 @@ func (p *staleReadProcessor) OnExecutePreparedStmt(preparedTSEvaluator Staleness
 		return errors.New("already evaluated")
 	}
 
-	if p.sctx.GetSessionVars().InTxn() {
+	sessVars := p.sctx.GetSessionVars()
+	if sessVars.InTxn() || !sessVars.IsAutocommit() {
 		if preparedTSEvaluator != nil {
-			return plannererrors.ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction.")
+			return plannererrors.ErrAsOf.FastGenWithCause("as of timestamp can't be set in transaction or when autocommit is disabled.")
 		}
 		return p.evaluateFromTxn()
 	}

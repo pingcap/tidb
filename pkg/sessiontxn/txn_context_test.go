@@ -535,7 +535,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("begin")
 
-	//change schema
+	// change schema
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t2 add column(c1 int)")
@@ -611,7 +611,7 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	stmtID2, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1 ")
 	require.NoError(t, err)
 
-	//change schema
+	// change schema
 	tk.MustExec("use test")
 	tk.MustExec("alter table t2 add column(c1 int)")
 	tk.MustExec("update t1 set v=11 where id=1")
@@ -711,7 +711,7 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 	tk.MustExec("prepare s from 'select * from t1 where id=1 for update'")
 	tk.MustExec("begin pessimistic")
 
-	//change schema
+	// change schema
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t1 add column(c int default 100)")
@@ -992,4 +992,62 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(99), count)
+}
+
+func TestAsOfTimestampNotAllowedWhenAutocommitOff(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 10)")
+
+	time.Sleep(100 * time.Millisecond)
+	ts1 := tk.MustQuery("select now(6)").Rows()[0][0].(string)
+	time.Sleep(100 * time.Millisecond)
+
+	tk.MustExec("update t set v = 20 where id = 1")
+
+	ts2 := tk.MustQuery("select now(6)").Rows()[0][0].(string)
+	time.Sleep(100 * time.Millisecond)
+
+	tk.MustExec("update t set v = 30 where id = 1")
+
+	time.Sleep(1 * time.Second)
+
+	tk.MustExec("set @@tidb_read_staleness = -1")
+	tk.MustExec("set @@autocommit = 0")
+
+	// AS OF TIMESTAMP should fail when autocommit=0 and tidb_read_staleness is set
+	// Only autocommit=1 allows select ... as of timestamp ...
+	tk.MustGetErrMsg(fmt.Sprintf("select * from t as of timestamp '%s' where id = 1", ts1),
+		"[planner:8135]invalid as of timestamp: as of timestamp can't be set in transaction or when autocommit is disabled.")
+	tk.MustGetErrMsg(fmt.Sprintf("select * from t as of timestamp '%s' where id = 1", ts2),
+		"[planner:8135]invalid as of timestamp: as of timestamp can't be set in transaction or when autocommit is disabled.")
+
+	tk.MustExec("set @@tidb_read_staleness = 0")
+	tk.MustExec("set @@autocommit = 1")
+}
+
+func TestAsOfTimestampNotAllowedWhenAutocommitOffWithoutReadStaleness(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id int primary key, v int)")
+	tk.MustExec("insert into t values (1, 10)")
+
+	time.Sleep(100 * time.Millisecond)
+	ts1 := tk.MustQuery("select now(6)").Rows()[0][0].(string)
+
+	tk.MustExec("update t set v = 20 where id = 1")
+
+	// Only set autocommit=0, do NOT set tidb_read_staleness
+	tk.MustExec("set @@autocommit = 0")
+
+	// AS OF TIMESTAMP should also fail when autocommit=0 (even without tidb_read_staleness)
+	tk.MustGetErrMsg(fmt.Sprintf("select * from t as of timestamp '%s' where id = 1", ts1),
+		"[planner:8135]invalid as of timestamp: as of timestamp can't be set in transaction or when autocommit is disabled.")
+
+	tk.MustExec("set @@autocommit = 1")
 }
