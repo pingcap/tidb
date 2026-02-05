@@ -25,6 +25,7 @@ go_library(
         "first_row.go",
         "max_min.go",
         "sum.go",
+        "sum_int.go",
         "util.go",
         "window_func.go",
     ],
