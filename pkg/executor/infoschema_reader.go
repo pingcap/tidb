@@ -39,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/executor/internal/pdhelper"
 	"github.com/pingcap/tidb/pkg/expression"
+	"github.com/pingcap/tidb/pkg/expression/sessionexpr"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/keyspace"
@@ -71,6 +72,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/generatedexpr"
 	"github.com/pingcap/tidb/pkg/util/hint"
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/keydecoder"
@@ -227,6 +229,10 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromTiDBCheckConstraints(ctx, sctx)
 		case infoschema.TableKeywords:
 			err = e.setDataFromKeywords()
+		case infoschema.TableTiDBMViews:
+			err = e.setDataFromTiDBMViews(ctx, sctx)
+		case infoschema.TableTiDBMLogs:
+			err = e.setDataFromTiDBMLogs(ctx, sctx)
 		case infoschema.TableTiDBIndexUsage:
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
@@ -3864,6 +3870,157 @@ func (e *memtableRetriever) setDataFromKeywords() error {
 	}
 	e.rows = rows
 	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMViews(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	exprCtx := sessionexpr.NewExprContext(sctx)
+	loc := sctx.GetSessionVars().TimeZone
+
+	rows := make([][]types.Datum, 0, 8)
+	for _, db := range e.is.AllSchemas() {
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, db.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		tblInfos, err := e.is.SchemaTableInfos(ctx, db.Name)
+		if err != nil {
+			return err
+		}
+		for _, tblInfo := range tblInfos {
+			if tblInfo.MaterializedView == nil {
+				continue
+			}
+
+			var comment any
+			if tblInfo.Comment != "" {
+				comment = tblInfo.Comment
+			}
+			modifyTime := types.NewTime(types.FromGoTime(tblInfo.GetUpdateTime().In(loc)), mysql.TypeDatetime, types.DefaultFsp)
+
+			var refreshMethod any
+			if tblInfo.MaterializedView.RefreshMethod != "" {
+				refreshMethod = tblInfo.MaterializedView.RefreshMethod
+			}
+			refreshStart := evalExprAsDatetime(exprCtx, tblInfo.MaterializedView.RefreshStartWith)
+			refreshInterval := evalExprAsInt64(exprCtx, tblInfo.MaterializedView.RefreshNext)
+
+			row := types.MakeDatums(
+				"def",                               // TABLE_CATALOG
+				db.Name.O,                           // TABLE_SCHEMA
+				tblInfo.ID,                          // MVIEW_ID
+				tblInfo.Name.O,                      // MVIEW_NAME
+				tblInfo.MaterializedView.SQLContent, // MVIEW_SQL_CONTENT
+				comment,                             // MVIEW_COMMENT
+				modifyTime,                          // MVIEW_MODIFY_TIME
+				refreshMethod,                       // REFRESH_METHOD
+				refreshStart,                        // REFRESH_START
+				refreshInterval,                     // REFRESH_INTERVAL
+			)
+			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func (e *memtableRetriever) setDataFromTiDBMLogs(ctx context.Context, sctx sessionctx.Context) error {
+	checker := privilege.GetPrivilegeManager(sctx)
+	exprCtx := sessionexpr.NewExprContext(sctx)
+
+	rows := make([][]types.Datum, 0, 8)
+	for _, db := range e.is.AllSchemas() {
+		if checker != nil && !checker.RequestVerification(sctx.GetSessionVars().ActiveRoles, db.Name.L, "", "", mysql.AllPrivMask) {
+			continue
+		}
+		tblInfos, err := e.is.SchemaTableInfos(ctx, db.Name)
+		if err != nil {
+			return err
+		}
+		for _, tblInfo := range tblInfos {
+			if tblInfo.MaterializedViewLog == nil {
+				continue
+			}
+			baseTable, ok := e.is.TableByID(ctx, tblInfo.MaterializedViewLog.BaseTableID)
+			if !ok {
+				continue
+			}
+			baseSchema, ok := e.is.SchemaByID(baseTable.Meta().DBID)
+			if !ok {
+				continue
+			}
+
+			mlogCols := make([]string, 0, len(tblInfo.MaterializedViewLog.Columns))
+			for _, col := range tblInfo.MaterializedViewLog.Columns {
+				mlogCols = append(mlogCols, col.O)
+			}
+
+			var purgeMethod any
+			if tblInfo.MaterializedViewLog.PurgeMethod != "" {
+				purgeMethod = tblInfo.MaterializedViewLog.PurgeMethod
+			}
+			purgeStart := evalExprAsDatetime(exprCtx, tblInfo.MaterializedViewLog.PurgeStartWith)
+			purgeInterval := evalExprAsInt64(exprCtx, tblInfo.MaterializedViewLog.PurgeNext)
+
+			row := types.MakeDatums(
+				"def",                                   // TABLE_CATALOG
+				db.Name.O,                               // TABLE_SCHEMA
+				tblInfo.ID,                              // MLOG_ID
+				tblInfo.Name.O,                          // MLOG_NAME
+				strings.Join(mlogCols, ","),             // MLOG_COLUMNS
+				"def",                                   // BASE_TABLE_CATALOG
+				baseSchema.Name.O,                       // BASE_TABLE_SCHEMA
+				tblInfo.MaterializedViewLog.BaseTableID, // BASE_TABLE_ID
+				baseTable.Meta().Name.O,                 // BASE_TABLE_NAME
+				purgeMethod,                             // PURGE_METHOD
+				purgeStart,                              // PURGE_START
+				purgeInterval,                           // PURGE_INTERVAL
+			)
+			rows = append(rows, row)
+		}
+	}
+	e.rows = rows
+	return nil
+}
+
+func evalExprAsDatetime(exprCtx expression.BuildContext, exprStr string) any {
+	if exprStr == "" {
+		return nil
+	}
+	node, err := generatedexpr.ParseExpression(exprStr)
+	if err != nil {
+		return nil
+	}
+	v, err := expression.EvalSimpleAst(exprCtx, node)
+	if err != nil {
+		return nil
+	}
+	ft := types.NewFieldType(mysql.TypeDatetime)
+	ft.SetDecimal(types.DefaultFsp)
+	converted, err := v.ConvertTo(exprCtx.GetEvalCtx().TypeCtx(), ft)
+	if err != nil || converted.IsNull() {
+		return nil
+	}
+	return converted.GetMysqlTime()
+}
+
+func evalExprAsInt64(exprCtx expression.BuildContext, exprStr string) any {
+	if exprStr == "" {
+		return nil
+	}
+	node, err := generatedexpr.ParseExpression(exprStr)
+	if err != nil {
+		return nil
+	}
+	v, err := expression.EvalSimpleAst(exprCtx, node)
+	if err != nil {
+		return nil
+	}
+	ft := types.NewFieldType(mysql.TypeLonglong)
+	converted, err := v.ConvertTo(exprCtx.GetEvalCtx().TypeCtx(), ft)
+	if err != nil || converted.IsNull() {
+		return nil
+	}
+	return converted.GetInt64()
 }
 
 func (e *memtableRetriever) setDataFromIndexUsage(ctx context.Context, sctx sessionctx.Context) error {

@@ -221,6 +221,7 @@ go_library(
         "//pkg/util/filter",
         "//pkg/util/format",
         "//pkg/util/gcutil",
+        "//pkg/util/generatedexpr",
         "//pkg/util/globalconn",
         "//pkg/util/hack",
         "//pkg/util/hint",
