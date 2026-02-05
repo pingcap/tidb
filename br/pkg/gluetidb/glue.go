@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
 	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 )
@@ -42,6 +43,7 @@ func New() Glue {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
+		vardef.SetSchemaLease(config.DefSchemaLease)
 	})
 	return Glue{
 		startDomainMu: &sync.Mutex{},
