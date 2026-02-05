@@ -1194,6 +1194,8 @@ func (hg *Histogram) OutOfRangeRowCount(
 	predWidth := r - l
 	if predWidth < 0 {
 		// This should never happen.
+		intest.Assert(false, "Right bound should not be less than left bound")
+
 		return DefaultRowEst(0)
 	} else if predWidth == 0 {
 		// Set histWidth to 0 so that we can still return a minimum of oneValue,
