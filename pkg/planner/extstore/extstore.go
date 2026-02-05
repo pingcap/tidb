@@ -39,6 +39,8 @@ import (
 var (
 	globalExtStorage   storeapi.Storage
 	globalExtStorageMu sync.Mutex
+	// testLocalPathFS is set by tests to inject afero.Fs for getLocalPathDirName (when non-nil).
+	testLocalPathFS afero.Fs
 )
 
 // GetGlobalExtStorage returns the global external storage instance.
@@ -124,9 +126,12 @@ func NewExtStorage(ctx context.Context, rawURL, namespace string) (storeapi.Stor
 
 func getLocalPathDirName(vfs ...afero.Fs) string {
 	var fs afero.Fs
-	fs = afero.NewOsFs()
-	if vfs != nil {
+	if testLocalPathFS != nil {
+		fs = testLocalPathFS
+	} else if len(vfs) > 0 {
 		fs = vfs[0]
+	} else {
+		fs = afero.NewOsFs()
 	}
 	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
 	tidbLogDir = filepath.Clean(tidbLogDir)
