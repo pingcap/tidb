@@ -164,12 +164,12 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(1)})
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(2)})
 		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.123})
-		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(4)})
+		checkRet(false, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(4)})
 		// ExecDetail == nil
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
-		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(0)})
 		// ExecDetail != nil && d.CommitDetail == nil && d.ScanDetail == nil
 		execDetail := &execdetails.ExecDetails{
 			CopExecDetails: execdetails.CopExecDetails{
@@ -182,7 +182,7 @@ func TestMatchSpecialTypeConditions(t *testing.T) {
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.ProcessTimeStr, Threshold: float64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.TotalKeysStr, Threshold: uint64(0)})
 		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PreWriteTimeStr, Threshold: 0.0})
-		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: int64(0)})
+		checkRet(true, slowlogrule.SlowLogCondition{Field: execdetails.PrewriteRegionStr, Threshold: uint64(0)})
 	})
 }
 
@@ -269,6 +269,68 @@ func TestMatchDifferentTypesAfterParse(t *testing.T) {
 	require.NoError(t, err)
 	ctx.GetSessionVars().SlowLogRules.SlowLogRules = slowLogRules
 	require.True(t, executor.Match(ctx.GetSessionVars(), items, ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+}
+
+func TestMatchUintExecDetailFieldsAfterParse(t *testing.T) {
+	t.Run("commit fields", func(t *testing.T) {
+		ctx := newMockCtx()
+		rules, err := variable.ParseSessionSlowLogRules("Write_keys:1,Write_size:2,Prewrite_region:3")
+		require.NoError(t, err)
+		ctx.GetSessionVars().SlowLogRules.SlowLogRules = rules
+
+		newItems := func(writeKeys, writeSize int, prewriteRegionNum int32) *variable.SlowQueryLogItems {
+			return &variable.SlowQueryLogItems{
+				ExecDetail: &execdetails.ExecDetails{
+					CommitDetail: &util.CommitDetails{
+						WriteKeys:         writeKeys,
+						WriteSize:         writeSize,
+						PrewriteRegionNum: prewriteRegionNum,
+					},
+				},
+			}
+		}
+
+		require.True(t, executor.Match(ctx.GetSessionVars(), newItems(2, 3, 4), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+
+		t.Run("negative write_keys", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(-1, 3, 4), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+		t.Run("negative write_size", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(2, -1, 4), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+		t.Run("negative prewrite_region", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(2, 3, -1), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+	})
+
+	t.Run("scan fields", func(t *testing.T) {
+		ctx := newMockCtx()
+		rules, err := variable.ParseSessionSlowLogRules("Total_keys:1,Process_keys:2")
+		require.NoError(t, err)
+		ctx.GetSessionVars().SlowLogRules.SlowLogRules = rules
+
+		newItems := func(totalKeys, processedKeys int64) *variable.SlowQueryLogItems {
+			return &variable.SlowQueryLogItems{
+				ExecDetail: &execdetails.ExecDetails{
+					CopExecDetails: execdetails.CopExecDetails{
+						ScanDetail: &util.ScanDetail{
+							TotalKeys:     totalKeys,
+							ProcessedKeys: processedKeys,
+						},
+					},
+				},
+			}
+		}
+
+		require.True(t, executor.Match(ctx.GetSessionVars(), newItems(2, 3), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+
+		t.Run("negative total_keys", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(-1, 3), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+		t.Run("negative process_keys", func(t *testing.T) {
+			require.False(t, executor.Match(ctx.GetSessionVars(), newItems(2, -1), ctx.GetSessionVars().SlowLogRules.SlowLogRules))
+		})
+	})
 }
 
 func TestParseSingleSlowLogField(t *testing.T) {
