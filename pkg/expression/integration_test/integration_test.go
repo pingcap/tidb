@@ -430,7 +430,7 @@ func TestVectorExplainTruncate(t *testing.T) {
 		VEC_COSINE_DISTANCE(c, '[11111111111,11111111111.23456789,3.1,5.12456]'),
 		VEC_COSINE_DISTANCE(c, '[-11111111111,-11111111111.23456789,-3.1,-5.12456]')
 	FROM t;`).Check(testkit.Rows(
-		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#3, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#4, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#5`,
+		`Projection 10000.00 root  vec_cosine_distance(test.t.c, [3,1e+02,1.2e+04,1e+04])->Column#4, vec_cosine_distance(test.t.c, [1.1e+10,1.1e+10,3.1,5.1])->Column#5, vec_cosine_distance(test.t.c, [-1.1e+10,-1.1e+10,-3.1,-5.1])->Column#6`,
 		`└─TableReader 10000.00 root  data:TableFullScan`,
 		`  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo`,
 	))
@@ -442,20 +442,20 @@ func TestVectorConstantExplain(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("CREATE TABLE t(c VECTOR);")
 	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') FROM t;`).Check(testkit.Rows(
-		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
 		"└─TableReader 10000.00 root  data:TableFullScan",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`EXPLAIN format='brief' SELECT VEC_COSINE_DISTANCE(c, VEC_FROM_TEXT('[1,2,3,4,5,6,7,8,9,10,11]')) FROM t;`).Check(testkit.Rows(
-		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"Projection 10000.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
 		"└─TableReader 10000.00 root  data:TableFullScan",
 		"  └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
 	tk.MustQuery(`EXPLAIN format = 'brief' SELECT VEC_COSINE_DISTANCE(c, '[1,2,3,4,5,6,7,8,9,10,11]') AS d FROM t ORDER BY d LIMIT 10;`).Check(testkit.Rows(
-		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#3",
+		"Projection 10.00 root  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
 		"└─Projection 10.00 root  test.t.c",
-		"  └─TopN 10.00 root  Column#4, offset:0, count:10",
-		"    └─Projection 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#4",
+		"  └─TopN 10.00 root  Column#5, offset:0, count:10",
+		"    └─Projection 10.00 root  test.t.c, vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...])->Column#5",
 		"      └─TableReader 10.00 root  data:TopN",
 		"        └─TopN 10.00 cop[tikv]  vec_cosine_distance(test.t.c, [1,2,3,4,5,(6 more)...]), offset:0, count:10",
 		"          └─TableFullScan 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
@@ -488,7 +488,7 @@ func TestVectorConstantExplain(t *testing.T) {
 	fmt.Println("++++")
 	require.Equal(t, strings.Join([]string{
 		`	id                 	task     	estRows	operator info                                                                                                                      	actRows	execution info  	memory 	disk`,
-		`	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#3	0      	time:0s, loops:0	0 Bytes	N/A`,
+		`	Projection_3       	root     	10000  	vec_cosine_distance(test.t.c, cast([100,100,100,100,100,100,100,100,100,100,100,100,100,100,100,100...(len:401), vector))->Column#4	0      	time:0s, loops:0	0 Bytes	N/A`,
 		`	└─TableReader_5    	root     	10000  	data:TableFullScan_4                                                                                                               	0      	time:0s, loops:0	0 Bytes	N/A`,
 		`	  └─TableFullScan_4	cop[tikv]	10000  	table:t, keep order:false, stats:pseudo                                                                                            	0      	                	N/A    	N/A`,
 	}, "\n"), planTree)
@@ -542,13 +542,13 @@ func TestVectorIndexExplain(t *testing.T) {
 
 	tk.MustQuery(fmt.Sprintf("explain format = 'brief' select * from t1 order by vec_cosine_distance(vec, '%s') limit 1", vb.String())).Check(testkit.Rows(
 		`Projection 1.00 root  test.t1.vec`,
-		`└─TopN 1.00 root  Column#4, offset:0, count:1`,
-		`  └─Projection 1.00 root  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#4`,
+		`└─TopN 1.00 root  Column#5, offset:0, count:1`,
+		`  └─Projection 1.00 root  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#5`,
 		`    └─TableReader 1.00 root  MppVersion: 2, data:ExchangeSender`,
 		`      └─ExchangeSender 1.00 mpp[tiflash]  ExchangeType: PassThrough`,
 		`        └─Projection 1.00 mpp[tiflash]  test.t1.vec`,
-		`          └─TopN 1.00 mpp[tiflash]  Column#3, offset:0, count:1`,
-		`            └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#3`,
+		`          └─TopN 1.00 mpp[tiflash]  Column#4, offset:0, count:1`,
+		`            └─Projection 1.00 mpp[tiflash]  test.t1.vec, vec_cosine_distance(test.t1.vec, [1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...])->Column#4`,
 		`              └─TableFullScan 1.00 mpp[tiflash] table:t1, index:vector_index(vec) keep order:false, stats:pseudo, annIndex:COSINE(vec..[1e+02,1e+02,1e+02,1e+02,1e+02,(95 more)...], limit:1)`,
 	))
 }
@@ -2335,7 +2335,7 @@ func TestCompareBuiltin(t *testing.T) {
 	tk.MustExec("create table t(a date)")
 	result = tk.MustQuery("desc select a = a from t")
 	result.Check(testkit.Rows(
-		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#3",
+		"Projection_3 10000.00 root  eq(test.t.a, test.t.a)->Column#4",
 		"└─TableReader_5 10000.00 root  data:TableFullScan_4",
 		"  └─TableFullScan_4 10000.00 cop[tikv] table:t keep order:false, stats:pseudo",
 	))
