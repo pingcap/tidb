@@ -2088,6 +2088,85 @@ func TestRiskRangeSkewRatioOutOfRange(t *testing.T) {
 	require.Less(t, count2, count3)
 }
 
+// TestOutOfRangeGeVsBetween tests two out-of-range queries: col >= 100 and col BETWEEN 100 AND 102.
+// Histogram has values 1-100 so the right uncertainty band (histR, boundR) is (100, 199).
+// [100, 102] overlaps that band (bounded gets a fraction); [100, MaxInt64] is unbounded and gets the full band.
+// Uses mock statistics only (no store/table/analyze). We verify:
+// 1. MaxEst for "col >= 100" is strictly larger than MaxEst for "col BETWEEN 100 AND 102".
+// 2. For every skewRatio, Est for "col >= 100" is strictly larger than Est for "col BETWEEN 100 AND 102".
+func TestOutOfRangeGeVsBetween(t *testing.T) {
+	tblInfo := &model.TableInfo{
+		ID:    1,
+		Name:  ast.NewCIStr("t"),
+		State: model.StatePublic,
+		Columns: []*model.ColumnInfo{
+			{
+				ID:        1,
+				Name:      ast.NewCIStr("a"),
+				Offset:    0,
+				FieldType: *types.NewFieldType(mysql.TypeLonglong),
+				State:     model.StatePublic,
+			},
+		},
+		Indices: []*model.IndexInfo{
+			{
+				ID:    1,
+				Name:  ast.NewCIStr("idx"),
+				Table: ast.NewCIStr("t"),
+				Columns: []*model.IndexColumn{
+					{Name: ast.NewCIStr("a"), Offset: 0, Length: -1},
+				},
+				State: model.StatePublic,
+			},
+		},
+	}
+
+	// Histogram 1-100 so boundR = 199; [100, 102] overlaps (100, 199), unbounded [100, MaxInt64] gets full band.
+	rowCount := int64(100)
+	statsTbl := mockStatsTable(tblInfo, rowCount)
+
+	colValues, err := generateIntDatum(1, 100)
+	require.NoError(t, err)
+	for i := range colValues {
+		colValues[i].SetInt64(int64(i) + 1)
+	}
+	col := &statistics.Column{
+		Histogram:         *mockStatsHistogram(1, colValues, 1, types.NewFieldType(mysql.TypeLonglong)),
+		Info:              tblInfo.Columns[0],
+		StatsLoadedStatus: statistics.NewStatsFullLoadStatus(),
+		StatsVer:          2,
+	}
+	statsTbl.SetCol(1, col)
+
+	sctx := mock.NewContext()
+	realtimeCount := rowCount * 10
+	modifyCount := realtimeCount * 2
+
+	rangeGe100 := getRange(100, math.MaxInt64)
+	rangeBetween100102 := getRange(100, 102)
+
+	sctx.GetSessionVars().RiskRangeSkewRatio = 0.5
+	est1, err := getColumnRowCount(sctx, col, rangeGe100, realtimeCount, modifyCount, false)
+	require.NoError(t, err)
+	est2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
+	require.NoError(t, err)
+
+	require.Greaterf(t, est1.MaxEst, est2.MaxEst,
+		"MaxEst for col >= 100 (%v) must be larger than MaxEst for col BETWEEN 100 AND 102 (%v)",
+		est1.MaxEst, est2.MaxEst)
+
+	for _, ratio := range []float64{0, 0.3, 0.5, 0.7, 1} {
+		sctx.GetSessionVars().RiskRangeSkewRatio = ratio
+		e1, err := getColumnRowCount(sctx, col, rangeGe100, realtimeCount, modifyCount, false)
+		require.NoError(t, err)
+		e2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
+		require.NoError(t, err)
+		require.Greaterf(t, e1.Est, e2.Est,
+			"skew_ratio=%v: Est for col >= 100 (%v) must be larger than Est for col BETWEEN 100 AND 102 (%v)",
+			ratio, e1.Est, e2.Est)
+	}
+}
+
 func TestLastBucketEndValueHeuristic(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	testKit := testkit.NewTestKit(t, store)
