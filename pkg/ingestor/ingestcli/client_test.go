@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/opt"
 )
 
 func TestJsonByteSlice(t *testing.T) {
@@ -148,7 +149,7 @@ type storeClient struct {
 	addr string
 }
 
-func (sc *storeClient) GetStore(_ context.Context, _ uint64) (*metapb.Store, error) {
+func (sc *storeClient) GetStore(_ context.Context, _ uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return &metapb.Store{
 		Address:       sc.addr,
 		StatusAddress: sc.addr,

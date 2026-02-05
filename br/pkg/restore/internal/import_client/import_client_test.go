@@ -28,6 +28,7 @@ import (
 	importclient "github.com/pingcap/tidb/br/pkg/restore/internal/import_client"
 	"github.com/pingcap/tidb/br/pkg/restore/split"
 	"github.com/stretchr/testify/require"
+	"github.com/tikv/pd/client/opt"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
 )
@@ -37,7 +38,7 @@ type storeClient struct {
 	addr string
 }
 
-func (sc *storeClient) GetStore(_ context.Context, _ uint64) (*metapb.Store, error) {
+func (sc *storeClient) GetStore(_ context.Context, _ uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
 	return &metapb.Store{
 		Address: sc.addr,
 	}, nil
