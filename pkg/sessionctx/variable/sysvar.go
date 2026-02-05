@@ -2396,10 +2396,6 @@ var defaultSysVars = []*SysVar{
 		s.TiDBOptJoinReorderThreshold = tidbOptPositiveInt32(val, DefTiDBOptJoinReorderThreshold)
 		return nil
 	}},
-	{Scope: ScopeGlobal | ScopeSession, Name: TiDBOptJoinReorderThroughSel, Value: BoolToOnOff(DefTiDBOptJoinReorderThroughSel), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-		s.TiDBOptJoinReorderThroughSel = TiDBOptOn(val)
-		return nil
-	}},
 	{Scope: ScopeGlobal | ScopeSession, Name: TiDBEnableNoopFuncs, Value: DefTiDBEnableNoopFuncs, Type: TypeEnum, PossibleValues: []string{Off, On, Warn}, Depended: true, Validation: func(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 		// The behavior is very weird if someone can turn TiDBEnableNoopFuncs OFF, but keep any of the following on:
 		// TxReadOnly, TransactionReadOnly, OfflineMode, SuperReadOnly, serverReadOnly, SQLAutoIsNull
