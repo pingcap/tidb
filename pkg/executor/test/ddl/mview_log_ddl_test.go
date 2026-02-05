@@ -41,6 +41,9 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t"))
 	require.NoError(t, err)
 
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.Equal(t, mlogTable.Meta().ID, baseTable.Meta().MaterializedViewBase.MLogID)
+
 	mlogInfo := mlogTable.Meta().MaterializedViewLog
 	require.NotNil(t, mlogInfo)
 	require.Equal(t, baseTable.Meta().ID, mlogInfo.BaseTableID)

@@ -29,6 +29,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	field_types "github.com/pingcap/tidb/pkg/parser/types"
@@ -38,6 +39,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
+	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 )
 
 // SchemaTracker is used to track schema changes by DM. It implements
@@ -227,6 +229,145 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	}
 
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
+}
+
+func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) error {
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx == nil || ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	schema := d.SchemaByName(schemaName)
+	if schema == nil {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	baseTable, err := d.TableClonedByName(schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+
+	mlogName := "$mlog$" + baseTable.Name.O
+	if len(mlogName) > mysql.MaxTableNameLength {
+		return errors.Errorf("materialized view log table name too long: %s", mlogName)
+	}
+	mlogNameCIStr := pmodel.NewCIStr(mlogName)
+	if _, err := d.TableByName(context.Background(), schemaName, mlogNameCIStr); err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
+	} else if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
+	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Columns))
+	for _, col := range baseTable.Columns {
+		colMap[col.Name.L] = col
+	}
+
+	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
+	for _, c := range s.Cols {
+		baseCol := colMap[c.L]
+		if baseCol == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
+		}
+		ft := baseCol.FieldType
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{Name: c},
+			Tp:   &ft,
+		})
+	}
+
+	metaCols := []struct {
+		name string
+		ft   byte
+		flen int
+	}{
+		{name: "dml_type", ft: mysql.TypeVarchar, flen: 1},
+		// old_new is a signed tinyint: NEW=1, OLD=-1.
+		{name: "old_new", ft: mysql.TypeTiny, flen: 4},
+	}
+	for _, metaCol := range metaCols {
+		ft := field_types.NewFieldType(metaCol.ft)
+		ft.SetFlen(metaCol.flen)
+		ft.SetFlag(mysql.NotNullFlag)
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{Name: pmodel.NewCIStr(metaCol.name)},
+			Tp:   ft,
+		})
+	}
+
+	createTableStmt := &ast.CreateTableStmt{
+		Table: &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
+		Cols:  colDefs,
+	}
+	metaBuildCtx := ddl.NewMetaBuildContextWithSctx(
+		ctx,
+		// suppress ErrTooLongKey
+		metabuild.WithSuppressTooLongIndexErr(true),
+		// support drop PK
+		metabuild.WithClusteredIndexDefMode(variable.ClusteredIndexDefModeOff),
+	)
+	mlogTableInfo, err := ddl.BuildTableInfoWithStmt(metaBuildCtx, createTableStmt, schema.Charset, schema.Collate, nil)
+	if err != nil {
+		return err
+	}
+
+	var purgeMethod string
+	var purgeStartWith string
+	var purgeNext string
+	if s.Purge != nil {
+		if s.Purge.Immediate {
+			purgeMethod = "IMMEDIATE"
+		} else {
+			purgeMethod = "DEFERRED"
+			if s.Purge.StartWith != nil {
+				purgeStartWith, err = restoreExprToCanonicalSQL(s.Purge.StartWith)
+				if err != nil {
+					return err
+				}
+			}
+			if s.Purge.Next != nil {
+				purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+				if err != nil {
+					return err
+				}
+			} else {
+				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
+			}
+		}
+	}
+
+	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
+		BaseTableID:    baseTable.ID,
+		Columns:        s.Cols,
+		PurgeMethod:    purgeMethod,
+		PurgeStartWith: purgeStartWith,
+		PurgeNext:      purgeNext,
+	}
+	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
+		return err
+	}
+
+	if baseTable.MaterializedViewBase == nil {
+		baseTable.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
+	}
+	if mlogTableInfo.ID != 0 {
+		baseTable.MaterializedViewBase.MLogID = mlogTableInfo.ID
+	} else {
+		// SchemaTracker doesn't allocate physical table IDs, use a non-zero sentinel.
+		baseTable.MaterializedViewBase.MLogID = 1
+	}
+	return d.PutTable(schemaName, baseTable)
+}
+
+func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreStringWithoutCharset, &sb)
+	if err := expr.Restore(rctx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
 // CreateTableWithInfo implements the DDL interface.
