@@ -482,15 +482,15 @@ func (d *ConflictDetector) MakeJoin(checkResult *CheckConnectionResult, vertexHi
 	}, nil
 }
 
-func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []*expression.ScalarFunction) ([]*expression.ScalarFunction, error) {
+func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []*expression.ScalarFunction) (newLeft base.LogicalPlan, newRight base.LogicalPlan, alignedEQConds []*expression.ScalarFunction, err error) {
 	if len(eqConds) == 0 {
-		return nil, nil
+		return left, right, nil, nil
 	}
 	res := make([]*expression.ScalarFunction, 0, len(eqConds))
 	for _, cond := range eqConds {
 		args := cond.GetArgs()
 		if len(args) != 2 {
-			return nil, errors.Errorf("unexpected eq condition args: %d", len(args))
+			return nil, nil, nil, errors.Errorf("unexpected eq condition args: %d", len(args))
 		}
 		if expression.ExprFromSchema(args[0], left.Schema()) && expression.ExprFromSchema(args[1], right.Schema()) {
 			res = append(res, cond)
@@ -499,7 +499,7 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 		if expression.ExprFromSchema(args[1], left.Schema()) && expression.ExprFromSchema(args[0], right.Schema()) {
 			swapped, ok := expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(), args[1], args[0]).(*expression.ScalarFunction)
 			if !ok {
-				return nil, errors.New("failed to build swapped eq condition")
+				return nil, nil, nil, errors.New("failed to build swapped eq condition")
 			}
 			_, isCol0 := swapped.GetArgs()[0].(*expression.Column)
 			_, isCol1 := swapped.GetArgs()[1].(*expression.Column)
@@ -518,21 +518,25 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 			res = append(res, swapped)
 			continue
 		}
-		return nil, errors.New("eq condition does not match join sides")
+		return nil, nil, nil, errors.New("eq condition does not match join sides")
 	}
-	return res, nil
+	return left, right, res, nil
 }
 
 func makeNonInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, vertexHints map[int]*JoinMethodHint) (*logicalop.LogicalJoin, error) {
 	e := checkResult.appliedNonInnerEdge
+	var alignedEQConds []*expression.ScalarFunction
+	var err error
+
+	checkResult.node1.p, checkResult.node2.p, alignedEQConds, err = alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+	if err != nil {
+		return nil, err
+	}
+
 	left := checkResult.node1.p
 	right := checkResult.node2.p
 
 	join, err := newCartesianJoin(ctx, e.joinType, left, right, vertexHints)
-	if err != nil {
-		return nil, err
-	}
-	alignedEQConds, err := alignEQConds(ctx, left, right, e.eqConds)
 	if err != nil {
 		return nil, err
 	}
@@ -562,11 +566,7 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 			Conditions: make([]expression.Expression, 0, condCap),
 		}
 		for _, e := range checkResult.appliedInnerEdges {
-			alignedEQConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
-			if err != nil {
-				return nil, err
-			}
-			eqExprs := expression.ScalarFuncs2Exprs(alignedEQConds)
+			eqExprs := expression.ScalarFuncs2Exprs(e.eqConds)
 			selection.Conditions = append(selection.Conditions, eqExprs...)
 			selection.Conditions = append(selection.Conditions, e.nonEQConds...)
 		}
@@ -575,18 +575,25 @@ func makeInnerJoin(ctx base.PlanContext, checkResult *CheckConnectionResult, exi
 		return resSelection, nil
 	}
 
+	var err error
+	var alignedEQConds []*expression.ScalarFunction
+	newEqConds := make([]*expression.ScalarFunction, 0, 8)
+	newOtherConds := make([]expression.Expression, 0, 8)
+	for _, e := range checkResult.appliedInnerEdges {
+		checkResult.node1.p, checkResult.node2.p, alignedEQConds, err = alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
+		if err != nil {
+			return nil, err
+		}
+		newEqConds = append(newEqConds, alignedEQConds...)
+		newOtherConds = append(newOtherConds, e.nonEQConds...)
+	}
 	join, err := newCartesianJoin(ctx, checkResult.appliedInnerEdges[0].joinType, checkResult.node1.p, checkResult.node2.p, vertexHints)
 	if err != nil {
 		return nil, err
 	}
-	for _, e := range checkResult.appliedInnerEdges {
-		alignedEQConds, err := alignEQConds(ctx, checkResult.node1.p, checkResult.node2.p, e.eqConds)
-		if err != nil {
-			return nil, err
-		}
-		join.EqualConditions = append(join.EqualConditions, alignedEQConds...)
-		join.OtherConditions = append(join.OtherConditions, e.nonEQConds...)
-	}
+	join.EqualConditions = append(join.EqualConditions, newEqConds...)
+	join.OtherConditions = append(join.OtherConditions, newOtherConds...)
+
 	return join, nil
 }
 
