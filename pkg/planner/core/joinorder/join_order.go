@@ -423,10 +423,7 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 	if err != nil {
 		return nil, err
 	}
-	nodes, usedEdges, err := tryApplyAllRemainingEdges(detector, nodes, j.group.vertexHints, cartesianFactor, allowNoEQ)
-	if err != nil {
-		return nil, err
-	}
+	usedEdges := collectUsedEdges(nodes)
 	if !detector.CheckAllEdgesUsed(usedEdges) {
 		totalEdges, usedEdgeCount, missingEdges, missingDetail, nodeSets := summarizeEdges(detector, usedEdges, nodes, 4)
 		logutil.BgLogger().Warn("join reorder skipped because not all edges are used",
@@ -447,71 +444,56 @@ func (j *joinOrderGreedy) optimize() (base.LogicalPlan, error) {
 }
 
 func greedyConnectJoinNodes(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, error) {
-	var curJoinIdx int
-	for curJoinIdx < len(nodes)-1 {
-		var bestNode *Node
-		var bestIdx int
-		curJoinTree := nodes[curJoinIdx]
-		for iterIdx := curJoinIdx + 1; iterIdx < len(nodes); iterIdx++ {
-			iterNode := nodes[iterIdx]
-			checkResult, newNode, err := checkConnectionAndMakeJoin(detector, curJoinTree, iterNode, vertexHints, allowNoEQ)
-			if err != nil {
-				return nil, err
-			}
-			if newNode == nil {
-				continue
-			}
-			if checkResult.NoEQEdge() {
-				// The original plan tree may have cartesian edges, to avoid cartesian join happens first,
-				// we need the check here.
-				if !allowNoEQ {
+	// Outer loop: keep trying while we have multiple nodes and made progress in the last iteration.
+	// This handles cases where conflict rules block some joins until other joins are completed.
+	for len(nodes) > 1 {
+		madeProgress := false
+		var curJoinIdx int
+		for curJoinIdx < len(nodes)-1 {
+			var bestNode *Node
+			var bestIdx int
+			curJoinTree := nodes[curJoinIdx]
+			for iterIdx := curJoinIdx + 1; iterIdx < len(nodes); iterIdx++ {
+				iterNode := nodes[iterIdx]
+				checkResult, newNode, err := checkConnectionAndMakeJoin(detector, curJoinTree, iterNode, vertexHints, allowNoEQ)
+				if err != nil {
+					return nil, err
+				}
+				if newNode == nil {
 					continue
 				}
-				// TODO: Non INNER JOIN without eqCond is not supported for now.
-				// For INNER JOIN, if cartesianFactor > 0, we apply a penalty to the cost of the newNode,
-				// and we might generate a tree with cartesian edge.
-				// For non INNER JOIN, the logic in extractJoinGroup ensures we will not reach here,
-				// check the comment in extractJoinGroup for more details.
-				newNode.cumCost = newNode.cumCost * cartesianFactor
+				if checkResult.NoEQEdge() {
+					// The original plan tree may have cartesian edges, to avoid cartesian join happens first,
+					// we need the check here.
+					if !allowNoEQ {
+						continue
+					}
+					// TODO: Non INNER JOIN without eqCond is not supported for now.
+					// For INNER JOIN, if cartesianFactor > 0, we apply a penalty to the cost of the newNode,
+					// and we might generate a tree with cartesian edge.
+					// For non INNER JOIN, the logic in extractJoinGroup ensures we will not reach here,
+					// check the comment in extractJoinGroup for more details.
+					newNode.cumCost = newNode.cumCost * cartesianFactor
+				}
+				if bestNode == nil || newNode.cumCost < bestNode.cumCost {
+					bestNode = newNode
+					bestIdx = iterIdx
+				}
 			}
-			if bestNode == nil || newNode.cumCost < bestNode.cumCost {
-				bestNode = newNode
-				bestIdx = iterIdx
+			if bestNode == nil {
+				curJoinIdx++
+			} else {
+				nodes[curJoinIdx] = bestNode
+				nodes = append(nodes[:bestIdx], nodes[bestIdx+1:]...)
+				madeProgress = true
 			}
 		}
-		if bestNode == nil {
-			curJoinIdx++
-		} else {
-			nodes[curJoinIdx] = bestNode
-			nodes = append(nodes[:bestIdx], nodes[bestIdx+1:]...)
+		// If no progress was made in this iteration, we cannot connect any more nodes.
+		if !madeProgress {
+			break
 		}
 	}
 	return nodes, nil
-}
-
-// TODO add example
-func tryApplyAllRemainingEdges(detector *ConflictDetector, nodes []*Node, vertexHints map[int]*JoinMethodHint, cartesianFactor float64, allowNoEQ bool) ([]*Node, map[uint64]struct{}, error) {
-	usedEdges := collectUsedEdges(nodes)
-	// If all edges are used, return directly.
-	if detector.CheckAllEdgesUsed(usedEdges) {
-		return nodes, usedEdges, nil
-	}
-	// If there is only one node, return directly.
-	if len(nodes) < 2 {
-		return nodes, usedEdges, nil
-	}
-
-	slices.SortFunc(nodes, func(a, b *Node) int {
-		return cmp.Compare(a.cumCost, b.cumCost)
-	})
-
-	nodes, err := greedyConnectJoinNodes(detector, nodes, vertexHints, cartesianFactor, allowNoEQ)
-	if err != nil {
-		return nil, nil, err
-	}
-	// Need to recompute usedEdges.
-	usedEdges = collectUsedEdges(nodes)
-	return nodes, usedEdges, nil
 }
 
 func collectUsedEdges(nodes []*Node) map[uint64]struct{} {
