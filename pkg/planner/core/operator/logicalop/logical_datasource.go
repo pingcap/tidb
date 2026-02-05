@@ -332,9 +332,10 @@ func (ds *DataSource) PreparePossibleProperties(_ *expression.Schema, _ ...*base
 			copy(result[len(result)-1], path.IdxCols[i+1:])
 		}
 	}
-	ds.hasTiflash = ds.TableInfo.TiFlashReplica != nil &&
+	hasTiFlashReplica := ds.TableInfo.TiFlashReplica != nil &&
 		ds.TableInfo.TiFlashReplica.Available && ds.TableInfo.TiFlashReplica.Count > 0 ||
 		UsedHypoTiFlashReplicas(ds.SCtx().GetSessionVars(), ds.DBName, ds.TableInfo)
+	ds.hasTiflash = hasTiFlashReplica && ds.SCtx().GetSessionVars().IsMPPAllowed()
 	return &base.PossiblePropertiesInfo{
 		Order:      result,
 		HasTiflash: ds.hasTiflash,
