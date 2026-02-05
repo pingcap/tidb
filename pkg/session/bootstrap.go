@@ -273,6 +273,9 @@ var systemDatabases = []DatabaseBasicInfo{
 var (
 	// systemTablesOfBaseNextGenVersion contains the definitions of system tables in
 	// the base next-gen bootstrap version.
+	// Note: although from the name, this var is for next-gen, classic kernel
+	// actually share the same definition. next-gen uses inner versions to
+	// structure those tables, but for classic, a flat slice is enough in theory.
 	systemTablesOfBaseNextGenVersion = []TableBasicInfo{
 		{ID: metadef.UserTableID, Name: "user", SQL: metadef.CreateUserTable},
 		{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: metadef.CreatePasswordHistoryTable},
@@ -334,8 +337,11 @@ type versionedBootstrapSchema struct {
 	databases []DatabaseBasicInfo
 }
 
-// used in next-gen, to create system tables directly through meta kv, without
-// going through DDL, so we can create them with reversed ID range.
+// definitions of all system tables, shared by classic and next-gen kernel.
+// the version is used in next-gen, in order to create system tables directly
+// through meta kv, without going through DDL, so we can create them with
+// reversed ID range.
+// for classic kernel, only the inner Tables field is used.
 var versionedBootstrapSchemas = []versionedBootstrapSchema{
 	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
 		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: systemTablesOfBaseNextGenVersion},
