@@ -5251,18 +5251,17 @@ ViewCheckOption:
 
 CreateMaterializedViewStmt:
 	"CREATE" "MATERIALIZED" "VIEW" TableName '(' ColumnList ')' MViewCreateOptionListOpt "AS" CreateViewSelectOpt
-	{
-		opts := $8.(*mviewCreateOptions)
-		x := &ast.CreateMaterializedViewStmt{
-			ViewName:        $4.(*ast.TableName),
-			Cols:            $6.([]model.CIStr),
-			Comment:         opts.comment,
-			TiFlashReplicas: opts.tiflashReplicas,
-			Refresh:         opts.refresh,
-			Select:          $10.(ast.StmtNode).(ast.ResultSetNode),
+		{
+			opts := $8.(*mviewCreateOptions)
+			x := &ast.CreateMaterializedViewStmt{
+				ViewName:        $4.(*ast.TableName),
+				Cols:            $6.([]model.CIStr),
+				Comment:         opts.comment,
+				Refresh:         opts.refresh,
+				Select:          $10.(ast.StmtNode).(ast.ResultSetNode),
+			}
+			$$ = x
 		}
-		$$ = x
-	}
 
 MViewCreateOptionListOpt:
 	/* EMPTY */
@@ -5283,43 +5282,32 @@ MViewCreateOptionList:
 	{
 		opts := $1.(*mviewCreateOptions)
 		opt := $2.(*mviewCreateOptions)
-		if opt.hasComment {
-			if opts.hasComment {
-				yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
+			if opt.hasComment {
+				if opts.hasComment {
+					yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
+				}
+				opts.hasComment = true
+				opts.comment = opt.comment
 			}
-			opts.hasComment = true
-			opts.comment = opt.comment
-		}
-		if opt.hasTiFlashReplicas {
-			if opts.hasTiFlashReplicas {
-				yylex.AppendError(yylex.Errorf("Duplicate TIFLASH REPLICA specified in CREATE MATERIALIZED VIEW"))
-			}
-			opts.hasTiFlashReplicas = true
-			opts.tiflashReplicas = opt.tiflashReplicas
-		}
-		if opt.hasRefresh {
-			if opts.hasRefresh {
-				yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
-			}
-			opts.hasRefresh = true
+			if opt.hasRefresh {
+				if opts.hasRefresh {
+					yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
+				}
+				opts.hasRefresh = true
 			opts.refresh = opt.refresh
 		}
 		$$ = opts
 	}
 
-MViewCreateOption:
-	"COMMENT" "=" stringLit
-	{
-		$$ = &mviewCreateOptions{hasComment: true, comment: $3}
-	}
-|	"TIFLASH" "REPLICA" LengthNum
-	{
-		$$ = &mviewCreateOptions{hasTiFlashReplicas: true, tiflashReplicas: $3.(uint64)}
-	}
-|	MViewRefreshClause
-	{
-		$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
-	}
+	MViewCreateOption:
+		"COMMENT" "=" stringLit
+		{
+			$$ = &mviewCreateOptions{hasComment: true, comment: $3}
+		}
+	|	MViewRefreshClause
+		{
+			$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+		}
 
 MViewRefreshClause:
 	"REFRESH" "FAST" MViewRefreshOnClauseOpt
@@ -5466,20 +5454,16 @@ AlterMaterializedViewActionList:
 		$$ = append($1.([]*ast.AlterMaterializedViewAction), $3.(*ast.AlterMaterializedViewAction))
 	}
 
-AlterMaterializedViewAction:
-	"COMMENT" "=" stringLit
-	{
-		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
-	}
-|	"TIFLASH" "REPLICA" LengthNum
-	{
-		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionTiFlashReplica, TiFlashReplicas: $3.(uint64)}
-	}
-|	"REFRESH" MViewStartWithOpt MViewNextOpt
-	{
-		var startWith ast.ExprNode
-		if $2 != nil {
-			startWith = $2.(ast.ExprNode)
+	AlterMaterializedViewAction:
+		"COMMENT" "=" stringLit
+		{
+			$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
+		}
+	|	"REFRESH" MViewStartWithOpt MViewNextOpt
+		{
+			var startWith ast.ExprNode
+			if $2 != nil {
+				startWith = $2.(ast.ExprNode)
 		}
 		var next ast.ExprNode
 		if $3 != nil {

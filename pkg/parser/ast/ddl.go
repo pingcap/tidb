@@ -1685,12 +1685,11 @@ func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
 type CreateMaterializedViewStmt struct {
 	ddlNode
 
-	ViewName        *TableName
-	Cols            []model.CIStr
-	Comment         string
-	TiFlashReplicas uint64
-	Refresh         *MViewRefreshClause
-	Select          ResultSetNode
+	ViewName *TableName
+	Cols     []model.CIStr
+	Comment  string
+	Refresh  *MViewRefreshClause
+	Select   ResultSetNode
 }
 
 // Restore implements Node interface.
@@ -1711,10 +1710,6 @@ func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(" COMMENT ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Comment)
-	}
-	if n.TiFlashReplicas > 0 {
-		ctx.WriteKeyWord(" TIFLASH REPLICA ")
-		ctx.WritePlainf("%d", n.TiFlashReplicas)
 	}
 	if n.Refresh != nil {
 		ctx.WritePlain(" ")
@@ -1874,17 +1869,15 @@ type AlterMaterializedViewActionType int
 
 const (
 	AlterMaterializedViewActionComment AlterMaterializedViewActionType = iota
-	AlterMaterializedViewActionTiFlashReplica
 	AlterMaterializedViewActionRefresh
 )
 
 // AlterMaterializedViewAction is one action in ALTER MATERIALIZED VIEW.
 type AlterMaterializedViewAction struct {
 	node
-	Tp              AlterMaterializedViewActionType
-	Comment         string
-	TiFlashReplicas uint64
-	Refresh         *MViewRefreshClause
+	Tp      AlterMaterializedViewActionType
+	Comment string
+	Refresh *MViewRefreshClause
 }
 
 // Restore implements Node interface.
@@ -1894,10 +1887,6 @@ func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("COMMENT ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.Comment)
-		return nil
-	case AlterMaterializedViewActionTiFlashReplica:
-		ctx.WriteKeyWord("TIFLASH REPLICA ")
-		ctx.WritePlainf("%d", n.TiFlashReplicas)
 		return nil
 	case AlterMaterializedViewActionRefresh:
 		ctx.WriteKeyWord("REFRESH")

@@ -5188,10 +5188,6 @@ func TestMaterializedViewDuplicateOptionsErrMsg(t *testing.T) {
 			substring: "Duplicate COMMENT specified in CREATE MATERIALIZED VIEW",
 		},
 		{
-			sql:       "CREATE MATERIALIZED VIEW mv (a) TIFLASH REPLICA 1 TIFLASH REPLICA 2 AS SELECT 1",
-			substring: "Duplicate TIFLASH REPLICA specified in CREATE MATERIALIZED VIEW",
-		},
-		{
 			sql:       "CREATE MATERIALIZED VIEW mv (a) REFRESH FAST REFRESH FAST AS SELECT 1",
 			substring: "Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW",
 		},
@@ -5287,11 +5283,6 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"CREATE MATERIALIZED VIEW `mv` (`a`) COMMENT = 'c1' AS SELECT 1",
 		},
 		{
-			"CREATE MATERIALIZED VIEW mv (a) TIFLASH REPLICA 1 AS SELECT 1",
-			true,
-			"CREATE MATERIALIZED VIEW `mv` (`a`) TIFLASH REPLICA 1 AS SELECT 1",
-		},
-		{
 			"CREATE MATERIALIZED VIEW mv (a) REFRESH FAST AS SELECT 1",
 			true,
 			"CREATE MATERIALIZED VIEW `mv` (`a`) REFRESH FAST AS SELECT 1",
@@ -5340,11 +5331,6 @@ func TestMaterializedViewStatements(t *testing.T) {
 			"ALTER MATERIALIZED VIEW mv COMMENT = 'c2'",
 			true,
 			"ALTER MATERIALIZED VIEW `mv` COMMENT = 'c2'",
-		},
-		{
-			"ALTER MATERIALIZED VIEW mv TIFLASH REPLICA 1",
-			true,
-			"ALTER MATERIALIZED VIEW `mv` TIFLASH REPLICA 1",
 		},
 		{
 			"ALTER MATERIALIZED VIEW mv REFRESH",

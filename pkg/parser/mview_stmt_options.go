@@ -19,9 +19,6 @@ type mviewCreateOptions struct {
 	hasComment bool
 	comment    string
 
-	hasTiFlashReplicas bool
-	tiflashReplicas    uint64
-
 	hasRefresh bool
 	refresh    *ast.MViewRefreshClause
 }
