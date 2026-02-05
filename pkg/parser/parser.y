@@ -1424,16 +1424,15 @@ import (
 	MViewCreateOption                      "materialized view create option"
 	MViewRefreshClause                     "materialized view refresh clause"
 	MViewRefreshOnClauseOpt                "materialized view refresh ON clause"
-	MViewStartWithOpt                      "materialized view START WITH option"
-	MViewNextOpt                           "materialized view NEXT option"
-	MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
-	MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
-	MLogOptionClauseOpt                    "materialized view log create option clause"
-	MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
-	MLogPurgeClause                        "materialized view log PURGE clause"
-	MLogStartWithOpt                       "materialized view log START WITH option"
-	MLogNextOpt                            "materialized view log NEXT option"
-	AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
+		MViewStartWithOpt                      "materialized view START WITH option"
+		MViewNextOpt                           "materialized view NEXT option"
+		MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
+		MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
+		MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
+		MLogPurgeClause                        "materialized view log PURGE clause"
+		MLogStartWithOpt                       "materialized view log START WITH option"
+		MLogNextOpt                            "materialized view log NEXT option"
+		AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
 	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
 	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
 	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
@@ -5368,32 +5367,21 @@ MViewNextOpt:
 		$$ = $2
 	}
 
-CreateMaterializedViewLogStmt:
-	"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogOptionClauseOpt MLogPurgeClauseOpt
-	{
-		x := &ast.CreateMaterializedViewLogStmt{
-			Table:            $6.(*ast.TableName),
-			Cols:             $8.([]model.CIStr),
-			TiFlashReplicas:  $10.(uint64),
-			Purge:            $11.(*ast.MLogPurgeClause),
+	CreateMaterializedViewLogStmt:
+		"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogPurgeClauseOpt
+		{
+			x := &ast.CreateMaterializedViewLogStmt{
+				Table:            $6.(*ast.TableName),
+				Cols:             $8.([]model.CIStr),
+				Purge:            $10.(*ast.MLogPurgeClause),
+			}
+			$$ = x
 		}
-		$$ = x
-	}
 
-MLogOptionClauseOpt:
-	/* EMPTY */
-	{
-		$$ = uint64(0)
-	}
-|	"TIFLASH" "REPLICA" LengthNum
-	{
-		$$ = $3.(uint64)
-	}
-
-MLogPurgeClauseOpt:
-	/* EMPTY */
-	{
-		$$ = (*ast.MLogPurgeClause)(nil)
+	MLogPurgeClauseOpt:
+		/* EMPTY */
+		{
+			$$ = (*ast.MLogPurgeClause)(nil)
 	}
 |	MLogPurgeClause
 	{
@@ -5493,17 +5481,13 @@ AlterMaterializedViewLogActionList:
 		$$ = append($1.([]*ast.AlterMaterializedViewLogAction), $3.(*ast.AlterMaterializedViewLogAction))
 	}
 
-AlterMaterializedViewLogAction:
-	"TIFLASH" "REPLICA" LengthNum
-	{
-		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionTiFlashReplica, TiFlashReplicas: $3.(uint64)}
-	}
-|	"PURGE" "IMMEDIATE"
-	{
-		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: true}}
-	}
-|	"PURGE" MLogStartWithOpt MLogNextOpt
-	{
+	AlterMaterializedViewLogAction:
+		"PURGE" "IMMEDIATE"
+		{
+			$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: true}}
+		}
+	|	"PURGE" MLogStartWithOpt MLogNextOpt
+		{
 		var startWith ast.ExprNode
 		if $2 != nil {
 			startWith = $2.(ast.ExprNode)

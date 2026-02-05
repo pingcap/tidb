@@ -1799,9 +1799,7 @@ type CreateMaterializedViewLogStmt struct {
 
 	Table *TableName
 	Cols  []model.CIStr
-	// TiFlashReplicas is the number of TiFlash replicas for the materialized view log.
-	TiFlashReplicas uint64
-	Purge           *MLogPurgeClause
+	Purge *MLogPurgeClause
 }
 
 // Restore implements Node interface.
@@ -1818,10 +1816,6 @@ func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteName(col.O)
 	}
 	ctx.WritePlain(")")
-	if n.TiFlashReplicas > 0 {
-		ctx.WriteKeyWord(" TIFLASH REPLICA ")
-		ctx.WritePlainf("%d", n.TiFlashReplicas)
-	}
 	if n.Purge != nil {
 		ctx.WritePlain(" ")
 		if err := n.Purge.Restore(ctx); err != nil {
@@ -1996,26 +1990,19 @@ func (n *AlterMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
 // AlterMaterializedViewLogAction is one action in ALTER MATERIALIZED VIEW LOG.
 type AlterMaterializedViewLogAction struct {
 	node
-	Tp AlterMaterializedViewLogActionType
-	// TiFlashReplicas is the number of TiFlash replicas to set for the materialized view log.
-	TiFlashReplicas uint64
-	Purge           *MLogPurgeClause
+	Tp    AlterMaterializedViewLogActionType
+	Purge *MLogPurgeClause
 }
 
 type AlterMaterializedViewLogActionType int
 
 const (
-	AlterMaterializedViewLogActionTiFlashReplica AlterMaterializedViewLogActionType = iota
-	AlterMaterializedViewLogActionPurge
+	AlterMaterializedViewLogActionPurge AlterMaterializedViewLogActionType = iota
 )
 
 // Restore implements Node interface.
 func (n *AlterMaterializedViewLogAction) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
-	case AlterMaterializedViewLogActionTiFlashReplica:
-		ctx.WriteKeyWord("TIFLASH REPLICA ")
-		ctx.WritePlainf("%d", n.TiFlashReplicas)
-		return nil
 	case AlterMaterializedViewLogActionPurge:
 		if n.Purge == nil {
 			return nil
