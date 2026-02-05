@@ -191,8 +191,8 @@ type RecoverIndexExec struct {
 	srcChunk      *chunk.Chunk
 	handleCols    plannercore.HandleCols
 
-	containsGenedCol bool
-	cols             []*expression.Column
+	containsGenedColOrPartialIndex bool
+	cols                           []*expression.Column
 
 	// below buf is used to reduce allocations.
 	recoverRows []recoverRows
@@ -384,6 +384,21 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 			if e.index.Meta().Global {
 				handle = kv.NewPartitionHandle(e.physicalID, handle)
 			}
+
+			// TODO: it's possible to push down the condition.
+			if e.index.Meta().HasCondition() {
+				ok, err := e.index.MeetPartialConditionWithChunk(row)
+				if err != nil {
+					return nil, err
+				}
+				if !ok {
+					// Skip partial index not match row. Still add the `scanRowCount` to avoid stopping the recovery too early.
+					result.scanRowCount++
+					result.currentHandle = handle
+					continue
+				}
+			}
+
 			idxVals, err := e.buildIndexedValues(row, e.idxValsBufs[result.scanRowCount], e.colFieldTypes, idxValLen)
 			if err != nil {
 				return nil, err
@@ -400,7 +415,7 @@ func (e *RecoverIndexExec) fetchRecoverRows(ctx context.Context, srcResult dists
 }
 
 func (e *RecoverIndexExec) buildIndexedValues(row chunk.Row, idxVals []types.Datum, fieldTypes []*types.FieldType, idxValLen int) ([]types.Datum, error) {
-	if !e.containsGenedCol {
+	if !e.containsGenedColOrPartialIndex {
 		return extractIdxVals(row, idxVals, fieldTypes, idxValLen), nil
 	}
 

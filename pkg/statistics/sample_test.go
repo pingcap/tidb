@@ -146,31 +146,31 @@ func TestBuildStatsOnRowSample(t *testing.T) {
 		d := types.NewIntDatum(int64(i))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 10; i++ {
 		d := types.NewIntDatum(int64(2))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 7; i++ {
 		d := types.NewIntDatum(int64(4))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 5; i++ {
 		d := types.NewIntDatum(int64(7))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 3; i++ {
 		d := types.NewIntDatum(int64(11))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	collector := &SampleCollector{
 		Samples:   data,
@@ -205,19 +205,19 @@ func TestBuildSampleFullNDV(t *testing.T) {
 		d := types.NewIntDatum(int64(2))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 31; i++ {
 		d := types.NewIntDatum(int64(4))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 	for i := 1; i < 25; i++ {
 		d := types.NewIntDatum(int64(7))
 		err := sketch.InsertValue(ctx.GetSessionVars().StmtCtx, d)
 		require.NoError(t, err)
-		data = append(data, &SampleItem{Value: d})
+		data = append(data, &SampleItem{Value: &d})
 	}
 
 	// Add many more distinct values to the FMSketch to make column NDV > sample NDV

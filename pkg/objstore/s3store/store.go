@@ -70,10 +70,10 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	)
 
 	// Configure custom retryer
-	if opts.S3Retryer.MaxAttempts() > 0 {
+	if opts.S3Retryer != nil {
 		// Use the provided S3Retryer (which is already a v2 retry.Standard)
 		configOpts = append(configOpts, config.WithRetryer(func() aws.Retryer {
-			return &opts.S3Retryer
+			return opts.S3Retryer
 		}))
 	} else {
 		// Use default TiDB retryer that handles some corner cases found in production
