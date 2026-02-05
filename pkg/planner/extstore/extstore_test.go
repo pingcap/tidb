@@ -142,12 +142,7 @@ func TestExtStorage(t *testing.T) {
 }
 
 func TestGetLocalPathDirNameWithWritePerm(t *testing.T) {
-	origLogFile := config.GetGlobalConfig().Log.File.Filename
-	origTempDir := config.GetGlobalConfig().TempDir
-	defer config.UpdateGlobal(func(conf *config.Config) {
-		conf.Log.File.Filename = origLogFile
-		conf.TempDir = origTempDir
-	})
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.File.Filename = filepath.Join("/var/log/tidb", "tidb.log")
 		conf.TempDir = filepath.Join("/tmp", "tidb")
@@ -162,12 +157,7 @@ func TestGetLocalPathDirNameWithWritePerm(t *testing.T) {
 }
 
 func TestGetLocalPathDirNameWithoutWritePerm(t *testing.T) {
-	origLogFile := config.GetGlobalConfig().Log.File.Filename
-	origTempDir := config.GetGlobalConfig().TempDir
-	defer config.UpdateGlobal(func(conf *config.Config) {
-		conf.Log.File.Filename = origLogFile
-		conf.TempDir = origTempDir
-	})
+	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.File.Filename = filepath.Join("/var/log/tidb", "tidb.log")
 		conf.TempDir = filepath.Join("/tmp", "tidb")
@@ -184,18 +174,7 @@ func TestGetLocalPathDirNameWithoutWritePerm(t *testing.T) {
 func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 	ctx := context.Background()
 
-	origLogFile := config.GetGlobalConfig().Log.File.Filename
-	origTempDir := config.GetGlobalConfig().TempDir
-	origCloudStorageURI := vardef.CloudStorageURI.Load()
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Log.File.Filename = origLogFile
-			conf.TempDir = origTempDir
-		})
-		vardef.CloudStorageURI.Store(origCloudStorageURI)
-		SetGlobalExtStorageForTest(nil)
-	}()
-
+	defer config.RestoreFunc()()
 	// Use writable temp dir for log
 	tempDir := t.TempDir()
 	logDir := filepath.Join(tempDir, "log")
@@ -223,18 +202,7 @@ func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	origLogFile := config.GetGlobalConfig().Log.File.Filename
-	origTempDir := config.GetGlobalConfig().TempDir
-	origCloudStorageURI := vardef.CloudStorageURI.Load()
-	defer func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.Log.File.Filename = origLogFile
-			conf.TempDir = origTempDir
-		})
-		vardef.CloudStorageURI.Store(origCloudStorageURI)
-		SetGlobalExtStorageForTest(nil)
-	}()
+	defer config.RestoreFunc()()
 
 	tempDir := t.TempDir()
 	readOnlyDir := filepath.Join(tempDir, "readonly")
