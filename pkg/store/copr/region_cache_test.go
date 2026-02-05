@@ -438,11 +438,48 @@ func TestLocateBucketNilFallback(t *testing.T) {
 	}
 
 	// Call splitKeyRangesByBuckets - should NOT panic, should return unsplit ranges
-	result := lkr.splitKeyRangesByBuckets(ctx)
+	result, fb := lkr.splitKeyRangesByBuckets(ctx)
+	require.NotNil(t, fb)
 
 	// Verify we got the fallback behavior: unsplit original LocationKeyRanges
 	require.Len(t, result, 1, "Expected 1 unsplit LocationKeyRanges")
 	require.Equal(t, lkr, result[0], "Expected original LocationKeyRanges to be returned")
 
 	t.Log("LocateBucket nil fallback working correctly - returned unsplit ranges instead of panicking")
+}
+
+// TestLocateBucketOutsideRegionNonNilFallback tests a subtle stale-bucket case:
+// LocateBucket can return a non-nil bucket even when key is outside the region boundaries
+// (because it clamps the located bucket without checking loc.Contains(key) in that path).
+// Our bucket splitting must not livelock in this scenario.
+func TestLocateBucketOutsideRegionNonNilFallback(t *testing.T) {
+	ctx := context.Background()
+
+	// Location covers [m, z). Buckets are stale (start before region start), so LocateBucket("b")
+	// returns a non-nil bucket, clamping falls back to region boundaries, and bucket.Contains("b") is false.
+	loc := &tikv.KeyLocation{
+		Region:   tikv.NewRegionVerID(1, 0, 0),
+		StartKey: []byte("m"),
+		EndKey:   []byte("z"),
+		Buckets: &metapb.Buckets{
+			Keys:    [][]byte{[]byte("a"), []byte("f"), []byte("z")},
+			Version: 1,
+		},
+	}
+
+	startKey := []byte("b") // outside [m, z)
+	require.False(t, loc.Contains(startKey), "sanity: startKey should be outside location")
+	b := loc.LocateBucket(startKey)
+	require.NotNil(t, b, "LocateBucket should return a non-nil bucket for this stale metadata")
+	require.False(t, b.Contains(startKey), "sanity: clamped bucket should not contain the key")
+
+	lkr := &LocationKeyRanges{
+		Location: loc,
+		Ranges:   NewKeyRanges([]kv.KeyRange{{StartKey: startKey, EndKey: []byte("c")}}),
+	}
+
+	result, fb := lkr.splitKeyRangesByBuckets(ctx)
+	require.NotNil(t, fb)
+	require.Len(t, result, 1, "Expected unsplit LocationKeyRanges fallback")
+	require.Equal(t, lkr, result[0], "Expected original LocationKeyRanges to be returned")
 }
