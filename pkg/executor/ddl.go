@@ -438,10 +438,6 @@ func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.C
 		PurgeStartWith: purgeStartWith,
 		PurgeNext:      purgeNext,
 	}
-
-	if s.TiFlashReplicas > 0 {
-		mlogTableInfo.TiFlashReplica = &model.TiFlashReplicaInfo{Count: s.TiFlashReplicas}
-	}
 	if err := e.ddlExecutor.CreateTableWithInfo(e.Ctx(), schemaName, mlogTableInfo, nil); err != nil {
 		return err
 	}

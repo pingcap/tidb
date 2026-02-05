@@ -17,11 +17,9 @@ package ddl_test
 import (
 	"context"
 	"testing"
-	"time"
 
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
@@ -67,26 +65,4 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 
 	// Duplicated MV LOG should fail (same derived table name).
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
-}
-
-func TestCreateMaterializedViewLogTiFlashReplica(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 50*time.Millisecond, mockstore.WithMockTiFlash(1))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_tiflash (a int)")
-
-	tk.MustExec("create materialized view log on t_tiflash (a) tiflash replica 1 purge immediate")
-
-	is := dom.InfoSchema()
-	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_tiflash"))
-	require.NoError(t, err)
-
-	require.NotNil(t, mlogTable.Meta().MaterializedViewLog)
-	require.NotNil(t, mlogTable.Meta().TiFlashReplica)
-	require.Equal(t, uint64(1), mlogTable.Meta().TiFlashReplica.Count)
-
-	// Purge immediate only records method, without start/next.
-	require.Equal(t, "IMMEDIATE", mlogTable.Meta().MaterializedViewLog.PurgeMethod)
-	require.Empty(t, mlogTable.Meta().MaterializedViewLog.PurgeStartWith)
-	require.Empty(t, mlogTable.Meta().MaterializedViewLog.PurgeNext)
 }
