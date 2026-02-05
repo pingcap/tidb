@@ -3,16 +3,16 @@
     "name": "TestWindowPushDownPlans",
     "cases": [
       "set @@tidb_enforce_mpp=1",
-      "explain select *, row_number() over () FROM employee -- 1. empty partition",
-      "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
-      "explain select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
-      "explain select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
-      "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
-      "explain select *, rank() over w, dense_rank() over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
-      "explain select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
-      "explain select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
-      "explain select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
-      "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;"
+      "explain format = 'brief' select *, row_number() over () FROM employee -- 1. empty partition",
+      "explain format = 'brief' select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
+      "explain format = 'brief' select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
+      "explain format = 'brief' select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
+      "explain format = 'brief' select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
+      "explain format = 'brief' select *, rank() over w, dense_rank() over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
+      "explain format = 'brief' select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
+      "explain format = 'brief' select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
+      "explain format = 'brief' select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
+      "explain format = 'brief' select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;"
     ]
   },
   {

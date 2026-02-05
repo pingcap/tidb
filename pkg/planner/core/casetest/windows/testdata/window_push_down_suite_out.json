@@ -8,142 +8,142 @@
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over () FROM employee -- 1. empty partition",
+        "SQL": "explain format = 'brief' select *, row_number() over () FROM employee -- 1. empty partition",
         "Plan": [
-          "TableReader_27 10000.00 root  MppVersion: 3, data:ExchangeSender_26",
-          "└─ExchangeSender_26 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_25 10000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "    └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "        └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "    └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
+        "SQL": "explain format = 'brief' select *, row_number() over (order by salary) FROM employee -- 1.1 empty partition with sort",
         "Plan": [
-          "TableReader_24 10000.00 root  MppVersion: 3, data:ExchangeSender_23",
-          "└─ExchangeSender_23 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_22 10000.00 mpp[tiflash]  row_number()->Column#7 over(order by test.employee.salary rows between current row and current row)",
-          "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.salary",
-          "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(order by test.employee.salary rows between current row and current row)",
+          "    └─Sort 10000.00 mpp[tiflash]  test.employee.salary",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
+        "SQL": "explain format = 'brief' select *, row_number() over (partition by deptid) FROM employee -- 2. column partition key",
         "Plan": [
-          "TableReader_25 10000.00 root  MppVersion: 3, data:ExchangeSender_24",
-          "└─ExchangeSender_24 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_23 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
-          "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
-          "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 8",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "    └─Sort 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
+        "SQL": "explain format = 'brief' select *, row_number() over (partition by deptid+1) FROM employee -- 3. expression partition key",
         "Plan": [
-          "TableReader_32 10000.00 root  MppVersion: 3, data:ExchangeSender_31",
-          "└─ExchangeSender_31 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_7 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#8, stream_count: 8",
-          "    └─Window_30 10000.00 mpp[tiflash]  row_number()->Column#8 over(partition by Column#7 rows between current row and current row), stream_count: 8",
-          "      └─Sort_15 10000.00 mpp[tiflash]  Column#7, stream_count: 8",
-          "        └─ExchangeReceiver_14 10000.00 mpp[tiflash]  stream_count: 8",
-          "          └─ExchangeSender_13 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#7, collate: binary], stream_count: 8",
-          "            └─Projection_11 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, 1)->Column#7",
-          "              └─TableFullScan_12 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#8, stream_count: 8",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#8 over(partition by Column#7 rows between current row and current row), stream_count: 8",
+          "      └─Sort 10000.00 mpp[tiflash]  Column#7, stream_count: 8",
+          "        └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "          └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: Column#7, collate: binary], stream_count: 8",
+          "            └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, plus(test.employee.deptid, 1)->Column#7",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
+        "SQL": "explain format = 'brief' select *, row_number() over (partition by deptid ORDER BY salary desc) FROM employee -- 3.1 with sort key",
         "Plan": [
-          "TableReader_25 10000.00 root  MppVersion: 3, data:ExchangeSender_24",
-          "└─ExchangeSender_24 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_23 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid order by test.employee.salary desc rows between current row and current row), stream_count: 8",
-          "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.deptid, test.employee.salary:desc, stream_count: 8",
-          "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 8",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(partition by test.employee.deptid order by test.employee.salary desc rows between current row and current row), stream_count: 8",
+          "    └─Sort 10000.00 mpp[tiflash]  test.employee.deptid, test.employee.salary:desc, stream_count: 8",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, rank() over w, dense_rank() over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
+        "SQL": "explain format = 'brief' select *, rank() over w, dense_rank() over w from employee window w as (partition by deptid) -- 4. same kinds, multi function, same window",
         "Plan": [
-          "TableReader_25 10000.00 root  MppVersion: 3, data:ExchangeSender_24",
-          "└─ExchangeSender_24 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_23 10000.00 mpp[tiflash]  rank()->Column#8, dense_rank()->Column#9 over(partition by test.employee.deptid), stream_count: 8",
-          "    └─Sort_13 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
-          "      └─ExchangeReceiver_12 10000.00 mpp[tiflash]  stream_count: 8",
-          "        └─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "          └─TableFullScan_10 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  rank()->Column#8, dense_rank()->Column#9 over(partition by test.employee.deptid), stream_count: 8",
+          "    └─Sort 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
+        "SQL": "explain format = 'brief' select *, row_number() over w, rank() over w from employee window w as (partition by deptid) -- 5. different kinds, multi functions, same window",
         "Plan": [
-          "TableReader_37 10000.00 root  MppVersion: 3, data:ExchangeSender_36",
-          "└─ExchangeSender_36 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Projection_9 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#9, Column#8, stream_count: 8",
-          "    └─Window_35 10000.00 mpp[tiflash]  row_number()->Column#9 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
-          "      └─Window_12 10000.00 mpp[tiflash]  rank()->Column#8 over(partition by test.employee.deptid), stream_count: 8",
-          "        └─Sort_17 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
-          "          └─ExchangeReceiver_16 10000.00 mpp[tiflash]  stream_count: 8",
-          "            └─ExchangeSender_15 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "              └─TableFullScan_14 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Projection 10000.00 mpp[tiflash]  test.employee.empid, test.employee.deptid, test.employee.salary, Column#9, Column#8, stream_count: 8",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#9 over(partition by test.employee.deptid rows between current row and current row), stream_count: 8",
+          "      └─Window 10000.00 mpp[tiflash]  rank()->Column#8 over(partition by test.employee.deptid), stream_count: 8",
+          "        └─Sort 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
+          "          └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "            └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "              └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
+        "SQL": "explain format = 'brief' select *, rank() over () FROM  (select *, row_number() over () a from employee) tmp -- 6. multi window from sub query",
         "Plan": [
-          "TableReader_41 10000.00 root  MppVersion: 3, data:ExchangeSender_40",
-          "└─ExchangeSender_40 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_39 10000.00 mpp[tiflash]  rank()->Column#9 over()",
-          "    └─Window_14 10000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "      └─ExchangeReceiver_18 10000.00 mpp[tiflash]  ",
-          "        └─ExchangeSender_17 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "          └─TableFullScan_16 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  rank()->Column#9 over()",
+          "    └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "          └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
+        "SQL": "explain format = 'brief' select *, rank() over (partition by deptid) FROM  (select *, row_number() over () a from employee) tmp -- 6.1 multi window from sub query",
         "Plan": [
-          "TableReader_42 10000.00 root  MppVersion: 3, data:ExchangeSender_41",
-          "└─ExchangeSender_41 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_40 10000.00 mpp[tiflash]  rank()->Column#9 over(partition by test.employee.deptid), stream_count: 8",
-          "    └─Sort_20 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
-          "      └─ExchangeReceiver_19 10000.00 mpp[tiflash]  stream_count: 8",
-          "        └─ExchangeSender_18 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
-          "          └─Window_14 10000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "            └─ExchangeReceiver_17 10000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_16 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "                └─TableFullScan_15 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 10000.00 mpp[tiflash]  rank()->Column#9 over(partition by test.employee.deptid), stream_count: 8",
+          "    └─Sort 10000.00 mpp[tiflash]  test.employee.deptid, stream_count: 8",
+          "      └─ExchangeReceiver 10000.00 mpp[tiflash]  stream_count: 8",
+          "        └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary], stream_count: 8",
+          "          └─Window 10000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "            └─ExchangeReceiver 10000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "                └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       },
       {
-        "SQL": "explain select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
+        "SQL": "explain format = 'brief' select deptid, row_number() OVER() from (select deptid from employee group by deptid) t;",
         "Plan": [
-          "TableReader_78 8000.00 root  MppVersion: 3, data:ExchangeSender_77",
-          "└─ExchangeSender_77 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─Window_76 8000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
-          "    └─ExchangeReceiver_26 8000.00 mpp[tiflash]  ",
-          "      └─ExchangeSender_25 8000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
-          "        └─Projection_21 8000.00 mpp[tiflash]  test.employee.deptid",
-          "          └─HashAgg_22 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
-          "            └─ExchangeReceiver_24 8000.00 mpp[tiflash]  ",
-          "              └─ExchangeSender_23 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
-          "                └─HashAgg_13 8000.00 mpp[tiflash]  group by:test.employee.deptid, ",
-          "                  └─TableFullScan_20 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
+          "TableReader 8000.00 root  MppVersion: 3, data:ExchangeSender",
+          "└─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough",
+          "  └─Window 8000.00 mpp[tiflash]  row_number()->Column#7 over(rows between current row and current row)",
+          "    └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "      └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: PassThrough, Compression: FAST",
+          "        └─Projection 8000.00 mpp[tiflash]  test.employee.deptid",
+          "          └─HashAgg 8000.00 mpp[tiflash]  group by:test.employee.deptid, funcs:firstrow(test.employee.deptid)->test.employee.deptid",
+          "            └─ExchangeReceiver 8000.00 mpp[tiflash]  ",
+          "              └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: HashPartition, Compression: FAST, Hash Cols: [name: test.employee.deptid, collate: binary]",
+          "                └─HashAgg 8000.00 mpp[tiflash]  group by:test.employee.deptid, ",
+          "                  └─TableFullScan 10000.00 mpp[tiflash] table:employee keep order:false, stats:pseudo"
         ],
         "Warn": null
       }
