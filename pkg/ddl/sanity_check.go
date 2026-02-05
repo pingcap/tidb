@@ -237,7 +237,9 @@ func (e *executor) checkHistoryJobInTest(ctx sessionctx.Context, historyJob *mod
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateTable:
-			if _, ok := st.(*ast.CreateTableStmt); !ok {
+			_, isCreateTable := st.(*ast.CreateTableStmt)
+			_, isCreateMLog := st.(*ast.CreateMaterializedViewLogStmt)
+			if !isCreateTable && !isCreateMLog {
 				panic(fmt.Sprintf("job ID %d, parse ddl job failed, query %s", historyJob.ID, historyJob.Query))
 			}
 		case model.ActionCreateSchema:

@@ -28,9 +28,11 @@ import (
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	ptypes "github.com/pingcap/tidb/pkg/parser/types"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -163,6 +165,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
+	case *ast.CreateMaterializedViewLogStmt:
+		err = e.executeCreateMaterializedViewLog(ctx, x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -316,6 +320,148 @@ func (e *DDLExec) executeCreateView(ctx context.Context, s *ast.CreateViewStmt) 
 
 	e.Ctx().GetSessionVars().ClearRelatedTableForMDL()
 	return e.ddlExecutor.CreateView(e.Ctx(), s)
+}
+
+func (e *DDLExec) executeCreateMaterializedViewLog(ctx context.Context, s *ast.CreateMaterializedViewLogStmt) error {
+	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if e.Ctx().GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
+	}
+	dbInfo, ok := is.SchemaByName(schemaName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName.O)
+	}
+
+	baseTable, err := is.TableByName(ctx, schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	baseTableID := baseTable.Meta().ID
+
+	mlogName := "$mlog$" + baseTable.Meta().Name.O
+	if len(mlogName) > mysql.MaxTableNameLength {
+		return errors.Errorf("materialized view log table name too long: %s", mlogName)
+	}
+	_, err = is.TableByName(ctx, schemaName, pmodel.NewCIStr(mlogName))
+	if err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: pmodel.NewCIStr(mlogName)})
+	}
+	if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
+	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))
+	for _, col := range baseTable.Meta().Columns {
+		colMap[col.Name.L] = col
+	}
+
+	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
+	for _, c := range s.Cols {
+		baseCol := colMap[c.L]
+		if baseCol == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
+		}
+		ft := baseCol.FieldType
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{Name: c},
+			Tp:   &ft,
+		})
+	}
+
+	metaCols := []struct {
+		name string
+		ft   byte
+		flen int
+	}{
+		{name: "dml_type", ft: mysql.TypeVarchar, flen: 1},
+		{name: "old_new", ft: mysql.TypeVarchar, flen: 1},
+	}
+	for _, metaCol := range metaCols {
+		ft := ptypes.NewFieldType(metaCol.ft)
+		ft.SetFlen(metaCol.flen)
+		ft.SetFlag(mysql.NotNullFlag)
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{Name: pmodel.NewCIStr(metaCol.name)},
+			Tp:   ft,
+		})
+	}
+
+	createTableStmt := &ast.CreateTableStmt{
+		Table: &ast.TableName{Schema: schemaName, Name: pmodel.NewCIStr(mlogName)},
+		Cols:  colDefs,
+	}
+	mlogTableInfo, err := ddl.BuildTableInfoWithStmt(
+		ddl.NewMetaBuildContextWithSctx(e.Ctx()),
+		createTableStmt,
+		dbInfo.Charset,
+		dbInfo.Collate,
+		dbInfo.PlacementPolicyRef,
+	)
+	if err != nil {
+		return err
+	}
+
+	var purgeMethod string
+	var purgeStartWith string
+	var purgeNext string
+	if s.Purge != nil {
+		if s.Purge.Immediate {
+			purgeMethod = "IMMEDIATE"
+		} else {
+			purgeMethod = "DEFERRED"
+			if s.Purge.StartWith != nil {
+				purgeStartWith, err = restoreExprToCanonicalSQL(s.Purge.StartWith)
+				if err != nil {
+					return err
+				}
+			}
+			if s.Purge.Next != nil {
+				purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+				if err != nil {
+					return err
+				}
+			} else {
+				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
+			}
+		}
+	}
+
+	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
+		BaseTableID:    baseTableID,
+		Columns:        s.Cols,
+		PurgeMethod:    purgeMethod,
+		PurgeStartWith: purgeStartWith,
+		PurgeNext:      purgeNext,
+	}
+
+	if err := e.ddlExecutor.CreateTableWithInfo(e.Ctx(), schemaName, mlogTableInfo, nil); err != nil {
+		return err
+	}
+
+	if s.TiFlashReplicas > 0 {
+		alterStmt := &ast.AlterTableStmt{
+			Table: &ast.TableName{Schema: schemaName, Name: pmodel.NewCIStr(mlogName)},
+			Specs: []*ast.AlterTableSpec{{
+				Tp:             ast.AlterTableSetTiFlashReplica,
+				TiFlashReplica: &ast.TiFlashReplicaSpec{Count: s.TiFlashReplicas},
+			}},
+		}
+		return e.ddlExecutor.AlterTable(ctx, e.Ctx(), alterStmt)
+	}
+	return nil
+}
+
+func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreStringWithoutCharset, &sb)
+	if err := expr.Restore(rctx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
 func (e *DDLExec) executeCreateIndex(s *ast.CreateIndexStmt) error {
