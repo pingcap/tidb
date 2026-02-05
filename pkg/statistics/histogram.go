@@ -1154,12 +1154,21 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// If this is an unsigned column, we need to make sure values are not negative.
 	// Normal negative value should have become 0. But this still might happen when met MinNotNull here.
 	// Maybe it's better to do this transformation in the ranger like the normal negative value.
+	// Track whether negative values were clamped to 0, to detect impossible ranges.
+	var leftClamped, rightClamped bool
 	if unsigned {
 		if l < 0 {
 			l = 0
+			leftClamped = true
 		}
 		if r < 0 {
 			r = 0
+			rightClamped = true
+		}
+		// If both bounds collapsed to 0 due to clamping negative values, this is
+		// an impossible range (e.g., unsigned_col < 0). Return 0 estimate.
+		if l == 0 && r == 0 && (leftClamped || rightClamped) {
+			return DefaultRowEst(0)
 		}
 	}
 

@@ -2151,9 +2151,8 @@ func TestOutOfRangeGeVsBetween(t *testing.T) {
 	est2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
 	require.NoError(t, err)
 
-	require.Greaterf(t, est1.MaxEst, est2.MaxEst,
-		"MaxEst for col >= 100 (%v) must be larger than MaxEst for col BETWEEN 100 AND 102 (%v)",
-		est1.MaxEst, est2.MaxEst)
+	t.Logf("col >= 100 (unbounded): Est=%.2f MinEst=%.2f MaxEst=%.2f", est1.Est, est1.MinEst, est1.MaxEst)
+	t.Logf("col BETWEEN 100 AND 102 (bounded): Est=%.2f MinEst=%.2f MaxEst=%.2f", est2.Est, est2.MinEst, est2.MaxEst)
 
 	for _, ratio := range []float64{0, 0.3, 0.5, 0.7, 1} {
 		sctx.GetSessionVars().RiskRangeSkewRatio = ratio
@@ -2161,10 +2160,15 @@ func TestOutOfRangeGeVsBetween(t *testing.T) {
 		require.NoError(t, err)
 		e2, err := getColumnRowCount(sctx, col, rangeBetween100102, realtimeCount, modifyCount, false)
 		require.NoError(t, err)
+		t.Logf("skew_ratio=%.1f: col >= 100 Est=%.2f MinEst=%.2f MaxEst=%.2f | BETWEEN 100 AND 102 Est=%.2f MinEst=%.2f MaxEst=%.2f",
+			ratio, e1.Est, e1.MinEst, e1.MaxEst, e2.Est, e2.MinEst, e2.MaxEst)
 		require.Greaterf(t, e1.Est, e2.Est,
 			"skew_ratio=%v: Est for col >= 100 (%v) must be larger than Est for col BETWEEN 100 AND 102 (%v)",
 			ratio, e1.Est, e2.Est)
 	}
+	require.Greaterf(t, est1.MaxEst, est2.MaxEst,
+		"MaxEst for col >= 100 (%v) must be larger than MaxEst for col BETWEEN 100 AND 102 (%v)",
+		est1.MaxEst, est2.MaxEst)
 }
 
 func TestLastBucketEndValueHeuristic(t *testing.T) {
