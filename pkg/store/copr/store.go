@@ -78,6 +78,7 @@ func (c *tikvClient) SetEventListener(listener tikv.ClientEventListener) {
 	c.c.SetEventListener(listener)
 }
 
+// SendRequestAsync implements Client interface
 func (c *tikvClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
 	panic("Not implemented")
 }
