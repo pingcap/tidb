@@ -46,6 +46,7 @@ go_library(
         "inspection_summary.go",
         "load_data.go",
         "load_stats.go",
+        "materialized_view_ddl.go",
         "mem_reader.go",
         "memtable_reader.go",
         "metrics_reader.go",

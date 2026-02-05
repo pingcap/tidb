@@ -97,7 +97,15 @@ func (w *worker) onDropTableOrView(jobCtx *jobContext, job *model.Job) (ver int6
 		ruleIDs := append(getPartitionRuleIDs(job.SchemaName, tblInfo), fmt.Sprintf(label.TableIDFormat, label.IDPrefix, job.SchemaName, tblInfo.Name.L))
 
 		args.OldPartitionIDs = oldIDs
-		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State)
+		var extraInfos []schemaIDAndTableInfo
+		extra, extraErr := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, tblInfo)
+		if extraErr != nil {
+			return ver, errors.Trace(extraErr)
+		}
+		if extra != nil {
+			extraInfos = append(extraInfos, *extra)
+		}
+		ver, err = updateVersionAndTableInfo(jobCtx, job, tblInfo, originalState != tblInfo.State, extraInfos...)
 		if err != nil {
 			return ver, errors.Trace(err)
 		}
@@ -1393,6 +1401,57 @@ func onRepairTable(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStackByArgs("table", tblInfo.State)
 	}
+}
+
+func updateMaterializedViewBaseInfoOnDrop(jobCtx *jobContext, job *model.Job, droppingTable *model.TableInfo) (*schemaIDAndTableInfo, error) {
+	var baseTableID int64
+	var apply func(base *model.TableInfo)
+
+	switch {
+	case droppingTable.MaterializedView != nil:
+		if len(droppingTable.MaterializedView.BaseTableIDs) != 1 {
+			return nil, errors.New("materialized view must reference exactly one base table in Stage-1")
+		}
+		baseTableID = droppingTable.MaterializedView.BaseTableIDs[0]
+		apply = func(base *model.TableInfo) {
+			if base.MaterializedViewBase == nil {
+				return
+			}
+			newIDs := base.MaterializedViewBase.MViewIDs[:0]
+			for _, id := range base.MaterializedViewBase.MViewIDs {
+				if id != job.TableID {
+					newIDs = append(newIDs, id)
+				}
+			}
+			base.MaterializedViewBase.MViewIDs = newIDs
+			if base.MaterializedViewBase.MLogID == 0 && len(base.MaterializedViewBase.MViewIDs) == 0 {
+				base.MaterializedViewBase = nil
+			}
+		}
+	case droppingTable.MaterializedViewLog != nil:
+		baseTableID = droppingTable.MaterializedViewLog.BaseTableID
+		apply = func(base *model.TableInfo) {
+			if base.MaterializedViewBase == nil {
+				return
+			}
+			if base.MaterializedViewBase.MLogID == job.TableID {
+				base.MaterializedViewBase.MLogID = 0
+			}
+			if base.MaterializedViewBase.MLogID == 0 && len(base.MaterializedViewBase.MViewIDs) == 0 {
+				base.MaterializedViewBase = nil
+			}
+		}
+	default:
+		return nil, nil
+	}
+
+	baseTblInfo, err := jobCtx.metaMut.GetTable(job.SchemaID, baseTableID)
+	if err != nil {
+		// The base table may already be dropped; keep dropping MV/MLOG table going.
+		return nil, nil
+	}
+	apply(baseTblInfo)
+	return &schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo}, nil
 }
 
 func onAlterTableAttributes(jobCtx *jobContext, job *model.Job) (ver int64, err error) {

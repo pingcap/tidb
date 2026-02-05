@@ -145,7 +145,32 @@ func applyDropTableOrPartition(b *Builder, m meta.Reader, diff *model.SchemaDiff
 	// bundle ops
 	b.markTableBundleShouldUpdate(diff.TableID)
 	for _, opt := range diff.AffectedOpts {
-		b.deleteBundle(b.infoSchema, opt.OldTableID)
+		// When SchemaID is 0, it comes from buildPlacementAffects and only indicates
+		// physical IDs (e.g. partition IDs) for placement bundle operations.
+		if opt.SchemaID == 0 && opt.OldSchemaID == 0 {
+			b.deleteBundle(b.infoSchema, opt.OldTableID)
+			continue
+		}
+
+		// Otherwise, it indicates an extra table updated in the same DDL transaction.
+		// Drop-table diffs don't apply affected opts by default, so reload the table
+		// metadata explicitly.
+		affectedDiff := &model.SchemaDiff{
+			// Use a non-drop action type so that applyTableUpdate treats it as a normal
+			// table update (reload from meta) instead of a drop.
+			Type:        model.ActionModifyTableComment,
+			Version:     diff.Version,
+			SchemaID:    opt.SchemaID,
+			TableID:     opt.TableID,
+			OldSchemaID: opt.OldSchemaID,
+			OldTableID:  opt.OldTableID,
+		}
+		affectedIDs, err := applyTableUpdate(b, m, affectedDiff)
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		tblIDs = append(tblIDs, affectedIDs...)
+		b.markTableBundleShouldUpdate(opt.TableID)
 	}
 	return tblIDs, nil
 }

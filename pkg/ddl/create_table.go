@@ -178,7 +178,16 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 		return ver, errors.Trace(err)
 	}
 
-	ver, err = updateSchemaVersion(jobCtx, job)
+	var extraInfos []schemaIDAndTableInfo
+	extra, err := updateMaterializedViewBaseInfoOnCreate(jobCtx, job, tbInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	if extra != nil {
+		extraInfos = append(extraInfos, *extra)
+	}
+
+	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
 	if err != nil {
 		return ver, errors.Trace(err)
 	}
@@ -262,6 +271,61 @@ func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job)
 
 	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, []*model.TableInfo{baseTblInfo, mlogTblInfo})
 	return ver, nil
+}
+
+func updateMaterializedViewBaseInfoOnCreate(jobCtx *jobContext, job *model.Job, createdTable *model.TableInfo) (*schemaIDAndTableInfo, error) {
+	var baseTableID int64
+	var apply func(base *model.TableInfo) error
+
+	switch {
+	case createdTable.MaterializedView != nil:
+		if len(createdTable.MaterializedView.BaseTableIDs) != 1 {
+			job.State = model.JobStateCancelled
+			return nil, errors.New("materialized view must reference exactly one base table in Stage-1")
+		}
+		baseTableID = createdTable.MaterializedView.BaseTableIDs[0]
+		apply = func(base *model.TableInfo) error {
+			if base.MaterializedViewBase == nil {
+				base.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
+			}
+			for _, id := range base.MaterializedViewBase.MViewIDs {
+				if id == createdTable.ID {
+					return nil
+				}
+			}
+			base.MaterializedViewBase.MViewIDs = append(base.MaterializedViewBase.MViewIDs, createdTable.ID)
+			return nil
+		}
+	case createdTable.MaterializedViewLog != nil:
+		baseTableID = createdTable.MaterializedViewLog.BaseTableID
+		apply = func(base *model.TableInfo) error {
+			if base.MaterializedViewBase == nil {
+				base.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
+			}
+			if base.MaterializedViewBase.MLogID != 0 && base.MaterializedViewBase.MLogID != createdTable.ID {
+				return errors.Errorf("base table %s already has a materialized view log", base.Name.O)
+			}
+			base.MaterializedViewBase.MLogID = createdTable.ID
+			return nil
+		}
+	default:
+		return nil, nil
+	}
+
+	baseTblInfo, err := jobCtx.metaMut.GetTable(job.SchemaID, baseTableID)
+	if err != nil {
+		job.State = model.JobStateCancelled
+		return nil, errors.Trace(err)
+	}
+	if err := apply(baseTblInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, errors.Trace(err)
+	}
+	if err := updateTable(jobCtx.metaMut, job.SchemaID, baseTblInfo); err != nil {
+		job.State = model.JobStateCancelled
+		return nil, errors.Trace(err)
+	}
+	return &schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo}, nil
 }
 
 func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {

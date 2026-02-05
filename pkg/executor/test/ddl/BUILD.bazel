@@ -6,6 +6,7 @@ go_test(
     srcs = [
         "ddl_test.go",
         "main_test.go",
+        "mview_ddl_test.go",
         "mview_log_ddl_test.go",
     ],
     flaky = True,

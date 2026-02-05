@@ -163,8 +163,14 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
+	case *ast.CreateMaterializedViewStmt:
+		err = e.executeCreateMaterializedView(ctx, x)
 	case *ast.CreateMaterializedViewLogStmt:
 		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), x)
+	case *ast.AlterMaterializedViewStmt:
+		err = e.executeAlterMaterializedView(ctx, x)
+	case *ast.AlterMaterializedViewLogStmt:
+		err = e.executeAlterMaterializedViewLog(ctx, x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -206,6 +212,12 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateSequence(x)
 	case *ast.DropSequenceStmt:
 		err = e.executeDropSequence(x)
+	case *ast.DropMaterializedViewStmt:
+		err = e.executeDropMaterializedView(ctx, x)
+	case *ast.DropMaterializedViewLogStmt:
+		err = e.executeDropMaterializedViewLog(ctx, x)
+	case *ast.RefreshMaterializedViewStmt:
+		err = e.executeRefreshMaterializedView(ctx, x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:
