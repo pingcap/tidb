@@ -19,12 +19,12 @@
     "name": "TestWindowFunctionDescCanPushDown",
     "cases": [
       "set @@tidb_enforce_mpp=1",
-      "explain select *, row_number() over () FROM employee -- 1. pure window functions",
-      "explain select *, rank() over () FROM employee",
-      "explain select *, dense_rank() over () FROM employee",
-      "explain select *, lead(empid) over () FROM employee",
-      "explain select *, lag(empid) over () FROM employee",
-      "explain select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame"
+      "explain format = 'brief' select *, row_number() over () FROM employee -- 1. pure window functions",
+      "explain format = 'brief' select *, rank() over () FROM employee",
+      "explain format = 'brief' select *, dense_rank() over () FROM employee",
+      "explain format = 'brief' select *, lead(empid) over () FROM employee",
+      "explain format = 'brief' select *, lag(empid) over () FROM employee",
+      "explain format = 'brief' select *, row_number() over (partition by empid order by salary RANGE between 1 preceding and 1 following) FROM employee -- 3. range frame"
     ]
   },
   {
