@@ -2189,7 +2189,13 @@ func (w *worker) buildTiCIFulltextParserInfo(jobCtx *jobContext, job *model.Job,
 		if stopwordTable != "" {
 			dbName, tblName, ok := splitFullTextStopwordTableName(stopwordTable)
 			if !ok {
-				return nil, errors.New("invalid stopword table name")
+				return nil, errors.Errorf(
+					"invalid stopword table name %q (expected 'db_name/table_name'); set @@global.%s or @@global.%s (or disable stopwords with @@global.%s=OFF) before creating FULLTEXT index",
+					stopwordTable,
+					vardef.InnodbFtUserStopwordTable,
+					vardef.InnodbFtServerStopwordTable,
+					vardef.InnodbFtEnableStopword,
+				)
 			}
 			stopwords, err := w.readFullTextStopwords(jobCtx, dbName, tblName)
 			if err != nil {

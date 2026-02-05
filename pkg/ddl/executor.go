@@ -4994,12 +4994,6 @@ func (e *executor) createColumnarIndex(ctx sessionctx.Context, ti ast.Ident, ind
 	// indexPartSpecifications[0].Expr can not be unmarshaled, so we set it to nil.
 	indexPartSpecifications[0].Expr = nil
 
-	if columnarIndexType == model.ColumnarIndexTypeFulltext {
-		if err := e.captureFullTextIndexSysvarsToJob(ctx, job, indexOption); err != nil {
-			return errors.Trace(err)
-		}
-	}
-
 	// TODO: support CDCWriteSource
 
 	args := &model.ModifyIndexArgs{
