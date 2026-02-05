@@ -72,9 +72,11 @@ func testConcurrentlyInitStats(t *testing.T) {
 	h.Clear()
 	require.Equal(t, h.MemConsumed(), int64(0))
 	require.NoError(t, h.InitStats(context.Background(), is))
+	var maxTableID int64
 	for i := 1; i < 10; i++ {
 		tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(fmt.Sprintf("t%v", i)))
 		require.NoError(t, err)
+		maxTableID = max(maxTableID, tbl.Meta().ID)
 		stats, ok := h.StatsCache.Get(tbl.Meta().ID)
 		require.True(t, ok)
 		for _, col := range stats.GetColSlice() {
@@ -101,7 +103,7 @@ func testConcurrentlyInitStats(t *testing.T) {
 			require.False(t, col.IsAllEvicted())
 		}
 	}
-	require.Equal(t, int64(126), handle.GetMaxTidRecordForTest())
+	require.Equal(t, maxTableID, handle.GetMaxTidRecordForTest())
 }
 
 func TestDropTableBeforeConcurrentlyInitStats(t *testing.T) {
