@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -116,7 +115,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	// So we don't need to split the left child part. The right child part is the same.
 
 	// Check if left child should be preserved due to LEADING hint reference
-	leftShouldPreserve := currentLeadingHint != nil && isDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint)
+	leftShouldPreserve := currentLeadingHint != nil && joinorder.IsDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint)
 
 	if join.JoinType != base.RightOuterJoin && !leftHasHint && !leftShouldPreserve {
 		lhsJoinGroupResult := extractJoinGroup(join.Children()[0])
@@ -162,7 +161,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// Check if right child should be preserved due to LEADING hint reference
-	rightShouldPreserve := currentLeadingHint != nil && isDerivedTableInLeadingHint(join.Children()[1], currentLeadingHint)
+	rightShouldPreserve := currentLeadingHint != nil && joinorder.IsDerivedTableInLeadingHint(join.Children()[1], currentLeadingHint)
 
 	// You can see the comments in the upside part which we try to split the left child part. It's the same here.
 	if join.JoinType != base.LeftOuterJoin && !rightHasHint && !rightShouldPreserve {
@@ -239,68 +238,6 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			joinMethodHintInfo: joinMethodHintInfo,
 		},
 	}
-}
-
-// isDerivedTableInLeadingHint checks if a plan node represents a derived table (subquery)
-// that is explicitly referenced in the LEADING hint.
-func isDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *h.PlanHints) bool {
-	if leadingHint == nil || leadingHint.LeadingList == nil {
-		return false
-	}
-
-	// Get the query block names mapping to find derived table aliases
-	var queryBlockNames []ast.HintTable
-	names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load()
-	if names == nil {
-		return false
-	}
-	queryBlockNames = *names
-
-	// Get the block offset of this plan node
-	blockOffset := p.QueryBlockOffset()
-
-	// Only blockOffset values in [2, len(queryBlockNames)-1] can represent
-	// subqueries / derived tables. Offsets 0 and 1 are typically main query
-	// or CTE, and offsets beyond the end of queryBlockNames are invalid.
-	if blockOffset <= 1 || blockOffset >= len(queryBlockNames) {
-		return false
-	}
-
-	// Get the alias name of this derived table
-	derivedTableAlias := queryBlockNames[blockOffset].TableName.L
-	if derivedTableAlias == "" {
-		return false
-	}
-	derivedDBName := queryBlockNames[blockOffset].DBName.L
-
-	// Check if this alias appears in the LEADING hint
-	return containsTableInLeadingList(leadingHint.LeadingList, derivedDBName, derivedTableAlias)
-}
-
-// containsTableInLeadingList recursively searches for a table name in the LEADING hint structure
-func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName string) bool {
-	if leadingList == nil {
-		return false
-	}
-
-	for _, item := range leadingList.Items {
-		switch element := item.(type) {
-		case *ast.HintTable:
-			// Direct table reference in LEADING hint
-			dbMatch := element.DBName.L == "" || element.DBName.L == dbName || element.DBName.L == "*"
-			tableMatch := element.TableName.L == tableName
-			if dbMatch && tableMatch {
-				return true
-			}
-		case *ast.LeadingList:
-			// Nested structure, recursively check
-			if containsTableInLeadingList(element, dbName, tableName) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // JoinReOrderSolver is used to reorder the join nodes in a logical plan.

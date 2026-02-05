@@ -22,6 +22,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/cockroachdb/errors"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -86,9 +87,14 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 		return makeSingleGroup(p)
 	}
 
+
+	var curLeadingHint *hint.PlanHints
+	if join.PreferJoinOrder {
+		curLeadingHint = join.HintInfo
+	}
 	defer func() {
-		if join.PreferJoinOrder {
-			resJoinGroup.leadingHints = []*hint.PlanHints{join.HintInfo}
+		if curLeadingHint != nil {
+			resJoinGroup.leadingHints = []*hint.PlanHints{curLeadingHint}
 		}
 	}()
 
@@ -153,15 +159,17 @@ func extractJoinGroup(p base.LogicalPlan) (resJoinGroup *joinGroup) {
 		allInnerJoin: join.JoinType == base.InnerJoin,
 	}
 
+	leftShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[0], curLeadingHint)
 	var leftJoinGroup, rightJoinGroup *joinGroup
-	if !leftHasHint {
+	if !leftHasHint && !leftShouldPreserve {
 		leftJoinGroup = extractJoinGroup(join.Children()[0])
 	} else {
 		leftJoinGroup = makeSingleGroup(join.Children()[0])
 	}
 	resJoinGroup.merge(leftJoinGroup)
 
-	if !rightHasHint {
+	rightShouldPreserve := curLeadingHint != nil && IsDerivedTableInLeadingHint(join.Children()[1], curLeadingHint)
+	if !rightHasHint && !rightShouldPreserve {
 		rightJoinGroup = extractJoinGroup(join.Children()[1])
 	} else {
 		rightJoinGroup = makeSingleGroup(join.Children()[1])
@@ -717,7 +725,8 @@ func FindAndRemovePlanByAstHint[T any](
 	// Only execute this step if no direct table name match was found
 	matchIdx := -1
 	for i, joinGroup := range plans {
-		blockOffset := joinGroup.QueryBlockOffset()
+		plan := getPlan(joinGroup)
+		blockOffset := plan.QueryBlockOffset()
 		if blockOffset > 1 && blockOffset < len(queryBlockNames) {
 			blockName := queryBlockNames[blockOffset]
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
@@ -725,7 +734,7 @@ func FindAndRemovePlanByAstHint[T any](
 			if dbMatch && tableMatch {
 				if matchIdx != -1 {
 					intest.Assert(false, "leading subquery alias matches multiple join groups")
-					return nil, plans, false
+					return zero, plans, false
 				}
 				matchIdx = i
 			}
@@ -751,3 +760,66 @@ func extractSelectOffset(qbName string) int {
 	}
 	return -1
 }
+
+// IsDerivedTableInLeadingHint checks if a plan node represents a derived table (subquery)
+// that is explicitly referenced in the LEADING hint.
+func IsDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *hint.PlanHints) bool {
+	if leadingHint == nil || leadingHint.LeadingList == nil {
+		return false
+	}
+
+	// Get the query block names mapping to find derived table aliases
+	var queryBlockNames []ast.HintTable
+	names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load()
+	if names == nil {
+		return false
+	}
+	queryBlockNames = *names
+
+	// Get the block offset of this plan node
+	blockOffset := p.QueryBlockOffset()
+
+	// Only blockOffset values in [2, len(queryBlockNames)-1] can represent
+	// subqueries / derived tables. Offsets 0 and 1 are typically main query
+	// or CTE, and offsets beyond the end of queryBlockNames are invalid.
+	if blockOffset <= 1 || blockOffset >= len(queryBlockNames) {
+		return false
+	}
+
+	// Get the alias name of this derived table
+	derivedTableAlias := queryBlockNames[blockOffset].TableName.L
+	if derivedTableAlias == "" {
+		return false
+	}
+	derivedDBName := queryBlockNames[blockOffset].DBName.L
+
+	// Check if this alias appears in the LEADING hint
+	return containsTableInLeadingList(leadingHint.LeadingList, derivedDBName, derivedTableAlias)
+}
+
+// containsTableInLeadingList recursively searches for a table name in the LEADING hint structure
+func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName string) bool {
+	if leadingList == nil {
+		return false
+	}
+
+	for _, item := range leadingList.Items {
+		switch element := item.(type) {
+		case *ast.HintTable:
+			// Direct table reference in LEADING hint
+			dbMatch := element.DBName.L == "" || element.DBName.L == dbName || element.DBName.L == "*"
+			tableMatch := element.TableName.L == tableName
+			if dbMatch && tableMatch {
+				return true
+			}
+		case *ast.LeadingList:
+			// Nested structure, recursively check
+			if containsTableInLeadingList(element, dbName, tableName) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
