@@ -41,6 +41,7 @@ func New() Glue {
 		conf.SkipRegisterToDashboard = true
 		conf.Log.EnableSlowLog.Store(false)
 		conf.TiKVClient.CoprReqTimeout = 1800 * time.Second
+		session.SetSchemaLease(config.DefSchemaLease)
 	})
 	return Glue{
 		startDomainMu: &sync.Mutex{},
