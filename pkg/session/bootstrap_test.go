@@ -15,7 +15,6 @@
 package session
 
 import (
-	"cmp"
 	"context"
 	"crypto/tls"
 	"fmt"
@@ -1867,16 +1866,14 @@ func TestBindInfoUniqueIndex(t *testing.T) {
 }
 
 func TestVersionedBootstrapSchemas(t *testing.T) {
-	require.True(t, slices.IsSortedFunc(versionedBootstrapSchemas, func(a, b versionedBootstrapSchema) int {
-		return cmp.Compare(a.ver, b.ver)
-	}), "versionedBootstrapSchemas should be sorted by version")
-
 	// make sure that later change won't affect existing version schemas.
 	require.Len(t, versionedBootstrapSchemas[0].databases[0].Tables, 52)
 	require.Len(t, versionedBootstrapSchemas[0].databases[1].Tables, 0)
 
+	versions := make([]int, 0, len(versionedBootstrapSchemas))
 	allIDs := make([]int64, 0, len(versionedBootstrapSchemas))
 	for _, vbs := range versionedBootstrapSchemas {
+		versions = append(versions, int(vbs.ver))
 		for _, db := range vbs.databases {
 			require.Greater(t, db.ID, metadef.ReservedGlobalIDLowerBound)
 			require.LessOrEqual(t, db.ID, metadef.ReservedGlobalIDUpperBound)
@@ -1888,6 +1885,8 @@ func TestVersionedBootstrapSchemas(t *testing.T) {
 			}
 		}
 	}
+	require.IsIncreasing(t, versions,
+		"versions in versionedBootstrapSchemas should be monotonically increasing, and cannot have duplicate versions")
 	slices.Sort(allIDs)
 	require.IsIncreasing(t, allIDs, "versionedBootstrapSchemas should not have duplicate IDs")
 }
