@@ -96,6 +96,22 @@ func (s *Schema) Clone() *Schema {
 	return schema
 }
 
+// Equal checks if two schemas are equal.
+func (s *Schema) Equal(other *Schema) bool {
+	if other == nil {
+		return false
+	}
+	if len(s.Columns) != len(other.Columns) {
+		return false
+	}
+	for i, col := range s.Columns {
+		if !col.EqualColumn(other.Columns[i]) {
+			return false
+		}
+	}
+	return true
+}
+
 // ExprReferenceSchema checks if any column of this expression are from the schema.
 func ExprReferenceSchema(expr Expression, schema *Schema) bool {
 	switch v := expr.(type) {

@@ -26,6 +26,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util/costusage"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -304,6 +305,7 @@ func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, lo
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
 type JoinType int
 
+// NOTE: keep the order and value unchanged, because they are used in conflict_detector.go!!!
 const (
 	// InnerJoin means inner join.
 	InnerJoin JoinType = iota
@@ -320,6 +322,16 @@ const (
 	// AntiLeftOuterSemiJoin means if row a in table A matches some rows in B, output (a, false), otherwise, output (a, true).
 	AntiLeftOuterSemiJoin
 )
+
+func init() {
+	intest.Assert(InnerJoin == 0 &&
+		LeftOuterJoin == 1 &&
+		RightOuterJoin == 2 &&
+		SemiJoin == 3 &&
+		AntiSemiJoin == 4 &&
+		LeftOuterSemiJoin == 5 &&
+		AntiLeftOuterSemiJoin == 6)
+}
 
 // IsOuterJoin returns if this joiner is an outer joiner
 func (tp JoinType) IsOuterJoin() bool {
