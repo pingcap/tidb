@@ -36,6 +36,8 @@ var _ base.LogicalPlan = &BaseLogicalPlan{}
 const (
 	// ApplyGenFromXFDeCorrelateRuleFlag is the flag marked for this op apply is intermediary.
 	ApplyGenFromXFDeCorrelateRuleFlag uint64 = 1 << 0
+	// JoinGenFromApplyFlag is the flag marked for a join generated from apply decorrelation.
+	JoinGenFromApplyFlag uint64 = 1 << 1
 )
 
 // BaseLogicalPlan is the common structure that used in logical plan.
