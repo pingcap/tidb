@@ -346,51 +346,10 @@ func (e *DDLExec) executeAlterMaterializedView(ctx context.Context, s *ast.Alter
 }
 
 func (e *DDLExec) executeAlterMaterializedViewLog(ctx context.Context, s *ast.AlterMaterializedViewLogStmt) error {
-	// Keep the execution atomic: if there are unsupported actions, fail fast before any DDL.
-	for _, action := range s.Actions {
-		if action.Tp == ast.AlterMaterializedViewLogActionPurge {
-			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG ... PURGE is not supported")
-		}
-	}
-
-	is := e.Ctx().GetInfoSchema().(infoschema.InfoSchema)
-	schemaName := s.Table.Schema
-	if schemaName.O == "" {
-		if e.Ctx().GetSessionVars().CurrentDB == "" {
-			return errors.Trace(plannererrors.ErrNoDB)
-		}
-		schemaName = pmodel.NewCIStr(e.Ctx().GetSessionVars().CurrentDB)
-	}
-	if _, ok := is.SchemaByName(schemaName); !ok {
-		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName.O)
-	}
-
-	baseTable, err := is.TableByName(ctx, schemaName, s.Table.Name)
-	if err != nil {
-		return err
-	}
-	mlogName := "$mlog$" + baseTable.Meta().Name.O
-	mlogTable, err := is.TableByName(ctx, schemaName, pmodel.NewCIStr(mlogName))
-	if err != nil {
-		return err
-	}
-	if mlogTable.Meta().MaterializedViewLog == nil || mlogTable.Meta().MaterializedViewLog.BaseTableID != baseTable.Meta().ID {
-		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName.O, mlogName, "MATERIALIZED VIEW LOG")
-	}
-
 	for _, action := range s.Actions {
 		switch action.Tp {
-		case ast.AlterMaterializedViewLogActionTiFlashReplica:
-			alterStmt := &ast.AlterTableStmt{
-				Table: &ast.TableName{Schema: schemaName, Name: pmodel.NewCIStr(mlogName)},
-				Specs: []*ast.AlterTableSpec{{
-					Tp:             ast.AlterTableSetTiFlashReplica,
-					TiFlashReplica: &ast.TiFlashReplicaSpec{Count: action.TiFlashReplicas},
-				}},
-			}
-			if err := e.ddlExecutor.AlterTable(ctx, e.Ctx(), alterStmt); err != nil {
-				return err
-			}
+		case ast.AlterMaterializedViewLogActionPurge:
+			return dbterror.ErrGeneralUnsupportedDDL.GenWithStack("ALTER MATERIALIZED VIEW LOG ... PURGE is not supported")
 		default:
 			return errors.Errorf("unknown alter materialized view log action type: %d", action.Tp)
 		}
