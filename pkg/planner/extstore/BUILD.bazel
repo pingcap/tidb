@@ -7,7 +7,6 @@ go_library(
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/keyspace",
         "//pkg/objstore",
         "//pkg/objstore/storeapi",

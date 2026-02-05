@@ -199,7 +199,11 @@ func (e *PlanReplayerDumpInfo) dump(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
-	e.ctx.GetSessionVars().LastPlanReplayerToken = task.Token
+	token := e.FileName
+	if task.PresignedURL != "" {
+		token = task.PresignedURL
+	}
+	e.ctx.GetSessionVars().LastPlanReplayerToken = token
 	return nil
 }
 

@@ -29,12 +29,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
-	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/config"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -43,6 +42,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/printer"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
@@ -287,29 +287,11 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 			logutil.BgLogger().Warn("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err2), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err2.Error()
 		}
-		storage, err3 := extstore.GetGlobalExtStorage(ctx)
-		var presignedURL string
-		if err3 != nil {
-			logutil.BgLogger().Error("[plan-replayer-dump] get storage failed", zap.Error(err3), zap.String("filename", fileName))
-			errMsg = errMsg + "," + err3.Error()
-		} else {
-			url, err4 := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour)
-			if err4 != nil {
-				logutil.BgLogger().Error("[plan-replayer-dump] presign file failed", zap.Error(err4), zap.String("filename", fileName))
-				errMsg = errMsg + "," + err4.Error()
-			} else {
-				presignedURL = url
-			}
-		}
-		// token stores file name; presigned_url stores URL for external storage
-		task.Token = task.FileName
-		for i, record := range records {
-			if len(errMsg) > 0 {
+		if len(errMsg) > 0 {
+			for i, record := range records {
 				record.FailedReason = errMsg
+				records[i] = record
 			}
-			record.Token = task.FileName
-			record.PresignedURL = presignedURL
-			records[i] = record
 		}
 		insertPlanReplayerStatus(ctx, sctx, records)
 	}()
@@ -408,13 +390,13 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	}
 
 	if len(task.EncodedPlan) > 0 {
-		records = generateRecords(task)
+		records = generateRecords(ctx, task)
 		if err = dumpEncodedPlan(sctx, zw, task.EncodedPlan); err != nil {
 			return err
 		}
 	} else {
 		// Dump explain
-		if err = dumpPlanReplayerExplain(sctx, zw, task, &records); err != nil {
+		if err = dumpPlanReplayerExplain(ctx, sctx, zw, task, &records); err != nil {
 			errMsgs = append(errMsgs, err.Error())
 		}
 	}
@@ -431,14 +413,23 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 	return nil
 }
 
-func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
+func generateRecords(ctx context.Context, task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 	records := make([]PlanReplayerStatusRecord, 0)
+	var presignedURL string
+	if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
+		if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
+			presignedURL = url
+			task.PresignedURL = url
+		}
+	}
 	if len(task.ExecStmts) > 0 {
 		for _, execStmt := range task.ExecStmts {
 			records = append(records, PlanReplayerStatusRecord{
-				SQLDigest:  task.SQLDigest,
-				PlanDigest: task.PlanDigest,
-				OriginSQL:  execStmt.Text(),
+				SQLDigest:    task.SQLDigest,
+				PlanDigest:   task.PlanDigest,
+				OriginSQL:    execStmt.Text(),
+				Token:        task.FileName,
+				PresignedURL: presignedURL,
 			})
 		}
 	}
@@ -791,16 +782,25 @@ func dumpExplain(ctx sessionctx.Context, zw *zip.Writer, isAnalyze bool, sqls []
 	return
 }
 
-func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+func dumpPlanReplayerExplain(ctx context.Context, sctx sessionctx.Context, zw *zip.Writer, task *PlanReplayerDumpTask, records *[]PlanReplayerStatusRecord) error {
+	var presignedURL string
+	if storage, err := extstore.GetGlobalExtStorage(ctx); err == nil {
+		if url, err := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour); err == nil {
+			presignedURL = url
+			task.PresignedURL = url
+		}
+	}
 	sqls := make([]string, 0)
 	for _, execStmt := range task.ExecStmts {
 		sql := execStmt.Text()
 		sqls = append(sqls, sql)
 		*records = append(*records, PlanReplayerStatusRecord{
-			OriginSQL: sql,
+			OriginSQL:    sql,
+			Token:        task.FileName,
+			PresignedURL: presignedURL,
 		})
 	}
-	debugTraces, err := dumpExplain(ctx, zw, task.Analyze, sqls, false)
+	debugTraces, err := dumpExplain(sctx, zw, task.Analyze, sqls, false)
 	task.DebugTrace = debugTraces
 	return err
 }

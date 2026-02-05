@@ -118,11 +118,11 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 				logutil.BgLogger().Warn("remove file failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
 				return nil
 			}
+			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 			if isPlanReplayer && p.sctx != nil {
 				deletePlanReplayerStatus(ctx, p.sctx, baseName)
 				p.planReplayerTaskStatus.clearFinishedTask()
 			}
-			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 		}
 		return nil
 	})
@@ -586,9 +586,9 @@ type PlanReplayerDumpTask struct {
 	HistoricalStatsTS uint64
 	DebugTrace        []any
 
-	FileName string
-	Token    string
-	Zf       io.WriteCloser
+	FileName     string
+	PresignedURL string
+	Zf           io.WriteCloser
 
 	// IsCapture indicates whether the task is from capture
 	IsCapture bool
