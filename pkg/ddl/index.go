@@ -363,6 +363,15 @@ func BuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 
+	if isUnique {
+		if columnarIndexType == model.ColumnarIndexTypeHybrid || (indexOption != nil && indexOption.Tp == ast.IndexTypeHybrid) {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("HYBRID index does not support UNIQUE")
+		}
+		if columnarIndexType == model.ColumnarIndexTypeFulltext || (indexOption != nil && indexOption.Tp == ast.IndexTypeFulltext) {
+			return nil, dbterror.ErrUnsupportedAddColumnarIndex.FastGen("FULLTEXT index does not support UNIQUE")
+		}
+	}
+
 	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,
@@ -1873,6 +1882,9 @@ func ensureHybridIndexReorgMeta(job *model.Job) error {
 	// Hybrid index requires DXF + fast reorg ingest only; reject other modes early.
 	if !job.ReorgMeta.IsDistReorg || !job.ReorgMeta.IsFastReorg {
 		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires distributed fast reorg ingest")
+	}
+	if !job.ReorgMeta.UseCloudStorage {
+		return dbterror.ErrUnsupportedAddColumnarIndex.FastGen("hybrid index requires global sort")
 	}
 	reorgTp, err := pickBackfillType(job)
 	if err != nil {

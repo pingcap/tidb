@@ -30,6 +30,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/util/cdcutil"
@@ -194,4 +195,47 @@ func TestCheckRequirements(t *testing.T) {
 	require.NoError(t, backend.CreateBucket("test-bucket"))
 	c.Plan.CloudStorageURI = fmt.Sprintf("s3://test-bucket/path?region=us-east-1&endpoint=%s&access-key=xxxxxx&secret-access-key=xxxxxx", ts.URL)
 	require.NoError(t, c.CheckRequirements(ctx, tk.Session()))
+}
+
+func TestCheckRequirementsWithTiCIIndexLocalSort(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	ctx := util.WithInternalSourceType(context.Background(), kv.InternalImportInto)
+	conn := tk.Session().GetSQLExecutor()
+
+	_, err := conn.Execute(ctx, "create table test.t(id int primary key)")
+	require.NoError(t, err)
+	is := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	tableObj, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	require.NoError(t, err)
+
+	tableInfo := tableObj.Meta().Clone()
+	tableInfo.Indices = append(tableInfo.Indices, &model.IndexInfo{
+		ID:           1,
+		Name:         ast.NewCIStr("tici_idx"),
+		FullTextInfo: &model.FullTextIndexInfo{},
+	})
+
+	c := &importer.LoadDataController{
+		Plan: &importer.Plan{
+			DBName:         "test",
+			DataSourceType: importer.DataSourceTypeFile,
+			TableInfo:      tableInfo,
+		},
+		Table:         tableObj,
+		TotalFileSize: 1,
+	}
+
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorIs(t, err, exeerrors.ErrLoadDataPreCheckFailed)
+	require.ErrorContains(t, err, "local sort import does not support TiCI indexes")
+
+	c.Plan.CloudStorageURI = "s3://test-bucket/path"
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.ErrorContains(t, err, "check cloud storage uri access")
+
+	tableInfo.Indices = nil
+	c.Plan.CloudStorageURI = ""
+	err = c.CheckRequirements(ctx, tk.Session())
+	require.NoError(t, err)
 }

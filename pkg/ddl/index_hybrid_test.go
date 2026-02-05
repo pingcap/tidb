@@ -66,12 +66,25 @@ func TestEnsureHybridIndexReorgMeta(t *testing.T) {
 			want: "hybrid index requires",
 		},
 		{
+			name: "without global sort",
+			job: &model.Job{
+				ReorgMeta: &model.DDLReorgMeta{
+					IsDistReorg:     true,
+					IsFastReorg:     true,
+					UseCloudStorage: false,
+					ReorgTp:         model.ReorgTypeIngest,
+				},
+			},
+			want: "hybrid index requires global sort",
+		},
+		{
 			name: "ingest ok",
 			job: &model.Job{
 				ReorgMeta: &model.DDLReorgMeta{
-					IsDistReorg: true,
-					IsFastReorg: true,
-					ReorgTp:     model.ReorgTypeIngest,
+					IsDistReorg:     true,
+					IsFastReorg:     true,
+					UseCloudStorage: true,
+					ReorgTp:         model.ReorgTypeIngest,
 				},
 			},
 		},

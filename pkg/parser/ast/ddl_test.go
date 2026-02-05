@@ -182,6 +182,8 @@ func TestDDLConstraintRestore(t *testing.T) {
 		{"fulltext key full_id (parent_id)", "FULLTEXT `full_id`(`parent_id`)"},
 		{"fulltext INDEX full_id (parent_id)", "FULLTEXT `full_id`(`parent_id`)"},
 		{"fulltext INDEX full_id ((parent_id+1))", "FULLTEXT `full_id`((`parent_id`+1))"},
+		{"fulltext INDEX full_id (parent_id, id) WITH PARSER ngram", "FULLTEXT `full_id`(`parent_id`,`id`) WITH PARSER `ngram`"},
+		{"fulltext INDEX full_id (parent_id, id) WITH PARSER standard", "FULLTEXT `full_id`(`parent_id`,`id`) WITH PARSER `standard`"},
 		{"PRIMARY KEY (id)", "PRIMARY KEY(`id`)"},
 		{"PRIMARY KEY (id) key_block_size = 32 using hash comment 'hello'", "PRIMARY KEY(`id`) KEY_BLOCK_SIZE=32 USING HASH COMMENT 'hello'"},
 		{"PRIMARY KEY ((id+1))", "PRIMARY KEY((`id`+1))"},

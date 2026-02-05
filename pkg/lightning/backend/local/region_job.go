@@ -526,7 +526,7 @@ func (local *Backend) doWrite(ctx context.Context, j *regionJob) (ret *tikvWrite
 		// TiCI does not observe overlapping or discontinuous ranges on partial writes.
 		upperBound := lastKey
 		if lastWrittenKey != nil {
-			upperBound = lastWrittenKey
+			upperBound = codec.EncodeBytes([]byte{}, lastWrittenKey)
 		}
 		if err := ticiWriteGroup.FinishPartitionUpload(ctx, ticiFileWriter, firstKey, upperBound); err != nil {
 			return nil, errors.Annotate(err, "failed to finish upload for tici file writer")

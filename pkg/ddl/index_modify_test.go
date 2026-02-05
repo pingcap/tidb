@@ -2110,3 +2110,17 @@ func TestHybridIndexCreateTiCIOnce(t *testing.T) {
 		"sharding_key": {"columns": ["col1", "col4"]}
 	}'`)
 }
+
+func TestUniqueTiCIIndexRejected(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(c1 int, c2 text)")
+
+	tk.MustContainErrMsg("create unique index idx_ft on t(c2) using fulltext", "FULLTEXT index does not support UNIQUE")
+	tk.MustContainErrMsg(`create unique index idx_h on t(c1, c2) using hybrid parameter '{
+		"inverted": {"columns": ["c2"]},
+		"sort": {"columns": ["c1"]},
+		"sharding_key": {"columns": ["c1"]}
+	}'`, "HYBRID index does not support UNIQUE")
+}

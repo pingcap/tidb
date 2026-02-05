@@ -339,6 +339,12 @@ func TestValidator(t *testing.T) {
 		{"CREATE VECTOR INDEX ident USING HNSW ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		{"CREATE VECTOR INDEX ident ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
 		// {"CREATE COLUMNAR INDEX ident USING VECTOR ON d_n.t_n ((VEC_L2_DISTANCE(ident)))", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"CREATE FULLTEXT INDEX idx_name ON d_n.t_n (ident, ident2) WITH PARSER ngram", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"CREATE FULLTEXT INDEX idx_name ON d_n.t_n (ident, ident2) WITH PARSER standard", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"ALTER TABLE d_n.t_n ADD FULLTEXT INDEX idx_name (ident, ident2) WITH PARSER ngram", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"ALTER TABLE d_n.t_n ADD FULLTEXT INDEX idx_name (ident, ident2) WITH PARSER standard", false, errors.New(`[schema:1146]Table 'd_n.t_n' doesn't exist`)},
+		{"CREATE TABLE t(c1 TEXT, c2 TEXT, c3 TEXT, c4 TEXT, c5 TEXT, FULLTEXT INDEX idx_name(c1,c2,c3,c4,c5) WITH PARSER ngram)", false, nil},
+		{"CREATE TABLE t(c1 TEXT, c2 TEXT, c3 TEXT, c4 TEXT, c5 TEXT, FULLTEXT INDEX idx_name(c1,c2,c3,c4,c5) WITH PARSER standard)", false, nil},
 		{"CREATE FULLTEXT INDEX x ON ident (col_x)", false, errors.New(`[schema:1146]Table 'test.ident' doesn't exist`)},
 	}
 

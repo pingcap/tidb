@@ -26,6 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/disttask/framework/proto"
 	"github.com/pingcap/tidb/pkg/disttask/framework/storage"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/pingcap/tidb/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -207,4 +209,38 @@ func TestModifyTaskParamLoop(t *testing.T) {
 			e.jobID, e.taskID, 1, 2, 3)
 		require.True(t, e.ctrl.Satisfied())
 	})
+}
+
+func TestBuildFullTextInfoWithCheckParser(t *testing.T) {
+	newIdxPart := func(name string) *ast.IndexPartSpecification {
+		return &ast.IndexPartSpecification{
+			Column: &ast.ColumnName{Name: ast.NewCIStr(name)},
+			Length: types.UnspecifiedLength,
+		}
+	}
+	tblInfo := &model.TableInfo{
+		Name: ast.NewCIStr("t"),
+		Columns: []*model.ColumnInfo{
+			{Name: ast.NewCIStr("c1")},
+			{Name: ast.NewCIStr("c2")},
+			{Name: ast.NewCIStr("c3")},
+			{Name: ast.NewCIStr("c4")},
+			{Name: ast.NewCIStr("c5")},
+		},
+	}
+	idxParts := []*ast.IndexPartSpecification{
+		newIdxPart("c1"), newIdxPart("c2"), newIdxPart("c3"), newIdxPart("c4"), newIdxPart("c5"),
+	}
+
+	ftsInfo, err := buildFullTextInfoWithCheck(idxParts, nil, tblInfo)
+	require.NoError(t, err)
+	require.Equal(t, model.FullTextParserTypeStandardV1, ftsInfo.ParserType)
+
+	ftsInfo, err = buildFullTextInfoWithCheck(idxParts, &ast.IndexOption{ParserName: ast.NewCIStr("standard")}, tblInfo)
+	require.NoError(t, err)
+	require.Equal(t, model.FullTextParserTypeStandardV1, ftsInfo.ParserType)
+
+	ftsInfo, err = buildFullTextInfoWithCheck(idxParts, &ast.IndexOption{ParserName: ast.NewCIStr("ngram")}, tblInfo)
+	require.NoError(t, err)
+	require.Equal(t, model.FullTextParserTypeNgramV1, ftsInfo.ParserType)
 }
