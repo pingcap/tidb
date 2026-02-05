@@ -25,7 +25,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/ks3sdklib/aws-sdk-go/aws"
 	"github.com/ks3sdklib/aws-sdk-go/aws/awserr"
 	"github.com/ks3sdklib/aws-sdk-go/aws/credentials"
@@ -34,6 +33,7 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
