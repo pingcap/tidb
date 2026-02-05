@@ -294,6 +294,8 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 
 The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
 
+If you create PRs via GitHub CLI, start from the template to avoid breaking required HTML comments: `gh pr create -T .github/pull_request_template.md` (then fill in the fields; do not delete/alter the HTML comment markers).
+
 ### Language
 
 Issues and PRs **must** be written in English (title and description).
