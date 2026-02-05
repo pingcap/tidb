@@ -160,12 +160,13 @@ func (m StandardBooleanModifier) prefixChar() byte {
 type StandardBooleanExpr interface {
 	DebugString() string
 	standardBooleanExpr()
+	Text() string
 }
 
 // StandardBooleanTerm is a TERM/NUM token in boolean mode.
 type StandardBooleanTerm struct {
-	// Text is the raw TERM/NUM token text (no secondary tokenization).
-	Text string
+	// text is the raw TERM/NUM token text (no secondary tokenization).
+	text string
 	// Wildcard means a trailing '*' is present, representing a prefix match.
 	Wildcard bool
 }
@@ -178,15 +179,23 @@ func (e *StandardBooleanTerm) DebugString() string {
 		return ""
 	}
 	if !e.Wildcard {
-		return e.Text
+		return e.text
 	}
-	return e.Text + "*"
+	return e.text + "*"
+}
+
+// Text returns the raw term text without the wildcard suffix, for use in execution.
+func (e *StandardBooleanTerm) Text() string {
+	if e == nil {
+		return ""
+	}
+	return e.text
 }
 
 // StandardBooleanPhrase is a double-quoted phrase token in boolean mode.
 type StandardBooleanPhrase struct {
-	// Text is the content between the quotes (without the surrounding quotes).
-	Text string
+	// text is the content between the quotes (without the surrounding quotes).
+	text string
 	// Distance is from the optional "@N" suffix. It is nil when not specified.
 	// Note: the current STANDARD boolean-mode parser rejects '@', so this is reserved for future use.
 	Distance *int
@@ -201,7 +210,7 @@ func (e *StandardBooleanPhrase) DebugString() string {
 	}
 	var b strings.Builder
 	b.WriteByte('"')
-	b.WriteString(e.Text)
+	b.WriteString(e.text)
 	b.WriteByte('"')
 	if e.Distance != nil {
 		b.WriteByte('@')
@@ -211,3 +220,11 @@ func (e *StandardBooleanPhrase) DebugString() string {
 }
 
 func (*StandardBooleanGroup) standardBooleanExpr() {}
+
+// Text returns the raw phrase text without the quotes, for use in execution.
+func (e *StandardBooleanPhrase) Text() string {
+	if e == nil {
+		return ""
+	}
+	return e.text
+}

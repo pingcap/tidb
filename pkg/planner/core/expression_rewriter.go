@@ -1727,6 +1727,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 			return retNode, false
 		}
 		er.ctxStackAppend(fn, types.EmptyName)
+		er.planCtx.builder.ctx.SetHasFTSFunc()
 	default:
 		er.err = errors.Errorf("UnknownType: %T", v)
 		return retNode, false

@@ -165,7 +165,7 @@ func (p *standardBooleanParser) parseTermExpr() (*StandardBooleanTerm, error) {
 	}
 	p.consume()
 	return &StandardBooleanTerm{
-		Text: t.raw,
+		text: t.raw,
 	}, nil
 }
 
@@ -187,7 +187,7 @@ func (p *standardBooleanParser) parsePhraseExpr() (*StandardBooleanPhrase, error
 	if len(inner) == 0 {
 		return nil, nil
 	}
-	return &StandardBooleanPhrase{Text: inner}, nil
+	return &StandardBooleanPhrase{text: inner}, nil
 }
 
 // applyTrailingWildcardIfPresent consumes a trailing '*' after a term and marks the term as wildcard.

@@ -744,13 +744,20 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
 	pbExprs := make([]tipb.Expr, 0, len(matchedFuncs))
+	// It represets the TiCI search functions currently.
+	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
 	for ftsFunc := range matchedFuncs {
-		pbExpr := pbConverter.ExprToPB(ftsFunc)
+		newF, _, err := expression.RewriteMySQLMatchAgainstRecursively(ds.SCtx().GetExprCtx(), ftsFunc)
+		if err != nil {
+			return err
+		}
+		pbExpr := pbConverter.ExprToPB(newF)
 		if pbExpr == nil {
 			// If the expression is not converted to PB, we should return an error.
 			return errors.New("Failed to convert FTS function to PB expression")
 		}
 		pbExprs = append(pbExprs, *pbExpr)
+		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, newF)
 	}
 
 	// Build tipb protobuf info for the matched index.
@@ -765,11 +772,6 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 		MatchExpr:      pbExprs,
 	}
 
-	// It represets the TiCI search functions currently.
-	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
-	for ftsFunc := range matchedFuncs {
-		ds.PossibleAccessPaths[0].AccessConds = append(ds.PossibleAccessPaths[0].AccessConds, ftsFunc)
-	}
 	ds.PossibleAccessPaths[0].TableFilters = remainedFilters
 	return nil
 }
