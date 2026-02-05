@@ -167,16 +167,17 @@
       {
         "SQL": "desc format = 'plan_tree' select * from t join (select id-2 as b from t) A on A.b=t.id",
         "Plan": [
-          "HashJoin root  inner join, equal:[eq(test.t.id, Column)]",
-          "├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
-          "│ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "│   └─Projection mpp[tiflash]  minus(test.t.id, 2)->Column",
-          "│     └─Selection mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "│       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "└─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
-          "  └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
-          "    └─Selection mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "Projection root  test.t.a, test.t.b, test.t.i, test.t.id, test.t.value, test.t.name, test.t.d, test.t.s, test.t.t, test.t.c, test.t.e, Column",
+          "└─HashJoin root  inner join, equal:[eq(Column, test.t.id)]",
+          "  ├─TableReader(Build) root  MppVersion: 3, data:ExchangeSender",
+          "  │ └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "  │   └─Projection mpp[tiflash]  minus(test.t.id, 2)->Column",
+          "  │     └─Selection mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "  │       └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "  └─TableReader(Probe) root  MppVersion: 3, data:ExchangeSender",
+          "    └─ExchangeSender mpp[tiflash]  ExchangeType: PassThrough",
+          "      └─Selection mpp[tiflash]  not(isnull(test.t.id))",
+          "        └─TableFullScan mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {

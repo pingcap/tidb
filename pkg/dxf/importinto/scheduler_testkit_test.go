@@ -24,7 +24,6 @@ import (
 	"github.com/fsouza/fake-gcs-server/fakestorage"
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
 	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
@@ -359,28 +358,26 @@ func TestSchedulerExtGlobalSort(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "running", gotJobInfo.Status)
 	require.Equal(t, "importing", gotJobInfo.Step)
-	if kerneltype.IsClassic() {
-		// to collect-conflicts state
-		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
-		require.NoError(t, err)
-		require.Len(t, subtaskMetas, 0)
-		task.Step = ext.GetNextStep(&task.TaskBase)
-		require.Equal(t, proto.ImportStepCollectConflicts, task.Step)
-		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
-		require.NoError(t, err)
-		require.Equal(t, "running", gotJobInfo.Status)
-		require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
-		// to conflict-resolution state
-		subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
-		require.NoError(t, err)
-		require.Len(t, subtaskMetas, 0)
-		task.Step = ext.GetNextStep(&task.TaskBase)
-		require.Equal(t, proto.ImportStepConflictResolution, task.Step)
-		gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
-		require.NoError(t, err)
-		require.Equal(t, "running", gotJobInfo.Status)
-		require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
-	}
+	// to collect-conflicts state
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 0)
+	task.Step = ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepCollectConflicts, task.Step)
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "running", gotJobInfo.Status)
+	require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
+	// to conflict-resolution state
+	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
+	require.NoError(t, err)
+	require.Len(t, subtaskMetas, 0)
+	task.Step = ext.GetNextStep(&task.TaskBase)
+	require.Equal(t, proto.ImportStepConflictResolution, task.Step)
+	gotJobInfo, err = importer.GetJob(ctx, conn, jobID, "root", true)
+	require.NoError(t, err)
+	require.Equal(t, "running", gotJobInfo.Status)
+	require.Equal(t, "resolving-conflicts", gotJobInfo.Step)
 	// on next stage, to post-process stage
 	subtaskMetas, err = ext.OnNextSubtasksBatch(ctx, d, task, []string{":4000"}, ext.GetNextStep(&task.TaskBase))
 	require.NoError(t, err)

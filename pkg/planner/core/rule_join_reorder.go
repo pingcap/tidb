@@ -656,10 +656,12 @@ func (s *baseSingleGroupJoinOrderSolver) generateJoinOrderNode(joinNodePlans []b
 	}
 	return joinGroup, nil
 }
+
 const (
 	capFactor = 1000.0    // cap = max(absMinCap, capFactor*out)
 	absMinCap = 1_000_000 // hard floor; not a knob
 )
+
 // baseNodeCumCost calculates the cumulative cost of the node in the join group.
 //
 // Heuristic (operator-split):
@@ -668,27 +670,27 @@ const (
 // - Agg/Sort/Window: add bounded input penalty to reflect blocking startup cost (TPCH-17/Q17).
 func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalPlan) float64 {
 	cost := groupNode.StatsInfo().RowCount
-	ratio := s.ctx.GetSessionVars().OptJoinReorderBlockingPenaltyRatio
-	s.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
 	switch x := groupNode.(type) {
 	case *logicalop.LogicalLimit:
-		need := float64(x.Count + x.Offset)
+		need := float64(x.Count) + float64(x.Offset)
 		if need > cost {
 			return need
 		}
 		return cost
 
 	case *logicalop.LogicalTopN:
-		need := float64(x.Count + x.Offset)
+		need := float64(x.Count) + float64(x.Offset)
 		if need > cost {
 			return need
 		}
 		return cost
 
 	case *logicalop.LogicalAggregation, *logicalop.LogicalSort, *logicalop.LogicalWindow:
+		ratio := s.ctx.GetSessionVars().OptJoinReorderBlockingPenaltyRatio
+		s.ctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptJoinReorderBlockingPenaltyRatio)
 		in := inputRowsOneLevel(groupNode)
-		cap := math.Max(absMinCap, capFactor*cost)
-		return cost + ratio*math.Min(in, cap)
+		maxCap := math.Max(absMinCap, capFactor*cost)
+		return cost + ratio*math.Min(in, maxCap)
 
 	default:
 		return cost
@@ -702,7 +704,6 @@ func inputRowsOneLevel(p base.LogicalPlan) float64 {
 	}
 	return sum
 }
-
 
 // checkConnection used to check whether two nodes have equal conditions or not.
 func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
