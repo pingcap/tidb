@@ -325,8 +325,7 @@ func TestProcessChunkWith(t *testing.T) {
 			FileMeta: mydump.SourceFileMeta{Type: mydump.SourceTypeCSV, Path: "test.csv"},
 			Chunk:    mydump.Chunk{EndOffset: int64(len(sourceData)), RowIDMax: 10000},
 		}
-<<<<<<< HEAD
-		ti := getTableImporter(ctx, t, store, "t", "", nil)
+		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
 		defer ti.Backend().CloseEngineMgr()
 		rowsCh := make(chan importer.QueryRow, 3)
 		for i := 1; i <= 3; i++ {
@@ -338,17 +337,6 @@ func TestProcessChunkWith(t *testing.T) {
 					types.NewIntDatum(int64((i-1)*3 + 3)),
 				},
 			}
-=======
-		ti := getTableImporter(ctx, t, store, "t", "", importer.DataFormatCSV, nil)
-		defer func() {
-			ti.LoadDataController.Close()
-			ti.Backend().CloseEngineMgr()
-		}()
-		chkCh := make(chan importer.QueryChunk, 3)
-		fields := make([]*types.FieldType, 0, 3)
-		for range 3 {
-			fields = append(fields, types.NewFieldType(mysql.TypeLong))
->>>>>>> 83edc072127 (import into: automatic file type recognition based on file name characteristics (#59543))
 		}
 		close(rowsCh)
 		ti.SetSelectedRowCh(rowsCh)
@@ -378,16 +366,8 @@ func TestPopulateChunks(t *testing.T) {
 		[]byte("8,8,8\n"), 0o644))
 	require.NoError(t, os.WriteFile(path.Join(tidbCfg.TempDir, "test-03.csv"),
 		[]byte("9,9,9\n10,10,10\n"), 0o644))
-<<<<<<< HEAD
-	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
-	defer ti.Backend().CloseEngineMgr()
-=======
 	ti := getTableImporter(ctx, t, store, "t", fmt.Sprintf("%s/test-*.csv", tidbCfg.TempDir), importer.DataFormatCSV, []*plannercore.LoadDataOpt{{Name: "__max_engine_size", Value: expression.NewStrConst("20")}})
-	defer func() {
-		ti.LoadDataController.Close()
-		ti.Backend().CloseEngineMgr()
-	}()
->>>>>>> 83edc072127 (import into: automatic file type recognition based on file name characteristics (#59543))
+	defer ti.Backend().CloseEngineMgr()
 	require.NoError(t, ti.InitDataFiles(ctx))
 	engines, err := ti.PopulateChunks(ctx)
 	require.NoError(t, err)

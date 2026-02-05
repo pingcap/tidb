@@ -1149,13 +1149,9 @@ func (e *LoadDataController) InitDataFiles(ctx context.Context) error {
 
 	s := e.dataStore
 	var (
-<<<<<<< HEAD
-		totalSize        int64
 		compressionRatio = 1.0
-=======
-		totalSize  int64
-		sourceType mydump.SourceType
->>>>>>> 83edc072127 (import into: automatic file type recognition based on file name characteristics (#59543))
+		totalSize        int64
+		sourceType       mydump.SourceType
 	)
 	dataFiles := []*mydump.SourceFileMeta{}
 	isAutoDetectingFormat := e.Format == DataFormatAuto

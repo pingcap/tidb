@@ -100,11 +100,7 @@ go_test(
     embed = [":importer"],
     flaky = True,
     race = "on",
-<<<<<<< HEAD
-    shard_count = 25,
-=======
-    shard_count = 27,
->>>>>>> 83edc072127 (import into: automatic file type recognition based on file name characteristics (#59543))
+    shard_count = 26,
     deps = [
         "//br/pkg/mock",
         "//br/pkg/streamhelper",
