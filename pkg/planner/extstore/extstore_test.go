@@ -16,11 +16,16 @@ package extstore
 
 import (
 	"context"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/spf13/afero"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -38,13 +43,13 @@ func TestExtStorage(t *testing.T) {
 	ctx := context.Background()
 	tempDir := t.TempDir()
 
-	s, err := NewExtStorage(tempDir, "test_namespace", nil)
+	s, err := NewExtStorage(ctx, "file://"+tempDir, "test_namespace")
 	require.NoError(t, err)
 	require.NotNil(t, s)
 
-	es, ok := s.(*extStorage)
-	require.True(t, ok)
-	require.Equal(t, filepath.Join(tempDir, "test_namespace"), es.basePath)
+	uri := s.URI()
+	require.Contains(t, uri, tempDir)
+	require.Contains(t, uri, "test_namespace")
 
 	// Test WriteFile and ReadFile
 	fileName := "test_file.txt"
@@ -128,41 +133,128 @@ func TestExtStorage(t *testing.T) {
 	require.False(t, exists)
 
 	// Test URI
-	// The URI() method on the wrapper calls the underlying storage's URI().
-	// For local storage, it should be the path.
-	// The underlying storage is created lazily. Let's trigger it.
-	_, err = s.FileExists(ctx, "anyfile")
-	require.NoError(t, err)
-	uri := s.URI()
+	uri = s.URI()
 	require.Contains(t, uri, tempDir)
 	require.Contains(t, uri, "test_namespace")
 
 	// Test Close
-	es.Close()
-	require.Nil(t, es.storage)
+	s.Close()
 }
 
-func TestNewFileWriter(t *testing.T) {
+func TestGetLocalPathDirNameWithWritePerm(t *testing.T) {
+	origLogFile := config.GetGlobalConfig().Log.File.Filename
+	origTempDir := config.GetGlobalConfig().TempDir
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = origLogFile
+		conf.TempDir = origTempDir
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = filepath.Join("/var/log/tidb", "tidb.log")
+		conf.TempDir = filepath.Join("/tmp", "tidb")
+	})
+
+	fs := afero.NewMemMapFs()
+	require.NoError(t, fs.MkdirAll("/var/log/tidb", 0o755))
+	basePathFsMem := afero.NewBasePathFs(fs, "/")
+
+	path := getLocalPathDirName(basePathFsMem)
+	require.Equal(t, "/var/log/tidb", path)
+}
+
+func TestGetLocalPathDirNameWithoutWritePerm(t *testing.T) {
+	origLogFile := config.GetGlobalConfig().Log.File.Filename
+	origTempDir := config.GetGlobalConfig().TempDir
+	defer config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = origLogFile
+		conf.TempDir = origTempDir
+	})
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = filepath.Join("/var/log/tidb", "tidb.log")
+		conf.TempDir = filepath.Join("/tmp", "tidb")
+	})
+
+	fs := afero.NewMemMapFs()
+	require.NoError(t, fs.MkdirAll("/var/log/tidb", 0o755))
+	basePathFsMem := afero.NewReadOnlyFs(fs)
+
+	path := getLocalPathDirName(basePathFsMem)
+	require.Equal(t, config.GetGlobalConfig().TempDir, path)
+}
+
+func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 	ctx := context.Background()
+
+	origLogFile := config.GetGlobalConfig().Log.File.Filename
+	origTempDir := config.GetGlobalConfig().TempDir
+	origCloudStorageURI := vardef.CloudStorageURI.Load()
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Log.File.Filename = origLogFile
+			conf.TempDir = origTempDir
+		})
+		vardef.CloudStorageURI.Store(origCloudStorageURI)
+		SetGlobalExtStorageForTest(nil)
+	}()
+
+	// Use writable temp dir for log
 	tempDir := t.TempDir()
+	logDir := filepath.Join(tempDir, "log")
+	require.NoError(t, os.MkdirAll(logDir, 0o755))
 
-	s, err := NewExtStorage(tempDir, "", nil)
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = filepath.Join(logDir, "tidb.log")
+		conf.TempDir = filepath.Join(tempDir, "tmp")
+	})
+	vardef.CloudStorageURI.Store("")
+	SetGlobalExtStorageForTest(nil)
+
+	s, err := GetGlobalExtStorage(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, s)
+	defer s.Close()
 
-	writer, err := s.Create(ctx, "test_writer.txt", nil)
+	uri := s.URI()
+	require.Contains(t, uri, logDir, "storage URI should use log dir when writable")
+}
+
+func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod read-only dir not reliable on Windows")
+	}
+
+	ctx := context.Background()
+
+	origLogFile := config.GetGlobalConfig().Log.File.Filename
+	origTempDir := config.GetGlobalConfig().TempDir
+	origCloudStorageURI := vardef.CloudStorageURI.Load()
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.Log.File.Filename = origLogFile
+			conf.TempDir = origTempDir
+		})
+		vardef.CloudStorageURI.Store(origCloudStorageURI)
+		SetGlobalExtStorageForTest(nil)
+	}()
+
+	tempDir := t.TempDir()
+	readOnlyDir := filepath.Join(tempDir, "readonly")
+	require.NoError(t, os.MkdirAll(readOnlyDir, 0o755))
+	require.NoError(t, os.Chmod(readOnlyDir, 0o555))
+	defer func() { _ = os.Chmod(readOnlyDir, 0o755) }()
+
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Log.File.Filename = filepath.Join(readOnlyDir, "tidb.log")
+		conf.TempDir = filepath.Join(tempDir, "tmp")
+	})
+	vardef.CloudStorageURI.Store("")
+	SetGlobalExtStorageForTest(nil)
+
+	s, err := GetGlobalExtStorage(ctx)
 	require.NoError(t, err)
+	require.NotNil(t, s)
+	defer s.Close()
 
-	fileWriter := NewFileWriter(ctx, writer)
-	require.NotNil(t, fileWriter)
-
-	_, err = fileWriter.Write([]byte("test content"))
-	require.NoError(t, err)
-
-	err = fileWriter.Close()
-	require.NoError(t, err)
-
-	// Verify the file was written
-	content, err := s.ReadFile(ctx, "test_writer.txt")
-	require.NoError(t, err)
-	require.Equal(t, []byte("test content"), content)
+	uri := s.URI()
+	expectedFallback := config.GetGlobalConfig().TempDir
+	require.Contains(t, uri, expectedFallback, "storage URI should use temp dir when log dir not writable")
 }
