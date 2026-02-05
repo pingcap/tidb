@@ -15,6 +15,8 @@
 package importsdk
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
 	"os"
 	"path/filepath"
@@ -125,6 +127,56 @@ func TestFileScanner(t *testing.T) {
 		err = scanner.CreateSchemaAndTableByName(ctx, "db1", "nonexistent")
 		require.Error(t, err)
 	})
+}
+
+func TestFileScannerWithEstimateFileSize(t *testing.T) {
+	tmpDir := t.TempDir()
+	ctx := context.Background()
+
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "db1-schema-create.sql"), []byte("CREATE DATABASE db1;"), 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "db1.t1-schema.sql"), []byte("CREATE TABLE t1 (id INT);"), 0644))
+
+	var buf bytes.Buffer
+	gz := gzip.NewWriter(&buf)
+	for range 1000 {
+		_, err := gz.Write([]byte("aaaa\n"))
+		require.NoError(t, err)
+	}
+	require.NoError(t, gz.Close())
+	compressedData := buf.Bytes()
+	compressedSize := int64(len(compressedData))
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "db1.t1.001.csv.gz"), compressedData, 0644))
+
+	db1, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db1.Close()
+
+	cfg1 := defaultSDKConfig()
+	scanner1, err := NewFileScanner(ctx, "file://"+tmpDir, db1, cfg1)
+	require.NoError(t, err)
+	defer scanner1.Close()
+
+	metas1, err := scanner1.GetTableMetas(ctx)
+	require.NoError(t, err)
+	require.Len(t, metas1, 1)
+	require.Greater(t, metas1[0].TotalSize, compressedSize)
+
+	db2, _, err := sqlmock.New()
+	require.NoError(t, err)
+	defer db2.Close()
+
+	cfg2 := defaultSDKConfig()
+	WithEstimateFileSize(false)(cfg2)
+	scanner2, err := NewFileScanner(ctx, "file://"+tmpDir, db2, cfg2)
+	require.NoError(t, err)
+	defer scanner2.Close()
+
+	metas2, err := scanner2.GetTableMetas(ctx)
+	require.NoError(t, err)
+	require.Len(t, metas2, 1)
+	require.Equal(t, compressedSize, metas2[0].TotalSize)
+	require.Len(t, metas2[0].DataFiles, 1)
+	require.Equal(t, compressedSize, metas2[0].DataFiles[0].Size)
 }
 
 func TestFileScannerWithSkipInvalidFiles(t *testing.T) {

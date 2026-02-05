@@ -34,6 +34,7 @@ type SDKConfig struct {
 	charset          string
 	maxScanFiles     *int
 	skipInvalidFiles bool
+	estimateFileSize bool
 
 	// General options
 	logger log.Logger
@@ -45,6 +46,8 @@ func defaultSDKConfig() *SDKConfig {
 		filter:      config.GetDefaultFilter(),
 		logger:      log.L(),
 		charset:     "auto",
+		// Estimate the real size (uncompressed / row-oriented) for compressed/parquet data files by default.
+		estimateFileSize: true,
 	}
 }
 
@@ -107,6 +110,14 @@ func WithMaxScanFiles(limit int) SDKOption {
 		if limit > 0 {
 			cfg.maxScanFiles = &limit
 		}
+	}
+}
+
+// WithEstimateFileSize specifies whether to estimate the real size for compressed and parquet data files.
+// When disabled, the SDK uses the storage-reported file size to speed up initialization.
+func WithEstimateFileSize(estimate bool) SDKOption {
+	return func(cfg *SDKConfig) {
+		cfg.estimateFileSize = estimate
 	}
 }
 
