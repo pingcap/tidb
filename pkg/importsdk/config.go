@@ -121,13 +121,6 @@ func WithEstimateRealSize(estimate bool) SDKOption {
 	}
 }
 
-// WithEstimateFileSize is kept for backward compatibility.
-//
-// Deprecated: use WithEstimateRealSize.
-func WithEstimateFileSize(estimate bool) SDKOption {
-	return WithEstimateRealSize(estimate)
-}
-
 // WithSkipInvalidFiles specifies whether sdk need raise error on found invalid files
 func WithSkipInvalidFiles(skip bool) SDKOption {
 	return func(cfg *SDKConfig) {
