@@ -15,7 +15,6 @@
 package sortexec
 
 import (
-	"sort"
 	"sync"
 	"time"
 
@@ -160,23 +159,20 @@ func (s *sortPartition) sortNoLock() (ret error) {
 		}
 	})
 
-	if !s.tryAQSort() {
-		sort.Slice(s.savedRows, s.keyColumnsLess)
-	}
+	aqsort.Slice(s.savedRows, s.keyColumnsLess, s.aqsortConfig())
 	s.isSorted = true
 	s.sliceIter = chunk.NewIterator4Slice(s.savedRows)
 	return
 }
 
-func (s *sortPartition) tryAQSort() bool {
-	if !s.shouldUseAQSort() {
-		return false
+func (s *sortPartition) aqsortConfig() aqsort.SliceConfig[chunk.Row] {
+	return aqsort.SliceConfig[chunk.Row]{
+		Enabled:         s.shouldUseAQSort,
+		EncodeKey:       s.encodeRowSortKeyWithCheckpoint,
+		Disable:         s.disableAQSort,
+		CheckpointEvery: signalCheckpointForSort,
+		CheckpointFn:    s.memTracker.HandleKillSignal,
 	}
-	if err := s.sortByEncodedKey(); err != nil {
-		s.disableAQSort(err)
-		return false
-	}
-	return true
 }
 
 func (s *sortPartition) shouldUseAQSort() bool {
@@ -194,38 +190,20 @@ func (s *sortPartition) disableAQSort(err error) {
 	}
 }
 
-func (s *sortPartition) sortByEncodedKey() error {
+func (s *sortPartition) encodeRowSortKeyWithCheckpoint(idx int, row chunk.Row) ([]byte, error) {
 	failpoint.Inject("AQSortForceEncodeKeyError", func(val failpoint.Value) {
 		if val.(bool) {
-			failpoint.Return(errors.NewNoStackError("injected aqsort sort key encode error"))
+			failpoint.Return(nil, errors.NewNoStackError("injected aqsort sort key encode error"))
 		}
 	})
 
-	if len(s.savedRows) <= 1 {
-		return nil
-	}
 	if s.loc == nil {
 		s.loc = time.UTC
 	}
-
-	pairs := make([]aqsort.Pair[chunk.Row], len(s.savedRows))
-	for i, row := range s.savedRows {
-		if i%1024 == 0 {
-			s.memTracker.HandleKillSignal()
-		}
-		key, err := s.encodeRowSortKey(row)
-		if err != nil {
-			return err
-		}
-		pairs[i] = aqsort.Pair[chunk.Row]{Key: key, Val: row}
+	if idx%1024 == 0 {
+		s.memTracker.HandleKillSignal()
 	}
-
-	var sorter aqsort.PairSorter[chunk.Row]
-	sorter.SortWithCheckpoint(pairs, signalCheckpointForSort, s.memTracker.HandleKillSignal)
-	for i := range pairs {
-		s.savedRows[i] = pairs[i].Val
-	}
-	return nil
+	return s.encodeRowSortKey(row)
 }
 
 func (s *sortPartition) encodeRowSortKey(row chunk.Row) ([]byte, error) {

@@ -22,10 +22,10 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/executor/sortexec"
-	sessiontypes "github.com/pingcap/tidb/pkg/session/types"
+	"github.com/pingcap/tidb/pkg/session/sessionapi"
 )
 
-func prepareTPCHLineitemSortBenchData(se sessiontypes.Session, rowCount int) {
+func prepareTPCHLineitemSortBenchData(se sessionapi.Session, rowCount int) {
 	mustExecute(se, "drop table if exists lineitem")
 	mustExecute(se, `
 create table lineitem (

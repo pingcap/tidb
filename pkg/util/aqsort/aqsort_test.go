@@ -23,8 +23,6 @@ import (
 )
 
 func TestSortBytesMatchesStdSort(t *testing.T) {
-	t.Parallel()
-
 	cases := []struct {
 		name string
 		keys [][]byte
@@ -73,8 +71,6 @@ func TestSortBytesMatchesStdSort(t *testing.T) {
 }
 
 func TestSortBytesRandom(t *testing.T) {
-	t.Parallel()
-
 	rng := rand.New(rand.NewSource(1))
 	for iter := 0; iter < 200; iter++ {
 		n := rng.Intn(500) + 1
@@ -101,8 +97,6 @@ func TestSortBytesRandom(t *testing.T) {
 }
 
 func TestPairSorterMatchesStdSort(t *testing.T) {
-	t.Parallel()
-
 	rng := rand.New(rand.NewSource(1))
 	for iter := 0; iter < 100; iter++ {
 		n := rng.Intn(500) + 1

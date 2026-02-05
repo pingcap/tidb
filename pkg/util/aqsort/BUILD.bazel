@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "aqsort.go",
         "pairs.go",
+        "slice.go",
     ],
     importpath = "github.com/pingcap/tidb/pkg/util/aqsort",
     visibility = ["//visibility:public"],
