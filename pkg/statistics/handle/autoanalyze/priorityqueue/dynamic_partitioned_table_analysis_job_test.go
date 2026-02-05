@@ -143,7 +143,7 @@ func TestValidateAndPrepareForDynamicPartitionedTable(t *testing.T) {
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs:  partitionIDs,
-		Weight: 2,
+		Weight:        2,
 	}
 	initJobs(tk)
 	insertMultipleFinishedJobs(tk, "example_table", "p0")
@@ -200,7 +200,7 @@ func TestPerformanceOfValidateAndPrepare(t *testing.T) {
 		SchemaName:    "example_schema",
 		GlobalTableID: tableInfo.Meta().ID,
 		PartitionIDs:  partitionIDs,
-		Weight: 2,
+		Weight:        2,
 	}
 	initJobs(tk)
 	insertMultipleFinishedJobs(tk, "example_table", "p0")
