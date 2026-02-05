@@ -33,7 +33,7 @@ type PhysicalApply struct {
 	CanUseCache bool
 	Concurrency int
 	OuterSchema []*expression.CorrelatedColumn
-	// NoDecorrelate indicates this apply is preserved by NO_DECORRELATE hint.
+	// NoDecorrelate is used to flag that an Apply operator remained undecorrelated due to the no_decorrelate hint exists. This allows the EXPLAIN EXPLORE feature to know exactly when to suggest adding a no_decorrelate hint when reverse-generating the sql recommended hints from the physical plan tree."
 	NoDecorrelate bool
 }
 
