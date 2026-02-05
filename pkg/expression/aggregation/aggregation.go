@@ -213,7 +213,7 @@ func NeedCount(name string) bool {
 // NeedValue indicates whether the aggregate function should record value.
 func NeedValue(name string) bool {
 	switch name {
-	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
+	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncFirstRow, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncGroupConcat, ast.AggFuncBitOr, ast.AggFuncBitAnd, ast.AggFuncBitXor, ast.AggFuncApproxPercentile:
 		return true
 	default:
@@ -233,6 +233,9 @@ func IsAllFirstRow(aggFuncs []*AggFuncDesc) bool {
 
 // CheckAggPushDown checks whether an agg function can be pushed to storage.
 func CheckAggPushDown(ctx expression.EvalContext, aggFunc *AggFuncDesc, storeType kv.StoreType) bool {
+	if aggFunc.Name == ast.AggFuncSumInt {
+		return false
+	}
 	if len(aggFunc.OrderByItems) > 0 && aggFunc.Name != ast.AggFuncGroupConcat {
 		return false
 	}

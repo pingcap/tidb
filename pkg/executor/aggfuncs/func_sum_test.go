@@ -29,7 +29,11 @@ func TestMergePartialResult4Sum(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, types.NewDecFromInt(10), types.NewDecFromInt(9), types.NewDecFromInt(19)),
 		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, 10.0, 9.0, 19.0),
+		buildAggTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5, 10, 9, 19),
 	}
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.AddFlag(mysql.UnsignedFlag)
+	tests = append(tests, buildAggTesterWithFieldType(ast.AggFuncSumInt, unsignedType, 5, uint64(10), uint64(9), uint64(19)))
 
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
@@ -42,7 +46,11 @@ func TestSum(t *testing.T) {
 	tests := []aggTest{
 		buildAggTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(10)),
 		buildAggTester(ast.AggFuncSum, mysql.TypeDouble, 5, nil, 10.0),
+		buildAggTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5, nil, 10),
 	}
+	unsignedType := types.NewFieldType(mysql.TypeLonglong)
+	unsignedType.AddFlag(mysql.UnsignedFlag)
+	tests = append(tests, buildAggTesterWithFieldType(ast.AggFuncSumInt, unsignedType, 5, nil, uint64(10)))
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
 			testAggFunc(t, test)
@@ -56,10 +64,14 @@ func TestMemSum(t *testing.T) {
 			aggfuncs.DefPartialResult4SumFloat64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4SumDecimalSize, defaultUpdateMemDeltaGens, false),
+		buildAggMemTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4SumInt64Size, defaultUpdateMemDeltaGens, false),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4SumDistinctFloat64Size+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
 		buildAggMemTester(ast.AggFuncSum, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4SumDistinctDecimalSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
+		buildAggMemTester(ast.AggFuncSumInt, mysql.TypeLonglong, 5,
+			aggfuncs.DefPartialResult4SumDistinctInt64Size+hack.DefBucketMemoryUsageForSetInt64, distinctUpdateMemDeltaGens, true),
 	}
 
 	for i, test := range tests {
