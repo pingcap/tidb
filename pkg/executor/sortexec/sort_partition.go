@@ -160,21 +160,23 @@ func (s *sortPartition) sortNoLock() (ret error) {
 		}
 	})
 
-	s.sortSavedRows()
+	if !s.tryAQSort() {
+		sort.Slice(s.savedRows, s.keyColumnsLess)
+	}
 	s.isSorted = true
 	s.sliceIter = chunk.NewIterator4Slice(s.savedRows)
 	return
 }
 
-func (s *sortPartition) sortSavedRows() {
-	if s.shouldUseAQSort() {
-		if err := s.sortByEncodedKey(); err != nil {
-			s.disableAQSort(err)
-			s.sortByColumns()
-		}
-		return
+func (s *sortPartition) tryAQSort() bool {
+	if !s.shouldUseAQSort() {
+		return false
 	}
-	s.sortByColumns()
+	if err := s.sortByEncodedKey(); err != nil {
+		s.disableAQSort(err)
+		return false
+	}
+	return true
 }
 
 func (s *sortPartition) shouldUseAQSort() bool {
@@ -190,10 +192,6 @@ func (s *sortPartition) disableAQSort(err error) {
 	} else {
 		s.useAQSort = false
 	}
-}
-
-func (s *sortPartition) sortByColumns() {
-	sort.Slice(s.savedRows, s.keyColumnsLess)
 }
 
 func (s *sortPartition) sortByEncodedKey() error {
