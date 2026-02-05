@@ -441,21 +441,6 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) ([]*Loc
 
 	for ranges.Len() > 0 {
 		startKey := ranges.At(0).StartKey
-		bucket := loc.LocateBucket(startKey)
-
-		// Known anomaly: LocateBucket returned nil
-		// Based on LocateBucket implementation analysis:
-		// - LocateBucket returns nil IFF !loc.Contains(startKey)
-		// - This means startKey is outside location boundaries
-		// - Bucket structure issues (gaps, sorting, etc.) cannot cause nil
-		//   because fallback logic creates synthetic buckets
-		if bucket == nil {
-			return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
-				reason:              "locate_bucket_nil",
-				startKey:            startKey,
-				remainingRangeCount: ranges.Len(),
-			}
-		}
 
 		// Input consistency guard: Bucket splitting assumes the first range starts inside this location.
 		// If it doesn't, continuing can livelock (no progress) and/or over-split incorrectly.
@@ -463,8 +448,17 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) ([]*Loc
 			return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
 				reason:              "range_start_outside_location",
 				startKey:            startKey,
-				bucketStart:         bucket.StartKey,
-				bucketEnd:           bucket.EndKey,
+				remainingRangeCount: ranges.Len(),
+			}
+		}
+
+		bucket := loc.LocateBucket(startKey)
+		// Defensive: LocateBucket should never return nil because startKey is inside location.
+		// If it does, fall back to region-only splitting.
+		if bucket == nil {
+			return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
+				reason:              "locate_bucket_nil",
+				startKey:            startKey,
 				remainingRangeCount: ranges.Len(),
 			}
 		}

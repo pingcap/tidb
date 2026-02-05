@@ -408,9 +408,9 @@ func TestPanicInSplitKeyRangesByBuckets(t *testing.T) {
 	t.Logf("Test completed successfully - panic was caught, diagnostics logged, and re-panicked as expected")
 }
 
-// TestLocateBucketNilFallback tests that when LocateBucket returns nil
-// (range outside location boundaries), splitKeyRangesByBuckets returns
-// unsplit ranges instead of panicking.
+// TestLocateBucketNilFallback tests that when the first range starts outside the
+// location boundaries, splitKeyRangesByBuckets returns unsplit ranges instead of
+// panicking.
 func TestLocateBucketNilFallback(t *testing.T) {
 	ctx := context.Background()
 
@@ -425,8 +425,8 @@ func TestLocateBucketNilFallback(t *testing.T) {
 		},
 	}
 
-	// Create ranges where the first one is OUTSIDE the location (starts at "x")
-	// This simulates the bug scenario where ranges don't match locations
+	// Create ranges where the first one is OUTSIDE the location (starts at "x").
+	// This simulates the bug scenario where ranges don't match locations.
 	outsideRanges := NewKeyRanges([]kv.KeyRange{
 		{StartKey: []byte("x"), EndKey: []byte("z")}, // Outside [a, m)
 	})
@@ -445,13 +445,12 @@ func TestLocateBucketNilFallback(t *testing.T) {
 	require.Len(t, result, 1, "Expected 1 unsplit LocationKeyRanges")
 	require.Equal(t, lkr, result[0], "Expected original LocationKeyRanges to be returned")
 
-	t.Log("LocateBucket nil fallback working correctly - returned unsplit ranges instead of panicking")
+	t.Log("StartKey outside location fallback working correctly - returned unsplit ranges instead of panicking")
 }
 
 // TestLocateBucketOutsideRegionNonNilFallback tests a subtle stale-bucket case:
-// LocateBucket can return a non-nil bucket even when key is outside the region boundaries
-// (because it clamps the located bucket without checking loc.Contains(key) in that path).
-// Our bucket splitting must not livelock in this scenario.
+// LocateBucket can return a non-nil bucket even when key is outside the region boundaries.
+// Our bucket splitting must not livelock and should fall back safely.
 func TestLocateBucketOutsideRegionNonNilFallback(t *testing.T) {
 	ctx := context.Background()
 
