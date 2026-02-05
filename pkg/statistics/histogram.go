@@ -1227,6 +1227,9 @@ func (hg *Histogram) OutOfRangeRowCount(
 		// magic number by setting the session variable `tidb_opt_risk_range_skew_ratio`.
 		// When skewRatio > 0, estRows sets the starting point for the skew ratio calculation.
 		addedRowMultiplier := 0.5
+		// NOTE: Skew ratio is used twice in this function.
+		// This first usage allows a user to specify a ratio that is smaller or
+		// larger than the default 0.5.
 		if skewRatio > 0 {
 			addedRowMultiplier = skewRatio
 		}
@@ -1253,9 +1256,12 @@ func (hg *Histogram) OutOfRangeRowCount(
 
 	// Step 12: Calculate the final min/max/est rows including the skew ratio adjustment
 	result.MinEst = min(estRows, oneValue)
+	// NOTE: Skew ratio is used twice in this function.
+	// This second usage scales the estimate from the base estimate to the max estimate.
 	if skewRatio > 0 {
 		result = CalculateSkewRatioCounts(estRows, maxAddedRows, skewRatio)
 	} else {
+		// Do not scale the estimate if skew ratio is not set.
 		result.Est = estRows
 	}
 	result.Est = max(result.Est, oneValue)
