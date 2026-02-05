@@ -504,15 +504,16 @@ func alignEQConds(ctx base.PlanContext, left, right base.LogicalPlan, eqConds []
 			_, isCol0 := swapped.GetArgs()[0].(*expression.Column)
 			_, isCol1 := swapped.GetArgs()[1].(*expression.Column)
 			if !isCol0 || !isCol1 {
-				var lCol, rCol expression.Expression
+				lCol := swapped.GetArgs()[0]
+				rCol := swapped.GetArgs()[1]
 				if !isCol0 {
-					left, rCol = logicalop.InjectExpr(left, swapped.GetArgs()[0])
+					left, lCol = logicalop.InjectExpr(left, swapped.GetArgs()[0])
 				}
 				if !isCol1 {
-					right, lCol = logicalop.InjectExpr(right, swapped.GetArgs()[1])
+					right, rCol = logicalop.InjectExpr(right, swapped.GetArgs()[1])
 				}
 				swapped = expression.NewFunctionInternal(ctx.GetExprCtx(), cond.FuncName.L, cond.GetStaticType(),
-					rCol, lCol).(*expression.ScalarFunction)
+					lCol, rCol).(*expression.ScalarFunction)
 			}
 			res = append(res, swapped)
 			continue
