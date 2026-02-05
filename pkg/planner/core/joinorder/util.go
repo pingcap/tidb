@@ -18,10 +18,20 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/util/hint"
 )
+
+// JoinMethodHint records the join method hint for a vertex.
+// JoinMethodHint stores join method hint info associated with a vertex.
+type JoinMethodHint struct {
+	PreferJoinMethod uint
+	HintInfo         *hint.PlanHints
+}
 
 func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
@@ -267,3 +277,20 @@ func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName 
 	return false
 }
 
+// SetNewJoinWithHint sets the join method hint for the join node.
+func SetNewJoinWithHint(newJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) {
+	if newJoin == nil {
+		return
+	}
+	lChild := newJoin.Children()[0]
+	rChild := newJoin.Children()[1]
+	if joinMethodHint, ok := vertexHints[lChild.ID()]; ok {
+		newJoin.LeftPreferJoinType = joinMethodHint.PreferJoinMethod
+		newJoin.HintInfo = joinMethodHint.HintInfo
+	}
+	if joinMethodHint, ok := vertexHints[rChild.ID()]; ok {
+		newJoin.RightPreferJoinType = joinMethodHint.PreferJoinMethod
+		newJoin.HintInfo = joinMethodHint.HintInfo
+	}
+	newJoin.SetPreferredJoinType()
+}
