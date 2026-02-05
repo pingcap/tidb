@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library")
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "joinorder",
@@ -20,5 +20,17 @@ go_library(
         "@com_github_cockroachdb_errors//:errors",
         "@com_github_pingcap_errors//:errors",
         "@org_uber_go_zap//:zap",
+    ],
+)
+
+go_test(
+    name = "joinorder_test",
+    timeout = "short",
+    srcs = ["bitset_bench_test.go"],
+    embed = [":joinorder"],
+    flaky = True,
+    deps = [
+        "//pkg/util/intset",
+        "@com_github_bits_and_blooms_bitset//:bitset",
     ],
 )
