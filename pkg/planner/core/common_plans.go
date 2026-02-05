@@ -783,7 +783,7 @@ func (e *Explain) renderResultForExplore() error {
 			p.Recommend,
 			p.Reason,
 			fmt.Sprintf("EXPLAIN ANALYZE %v", p.BindSQL),
-			p.BindSQL})
+			fmt.Sprintf("CREATE GLOBAL BINDING USING %v", p.BindSQL)})
 	}
 	return nil
 }
