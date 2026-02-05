@@ -236,7 +236,6 @@ func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
 
 	tempDir := t.TempDir()
 	logDir := filepath.Join(tempDir, "readonly")
-	// Use afero ReadOnlyFs so canWriteToFile fails and we fall back to TempDir (like TestPlanReplayerPathWithoutWritePrem).
 	fs := afero.NewMemMapFs()
 	testLocalPathFS = afero.NewReadOnlyFs(fs)
 
