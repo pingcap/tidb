@@ -23,6 +23,26 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/util"
 )
 
+func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
+	leadingHintNum := len(hintInfo)
+	var leadingHintInfo *hint.PlanHints
+	hasDiffLeadingHint := false
+	if leadingHintNum > 0 {
+		leadingHintInfo = hintInfo[0]
+		// One join group has one leading hint at most. Check whether there are different join order hints.
+		for i := 1; i < leadingHintNum; i++ {
+			if hintInfo[i] != hintInfo[i-1] {
+				hasDiffLeadingHint = true
+				break
+			}
+		}
+		if hasDiffLeadingHint {
+			leadingHintInfo = nil
+		}
+	}
+	return leadingHintInfo, hasDiffLeadingHint
+}
+
 // LeadingTreeFinder finds a node by hint and removes it from the available slice.
 type LeadingTreeFinder[T any] func(available []T, hint *ast.HintTable) (T, []T, bool)
 
@@ -104,7 +124,7 @@ func BuildLeadingTreeFromList[T any](
 }
 
 // FindAndRemovePlanByAstHint matches a hint table to a plan and removes it from the slice.
-// T is usually be *jrNode or base.LogicalPlan, we use generics because we want to reuse this function in both the old and new join order code.
+// T is usually be *Node or base.LogicalPlan, we use generics because we want to reuse this function in both the old and new join order code.
 func FindAndRemovePlanByAstHint[T any](
 	ctx base.PlanContext,
 	plans []T,
@@ -147,7 +167,7 @@ func FindAndRemovePlanByAstHint[T any](
 
 	// Step 2: Match by query-block alias (subquery name)
 	// Only execute this step if no direct table name match was found
-	groupIdx := -1
+	matchIdx := -1
 	for i, joinGroup := range plans {
 		plan := getPlan(joinGroup)
 		blockOffset := plan.QueryBlockOffset()
@@ -156,29 +176,26 @@ func FindAndRemovePlanByAstHint[T any](
 			dbMatch := astTbl.DBName.L == "" || astTbl.DBName.L == blockName.DBName.L
 			tableMatch := astTbl.TableName.L == blockName.TableName.L
 			if dbMatch && tableMatch {
-				// this can happen when multiple join groups are from the same block, for example:
-				//   select /*+ leading(tx) */ * from (select * from t1, t2 ...) tx, ...
-				// `tx` is split to 2 join groups `t1` and `t2`, and they have the same block offset.
-				// TODO: currently we skip this case for simplification, we can support it in the future.
-				if groupIdx != -1 {
-					groupIdx = -1
-					break
+				if matchIdx != -1 {
+					intest.Assert(false, "leading subquery alias matches multiple join groups")
+					return zero, plans, false
 				}
-				groupIdx = i
+				matchIdx = i
 			}
 		}
 	}
-
-	if groupIdx != -1 {
-		matched := plans[groupIdx]
-		newPlans := append(plans[:groupIdx], plans[groupIdx+1:]...)
+	if matchIdx != -1 {
+		// take the matched plan before slice manipulation. `append(plans[:matchIdx], ...)`
+		// may overwrite `plans[matchIdx]` due to shared backing arrays.
+		matched := plans[matchIdx]
+		newPlans := append(plans[:matchIdx], plans[matchIdx+1:]...)
 		return matched, newPlans, true
 	}
 
 	return zero, plans, false
 }
 
-// extractSelectOffset extracts the number x from 'sel_x'.
+// extract the number x from 'sel_x'
 func extractSelectOffset(qbName string) int {
 	if strings.HasPrefix(qbName, "sel_") {
 		if offset, err := strconv.Atoi(qbName[4:]); err == nil {
@@ -187,3 +204,66 @@ func extractSelectOffset(qbName string) int {
 	}
 	return -1
 }
+
+// IsDerivedTableInLeadingHint checks if a plan node represents a derived table (subquery)
+// that is explicitly referenced in the LEADING hint.
+func IsDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *hint.PlanHints) bool {
+	if leadingHint == nil || leadingHint.LeadingList == nil {
+		return false
+	}
+
+	// Get the query block names mapping to find derived table aliases
+	var queryBlockNames []ast.HintTable
+	names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load()
+	if names == nil {
+		return false
+	}
+	queryBlockNames = *names
+
+	// Get the block offset of this plan node
+	blockOffset := p.QueryBlockOffset()
+
+	// Only blockOffset values in [2, len(queryBlockNames)-1] can represent
+	// subqueries / derived tables. Offsets 0 and 1 are typically main query
+	// or CTE, and offsets beyond the end of queryBlockNames are invalid.
+	if blockOffset <= 1 || blockOffset >= len(queryBlockNames) {
+		return false
+	}
+
+	// Get the alias name of this derived table
+	derivedTableAlias := queryBlockNames[blockOffset].TableName.L
+	if derivedTableAlias == "" {
+		return false
+	}
+	derivedDBName := queryBlockNames[blockOffset].DBName.L
+
+	// Check if this alias appears in the LEADING hint
+	return containsTableInLeadingList(leadingHint.LeadingList, derivedDBName, derivedTableAlias)
+}
+
+// containsTableInLeadingList recursively searches for a table name in the LEADING hint structure
+func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName string) bool {
+	if leadingList == nil {
+		return false
+	}
+
+	for _, item := range leadingList.Items {
+		switch element := item.(type) {
+		case *ast.HintTable:
+			// Direct table reference in LEADING hint
+			dbMatch := element.DBName.L == "" || element.DBName.L == dbName || element.DBName.L == "*"
+			tableMatch := element.TableName.L == tableName
+			if dbMatch && tableMatch {
+				return true
+			}
+		case *ast.LeadingList:
+			// Nested structure, recursively check
+			if containsTableInLeadingList(element, dbName, tableName) {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+

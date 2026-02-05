@@ -22,6 +22,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
+	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	h "github.com/pingcap/tidb/pkg/util/hint"
 )
@@ -33,7 +34,7 @@ import (
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
 func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
-	joinMethodHintInfo := make(map[int]*joinMethodHint)
+	joinMethodHintInfo := make(map[int]*joinorder.JoinMethodHint)
 	var (
 		group              []base.LogicalPlan
 		joinOrderHintInfo  []*h.PlanHints
@@ -100,11 +101,11 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	if isJoin && p.SCtx().GetSessionVars().EnableAdvancedJoinHint && join.PreferJoinType > uint(0) {
 		// If the current join node has the join method hint, we should store the hint information and restore it when we have finished the join reorder process.
 		if join.LeftPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.Children()[0].ID()] = &joinMethodHint{join.LeftPreferJoinType, join.HintInfo}
+			joinMethodHintInfo[join.Children()[0].ID()] = &joinorder.JoinMethodHint{PreferJoinMethod: join.LeftPreferJoinType, HintInfo: join.HintInfo}
 			leftHasHint = true
 		}
 		if join.RightPreferJoinType > uint(0) {
-			joinMethodHintInfo[join.Children()[1].ID()] = &joinMethodHint{join.RightPreferJoinType, join.HintInfo}
+			joinMethodHintInfo[join.Children()[1].ID()] = &joinorder.JoinMethodHint{PreferJoinMethod: join.RightPreferJoinType, HintInfo: join.HintInfo}
 			rightHasHint = true
 		}
 	}
@@ -114,7 +115,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	// So we don't need to split the left child part. The right child part is the same.
 
 	// Check if left child should be preserved due to LEADING hint reference
-	leftShouldPreserve := currentLeadingHint != nil && isDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint)
+	leftShouldPreserve := currentLeadingHint != nil && joinorder.IsDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint)
 
 	if join.JoinType != base.RightOuterJoin && !leftHasHint && !leftShouldPreserve {
 		lhsJoinGroupResult := extractJoinGroup(join.Children()[0])
@@ -160,7 +161,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	}
 
 	// Check if right child should be preserved due to LEADING hint reference
-	rightShouldPreserve := currentLeadingHint != nil && isDerivedTableInLeadingHint(join.Children()[1], currentLeadingHint)
+	rightShouldPreserve := currentLeadingHint != nil && joinorder.IsDerivedTableInLeadingHint(join.Children()[1], currentLeadingHint)
 
 	// You can see the comments in the upside part which we try to split the left child part. It's the same here.
 	if join.JoinType != base.LeftOuterJoin && !rightHasHint && !rightShouldPreserve {
@@ -237,68 +238,6 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			joinMethodHintInfo: joinMethodHintInfo,
 		},
 	}
-}
-
-// isDerivedTableInLeadingHint checks if a plan node represents a derived table (subquery)
-// that is explicitly referenced in the LEADING hint.
-func isDerivedTableInLeadingHint(p base.LogicalPlan, leadingHint *h.PlanHints) bool {
-	if leadingHint == nil || leadingHint.LeadingList == nil {
-		return false
-	}
-
-	// Get the query block names mapping to find derived table aliases
-	var queryBlockNames []ast.HintTable
-	names := p.SCtx().GetSessionVars().PlannerSelectBlockAsName.Load()
-	if names == nil {
-		return false
-	}
-	queryBlockNames = *names
-
-	// Get the block offset of this plan node
-	blockOffset := p.QueryBlockOffset()
-
-	// Only blockOffset values in [2, len(queryBlockNames)-1] can represent
-	// subqueries / derived tables. Offsets 0 and 1 are typically main query
-	// or CTE, and offsets beyond the end of queryBlockNames are invalid.
-	if blockOffset <= 1 || blockOffset >= len(queryBlockNames) {
-		return false
-	}
-
-	// Get the alias name of this derived table
-	derivedTableAlias := queryBlockNames[blockOffset].TableName.L
-	if derivedTableAlias == "" {
-		return false
-	}
-	derivedDBName := queryBlockNames[blockOffset].DBName.L
-
-	// Check if this alias appears in the LEADING hint
-	return containsTableInLeadingList(leadingHint.LeadingList, derivedDBName, derivedTableAlias)
-}
-
-// containsTableInLeadingList recursively searches for a table name in the LEADING hint structure
-func containsTableInLeadingList(leadingList *ast.LeadingList, dbName, tableName string) bool {
-	if leadingList == nil {
-		return false
-	}
-
-	for _, item := range leadingList.Items {
-		switch element := item.(type) {
-		case *ast.HintTable:
-			// Direct table reference in LEADING hint
-			dbMatch := element.DBName.L == "" || element.DBName.L == dbName || element.DBName.L == "*"
-			tableMatch := element.TableName.L == tableName
-			if dbMatch && tableMatch {
-				return true
-			}
-		case *ast.LeadingList:
-			// Nested structure, recursively check
-			if containsTableInLeadingList(element, dbName, tableName) {
-				return true
-			}
-		}
-	}
-
-	return false
 }
 
 // JoinReOrderSolver is used to reorder the join nodes in a logical plan.
@@ -459,11 +398,6 @@ func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
 	return leadingHintInfo, hasDiffLeadingHint
 }
 
-type joinMethodHint struct {
-	preferredJoinMethod uint
-	joinMethodHintInfo  *h.PlanHints
-}
-
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
 type basicJoinGroupInfo struct {
 	eqEdges    []*expression.ScalarFunction
@@ -472,7 +406,7 @@ type basicJoinGroupInfo struct {
 	// `joinMethodHintInfo` is used to map the sub-plan's ID to the join method hint.
 	// The sub-plan will join the join reorder process to build the new plan.
 	// So after we have finished the join reorder process, we can reset the join method hint based on the sub-plan's ID.
-	joinMethodHintInfo map[int]*joinMethodHint
+	joinMethodHintInfo map[int]*joinorder.JoinMethodHint
 }
 
 type joinGroupResult struct {
@@ -516,7 +450,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	copy(leftJoinGroup, curJoinGroup)
 
 	find := func(available []base.LogicalPlan, hint *ast.HintTable) (base.LogicalPlan, []base.LogicalPlan, bool) {
-		return FindAndRemovePlanByAstHint(s.ctx, available, hint, func(plan base.LogicalPlan) base.LogicalPlan {
+		return joinorder.FindAndRemovePlanByAstHint(s.ctx, available, hint, func(plan base.LogicalPlan) base.LogicalPlan {
 			return plan
 		})
 	}
@@ -531,7 +465,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 		s.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
 	}
 
-	leadingJoin, remainingGroup, ok, err := BuildLeadingTreeFromList(leadingList, leftJoinGroup, find, joiner, warn)
+	leadingJoin, remainingGroup, ok, err := joinorder.BuildLeadingTreeFromList(leadingList, leftJoinGroup, find, joiner, warn)
 	if err != nil || !ok {
 		return false, nil
 	}
@@ -539,8 +473,6 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	return true, remainingGroup
 }
 
-// connectJoinNodes handles joining two subplans, performing connection checks
-// and enforcing the outer join constraint.
 func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
 	hasOuterJoin bool, availableGroups []base.LogicalPlan,
@@ -606,10 +538,10 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
 				if !isCol0 || !isCol1 {
 					if !isCol0 {
-						leftPlan, rCol = s.injectExpr(leftPlan, newSf.GetArgs()[0])
+						leftPlan, rCol = logicalop.InjectExpr(leftPlan, newSf.GetArgs()[0])
 					}
 					if !isCol1 {
-						rightPlan, lCol = s.injectExpr(rightPlan, newSf.GetArgs()[1])
+						rightPlan, lCol = logicalop.InjectExpr(rightPlan, newSf.GetArgs()[1])
 					}
 					leftNode, rightNode = leftPlan, rightPlan
 					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(),
@@ -620,16 +552,6 @@ func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan bas
 		}
 	}
 	return
-}
-
-func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
-	proj, ok := p.(*logicalop.LogicalProjection)
-	if !ok {
-		proj = logicalop.LogicalProjection{Exprs: expression.Cols2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
-		proj.SetSchema(p.Schema().Clone())
-		proj.SetChildren(p)
-	}
-	return proj, proj.AppendExpr(expr)
 }
 
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
@@ -734,7 +656,7 @@ func (s *baseSingleGroupJoinOrderSolver) newCartesianJoin(lChild, rChild base.Lo
 	}.Init(s.ctx, offset)
 	join.SetSchema(expression.MergeSchema(lChild.Schema(), rChild.Schema()))
 	join.SetChildren(lChild, rChild)
-	s.setNewJoinWithHint(join)
+	joinorder.SetNewJoinWithHint(join, s.joinMethodHintInfo)
 	return join
 }
 
@@ -759,23 +681,6 @@ func (s *baseSingleGroupJoinOrderSolver) newJoinWithEdges(lChild, rChild base.Lo
 		}
 	}
 	return newJoin
-}
-
-// setNewJoinWithHint sets the join method hint for the join node.
-// Before the join reorder process, we split the join node and collect the join method hint.
-// And we record the join method hint and reset the hint after we have finished the join reorder process.
-func (s *baseSingleGroupJoinOrderSolver) setNewJoinWithHint(newJoin *logicalop.LogicalJoin) {
-	lChild := newJoin.Children()[0]
-	rChild := newJoin.Children()[1]
-	if joinMethodHint, ok := s.joinMethodHintInfo[lChild.ID()]; ok {
-		newJoin.LeftPreferJoinType = joinMethodHint.preferredJoinMethod
-		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
-	}
-	if joinMethodHint, ok := s.joinMethodHintInfo[rChild.ID()]; ok {
-		newJoin.RightPreferJoinType = joinMethodHint.preferredJoinMethod
-		newJoin.HintInfo = joinMethodHint.joinMethodHintInfo
-	}
-	newJoin.SetPreferredJoinType()
 }
 
 // calcJoinCumCost calculates the cumulative cost of the join node.
