@@ -129,7 +129,7 @@ func TestFileScanner(t *testing.T) {
 	})
 }
 
-func TestFileScannerWithEstimateFileSize(t *testing.T) {
+func TestFileScannerWithEstimateRealSize(t *testing.T) {
 	tmpDir := t.TempDir()
 	ctx := context.Background()
 
@@ -166,7 +166,7 @@ func TestFileScannerWithEstimateFileSize(t *testing.T) {
 	defer db2.Close()
 
 	cfg2 := defaultSDKConfig()
-	WithEstimateFileSize(false)(cfg2)
+	WithEstimateRealSize(false)(cfg2)
 	scanner2, err := NewFileScanner(ctx, "file://"+tmpDir, db2, cfg2)
 	require.NoError(t, err)
 	defer scanner2.Close()
