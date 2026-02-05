@@ -89,9 +89,15 @@ type Manager struct {
 }
 
 // NewRunawayManager creates a new Manager.
-func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serverAddr string,
-	pool util.SessionPool, exit chan struct{}, infoCache *infoschema.InfoCache, ddl ddl.DDL) *Manager {
-	watchList := ttlcache.New[string, *QuarantineRecord](
+func NewRunawayManager(
+	resourceGroupCtl *rmclient.ResourceGroupsController,
+	serverAddr string,
+	pool util.SessionPool,
+	exit chan struct{},
+	infoCache *infoschema.InfoCache,
+	ddl ddl.DDL,
+) *Manager {
+	watchList := ttlcache.New(
 		ttlcache.WithTTL[string, *QuarantineRecord](ttlcache.NoTTL),
 		ttlcache.WithCapacity[string, *QuarantineRecord](maxWatchListCap),
 		ttlcache.WithDisableTouchOnHit[string, *QuarantineRecord](),
@@ -126,7 +132,7 @@ func NewRunawayManager(resourceGroupCtl *rmclient.ResourceGroupsController, serv
 		}
 		staleQuarantineChan <- i.Value()
 	})
-	m.runawaySyncer = newSyncer(pool)
+	m.runawaySyncer = newSyncer(pool, infoCache)
 
 	return m
 }
@@ -380,10 +386,8 @@ func (rm *Manager) Stop() {
 func (rm *Manager) UpdateNewAndDoneWatch() error {
 	rm.runawaySyncer.mu.Lock()
 	defer rm.runawaySyncer.mu.Unlock()
-	// DDL may be not finished during the startup, so we need to check the table exist.
-	exist, err := rm.runawaySyncer.checkWatchTableExist()
-	if err != nil || !exist {
-		return err
+	if !rm.runawaySyncer.checkWatchTableExist() {
+		return nil
 	}
 	records, err := rm.runawaySyncer.getNewWatchRecords()
 	if err != nil {
@@ -392,9 +396,8 @@ func (rm *Manager) UpdateNewAndDoneWatch() error {
 	for _, r := range records {
 		rm.AddWatch(r)
 	}
-	exist, err = rm.runawaySyncer.checkWatchDoneTableExist()
-	if err != nil || !exist {
-		return err
+	if !rm.runawaySyncer.checkWatchDoneTableExist() {
+		return nil
 	}
 	doneRecords, err := rm.runawaySyncer.getNewWatchDoneRecords()
 	if err != nil {

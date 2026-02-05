@@ -530,16 +530,16 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on UpdateRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err
@@ -584,10 +584,23 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			// it has never been written.
 			continue
 		}
+		untouched := true
 		for _, ic := range idx.Meta().Columns {
 			if !touched[ic.Offset] {
 				continue
 			}
+			untouched = false
+			break
+		}
+		for _, ic := range idx.Meta().AffectColumn {
+			if !touched[ic.Offset] {
+				continue
+			}
+			untouched = false
+			break
+		}
+
+		if !untouched {
 			oldVs, err := idx.FetchValues(oldData, nil)
 			if err != nil {
 				return err
@@ -595,7 +608,6 @@ func (t *TableCommon) rebuildUpdateRecordIndices(
 			if err = idx.Delete(ctx, txn, oldVs, h); err != nil {
 				return err
 			}
-			break
 		}
 	}
 	createIdxOpt := opt.GetCreateIdxOpt()
@@ -896,7 +908,7 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		}
 		if err == nil {
 			// If Global Index and reorganization truncate/drop partition, old partition,
-			// Accept and set Assertion key to kv.SetAssertUnknown for overwrite instead
+			// Accept and set Assertion key to kv.AssertUnknown for overwrite instead
 			dupErr := getDuplicateError(t.Meta(), recordID, r)
 			return recordID, dupErr
 		} else if !kv.ErrNotExist.Equal(err) {
@@ -923,15 +935,15 @@ func (t *TableCommon) addRecord(sctx table.MutateContext, txn kv.Transaction, r 
 		// override it.
 		if sctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting exist on AddRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertExist); err != nil {
 				failpoint.Return(nil, err)
 			}
 		}
 	})
 	if setPresume && !txn.IsPessimistic() {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertNotExist)
+		err = setAssertion(txn, key, kv.AssertNotExist)
 	}
 	if err != nil {
 		return nil, err
@@ -1236,15 +1248,15 @@ func (t *TableCommon) removeRowData(ctx table.MutateContext, txn kv.Transaction,
 		// override it.
 		if ctx.ConnectionID() != 0 {
 			logutil.BgLogger().Info("force asserting not exist on RemoveRecord", zap.String("category", "failpoint"), zap.Uint64("startTS", txn.StartTS()))
-			if err = txn.SetAssertion(key, kv.SetAssertNotExist); err != nil {
+			if err = setAssertion(txn, key, kv.AssertNotExist); err != nil {
 				failpoint.Return(err)
 			}
 		}
 	})
 	if t.skipAssert {
-		err = txn.SetAssertion(key, kv.SetAssertUnknown)
+		err = setAssertion(txn, key, kv.AssertUnknown)
 	} else {
-		err = txn.SetAssertion(key, kv.SetAssertExist)
+		err = setAssertion(txn, key, kv.AssertExist)
 	}
 	if err != nil {
 		return err

@@ -619,7 +619,7 @@ func formatSQL(sql string) string {
 		fmt.Fprintf(&result, "(len:%d)", length)
 		return result.String()
 	}
-	return sql
+	return strings.Clone(sql)
 }
 
 func maxSQLLength() uint32 {

@@ -629,7 +629,7 @@ func SubTestBuild() func(*testing.T) {
 
 		datum := types.Datum{}
 		datum.SetMysqlJSON(types.BinaryJSON{TypeCode: types.JSONTypeCodeLiteral})
-		item := &SampleItem{Value: datum}
+		item := &SampleItem{Value: &datum}
 		collector = &SampleCollector{
 			Count:     1,
 			NullCount: 0,

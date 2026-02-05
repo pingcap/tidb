@@ -1234,6 +1234,10 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 	if !ok {
 		return nil, false
 	}
+	// For cluster tables, HandleCols may be nil. Skip this optimization if HandleCols is not available.
+	if tblScan.HandleCols == nil {
+		return nil, false
+	}
 	if len(colsProp.SortItems) != 1 || !colsProp.SortItems[0].Col.Equal(p.SCtx().GetExprCtx().GetEvalCtx(), tblScan.HandleCols.GetCol(0)) {
 		return nil, false
 	}
@@ -1265,6 +1269,15 @@ func pushLimitDownToTiDBCop(p *physicalop.PhysicalTopN, copTsk *physicalop.CopTa
 func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Task {
 	p := pp.(*physicalop.PhysicalTopN)
 	t := tasks[0].Copy()
+
+	// Handle partial order TopN first: when CopTask carries PartialOrderMatchResult,
+	// it means skylinePruning has found a prefix index that can provide partial order.
+	if copTask, ok := t.(*physicalop.CopTask); ok {
+		if copTask.PartialOrderMatchResult != nil && copTask.PartialOrderMatchResult.Matched {
+			return handlePartialOrderTopN(p, copTask)
+		}
+	}
+
 	cols := make([]*expression.Column, 0, len(p.ByItems))
 	for _, item := range p.ByItems {
 		cols = append(cols, expression.ExtractColumns(item.Expr)...)
@@ -1328,6 +1341,98 @@ func attach2Task4PhysicalTopN(pp base.PhysicalPlan, tasks ...base.Task) base.Tas
 		return t
 	}
 	return attachPlan2Task(p, rootTask)
+}
+
+// handlePartialOrderTopN handles the partial order TopN scenario.
+// It fills the partial-order-related fields on the TopN itself and, when possible,
+// pushes down a special Limit with prefix information to the index side.
+// There are two different cases:
+//
+// Case1: Two phase TopN, where TiDB keeps TopN and TiKV applies a partial-order Limit:
+//
+//	TopN(with partial info)
+//	  └─IndexLookUp
+//	     └─Limit(with partial info)
+//	... (other operators)
+//
+// Case2: One phase TopN, where the whole TopN can only be executed in TiDB:
+//
+//	TopN(with partial info)
+//	  ├─IndexPlan
+//	  └─TablePlan
+func handlePartialOrderTopN(p *physicalop.PhysicalTopN, copTask *physicalop.CopTask) base.Task {
+	matchResult := copTask.PartialOrderMatchResult
+
+	// Init partial order params PrefixCol and PrefixLen.
+	// PartialOrderedLimit = Count + Offset.
+	// TopN(with partial order) executor will short-cut read when it already handle "p.Count + p.Offset" rows.
+	// Also it need to read X more rows (which prefix value is same as the last line prefix value) to ensure correctness.
+	partialOrderedLimit := p.Count + p.Offset
+	p.PrefixLen = matchResult.PrefixLen
+	// Find the corresponding prefix column in TopN's schema.
+	// matchResult.PrefixCol is from IndexScan's schema, but
+	// Projection operators may remap columns. We need to find the column in TopN's
+	// schema that has the same UniqueID as matchResult.PrefixCol.
+	// Column UniqueID remains unchanged even after Projection remapping.
+	p.PrefixCol = nil
+	for _, col := range p.Schema().Columns {
+		if col.UniqueID == matchResult.PrefixCol.UniqueID {
+			p.PrefixCol = col
+			break
+		}
+	}
+	// Fallback: if not found in rootTask schema (should not happen)
+	if p.PrefixCol == nil {
+		return base.InvalidTask
+	}
+
+	// Decide whether we can push a special Limit down to the index plan.
+	// Conditions:
+	//   - Not an IndexMerge.
+	//   - IndexPlan is not finished (IndexPlanFinished == false).
+	//   - No root task conditions.
+	// Since the output of the table plan is not ordered. So if limit can be pushed down, it must be pushed down to the index plan.
+	// Therefore, we performed this related check here.
+	canPushLimit := false
+	if len(copTask.IdxMergePartPlans) == 0 &&
+		!copTask.IndexPlanFinished &&
+		len(copTask.RootTaskConds) == 0 &&
+		copTask.IndexPlan != nil {
+		canPushLimit = true
+	}
+
+	if canPushLimit {
+		// Two-layer mode: TiDB TopN(with partial order info.) + TiKV limit(with partial order info.)
+		// The estRows of partial order TopN : N + X
+		// N: The partialOrderedLimit, N means the value of TopN, N = Count + Offset.
+		// X: The estimated extra rows to read to fulfill the TopN.
+		// We need to read more prefix values that are the same as the last line
+		// to ensure the correctness of the final calculation of the Top n rows.
+		maxX := estimateMaxXForPartialOrder()
+		estimatedRows := float64(partialOrderedLimit) + float64(maxX)
+		childProfile := copTask.IndexPlan.StatsInfo()
+		limitStats := property.DeriveLimitStats(childProfile, estimatedRows)
+
+		pushedDownLimit := physicalop.PhysicalLimit{
+			Count:     partialOrderedLimit,
+			PrefixCol: p.PrefixCol,
+			PrefixLen: matchResult.PrefixLen,
+		}.Init(p.SCtx(), limitStats, p.QueryBlockOffset())
+		pushedDownLimit.SetChildren(copTask.IndexPlan)
+		pushedDownLimit.SetSchema(copTask.IndexPlan.Schema())
+		copTask.IndexPlan = pushedDownLimit
+	}
+
+	// Always keep TopN in TiDB as the upper layer.
+	rootTask := copTask.ConvertToRootTask(p.SCtx())
+	return attachPlan2Task(p, rootTask)
+}
+
+// estimateMaxXForPartialOrder estimates the extra rows X to read for partial order optimization.
+// This value is used for statistics (row count estimation).
+func estimateMaxXForPartialOrder() uint64 {
+	// TODO: implement it by TopN/buckets and adjust it by session variable.
+	return 0
 }
 
 // attach2Task4PhysicalProjection implements PhysicalPlan interface.
@@ -2113,7 +2218,14 @@ func attach2Task4PhysicalSequence(pp base.PhysicalPlan, tasks ...base.Task) base
 
 func collectRowSizeFromMPPPlan(mppPlan base.PhysicalPlan) (rowSize float64) {
 	if mppPlan != nil && mppPlan.StatsInfo() != nil && mppPlan.StatsInfo().HistColl != nil {
-		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, mppPlan.Schema().Columns, false, false)
+		schemaCols := mppPlan.Schema().Columns
+		for i, col := range schemaCols {
+			if col.ID == model.ExtraCommitTSID {
+				schemaCols = slices.Delete(slices.Clone(schemaCols), i, i+1)
+				break
+			}
+		}
+		return cardinality.GetAvgRowSize(mppPlan.SCtx(), mppPlan.StatsInfo().HistColl, schemaCols, false, false)
 	}
 	return 1 // use 1 as lower-bound for safety
 }

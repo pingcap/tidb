@@ -268,11 +268,21 @@ func canConvertAntiJoin(p *logicalop.LogicalJoin, selectCond []expression.Expres
 	//  but it is not in the equal/other condition.
 	//  We need to check whether inner column is not null in the origin table schema.
 	//  If it is not null column, it can be directly converted into an anti-semi join.
-	innerSch := p.Children()[1^outerChildIdx].Schema()
+	//  Use FD's not-null info to avoid treating columns that become nullable via outer joins as NOT NULL.
+	innerChild := p.Children()[1^outerChildIdx]
+	innerSch := innerChild.Schema()
 	// if isNullColInnerSchIdx < 0, it means the is null column is not in the inner schema.
 	isNullColInnerSchIdx := innerSch.ColumnIndex(isNullCol)
-	isInnerNonNullCol := isNullColInnerSchIdx >= 0 &&
-		mysql.HasNotNullFlag(innerSch.Columns[isNullColInnerSchIdx].RetType.GetFlag())
+	isInnerNonNullCol := false
+	if isNullColInnerSchIdx >= 0 {
+		fds := innerChild.ExtractFD()
+		if fds != nil {
+			isInnerNonNullCol = fds.NotNullCols.Has(int(isNullCol.UniqueID))
+		} else {
+			// Fallback to schema flag if FDs are unavailable.
+			isInnerNonNullCol = mysql.HasNotNullFlag(innerSch.Columns[isNullColInnerSchIdx].RetType.GetFlag())
+		}
+	}
 
 	// If either scenario is met, it can be converted to an anti-semi join.
 	canConvertToAntiSemiJoin = joinCondNRInnerCol || isInnerNonNullCol
