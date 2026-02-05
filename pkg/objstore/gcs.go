@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/pingcap/errors"
@@ -397,6 +398,11 @@ func (s *GCSStorage) Rename(ctx context.Context, oldFileName, newFileName string
 		return errors.Trace(err)
 	}
 	return s.DeleteFile(ctx, oldFileName)
+}
+
+// PresignFile implements storeapi.Storage interface.
+func (*GCSStorage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
+	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "GCS backend does not support PresignFile")
 }
 
 // Close implements Storage interface.

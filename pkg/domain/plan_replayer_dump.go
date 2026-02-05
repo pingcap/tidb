@@ -20,13 +20,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/bindinfo"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
+	"github.com/pingcap/tidb/pkg/util/replayer"
 	"github.com/pingcap/tidb/pkg/config"
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/infoschema"
@@ -283,11 +287,27 @@ func DumpPlanReplayerInfo(ctx context.Context, sctx sessionctx.Context,
 			logutil.BgLogger().Warn("Closing zip file failed", zap.String("category", "plan-replayer-dump"), zap.Error(err2), zap.String("filename", fileName))
 			errMsg = errMsg + "," + err2.Error()
 		}
-		if len(errMsg) > 0 {
-			for i, record := range records {
-				record.FailedReason = errMsg
-				records[i] = record
+		storage, err3 := extstore.GetGlobalExtStorage(ctx)
+		if err3 != nil {
+			logutil.BgLogger().Error("[plan-replayer-dump] get storage failed", zap.Error(err3), zap.String("filename", fileName))
+			errMsg = errMsg + "," + err3.Error()
+		} else {
+			token, err4 := storage.PresignFile(ctx, filepath.Join(replayer.GetPlanReplayerDirName(), task.FileName), 24*time.Hour)
+			if err4 != nil {
+				logutil.BgLogger().Error("[plan-replayer-dump] presign file failed", zap.Error(err4), zap.String("filename", fileName))
+				errMsg = errMsg + "," + err4.Error()
+			} else {
+				task.Token = token
 			}
+		}
+		for i, record := range records {
+			if len(errMsg) > 0 {
+				record.FailedReason = errMsg
+			}
+			if task.Token != "" {
+				record.Token = task.Token
+			}
+			records[i] = record
 		}
 		insertPlanReplayerStatus(ctx, sctx, records)
 	}()
@@ -417,7 +437,6 @@ func generateRecords(task *PlanReplayerDumpTask) []PlanReplayerStatusRecord {
 				SQLDigest:  task.SQLDigest,
 				PlanDigest: task.PlanDigest,
 				OriginSQL:  execStmt.Text(),
-				Token:      task.FileName,
 			})
 		}
 	}
@@ -777,7 +796,6 @@ func dumpPlanReplayerExplain(ctx sessionctx.Context, zw *zip.Writer, task *PlanR
 		sqls = append(sqls, sql)
 		*records = append(*records, PlanReplayerStatusRecord{
 			OriginSQL: sql,
-			Token:     task.FileName,
 		})
 	}
 	debugTraces, err := dumpExplain(ctx, zw, task.Analyze, sqls, false)

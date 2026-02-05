@@ -21,6 +21,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/google/uuid"
@@ -167,6 +168,13 @@ type Storage interface {
 	Create(ctx context.Context, path string, option *WriterOption) (objectio.Writer, error)
 	// Rename file name from oldFileName to newFileName
 	Rename(ctx context.Context, oldFileName, newFileName string) error
+
+	// PresignFile creates a presigned URL for sharing a file without writing any code.
+	// For S3, it returns a presigned URL. For local storage, it returns the file name only.
+	// Unsupported backends (GCS, Azure, HDFS, etc.) return an error.
+	// See https://docs.aws.amazon.com/AmazonS3/latest/userguide/ShareObjectPreSignedURL.html
+	PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error)
+
 	// Close release the resources of the storage.
 	Close()
 }

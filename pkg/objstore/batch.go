@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -156,6 +157,11 @@ func (d *Batched) Rename(ctx context.Context, oldName, newName string) error {
 // Create implements the Storage interface.
 func (d *Batched) Create(ctx context.Context, path string, option *storeapi.WriterOption) (objectio.Writer, error) {
 	return nil, errors.Annotatef(berrors.ErrStorageUnknown, "ExternalStorage.Create isn't allowed in batch mode for now.")
+}
+
+// PresignFile implements the Storage interface by delegating to the underlying storage.
+func (d *Batched) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	return d.Storage.PresignFile(ctx, fileName, expire)
 }
 
 // Commit performs all effects recorded so long in the REAL external storage.

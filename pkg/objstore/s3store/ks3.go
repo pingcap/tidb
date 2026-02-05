@@ -22,8 +22,10 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/ks3sdklib/aws-sdk-go/aws"
 	"github.com/ks3sdklib/aws-sdk-go/aws/awserr"
 	"github.com/ks3sdklib/aws-sdk-go/aws/credentials"
@@ -32,7 +34,6 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	"github.com/pingcap/tidb/br/pkg/logutil"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/objstore/compressedio"
@@ -758,6 +759,11 @@ func (rs *KS3Storage) Create(ctx context.Context, name string, option *storeapi.
 }
 
 // Rename implements Storage interface.
+// PresignFile implements storeapi.Storage interface.
+func (*KS3Storage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
+	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "KS3 backend does not support PresignFile")
+}
+
 func (rs *KS3Storage) Rename(ctx context.Context, oldFileName, newFileName string) error {
 	content, err := rs.ReadFile(ctx, oldFileName)
 	if err != nil {

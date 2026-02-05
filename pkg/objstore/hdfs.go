@@ -21,6 +21,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"time"
 
 	"github.com/pingcap/errors"
 	berrors "github.com/pingcap/tidb/br/pkg/errors"
@@ -149,6 +150,11 @@ func (*HDFSStorage) Create(_ context.Context, _ string, _ *storeapi.WriterOption
 // Rename a file name from oldFileName to newFileName.
 func (*HDFSStorage) Rename(_ context.Context, _, _ string) error {
 	return errors.Annotatef(berrors.ErrUnsupportedOperation, "currently HDFS backend only support rawkv backup")
+}
+
+// PresignFile implements storeapi.Storage interface.
+func (*HDFSStorage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
+	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "HDFS backend does not support PresignFile")
 }
 
 // Close implements Storage interface.

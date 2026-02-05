@@ -633,6 +633,19 @@ func (rs *Storage) Rename(ctx context.Context, oldFileName, newFileName string) 
 	return nil
 }
 
+// presignableClient is an optional interface for PrefixClient implementations that support presigning.
+type presignableClient interface {
+	PresignObject(ctx context.Context, name string, expire time.Duration) (string, error)
+}
+
+// PresignFile implements storeapi.Storage interface.
+func (rs *Storage) PresignFile(ctx context.Context, fileName string, expire time.Duration) (string, error) {
+	if pc, ok := rs.s3Cli.(presignableClient); ok {
+		return pc.PresignObject(ctx, fileName, expire)
+	}
+	return "", errors.Annotatef(berrors.ErrUnsupportedOperation, "S3-compatible storage does not support PresignFile")
+}
+
 // Close implements Storage interface.
 func (*Storage) Close() {}
 

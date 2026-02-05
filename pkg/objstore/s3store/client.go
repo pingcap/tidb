@@ -20,6 +20,7 @@ import (
 	goerrors "errors"
 	"io"
 	"path"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/s3/manager"
@@ -29,6 +30,7 @@ import (
 	"github.com/aws/smithy-go/middleware"
 	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"github.com/pingcap/errors"
+	berrors "github.com/pingcap/tidb/br/pkg/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
@@ -203,6 +205,27 @@ func (c *s3Client) DeleteObject(ctx context.Context, name string) error {
 
 	_, err := c.svc.DeleteObject(ctx, input)
 	return errors.Trace(err)
+}
+
+// PresignObject creates a presigned URL for the given object.
+// It implements the presignableClient interface used by s3like.Storage.
+func (c *s3Client) PresignObject(ctx context.Context, name string, expire time.Duration) (string, error) {
+	key := c.ObjectKey(name)
+	input := &s3.GetObjectInput{
+		Bucket: aws.String(c.Bucket),
+		Key:    aws.String(key),
+	}
+	// PresignClient requires *s3.Client; S3API is implemented by *s3.Client in production.
+	client, ok := c.svc.(*s3.Client)
+	if !ok {
+		return "", errors.Annotate(berrors.ErrUnsupportedOperation, "PresignObject requires concrete S3 client")
+	}
+	presignClient := s3.NewPresignClient(client)
+	result, err := presignClient.PresignGetObject(ctx, input, s3.WithPresignExpires(expire))
+	if err != nil {
+		return "", errors.Trace(err)
+	}
+	return result.URL, nil
 }
 
 func (c *s3Client) DeleteObjects(ctx context.Context, names []string) error {

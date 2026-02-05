@@ -119,24 +119,27 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, 
 				return nil
 			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
-			if isPlanReplayer && p.sctx != nil {
-				deletePlanReplayerStatus(ctx, p.sctx, baseName)
-				p.planReplayerTaskStatus.clearFinishedTask()
-			}
 		}
 		return nil
 	})
 	if err != nil {
 		logutil.BgLogger().Warn("walk dir failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("path", path))
 	}
+	// The token of the table mysql.plan_replayer_status is different for different storage.
+	// For local, the token is the file name. For s3, the token is the presigned URL.
+	// So we can't delete the record in the table mysql.plan_replayer_status by the file name.
+	if path == replayer.GetPlanReplayerDirName() && p.sctx != nil {
+		deletePlanReplayerStatus(ctx, p.sctx, gcTargetTimeForCapture)
+		p.planReplayerTaskStatus.clearFinishedTask()
+	}
 }
 
-func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, token string) {
+func deletePlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, targetTime time.Time) {
 	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	exec := sctx.GetRestrictedSQLExecutor()
-	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where token = %?", token)
+	_, _, err := exec.ExecRestrictedSQL(ctx1, nil, "delete from mysql.plan_replayer_status where update_time < %?", targetTime)
 	if err != nil {
-		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.String("token", token), zap.Error(err))
+		logutil.BgLogger().Warn("delete mysql.plan_replayer_status record failed", zap.Time("target-time", targetTime), zap.Error(err))
 	}
 }
 
@@ -586,6 +589,7 @@ type PlanReplayerDumpTask struct {
 	DebugTrace        []any
 
 	FileName string
+	Token    string
 	Zf       io.WriteCloser
 
 	// IsCapture indicates whether the task is from capture

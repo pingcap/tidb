@@ -16,6 +16,7 @@ package objstore
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/objstore/objectio"
 	"github.com/pingcap/tidb/pkg/objstore/storeapi"
@@ -70,6 +71,11 @@ func (*noopStorage) Create(_ context.Context, _ string, _ *storeapi.WriterOption
 // Rename implements Storage interface.
 func (*noopStorage) Rename(_ context.Context, _, _ string) error {
 	return nil
+}
+
+// PresignFile implements storeapi.Storage interface.
+func (*noopStorage) PresignFile(_ context.Context, _ string, _ time.Duration) (string, error) {
+	return "", nil
 }
 
 // Close implements Storage interface.
