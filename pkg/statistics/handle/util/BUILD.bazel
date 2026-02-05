@@ -44,7 +44,6 @@ go_test(
     timeout = "short",
     srcs = ["util_test.go"],
     flaky = True,
-    shard_count = 3,
     deps = [
         ":util",
         "//pkg/domain/infosync",
