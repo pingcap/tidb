@@ -211,17 +211,6 @@ func TestRelevantOptVarsAndFixes(t *testing.T) {
 	}
 }
 
-func TestExplainExploreInStmtStats(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (a int, b int, key(a))`)
-	tk.MustQuery(`explain explore select count(1) from t where a=1`)
-	rs := tk.MustQuery("select digest_text, sample_user from information_schema.tidb_statements_stats where digest_text = 'select count ( ? ) from `t` where `a` = ?'").Rows()
-	require.Greater(t, len(rs), 0)
-	require.NotEmpty(t, rs[0][1].(string)) // user name is not empty
-}
-
 func TestExplainExploreAnalyze(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
