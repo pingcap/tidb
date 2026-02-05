@@ -1193,26 +1193,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	}
 
 	// Step 8: Calculate the out of range percentages
-	// Bound the predicate range to [boundL, boundR] for overlap: unbounded past the band
-	// is treated as covering the full band so we get strictly larger Est/MaxEst than bounded.
-	isUnboundedRight := rDatum.Kind() == types.KindMaxValue ||
-		(rDatum.Kind() == types.KindInt64 && rDatum.GetInt64() == math.MaxInt64) ||
-		(rDatum.Kind() == types.KindUint64 && rDatum.GetUint64() == math.MaxUint64) ||
-		(l >= histR && r > boundR && r >= 1e15) // scalar fallback: range far past right band
-	isUnboundedLeft := lDatum.Kind() == types.KindMinNotNull ||
-		(lDatum.Kind() == types.KindInt64 && lDatum.GetInt64() == math.MinInt64) ||
-		(lDatum.Kind() == types.KindUint64 && lDatum.GetUint64() == 0) ||
-		(r <= histL && l < boundL && l <= -1e15) // scalar fallback: range far past left band
-	lLeft, rLeft := max(l, boundL), min(r, histL)
-	if isUnboundedLeft && r <= histL {
-		lLeft, rLeft = boundL, histL
-	}
-	lRight, rRight := max(l, histR), min(r, boundR)
-	if isUnboundedRight && l >= histR {
-		lRight, rRight = histR, boundR
-	}
-	leftPercent := calculateLeftOverlapPercent(lLeft, rLeft, boundL, histL, histWidth)
-	rightPercent := calculateRightOverlapPercent(lRight, rRight, histR, boundR, histWidth)
+	// Calculate left overlap percentage if the range overlaps with (boundL, histL)
+	leftPercent := calculateLeftOverlapPercent(l, r, boundL, histL, histWidth)
+	// Calculate right overlap percentage if the range overlaps with (histR, boundR)
+	rightPercent := calculateRightOverlapPercent(l, r, histR, boundR, histWidth)
 
 	totalPercent := min(leftPercent*0.5+rightPercent*0.5, 1.0)
 	maxTotalPercent := min(leftPercent+rightPercent, 1.0)
