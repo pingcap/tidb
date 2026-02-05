@@ -257,16 +257,17 @@ func TestExplainExploreVerifyAndBind(t *testing.T) {
 	require.Equal(t, 0, len(tk.MustQuery(`show global bindings`).Rows())) // no binding
 
 	rs := tk.MustQuery(`explain explore select * from t`).Rows()
-	runStmt := rs[0][12].(string)     // explain analyze <plan_digest>
-	bindingStmt := rs[0][13].(string) // create global binding from history using plan digest <plan_digest>
+	runStmt := rs[0][12].(string)    // "EXPLAIN ANALYZE <bind_sql>"
+	bindingSQL := rs[0][13].(string) // "<bind_sql>"
 
 	require.True(t, strings.HasPrefix(runStmt, "EXPLAIN ANALYZE"))
-	require.True(t, strings.HasPrefix(bindingStmt, "CREATE GLOBAL BINDING"))
+	require.True(t, strings.HasPrefix(strings.ToUpper(bindingSQL), "SELECT"))
 
 	rs = tk.MustQuery(runStmt).Rows()
 	require.True(t, strings.Contains(rs[0][0].(string), "TableReader")) // table scan and no error
 
-	tk.MustExec(bindingStmt)
+	createBindingStmt := fmt.Sprintf("CREATE GLOBAL BINDING USING %s", bindingSQL)
+	tk.MustExec(createBindingStmt)
 	tk.MustQuery(`select * from t`)
 	tk.MustQuery(`select @@last_plan_from_binding`).Check(testkit.Rows("1"))
 	require.Equal(t, 1, len(tk.MustQuery(`show global bindings`).Rows()))
