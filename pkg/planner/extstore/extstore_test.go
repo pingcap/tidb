@@ -16,9 +16,7 @@ package extstore
 
 import (
 	"context"
-	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/config"
@@ -194,12 +192,15 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 		})
 		vardef.CloudStorageURI.Store(origCloudStorageURI)
 		SetGlobalExtStorageForTest(nil)
+		testLocalPathFS = nil
 	}()
 
-	// Use writable temp dir for log
 	tempDir := t.TempDir()
 	logDir := filepath.Join(tempDir, "log")
-	require.NoError(t, os.MkdirAll(logDir, 0o755))
+	// Use afero MemMapFs with log dir created so canWriteToFile succeeds (like TestPlanReplayerPathWithWritePrem).
+	fs := afero.NewMemMapFs()
+	require.NoError(t, fs.MkdirAll(logDir, 0o755))
+	testLocalPathFS = fs
 
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.File.Filename = filepath.Join(logDir, "tidb.log")
@@ -218,10 +219,6 @@ func TestGetGlobalExtStorageWithWritePerm(t *testing.T) {
 }
 
 func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("chmod read-only dir not reliable on Windows")
-	}
-
 	ctx := context.Background()
 
 	origLogFile := config.GetGlobalConfig().Log.File.Filename
@@ -234,16 +231,16 @@ func TestGetGlobalExtStorageWithoutWritePerm(t *testing.T) {
 		})
 		vardef.CloudStorageURI.Store(origCloudStorageURI)
 		SetGlobalExtStorageForTest(nil)
+		testLocalPathFS = nil
 	}()
 
 	tempDir := t.TempDir()
-	readOnlyDir := filepath.Join(tempDir, "readonly")
-	require.NoError(t, os.MkdirAll(readOnlyDir, 0o755))
-	require.NoError(t, os.Chmod(readOnlyDir, 0o555))
-	defer func() { _ = os.Chmod(readOnlyDir, 0o755) }()
+	logDir := filepath.Join(tempDir, "readonly")
+	fs := afero.NewMemMapFs()
+	testLocalPathFS = afero.NewReadOnlyFs(fs)
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Log.File.Filename = filepath.Join(readOnlyDir, "tidb.log")
+		conf.Log.File.Filename = filepath.Join(logDir, "tidb.log")
 		conf.TempDir = filepath.Join(tempDir, "tmp")
 	})
 	vardef.CloudStorageURI.Store("")
