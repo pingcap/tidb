@@ -55,7 +55,6 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 		ActionAlterTTLRemove,
 		ActionCreateView,
 		ActionDropView,
-		ActionAlterTableAffinity,
 	},
 	UnsafeDDL: {
 		ActionDropSchema,
