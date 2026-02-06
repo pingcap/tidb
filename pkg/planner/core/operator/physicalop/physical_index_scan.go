@@ -698,8 +698,6 @@ func GetOriginalPhysicalIndexScan(ds *logicalop.DataSource, prop *property.Physi
 
 // ConvertToPartialIndexScan converts a DataSource to a PhysicalIndexScan for IndexMerge.
 func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysPlanPartInfo, prop *property.PhysicalProperty, path *util.AccessPath, matchProp property.PhysicalPropMatchResult, byItems []*util.ByItems) (base.PhysicalPlan, []expression.Expression, error) {
-	intest.Assert(matchProp != property.PropMatchedNeedMergeSort,
-		"partial paths of index merge path should not match property using merge sort")
 	is := GetOriginalPhysicalIndexScan(ds, prop, path, matchProp.Matched(), false)
 	// TODO: Consider using isIndexCoveringColumns() to avoid another TableRead
 	indexConds := path.IndexFilters
@@ -711,6 +709,13 @@ func ConvertToPartialIndexScan(ds *logicalop.DataSource, physPlanPartInfo *PhysP
 		}
 		// Add sort items for index scan for merge-sort operation between partitions.
 		is.ByItems = byItems
+		// Copy GroupedRanges and GroupByColIdxs from the path if they are set.
+		// This enables merge sort for IN conditions in partial paths of IndexMerge.
+		// matchProperty() sets these fields when it returns PropMatchedNeedMergeSort.
+		if len(path.GroupedRanges) > 0 {
+			is.GroupedRanges = path.GroupedRanges
+			is.GroupByColIdxs = path.GroupByColIdxs
+		}
 	}
 
 	// Add a `Selection` for `IndexScan` with global index.

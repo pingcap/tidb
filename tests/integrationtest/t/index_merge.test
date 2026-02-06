@@ -238,3 +238,30 @@ with recursive cte1 as (select /*+ use_index_merge(t1) */ c1 from t1 where c1 < 
 explain format = 'plan_tree' with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
 show warnings;
 with recursive cte1 as (select 1 c1, 1 c2, 1 c3 UNION ALL select /*+ use_index_merge(t_alias) */ c1 + 1, c2 + 1, c3 + 1 from cte1 t_alias where c1 < 10 or c2 < 10 and c3 < 10) select * from cte1 order by 1;
+
+--echo ///// IndexMerge with IN conditions and ORDER BY LIMIT (issue#65712)
+--echo // This tests that IndexMerge can use keep order with merge sort for IN conditions in partial paths.
+drop table if exists t;
+create table t (id int not null, a int, b int, c int, padding varchar(100), primary key(id), key idx_a_c(a, c), key idx_b_c(b, c));
+insert into t values (1, 1, 1, 1, 'a'), (2, 1, 1, 2, 'b'), (3, 1, 2, 3, 'c'), (4, 2, 1, 4, 'd'), (5, 2, 2, 5, 'e');
+insert into t values (6, 1, 1, 6, 'f'), (7, 1, 2, 7, 'g'), (8, 2, 1, 8, 'h'), (9, 2, 2, 9, 'i'), (10, 3, 3, 10, 'j');
+
+--echo // Case 1: a=1 can keep order directly, b in (1,2) needs merge sort
+explain format = 'brief' select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a = 1 or b in (1,2) order by c limit 5;
+select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a = 1 or b in (1,2) order by c limit 5;
+
+--echo // Case 2: Both partial paths need merge sort (IN conditions on both)
+explain format = 'brief' select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a in (1,2) or b in (1,2) order by c limit 5;
+select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a in (1,2) or b in (1,2) order by c limit 5;
+
+--echo // Case 3: ORDER BY DESC with IN condition
+explain format = 'brief' select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a = 1 or b in (1,2) order by c desc limit 5;
+select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a = 1 or b in (1,2) order by c desc limit 5;
+
+--echo // Case 4: Verify correctness with more data
+insert into t select id+10, a, b, c+10, padding from t;
+insert into t select id+20, a, b, c+20, padding from t;
+select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a = 1 or b in (1,2) order by c limit 5;
+select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a in (1,2) or b in (1,2) order by c limit 5;
+
+drop table if exists t;
