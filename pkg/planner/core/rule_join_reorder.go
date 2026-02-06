@@ -44,7 +44,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		otherConds         []expression.Expression
 		joinTypes          []*joinTypeWithExtMsg
 		hasOuterJoin       bool
-		currentLeadingHint *h.PlanHints
+		currentLeadingHint *h.PlanHints // Track the active LEADING hint
 	)
 
 	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
@@ -70,6 +70,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		joinOrderHintInfo = append(joinOrderHintInfo, join.HintInfo)
 		currentLeadingHint = join.HintInfo
 	}
+
 	// If the variable `tidb_opt_advanced_join_hint` is false and the join node has the join method hint, we will not split the current join node to join reorder process.
 	if !isJoin || (join.PreferJoinType > uint(0) && !p.SCtx().GetSessionVars().EnableAdvancedJoinHint) || join.StraightJoin ||
 		(join.JoinType != base.InnerJoin && join.JoinType != base.LeftOuterJoin && join.JoinType != base.RightOuterJoin) ||
