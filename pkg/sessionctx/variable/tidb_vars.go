@@ -284,6 +284,9 @@ const (
 	// TiDBExplicitRequestSourceType indicates the source of the request, it's a complement of RequestSourceType.
 	// The value maybe "lightning", "br", "dumpling" etc.
 	TiDBExplicitRequestSourceType = "tidb_request_source_type"
+
+	// TiDBCDCActiveActiveSyncStats is a read-only variable to show the status of active-active sync.
+	TiDBCDCActiveActiveSyncStats = "tidb_cdc_active_active_sync_stats"
 )
 
 // TiDB system variable names that both in session and global scope.
@@ -1016,6 +1019,9 @@ const (
 	// TiDBEnableSharedLockPromotion indicates whether the `select for share` statement would be executed
 	// as `select for update` statements which do acquire pessimistic locks.
 	TiDBEnableSharedLockPromotion = "tidb_enable_shared_lock_promotion"
+
+	// TiDBTranslateSoftDeleteSQL indicates whether to rewrite SQL for softdelete tables.
+	TiDBTranslateSoftDeleteSQL = "tidb_translate_softdelete_sql"
 )
 
 // TiDB vars that have only global scope
@@ -1631,6 +1637,7 @@ const (
 	DefTiDBAdvancerCheckPointLagLimit                 = 48 * time.Hour
 	DefTiDBIndexLookUpPushDownPolicy                  = IndexLookUpPushDownPolicyHintOnly
 	DefTiDBCircuitBreakerPDMetaErrorRateRatio         = 0.0
+	DefTiDBTranslateSoftdeleteSQL                     = true
 )
 
 // Process global variables.

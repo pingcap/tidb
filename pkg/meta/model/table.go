@@ -23,6 +23,7 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
@@ -92,42 +93,33 @@ var ExtraHandleName = model.NewCIStr("_tidb_rowid")
 var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
 
 // ExtraCommitTSName is the name of ExtraCommitTSID Column.
-<<<<<<< HEAD
 var ExtraCommitTSName = model.NewCIStr("_tidb_commit_ts")
-=======
-var ExtraCommitTSName = ast.NewCIStr("_tidb_commit_ts")
 
 // ExtraOriginTSName is the name of ExtraOriginTSID Column.
-var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
+var ExtraOriginTSName = model.NewCIStr("_tidb_origin_ts")
 
 // ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
-var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
+var ExtraSoftDeleteTimeName = model.NewCIStr("_tidb_softdelete_time")
 
 // IsInternalColumn will check if a column name is reserved.
-func IsInternalColumn(x ast.CIStr) bool {
+func IsInternalColumn(x model.CIStr) bool {
 	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x == ExtraHandleName || x == ExtraCommitTSName
 }
 
 // IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
-func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
+func IsSoftDeleteOrActiveActiveColumn(x model.CIStr) bool {
 	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x)
 }
 
 // IsActiveActiveColumn will check if a column name is reserved.
-func IsActiveActiveColumn(x ast.CIStr) bool {
+func IsActiveActiveColumn(x model.CIStr) bool {
 	return x == ExtraOriginTSName
 }
 
 // IsSoftDeleteColumn will check if a column name is reserved.
-func IsSoftDeleteColumn(x ast.CIStr) bool {
+func IsSoftDeleteColumn(x model.CIStr) bool {
 	return x == ExtraSoftDeleteTimeName
 }
-
-// VirtualColVecSearchDistanceID is the ID of the column who holds the vector search distance.
-// When read column by vector index, sometimes there is no need to read vector column just need distance,
-// so a distance column will be added to table_scan. this field is used in the action.
-const VirtualColVecSearchDistanceID int64 = -2000
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 
 // Deprecated: Use ExtraPhysTblIDName instead.
 // var ExtraPartitionIdName = NewCIStr("_tidb_pid") //nolint:revive
@@ -237,26 +229,17 @@ type TableInfo struct {
 	// If it is nil, it means no affinity
 	Affinity *TableAffinityInfo `json:"affinity,omitempty"`
 
-<<<<<<< HEAD
 	// IsActiveActive means the table is active-active table.
 	IsActiveActive bool `json:"is_active_active,omitempty"`
 	// SoftdeleteInfo is softdelete TTL. It is required if IsActiveActive == true.
 	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 
-=======
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	// Revision is per table schema's version, it will be increased when the schema changed.
 	Revision uint64 `json:"revision"`
 
 	DBID int64 `json:"-"`
 
 	Mode TableMode `json:"mode,omitempty"`
-
-	// IsActiveActive indicates if the table has active-active replication enabled
-	IsActiveActive bool `json:"is_active_active,omitempty"`
-
-	// SoftdeleteInfo holds the soft delete configuration for this table
-	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 }
 
 // SepAutoInc decides whether _rowid and auto_increment id use separate allocator.
@@ -1481,8 +1464,6 @@ func (t *TTLInfo) GetJobInterval() (time.Duration, error) {
 	return duration.ParseDuration(t.JobInterval)
 }
 
-<<<<<<< HEAD
-=======
 // SoftdeleteInfo records the Softdelete config.
 type SoftdeleteInfo struct {
 	// Retention specifies how long soft-deleted data is kept.
@@ -1539,7 +1520,6 @@ func (s *SoftdeleteInfo) GetJobInterval() (time.Duration, error) {
 	return duration.ParseDuration(s.JobInterval)
 }
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 // TableAffinityInfo indicates the data affinity information of the table.
 type TableAffinityInfo struct {
 	// Level indicates the affinity level of the table.
@@ -1565,20 +1545,6 @@ func NewTableAffinityInfoWithLevel(level string) (*TableAffinityInfo, error) {
 
 // Clone clones TableAffinityInfo
 func (t *TableAffinityInfo) Clone() *TableAffinityInfo {
-	cloned := *t
-	return &cloned
-}
-
-// SoftdeleteInfo records the Softdelete config.
-type SoftdeleteInfo struct {
-	Retention string `json:"retention,omitempty"`
-	// JobEnable is used to control the cleanup JobEnable
-	JobEnable   bool   `json:"job_enable,omitempty"`
-	JobInterval string `json:"job_interval,omitempty"`
-}
-
-// Clone clones TTLInfo
-func (t *SoftdeleteInfo) Clone() *SoftdeleteInfo {
 	cloned := *t
 	return &cloned
 }

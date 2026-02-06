@@ -64,8 +64,6 @@ var (
 	// AffectedRowsCounterNTDMLReplace records the number of NT-DML replace affected rows.
 	AffectedRowsCounterNTDMLReplace prometheus.Counter
 
-<<<<<<< HEAD
-=======
 	// ActiveActiveHardDeleteStmtCounter records the num of hard delete statements on a active-active table
 	ActiveActiveHardDeleteStmtCounter prometheus.Counter
 	// ActiveActiveWriteUnsafeOriginTsRowCounter records the num of unsafe _tidb_origin_ts write rows.
@@ -80,10 +78,6 @@ var (
 	// SoftDeleteImplicitDeleteRowsLoadData records SoftDeleteImplicitDeleteRows with LoadData label.
 	SoftDeleteImplicitDeleteRowsLoadData prometheus.Observer
 
-	// NetworkTransmissionStats records the network transmission for queries
-	NetworkTransmissionStats *prometheus.CounterVec
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	// IndexLookUpExecutorDuration records the duration of index look up executor
 	IndexLookUpExecutorDuration *prometheus.HistogramVec
 
@@ -176,10 +170,7 @@ func InitExecutorMetrics() {
 	AffectedRowsCounterNTDMLInsert = AffectedRowsCounter.WithLabelValues("NTDML-Insert")
 	AffectedRowsCounterNTDMLReplace = AffectedRowsCounter.WithLabelValues("NTDML-Replace")
 
-<<<<<<< HEAD
-	IndexLookUpExecutorDuration = NewHistogramVec(
-=======
-	ActiveActiveHardDeleteStmtCounter = metricscommon.NewCounter(
+	ActiveActiveHardDeleteStmtCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -187,7 +178,7 @@ func InitExecutorMetrics() {
 			Help:      "hard delete statement count for a soft delete table",
 		})
 
-	ActiveActiveWriteUnsafeOriginTsRowCounter = metricscommon.NewCounter(
+	ActiveActiveWriteUnsafeOriginTsRowCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -195,7 +186,7 @@ func InitExecutorMetrics() {
 			Help:      "rows written with unsafe _tidb_origin_ts column",
 		})
 
-	ActiveActiveWriteUnsafeOriginTsStmtCounter = metricscommon.NewCounter(
+	ActiveActiveWriteUnsafeOriginTsStmtCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -203,7 +194,7 @@ func InitExecutorMetrics() {
 			Help:      "stmts written with unsafe _tidb_origin_ts column",
 		})
 
-	SoftDeleteImplicitDeleteRows = metricscommon.NewHistogramVec(
+	SoftDeleteImplicitDeleteRows = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",
@@ -215,16 +206,7 @@ func InitExecutorMetrics() {
 	SoftDeleteImplicitDeleteRowsInsert = SoftDeleteImplicitDeleteRows.WithLabelValues("Insert")
 	SoftDeleteImplicitDeleteRowsLoadData = SoftDeleteImplicitDeleteRows.WithLabelValues("LoadData")
 
-	NetworkTransmissionStats = metricscommon.NewCounterVec(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "executor",
-			Name:      "network_transmission",
-			Help:      "Counter of network transmission bytes.",
-		}, []string{LblType})
-
-	IndexLookUpExecutorDuration = metricscommon.NewHistogramVec(
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	IndexLookUpExecutorDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "executor",

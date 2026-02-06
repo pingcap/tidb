@@ -162,26 +162,6 @@ var (
 	ErrInvalidString = dbterror.ClassMeta.NewStd(errno.ErrInvalidCharacterString)
 )
 
-<<<<<<< HEAD
-=======
-// NextGenBootTableVersion is the version of nextgen bootstrapping.
-// it serves the same purpose as DDLTableVersion, to avoid the same table created
-// twice, as we are creating those tables in meta kv directly, without going
-// through DDL.
-type NextGenBootTableVersion int
-
-const (
-	// InitNextGenBootTableVersion means it's a fresh cluster, we haven't bootstrapped yet.
-	InitNextGenBootTableVersion NextGenBootTableVersion = 0
-	// BaseNextGenBootTableVersion is the first version of nextgen bootstrapping, we
-	// will create 52 physical tables.
-	// Note: DDL related tables are created separately, see DDLTableVersion.
-	BaseNextGenBootTableVersion NextGenBootTableVersion = 1
-	// SecondNextGenBootTableVersion is the 2nd version of nextgen bootstrapping for tidb_softdelete_table_status.
-	SecondNextGenBootTableVersion NextGenBootTableVersion = 2
-)
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 // DDLTableVersion is to display ddl related table versions
 type DDLTableVersion int
 

@@ -769,11 +769,7 @@ func BuildSessionTemporaryTableInfo(ctx *metabuild.Context, store kv.Storage, is
 		}
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-<<<<<<< HEAD
-		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbCharset, dbCollate, placementPolicyRef)
-=======
-		tbInfo, err = BuildTableInfoWithStmt(ctx, s, dbInfo)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+		tbInfo, err = buildTableInfoWithCheck(ctx, store, s, dbInfo)
 	}
 	return tbInfo, err
 }

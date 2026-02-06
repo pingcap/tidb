@@ -306,26 +306,10 @@ func RegisterMetrics() {
 	tikvmetrics.RegisterMetrics()
 	tikvmetrics.TiKVPanicCounter = PanicCounter // reset tidb metrics for tikv metrics
 
-<<<<<<< HEAD
-=======
-	prometheus.MustRegister(GlobalMemArbitrationDuration)
-	prometheus.MustRegister(GlobalMemArbitratorWorkMode)
-	prometheus.MustRegister(GlobalMemArbitratorQuota)
-	prometheus.MustRegister(GlobalMemArbitratorWaitingTask)
-	prometheus.MustRegister(GlobalMemArbitratorRuntimeMemMagnifi)
-	prometheus.MustRegister(GlobalMemArbitratorRootPool)
-	prometheus.MustRegister(GlobalMemArbitratorEventCounter)
-	prometheus.MustRegister(GlobalMemArbitratorTaskExecCounter)
-
 	prometheus.MustRegister(ActiveActiveHardDeleteStmtCounter)
 	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsRowCounter)
 	prometheus.MustRegister(ActiveActiveWriteUnsafeOriginTsStmtCounter)
 
-	// TLS
-	prometheus.MustRegister(TLSVersion)
-	prometheus.MustRegister(TLSCipher)
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	// IndexLookup
 	prometheus.MustRegister(IndexLookUpExecutorDuration)
 	prometheus.MustRegister(IndexLookRowsCounter)

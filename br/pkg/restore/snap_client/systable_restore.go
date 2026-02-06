@@ -78,41 +78,6 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb":                             {},
 		"global_variables":                 {},
 		"capture_plan_baselines_blacklist": {},
-<<<<<<< HEAD
-=======
-		// GET_LOCK() or IS_USED_LOCK() try to insert a lock into the table in a pessimistic transaction but finally rollback.
-		// Therefore actually the table is empty.
-		"advisory_locks": {},
-		// Table ID is recorded in the column `job_info` so that the table cannot be recovered simply.
-		"analyze_jobs": {},
-		// Table ID is recorded in the column `table_id` so that the table cannot be recovered simply.
-		"analyze_options": {},
-		// Distributed eXecution Framework
-		// Records the tidb node information, no need to recovered.
-		"dist_framework_meta":             {},
-		"tidb_global_task":                {},
-		"tidb_global_task_history":        {},
-		"tidb_background_subtask":         {},
-		"tidb_background_subtask_history": {},
-		// DDL internal system tables.
-		"tidb_ddl_history": {},
-		"tidb_ddl_job":     {},
-		"tidb_ddl_reorg":   {},
-		// Table ID is recorded in the column `schema_change` so that the table cannot be recovered simply.
-		"tidb_ddl_notifier": {},
-		// v7.2.0. Based on Distributed eXecution Framework, records running import jobs.
-		"tidb_import_jobs": {},
-
-		"help_topic": {},
-		// records the RU for each resource group temporary, no need to recovered.
-		"request_unit_by_group": {},
-		// load the table data into the memory.
-		"table_cache_meta": {},
-
-		// TiDB runaway internal information.
-		"tidb_runaway_queries":    {},
-		"tidb_runaway_watch":      {},
-		"tidb_runaway_watch_done": {},
 
 		// TiDB internal ttl information.
 		"tidb_ttl_job_history":         {},
@@ -120,10 +85,6 @@ var unRecoverableTable = map[string]map[string]struct{}{
 		"tidb_softdelete_table_status": {},
 		"tidb_ttl_task":                {},
 
-		// TiDB internal timers.
-		"tidb_timers": {},
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		// gc info don't need to recover.
 		"gc_delete_range":       {},
 		"gc_delete_range_done":  {},

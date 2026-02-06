@@ -22,21 +22,13 @@ import (
 
 // DBInfo provides meta data describing a DB.
 type DBInfo struct {
-<<<<<<< HEAD
-	ID         int64       `json:"id"`      // Database ID
-	Name       model.CIStr `json:"db_name"` // DB name.
-	Charset    string      `json:"charset"`
-	Collate    string      `json:"collate"`
-	Deprecated struct {    // Tables is not set in infoschema v2, use infoschema SchemaTableInfos() instead.
-=======
 	ID             int64           `json:"id"`      // Database ID
-	Name           ast.CIStr       `json:"db_name"` // DB name.
+	Name           model.CIStr     `json:"db_name"` // DB name.
 	Charset        string          `json:"charset"`
 	Collate        string          `json:"collate"`
 	IsActiveActive bool            `json:"is_active_active,omitempty"`
 	SoftdeleteInfo *SoftdeleteInfo `json:"softdelete_info,omitempty"`
 	Deprecated     struct {        // Tables is not set in infoschema v2, use infoschema SchemaTableInfos() instead.
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		Tables []*TableInfo `json:"-"` // Tables in the DB.
 	}
 	State              SchemaState      `json:"state"`

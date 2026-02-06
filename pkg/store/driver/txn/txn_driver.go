@@ -311,13 +311,8 @@ func (txn *tikvTxn) SetOption(opt int, val any) {
 		txn.KVTxn.SetSessionID(val.(uint64))
 	case kv.BackgroundGoroutineLifecycleHooks:
 		txn.KVTxn.SetBackgroundGoroutineLifecycleHooks(val.(transaction.LifecycleHooks))
-<<<<<<< HEAD
-=======
-	case kv.PrewriteEncounterLockPolicy:
-		txn.KVTxn.SetPrewriteEncounterLockPolicy(val.(transaction.PrewriteEncounterLockPolicy))
 	case kv.CommitWaitUntilTSO:
 		txn.KVTxn.SetCommitWaitUntilTSO(val.(uint64))
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	}
 }
 

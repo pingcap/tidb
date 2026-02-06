@@ -19,36 +19,20 @@ import (
 	"encoding/json"
 	goerr "errors"
 	"fmt"
-	"math"
-	"runtime"
-	"strconv"
-	"strings"
-	"sync/atomic"
-	"time"
-
 	"github.com/docker/go-units"
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/servicescope"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
@@ -58,11 +42,27 @@ import (
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	tikvcliutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
+	"math"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/types"
+	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
+	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	tikvcliutil "github.com/tikv/client-go/v2/util"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -326,14 +326,11 @@ var defaultSysVars = []*SysVar{
 		s.lowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
-<<<<<<< HEAD
-	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-=======
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBCDCActiveActiveSyncStats, Value: "", Type: vardef.TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+	{Scope: ScopeSession, Name: TiDBCDCActiveActiveSyncStats, Value: "", Type: TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
 		return fmt.Sprintf("{\"conflict_skip_rows\": %d}", s.ActiveActiveConflictSkipRows.Load()), nil
 	}},
-	{Scope: vardef.ScopeSession, Name: vardef.TiDBAllowRemoveAutoInc, Value: BoolToOnOff(vardef.DefTiDBAllowRemoveAutoInc), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
@@ -598,15 +595,11 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
-<<<<<<< HEAD
-	{Scope: ScopeInstance, Name: TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
-=======
-	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTranslateSoftDeleteSQL, Type: vardef.TypeBool, Value: BoolToOnOff(vardef.DefTiDBTranslateSoftdeleteSQL), SetSession: func(s *SessionVars, val string) error {
+	{Scope: ScopeGlobal | ScopeSession, Name: TiDBTranslateSoftDeleteSQL, Type: TypeBool, Value: BoolToOnOff(DefTiDBTranslateSoftdeleteSQL), SetSession: func(s *SessionVars, val string) error {
 		s.SoftDeleteRewrite = TiDBOptOn(val)
 		return nil
 	}},
-	{Scope: vardef.ScopeInstance, Name: vardef.TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	{Scope: ScopeInstance, Name: TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
 		return BoolToOnOff(config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBStmtSummaryFilename, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
@@ -2912,17 +2905,13 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTTLJob.Load()), nil
 	}},
-<<<<<<< HEAD
-	{Scope: ScopeGlobal, Name: TiDBTTLScanBatchSize, Value: strconv.Itoa(DefTiDBTTLScanBatchSize), Type: TypeInt, MinValue: DefTiDBTTLScanBatchMinSize, MaxValue: DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-=======
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSoftDeleteJobEnable, Value: BoolToOnOff(vardef.DefTiDBSoftDeleteJobEnable), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+	{Scope: ScopeGlobal, Name: TiDBSoftDeleteJobEnable, Value: BoolToOnOff(vardef.DefTiDBSoftDeleteJobEnable), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		vardef.SoftDeleteJobEnable.Store(TiDBOptOn(s))
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(vardef.SoftDeleteJobEnable.Load()), nil
 	}},
-	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLScanBatchSize, Value: strconv.Itoa(vardef.DefTiDBTTLScanBatchSize), Type: vardef.TypeInt, MinValue: vardef.DefTiDBTTLScanBatchMinSize, MaxValue: vardef.DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	{Scope: ScopeGlobal, Name: TiDBTTLScanBatchSize, Value: strconv.Itoa(DefTiDBTTLScanBatchSize), Type: TypeInt, MinValue: DefTiDBTTLScanBatchMinSize, MaxValue: DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return err

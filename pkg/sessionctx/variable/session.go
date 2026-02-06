@@ -1724,27 +1724,12 @@ type SessionVars struct {
 	// InternalSQLScanUserTable indicates whether to use user table for internal SQL. it will be used by TTL scan
 	InternalSQLScanUserTable bool
 
-<<<<<<< HEAD
-=======
-	// MemArbitrator represents the properties to be controlled by the memory arbitrator.
-	MemArbitrator struct {
-		WaitAverse    MemArbitratorWaitAverseMode
-		QueryReserved int64
-	}
-
-	// InPacketBytes records the total incoming packet bytes from clients for current session.
-	InPacketBytes atomic.Uint64
-
-	// OutPacketBytes records the total outcoming packet bytes to clients for current session.
-	OutPacketBytes atomic.Uint64
-
 	// Used in ActiveActive replication, providing value for @@tidb_active_active_sync_stats
 	// When CDC replicate upstream cluster to downstream cluster in active-active mode, some rows
 	// may be skipped due to conflict. And this counter is used to record the number of rows skipped
 	// by such kind of conflict.
 	ActiveActiveConflictSkipRows atomic.Uint64
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	// IndexLookUpPushDownPolicy indicates the policy of index look up push down.
 	IndexLookUpPushDownPolicy string
 }

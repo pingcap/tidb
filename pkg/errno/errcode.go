@@ -1087,11 +1087,8 @@ const (
 	ErrDeleteNotFoundColumn                = 8177
 	ErrKeyTooLarge                         = 8178
 	ErrTimeStampInDSTTransition            = 8179
-<<<<<<< HEAD
-=======
-	ErrQueryExecStopped                    = 8180
+	_                                      = 8180 // reserve for ErrQueryExecStopped
 	ErrPDTimestampLagsTooMuch              = 8181
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 
 	// Error codes used by TiDB ddl package
 	ErrUnsupportedDDLOperation            = 8200

@@ -153,6 +153,8 @@ const (
 	CommitTimeStr = "Commit_time"
 	// GetCommitTSTimeStr means the time of getting commit ts.
 	GetCommitTSTimeStr = "Get_commit_ts_time"
+	// CommitTSLagStr means information for commit ts lagging.
+	CommitTSLagStr = "Commit_ts_lag"
 	// GetLatestTsTimeStr means the time of getting latest ts in async commit and 1pc.
 	GetLatestTsTimeStr = "Get_latest_ts_time"
 	// CommitBackoffTimeStr means the time of commit backoff.
@@ -189,33 +191,6 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
-<<<<<<< HEAD
-=======
-
-	// The following constants define the set of fields for SlowQueryLogItems
-	// that are relevant to evaluating and triggering SlowLogRules.
-
-	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
-	ProcessTimeStr = "Process_time"
-	// BackoffTimeStr means the time of all back-off.
-	BackoffTimeStr = "Backoff_time"
-	// TotalKeysStr means the total scan keys.
-	TotalKeysStr = "Total_keys"
-	// ProcessKeysStr means the total processed keys.
-	ProcessKeysStr = "Process_keys"
-	// PreWriteTimeStr means the time of pre-write.
-	PreWriteTimeStr = "Prewrite_time"
-	// CommitTSLagStr means information for commit ts lagging.
-	CommitTSLagStr = "Commit_ts_lag"
-	// CommitTimeStr means the time of commit.
-	CommitTimeStr = "Commit_time"
-	// WriteKeysStr means the count of keys in the transaction.
-	WriteKeysStr = "Write_keys"
-	// WriteSizeStr means the key/value size in the transaction.
-	WriteSizeStr = "Write_size"
-	// PrewriteRegionStr means the count of region when pre-write.
-	PrewriteRegionStr = "Prewrite_region"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 )
 
 // String implements the fmt.Stringer interface.
