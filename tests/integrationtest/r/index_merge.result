@@ -898,7 +898,7 @@ IndexMerge	5.00	root		type: union, limit embedded(offset:0, count:5)
 ├─Limit(Build)	1.67	cop[tikv]		offset:0, count:5
 │ └─IndexRangeScan	1.67	cop[tikv]	table:t, index:idx_a_c(a, c)	range:[1,1], keep order:true, stats:pseudo
 ├─Limit(Build)	3.34	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan	3.34	cop[tikv]	table:t, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, stats:pseudo
+│ └─IndexRangeScan	3.34	cop[tikv]	table:t, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, sort-merge:true, stats:pseudo
 └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a = 1 or b in (1,2) order by c limit 5;
 id	a	b	c	padding
@@ -912,9 +912,9 @@ explain format = 'brief' select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * fr
 id	estRows	task	access object	operator info
 IndexMerge	5.00	root		type: union, limit embedded(offset:0, count:5)
 ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:idx_a_c(a, c)	range:[1,1], [2,2], keep order:true, stats:pseudo
+│ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:idx_a_c(a, c)	range:[1,1], [2,2], keep order:true, sort-merge:true, stats:pseudo
 ├─Limit(Build)	2.50	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, stats:pseudo
+│ └─IndexRangeScan	2.50	cop[tikv]	table:t, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, sort-merge:true, stats:pseudo
 └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a in (1,2) or b in (1,2) order by c limit 5;
 id	a	b	c	padding
@@ -930,7 +930,7 @@ IndexMerge	5.00	root		type: union, limit embedded(offset:0, count:5)
 ├─Limit(Build)	1.67	cop[tikv]		offset:0, count:5
 │ └─IndexRangeScan	1.67	cop[tikv]	table:t, index:idx_a_c(a, c)	range:[1,1], keep order:true, desc, stats:pseudo
 ├─Limit(Build)	3.34	cop[tikv]		offset:0, count:5
-│ └─IndexRangeScan	3.34	cop[tikv]	table:t, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, desc, stats:pseudo
+│ └─IndexRangeScan	3.34	cop[tikv]	table:t, index:idx_b_c(b, c)	range:[1,1], [2,2], keep order:true, sort-merge:true, desc, stats:pseudo
 └─TableRowIDScan(Probe)	5.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select /*+ use_index_merge(t, idx_a_c, idx_b_c) */ * from t where a = 1 or b in (1,2) order by c desc limit 5;
 id	a	b	c	padding

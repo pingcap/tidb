@@ -870,6 +870,123 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	}
 }
 
+func getResultForIN(values []*valueStruct, aVals []int, bVals []int, limit int, desc bool) []*valueStruct {
+	aSet := make(map[int]bool)
+	for _, v := range aVals {
+		aSet[v] = true
+	}
+	bSet := make(map[int]bool)
+	for _, v := range bVals {
+		bSet[v] = true
+	}
+	ret := make([]*valueStruct, 0)
+	for _, value := range values {
+		if aSet[value.a] || bSet[value.b] {
+			ret = append(ret, value)
+		}
+	}
+	slices.SortFunc(ret, func(a, b *valueStruct) int {
+		if desc {
+			return cmp.Compare(b.c, a.c)
+		}
+		return cmp.Compare(a.c, b.c)
+	})
+	if len(ret) > limit {
+		return ret[:limit]
+	}
+	return ret
+}
+
+func TestOrderByWithLimitForINConditions(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
+
+	// Analyze before insert to speed up UT.
+	tk.MustExec("analyze table t")
+
+	valueSlice := make([]*valueStruct, 0, 500)
+	vals := make([]string, 0, 500)
+	for range 500 {
+		a := rand.Intn(20)
+		b := rand.Intn(20)
+		c := rand.Intn(100)
+		vals = append(vals, fmt.Sprintf("(%v, %v, %v)", a, b, c))
+		valueSlice = append(valueSlice, &valueStruct{a, b, c})
+	}
+	tk.MustExec("insert into t values " + strings.Join(vals, ","))
+
+	for i := range 10 {
+		// Generate random IN values.
+		numAVals := rand.Intn(3) + 1
+		numBVals := rand.Intn(3) + 1
+		aVals := make([]int, numAVals)
+		bVals := make([]int, numBVals)
+		for j := range numAVals {
+			aVals[j] = rand.Intn(20)
+		}
+		for j := range numBVals {
+			bVals[j] = rand.Intn(20)
+		}
+		limit := rand.Intn(10) + 1
+		desc := i%2 == 1
+
+		// Build IN list strings.
+		aInStr := strconv.Itoa(aVals[0])
+		for _, v := range aVals[1:] {
+			aInStr += ", " + strconv.Itoa(v)
+		}
+		bInStr := strconv.Itoa(bVals[0])
+		for _, v := range bVals[1:] {
+			bInStr += ", " + strconv.Itoa(v)
+		}
+
+		orderDir := "ASC"
+		if desc {
+			orderDir = "DESC"
+		}
+
+		// Case 1: a = val OR b IN (...)
+		q1 := fmt.Sprintf("select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a = %d or b in (%s) order by c %s limit %d",
+			aVals[0], bInStr, orderDir, limit)
+		res1 := tk.MustQuery(q1).Rows()
+		tk.MustHavePlan(q1, "IndexMerge")
+		tk.MustNotHavePlan(q1, "TopN")
+		expected1 := getResultForIN(valueSlice, aVals[:1], bVals, limit, desc)
+		require.Equal(t, len(expected1), len(res1), "case 1 iter %d: q=%s", i, q1)
+		for j := range expected1 {
+			require.Equal(t, fmt.Sprintf("%v", expected1[j].c), res1[j][2], "case 1 iter %d row %d", i, j)
+		}
+
+		// Case 2: a IN (...) OR b IN (...)
+		q2 := fmt.Sprintf("select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a in (%s) or b in (%s) order by c %s limit %d",
+			aInStr, bInStr, orderDir, limit)
+		res2 := tk.MustQuery(q2).Rows()
+		tk.MustHavePlan(q2, "IndexMerge")
+		tk.MustNotHavePlan(q2, "TopN")
+		expected2 := getResultForIN(valueSlice, aVals, bVals, limit, desc)
+		require.Equal(t, len(expected2), len(res2), "case 2 iter %d: q=%s", i, q2)
+		for j := range expected2 {
+			require.Equal(t, fmt.Sprintf("%v", expected2[j].c), res2[j][2], "case 2 iter %d row %d", i, j)
+		}
+
+		// Case 3: a IN (...) OR b = val
+		q3 := fmt.Sprintf("select /*+ use_index_merge(t, idx_ac, idx_bc) */ * from t where a in (%s) or b = %d order by c %s limit %d",
+			aInStr, bVals[0], orderDir, limit)
+		res3 := tk.MustQuery(q3).Rows()
+		tk.MustHavePlan(q3, "IndexMerge")
+		tk.MustNotHavePlan(q3, "TopN")
+		expected3 := getResultForIN(valueSlice, aVals, bVals[:1], limit, desc)
+		require.Equal(t, len(expected3), len(res3), "case 3 iter %d: q=%s", i, q3)
+		for j := range expected3 {
+			require.Equal(t, fmt.Sprintf("%v", expected3[j].c), res3[j][2], "case 3 iter %d row %d", i, j)
+		}
+	}
+}
+
 func TestIssues46005(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)

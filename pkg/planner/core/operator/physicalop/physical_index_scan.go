@@ -295,6 +295,9 @@ func (p *PhysicalIndexScan) OperatorInfo(normalized bool) string {
 	}
 	buffer.WriteString("keep order:")
 	buffer.WriteString(strconv.FormatBool(p.KeepOrder))
+	if len(p.GroupedRanges) > 0 {
+		buffer.WriteString(", sort-merge:true")
+	}
 	if p.Desc {
 		buffer.WriteString(", desc")
 	}

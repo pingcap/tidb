@@ -3771,7 +3771,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
   │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:true, stats:pseudo
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, sort-merge:true, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -3780,7 +3780,7 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, sort-merge:true, stats:pseudo
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
   │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
@@ -3791,9 +3791,9 @@ id	task	access object	operator info
 Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
 └─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, sort-merge:true, stats:pseudo
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, sort-merge:true, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
@@ -3815,7 +3815,7 @@ Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, p
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
   │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1 2,1 2], keep order:true, stats:pseudo
   ├─Limit(Build)	cop[tikv]		offset:0, count:2
-  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, sort-merge:true, stats:pseudo
   └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
