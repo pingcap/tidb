@@ -366,6 +366,10 @@ func BuildIndexInfo(
 		return nil, errors.Trace(err)
 	}
 
+	if !isPrimary && isUnique && (tblInfo.IsActiveActive || tblInfo.SoftdeleteInfo != nil) {
+		return nil, errors.Trace(dbterror.ErrAlterOperationNotSupported.GenWithStackByArgs("UNIQUE", "Cannot create unique index on ACTIVE_ACTIVE or softdelete table", "removing UNIQUE"))
+	}
+
 	// Create index info.
 	idxInfo := &model.IndexInfo{
 		Name:    indexName,

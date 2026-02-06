@@ -1564,7 +1564,7 @@ func (e *executor) CreateView(ctx sessionctx.Context, s *ast.CreateViewStmt) (er
 		tblCollate = v
 	}
 
-	tbInfo, err := BuildTableInfo(NewMetaBuildContextWithSctx(ctx), s.ViewName.Name, cols, nil, tblCharset, tblCollate)
+	tbInfo, err := BuildTableInfo(NewMetaBuildContextWithSctx(ctx), s.ViewName.Name, cols, nil, tblCharset, tblCollate, nil)
 	if err != nil {
 		return err
 	}
@@ -6002,7 +6002,7 @@ func (e *executor) CreateSequence(ctx sessionctx.Context, stmt *ast.CreateSequen
 		return err
 	}
 	// TiDB describe the sequence within a tableInfo, as a same-level object of a table and view.
-	tbInfo, err := BuildTableInfo(NewMetaBuildContextWithSctx(ctx), ident.Name, nil, nil, "", "")
+	tbInfo, err := BuildTableInfo(NewMetaBuildContextWithSctx(ctx), ident.Name, nil, nil, "", "", nil)
 	if err != nil {
 		return err
 	}

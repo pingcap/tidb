@@ -814,7 +814,7 @@ func BuildTableInfoWithStmt(ctx *metabuild.Context, s *ast.CreateTableStmt, dbIn
 	}
 
 	var tbInfo *model.TableInfo
-	tbInfo, err = BuildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate)
+	tbInfo, err = BuildTableInfo(ctx, s.Table.Name, cols, newConstraints, tableCharset, tableCollate, optInfo)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -1388,12 +1388,17 @@ func BuildTableInfo(
 	constraints []*ast.Constraint,
 	charset string,
 	collate string,
+	optInfo *model.TableInfo,
 ) (tbInfo *model.TableInfo, err error) {
 	tbInfo = &model.TableInfo{
 		Name:    tableName,
 		Version: model.CurrLatestTableInfoVersion,
 		Charset: charset,
 		Collate: collate,
+	}
+	if optInfo != nil {
+		tbInfo.SoftdeleteInfo = optInfo.SoftdeleteInfo
+		tbInfo.IsActiveActive = optInfo.IsActiveActive
 	}
 	tblColumns := make([]*table.Column, 0, len(cols))
 	existedColsMap := make(map[string]struct{}, len(cols))
