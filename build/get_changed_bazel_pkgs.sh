@@ -14,10 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# This test is used to test compatible for BR restore.
-# It will download backup data from internal file server.
-# And make sure these backup data can restore through newly BR tools to newly cluster.
-
 set -euo pipefail
 
 detect_base_ref() {
