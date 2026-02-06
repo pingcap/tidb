@@ -114,9 +114,8 @@ const (
 	ActionAlterTableMode                        ActionType = 75
 	ActionRefreshMeta                           ActionType = 76
 	_                                           ActionType = 77 // reserve for database read-only feature
-	ActionAlterTableAffinity                    ActionType = 78
-	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
-	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
+	ActionAlterTableSoftDeleteInfo              ActionType = 78 // reserve for soft-delete feature
+	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 79 // reserve for soft-delete and active-active feature
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -191,7 +190,6 @@ var ActionMap = map[ActionType]string{
 	ActionAddVectorIndex:                        "add vector index",
 	ActionAlterTableMode:                        "alter table mode",
 	ActionRefreshMeta:                           "refresh meta",
-	ActionAlterTableAffinity:                    "alter table affinity",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
 

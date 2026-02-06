@@ -15,6 +15,7 @@
 package core
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"math"
@@ -5265,6 +5266,11 @@ func (t *TblColPosInfo) MemoryUsage() (sum int64) {
 		sum += t.HandleCols.MemoryUsage()
 	}
 	return
+}
+
+// Cmp compares two TblColPosInfo by their Start field.
+func (t *TblColPosInfo) Cmp(a TblColPosInfo) int {
+	return cmp.Compare(t.Start, a.Start)
 }
 
 // TblColPosInfoSlice attaches the methods of sort.Interface to []TblColPosInfos sorting in increasing order.
