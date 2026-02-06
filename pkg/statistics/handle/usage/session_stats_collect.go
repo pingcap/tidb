@@ -76,6 +76,7 @@ func (s *statsUsageImpl) needDumpStatsDelta(is infoschema.InfoSchema, dumpAll bo
 	if dumpAll {
 		return true
 	}
+	intest.Assert(!item.InitTime.IsZero(), "InitTime should be initialized before evaluating dump conditions")
 	if currentTime.Sub(item.InitTime) > dumpStatsMaxDuration {
 		// Dump the stats to kv at least once 5 minutes.
 		return true
