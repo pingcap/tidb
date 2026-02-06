@@ -336,18 +336,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			if err != nil {
 				return nil, err
 			}
-			schemaChanged := false
-			if len(p.Schema().Columns) != len(originalSchema.Columns) {
-				schemaChanged = true
-			} else {
-				for i, col := range p.Schema().Columns {
-					if !col.EqualColumn(originalSchema.Columns[i]) {
-						schemaChanged = true
-						break
-					}
-				}
-			}
-			if schemaChanged {
+			if p.Schema().Equal(originalSchema) {
 				proj := logicalop.LogicalProjection{
 					Exprs: expression.Column2Exprs(originalSchema.Columns),
 				}.Init(p.SCtx(), p.QueryBlockOffset())
