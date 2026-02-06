@@ -186,7 +186,7 @@ HashJoin	100000.00	root		CARTESIAN left outer join
 explain format = 'brief' select * from t1 where t1.b > 1 or t1.b in (select b from t2);
 id	estRows	task	access object	operator info
 Projection	8000.00	root		expression__explain.t1.id, expression__explain.t1.a, expression__explain.t1.b
-└─Selection	8000.00	root		or(gt(expression__explain.t1.b, 1), Column#7)
+└─Selection	8000.00	root		or(gt(expression__explain.t1.b, 1), Column#9)
   └─HashJoin	10000.00	root		CARTESIAN left outer semi join, other cond:eq(expression__explain.t1.b, expression__explain.t2.b)
     ├─TableReader(Build)	10000.00	root		data:TableFullScan
     │ └─TableFullScan	10000.00	cop[tikv]	table:t2	keep order:false, stats:pseudo

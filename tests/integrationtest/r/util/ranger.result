@@ -556,11 +556,11 @@ insert into t values(1,1,1,1,2),(2,1,2,1,0);
 analyze table t;
 explain format = 'brief' select t.e in (select count(*) from t s use index(idx), t t1 where s.b = 1 and s.c in (1, 2) and s.d = t.a and s.a = t1.a) from t;
 id	estRows	task	access object	operator info
-Projection	2.00	root		Column#27
-└─Apply	2.00	root		CARTESIAN left outer semi join, other cond:eq(util__ranger.t.e, Column#26)
+Projection	2.00	root		Column#32
+└─Apply	2.00	root		CARTESIAN left outer semi join, other cond:eq(util__ranger.t.e, Column#31)
   ├─TableReader(Build)	2.00	root		data:TableFullScan
   │ └─TableFullScan	2.00	cop[tikv]	table:t	keep order:false
-  └─StreamAgg(Probe)	2.00	root		funcs:count(1)->Column#26
+  └─StreamAgg(Probe)	2.00	root		funcs:count(1)->Column#31
     └─HashJoin	4.00	root		inner join, equal:[eq(util__ranger.t.a, util__ranger.t.a)]
       ├─IndexReader(Build)	4.00	root		index:IndexFullScan
       │ └─IndexFullScan	4.00	cop[tikv]	table:t1, index:idx(b, c, d)	keep order:false
