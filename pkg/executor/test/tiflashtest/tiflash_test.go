@@ -2025,7 +2025,7 @@ func TestMppAggShouldAlignFinalMode(t *testing.T) {
 		"    │ └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#13)->Column#10",
 		"    │   └─TableReader 200.00 root  MppVersion: 2, data:ExchangeSender",
 		"    │     └─ExchangeSender 200.00 mpp[tiflash]  ExchangeType: PassThrough",
-		"    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#12",
+		"    │       └─HashAgg 200.00 mpp[tiflash]  group by:test.t.d, funcs:count(partial1,1)->Column#13",
 		"    │         └─TableRangeScan 250.00 mpp[tiflash] table:t, partition:p1 range:[2023-07-01,2023-07-03], keep order:false, stats:pseudo",
 		"    └─Projection 200.00 root  test.t.d",
 		"      └─HashAgg 200.00 root  group by:test.t.d, funcs:firstrow(partial2,test.t.d)->test.t.d, funcs:count(final,Column#15)->Column#11",
