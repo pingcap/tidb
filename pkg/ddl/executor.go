@@ -1058,12 +1058,15 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 		return err
 	}
 	baseTableID := baseTable.Meta().ID
+	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
 
 	mlogName := "$mlog$" + baseTable.Meta().Name.O
-	if len(mlogName) > mysql.MaxTableNameLength {
-		return errors.Errorf("materialized view log table name too long: %s", mlogName)
-	}
 	mlogNameCIStr := pmodel.NewCIStr(mlogName)
+	if err := checkTooLongTable(mlogNameCIStr); err != nil {
+		return err
+	}
 	_, err = is.TableByName(e.ctx, schemaName, mlogNameCIStr)
 	if err == nil {
 		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})

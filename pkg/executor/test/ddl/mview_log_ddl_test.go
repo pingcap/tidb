@@ -16,11 +16,15 @@ package ddl_test
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/errno"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -68,4 +72,47 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 
 	// Duplicated MV LOG should fail (same derived table name).
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
+}
+
+func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int)")
+	tk.MustExec("create view v as select a from t")
+	tk.MustExec("create sequence s")
+
+	err := tk.ExecToErr("create materialized view log on v (a)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "v", "BASE TABLE").Error(), err.Error())
+
+	err = tk.ExecToErr("create materialized view log on s (a)")
+	require.Equal(t, dbterror.ErrWrongObject.GenWithStackByArgs("test", "s", "BASE TABLE").Error(), err.Error())
+}
+
+func TestCreateMaterializedViewLogNameLengthByRune(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	maxName := strings.Repeat("表", 58)
+	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", maxName))
+	tk.MustExec(fmt.Sprintf("create materialized view log on `%s` (a)", maxName))
+	tk.MustQuery(fmt.Sprintf("select count(*) from information_schema.tables where table_schema='test' and table_name='%s'", "$mlog$"+maxName)).Check(testkit.Rows("1"))
+
+	tooLongName := strings.Repeat("表", 59)
+	tk.MustExec(fmt.Sprintf("create table `%s` (a int)", tooLongName))
+	tk.MustGetErrCode(fmt.Sprintf("create materialized view log on `%s` (a)", tooLongName), errno.ErrTooLongIdent)
+}
+
+func TestCreateMaterializedViewLogUpdatesPlacementBundle(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create placement policy mlog_p followers=1")
+	tk.MustExec("alter database test placement policy mlog_p")
+	tk.MustExec("create table t_placement (a int)")
+	tk.MustExec("create materialized view log on t_placement (a)")
+
+	tk.MustQuery("show placement for table `$mlog$t_placement`").CheckContain("TABLE test.$mlog$t_placement")
+	tk.MustQuery("show placement for table `$mlog$t_placement`").CheckContain("FOLLOWERS=1")
 }

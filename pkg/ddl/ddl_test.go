@@ -543,3 +543,33 @@ func TestDetectAndUpdateJobVersion(t *testing.T) {
 		require.EqualValues(t, 6, iterateCnt)
 	})
 }
+
+func TestCheckHistoryJobStmtType(t *testing.T) {
+	p := parser.New()
+	parseStmt := func(sql string) ast.StmtNode {
+		stmt, _, err := p.ParseSQL(sql)
+		require.NoError(t, err)
+		require.Len(t, stmt, 1)
+		return stmt[0]
+	}
+
+	createTableStmt := parseStmt("create table t (a int)")
+	createMLogStmt := parseStmt("create materialized view log on t (a)")
+	createDBStmt := parseStmt("create database test")
+	createPolicyStmt := parseStmt("create placement policy p followers=1")
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTable, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMLogStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateSchema, createDBStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateSchema, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createPolicyStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreatePlacementPolicy, createTableStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateTables, createTableStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTables, createMLogStmt))
+}
