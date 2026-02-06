@@ -417,6 +417,82 @@ func (p *LogicalJoin) PruneColumns(parentUsedCols []*expression.Column) (base.Lo
 	return p, nil
 }
 
+func (p *LogicalJoin) appendFullSchemaColumns(parentUsedCols []*expression.Column) {
+	if p.FullSchema == nil || len(parentUsedCols) == 0 {
+		return
+	}
+	used := make(map[int64]struct{}, len(parentUsedCols))
+	for _, col := range parentUsedCols {
+		used[col.UniqueID] = struct{}{}
+	}
+	names := p.OutputNames()
+	if names == nil {
+		names = make(types.NameSlice, p.Schema().Len())
+	}
+	for i, col := range p.FullSchema.Columns {
+		if _, ok := used[col.UniqueID]; !ok {
+			continue
+		}
+		if p.Schema().Contains(col) {
+			continue
+		}
+		p.Schema().Append(col)
+		if p.FullNames != nil && i < len(p.FullNames) {
+			name := *p.FullNames[i]
+			names = append(names, &name)
+		} else {
+			names = append(names, types.EmptyName)
+		}
+	}
+	p.SetOutputNames(names)
+}
+
+// AppendFullSchemaColumns appends columns from FullSchema into Schema if they are used by upper expressions.
+func (p *LogicalJoin) AppendFullSchemaColumns(parentUsedCols []*expression.Column) {
+	p.appendFullSchemaColumns(parentUsedCols)
+}
+
+// EnsureSchemaForConditions appends condition columns from child schemas into Schema
+// when they are missing from the current output schema.
+func (p *LogicalJoin) EnsureSchemaForConditions(conds ...[]expression.Expression) {
+	lChild := p.Children()[0]
+	rChild := p.Children()[1]
+	lSchema, rSchema := lChild.Schema(), rChild.Schema()
+	lNames, rNames := lChild.OutputNames(), rChild.OutputNames()
+	outNames := p.OutputNames()
+	if outNames == nil {
+		outNames = make(types.NameSlice, p.Schema().Len())
+	}
+	for _, condList := range conds {
+		cols := expression.ExtractColumnsFromExpressions(condList, nil)
+		for _, col := range cols {
+			if p.Schema().Contains(col) {
+				continue
+			}
+			if idx := lSchema.ColumnIndex(col); idx != -1 {
+				p.Schema().Append(col)
+				if lNames != nil && idx < len(lNames) {
+					name := *lNames[idx]
+					outNames = append(outNames, &name)
+				} else {
+					outNames = append(outNames, types.EmptyName)
+				}
+				continue
+			}
+			if idx := rSchema.ColumnIndex(col); idx != -1 {
+				p.Schema().Append(col)
+				if rNames != nil && idx < len(rNames) {
+					name := *rNames[idx]
+					outNames = append(outNames, &name)
+				} else {
+					outNames = append(outNames, types.EmptyName)
+				}
+			}
+		}
+	}
+	p.SetOutputNames(outNames)
+}
+
 // FindBestTask inherits the BaseLogicalPlan.LogicalPlan.<3rd> implementation.
 
 // BuildKeyInfo implements the base.LogicalPlan.<4th> interface.
