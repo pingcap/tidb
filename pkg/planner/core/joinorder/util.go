@@ -66,7 +66,35 @@ type LeadingTreeFinder[T any] func(available []T, hint *ast.HintTable) (T, []T, 
 // LeadingTreeJoiner joins two nodes in the leading tree.
 type LeadingTreeJoiner[T any] func(left, right T) (T, bool, error)
 
-// BuildLeadingTreeFromList constructs a join tree according to a LeadingList.
+// BuildLeadingTreeFromList recursively constructs a LEADING join order tree.
+// the `leadingList` argument is derived from a LEADING hint in SQL, e.g.:
+//
+//	/*+ LEADING(t1, (t2, t3), (t4, (t5, t6, t7))) */
+//
+// and it is parsed into a nested structure of *ast.LeadingList and *ast.HintTable:
+// leadingList.Items = [
+//
+//	*ast.HintTable{name: "t1"},
+//	*ast.LeadingList{ // corresponds to (t2, t3)
+//	    Items: [
+//	        *ast.HintTable{name: "t2"},
+//	        *ast.HintTable{name: "t3"},
+//	    ],
+//	},
+//	*ast.LeadingList{ // corresponds to (t4, (t5, t6, t7))
+//	    Items: [
+//	        *ast.HintTable{name: "t4"},
+//	        *ast.LeadingList{
+//	            Items: [
+//	                *ast.HintTable{name: "t5"},
+//	                *ast.HintTable{name: "t6"},
+//	                *ast.HintTable{name: "t7"},
+//	            ],
+//	        },
+//	    ],
+//	},
+//
+// ]
 func BuildLeadingTreeFromList[T any](
 	leadingList *ast.LeadingList,
 	availableGroups []T,
@@ -80,13 +108,11 @@ func BuildLeadingTreeFromList[T any](
 	}
 
 	var (
-		currentJoin T
-		err         error
-		ok          bool
+		currentJoin     T
+		err             error
+		ok              bool
+		remainingGroups = availableGroups
 	)
-	// copy here because findAndRemoveByHint will modify the slice.
-	remainingGroups := make([]T, len(availableGroups))
-	copy(remainingGroups, availableGroups)
 
 	for i, item := range leadingList.Items {
 		switch element := item.(type) {
@@ -140,8 +166,13 @@ func BuildLeadingTreeFromList[T any](
 	return currentJoin, remainingGroups, true, nil
 }
 
-// FindAndRemovePlanByAstHint matches a hint table to a plan and removes it from the slice.
-// T is usually be *Node or base.LogicalPlan, we use generics because we want to reuse this function in both the old and new join order code.
+// FindAndRemovePlanByAstHint: Find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.
+// Matching rules:
+//  1. Match by regular table name (db/table/*)
+//  2. Match by query-block alias (subquery name, e.g., tx)
+//  3. If multiple join groups belong to the same block alias, mark as ambiguous and skip (consistent with old logic)
+//
+// NOTE: T is usually be *Node or base.LogicalPlan, we use generics because we want to reuse this function in both the old and new join order code.
 func FindAndRemovePlanByAstHint[T any](
 	ctx base.PlanContext,
 	plans []T,
