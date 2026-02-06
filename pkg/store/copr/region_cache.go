@@ -17,7 +17,9 @@ package copr
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
@@ -25,7 +27,6 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
 	"github.com/pingcap/tidb/pkg/kv"
-	tidbmetrics "github.com/pingcap/tidb/pkg/metrics"
 	derr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/driver/options"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -39,6 +40,7 @@ import (
 type bucketSplitFallbackInfo struct {
 	reason   string
 	startKey []byte
+	endKey   []byte
 
 	bucketStart []byte
 	bucketEnd   []byte
@@ -46,9 +48,16 @@ type bucketSplitFallbackInfo struct {
 	remainingRangeCount int
 }
 
+const (
+	locationSummaryMaxDisplay = 5
+)
+
 // Helper functions for logging
-func formatLocation(loc *tikv.KeyLocation) zap.Field {
-	return zap.Object("location", zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+func formatKeyLocation(name string, loc *tikv.KeyLocation) zap.Field {
+	return zap.Object(name, zapcore.ObjectMarshalerFunc(func(enc zapcore.ObjectEncoder) error {
+		if loc == nil {
+			return nil
+		}
 		enc.AddUint64("regionID", loc.Region.GetID())
 		enc.AddString("startKey", redact.Key(loc.StartKey))
 		enc.AddString("endKey", redact.Key(loc.EndKey))
@@ -70,6 +79,10 @@ func formatLocation(loc *tikv.KeyLocation) zap.Field {
 		}
 		return nil
 	}))
+}
+
+func formatLocation(loc *tikv.KeyLocation) zap.Field {
+	return formatKeyLocation("location", loc)
 }
 
 func keyField(name string, key []byte) zap.Field {
@@ -108,6 +121,88 @@ func formatRanges(ranges *KeyRanges) zap.Field {
 		}
 		return nil
 	}))
+}
+
+func formatLocationCoverageSummary(name string, locs []*tikv.KeyLocation, focusIndex int) zap.Field {
+	n := len(locs)
+	if n == 0 {
+		return zap.String(name, "count=0")
+	}
+
+	var gaps, overlaps, contiguous int
+	for i := 1; i < n; i++ {
+		prev, curr := locs[i-1], locs[i]
+		if prev == nil || curr == nil {
+			continue
+		}
+		switch rel := compareKeyRangeBoundary(prev.EndKey, curr.StartKey, false, true); {
+		case rel < 0:
+			gaps++
+		case rel > 0:
+			overlaps++
+		default:
+			contiguous++
+		}
+	}
+
+	// Show a window of locations around focusIndex (region IDs + adjacency relation).
+	focusIndex = max(0, min(focusIndex, n-1))
+	windowStart := max(0, focusIndex-locationSummaryMaxDisplay/2)
+	windowEnd := min(n, windowStart+locationSummaryMaxDisplay)
+
+	var buf strings.Builder
+	fmt.Fprintf(&buf, "count=%d gaps=%d overlaps=%d contiguous=%d focus=%d locs=[",
+		n, gaps, overlaps, contiguous, focusIndex)
+	for i := windowStart; i < windowEnd; i++ {
+		if i > windowStart {
+			buf.WriteString(", ")
+		}
+		loc := locs[i]
+		if loc == nil {
+			fmt.Fprintf(&buf, "%d:nil", i)
+			continue
+		}
+		fmt.Fprintf(&buf, "%d:r%d", i, loc.Region.GetID())
+		if i > 0 && locs[i-1] != nil {
+			switch rel := compareKeyRangeBoundary(locs[i-1].EndKey, loc.StartKey, false, true); {
+			case rel < 0:
+				buf.WriteString("(gap)")
+			case rel > 0:
+				buf.WriteString("(overlap)")
+			}
+		}
+	}
+	if windowEnd < n {
+		fmt.Fprintf(&buf, ", ...+%d", n-windowEnd)
+	}
+	buf.WriteByte(']')
+	return zap.String(name, buf.String())
+}
+
+func rangeIssuesForTiKVKeyRanges(kvRanges []tikv.KeyRange) rangeIssueStats {
+	var stats rangeIssueStats
+	if len(kvRanges) == 0 {
+		return stats
+	}
+	validateRange := func(r kv.KeyRange) {
+		if len(r.EndKey) > 0 && bytes.Compare(r.StartKey, r.EndKey) > 0 {
+			stats.add(rangeIssueInvalidBound)
+		}
+	}
+	prev := kv.KeyRange{StartKey: kvRanges[0].StartKey, EndKey: kvRanges[0].EndKey}
+	validateRange(prev)
+	for i := 1; i < len(kvRanges); i++ {
+		curr := kv.KeyRange{StartKey: kvRanges[i].StartKey, EndKey: kvRanges[i].EndKey}
+		validateRange(curr)
+		switch {
+		case len(prev.EndKey) == 0:
+			stats.add(rangeIssueInfiniteTail)
+		case bytes.Compare(prev.EndKey, curr.StartKey) > 0:
+			stats.add(classifyRangePair(prev, curr))
+		}
+		prev = curr
+	}
+	return stats
 }
 
 // compareKeyRangeBoundary compares two key range boundaries where empty end keys mean +infinity.
@@ -445,9 +540,11 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) ([]*Loc
 		// Input consistency guard: Bucket splitting assumes the first range starts inside this location.
 		// If it doesn't, continuing can livelock (no progress) and/or over-split incorrectly.
 		if !loc.Contains(startKey) {
+			r := ranges.At(0)
 			return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
 				reason:              "range_start_outside_location",
 				startKey:            startKey,
+				endKey:              r.EndKey,
 				remainingRangeCount: ranges.Len(),
 			}
 		}
@@ -456,9 +553,11 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) ([]*Loc
 		// Defensive: LocateBucket should never return nil because startKey is inside location.
 		// If it does, fall back to region-only splitting.
 		if bucket == nil {
+			r := ranges.At(0)
 			return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
 				reason:              "locate_bucket_nil",
 				startKey:            startKey,
+				endKey:              r.EndKey,
 				remainingRangeCount: ranges.Len(),
 			}
 		}
@@ -500,6 +599,7 @@ func (l *LocationKeyRanges) splitKeyRangesByBuckets(ctx context.Context) ([]*Loc
 				return []*LocationKeyRanges{l}, &bucketSplitFallbackInfo{
 					reason:              "bucket_not_contain_start_no_progress",
 					startKey:            r.StartKey,
+					endKey:              r.EndKey,
 					bucketStart:         bucket.StartKey,
 					bucketEnd:           bucket.EndKey,
 					remainingRangeCount: ranges.Len(),
@@ -526,18 +626,6 @@ func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.Ke
 	}
 	// All rest ranges belong to the same region.
 	if i == ranges.Len() {
-		// Defensive check: Verify first range actually starts in this location
-		// This should never fail if caller is correct, but catches bugs in our splitting logic
-		if ranges.Len() > 0 && !loc.Contains(ranges.At(0).StartKey) {
-			logutil.Logger(ctx).Error("splitKeyRangesByLocation: all ranges added but first StartKey outside location",
-				zap.Uint64("regionID", loc.Region.GetID()),
-				zap.Uint64("regionVer", loc.Region.GetVer()),
-				zap.Uint64("regionConfVer", loc.Region.GetConfVer()),
-				formatLocation(loc),
-				keyField("rangeStart", ranges.At(0).StartKey),
-				zap.Int("rangeCount", ranges.Len()))
-			panic("splitKeyRangesByLocation: invariant violated - range StartKey outside location")
-		}
 		res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
 		return res, ranges, true
 	}
@@ -568,6 +656,12 @@ func (c *RegionCache) splitKeyRangesByLocation(ctx context.Context, loc *tikv.Ke
 
 // UnspecifiedLimit means no limit.
 const UnspecifiedLimit = -1
+
+// maxReLocateOnOverflow limits how many times SplitKeyRangesByLocations will
+// re-locate overflow ranges that extend beyond the pre-fetched locations.
+// This prevents infinite loops if LocateKey consistently returns locations
+// that don't cover the remaining ranges.
+const maxReLocateOnOverflow = 64
 
 // SplitKeyRangesByLocations splits the KeyRanges by logical info in the cache.
 // The buckets in the returned LocationKeyRanges are empty, regardless of whether the region is split by bucket.
@@ -604,40 +698,73 @@ func (c *RegionCache) SplitKeyRangesByLocations(bo *Backoffer, ranges *KeyRanges
 	res := make([]*LocationKeyRanges, 0, resCap)
 
 	nextLocIndex := 0
+	reLocateCount := 0
 	for ranges.Len() > 0 {
 		if limit != UnspecifiedLimit && len(res) >= limit {
 			break
 		}
 
 		if nextLocIndex >= len(locs) {
-			err = errors.Errorf("Unexpected loc index %d, which should less than %d", nextLocIndex, len(locs))
-			return nil, err
+			// Pre-fetched locations exhausted but ranges remain.
+			// This happens when locations don't fully cover the ranges (e.g., last-loc
+			// boundary is narrower than expected, or upstream metadata anomalies).
+			// Re-locate the remaining ranges via LocateKey instead of returning an error.
+			if reLocateCount >= maxReLocateOnOverflow {
+				logutil.Logger(ctx).Error("SplitKeyRangesByLocations: re-locate overflow budget exhausted",
+					zap.Int("reLocateCount", reLocateCount),
+					zap.Int("maxReLocateOnOverflow", maxReLocateOnOverflow),
+					zap.Int("locationCount", len(locs)),
+					zap.Int("remainingRangeCount", ranges.Len()),
+					zap.Any("remainingRangeIssues", rangeIssuesForKeyRanges(ranges)),
+					formatLocationCoverageSummary("locationCoverageSummary", locs, len(locs)-1),
+					formatRanges(ranges),
+					zap.Stack("stack"))
+				err = errors.Errorf("SplitKeyRangesByLocations: re-locate overflow budget exhausted after %d attempts, %d ranges remaining",
+					reLocateCount, ranges.Len())
+				return nil, err
+			}
+			startKey := ranges.At(0).StartKey
+			newLoc, locErr := c.LocateKey(bo.TiKVBackoffer(), startKey)
+			if locErr != nil {
+				return nil, derr.ToTiDBErr(locErr)
+			}
+			if reLocateCount == 0 {
+				logutil.Logger(ctx).Warn("SplitKeyRangesByLocations: re-locating overflow ranges beyond pre-fetched locations",
+					zap.Int("locationCount", len(locs)),
+					zap.Int("remainingRangeCount", ranges.Len()),
+					zap.Uint64("newRegionID", newLoc.Region.GetID()),
+					keyField("newLocStart", newLoc.StartKey),
+					keyField("newLocEnd", newLoc.EndKey),
+					formatLocationCoverageSummary("locationCoverageSummary", locs, len(locs)-1))
+			}
+			locs = append(locs, newLoc)
+			reLocateCount++
+			// Don't increment nextLocIndex; it now points to the newly appended location.
+			continue
 		}
 
 		loc := locs[nextLocIndex]
-		// For the last loc.
-		if nextLocIndex == (len(locs) - 1) {
-			// Defensive check: Verify remaining ranges start in last location
-			// This should never fail if locations cover ranges correctly, but catches bugs
-			if ranges.Len() > 0 && !loc.Contains(ranges.At(0).StartKey) {
-				logutil.Logger(ctx).Error("SplitKeyRangesByLocations: last location but ranges start outside",
-					zap.Uint64("regionID", loc.Region.GetID()),
-					zap.Uint64("regionVer", loc.Region.GetVer()),
-					zap.Uint64("regionConfVer", loc.Region.GetConfVer()),
-					formatLocation(loc),
-					keyField("rangeStart", ranges.At(0).StartKey),
-					zap.Int("rangeCount", ranges.Len()),
-					zap.Int("locationIndex", nextLocIndex),
-					zap.Int("totalLocations", len(locs)))
-				panic("SplitKeyRangesByLocations: invariant violated - remaining ranges start outside last location")
-			}
-			res = append(res, &LocationKeyRanges{Location: loc, Ranges: ranges})
-			break
-		}
 		nextLocIndex++
 
 		isBreak := false
 		res, ranges, isBreak = c.splitKeyRangesByLocation(ctx, loc, ranges, res)
+		if isBreak && ranges.Len() > 0 && !loc.Contains(ranges.At(0).StartKey) {
+			// This indicates an internal inconsistency between returned locations and remaining ranges.
+			// Do not panic in production; report it as an error so upper layers can retry or surface it.
+			logutil.Logger(ctx).Error("SplitKeyRangesByLocations: break early but remaining ranges start outside location",
+				zap.Uint64("regionID", loc.Region.GetID()),
+				zap.Uint64("regionVer", loc.Region.GetVer()),
+				zap.Uint64("regionConfVer", loc.Region.GetConfVer()),
+				formatLocation(loc),
+				keyField("rangeStart", ranges.At(0).StartKey),
+				zap.Int("rangeCount", ranges.Len()),
+				zap.Int("locationIndex", nextLocIndex-1),
+				zap.Int("totalLocations", len(locs)),
+				zap.Any("rangeIssues", rangeIssuesForKeyRanges(ranges)),
+				formatLocationCoverageSummary("locationCoverageSummary", locs, nextLocIndex-1),
+				zap.Stack("stack"))
+			return nil, errors.Errorf("SplitKeyRangesByLocations: remaining ranges start outside location")
+		}
 		if isBreak {
 			break
 		}
@@ -745,30 +872,94 @@ func (c *RegionCache) SplitKeyRangesByBuckets(bo *Backoffer, ranges *KeyRanges) 
 			tikvLocs = append(tikvLocs, l.Location)
 		}
 		coverageValid := validateLocationCoverage(ctx, kvRanges, tikvLocs)
-		tidbmetrics.DistSQLCoprBucketSplitFallback.Inc()
-		if !coverageValid {
-			fields := []zap.Field{
-				zap.String("reason", fallback.reason),
-				zap.Int("locationIndex", locIdx),
-				zap.Int("locationCount", len(locs)),
-				zap.Int("rangeCount", len(kvRanges)),
-				zap.Bool("coverageValid", coverageValid),
-				keyField("startKey", fallback.startKey),
-				zap.Uint64("regionID", locs[locIdx].Location.Region.GetID()),
-				zap.Uint64("regionVer", locs[locIdx].Location.Region.GetVer()),
-				zap.Uint64("regionConfVer", locs[locIdx].Location.Region.GetConfVer()),
-				keyField("locationStart", locs[locIdx].Location.StartKey),
-				keyField("locationEnd", locs[locIdx].Location.EndKey),
-				zap.Int("remainingRangeCount", fallback.remainingRangeCount),
-			}
-			if fallback.bucketStart != nil || fallback.bucketEnd != nil {
+		rangeIssues := rangeIssuesForTiKVKeyRanges(kvRanges)
+		// Always log fallback for production debugging. Buckets are an optimization; falling back indicates either
+		// stale bucket metadata, range/location mismatch, or other unexpected inputs.
+		cachedLoc := locs[locIdx].Location
+		cachedLocRanges := locs[locIdx].Ranges
+		badIdx, badRange, badReason := firstOutOfBoundKeyRangeInLocation(cachedLocRanges, cachedLoc.StartKey, cachedLoc.EndKey)
+		locationHasBuckets := cachedLoc.Buckets != nil && len(cachedLoc.Buckets.Keys) > 0
+		bucketKeyCount := 0
+		if cachedLoc.Buckets != nil {
+			bucketKeyCount = len(cachedLoc.Buckets.Keys)
+		}
+		locationRangeIssues := rangeIssuesForKeyRanges(cachedLocRanges)
+		fields := []zap.Field{
+			zap.String("reason", fallback.reason),
+			zap.Int("locationIndex", locIdx),
+			zap.Int("locationCount", len(locs)),
+			zap.Int("rangeCount", len(kvRanges)),
+			zap.Bool("coverageValid", coverageValid),
+			zap.Any("rangeIssues", rangeIssues),
+			zap.Int("locationRangeCount", cachedLocRanges.Len()),
+			zap.Any("locationRangeIssues", locationRangeIssues),
+			zap.Bool("locationHasBuckets", locationHasBuckets),
+			zap.Uint64("locationBucketsVer", cachedLoc.GetBucketVersion()),
+			zap.Int("locationBucketKeyCount", bucketKeyCount),
+			keyField("fallbackRangeStartKey", fallback.startKey),
+			keyField("fallbackRangeEndKey", fallback.endKey),
+			zap.Uint64("regionID", cachedLoc.Region.GetID()),
+			zap.Uint64("regionVer", cachedLoc.Region.GetVer()),
+			zap.Uint64("regionConfVer", cachedLoc.Region.GetConfVer()),
+			keyField("locationStart", cachedLoc.StartKey),
+			keyField("locationEnd", cachedLoc.EndKey),
+			zap.Int("remainingRangeCount", fallback.remainingRangeCount),
+			formatLocationCoverageSummary("locationCoverageSummary", tikvLocs, locIdx),
+		}
+		if badIdx >= 0 {
+			fields = append(fields,
+				zap.Int("outOfBoundRangeIndex", badIdx),
+				zap.String("outOfBoundReason", badReason),
+				keyField("outOfBoundRangeStartKey", badRange.StartKey),
+				keyField("outOfBoundRangeEndKey", badRange.EndKey),
+			)
+		}
+		if len(fallback.startKey) > 0 {
+			cacheLoc := c.RegionCache.TryLocateKey(fallback.startKey)
+			if cacheLoc == nil {
 				fields = append(fields,
-					keyField("bucketStart", fallback.bucketStart),
-					keyField("bucketEnd", fallback.bucketEnd),
+					zap.Bool("cacheLocateByFallbackStartMissing", true),
+				)
+			} else {
+				fields = append(fields,
+					formatKeyLocation("cacheLocateByFallbackStart", cacheLoc),
 				)
 			}
-			logutil.Logger(ctx).Warn("SplitKeyRangesByBuckets fell back to region-only splitting", fields...)
 		}
+		// Best-effort: query PD directly for region boundary comparison.
+		pdLoc, pdErr := c.RegionCache.LocateRegionByIDFromPD(bo.TiKVBackoffer(), cachedLoc.Region.GetID())
+		if pdErr != nil {
+			fields = append(fields, zap.Error(pdErr))
+		} else {
+			fields = append(fields,
+				zap.Uint64("pdRegionVer", pdLoc.Region.GetVer()),
+				zap.Uint64("pdRegionConfVer", pdLoc.Region.GetConfVer()),
+				keyField("pdRegionStartKey", pdLoc.StartKey),
+				keyField("pdRegionEndKey", pdLoc.EndKey),
+				zap.Bool("pdEpochChanged", pdLoc.Region.GetVer() != cachedLoc.Region.GetVer() || pdLoc.Region.GetConfVer() != cachedLoc.Region.GetConfVer()),
+				zap.Bool("pdBoundaryChanged", !bytes.Equal(pdLoc.StartKey, cachedLoc.StartKey) || !bytes.Equal(pdLoc.EndKey, cachedLoc.EndKey)),
+			)
+			if pdLoc.Buckets != nil {
+				fields = append(fields,
+					zap.Uint64("pdBucketsVer", pdLoc.GetBucketVersion()),
+					zap.Int("pdBucketKeyCount", len(pdLoc.Buckets.Keys)),
+				)
+			} else {
+				fields = append(fields, zap.Bool("pdBucketsNil", true))
+			}
+		}
+		if fallback.bucketStart != nil || fallback.bucketEnd != nil {
+			fields = append(fields,
+				keyField("fallbackBucketStartKey", fallback.bucketStart),
+				keyField("fallbackBucketEndKey", fallback.bucketEnd),
+			)
+		}
+		fields = append(fields,
+			formatLocation(cachedLoc),
+			formatRanges(cachedLocRanges),
+			zap.Stack("stack"),
+		)
+		logutil.Logger(ctx).Warn("SplitKeyRangesByBuckets fell back to region-only splitting", fields...)
 
 		locs, err := c.SplitKeyRangesByLocations(bo, ranges, UnspecifiedLimit, false, false)
 		if err != nil {

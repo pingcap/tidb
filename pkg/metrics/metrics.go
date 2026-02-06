@@ -145,7 +145,6 @@ func RegisterMetrics() {
 	prometheus.MustRegister(DeploySyncerHistogram)
 	prometheus.MustRegister(DistSQLPartialCountHistogram)
 	prometheus.MustRegister(DistSQLCoprCacheCounter)
-	prometheus.MustRegister(DistSQLCoprBucketSplitFallback)
 	prometheus.MustRegister(DistSQLCoprClosestReadCounter)
 	prometheus.MustRegister(DistSQLCoprRespBodySize)
 	prometheus.MustRegister(DistSQLQueryHistogram)

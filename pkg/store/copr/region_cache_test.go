@@ -482,3 +482,58 @@ func TestLocateBucketOutsideRegionNonNilFallback(t *testing.T) {
 	require.Len(t, result, 1, "Expected unsplit LocationKeyRanges fallback")
 	require.Equal(t, lkr, result[0], "Expected original LocationKeyRanges to be returned")
 }
+
+func TestOverlappingRangesCanProduceOutOfOrderRangesAfterSplit(t *testing.T) {
+	ctx := context.Background()
+
+	// This test demonstrates a concrete root-cause for `range.StartKey < location.StartKey`:
+	//
+	// 1) Input key ranges are overlapping/contained (e.g. [a,z) contains [b,c)).
+	// 2) `splitKeyRangesByLocation` splits the first range at the location boundary and stores the remainder
+	//    as `ranges.first`, but keeps the still-unprocessed contained range in `ranges.mid`.
+	// 3) The remaining `KeyRanges` becomes non-monotonic: [m,z) then [b,c).
+	// 4) A later location can end up receiving a range whose start is < location.StartKey, which triggers
+	//    the bucket-splitting fallback guard (and used to be able to livelock).
+
+	loc0 := &tikv.KeyLocation{
+		Region:   tikv.NewRegionVerID(1, 0, 0),
+		StartKey: []byte("a"),
+		EndKey:   []byte("m"),
+	}
+	loc1 := &tikv.KeyLocation{
+		Region:   tikv.NewRegionVerID(2, 0, 0),
+		StartKey: []byte("m"),
+		EndKey:   []byte("z"),
+		Buckets: &metapb.Buckets{
+			// One bucket covering the full location is enough to exercise the
+			// bucket-splitting loop and reach the mismatch.
+			Keys:    [][]byte{[]byte("m"), []byte("z")},
+			Version: 1,
+		},
+	}
+
+	ranges := NewKeyRanges([]kv.KeyRange{
+		{StartKey: []byte("a"), EndKey: []byte("z")}, // spans loc0 -> loc1
+		{StartKey: []byte("b"), EndKey: []byte("c")}, // fully inside loc0, contained by the first range
+	})
+
+	cache := &RegionCache{}
+	res := []*LocationKeyRanges{}
+	_, remaining, isBreak := cache.splitKeyRangesByLocation(ctx, loc0, ranges, res)
+	require.False(t, isBreak, "should not break: more locations remain")
+	require.Equal(t, 2, remaining.Len(), "expect [m,z) + original contained range to remain")
+
+	require.Equal(t, "m", string(remaining.At(0).StartKey))
+	require.Equal(t, "z", string(remaining.At(0).EndKey))
+	require.Equal(t, "b", string(remaining.At(1).StartKey))
+	require.Equal(t, "c", string(remaining.At(1).EndKey))
+
+	// Now bucket splitting must observe that remaining ranges are inconsistent with loc1 boundaries
+	// and fall back safely instead of looping forever.
+	lkr := &LocationKeyRanges{Location: loc1, Ranges: remaining}
+	result, fb := lkr.splitKeyRangesByBuckets(ctx)
+	require.NotNil(t, fb)
+	require.Equal(t, "range_start_outside_location", fb.reason)
+	require.Len(t, result, 1)
+	require.Equal(t, lkr, result[0])
+}
