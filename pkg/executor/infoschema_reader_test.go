@@ -1097,6 +1097,7 @@ func TestInfoSchemaConditionWorks(t *testing.T) {
 func TestInfoschemaTablesSpecialOptimizationCovered(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_schema_cache_size = default")
 
 	for _, testCase := range []struct {
 		sql    string
