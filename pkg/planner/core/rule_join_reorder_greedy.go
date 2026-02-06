@@ -166,7 +166,7 @@ func (s *joinReorderGreedySolver) constructConnectedJoinTree() (*jrNode, error) 
 }
 
 func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan base.LogicalPlan) (base.LogicalPlan, []expression.Expression, bool) {
-	leftPlan, rightPlan, usedEdges, joinType := s.checkConnection(leftPlan, rightPlan)
+	leftPlan, rightPlan, usedEdges, joinType, expr2Col := s.checkConnection(leftPlan, rightPlan)
 	if len(usedEdges) == 0 && // cartesian join
 		(!s.allInnerJoin || // not all joins are inner joins
 			s.ctx.GetSessionVars().CartesianJoinOrderThreshold <= 0) { // cartesian join is disabled
@@ -176,6 +176,11 @@ func (s *joinReorderGreedySolver) checkConnectionAndMakeJoin(leftPlan, rightPlan
 		// For inner joins like `t1 join t2 join t3`, we can reorder them freely, so we allow cartesian join here.
 		return nil, nil, false
 	}
-	join, otherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType)
-	return join, otherConds, len(usedEdges) == 0
+	otherConds := s.otherConds
+	if len(expr2Col) > 0 && len(otherConds) > 0 {
+		// Reuse the injected expression columns in non-eq conditions to avoid recomputation.
+		otherConds = substituteExprsWithColsInExprs(otherConds, expr2Col)
+	}
+	join, remainOtherConds := s.makeJoin(leftPlan, rightPlan, usedEdges, joinType, otherConds)
+	return join, remainOtherConds, len(usedEdges) == 0
 }

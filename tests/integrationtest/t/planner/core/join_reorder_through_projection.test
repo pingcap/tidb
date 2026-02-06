@@ -1,0 +1,1531 @@
+# Test join reorder through projection
+# Tests for join reorder optimization when projection operators contain expressions
+#
+# Overview:
+# The tidb_opt_join_reorder_through_proj session variable controls whether 
+# the join reorder algorithm can "look through" projection operators to find more
+# reorderable join nodes. When a projection contains expressions (e.g., t2.b + t3.b),
+# it creates "derived columns" that hide the underlying join structure from the 
+# join reorder algorithm.
+#
+# This optimization:
+# 1. Inlines safe projections during join group extraction
+# 2. Maintains a column-to-expression mapping (colExprMap) for derived columns
+# 3. Substitutes derived column references in join conditions with their original expressions
+# 4. Restores the output schema after reordering by adding a projection if needed
+#
+# Safety conditions for inline:
+# - No non-deterministic functions (rand, uuid, etc.)
+# - No side effects (setvar, sleep, etc.)
+# - No correlated columns
+# - No cross-table expressions in single projection expression
+# - Single-table string expressions are supported (collation safe)
+# - Only Column/ScalarFunction/Constant nodes are supported inside expression trees;
+#   other Expression implementations (e.g. ScalarSubQueryExpr) are NOT inlined (deny by default).
+# - Each projection expression must reference at least one column; constant-only expressions
+#   (including deterministic "pure functions") are not inlined.
+
+# =============================================================================
+# Setup test tables
+# =============================================================================
+drop table if exists t1, t2, t3, t4, t5;
+create table t1(a int, b int, c varchar(32), primary key (a), key(b));
+create table t2(a int, b int, c varchar(32), primary key (a), key(b));
+create table t3(a int, b int, c varchar(32), primary key (a), key(b));
+create table t4(a int, b int, c varchar(32), primary key (a), key(b));
+create table t5(a int, b int, c varchar(32), primary key (a), key(b));
+
+insert into t1 values(1, 10, 'a1'), (2, 20, 'a2'), (3, 30, 'a3'), (4, 200, 'a4');
+insert into t2 values(1, 100, 'b1'), (2, 200, 'b2'), (3, 300, 'b3');
+insert into t3 values(1, 1000, 'c1'), (2, 2000, 'c2'), (3, 3000, 'c3');
+insert into t4 values(1, 10000, 'd1'), (2, 20000, 'd2'), (3, 30000, 'd3');
+insert into t5 values(1, 10, 'e1'), (2, 20, 'e2'), (3, 30, 'e3'), (4, 40, 'e4');
+
+# =============================================================================
+# Basic Single-Table Expressions (Can Inline)
+# =============================================================================
+# Query: t1 JOIN (t2 JOIN t3 with single-table expressions in SELECT)
+# The projection uses expressions that only reference ONE table each.
+#
+# EXPECTED BEHAVIOR:
+# - OFF: Join group is {t1} and {Projection(t2 JOIN t3)}. The projection blocks
+#   join reorder from seeing t2 and t3 as separate relations.
+# - ON: Projection is inlined because expressions only reference single tables:
+#   - t2.b * 2 (only references t2)
+#   - t3.b + 100 (only references t3)
+#   Join group becomes {t1, t2, t3}. Join conditions using derived columns are
+#   substituted to use base columns.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.doubled_b, dt.shifted_b from t1,
+  (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2;
+
+select t1.a, dt.doubled_b, dt.shifted_b from t1,
+  (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.doubled_b, dt.shifted_b from t1,
+  (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2;
+
+select t1.a, dt.doubled_b, dt.shifted_b from t1,
+  (select t2.a as a2, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2
+order by 1;
+
+
+# =============================================================================
+# CTE (Common Table Expression) with Single-Table Expression (Can Inline)
+# =============================================================================
+# Query: t1 JOIN (CTE containing t2 JOIN t3 with single-table expression)
+# The CTE uses t2.b * 2 which only references t2 (single-table, can inline).
+#
+# EXPECTED BEHAVIOR:
+# - CTE is inlined (non-recursive CTE), so it behaves like a derived table.
+# - The projection over the join inside CTE is processed for inlining.
+# - Since t2.b * 2 only references t2, it CAN be inlined.
+#
+# NOTE: TiDB inlines simple CTEs, so this test behaves similarly to derived tables.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' with joined_cte as (
+  select t2.a as cte_a, t2.b * 2 as doubled_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.doubled_b from t1 join joined_cte cte on t1.a = cte.cte_a;
+
+with joined_cte as (
+  select t2.a as cte_a, t2.b * 2 as doubled_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.doubled_b from t1 join joined_cte cte on t1.a = cte.cte_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' with joined_cte as (
+  select t2.a as cte_a, t2.b * 2 as doubled_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.doubled_b from t1 join joined_cte cte on t1.a = cte.cte_a;
+
+with joined_cte as (
+  select t2.a as cte_a, t2.b * 2 as doubled_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.doubled_b from t1 join joined_cte cte on t1.a = cte.cte_a
+order by 1;
+
+# Nested Projection over Join - Key Test Case
+# Query: t1 JOIN (Projection over (t2 JOIN t3))
+# This test specifically validates that projections OVER JOIN nodes can be inlined.
+# Previous test had projection over DataSource which is treated as atomic unit.
+#
+# STRUCTURE:
+# - Inner: t2 JOIN t3 ON t2.a = t3.a (produces base join)
+# - Middle: Projection over this join with single-table expressions
+# - Outer: t1 joins with the projected result
+#
+# EXPECTED BEHAVIOR:
+# - OFF: Join group = {t1, Projection(t2 JOIN t3)}, projection blocks visibility
+# - ON: Projection is inlined, join group = {t1, t2, t3}
+#   The projection moves to the top level, and join conditions are substituted
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, t3.b + 100 as shifted_b 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+# =============================================================================
+# Unsupported Expression Types in Projection (Should NOT Inline)
+# =============================================================================
+# Scalar subqueries in the projection list are represented as ScalarSubQueryExpr (not ScalarFunction).
+# We conservatively do NOT inline such projections.
+set tidb_opt_enable_non_eval_scalar_subquery = on;
+set tidb_opt_join_reorder_through_proj = off;
+--replace_regex /ScalarQueryCol#[0-9]+/ScalarQueryCol#<id>/
+explain format = 'plan_tree' select t1.a, dt.subq_cnt from t1 join (
+  select t2.a as a2, (select count(*) from t4) as subq_cnt
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.a = dt.a2;
+
+set tidb_opt_join_reorder_through_proj = on;
+--replace_regex /ScalarQueryCol#[0-9]+/ScalarQueryCol#<id>/
+explain format = 'plan_tree' select t1.a, dt.subq_cnt from t1 join (
+  select t2.a as a2, (select count(*) from t4) as subq_cnt
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.a = dt.a2;
+
+# Scalar subqueries can also appear as arguments of ScalarFunction in projection expressions.
+# The subquery argument is still a ScalarSubQueryExpr and should prevent inlining.
+set tidb_opt_join_reorder_through_proj = off;
+--replace_regex /ScalarQueryCol#[0-9]+/ScalarQueryCol#<id>/
+explain format = 'plan_tree' select t1.a, dt.subq_cnt from t1 join (
+  select t2.a as a2, ifnull((select count(*) from t4), 0) as subq_cnt
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.a = dt.a2;
+
+set tidb_opt_join_reorder_through_proj = on;
+--replace_regex /ScalarQueryCol#[0-9]+/ScalarQueryCol#<id>/
+explain format = 'plan_tree' select t1.a, dt.subq_cnt from t1 join (
+  select t2.a as a2, ifnull((select count(*) from t4), 0) as subq_cnt
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.a = dt.a2;
+set tidb_opt_enable_non_eval_scalar_subquery = off;
+
+# Proj4Expand projection must not be inlined.
+# GROUP BY ... WITH ROLLUP introduces Expand + Proj4Expand over the join.
+# ON/OFF should keep the same shape for the derived table side.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.sum_b from t1 join (
+  select t2.a as key_a, sum(t3.b) as sum_b
+  from t2 join t3 on t2.a = t3.a
+  group by t2.a with rollup
+) dt on t1.a = dt.key_a;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.sum_b from t1 join (
+  select t2.a as key_a, sum(t3.b) as sum_b
+  from t2 join t3 on t2.a = t3.a
+  group by t2.a with rollup
+) dt on t1.a = dt.key_a;
+
+# Constant-only projection expression must not be inlined.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.const_one from t1 join (
+  select t2.a as a2, 1 as const_one
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.a = dt.a2;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.const_one from t1 join (
+  select t2.a as a2, 1 as const_one
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.a = dt.a2;
+
+# =============================================================================
+# DP Reorder: Preserve Single-Node Predicates After Projection Inlining
+# =============================================================================
+# After projection inlining, join conditions can become single-table predicates.
+# DP join reorder must not drop them.
+set tidb_opt_join_reorder_through_proj = on;
+set tidb_opt_join_reorder_threshold = 3;
+
+# Single-node predicate after substitution: dt.doubled_b > 300 -> (t2.b * 2) > 300
+select count(*) from (
+  select t2.a as a2, t2.b * 2 as doubled_b
+  from t2 join t3 on t2.a = t3.a
+) dt join t1 on dt.a2 = t1.a and dt.doubled_b > 300;
+
+set tidb_opt_join_reorder_threshold = 0;
+
+# Multi-level CTE with Projection over Join
+# This tests multi-level colExprMap propagation where EACH level has projection over join.
+#
+# STRUCTURE:
+# - cte1: Projection over t2 (simple single-table projection, b*2)
+# - cte2: Projection over (t3 JOIN cte1), computes shifted_b from t3 and also keeps cte1's doubled_b
+# - Outer: t1 JOIN cte2 on t1.b = cte2.doubled_b
+#
+# EXPECTED BEHAVIOR:
+# - cte1's colExprMap: doubled_b -> (t2.b * 2)
+# - cte2's colExprMap: shifted_b -> (t3.b + 100), and passes through cte1's mappings
+# - After inlining, t1.b = cte2.doubled_b becomes t1.b = (t2.b * 2)
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' with 
+  cte1 as (select a, b * 2 as doubled_b from t2),
+  cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
+select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b;
+
+with 
+  cte1 as (select a, b * 2 as doubled_b from t2),
+  cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
+select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' with 
+  cte1 as (select a, b * 2 as doubled_b from t2),
+  cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
+select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b;
+
+with 
+  cte1 as (select a, b * 2 as doubled_b from t2),
+  cte2 as (select t3.a, t3.b + 100 as shifted_b, cte1.doubled_b from t3 join cte1 on t3.a = cte1.a)
+select t1.a, cte2.* from t1 join cte2 on t1.b = cte2.doubled_b
+order by 1;
+
+# =============================================================================
+# View/Derived Table with Single-Table Expression
+# =============================================================================
+# Query: t1 JOIN (t2 JOIN t3 with t2.b * 2 expression)
+#
+# EXPECTED BEHAVIOR:
+# - The expression (t2.b * 2) only references t2, NOT a cross-table expression.
+# - The projection should be INLINED when ON.
+#
+# NOTE: If plans differ between OFF and ON, it confirms inlining is working.
+# Look for structural differences like projection position in the plan tree.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, v.* from t1,
+  (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
+where t1.a = v.va;
+
+select t1.a, v.* from t1,
+  (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
+where t1.a = v.va
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, v.* from t1,
+  (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
+where t1.a = v.va;
+
+select t1.a, v.* from t1,
+  (select t2.a as va, t2.b * 2 as vb, t3.b as vb2 from t2, t3 where t2.a = t3.a) v
+where t1.a = v.va
+order by 1;
+
+# =============================================================================
+# Single-Table String Expression (Can Inline - Collation Safe)
+# =============================================================================
+# Query: t1 JOIN (t2 JOIN t3) with UPPER(t2.c) computed expression
+# Tests that single-table string expressions can be safely inlined.
+# From first principles, the collation context is preserved because:
+# 1. The expression's collation is determined by its source columns
+# 2. Join reordering doesn't change which columns participate in the expression
+# 3. The expression is evaluated in the same context after inlining
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+# =============================================================================
+# LEFT JOIN with Single-Table Expressions (Can Inline)
+# =============================================================================
+# These tests verify correct handling of outer joins where projection inlining
+# uses SINGLE-TABLE expressions that CAN be inlined.
+
+# LEFT JOIN - projection with single-table expression on OUTER (left) side
+# Query: (Projection(t2 JOIN t3)) LEFT JOIN t5
+# The projection uses t2.b * 2 which only references t2 (single-table, can inline)
+#
+# EXPECTED BEHAVIOR:
+# - The derived table (dt) is on the OUTER side of the LEFT JOIN.
+# - The expression (t2.b * 2) only references t2, so projection CAN be inlined.
+# - When ON, the join group should include {t2, t3, t5} for potential reordering.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a;
+
+select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a;
+
+select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a
+order by 1;
+
+# LEFT JOIN - projection with single-table expression on INNER (right) side
+# Query: t1 LEFT JOIN (Projection(t2 JOIN t3))
+#
+# EXPECTED BEHAVIOR:
+# - The derived table (dt) is on the INNER side of the LEFT JOIN.
+# - Current implementation: extractJoinGroupImpl doesn't recurse into inner side
+#   for LeftOuterJoin, so this projection is naturally NOT inlined even with
+#   single-table expressions.
+#
+# RESULT: Plans should be identical for both OFF and ON.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.* from t1
+left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+on t1.a = dt.key_a;
+
+select t1.a, dt.* from t1
+left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+on t1.a = dt.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.* from t1
+left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+on t1.a = dt.key_a;
+
+select t1.a, dt.* from t1
+left join (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+on t1.a = dt.key_a
+order by 1;
+
+# LEFT JOIN with single-table derived column in OuterBindCondition
+# Query: (Projection(t2 JOIN t3)) LEFT JOIN t5 ON dt.key_a = t5.a AND dt.doubled_b > 100
+# The condition dt.doubled_b > 100 references a single-table derived column.
+#
+# EXPECTED BEHAVIOR:
+# - The expression (t2.b * 2) only references t2, so it CAN be inlined.
+# - When projection is inlined, this condition is SUBSTITUTED:
+#   dt.doubled_b > 100 -> (t2.b * 2) > 100
+# - This tests the outerBindCondition substitution in extractJoinGroupImpl.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a and dt.doubled_b > 100;
+
+select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a and dt.doubled_b > 100
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a and dt.doubled_b > 100;
+
+select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a and dt.doubled_b > 100
+order by 1;
+
+# LEFT JOIN with multi-leaf derived columns in OuterBindCondition (Should NOT Expand)
+# Query: (Projection(t2 JOIN t3)) LEFT JOIN t5
+#   ON dt.key_a = t5.a AND dt.doubled_b > 0 AND dt.shifted_b > 150
+#
+# The outer-join filters reference derived columns from DIFFERENT leaves:
+# - dt.doubled_b -> t2.b * 2 (from t2)
+# - dt.shifted_b -> t3.b + 100 (from t3)
+#
+# If join reorder incorrectly expands the outer join into the join group and chooses
+# to build (t2 LEFT JOIN t5) JOIN t3, the t3-dependent filter could be lost because
+# t3 is not available when constructing the outer join.
+drop table if exists oj_t2, oj_t3, oj_t5;
+create table oj_t2(a int, b int, primary key (a));
+create table oj_t3(a int, b int, primary key (a));
+create table oj_t5(a int, b int, primary key (a));
+
+insert into oj_t2 values
+  (1, 10), (2, 20), (3, 30), (4, 40), (5, 50),
+  (6, 60), (7, 70), (8, 80), (9, 90), (10, 100);
+insert into oj_t3 values
+  (1, 10), (2, 100), (3, 10), (4, 10), (5, 10),
+  (6, 10), (7, 10), (8, 10), (9, 10), (10, 10);
+insert into oj_t5 values (1, 1000), (2, 2000);
+analyze table oj_t2, oj_t3, oj_t5;
+
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
+  (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
+   from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
+left join oj_t5 on dt.key_a = oj_t5.a and dt.doubled_b > 0 and dt.shifted_b > 150
+order by dt.key_a;
+
+select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
+  (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
+   from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
+left join oj_t5 on dt.key_a = oj_t5.a and dt.doubled_b > 0 and dt.shifted_b > 150
+order by dt.key_a;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
+  (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
+   from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
+left join oj_t5 on dt.key_a = oj_t5.a and dt.doubled_b > 0 and dt.shifted_b > 150
+order by dt.key_a;
+
+select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
+  (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b, oj_t3.b + 100 as shifted_b
+   from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
+left join oj_t5 on dt.key_a = oj_t5.a and dt.doubled_b > 0 and dt.shifted_b > 150
+order by dt.key_a;
+
+# Repro Case: Outer Join + Reversed Edge + Expression Join Key
+# This case exercises the checkConnection() branch where:
+# - A LeftOuterJoin edge is found in reverse direction (current join tree starts from the INNER side)
+# - The outer-side join key is a scalar expression after projection inlining
+# - buildJoinEdge() must inject a projection to materialize the expression join key
+#
+# Without correct leftNode/rightNode update after injectExpr(), this can produce an invalid plan
+# (join condition columns not found in join children schema).
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
+  (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b
+   from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
+left join oj_t5 on dt.doubled_b = oj_t5.b
+order by dt.key_a;
+
+select dt.key_a, ifnull(oj_t5.b, -1) as t5_b from
+  (select oj_t2.a as key_a, oj_t2.b * 2 as doubled_b
+   from oj_t2 join oj_t3 on oj_t2.a = oj_t3.a) dt
+left join oj_t5 on dt.doubled_b = oj_t5.b
+order by dt.key_a;
+
+drop table oj_t2, oj_t3, oj_t5;
+
+# Note: RIGHT JOIN tests are omitted as they mirror LEFT JOIN behavior.
+# The key difference is which side is OUTER vs INNER, but the projection
+# inlining logic is symmetric.
+
+# =============================================================================
+# Multiple Derived Tables with Single-Table Expressions (Can Inline)
+# =============================================================================
+# Query: (Projection(t1 JOIN t2)) INNER JOIN (Projection(t3 JOIN t4))
+# Each projection uses single-table expressions that CAN be inlined.
+#
+# EXPECTED BEHAVIOR:
+# - Two separate derived tables, each containing an inner join with single-table expressions.
+# - Each projection is evaluated independently for inlining.
+# - If both are inlined, join group becomes {t1, t2, t3, t4}.
+# - The join condition dt1.a1 = dt2.a3 becomes t1.a = t3.a after substitution.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3
+order by 1;
+
+# Join on computed columns (dt1.doubled1 = dt2.doubled3)
+# Tests colExprMap substitution for computed column join keys between two derived tables
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled3;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled3
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled3;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled3
+order by 1;
+
+# =============================================================================
+# Deeply Nested Derived Tables with Single-Table Expressions (Can Inline)
+# =============================================================================
+# Query: t1 JOIN (Projection(dt1 JOIN t4)) where dt1 = (Projection(t2 JOIN t3))
+# Each projection uses single-table expressions that CAN be inlined.
+#
+# EXPECTED BEHAVIOR:
+# - Three levels of nesting: t1 -> dt2 -> dt1 -> (t2, t3)
+# - Each level has a projection with single-table expressions:
+#   - dt1: t2.b * 2 as doubled_b (only references t2)
+#   - dt2: dt1.doubled_b + 10 as adjusted (references dt1 column, which expands to t2.b * 2)
+# - Multi-level colExprMap propagation:
+#   1. dt1's colExprMap: doubled_b -> (t2.b * 2)
+#   2. dt2's colExprMap: adjusted -> (dt1.doubled_b + 10) -> ((t2.b * 2) + 10)
+#
+# This is a KEY test for bottom-up colExprMap propagation correctness.
+# If working correctly, join group should include {t1, t2, t3, t4}.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a;
+
+select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a;
+
+select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a
+order by 1;
+
+# Join on nested computed column (outer_t.b = dt2.adjusted)
+# Tests multi-level colExprMap substitution: adjusted = doubled_b + 10 = (t2.b * 2) + 10
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.b = dt2.adjusted;
+
+select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.b = dt2.adjusted
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.b = dt2.adjusted;
+
+select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.b = dt2.adjusted
+order by 1;
+
+# =============================================================================
+# Non-Deterministic Functions (Safety Check)
+# =============================================================================
+# Query: t1 JOIN (Projection with rand() function over t2 JOIN t3)
+#
+# EXPECTED BEHAVIOR:
+# - The projection contains rand() which is NON-DETERMINISTIC.
+# - canInlineProjection() checks expression.CheckNonDeterministic() and returns FALSE.
+# - Projection should NOT be inlined regardless of the session variable.
+# - Plans should be IDENTICAL for both OFF and ON.
+#
+# WHY BLOCK NON-DETERMINISTIC:
+# If we inline and reorder, the number of times rand() is called could change,
+# or it could be computed at a different point in the query execution,
+# producing different and incorrect results.
+#
+# NOTE: The SELECT doesn't reference unsafe_expr, but its presence in the
+# projection still blocks inlining for the entire projection.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.a2, dt.cross_table_sum from t1,
+  (select t2.a as a2, t2.b + t3.b as cross_table_sum, rand() as unsafe_expr 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.a2, dt.cross_table_sum from t1,
+  (select t2.a as a2, t2.b + t3.b as cross_table_sum, rand() as unsafe_expr 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2;
+
+# =============================================================================
+# Side Effects (setvar) - Should Block Inline
+# =============================================================================
+# Query: Projection contains @var := expr which has side effects
+#
+# EXPECTED BEHAVIOR:
+# - expression.ExprsHasSideEffects() returns true for setvar
+# - Projection should NOT be inlined
+# - Plans should be identical for OFF and ON
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.a2, dt.val from t1,
+  (select t2.a as a2, @v := t2.b as val from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.a2, dt.val from t1,
+  (select t2.a as a2, @v := t2.b as val from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.a2;
+
+# Note: Single-table expression test is covered by earlier "Basic Single-Table Expressions"
+# test case, so this duplicate section is removed.
+
+# =============================================================================
+# Expression Join Key in Derived Table (Projection over Join)
+# =============================================================================
+# This test structures the query so that the expression join key (m.b + 1)
+# is computed in a derived table that contains a join. This ensures the
+# Projection is OVER a Join node, truly blocking the join group.
+#
+# STRUCTURE:
+# - dt: Projection over (expr_medium JOIN expr_large), with expression m.b+1
+# - Outer: expr_small JOIN dt ON s.a = dt.expr_key
+#
+# EXPECTED BEHAVIOR:
+# - OFF: Join group = {s, Projection(m JOIN l)}, projection blocks visibility
+# - ON: Projection is inlined, join group = {s, m, l}, join order may change
+#
+# Setup: Create tables with different row counts to influence join order
+drop table if exists expr_small, expr_medium, expr_large;
+create table expr_small(a int, b int, primary key (a), key(b));
+create table expr_medium(a int, b int, primary key (a), key(b));
+create table expr_large(a int, b int, primary key (a), key(b));
+
+# Different row counts: small (2), medium (6), large (20)
+insert into expr_small values(11, 10), (21, 20);
+insert into expr_medium values(1, 10), (2, 20), (3, 30), (4, 40), (5, 50), (6, 60);
+insert into expr_large values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10);
+insert into expr_large values(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20);
+
+analyze table expr_small, expr_medium, expr_large;
+
+# Query: outer table joins with derived table that has expression join key
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select s.*, dt.* from expr_small s,
+  (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
+where s.a = dt.expr_key;
+
+select s.*, dt.* from expr_small s,
+  (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
+where s.a = dt.expr_key
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select s.*, dt.* from expr_small s,
+  (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
+where s.a = dt.expr_key;
+
+select s.*, dt.* from expr_small s,
+  (select m.a as key_a, m.b + 1 as expr_key, l.b as lb from expr_medium m join expr_large l on m.a = l.a) dt
+where s.a = dt.expr_key
+order by 1;
+
+drop table expr_small, expr_medium, expr_large;
+
+# =============================================================================
+# Type Coercion in Derived Table with Join (INT vs DOUBLE)
+# =============================================================================
+# This test structures the query so that type coercion (CAST int to double)
+# happens in a derived table that contains a join. The outer table then joins
+# with this derived table using the casted column.
+#
+# STRUCTURE:
+# - dt: Projection over (t_int_large JOIN t_double_medium), with cast expression
+# - Outer: t_int_small JOIN dt
+#
+# This ensures the CAST Projection is OVER a Join, allowing inline to have effect.
+drop table if exists t_int_small, t_double_medium, t_int_large;
+create table t_int_small(a int, b int, primary key (a), key(b));
+create table t_double_medium(a double, b double, key(a));
+create table t_int_large(a int, b int, primary key (a), key(b));
+
+# Different row counts: small (2), medium (6), large (20)
+insert into t_int_small values(1, 10), (2, 20);
+insert into t_double_medium values(1.0, 100.0), (2.0, 200.0), (3.0, 300.0), (4.0, 400.0), (5.0, 500.0), (6.0, 600.0);
+insert into t_int_large values(1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10);
+insert into t_int_large values(11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20);
+
+analyze table t_int_small, t_double_medium, t_int_large;
+
+# Query: outer table joins with derived table that has cast expression
+# The derived table contains a join between int and double columns,
+# producing a projection with CAST to match types
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select s.*, dt.* from t_int_small s,
+  (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb 
+   from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
+where s.a = dt.key_a;
+
+select s.*, dt.* from t_int_small s,
+  (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb 
+   from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
+where s.a = dt.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select s.*, dt.* from t_int_small s,
+  (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb 
+   from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
+where s.a = dt.key_a;
+
+select s.*, dt.* from t_int_small s,
+  (select l.a as key_a, l.b * 2 as doubled_b, m.b as mb 
+   from t_int_large l join t_double_medium m on cast(l.a as double) = m.a) dt
+where s.a = dt.key_a
+order by 1;
+
+drop table t_int_small, t_double_medium, t_int_large;
+
+# NOTE: Pure Column Pass-through Projection test removed.
+# Such projections are eliminated by ProjectionEliminator before join reorder,
+# so there's no projection to inline. Testing this case is redundant.
+
+# =============================================================================
+# DP Solver Path - Many Inner Joins
+# =============================================================================
+# Query: 5 tables with inner joins - triggers DP solver when threshold is not exceeded
+# Tests findNodeIndexInGroupWithSubstitution in rule_join_reorder_dp.go
+set tidb_opt_join_reorder_threshold = 10;
+
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.doubled_b from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a;
+
+select t1.a, dt.key_a, dt.doubled_b from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.doubled_b from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a;
+
+select t1.a, dt.key_a, dt.doubled_b from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a
+order by 1;
+
+# DP Solver with computed column as join key
+# This test SPECIFICALLY uses a computed column (doubled_b = t2.b * 2) as the join key
+# between the outer table and derived table. After colExprMap substitution:
+#   t1.b = dt.doubled_b -> t1.b = (t2.b * 2)
+# The EQ condition's right side changes from Column to ScalarFunction.
+# This tests whether DP phase (rule_join_reorder_dp.go L69-70) correctly handles
+# the substituted expression.
+#
+# POTENTIAL ISSUE: If DP phase directly type-asserts sf.GetArgs()[1].(*Column),
+# it would panic because after substitution the argument is ScalarFunction not Column.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a;
+
+select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a;
+
+select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_threshold = 10;
+
+# DP Solver with multiple computed columns as join keys
+# Tests multiple substituted expressions in single query
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
+
+select t1.a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a;
+
+select t1.a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c and dt.key_a = t5.a
+order by 1;
+
+# DP Solver with computed column in filter (otherConds)
+# Tests substitution in non-equality conditions during DP graph building
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
+
+select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100;
+
+select t1.a, dt.key_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.key_a = t5.a and dt.doubled_b > 100
+order by 1;
+
+# DP Solver with nested computed expression
+# Tests multi-level colExprMap substitution in DP phase
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt2.key_a from t1, t5,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted and dt2.key_a = t5.a;
+
+select t1.a, dt2.key_a from t1, t5,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted and dt2.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt2.key_a from t1, t5,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted and dt2.key_a = t5.a;
+
+select t1.a, dt2.key_a from t1, t5,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted and dt2.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_threshold = 0;
+
+# =============================================================================
+# Derived Column in WHERE Filter (colExprMap Substitution)
+# =============================================================================
+# Query: WHERE clause references the derived column dt.doubled_b
+# Tests substituteColsInExprs for otherConds
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.doubled_b from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100;
+
+select t1.a, dt.key_a, dt.doubled_b from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.key_a, dt.doubled_b from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100;
+
+select t1.a, dt.key_a, dt.doubled_b from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 100
+order by 1;
+
+# =============================================================================
+# Computed Expressions in JOIN Conditions (colExprMap Substitution Test)
+# =============================================================================
+# The following tests verify that computed columns from projections can be
+# correctly used in JOIN conditions, requiring proper colExprMap substitution.
+
+# Computed expression in INNER JOIN condition
+# Query: t1 JOIN (Projection(t2 JOIN t3)) ON t1.b = dt.doubled_b
+# The JOIN condition references dt.doubled_b which is a computed column (t2.b * 2)
+#
+# EXPECTED BEHAVIOR:
+# - OFF: Projection blocks join reorder
+# - ON: Projection is inlined, and the condition "t1.b = dt.doubled_b" is substituted
+#   to "t1.b = (t2.b * 2)". This tests colExprMap substitution in eqCond.
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b;
+
+select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b;
+
+select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b
+order by 1;
+
+# Multiple computed expressions in JOIN conditions
+# Query: t1 JOIN dt ON t1.b = dt.doubled_b AND t1.c = dt.upper_c
+# Both join conditions use computed columns
+#
+# EXPECTED BEHAVIOR:
+# - Both conditions should be substituted:
+#   t1.b = dt.doubled_b -> t1.b = (t2.b * 2)
+#   t1.c = dt.upper_c -> t1.c = upper(t2.c)
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c;
+
+select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c;
+
+select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b, upper(t2.c) as upper_c 
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and t1.c = dt.upper_c
+order by 1;
+
+# Computed expression with arithmetic in WHERE filter
+# Query: WHERE t1.a = dt.key_a AND dt.doubled_b > 200
+# Combines regular column join (t1.a = dt.key_a) with computed column filter
+#
+# EXPECTED BEHAVIOR:
+# - The filter "dt.doubled_b > 200" should be substituted to "(t2.b * 2) > 200"
+# - This tests substituteColsInExprs for otherConds
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 200;
+
+select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 200
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 200;
+
+select t1.*, dt.* from t1,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a and dt.doubled_b > 200
+order by 1;
+
+# Computed expression in multi-table join condition
+# Query: t1 JOIN dt ON t1.b = dt.doubled_b, and dt JOIN t5 ON dt.key_a = t5.a
+# Tests computed column join in a 3-table scenario
+#
+# EXPECTED BEHAVIOR:
+# - Join group should include {t1, t2, t3, t5}
+# - Condition "t1.b = dt.doubled_b" is substituted to "t1.b = (t2.b * 2)"
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.*, dt.*, t5.a as t5_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a;
+
+select t1.*, dt.*, t5.a as t5_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.*, dt.*, t5.a as t5_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a;
+
+select t1.*, dt.*, t5.a as t5_a from t1, t5,
+  (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt
+where t1.b = dt.doubled_b and dt.key_a = t5.a
+order by 1;
+
+# Nested computed expression in JOIN condition
+# Query: Outer query joins with dt on a column that is computed from inner dt1
+# Tests multi-level colExprMap substitution in join conditions
+#
+# EXPECTED BEHAVIOR:
+# - dt2.adjusted is computed from dt1.doubled_b which is t2.b * 2
+# - Final substitution: t1.b = (t2.b * 2) + 10
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.*, dt2.* from t1,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted;
+
+select t1.*, dt2.* from t1,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.*, dt2.* from t1,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted;
+
+select t1.*, dt2.* from t1,
+  (select dt1.key_a, dt1.doubled_b + 10 as adjusted from 
+    (select t2.a as key_a, t2.b * 2 as doubled_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where t1.b = dt2.adjusted
+order by 1;
+
+# Computed expression between two derived tables
+# Query: dt1 JOIN dt2 ON dt1.doubled1 = dt2.doubled2
+# Both sides use computed columns in the join condition
+#
+# EXPECTED BEHAVIOR:
+# - Condition "dt1.doubled1 = dt2.doubled2" is substituted to "(t1.b * 2) = (t3.b * 2)"
+# - Join group should include {t1, t2, t3, t4}
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled2;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled2
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled2;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b * 2 as doubled1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b * 2 as doubled2 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.doubled1 = dt2.doubled2
+order by 1;
+
+
+# ###########################################################################
+# CROSS-TABLE EXPRESSIONS - CANNOT INLINE
+# ###########################################################################
+# The following tests demonstrate cases where projection CANNOT be inlined
+# because expressions reference columns from MULTIPLE base tables.
+#
+# WHY BLOCK CROSS-TABLE: If we inline a projection with (t2.b + t3.b), this
+# expression can only be computed AFTER t2 and t3 are already joined. If the
+# reordering separates t2 and t3 to different branches, the expression becomes
+# invalid. So we conservatively block such projections.
+#
+# ALL TESTS BELOW: Plans should be IDENTICAL for both OFF and ON modes.
+
+# Cross-Table Arithmetic Expression
+# Expression: t2.b + t3.b (references BOTH t2 and t3)
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, t2.b + t3.b as cross_sum, t2.b * t3.b as cross_product
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+# Cross-Table String/Function Expression
+# Expressions: concat(t2.c, '-', t3.c), greatest(t2.b, t3.b), least(t2.b, t3.b)
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, 
+          concat(t2.c, '-', t3.c) as combined_c,
+          greatest(t2.b, t3.b) as max_b,
+          least(t2.b, t3.b) as min_b
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, 
+          concat(t2.c, '-', t3.c) as combined_c,
+          greatest(t2.b, t3.b) as max_b,
+          least(t2.b, t3.b) as min_b
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t1.a, dt.* from t1,
+  (select t2.a as key_a, 
+          concat(t2.c, '-', t3.c) as combined_c,
+          greatest(t2.b, t3.b) as max_b,
+          least(t2.b, t3.b) as min_b
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a;
+
+select t1.a, dt.* from t1,
+  (select t2.a as key_a, 
+          concat(t2.c, '-', t3.c) as combined_c,
+          greatest(t2.b, t3.b) as max_b,
+          least(t2.b, t3.b) as min_b
+   from t2 join t3 on t2.a = t3.a) dt
+where t1.a = dt.key_a
+order by 1;
+
+# Cross-Table CTE Expression
+# Expression: t2.b + t3.b in CTE
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' with joined_cte as (
+  select t2.a as cte_a, t2.b + t3.b as sum_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.sum_b from t1 join joined_cte cte on t1.a = cte.cte_a;
+
+with joined_cte as (
+  select t2.a as cte_a, t2.b + t3.b as sum_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.sum_b from t1 join joined_cte cte on t1.a = cte.cte_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' with joined_cte as (
+  select t2.a as cte_a, t2.b + t3.b as sum_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.sum_b from t1 join joined_cte cte on t1.a = cte.cte_a;
+
+with joined_cte as (
+  select t2.a as cte_a, t2.b + t3.b as sum_b 
+  from t2 join t3 on t2.a = t3.a
+)
+select t1.a, cte.cte_a, cte.sum_b from t1 join joined_cte cte on t1.a = cte.cte_a
+order by 1;
+
+# Cross-Table LEFT JOIN Expression
+# Expression: t2.b + t3.b in LEFT JOIN outer side
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a;
+
+select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a;
+
+select dt.*, t5.a as t5_a from
+  (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+left join t5 on dt.key_a = t5.a
+order by 1;
+
+# Cross-Table RIGHT JOIN Expression
+# Expression: t2.b + t3.b in RIGHT JOIN outer side
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t5.a as t5_a, dt.* from t5
+right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+on t5.a = dt.key_a;
+
+select t5.a as t5_a, dt.* from t5
+right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+on t5.a = dt.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t5.a as t5_a, dt.* from t5
+right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+on t5.a = dt.key_a;
+
+select t5.a as t5_a, dt.* from t5
+right join (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt
+on t5.a = dt.key_a
+order by 1;
+
+# Cross-Table Multiple Derived Tables
+# Expressions: t1.b + t2.b, t3.b + t4.b
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3;
+
+select dt1.*, dt2.* from
+  (select t1.a as a1, t1.b + t2.b as sum1 from t1 join t2 on t1.a = t2.a) dt1,
+  (select t3.a as a3, t3.b + t4.b as sum3 from t3 join t4 on t3.a = t4.a) dt2
+where dt1.a1 = dt2.a3
+order by 1;
+
+# Cross-Table Deeply Nested Expression
+# Expressions: t2.b + t3.b in nested derived tables
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.sum_b + t4.b as final_sum from 
+    (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a;
+
+select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.sum_b + t4.b as final_sum from 
+    (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a
+order by 1;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.sum_b + t4.b as final_sum from 
+    (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a;
+
+select outer_t.a, dt2.* from t1 outer_t,
+  (select dt1.key_a, dt1.sum_b + t4.b as final_sum from 
+    (select t2.a as key_a, t2.b + t3.b as sum_b from t2 join t3 on t2.a = t3.a) dt1
+   join t4 on dt1.key_a = t4.a) dt2
+where outer_t.a = dt2.key_a
+order by 1;
+
+# =============================================================================
+# Regression: CanonicalHashCode Cache Invalidation During Substitution
+# =============================================================================
+# When join reorder injects projection columns for expression join keys, it reuses
+# those columns in other conditions via CanonicalHashCode-keyed maps. If a
+# ScalarFunction is cloned and its args are rewritten during that substitution,
+# its cached canonical hash must be cleared; otherwise later substitutions can
+# match based on stale hash and incorrectly replace the rewritten expression.
+set tidb_opt_join_reorder_through_proj = on;
+set tidb_opt_join_reorder_threshold = 0;
+explain format = 'plan_tree' select t1.a, dt.a2 from t1 join (
+  select t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.b = dt.doubled_b and t1.b + 1 = dt.doubled_b + 1
+where dt.doubled_b + 1 > t1.a;
+
+select t1.a, dt.a2 from t1 join (
+  select t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.b = dt.doubled_b and t1.b + 1 = dt.doubled_b + 1
+where dt.doubled_b + 1 > t1.a order by t1.a;
+
+# =============================================================================
+# Derived Column Aliasing - Cross-Leaf Expression Detection
+# =============================================================================
+# This section verifies canInlineProjection rejects cross-leaf expressions even when
+# columns are re-aliased through derived tables.
+#
+# Example: SELECT t.a + t.b FROM (SELECT t1.a, t2.b FROM t1, t2) t
+# Here, the expression text looks like it only references one derived table "t",
+# but t.a and t.b originate from different join-group leaves (t1 and t2).
+#
+# The inlining safety check reasons about join-group leaves via column UniqueIDs and
+# leaf schema membership (not by alias/table name prefixes), so it should correctly
+# detect the cross-leaf dependency and refuse to inline the Projection.
+
+# Recreate test tables
+drop table if exists t1, t2, t3, t4;
+create table t1(a int, b int, primary key (a));
+create table t2(a int, b int, primary key (a));
+create table t3(a int, b int, primary key (a));
+create table t4(a int, b int, primary key (a));
+
+insert into t1 values(1, 10), (2, 20), (3, 30);
+insert into t2 values(1, 100), (2, 200), (3, 300);
+insert into t3 values(1, 1000), (2, 2000), (3, 3000);
+insert into t4 values(101, 1), (120, 2), (230, 3);
+
+# Alias-derived columns (shallow): Expression (t.a + t.b) appears to reference single table "t",
+# but t.a comes from t1 and t.b comes from t2.
+# This is a cross-table expression that should NOT be inlined.
+#
+# STRUCTURE:
+# - Inner: (t1 JOIN t2) produces columns aliased as t.a (from t1.a) and t.b (from t2.b)
+# - Middle: Projection computes t.a + t.b as 'plus', JOIN t3
+# - Outer: t4 joins using t4.a = tt.plus (the derived column)
+#
+# The key point: 'plus' is computed from t.a + t.b where t.a and t.b appear to be
+# from the same table 't', but actually originate from different base tables (t1, t2).
+# Even though both columns are re-aliased under the same derived-table prefix "t",
+# the inlining logic should still treat this as a cross-leaf expression.
+
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t4.a, tt.plus from t4,
+  (select t.a + t.b as plus, t3.a as t3_a from (
+    select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
+  ) t
+  join t3 on t.a = t3.a) tt
+where t4.a = tt.plus;
+
+select t4.a, tt.plus from t4,
+  (select t.a + t.b as plus, t3.a as t3_a from (
+    select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
+  ) t
+  join t3 on t.a = t3.a) tt
+where t4.a = tt.plus order by t4.a;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t4.a, tt.plus from t4,
+  (select t.a + t.b as plus, t3.a as t3_a from (
+    select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
+  ) t
+  join t3 on t.a = t3.a) tt
+where t4.a = tt.plus;
+
+select t4.a, tt.plus from t4,
+  (select t.a + t.b as plus, t3.a as t3_a from (
+    select t1.a as a, t2.b as b from t1, t2 where t1.a = t2.a
+  ) t
+  join t3 on t.a = t3.a) tt
+where t4.a = tt.plus order by t4.a;
+
+# Alias-derived columns (deep): More deeply nested alias case
+# dt2.combined references dt1.val_a and dt1.val_b, which come from t1.a and t2.b
+# Outer t4 joins on t4.a = dt2.combined
+
+set tidb_opt_join_reorder_through_proj = off;
+explain format = 'plan_tree' select t4.a, dt2.combined from t4,
+  (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
+    select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
+  ) dt1
+  join t3 on dt1.val_a = t3.a) dt2
+where t4.a = dt2.combined;
+
+select t4.a, dt2.combined from t4,
+  (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
+    select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
+  ) dt1
+  join t3 on dt1.val_a = t3.a) dt2
+where t4.a = dt2.combined order by t4.a;
+
+set tidb_opt_join_reorder_through_proj = on;
+explain format = 'plan_tree' select t4.a, dt2.combined from t4,
+  (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
+    select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
+  ) dt1
+  join t3 on dt1.val_a = t3.a) dt2
+where t4.a = dt2.combined;
+
+select t4.a, dt2.combined from t4,
+  (select dt1.val_a + dt1.val_b as combined, t3.a as t3_a from (
+    select t1.a as val_a, t2.b as val_b from t1 join t2 on t1.a = t2.a
+  ) dt1
+  join t3 on dt1.val_a = t3.a) dt2
+where t4.a = dt2.combined order by t4.a;
+
+# =============================================================================
+# Hint Compatibility (LEADING / Join Method)
+# =============================================================================
+# The join reorder process may inject extra projections to materialize expressions
+# (e.g. t2.b * 2) as columns. This must not break hint matching.
+#
+# 1) LEADING(): still works after projection inlining and expression materialization.
+# 2) Join method hints: MERGE_JOIN(t2) should still take effect even if the
+#    join side is wrapped by an injected projection.
+
+set tidb_opt_join_reorder_through_proj = on;
+set tidb_opt_join_reorder_threshold = 0;
+set tidb_opt_advanced_join_hint = on;
+
+# Baseline: greedy reorder prefers joining t1 with t2 first (t1.b = t2.b * 2 is selective)
+explain format = 'plan_tree' select t1.a, dt.a2 from t1 join (
+  select t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.b = dt.doubled_b;
+
+# LEADING(t2, t3, t1): enforce joining (t2 JOIN t3) first, then join t1 using the expression join key.
+explain format = 'plan_tree' select /*+ leading(t2, t3, t1) */ t1.a, dt.a2 from t1 join (
+  select t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.b = dt.doubled_b;
+
+# LEADING + HASH_JOIN: leading is on the outer query block, and hash join hint is inside the derived-table block.
+explain format = 'plan_tree' select /*+ leading(t2, t3, t1) */ t1.a, dt.a2 from t1 join (
+  select /*+ hash_join(t2) */ t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.b = dt.doubled_b;
+
+# MERGE_JOIN(t2): hint should still be applied even if t2 is wrapped by an injected projection
+explain format = 'plan_tree' select t1.a, dt.a2 from t1 join (
+  select /*+ merge_join(t2) */ t2.a as a2, t2.b * 2 as doubled_b, t3.a as a3
+  from t2 join t3 on t2.a = t3.a
+) dt on t1.b = dt.doubled_b;
+
+# =============================================================================
+# Cleanup
+# =============================================================================
+set tidb_opt_join_reorder_through_proj = off;
+drop table if exists t1, t2, t3, t4, t5;
