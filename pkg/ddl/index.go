@@ -103,7 +103,11 @@ var DefaultCumulativeTimeout = 1 * time.Minute
 // exported for testing.
 var DefaultAnalyzeCheckInterval = 10 * time.Second
 
+<<<<<<< HEAD
 func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, isVector bool) ([]*model.IndexColumn, bool, error) {
+=======
+func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, indexPartSpecifications []*ast.IndexPartSpecification, columnarIndexType model.ColumnarIndexType, isUnique bool) ([]*model.IndexColumn, bool, error) {
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	// Build offsets.
 	idxParts := make([]*model.IndexColumn, 0, len(indexPartSpecifications))
 	var col *model.ColumnInfo
@@ -119,6 +123,21 @@ func buildIndexColumns(ctx *metabuild.Context, columns []*model.ColumnInfo, inde
 		if isVector && col.FieldType.GetType() != mysql.TypeTiDBVectorFloat32 {
 			return nil, false, dbterror.ErrUnsupportedAddVectorIndex.FastGenByArgs(fmt.Sprintf("only support vector type, but this is type: %s", col.FieldType.String()))
 		}
+<<<<<<< HEAD
+=======
+		if columnarIndexType == model.ColumnarIndexTypeInverted && !types.IsTypeStoredAsInteger(col.FieldType.GetType()) {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support integer type, but this is type: %s", col.FieldType.String()))
+		}
+		if columnarIndexType == model.ColumnarIndexTypeFulltext && !types.IsString(col.FieldType.GetType()) {
+			return nil, false, dbterror.ErrUnsupportedAddColumnarIndex.FastGenByArgs(fmt.Sprintf("only support string type, but this is type: %s", col.FieldType.String()))
+		}
+		if col.Name == model.ExtraCommitTSName {
+			return nil, false, errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
+		}
+		if isUnique && model.IsSoftDeleteOrActiveActiveColumn(col.Name) {
+			return nil, false, errors.Trace(dbterror.ErrWrongKeyColumn.GenWithStackByArgs(col.Name))
+		}
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 
 		// return error in strict sql mode
 		if err := checkIndexColumn(col, ip.Length, ctx != nil && (!ctx.GetSQLMode().HasStrictMode() || ctx.SuppressTooLongIndexErr()), isVector); err != nil {
@@ -368,7 +387,11 @@ func BuildIndexInfo(
 
 	var err error
 	allTableColumns := tblInfo.Columns
+<<<<<<< HEAD
 	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, isVector)
+=======
+	idxInfo.Columns, idxInfo.MVIndex, err = buildIndexColumns(ctx, allTableColumns, indexPartSpecifications, columnarIndexType, isUnique)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}

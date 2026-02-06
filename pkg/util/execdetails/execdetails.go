@@ -189,6 +189,33 @@ const (
 	RocksdbBlockReadByteStr = "Rocksdb_block_read_byte"
 	// RocksdbBlockReadTimeStr means the time spent on rocksdb block read.
 	RocksdbBlockReadTimeStr = "Rocksdb_block_read_time"
+<<<<<<< HEAD
+=======
+
+	// The following constants define the set of fields for SlowQueryLogItems
+	// that are relevant to evaluating and triggering SlowLogRules.
+
+	// ProcessTimeStr represents the sum of process time of all the coprocessor tasks.
+	ProcessTimeStr = "Process_time"
+	// BackoffTimeStr means the time of all back-off.
+	BackoffTimeStr = "Backoff_time"
+	// TotalKeysStr means the total scan keys.
+	TotalKeysStr = "Total_keys"
+	// ProcessKeysStr means the total processed keys.
+	ProcessKeysStr = "Process_keys"
+	// PreWriteTimeStr means the time of pre-write.
+	PreWriteTimeStr = "Prewrite_time"
+	// CommitTSLagStr means information for commit ts lagging.
+	CommitTSLagStr = "Commit_ts_lag"
+	// CommitTimeStr means the time of commit.
+	CommitTimeStr = "Commit_time"
+	// WriteKeysStr means the count of keys in the transaction.
+	WriteKeysStr = "Write_keys"
+	// WriteSizeStr means the key/value size in the transaction.
+	WriteSizeStr = "Write_size"
+	// PrewriteRegionStr means the count of region when pre-write.
+	PrewriteRegionStr = "Prewrite_region"
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 )
 
 // String implements the fmt.Stringer interface.
@@ -228,6 +255,13 @@ func (d ExecDetails) String() string {
 		}
 		if commitDetails.GetLatestTsTime > 0 {
 			parts = append(parts, GetLatestTsTimeStr+": "+strconv.FormatFloat(commitDetails.GetLatestTsTime.Seconds(), 'f', -1, 64))
+		}
+		if lagDetails := commitDetails.LagDetails; lagDetails.FirstLagTS > 0 {
+			parts = append(parts, CommitTSLagStr+
+				": {wait_time: "+strconv.FormatFloat(lagDetails.WaitTime.Seconds(), 'f', -1, 64)+
+				", backoff_count: "+strconv.Itoa(lagDetails.BackoffCnt)+
+				", first_lag_ts: "+strconv.FormatUint(lagDetails.FirstLagTS, 10)+
+				", wait_until_ts: "+strconv.FormatUint(lagDetails.WaitUntilTS, 10)+"}")
 		}
 		commitDetails.Mu.Lock()
 		commitBackoffTime := commitDetails.Mu.CommitBackoffTime

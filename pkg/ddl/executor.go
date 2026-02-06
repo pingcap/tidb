@@ -225,6 +225,8 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 
 	explicitCharset := false
 	explicitCollation := false
+	var activeActive bool
+	softDeleteArg := &model.SoftDeleteInfoArg{}
 	for _, val := range stmt.Options {
 		switch val.Tp {
 		case ast.DatabaseOptionCharset:
@@ -237,6 +239,23 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 			placementPolicyRef = &model.PolicyRefInfo{
 				Name: pmodel.NewCIStr(val.Value),
 			}
+		case ast.DatabaseOptionActiveActive:
+			activeActive = val.BoolValue
+		case ast.DatabaseOptionSoftDelete:
+			softDeleteArg.Enable = val.BoolValue
+			softDeleteArg.HasEnable = true
+			softDeleteArg.Handled = true
+		case ast.DatabaseOptionSoftDeleteRetention:
+			softDeleteArg.Retention = val.Value
+			softDeleteArg.RetentionUnit = val.TimeUnitValue.Unit
+			softDeleteArg.Handled = true
+		case ast.DatabaseOptionSoftDeleteJobEnable:
+			softDeleteArg.JobEnable = val.BoolValue
+			softDeleteArg.HasJobEnable = true
+			softDeleteArg.Handled = true
+		case ast.DatabaseOptionSoftDeleteJobInterval:
+			softDeleteArg.JobInterval = val.Value
+			softDeleteArg.Handled = true
 		}
 	}
 
@@ -273,6 +292,10 @@ func (e *executor) CreateSchema(ctx sessionctx.Context, stmt *ast.CreateDatabase
 	dbInfo.Charset = chs
 	dbInfo.Collate = coll
 	dbInfo.PlacementPolicyRef = placementPolicyRef
+	dbInfo.SoftdeleteInfo, dbInfo.IsActiveActive, err = getSoftDeleteAndActiveActive(nil, softDeleteArg, activeActive, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
 
 	onExist := OnExistError
 	if stmt.IfNotExists {
@@ -691,6 +714,37 @@ func checkMultiSchemaSpecs(_ sessionctx.Context, specs []*ast.DatabaseOption) er
 	return nil
 }
 
+func (e *executor) ModifySchemaSoftDeleteAndActiveActive(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt, softDeleteInfo *model.SoftDeleteInfoArg, isActiveActive *bool) error {
+	dbName := stmt.Name
+	is := e.infoCache.GetLatest()
+	dbInfo, ok := is.SchemaByName(dbName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(dbName.O)
+	}
+
+	newInfo, newActiveActive, err := getSoftDeleteAndActiveActive(dbInfo.SoftdeleteInfo, softDeleteInfo, dbInfo.IsActiveActive, isActiveActive)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	// Build the args with the new values
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       dbInfo.ID,
+		SchemaName:     dbInfo.Name.L,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: sctx.GetSessionVars().CDCWriteSource,
+		Type:           model.ActionModifySchemaSoftDeleteAndActiveActive,
+		InvolvingSchemaInfo: []model.InvolvingSchemaInfo{{
+			Database: dbInfo.Name.L,
+			Table:    model.InvolvingAll,
+		}},
+		SQLMode: sctx.GetSessionVars().SQLMode,
+	}
+	args := &model.ModifySchemaSoftDeleteAndActiveActiveArgs{SoftDelete: newInfo, ActiveActive: newActiveActive}
+	return errors.Trace(e.doDDLJob2(sctx, job, args))
+}
+
 func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) (err error) {
 	// Resolve target charset and collation from options.
 	var (
@@ -698,6 +752,8 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 		isAlterCharsetAndCollate bool
 		placementPolicyRef       *model.PolicyRefInfo
 		tiflashReplica           *ast.TiFlashReplicaSpec
+		isActiveActive           *bool
+		softDeleteArg            = &model.SoftDeleteInfoArg{}
 	)
 
 	err = checkMultiSchemaSpecs(sctx, stmt.Options)
@@ -730,6 +786,24 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 			placementPolicyRef = &model.PolicyRefInfo{Name: pmodel.NewCIStr(val.Value)}
 		case ast.DatabaseSetTiFlashReplica:
 			tiflashReplica = val.TiFlashReplica
+		case ast.DatabaseOptionActiveActive:
+			v := val.BoolValue
+			isActiveActive = &v
+		case ast.DatabaseOptionSoftDelete:
+			softDeleteArg.Enable = val.BoolValue
+			softDeleteArg.HasEnable = true
+			softDeleteArg.Handled = true
+		case ast.DatabaseOptionSoftDeleteRetention:
+			softDeleteArg.Retention = val.Value
+			softDeleteArg.RetentionUnit = val.TimeUnitValue.Unit
+			softDeleteArg.Handled = true
+		case ast.DatabaseOptionSoftDeleteJobEnable:
+			softDeleteArg.JobEnable = val.BoolValue
+			softDeleteArg.HasJobEnable = true
+			softDeleteArg.Handled = true
+		case ast.DatabaseOptionSoftDeleteJobInterval:
+			softDeleteArg.JobInterval = val.Value
+			softDeleteArg.Handled = true
 		}
 	}
 
@@ -745,6 +819,11 @@ func (e *executor) AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseS
 	}
 	if tiflashReplica != nil {
 		if err = e.ModifySchemaSetTiFlashReplica(sctx, stmt, tiflashReplica); err != nil {
+			return err
+		}
+	}
+	if softDeleteArg.Handled || isActiveActive != nil {
+		if err = e.ModifySchemaSoftDeleteAndActiveActive(sctx, stmt, softDeleteArg, isActiveActive); err != nil {
 			return err
 		}
 	}
@@ -1023,7 +1102,7 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	if s.ReferTable != nil {
 		tbInfo, err = BuildTableInfoWithLike(ident, referTbl.Meta(), s)
 	} else {
-		tbInfo, err = BuildTableInfoWithStmt(metaBuildCtx, s, schema.Charset, schema.Collate, schema.PlacementPolicyRef)
+		tbInfo, err = BuildTableInfoWithStmt(metaBuildCtx, s, schema)
 	}
 	if err != nil {
 		return errors.Trace(err)
@@ -1817,6 +1896,7 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 			err = e.AlterTablePartitioning(sctx, ident, spec)
 		case ast.AlterTableOption:
 			var placementPolicyRef *model.PolicyRefInfo
+			softDeleteArg := &model.SoftDeleteInfoArg{}
 			for i, opt := range spec.Options {
 				switch opt.Tp {
 				case ast.TableOptionShardRowID:
@@ -1872,6 +1952,21 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 					err = e.AlterTableTTLInfoOrEnable(sctx, ident, ttlInfo, ttlEnable, ttlJobInterval)
 
 					ttlOptionsHandled = true
+				case ast.TableOptionSoftDelete:
+					softDeleteArg.Enable = opt.BoolValue
+					softDeleteArg.HasEnable = true
+					softDeleteArg.Handled = true
+				case ast.TableOptionSoftDeleteRetention:
+					softDeleteArg.Retention = opt.StrValue
+					softDeleteArg.RetentionUnit = opt.TimeUnitValue.Unit
+					softDeleteArg.Handled = true
+				case ast.TableOptionSoftDeleteJobInterval:
+					softDeleteArg.JobInterval = opt.StrValue
+					softDeleteArg.Handled = true
+				case ast.TableOptionSoftDeleteJobEnable:
+					softDeleteArg.JobEnable = opt.BoolValue
+					softDeleteArg.HasJobEnable = true
+					softDeleteArg.Handled = true
 				case ast.TableOptionAffinity:
 					err = e.AlterTableAffinity(sctx, ident, opt.StrValue)
 				default:
@@ -1885,6 +1980,16 @@ func (e *executor) AlterTable(ctx context.Context, sctx sessionctx.Context, stmt
 
 			if placementPolicyRef != nil {
 				err = e.AlterTablePlacement(sctx, ident, placementPolicyRef)
+				if err != nil {
+					return errors.Trace(err)
+				}
+			}
+
+			if softDeleteArg.Handled {
+				err = e.AlterTableSoftDeleteInfo(sctx, ident, softDeleteArg)
+				if err != nil {
+					return errors.Trace(err)
+				}
 			}
 		case ast.AlterTableSetTiFlashReplica:
 			err = e.AlterTableSetTiFlashReplica(sctx, ident, spec.TiFlashReplica)
@@ -3369,7 +3474,11 @@ func (e *executor) RenameColumn(ctx sessionctx.Context, ident ast.Ident, spec *a
 	if oldColName.L == newColName.L {
 		return nil
 	}
-	if newColName.L == model.ExtraHandleName.L {
+
+	if model.IsInternalColumn(oldColName) {
+		return dbterror.ErrWrongColumnName.GenWithStackByArgs(oldColName.L)
+	}
+	if model.IsInternalColumn(newColName) {
 		return dbterror.ErrWrongColumnName.GenWithStackByArgs(newColName.L)
 	}
 
@@ -3800,6 +3909,57 @@ func (e *executor) AlterTableRemoveTTL(ctx sessionctx.Context, ident ast.Ident) 
 	}
 
 	return nil
+}
+
+// AlterTableSoftDeleteInfo submits DDL job to change table soft delete info
+func (e *executor) AlterTableSoftDeleteInfo(
+	ctx sessionctx.Context,
+	ident ast.Ident,
+	softDeleteArg *model.SoftDeleteInfoArg,
+) error {
+	is := e.infoCache.GetLatest()
+	schema, ok := is.SchemaByName(ident.Schema)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(ident.Schema)
+	}
+
+	tb, err := is.TableByName(e.ctx, ident.Schema, ident.Name)
+	if err != nil {
+		return errors.Trace(infoschema.ErrTableNotExists.GenWithStackByArgs(ident.Schema, ident.Name))
+	}
+
+	tblInfo := tb.Meta().Clone()
+	tableID := tblInfo.ID
+	tableName := tblInfo.Name.L
+
+	// Apply the soft delete configuration
+	tblInfo.SoftdeleteInfo, tblInfo.IsActiveActive, err = getSoftDeleteAndActiveActive(tblInfo.SoftdeleteInfo, softDeleteArg, tblInfo.IsActiveActive, nil)
+	if err != nil {
+		return err
+	}
+	// Validate the soft delete configuration
+	err = checkSoftDeleteAndActiveActive(tblInfo, is, schema.Name)
+	if err != nil {
+		return err
+	}
+
+	job := &model.Job{
+		Version:        model.GetJobVerInUse(),
+		SchemaID:       schema.ID,
+		TableID:        tableID,
+		SchemaName:     schema.Name.L,
+		TableName:      tableName,
+		Type:           model.ActionAlterTableSoftDeleteInfo,
+		BinlogInfo:     &model.HistoryInfo{},
+		CDCWriteSource: ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:        ctx.GetSessionVars().SQLMode,
+	}
+
+	args := &model.AlterSoftDeleteInfoArgs{
+		SoftDelete: tblInfo.SoftdeleteInfo,
+	}
+	err = e.doDDLJob2(ctx, job, args)
+	return errors.Trace(err)
 }
 
 func (e *executor) AlterTableAffinity(ctx sessionctx.Context, ident ast.Ident, affinityLevel string) error {
@@ -4625,7 +4785,13 @@ func checkCreateGlobalIndex(ec errctx.Context, tblInfo *model.TableInfo, indexNa
 
 func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption) error {
+<<<<<<< HEAD
 	if indexOption != nil && indexOption.PrimaryKeyTp == pmodel.PrimaryKeyTypeClustered {
+=======
+	const isUnique = true
+
+	if indexOption != nil && indexOption.PrimaryKeyTp == ast.PrimaryKeyTypeClustered {
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		return dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Adding clustered primary key is not supported. " +
 			"Please consider adding NONCLUSTERED primary key instead")
 	}
@@ -4660,7 +4826,11 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
+<<<<<<< HEAD
 	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, false)
+=======
+	indexColumns, _, err := buildIndexColumns(NewMetaBuildContextWithSctx(ctx), tblInfo.Columns, indexPartSpecifications, model.ColumnarIndexTypeNA, isUnique)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4699,7 +4869,7 @@ func (e *executor) CreatePrimaryKey(ctx sessionctx.Context, ti ast.Ident, indexN
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
-			Unique:                  true,
+			Unique:                  isUnique,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
@@ -4785,6 +4955,7 @@ func checkTableTypeForVectorIndex(tblInfo *model.TableInfo) error {
 
 func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, indexName pmodel.CIStr,
 	indexPartSpecifications []*ast.IndexPartSpecification, indexOption *ast.IndexOption, ifNotExists bool) error {
+	const isUnique = false
 	schema, t, err := e.getSchemaAndTableByIdent(ti)
 	if err != nil {
 		return errors.Trace(err)
@@ -4811,7 +4982,11 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
+<<<<<<< HEAD
 	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, true)
+=======
+	_, _, err = buildIndexColumns(metaBuildCtx, tblInfo.Columns, indexPartSpecifications, columnarIndexType, isUnique)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -4831,6 +5006,7 @@ func (e *executor) createVectorIndex(ctx sessionctx.Context, ti ast.Ident, index
 
 	args := &model.ModifyIndexArgs{
 		IndexArgs: []*model.IndexArg{{
+			Unique:                  isUnique,
 			IndexName:               indexName,
 			IndexPartSpecifications: indexPartSpecifications,
 			IndexOption:             indexOption,
@@ -4909,6 +5085,10 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 		return errors.Trace(err)
 	}
 
+	if unique && (t.Meta().IsActiveActive || t.Meta().SoftdeleteInfo != nil) {
+		return errors.Trace(dbterror.ErrAlterOperationNotSupported.GenWithStackByArgs("UNIQUE", "Cannot add unique index on ACTIVE_ACTIVE or softdelete table", "removing UNIQUE"))
+	}
+
 	if t.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 		return errors.Trace(dbterror.ErrOptOnCacheTable.GenWithStackByArgs("Create Index"))
 	}
@@ -4932,7 +5112,11 @@ func (e *executor) createIndex(ctx sessionctx.Context, ti ast.Ident, keyType ast
 	// After DDL job is put to the queue, and if the check fail, TiDB will run the DDL cancel logic.
 	// The recover step causes DDL wait a few seconds, makes the unit test painfully slow.
 	// For same reason, decide whether index is global here.
+<<<<<<< HEAD
 	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, false)
+=======
+	indexColumns, _, err := buildIndexColumns(metaBuildCtx, finalColumns, indexPartSpecifications, model.ColumnarIndexTypeNA, unique)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -5433,6 +5617,9 @@ func CheckIsDropPrimaryKey(indexName pmodel.CIStr, indexInfo *model.IndexInfo, t
 		if t.Meta().IsCommonHandle || t.Meta().PKIsHandle {
 			return isPK, dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is using clustered index")
 		}
+		if t.Meta().IsActiveActive {
+			return isPK, dbterror.ErrUnsupportedModifyPrimaryKey.GenWithStack("Unsupported drop primary key when the table is active-active")
+		}
 	}
 
 	return isPK, nil
@@ -5843,7 +6030,11 @@ func (e *executor) RepairTable(ctx sessionctx.Context, createStmt *ast.CreateTab
 
 	// It is necessary to specify the table.ID and partition.ID manually.
 	newTableInfo, err := buildTableInfoWithCheck(NewMetaBuildContextWithSctx(ctx), ctx.GetStore(), createStmt,
-		oldTableInfo.Charset, oldTableInfo.Collate, oldTableInfo.PlacementPolicyRef)
+		&model.DBInfo{
+			Charset:            oldTableInfo.Charset,
+			Collate:            oldTableInfo.Collate,
+			PlacementPolicyRef: oldTableInfo.PlacementPolicyRef,
+		})
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -6458,6 +6649,14 @@ func (e *executor) AlterTableCache(sctx sessionctx.Context, ti ast.Ident) (err e
 		return errors.Trace(dbterror.ErrUnsupportedAlterCacheForSysTable)
 	} else if t.Meta().TempTableType != model.TempTableNone {
 		return dbterror.ErrOptOnTemporaryTable.GenWithStackByArgs("alter temporary table cache")
+	}
+
+	// Cached table uses transaction Scan API to get data, which does not support returnning _tidb_commit_ts.
+	// So if we allow query _tidb_commit_ts on cached table, it would always return NULL. That would look like a buggy
+	// behavior, so just disallow this combination to avoid it from happenning.
+	// Anyway, both feature's scenario are corner case and their combination are even rare.
+	if t.Meta().IsActiveActive {
+		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("Cached table can not work with active-active feature")
 	}
 
 	if t.Meta().Partition != nil {

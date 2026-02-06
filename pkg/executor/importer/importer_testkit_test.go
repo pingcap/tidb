@@ -349,7 +349,17 @@ func TestProcessChunkWith(t *testing.T) {
 		require.NoError(t, err)
 		checksumMap := checksum.GetInnerChecksums()
 		require.Len(t, checksumMap, 1)
+<<<<<<< HEAD
 		require.Equal(t, verify.MakeKVChecksum(111, 3, 17951921359894607752), *checksumMap[verify.DataKVGroupID])
+=======
+		if kerneltype.IsClassic() {
+			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111, 3, 17525860725273960722),
+				*checksumMap[verify.DataKVGroupID])
+		} else if kerneltype.IsNextGen() {
+			require.Equal(t, verify.MakeKVChecksumWithKeyspace(keyspace, 111+scanedRows*prefixLenForOneRow, 3, 9366516372087212007),
+				*checksumMap[verify.DataKVGroupID])
+		}
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	})
 }
 

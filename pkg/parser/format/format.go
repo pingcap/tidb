@@ -357,9 +357,10 @@ type RestoreWriter interface {
 
 // RestoreCtx is `Restore` context to hold flags and writer.
 type RestoreCtx struct {
-	Flags     RestoreFlags
-	In        RestoreWriter
-	DefaultDB string
+	Flags            RestoreFlags
+	In               RestoreWriter
+	DefaultDB        string
+	inSpecialContext bool
 	CTERestorer
 }
 
@@ -382,9 +383,13 @@ func (ctx *RestoreCtx) WriteKeyWord(keyWord string) {
 
 // WriteWithSpecialComments writes a string with a special comment wrapped.
 func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() error) error {
-	if !ctx.Flags.HasTiDBSpecialCommentFlag() {
+	if !ctx.Flags.HasTiDBSpecialCommentFlag() || ctx.inSpecialContext {
 		return fn()
 	}
+	ctx.inSpecialContext = true
+	defer func() {
+		ctx.inSpecialContext = false
+	}()
 	ctx.WritePlain("/*T!")
 	if len(featureID) != 0 {
 		ctx.WritePlainf("[%s]", featureID)

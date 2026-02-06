@@ -1,0 +1,94 @@
+create table t (id int primary key clustered, v int) softdelete retention 7 day;
+insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
+delete from t where id in (1, 2);
+insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
+select id, v from t;
+id	v
+1	11
+2	12
+3	666
+4	666
+5	15
+select * from t;
+id	v
+1	11
+2	12
+3	666
+4	666
+5	15
+truncate table t;
+insert into t (id, v) values (1, 1), (2, 2), (3, 3);
+delete from t where id = 1;
+insert into t values (2, 222) on duplicate key update v = 'abcd';
+Error 1292 (22007): Truncated incorrect DOUBLE value: 'abcd'
+insert ignore into t values (2, 222) on duplicate key update v = 'abcd';
+show warnings;
+Level	Code	Message
+Warning	1366	Incorrect int value: '0' for column 'v' at row 1
+select id, v from t;
+id	v
+2	0
+3	3
+insert into t values (2, 22) on duplicate key update id = 3;
+Error 1062 (23000): Duplicate entry '3' for key 't.PRIMARY'
+insert ignore into t values (2, 22) on duplicate key update id = 3;
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '3' for key 't.PRIMARY'
+select id, v from t;
+id	v
+2	0
+3	3
+drop table t;
+# test again with nonclustered
+create table t (id int primary key nonclustered, v int) softdelete retention 7 day;
+insert into t (id, v) values (1, 1), (2, 2), (3, 3), (4, 4);
+delete from t where id in (1, 2);
+insert into t (id, v) values (1, 11), (2, 12), (3, 13), (4, 14), (5, 15) on duplicate key update v = 666;
+select id, v from t;
+id	v
+3	666
+4	666
+1	11
+2	12
+5	15
+truncate table t;
+insert into t (id, v) values (1, 1), (2, 2), (3, 3);
+delete from t where id = 1;
+insert into t values (2, 222) on duplicate key update v = 'abcd';
+Error 1292 (22007): Truncated incorrect DOUBLE value: 'abcd'
+insert ignore into t values (2, 222) on duplicate key update v = 'abcd';
+show warnings;
+Level	Code	Message
+Warning	1366	Incorrect int value: '0' for column 'v' at row 1
+select id, v from t;
+id	v
+2	0
+3	3
+insert into t values (2, 22) on duplicate key update id = 3;
+Error 1062 (23000): Duplicate entry '3' for key 't.PRIMARY'
+insert ignore into t values (2, 22) on duplicate key update id = 3;
+show warnings;
+Level	Code	Message
+Warning	1062	Duplicate entry '3' for key 't.PRIMARY'
+select id, v from t;
+id	v
+2	0
+3	3
+create table t1 (id int primary key, v1 int unique, v2 int unique, v3 int unique) softdelete retention 7 day;
+insert into t1 (id, v1, v2, v3) values (1, 1, 1, 1), (2, 2, 2, 2), (3, 3, 3, 3), (4, 4, 4, 4);
+delete from t1 where id in (1, 2);
+set @@tidb_translate_softdelete_sql = 0;
+select id, v1, v2, v3, isnull(_tidb_softdelete_time) from t1;
+id	v1	v2	v3	isnull(_tidb_softdelete_time)
+1	1	1	1	0
+2	2	2	2	0
+3	3	3	3	1
+4	4	4	4	1
+insert into t1 (id, v1, v2, v3) values (1, 2, 3, 5) on duplicate key update v3 = 42;
+select id, v1, v2, v3, isnull(_tidb_softdelete_time) from t1;
+id	v1	v2	v3	isnull(_tidb_softdelete_time)
+1	1	1	42	0
+2	2	2	2	0
+3	3	3	3	1
+4	4	4	4	1

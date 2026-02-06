@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/session"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	ttlsession "github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
 	"github.com/stretchr/testify/require"
@@ -62,7 +63,11 @@ func TestRowToTTLTask(t *testing.T) {
 	now := time.Now()
 	now = now.Round(time.Second)
 
+<<<<<<< HEAD
 	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1, nil, nil, now, now)
+=======
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", ttlsession.TTLJobTypeTTL, 1, 1, nil, nil, now, now)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
@@ -105,7 +110,11 @@ func TestInsertIntoTTLTask(t *testing.T) {
 	now := time.Now()
 	now = now.Round(time.Second)
 
+<<<<<<< HEAD
 	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1,
+=======
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", ttlsession.TTLJobTypeTTL, 1, 1,
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		rangeStart, rangeEnd, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.

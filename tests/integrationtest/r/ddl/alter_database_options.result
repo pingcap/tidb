@@ -1,0 +1,66 @@
+drop database if exists test_aa;
+create database test_aa;
+use test_aa;
+alter database test_aa active_active = 'ON';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_aa';
+SCHEMA_NAME
+test_aa
+alter database test_aa active_active = 'OFF';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_aa';
+SCHEMA_NAME
+test_aa
+alter database test_aa active_active = 'INVALID';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 48 near ""The ACTIVE_ACTIVE option must be 'ON' or 'OFF' 
+drop database test_aa;
+drop database if exists test_sd;
+create database test_sd;
+use test_sd;
+alter database test_sd softdelete = 'ON';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete = 'OFF';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete_retention = '7d';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete_retention = '24h';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete_job_enable = 'ON';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete_job_enable = 'OFF';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete_job_interval = '1h';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete_job_interval = '30m';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_sd';
+SCHEMA_NAME
+test_sd
+alter database test_sd softdelete = 'INVALID';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 45 near ""The SOFTDELETE option must be 'ON' or 'OFF' 
+alter database test_sd softdelete_job_enable = 'MAYBE';
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 54 near ""The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF' 
+drop database test_sd;
+drop database if exists test_combined;
+create database test_combined;
+use test_combined;
+alter database test_combined active_active = 'ON';
+alter database test_combined softdelete = 'ON';
+alter database test_combined softdelete_retention = '7d';
+select SCHEMA_NAME from information_schema.SCHEMATA where SCHEMA_NAME = 'test_combined';
+SCHEMA_NAME
+test_combined
+alter database non_existent_db active_active = 'ON';
+Error 1049 (42000): Unknown database 'non_existent_db'
+drop database test_combined;

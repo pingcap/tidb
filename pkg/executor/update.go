@@ -25,8 +25,14 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
+<<<<<<< HEAD
 	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
+=======
+	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/parser/ast"
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,8 +40,10 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"go.uber.org/zap"
 )
 
 // UpdateExec represents a new update executor.
@@ -53,6 +61,9 @@ type UpdateExec struct {
 	// The value is cached table row
 	mergedRowData          map[int64]*kv.MemAwareHandleMap[[]types.Datum]
 	multiUpdateOnSameTable map[int64]bool
+	// tblID2ActiveActive is a for unique (Table, ActiveActiveInfo) pair
+	tblID2ActiveActive map[int64]ActiveActiveTableInfo
+	activeActiveStats  ActiveActiveStats
 
 	matched uint64 // a counter of matched rows during update
 	// tblColPosInfos stores relationship between column ordinal to its table handle.
@@ -65,7 +76,7 @@ type UpdateExec struct {
 	drained                   bool
 	memTracker                *memory.Tracker
 
-	stats *updateRuntimeStats
+	stats *UpdateRuntimeStats
 
 	handles        []kv.Handle
 	tableUpdatable []bool
@@ -327,6 +338,16 @@ func (e *UpdateExec) exec(
 				memDelta += int64(handle.ExtraMemSize())
 			}
 			totalMemDelta += memDelta
+			if info, ok := e.tblID2ActiveActive[content.TblID]; ok && info.originTSColOffset >= 0 && changed {
+				recordUnsafeActiveActiveOriginTS(
+					e.Ctx().GetSessionVars(),
+					tbl.Meta(),
+					info.originTSColOffset,
+					handle,
+					newTableData,
+					&e.activeActiveStats,
+				)
+			}
 			continue
 		}
 
@@ -468,7 +489,11 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
+<<<<<<< HEAD
 func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
+=======
+func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *model.ColumnInfo, rowIdx int, err error) error {
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err == nil {
 		return nil
 	}
@@ -488,11 +513,20 @@ func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mm
 	return err
 }
 
-func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
+	for i, col := range cols {
+		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+		// should be set to null rather than copy the old value.
+		if col.Column != nil && col.Table.Meta().IsActiveActive &&
+			col.Name.Equals(&model.ExtraOriginTSName) {
+			newRowData[i].SetNull()
+		}
+	}
+
 	for _, assign := range e.OrderedList {
-		var colInfo *mmodel.ColumnInfo
-		if cols[assign.Col.Index] != nil {
+		var colInfo *model.ColumnInfo
+		if cols[assign.Col.Index].Column != nil {
 			colInfo = cols[assign.Col.Index].ColumnInfo
 		}
 
@@ -508,7 +542,7 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
-		if cols[assign.Col.Index] != nil {
+		if cols[assign.Col.Index].Column != nil {
 			val, err = table.CastValue(e.Ctx(), val, cols[assign.Col.Index].ColumnInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
 				return nil, err
@@ -520,9 +554,17 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 	return newRowData, nil
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*table.Column) ([]types.Datum, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
-	e.evalBuffer.SetDatums(newRowData...)
+	for i, col := range cols {
+		if col.Column != nil && col.Table.Meta().IsActiveActive &&
+			col.Name.Equals(&model.ExtraOriginTSName) {
+			// For active-active table, when duplicate key is found, value of _tidb_origin_ts
+			// should be set to null rather than copy the old value.
+			newRowData[i].SetNull()
+		}
+	}
+	e.evalBuffer.SetDatums(oldRow...)
 	for _, assign := range e.OrderedList[:e.virtualAssignmentsOffset] {
 		tblIdx := e.assignFlag[assign.Col.Index]
 		if tblIdx >= 0 && !e.tableUpdatable[tblIdx] {
@@ -535,7 +577,7 @@ func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []*tab
 
 		// info of `_tidb_rowid` column is nil.
 		// No need to cast `_tidb_rowid` column value.
-		if cols[assign.Col.Index] != nil {
+		if cols[assign.Col.Index].Column != nil {
 			colInfo := cols[assign.Col.Index].ColumnInfo
 			val, err = table.CastValue(e.Ctx(), val, colInfo, false, false)
 			if err = handleUpdateError(e.Ctx(), assign.ColName, colInfo, rowIdx, err); err != nil {
@@ -559,6 +601,7 @@ func (e *UpdateExec) Close() error {
 		}
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
+	e.reportActiveActiveStats()
 	return exec.Close(e.Children(0))
 }
 
@@ -583,9 +626,10 @@ func (e *UpdateExec) setMessage() {
 func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 	if e.RuntimeStats() != nil {
 		if e.stats == nil {
-			e.stats = &updateRuntimeStats{
+			e.stats = &UpdateRuntimeStats{
 				SnapshotRuntimeStats:  &txnsnapshot.SnapshotRuntimeStats{},
 				AllocatorRuntimeStats: autoid.NewAllocatorRuntimeStats(),
+				ActiveActive:          &e.activeActiveStats,
 			}
 		}
 		return true
@@ -593,14 +637,47 @@ func (e *UpdateExec) collectRuntimeStatsEnabled() bool {
 	return false
 }
 
-// updateRuntimeStats is the execution stats about update statements.
-type updateRuntimeStats struct {
-	*txnsnapshot.SnapshotRuntimeStats
-	*autoid.AllocatorRuntimeStats
+func (e *UpdateExec) reportActiveActiveStats() {
+	if cnt := e.activeActiveStats.UnsafeOriginTSCount; cnt > 0 {
+		metrics.ActiveActiveWriteUnsafeOriginTsRowCounter.Add(float64(cnt))
+		metrics.ActiveActiveWriteUnsafeOriginTsStmtCounter.Add(1)
+		vars := e.Ctx().GetSessionVars()
+		tableIDs := make([]int64, 0, len(e.tblColPosInfos))
+		tableNames := make([]string, 0, len(e.tblColPosInfos))
+		for i, posInfo := range e.tblColPosInfos {
+			if !e.tableUpdatable[i] {
+				continue
+			}
+
+			var tableName string
+			if tbl, ok := e.tblID2table[posInfo.TblID]; ok {
+				tableName = tbl.Meta().Name.O
+			}
+
+			tableIDs = append(tableIDs, posInfo.TblID)
+			tableNames = append(tableNames, tableName)
+		}
+		logutil.BgLogger().Warn(
+			"Unsafe writing for active-active column _tidb_origin_ts",
+			zap.String("op", "UPDATE"),
+			zap.Uint64("connID", vars.ConnectionID),
+			zap.Uint64("txnStartTS", vars.TxnCtx.StartTS),
+			zap.Int64s("tableIDs", tableIDs),
+			zap.Strings("tables", tableNames),
+			zap.Uint64("unsafeCnt", cnt),
+		)
+	}
 }
 
-func (e *updateRuntimeStats) String() string {
-	if e.SnapshotRuntimeStats == nil && e.AllocatorRuntimeStats == nil {
+// UpdateRuntimeStats is the execution stats about update statements.
+type UpdateRuntimeStats struct {
+	*txnsnapshot.SnapshotRuntimeStats
+	*autoid.AllocatorRuntimeStats
+	ActiveActive *ActiveActiveStats
+}
+
+func (e *UpdateRuntimeStats) String() string {
+	if e.SnapshotRuntimeStats == nil && e.AllocatorRuntimeStats == nil && e.ActiveActive == nil {
 		return ""
 	}
 	buf := bytes.NewBuffer(make([]byte, 0, 16))
@@ -619,12 +696,20 @@ func (e *updateRuntimeStats) String() string {
 			buf.WriteString(stats)
 		}
 	}
+	if e.ActiveActive != nil {
+		if str := e.ActiveActive.String(); str != "" {
+			if buf.Len() > 0 {
+				buf.WriteString(", ")
+			}
+			buf.WriteString(str)
+		}
+	}
 	return buf.String()
 }
 
 // Clone implements the RuntimeStats interface.
-func (e *updateRuntimeStats) Clone() execdetails.RuntimeStats {
-	newRs := &updateRuntimeStats{}
+func (e *UpdateRuntimeStats) Clone() execdetails.RuntimeStats {
+	newRs := &UpdateRuntimeStats{}
 	if e.SnapshotRuntimeStats != nil {
 		snapshotStats := e.SnapshotRuntimeStats.Clone()
 		newRs.SnapshotRuntimeStats = snapshotStats
@@ -632,12 +717,15 @@ func (e *updateRuntimeStats) Clone() execdetails.RuntimeStats {
 	if e.AllocatorRuntimeStats != nil {
 		newRs.AllocatorRuntimeStats = e.AllocatorRuntimeStats.Clone()
 	}
+	if e.ActiveActive != nil {
+		newRs.ActiveActive = e.ActiveActive.Clone()
+	}
 	return newRs
 }
 
 // Merge implements the RuntimeStats interface.
-func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
-	tmp, ok := other.(*updateRuntimeStats)
+func (e *UpdateRuntimeStats) Merge(other execdetails.RuntimeStats) {
+	tmp, ok := other.(*UpdateRuntimeStats)
 	if !ok {
 		return
 	}
@@ -654,10 +742,17 @@ func (e *updateRuntimeStats) Merge(other execdetails.RuntimeStats) {
 			e.AllocatorRuntimeStats = tmp.AllocatorRuntimeStats.Clone()
 		}
 	}
+	if tmp.ActiveActive != nil {
+		if e.ActiveActive == nil {
+			e.ActiveActive = tmp.ActiveActive.Clone()
+		} else {
+			e.ActiveActive.Merge(tmp.ActiveActive)
+		}
+	}
 }
 
 // Tp implements the RuntimeStats interface.
-func (*updateRuntimeStats) Tp() int {
+func (*UpdateRuntimeStats) Tp() int {
 	return execdetails.TpUpdateRuntimeStats
 }
 

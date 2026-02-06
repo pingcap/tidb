@@ -1,0 +1,21 @@
+create table t (id int primary key clustered, v int) softdelete retention 7 day;
+insert into t(id, v) values (1, 1), (2, 2);
+delete from t where id = 1;
+insert ignore into t (id, v) values (1, 11), (2, 12), (3, 13);
+select id, v from t;
+id	v
+1	11
+2	2
+3	13
+drop table t;
+# test again with nonclustered
+create table t (id int primary key nonclustered, v int) softdelete retention 7 day;
+insert into t(id, v) values (1, 1), (2, 2);
+delete from t where id = 1;
+insert ignore into t (id, v) values (1, 11), (2, 12), (3, 13);
+select id, v from t;
+id	v
+2	2
+1	11
+3	13
+drop table t;

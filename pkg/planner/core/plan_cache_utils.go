@@ -19,8 +19,14 @@ import (
 	"context"
 	"math"
 	"slices"
+<<<<<<< HEAD
 	"sort"
 	"strconv"
+=======
+	"strconv"
+	"sync"
+	"sync/atomic"
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"time"
 
 	"github.com/pingcap/errors"
@@ -338,6 +344,15 @@ func NewPlanCacheKey(sctx sessionctx.Context, stmt *PlanCacheStmt) (key, binding
 	hash = append(hash, hack.Slice(strconv.FormatBool(variable.VarTiDBSuperReadOnly.Load()))...)
 	// expr-pushdown-blacklist can affect query optimization, so we need to consider it in plan cache.
 	hash = codec.EncodeInt(hash, expression.ExprPushDownBlackListReloadTimeStamp.Load())
+	for _, tbl := range stmt.tbls {
+		if tbl.Meta().SoftdeleteInfo != nil {
+			// tidb_translate_softdelete_sql affects the semantics of the queries that involves softdelete tables, so
+			// we need to consider it in plan cache.
+			hash = append(hash, hack.Slice(strconv.FormatBool(vars.SoftDeleteRewrite))...)
+			// We only need to add it once, so break here.
+			break
+		}
+	}
 
 	// whether this query has sub-query
 	if stmt.hasSubquery {

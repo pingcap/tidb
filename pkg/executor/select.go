@@ -1105,6 +1105,10 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 	case *ast.DeleteStmt:
 		ResetDeleteStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
+	case *ast.RecoverValuesStmt:
+		sc.MemSensitive = true
+		ResetRecoverValuesStmtCtx(sc, vars)
+		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:
 		sc.InInsertStmt = true
 		// For insert statement (not for update statement), disabling the StrictSQLMode
@@ -1258,24 +1262,40 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 
 // ResetUpdateStmtCtx resets statement context for UpdateStmt.
 func ResetUpdateStmtCtx(sc *stmtctx.StatementContext, stmt *ast.UpdateStmt, vars *variable.SessionVars) {
+	// When it's called from ResetRecoverValuesStmtCtx(), stmt is nil. In normal UPDATE statement, stmt is not nil.
+	ignoreError := false
+	priority := mysql.NoPriority
+	if stmt != nil {
+		ignoreError = stmt.IgnoreErr
+		priority = stmt.Priority
+	}
 	strictSQLMode := vars.SQLMode.HasStrictMode()
 	sc.InUpdateStmt = true
 	errLevels := sc.ErrLevels()
-	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
-	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupDupKey] = errctx.ResolveErrLevel(false, ignoreError)
+	errLevels[errctx.ErrGroupBadNull] = errctx.ResolveErrLevel(false, !strictSQLMode || ignoreError)
 	errLevels[errctx.ErrGroupNoDefault] = errLevels[errctx.ErrGroupBadNull]
 	errLevels[errctx.ErrGroupDividedByZero] = errctx.ResolveErrLevel(
 		!vars.SQLMode.HasErrorForDivisionByZeroMode(),
-		!strictSQLMode || stmt.IgnoreErr,
+		!strictSQLMode || ignoreError,
 	)
-	errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.ResolveErrLevel(false, stmt.IgnoreErr)
+	errLevels[errctx.ErrGroupNoMatchedPartition] = errctx.ResolveErrLevel(false, ignoreError)
 	sc.SetErrLevels(errLevels)
-	sc.Priority = stmt.Priority
+	sc.Priority = priority
 	sc.SetTypeFlags(sc.TypeFlags().
-		WithTruncateAsWarning(!strictSQLMode || stmt.IgnoreErr).
+		WithTruncateAsWarning(!strictSQLMode || ignoreError).
 		WithIgnoreInvalidDateErr(vars.SQLMode.HasAllowInvalidDatesMode()).
 		WithIgnoreZeroInDate(!vars.SQLMode.HasNoZeroInDateMode() || !vars.SQLMode.HasNoZeroDateMode() ||
-			!strictSQLMode || stmt.IgnoreErr || vars.SQLMode.HasAllowInvalidDatesMode()))
+			!strictSQLMode || ignoreError || vars.SQLMode.HasAllowInvalidDatesMode()))
+}
+
+// ResetRecoverValuesStmtCtx resets statement context for RecoverValuesStmt.
+// Since it's essentially an UPDATE statement, it's the same as ResetUpdateStmtCtx, only an extra flag
+// InRecoverValuesStmt is set. Besides, due to the RecoverValuesStmt doesn't have some fields like IgnoreErr,
+// those fields are ignored.
+func ResetRecoverValuesStmtCtx(sc *stmtctx.StatementContext, vars *variable.SessionVars) {
+	ResetUpdateStmtCtx(sc, nil, vars)
+	sc.InRecoverValuesStmt = true
 }
 
 // ResetDeleteStmtCtx resets statement context for DeleteStmt.

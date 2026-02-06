@@ -30,6 +30,10 @@ const (
 	FeatureIDPlacement = "placement"
 	// FeatureIDTTL is the `ttl` feature
 	FeatureIDTTL = "ttl"
+	// FeatureIDSoftDelete is the `softdelete` feature
+	FeatureIDSoftDelete = "softdelete"
+	// FeatureIDActiveActive is the `active_active` feature
+	FeatureIDActiveActive = "active_active"
 	// FeatureIDResourceGroup is the `resource group` feature.
 	FeatureIDResourceGroup = "resource_group"
 	// FeatureIDGlobalIndex is the `Global Index` feature.
@@ -46,7 +50,14 @@ var featureIDs = map[string]struct{}{
 	FeatureIDForceAutoInc:   {},
 	FeatureIDPlacement:      {},
 	FeatureIDTTL:            {},
+	FeatureIDSoftDelete:     {},
+	FeatureIDActiveActive:   {},
 	FeatureIDGlobalIndex:    {},
+<<<<<<< HEAD
+=======
+	FeatureIDResourceGroup:  {},
+	FeatureIDPresplit:       {},
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	FeatureIDAffinity:       {},
 }
 

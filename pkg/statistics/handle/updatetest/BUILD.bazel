@@ -8,9 +8,15 @@ go_test(
         "update_test.go",
     ],
     flaky = True,
-    shard_count = 23,
+    shard_count = 24,
     deps = [
+<<<<<<< HEAD
         "//pkg/parser/model",
+=======
+        "//pkg/config/kerneltype",
+        "//pkg/executor",
+        "//pkg/parser/ast",
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
         "//pkg/parser/mysql",
         "//pkg/planner/cardinality",
         "//pkg/sessionctx",
@@ -28,6 +34,9 @@ go_test(
         "//pkg/util/ranger",
         "@com_github_prometheus_client_model//go",
         "@com_github_stretchr_testify//require",
+        "@com_github_tikv_client_go_v2//tikv",
+        "@com_github_tikv_client_go_v2//tikvrpc",
+        "@com_github_tikv_client_go_v2//txnkv/txnsnapshot",
         "@org_uber_go_goleak//:goleak",
     ],
 )

@@ -28,9 +28,24 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/format"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
 )
+
+// TiCDCProgressDB is the database storing TiCDC progress table.
+const TiCDCProgressDB = "tidb_cdc"
+
+// TiCDCProgressTable is the table storing TiCDC progress checkpoints for hard-delete safety.
+const TiCDCProgressTable = "ticdc_progress_table"
+
+// SQLGenerator is the interface for SQL generators.
+type SQLGenerator interface {
+	NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error)
+	IsExhausted() bool
+}
+
+var _ SQLGenerator = (*ScanQueryGenerator)(nil)
 
 func writeHex(in io.Writer, d types.Datum) error {
 	_, err := fmt.Fprintf(in, "x'%s'", hex.EncodeToString(d.GetBytes()))
@@ -76,6 +91,7 @@ const (
 // SQLBuilder is used to build SQLs for TTL
 type SQLBuilder struct {
 	tbl        *cache.PhysicalTable
+	jobType    session.TTLJobType
 	sb         strings.Builder
 	restoreCtx *format.RestoreCtx
 	state      sqlBuilderState
@@ -85,8 +101,8 @@ type SQLBuilder struct {
 }
 
 // NewSQLBuilder creates a new TTLSQLBuilder
-func NewSQLBuilder(tbl *cache.PhysicalTable) *SQLBuilder {
-	b := &SQLBuilder{tbl: tbl, state: writeBegin}
+func NewSQLBuilder(tbl *cache.PhysicalTable, jobType session.TTLJobType) *SQLBuilder {
+	b := &SQLBuilder{tbl: tbl, jobType: jobType, state: writeBegin}
 	b.restoreCtx = format.NewRestoreCtx(format.DefaultRestoreFlags, &b.sb)
 	return b
 }
@@ -109,13 +125,13 @@ func (b *SQLBuilder) Build() (string, error) {
 	return b.sb.String(), nil
 }
 
-// WriteSelect writes a select statement to select key columns without any condition
-func (b *SQLBuilder) WriteSelect() error {
+// WriteSelectColumns writes a select statement to select the specified columns without any condition.
+func (b *SQLBuilder) WriteSelectColumns(cols []*model.ColumnInfo) error {
 	if b.state != writeBegin {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 	b.restoreCtx.WritePlain("SELECT LOW_PRIORITY SQL_NO_CACHE ")
-	b.writeColNames(b.tbl.KeyColumns, false)
+	b.writeColNames(cols, false)
 	b.restoreCtx.WritePlain(" FROM ")
 	if err := b.writeTblName(); err != nil {
 		return err
@@ -179,12 +195,51 @@ func (b *SQLBuilder) WriteExpireCondition(expire time.Time) error {
 		return errors.Errorf("invalid state: %v", b.state)
 	}
 
-	b.writeColNames([]*model.ColumnInfo{b.tbl.TimeColumn}, false)
+	timeCol, err := b.tbl.TimeColumnForJob(b.jobType)
+	if err != nil {
+		return err
+	}
+	b.writeColNames([]*model.ColumnInfo{timeCol}, false)
 	b.restoreCtx.WritePlain(" < ")
 	b.restoreCtx.WritePlain("FROM_UNIXTIME(")
 	b.restoreCtx.WritePlain(strconv.FormatInt(expire.Unix(), 10))
 	b.restoreCtx.WritePlain(")")
 	b.hasWriteExpireCond = true
+	return nil
+}
+
+// WriteActiveActiveSafetyCondition writes safe conds for Active-Active softdelete cleanup.
+// The min_checkpoint_ts is queried and cached from `tidb_cdc`.`ticdc_progress_table` for the table.
+func (b *SQLBuilder) WriteActiveActiveSafetyCondition(minCheckpointTS uint64) error {
+	switch b.state {
+	case writeSelOrDel:
+		b.restoreCtx.WritePlain(" WHERE ")
+		b.state = writeWhere
+	case writeWhere:
+		b.restoreCtx.WritePlain(" AND ")
+	default:
+		return errors.Errorf("invalid state: %v", b.state)
+	}
+
+	//  1. min_checkpoint_ts > IFNULL(_tidb_origin_ts, _tidb_commit_ts)
+	//     so TiCDC won't replicate any future row with a timestamp <= this row.
+	//  2. tidb_current_tso() > IFNULL(_tidb_origin_ts, _tidb_commit_ts)
+	//     so the delete won't be blocked waiting for TSO to pass the origin ts.
+
+	// tidb_current_tso just reads session variable tidb_current_ts.
+	b.restoreCtx.WritePlainf(
+		"%d > IFNULL(%s, %s)",
+		minCheckpointTS,
+		model.ExtraOriginTSName.O,
+		model.ExtraCommitTSName.O,
+	)
+	b.restoreCtx.WritePlain(" AND ")
+	// tidb_current_ts() is always larger than tidb_commit_ts
+	b.restoreCtx.WritePlainf(
+		"tidb_current_tso() > IFNULL(%s, 0)",
+		model.ExtraOriginTSName.O,
+	)
+
 	return nil
 }
 
@@ -303,10 +358,12 @@ func (b *SQLBuilder) writeDataPoint(cols []*model.ColumnInfo, dp []types.Datum) 
 	return nil
 }
 
-// ScanQueryGenerator generates SQLs for scan task
+// ScanQueryGenerator generates SQLs for scan task.
 type ScanQueryGenerator struct {
 	tbl           *cache.PhysicalTable
+	jobType       session.TTLJobType
 	expire        time.Time
+	minCheckpoint uint64
 	keyRangeStart []types.Datum
 	keyRangeEnd   []types.Datum
 	stack         [][]types.Datum
@@ -315,9 +372,15 @@ type ScanQueryGenerator struct {
 	exhausted     bool
 }
 
-// NewScanQueryGenerator creates a new ScanQueryGenerator
-func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
-	rangeStart, rangeEnd []types.Datum) (*ScanQueryGenerator, error) {
+// SetMinCheckpointTS sets the cached minimum checkpoint ts for Active-Active safety condition.
+func (g *ScanQueryGenerator) SetMinCheckpointTS(minCheckpointTS uint64) {
+	g.minCheckpoint = minCheckpointTS
+}
+
+// NewScanQueryGenerator creates a new ScanQueryGenerator.
+func NewScanQueryGenerator(jobType session.TTLJobType, tbl *cache.PhysicalTable, expire time.Time,
+	rangeStart, rangeEnd []types.Datum,
+) (*ScanQueryGenerator, error) {
 	if err := tbl.ValidateKeyPrefix(rangeStart); err != nil {
 		return nil, err
 	}
@@ -328,6 +391,7 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 
 	return &ScanQueryGenerator{
 		tbl:           tbl,
+		jobType:       jobType,
 		expire:        expire,
 		keyRangeStart: rangeStart,
 		keyRangeEnd:   rangeEnd,
@@ -335,7 +399,7 @@ func NewScanQueryGenerator(tbl *cache.PhysicalTable, expire time.Time,
 	}, nil
 }
 
-// NextSQL creates next sql of the scan task
+// NextSQL creates next sql of the scan task.
 func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLimit int) (string, error) {
 	if g.exhausted {
 		return "", errors.New("generator is exhausted")
@@ -369,11 +433,12 @@ func (g *ScanQueryGenerator) NextSQL(continueFromResult [][]types.Datum, nextLim
 			g.exhausted = true
 		}
 	}
+
 	g.limit = nextLimit
 	return g.buildSQL()
 }
 
-// IsExhausted returns whether the generator is exhausted
+// IsExhausted returns whether the generator is exhausted.
 func (g *ScanQueryGenerator) IsExhausted() bool {
 	return g.exhausted
 }
@@ -408,8 +473,8 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 		return "", nil
 	}
 
-	b := NewSQLBuilder(g.tbl)
-	if err := b.WriteSelect(); err != nil {
+	b := NewSQLBuilder(g.tbl, g.jobType)
+	if err := b.WriteSelectColumns(g.tbl.KeyColumns); err != nil {
 		return "", err
 	}
 	if len(g.stack) > 0 {
@@ -444,6 +509,12 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 		return "", err
 	}
 
+	if g.jobType == session.TTLJobTypeSoftDelete && g.tbl.TableInfo.IsActiveActive {
+		if err := b.WriteActiveActiveSafetyCondition(g.minCheckpoint); err != nil {
+			return "", err
+		}
+	}
+
 	if err := b.WriteOrderBy(g.tbl.KeyColumns, false); err != nil {
 		return "", err
 	}
@@ -455,13 +526,20 @@ func (g *ScanQueryGenerator) buildSQL() (string, error) {
 	return b.Build()
 }
 
-// BuildDeleteSQL builds a delete SQL
-func BuildDeleteSQL(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.Time) (string, error) {
+// BuildDeleteSQL builds a delete SQL for TTL/softdelete.
+// `rows` should contain only primary key columns.
+func BuildDeleteSQL(
+	tbl *cache.PhysicalTable,
+	jobType session.TTLJobType,
+	rows [][]types.Datum,
+	expire time.Time,
+	minCheckpointTS uint64,
+) (string, error) {
 	if len(rows) == 0 {
 		return "", errors.New("Cannot build delete SQL with empty rows")
 	}
 
-	b := NewSQLBuilder(tbl)
+	b := NewSQLBuilder(tbl, jobType)
 	if err := b.WriteDelete(); err != nil {
 		return "", err
 	}
@@ -472,6 +550,12 @@ func BuildDeleteSQL(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.
 
 	if err := b.WriteExpireCondition(expire); err != nil {
 		return "", err
+	}
+
+	if jobType == session.TTLJobTypeSoftDelete && tbl.TableInfo.IsActiveActive {
+		if err := b.WriteActiveActiveSafetyCondition(minCheckpointTS); err != nil {
+			return "", err
+		}
 	}
 
 	if err := b.WriteLimit(len(rows)); err != nil {

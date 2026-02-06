@@ -1053,6 +1053,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		return nil
 	}
 
+	restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
+	restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+
 	tblCharset := tableInfo.Charset
 	if len(tblCharset) == 0 {
 		tblCharset = mysql.DefaultCharset
@@ -1077,7 +1080,13 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	var hasAutoIncID bool
 	needAddComma := false
 	for i, col := range tableInfo.Cols() {
-		if col == nil || col.Hidden {
+		if col == nil || col.Hidden || col.Name == model.ExtraHandleName || col.Name == model.ExtraOriginTSName {
+			continue
+		}
+		if tableInfo.SoftdeleteInfo != nil && model.IsSoftDeleteColumn(col.Name) {
+			continue
+		}
+		if tableInfo.IsActiveActive && model.IsActiveActiveColumn(col.Name) {
 			continue
 		}
 		if needAddComma {
@@ -1214,10 +1223,8 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			publicIndices = append(publicIndices, hypoIndexList...)
 		}
 	}
-	if len(publicIndices) > 0 {
-		buf.WriteString(",\n")
-	}
 
+<<<<<<< HEAD
 	for i, idxInfo := range publicIndices {
 		if idxInfo.Primary {
 			buf.WriteString("  PRIMARY KEY ")
@@ -1225,8 +1232,26 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+=======
+	writeIndexDef := func(rc *parserformat.RestoreCtx, idxInfo *model.IndexInfo, sp bool) {
+		if sp {
+			restoreCtx.WritePlain(", ")
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		} else {
-			fmt.Fprintf(buf, "  KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
+			restoreCtx.WritePlain(",\n  ")
+		}
+		if idxInfo.Primary {
+			rc.WritePlain("PRIMARY KEY ")
+		} else if idxInfo.Unique {
+			rc.WritePlainf("UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.VectorInfo != nil {
+			rc.WritePlainf("VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.FullTextInfo != nil {
+			rc.WritePlainf("FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else if idxInfo.InvertedInfo != nil {
+			rc.WritePlainf("COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
+		} else {
+			rc.WritePlainf("KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
 
 		cols := make([]string, 0, len(idxInfo.Columns))
@@ -1244,32 +1269,78 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		}
 		if idxInfo.VectorInfo != nil {
 			funcName := model.IndexableDistanceMetricToFnName[idxInfo.VectorInfo.DistanceMetric]
-			fmt.Fprintf(buf, "((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
+			rc.WritePlainf("((%s(%s)))", strings.ToUpper(funcName), strings.Join(cols, ","))
 		} else {
-			fmt.Fprintf(buf, "(%s)", strings.Join(cols, ","))
+			rc.WritePlainf("(%s)", strings.Join(cols, ","))
 		}
+<<<<<<< HEAD
+=======
+
+		if idxInfo.InvertedInfo != nil {
+			rc.WritePlain(" USING INVERTED")
+		}
+		if idxInfo.FullTextInfo != nil {
+			rc.WritePlainf(" WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
+		}
+		if idxInfo.ConditionExprString != "" {
+			rc.WritePlainf(" WHERE %s", idxInfo.ConditionExprString)
+		}
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		if idxInfo.Invisible {
-			fmt.Fprintf(buf, ` /*!80000 INVISIBLE */`)
+			rc.WritePlain(` /*!80000 INVISIBLE */`)
 		}
 		if idxInfo.Comment != "" {
-			fmt.Fprintf(buf, ` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
+			rc.WritePlainf(` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
+<<<<<<< HEAD
 		if idxInfo.Tp == pmodel.IndexTypeHypo {
 			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
+=======
+		if idxInfo.Tp == ast.IndexTypeHypo {
+			rc.WritePlain(` /* HYPO INDEX */`)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		}
 		if idxInfo.Primary {
-			if tableInfo.HasClusteredIndex() {
-				buf.WriteString(" /*T![clustered_index] CLUSTERED */")
-			} else {
-				buf.WriteString(" /*T![clustered_index] NONCLUSTERED */")
-			}
+			rc.WritePlain(" ")
+			_ = rc.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
+				clusteredWord := "NONCLUSTERED"
+				if tableInfo.HasClusteredIndex() {
+					clusteredWord = "CLUSTERED"
+				}
+				rc.WritePlainf("%s", clusteredWord)
+				return nil
+			})
 		}
 		if idxInfo.Global {
-			buf.WriteString(" /*T![global_index] GLOBAL */")
+			rc.WritePlain(" ")
+			_ = rc.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
+				rc.WritePlain("GLOBAL")
+				return nil
+			})
 		}
-		if i != len(publicIndices)-1 {
-			buf.WriteString(",\n")
+	}
+	indexCommentFeature := func(idxInfo *model.IndexInfo) (shouldWrap bool, featureID string) {
+		for _, col := range idxInfo.Columns {
+			if model.IsActiveActiveColumn(col.Name) {
+				return true, tidb.FeatureIDActiveActive
+			}
+			if model.IsSoftDeleteColumn(col.Name) {
+				return true, tidb.FeatureIDSoftDelete
+			}
 		}
+		return false, ""
+	}
+
+	for _, idxInfo := range publicIndices {
+		if wrap, featureID := indexCommentFeature(idxInfo); wrap {
+			buf.WriteString("\n  ")
+			_ = restoreCtx.WriteWithSpecialComments(featureID, func() error {
+				writeIndexDef(restoreCtx, idxInfo, true)
+				return nil
+			})
+			continue
+		}
+		writeIndexDef(restoreCtx, idxInfo, false)
 	}
 
 	// Foreign Keys are supported by data dictionary even though
@@ -1400,9 +1471,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 	}
 
 	if tableInfo.TTLInfo != nil {
-		restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
-		restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
-
 		restoreCtx.WritePlain(" ")
 		err = restoreCtx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
 			columnName := ast.ColumnName{Name: tableInfo.TTLInfo.ColumnName}
@@ -1447,6 +1515,61 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		})
 
 		if err != nil {
+			return err
+		}
+	}
+
+	if tableInfo.IsActiveActive {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			restoreCtx.WriteKeyWord("ACTIVE_ACTIVE")
+			restoreCtx.WritePlain("=")
+			if tableInfo.IsActiveActive {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+
+	if info := tableInfo.SoftdeleteInfo; info != nil {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteKeyWord("RETENTION ")
+			restoreCtx.WritePlain(info.Retention)
+			restoreCtx.WritePlain(" ")
+			restoreCtx.WritePlain(info.RetentionUnit.String())
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_ENABLE")
+			restoreCtx.WritePlain("=")
+			if info.JobEnable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(info.JobInterval)
+			return nil
+		}); err != nil {
 			return err
 		}
 	}
@@ -1623,6 +1746,62 @@ func ConstructResultOfShowCreateDatabase(ctx sessionctx.Context, dbInfo *model.D
 	if dbInfo.PlacementPolicyRef != nil {
 		// add placement ref info here
 		fmt.Fprintf(buf, " /*T![placement] PLACEMENT POLICY=%s */", stringutil.Escape(dbInfo.PlacementPolicyRef.Name.O, sqlMode))
+	}
+
+	restoreFlags := parserformat.RestoreStringSingleQuotes | parserformat.RestoreNameBackQuotes | parserformat.RestoreTiDBSpecialComment
+	restoreCtx := parserformat.NewRestoreCtx(restoreFlags, buf)
+	if dbInfo.IsActiveActive {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			restoreCtx.WriteKeyWord("ACTIVE_ACTIVE")
+			restoreCtx.WritePlain("=")
+			if dbInfo.IsActiveActive {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+	}
+	if info := dbInfo.SoftdeleteInfo; info != nil {
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteKeyWord("RETENTION ")
+			restoreCtx.WritePlain(info.Retention)
+			restoreCtx.WritePlain(" ")
+			restoreCtx.WritePlain(info.RetentionUnit.String())
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_ENABLE")
+			restoreCtx.WritePlain("=")
+			if info.JobEnable {
+				restoreCtx.WriteString("ON")
+			} else {
+				restoreCtx.WriteString("OFF")
+			}
+			return nil
+		}); err != nil {
+			return err
+		}
+
+		restoreCtx.WritePlain(" ")
+		if err := restoreCtx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			restoreCtx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL")
+			restoreCtx.WritePlain("=")
+			restoreCtx.WriteString(info.JobInterval)
+			return nil
+		}); err != nil {
+			return err
+		}
 	}
 	return nil
 }

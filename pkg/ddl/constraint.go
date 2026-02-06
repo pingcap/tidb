@@ -320,6 +320,12 @@ func buildConstraintInfo(tblInfo *model.TableInfo, dependedCols []pmodel.CIStr, 
 		return nil, errors.Trace(err)
 	}
 
+	for _, col := range dependedCols {
+		if model.IsInternalColumn(col) {
+			return nil, dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("invalid check constraint on internal columnss")
+		}
+	}
+
 	// Create constraint info.
 	constraintInfo := &model.ConstraintInfo{
 		Name:           constraintName,

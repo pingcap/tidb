@@ -504,7 +504,12 @@ func (op *Insert) CloneForPlanCache(newCtx base.PlanContext) (base.Plan, bool) {
 	cloned.baseSchemaProducer = *op.baseSchemaProducer.CloneWithNewCtx(newCtx)
 	cloned.Lists = util.CloneExpression2D(op.Lists)
 	cloned.OnDuplicate = util.CloneAssignments(op.OnDuplicate)
+<<<<<<< HEAD:pkg/planner/core/plan_clone_generated.go
 	cloned.GenCols = op.GenCols.Copy()
+=======
+	cloned.ReplaceConflictIfExpr = utilfuncp.CloneExpressionsForPlanCache(op.ReplaceConflictIfExpr, nil)
+	cloned.GenCols = op.GenCols.cloneForPlanCache()
+>>>>>>> 6e50f2744f (Squashed commit of the active-active):pkg/planner/core/operator/physicalop/plan_clone_generated.go
 	if op.SelectPlan != nil {
 		SelectPlan, ok := op.SelectPlan.CloneForPlanCache(newCtx)
 		if !ok {

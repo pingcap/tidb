@@ -259,6 +259,11 @@ var Keywords = []KeywordsType{
 	{"ZEROFILL", true, "reserved"},
 	{"ACCOUNT", false, "unreserved"},
 	{"ACTION", false, "unreserved"},
+<<<<<<< HEAD
+=======
+	{"ACTIVE_ACTIVE", false, "unreserved"},
+	{"ADD_COLUMNAR_REPLICA_ON_DEMAND", false, "unreserved"},
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	{"ADVISE", false, "unreserved"},
 	{"AFFINITY", false, "unreserved"},
 	{"AFTER", false, "unreserved"},
@@ -526,6 +531,7 @@ var Keywords = []KeywordsType{
 	{"RESTORE", false, "unreserved"},
 	{"RESTORES", false, "unreserved"},
 	{"RESUME", false, "unreserved"},
+	{"RETENTION", false, "unreserved"},
 	{"REUSE", false, "unreserved"},
 	{"REVERSE", false, "unreserved"},
 	{"ROLE", false, "unreserved"},
@@ -562,6 +568,9 @@ var Keywords = []KeywordsType{
 	{"SLAVE", false, "unreserved"},
 	{"SLOW", false, "unreserved"},
 	{"SNAPSHOT", false, "unreserved"},
+	{"SOFTDELETE", false, "unreserved"},
+	{"SOFTDELETE_JOB_ENABLE", false, "unreserved"},
+	{"SOFTDELETE_JOB_INTERVAL", false, "unreserved"},
 	{"SOME", false, "unreserved"},
 	{"SOURCE", false, "unreserved"},
 	{"SQL_BUFFER_RESULT", false, "unreserved"},

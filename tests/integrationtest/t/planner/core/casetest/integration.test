@@ -730,4 +730,16 @@ from
 use test;
 drop table if exists tt;
 create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));
+<<<<<<< HEAD
 explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
+=======
+explain format='plan_tree' update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
+
+# TestIssue62564
+CREATE TABLE test_62564(c0 DECIMAL);
+INSERT INTO test_62564 VALUES (0);
+SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
+SET @b = NULL;
+PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE ? END ) AS DATE)';
+EXECUTE prepare_query USING @b;
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)

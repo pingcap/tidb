@@ -100,7 +100,11 @@ func TestNewTTLTable(t *testing.T) {
 		tblInfo := tbl.Meta()
 		var physicalTbls []*cache.PhysicalTable
 		if tblInfo.Partition == nil {
+<<<<<<< HEAD
 			ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, pmodel.NewCIStr(""))
+=======
+			ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, ast.NewCIStr(""), true, false)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 			if c.timeCol == "" {
 				require.Error(t, err)
 				continue
@@ -109,7 +113,11 @@ func TestNewTTLTable(t *testing.T) {
 			physicalTbls = append(physicalTbls, ttlTbl)
 		} else {
 			for _, partition := range tblInfo.Partition.Definitions {
+<<<<<<< HEAD
 				ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, partition.Name)
+=======
+				ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, partition.Name, true, false)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 				if c.timeCol == "" {
 					require.Error(t, err)
 					continue
@@ -127,7 +135,7 @@ func TestNewTTLTable(t *testing.T) {
 			require.Same(t, tblInfo, ttlTbl.TableInfo)
 			timeColumn := tblInfo.FindPublicColumnByName(c.timeCol)
 			require.NotNil(t, timeColumn)
-			require.Same(t, timeColumn, ttlTbl.TimeColumn)
+			require.Same(t, timeColumn, ttlTbl.TTLTimeColumn)
 
 			if tblInfo.Partition == nil {
 				require.Equal(t, ttlTbl.TableInfo.ID, ttlTbl.ID)
@@ -164,6 +172,80 @@ func TestNewTTLTable(t *testing.T) {
 	}
 }
 
+func TestNewSoftdeleteTable(t *testing.T) {
+	cases := []struct {
+		db    string
+		tbl   string
+		def   string
+		ok    bool
+		pkCol string
+	}{
+		{
+			db:    "test",
+			tbl:   "sd1",
+			def:   "(id int primary key, v int) softdelete retention 7 day softdelete_job_enable='ON'",
+			ok:    true,
+			pkCol: "id",
+		},
+		{
+			db:  "test",
+			tbl: "sd_job_off",
+			def: "(id int primary key, v int) softdelete retention 7 day softdelete_job_enable='OFF'",
+			ok:  false,
+		},
+		{
+			db:    "test",
+			tbl:   "sd_no_pk",
+			def:   "(id int, v int) softdelete retention 7 day softdelete_job_enable='ON'",
+			ok:    true,
+			pkCol: "_tidb_rowid",
+		},
+		{
+			db:  "test",
+			tbl: "not_softdelete",
+			def: "(id int primary key, v int)",
+			ok:  false,
+		},
+	}
+
+	store, do := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	for _, c := range cases {
+		tk.MustExec("use " + c.db)
+		tk.MustExec("create table " + c.tbl + c.def)
+	}
+
+	for _, c := range cases {
+		is := do.InfoSchema()
+		tbl, err := is.TableByName(context.Background(), ast.NewCIStr(c.db), ast.NewCIStr(c.tbl))
+		require.NoError(t, err)
+		tblInfo := tbl.Meta()
+
+		sdTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, ast.NewCIStr(""), false, true)
+		if c.tbl == "sd_job_off" {
+			require.NoError(t, err)
+			continue
+		}
+		if !c.ok {
+			require.Error(t, err)
+			continue
+		}
+		require.NoError(t, err)
+		require.Equal(t, c.db, sdTbl.Schema.O)
+		require.Same(t, tblInfo, sdTbl.TableInfo)
+		require.Equal(t, sdTbl.TableInfo.ID, sdTbl.ID)
+		require.Equal(t, "", sdTbl.Partition.L)
+		require.Nil(t, sdTbl.PartitionDef)
+
+		require.Equal(t, 1, len(sdTbl.KeyColumns))
+		require.Equal(t, c.pkCol, sdTbl.KeyColumns[0].Name.L)
+
+		require.NotNil(t, sdTbl.SoftDeleteTimeColumn)
+		require.Equal(t, model.ExtraSoftDeleteTimeName.L, sdTbl.SoftDeleteTimeColumn.Name.L)
+	}
+}
+
 func TestTableEvalTTLExpireTime(t *testing.T) {
 	store, do := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -173,7 +255,11 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tb, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
+<<<<<<< HEAD
 	ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo, pmodel.NewCIStr(""))
+=======
+	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""), true, false)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	require.NoError(t, err)
 
 	se := session.NewSession(tk.Session(), tk.Session(), nil)
@@ -185,7 +271,8 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tz2 := time.FixedZone("-02:00", -2*3600)
 	now, err := time.ParseInLocation(time.DateTime, "1999-02-28 23:00:00", tz2)
 	require.NoError(t, err)
-	tm, err := ttlTbl.EvalExpireTime(context.TODO(), se, now)
+	tm, err := ttlTbl.EvalExpireTimeForJob(context.TODO(), se, now, session.TTLJobTypeTTL)
+
 	require.NoError(t, err)
 	// The expired time should be calculated according to the global time zone
 	require.Equal(t, "1999-02-01 03:00:00", tm.In(tz1).Format(time.DateTime))
@@ -197,11 +284,16 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tb2, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo2 := tb2.Meta()
+<<<<<<< HEAD
 	ttlTbl2, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo2, pmodel.NewCIStr(""))
+=======
+	ttlTbl2, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo2, ast.NewCIStr(""), true, false)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	require.NoError(t, err)
 	now, err = time.ParseInLocation(time.DateTime, "2020-01-01 15:00:00", tz1)
 	require.NoError(t, err)
-	tm, err = ttlTbl2.EvalExpireTime(context.TODO(), se, now)
+	tm, err = ttlTbl2.EvalExpireTimeForJob(context.TODO(), se, now, session.TTLJobTypeTTL)
+
 	require.NoError(t, err)
 	require.Equal(t, "2020-01-01 13:57:00", tm.Format(time.DateTime))
 	require.Same(t, tz1, tm.Location())

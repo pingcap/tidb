@@ -16,6 +16,7 @@ package session
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"github.com/pingcap/errors"
@@ -27,9 +28,32 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+<<<<<<< HEAD
+=======
+	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/sqlescape"
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
+)
+
+const minActiveActiveCheckpointTSRefreshInterval = time.Minute
+
+const tiCDCProgressDB = "tidb_cdc"
+const tiCDCProgressTable = "ticdc_progress_table"
+
+// TTLJobType represents the type of TTL job
+type TTLJobType = string
+
+const (
+	// TTLJobTypeTTL represents a normal TTL job
+	TTLJobTypeTTL TTLJobType = "ttl"
+	// TTLJobTypeSoftDelete represents a softdelete cleanup job
+	TTLJobTypeSoftDelete TTLJobType = "softdelete"
+	// TTLJobTypeRunawayGC represents a GC job for runaway system table.
+	// It is used by the SQL builder to pick the correct time column.
+	TTLJobTypeRunawayGC TTLJobType = "runaway_gc"
 )
 
 // TxnMode represents using optimistic or pessimistic mode in the transaction
@@ -61,12 +85,28 @@ type Session interface {
 	Close()
 	// Now returns the current time in location specified by session var
 	Now() time.Time
+<<<<<<< HEAD
+=======
+	// GetMinActiveActiveCheckpointTS returns cached min checkpoint ts from TiCDC progress table.
+	// It refreshes the cache periodically to avoid querying for every SQL.
+	GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error)
+	// AvoidReuse is used to avoid reuse the session
+	AvoidReuse()
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }
-
 type session struct {
+<<<<<<< HEAD
 	sessionctx.Context
 	sqlExec sqlexec.SQLExecutor
 	closeFn func(Session)
+=======
+	sctx       sessionctx.Context
+	sqlExec    sqlexec.SQLExecutor
+	avoidReuse func()
+
+	minActiveActiveCheckpointTS            uint64
+	minActiveActiveCheckpointTSLastRefresh time.Time
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }
 
 // NewSession creates a new Session
@@ -207,4 +247,37 @@ func (s *session) Close() {
 // Now returns the current time in the location of time_zone session var
 func (s *session) Now() time.Time {
 	return time.Now().In(s.Context.GetSessionVars().Location())
+}
+
+// GetMinActiveActiveCheckpointTS get min safe checkpoint ts on demand.
+func (s *session) GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error) {
+	// Refresh periodically to avoid querying TiCDC progress table for every SQL.
+	if !s.minActiveActiveCheckpointTSLastRefresh.IsZero() &&
+		time.Since(s.minActiveActiveCheckpointTSLastRefresh) < minActiveActiveCheckpointTSRefreshInterval {
+		return s.minActiveActiveCheckpointTS, nil
+	}
+
+	sql := fmt.Sprintf(
+		"SELECT IFNULL(MIN(checkpoint_ts), 0) FROM %s.%s WHERE database_name=%%? AND table_name=%%?",
+		tiCDCProgressDB,
+		tiCDCProgressTable,
+	)
+
+	rows, err := s.ExecuteSQL(ctx,
+		sql,
+		sqlescape.EscapeString(dbName),
+		sqlescape.EscapeString(tableName),
+	)
+	if err != nil {
+		return 0, err
+	}
+
+	var ts uint64
+	if len(rows) == 1 && rows[0].Len() == 1 {
+		ts = rows[0].GetUint64(0)
+	}
+
+	s.minActiveActiveCheckpointTS = ts
+	s.minActiveActiveCheckpointTSLastRefresh = time.Now()
+	return ts, nil
 }

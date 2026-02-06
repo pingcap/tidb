@@ -419,16 +419,58 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats := &executor.InsertRuntimeStat{
 		BasicRuntimeStats:    &execdetails.BasicRuntimeStats{},
 		SnapshotRuntimeStats: nil,
-		CheckInsertTime:      2 * time.Second,
-		Prefetch:             1 * time.Second,
+		ActiveActive: &executor.ActiveActiveStats{
+			CdcConflictSkipCount: 1,
+			UnsafeOriginTSCount:  2,
+		},
+		SoftDelete: &executor.SoftDeleteStats{
+			ImplicitRemoveRows: 7,
+		},
+		CheckInsertTime: 2 * time.Second,
+		Prefetch:        1 * time.Second,
 	}
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
-	require.Equal(t, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}", stats.String())
+	require.Equal(t, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}, active_active: {cdc_conflict_skip_cnt: 1, unsafe_write_origin_ts_cnt: 2}, softdelete: {implicit_remove_rows: 7}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
+<<<<<<< HEAD
 	stats.Merge(stats.Clone())
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
+=======
+	newStats := stats.Clone().(*executor.InsertRuntimeStat)
+	require.NotSame(t, stats.ActiveActive, newStats.ActiveActive)
+	require.NotSame(t, stats.SoftDelete, newStats.SoftDelete)
+	newStats.BasicRuntimeStats.Record(5*time.Second, 1)
+	newStats.ActiveActive.CdcConflictSkipCount = 3
+	newStats.ActiveActive.UnsafeOriginTSCount = 4
+	newStats.SoftDelete.ImplicitRemoveRows = 11
+	stats.Merge(newStats)
+	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	stats.FKCheckTime = time.Second
-	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}", stats.String())
+	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
+
+	stats2 := &executor.InsertRuntimeStat{}
+	stats2.Merge(&executor.InsertRuntimeStat{
+		BasicRuntimeStats: &execdetails.BasicRuntimeStats{},
+		ActiveActive: &executor.ActiveActiveStats{
+			CdcConflictSkipCount: 2,
+			UnsafeOriginTSCount:  3,
+		},
+		SoftDelete: &executor.SoftDeleteStats{
+			ImplicitRemoveRows: 5,
+		},
+		CheckInsertTime: 2 * time.Second,
+		Prefetch:        500 * time.Millisecond,
+		FKCheckTime:     300 * time.Millisecond,
+	})
+	require.NotNil(t, stats2.BasicRuntimeStats)
+	require.Equal(t, uint64(2), stats2.ActiveActive.CdcConflictSkipCount)
+	require.Equal(t, uint64(3), stats2.ActiveActive.UnsafeOriginTSCount)
+	require.NotNil(t, stats2.SoftDelete)
+	require.Equal(t, uint64(5), stats2.SoftDelete.ImplicitRemoveRows)
+	require.Equal(t, 2*time.Second, stats2.CheckInsertTime)
+	require.Equal(t, 500*time.Millisecond, stats2.Prefetch)
+	require.Equal(t, 300*time.Millisecond, stats2.FKCheckTime)
 }
 
 func TestDuplicateEntryMessage(t *testing.T) {

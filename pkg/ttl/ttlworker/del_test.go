@@ -28,12 +28,28 @@ import (
 
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/time/rate"
 )
 
+<<<<<<< HEAD
+=======
+func newMockDeleteTask(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.Time) *ttlDeleteTask {
+	task := &ttlDeleteTask{
+		tbl:        tbl,
+		expire:     expire,
+		jobType:    session.TTLJobTypeTTL,
+		rows:       rows,
+		statistics: &ttlStatistics{},
+	}
+	task.statistics.IncTotalRows(task.jobType, len(rows))
+	return task
+}
+
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 func TestTTLDelRetryBuffer(t *testing.T) {
 	createTask := func(name string) (*ttlDeleteTask, [][]types.Datum, *ttlStatistics) {
 		rows := make([][]types.Datum, 10)
@@ -108,8 +124,14 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 	// poll up-to-date tasks
 	tm = tm.Add(10*time.Second - time.Millisecond)
 	tasks := make([]*ttlDeleteTask, 0)
+<<<<<<< HEAD
 	doRetrySuccess := func(task *ttlDeleteTask) [][]types.Datum {
 		task.statistics.IncSuccessRows(len(task.rows))
+=======
+	doRetrySuccess := func(item *ttlDelRetryItem) [][]types.Datum {
+		task := item.task
+		task.statistics.IncSuccessRows(task.jobType, len(task.rows))
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		tasks = append(tasks, task)
 		return nil
 	}

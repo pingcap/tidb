@@ -82,6 +82,11 @@ const (
 	DatabaseOptionCollate
 	DatabaseOptionEncryption
 	DatabaseSetTiFlashReplica
+	DatabaseOptionActiveActive
+	DatabaseOptionSoftDelete
+	DatabaseOptionSoftDeleteRetention
+	DatabaseOptionSoftDeleteJobEnable
+	DatabaseOptionSoftDeleteJobInterval
 	DatabaseOptionPlacementPolicy = DatabaseOptionType(PlacementOptionPolicy)
 )
 
@@ -89,7 +94,9 @@ const (
 type DatabaseOption struct {
 	Tp             DatabaseOptionType
 	Value          string
+	BoolValue      bool
 	UintValue      uint64
+	TimeUnitValue  *TimeUnitExpr
 	TiFlashReplica *TiFlashReplicaSpec
 }
 
@@ -128,6 +135,55 @@ func (n *DatabaseOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			ctx.WriteString(v)
 		}
+	case DatabaseOptionActiveActive:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case DatabaseOptionSoftDelete:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON`")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case DatabaseOptionSoftDeleteRetention:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE ")
+			ctx.WritePlain("= ")
+			ctx.WriteKeyWord("RETENTION ")
+			ctx.WritePlain(n.Value)
+			ctx.WritePlain(" ")
+			return n.TimeUnitValue.Restore(ctx)
+		})
+	case DatabaseOptionSoftDeleteJobEnable:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case DatabaseOptionSoftDeleteJobInterval:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.Value)
+			return nil
+		})
 	default:
 		return errors.Errorf("invalid DatabaseOptionType: %d", n.Tp)
 	}
@@ -2509,9 +2565,27 @@ const (
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
+<<<<<<< HEAD
 	/* Some options are not cherry-picked from master, reserve the options */
 
 	TableOptionAffinity        = 47
+=======
+	TableOptionSoftDelete
+	TableOptionSoftDeleteRetention
+	TableOptionSoftDeleteJobInterval
+	TableOptionSoftDeleteJobEnable
+	TableOptionActiveActive
+	TableOptionEngineAttribute
+	TableOptionSecondaryEngineAttribute
+	TableOptionAutoextendSize
+	TableOptionPageChecksum
+	TableOptionPageCompressed
+	TableOptionPageCompressionLevel
+	TableOptionTransactional
+	TableOptionIetfQuotes
+	TableOptionSequence
+	TableOptionAffinity
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -2899,6 +2973,36 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+<<<<<<< HEAD
+=======
+	case TableOptionSoftDelete:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case TableOptionSoftDeleteRetention:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE ")
+			ctx.WritePlain("= ")
+			ctx.WriteKeyWord("RETENTION ")
+			ctx.WritePlain(n.StrValue)
+			ctx.WritePlain(" ")
+			return n.TimeUnitValue.Restore(ctx)
+		})
+	case TableOptionSoftDeleteJobInterval:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_INTERVAL ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	case TableOptionAffinity:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
 			ctx.WriteKeyWord("AFFINITY ")
@@ -2906,6 +3010,67 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
+<<<<<<< HEAD
+=======
+	case TableOptionSoftDeleteJobEnable:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
+			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case TableOptionActiveActive:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDActiveActive, func() error {
+			ctx.WriteKeyWord("ACTIVE_ACTIVE ")
+			ctx.WritePlain("= ")
+			if n.BoolValue {
+				ctx.WriteString("ON")
+			} else {
+				ctx.WriteString("OFF")
+			}
+			return nil
+		})
+	case TableOptionAutoextendSize:
+		ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlain(n.StrValue) // e.g. '4M'
+
+	// MariaDB specific options
+	case TableOptionPageChecksum:
+		ctx.WriteKeyWord("PAGE_CHECKSUM ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressed:
+		ctx.WriteKeyWord("PAGE_COMPRESSED ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionPageCompressionLevel:
+		ctx.WriteKeyWord("PAGE_COMPRESSION_LEVEL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionTransactional:
+		ctx.WriteKeyWord("TRANSACTIONAL ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+	case TableOptionIetfQuotes:
+		ctx.WriteKeyWord("IETF_QUOTES ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%s", n.StrValue)
+		return nil
+	case TableOptionSequence:
+		ctx.WriteKeyWord("SEQUENCE ")
+		ctx.WritePlain("= ")
+		ctx.WritePlainf("%d", n.UintValue)
+		return nil
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}

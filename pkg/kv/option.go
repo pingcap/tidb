@@ -116,6 +116,13 @@ const (
 	SessionID
 	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
 	BackgroundGoroutineLifecycleHooks
+<<<<<<< HEAD
+=======
+	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
+	PrewriteEncounterLockPolicy
+	// CommitWaitUntilTSO is an option to require get commit ts wait until the obtained TSO larger than the specified value
+	CommitWaitUntilTSO
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 )
 
 // TxnSizeLimits is the argument type for `SizeLimits` option

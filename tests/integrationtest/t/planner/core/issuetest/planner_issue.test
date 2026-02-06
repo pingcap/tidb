@@ -615,6 +615,257 @@ set @@tidb_opt_join_reorder_threshold=5;
 explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
 set @@tidb_opt_join_reorder_threshold=default;
 
+<<<<<<< HEAD
+=======
+# TestLongQueryBindingFromHistory
+# Test that long SQL queries can be used to create bindings from history using plan digest
+# This test verifies the fix for the issue where long queries were truncated in statement summary
+# and caused binding creation from history to fail
+
+# Clear statements summary
+set global tidb_enable_stmt_summary = 0;
+
+# Create a table with many long column names to generate a long query
+drop table if exists long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
+create table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill (
+    pk int primary key,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 varchar(255),
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 varchar(255),
+    col_end int
+);
+
+# Insert test data
+insert into long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill values
+(1, 'filler1', 'filler2', 'filler3', 'filler4', 'filler5', 'filler6', 'filler7', 'filler8', 'filler9', 'filler10',
+ 'filler11', 'filler12', 'filler13', 'filler14', 'filler15', 'filler16', 'filler17', 'filler18', 'filler19', 'filler20',
+ 'filler21', 'filler22', 'filler23', 'filler24', 'filler25', 'filler26', 'filler27', 'filler28', 999);
+
+# Enable statement summary
+set global tidb_enable_stmt_summary = 1;
+set global tidb_stmt_summary_refresh_interval = 1;
+
+# Execute a very long query that would previously exceed the 4k limit
+select pk,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+    col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' and
+      col_end = 999;
+
+# Check that the query appears in statement summary and is not truncated
+(select digest, digest_text, query_sample_text, plan_digest 
+from information_schema.cluster_statements_summary 
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+union all
+select digest, digest_text, query_sample_text, plan_digest 
+from information_schema.cluster_statements_summary_history 
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%')
+order by digest,plan_digest;
+
+# Check that the global binding works
+create global binding from history using plan digest '34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab';
+--replace_column 1 # 2 # 5 # 6 #
+show global bindings;
+
+# Verify that the query text is not truncated (should not contain "(len:" pattern)
+select count(*) as truncated_count
+from information_schema.cluster_statements_summary 
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+  and (digest_text like '%(len:%' or query_sample_text like '%(len:%');
+
+# The count should be 0, meaning no queries are truncated
+# If this test passes, it means the 32k limit is sufficient for this query
+
+# Try the previous default of 4k
+set global tidb_stmt_summary_max_sql_length = 4096;
+# Clear the stmt_summary tables
+drop global binding for sql digest 'b4165ebffac47978b198f040ada87a44826284848c0ff6e0de70781bb6242d18';
+set global tidb_enable_stmt_summary = 0;
+set global tidb_enable_stmt_summary = 1;
+
+# Execute a very long query that would previously exceed the 4k limit
+select pk,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_1,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_2,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_3,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_4,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_5,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_6,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_7,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_8,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_9,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_10,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_11,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_12,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_13,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_14,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_15,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_16,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_17,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_18,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_19,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_20,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_21,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_22,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_23,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_24,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_25,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_26,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_27,
+    long_column_name_just_fill_out_the_plan_and_sql_digest_text_28,
+    col_end
+from long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill
+where long_column_name_just_fill_out_the_plan_and_sql_digest_text_1 = 'filler1' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_2 = 'filler2' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_3 = 'filler3' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_4 = 'filler4' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_5 = 'filler5' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_6 = 'filler6' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_7 = 'filler7' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_8 = 'filler8' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_9 = 'filler9' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_10 = 'filler10' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_11 = 'filler11' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_12 = 'filler12' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_13 = 'filler13' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_14 = 'filler14' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_15 = 'filler15' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_16 = 'filler16' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_17 = 'filler17' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_18 = 'filler18' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_19 = 'filler19' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_20 = 'filler20' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_21 = 'filler21' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_22 = 'filler22' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_23 = 'filler23' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_24 = 'filler24' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_25 = 'filler25' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_26 = 'filler26' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_27 = 'filler27' and
+      long_column_name_just_fill_out_the_plan_and_sql_digest_text_28 = 'filler28' and
+      col_end = 999;
+
+# Check that the query appears in statement summary and is truncated
+(select digest, digest_text, query_sample_text, plan_digest 
+from information_schema.cluster_statements_summary 
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+union all
+select digest, digest_text, query_sample_text, plan_digest 
+from information_schema.cluster_statements_summary_history 
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%')
+order by digest,plan_digest;
+
+# Original error
+--error 1105
+create global binding from history using plan digest '34905d92850ad6e2f8a75c3402ec9157ad2d4582ac30e9e0ad5aa8d7ebbeceab';
+show global bindings;
+
+# Verify that the query text is truncated (should contain "(len:" pattern)
+select count(*) as truncated_count
+from information_schema.cluster_statements_summary 
+where digest_text like 'select%long_column_name_just_fill_out_the_plan_and_sql_digest_text%'
+  and (digest_text like '%(len:%' or query_sample_text like '%(len:%');
+
+# Clean up
+drop table long_table_name_just_fill_out_the_plan_and_sql_digest_text_fill;
+set global tidb_stmt_summary_max_sql_length = DEFAULT;
+select @@global.tidb_stmt_summary_max_sql_length;
+set global tidb_enable_stmt_summary = DEFAULT;
+set global tidb_stmt_summary_refresh_interval = DEFAULT;
+
+# TestIssue64922
+drop table if exists t, t1, t2;
+create table t(a int, b int);
+insert into t value (1,1);
+select *, _tidb_rowid from t;
+select * from (select *, _tidb_rowid from t) n;
+
+create table t1(a int, b int);
+create table t2(aa int, bb int);
+explain format = 'brief' select * from (select _tidb_rowid from t1) n1 natural join (select _tidb_rowid from t2) n2;
+explain format = 'brief' select * from (select _tidb_rowid, a from t1) n1 natural join (select _tidb_rowid, aa from t2) n2;
+
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 # Issue64697
 drop table if exists t1, t2;
 create table t1(a int, b int);

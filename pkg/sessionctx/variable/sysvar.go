@@ -326,7 +326,14 @@ var defaultSysVars = []*SysVar{
 		s.lowResolutionTSO = TiDBOptOn(val)
 		return nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
+=======
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBCDCActiveActiveSyncStats, Value: "", Type: vardef.TypeStr, ReadOnly: true, GetSession: func(s *SessionVars) (string, error) {
+		return fmt.Sprintf("{\"conflict_skip_rows\": %d}", s.ActiveActiveConflictSkipRows.Load()), nil
+	}},
+	{Scope: vardef.ScopeSession, Name: vardef.TiDBAllowRemoveAutoInc, Value: BoolToOnOff(vardef.DefTiDBAllowRemoveAutoInc), Type: vardef.TypeBool, SetSession: func(s *SessionVars, val string) error {
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
@@ -591,7 +598,15 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
 		return BoolToOnOff(EnableRCReadCheckTS.Load()), nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeInstance, Name: TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+=======
+	{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: vardef.TiDBTranslateSoftDeleteSQL, Type: vardef.TypeBool, Value: BoolToOnOff(vardef.DefTiDBTranslateSoftdeleteSQL), SetSession: func(s *SessionVars, val string) error {
+		s.SoftDeleteRewrite = TiDBOptOn(val)
+		return nil
+	}},
+	{Scope: vardef.ScopeInstance, Name: vardef.TiDBStmtSummaryEnablePersistent, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		return BoolToOnOff(config.GetGlobalConfig().Instance.StmtSummaryEnablePersistent), nil
 	}},
 	{Scope: ScopeInstance, Name: TiDBStmtSummaryFilename, ReadOnly: true, GetGlobal: func(_ context.Context, _ *SessionVars) (string, error) {
@@ -2897,7 +2912,17 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTTLJob.Load()), nil
 	}},
+<<<<<<< HEAD
 	{Scope: ScopeGlobal, Name: TiDBTTLScanBatchSize, Value: strconv.Itoa(DefTiDBTTLScanBatchSize), Type: TypeInt, MinValue: DefTiDBTTLScanBatchMinSize, MaxValue: DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+=======
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSoftDeleteJobEnable, Value: BoolToOnOff(vardef.DefTiDBSoftDeleteJobEnable), Type: vardef.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		vardef.SoftDeleteJobEnable.Store(TiDBOptOn(s))
+		return nil
+	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
+		return BoolToOnOff(vardef.SoftDeleteJobEnable.Load()), nil
+	}},
+	{Scope: vardef.ScopeGlobal, Name: vardef.TiDBTTLScanBatchSize, Value: strconv.Itoa(vardef.DefTiDBTTLScanBatchSize), Type: vardef.TypeInt, MinValue: vardef.DefTiDBTTLScanBatchMinSize, MaxValue: vardef.DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		val, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return err

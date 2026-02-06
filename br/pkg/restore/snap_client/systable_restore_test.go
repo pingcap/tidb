@@ -393,7 +393,11 @@ func TestCheckPrivilegeTableRowsCollateCompatibility(t *testing.T) {
 //
 // The above variables are in the file br/pkg/restore/systable_restore.go
 func TestMonitorTheSystemTableIncremental(t *testing.T) {
+<<<<<<< HEAD
 	require.Equal(t, int64(223), session.CurrentBootstrapVersion)
+=======
+	require.Equal(t, int64(255), session.CurrentBootstrapVersion)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }
 
 func TestIsStatsTemporaryTable(t *testing.T) {

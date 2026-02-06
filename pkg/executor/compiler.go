@@ -309,6 +309,13 @@ func getStmtDbLabel(stmtNode ast.StmtNode, resolveCtx *resolve.Context) map[stri
 				dbLabelSet[db] = struct{}{}
 			}
 		}
+	case *ast.RecoverValuesStmt:
+		if x.Table != nil {
+			dbLabels := getDbFromResultNode(x.Table, resolveCtx)
+			for _, db := range dbLabels {
+				dbLabelSet[db] = struct{}{}
+			}
+		}
 	case *ast.DeleteStmt:
 		if x.TableRefs != nil {
 			dbLabels := getDbFromResultNode(x.TableRefs.TableRefs, resolveCtx)

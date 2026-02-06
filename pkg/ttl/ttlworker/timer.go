@@ -16,17 +16,15 @@ package ttlworker
 
 import (
 	"context"
-	"encoding/json"
-	"sync"
 	"time"
 
+<<<<<<< HEAD
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+=======
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	timerrt "github.com/pingcap/tidb/pkg/timer/runtime"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"go.uber.org/zap"
 )
 
 type ttlTimerSummary struct {
@@ -44,18 +42,19 @@ type TTLJobTrace struct {
 	Summary *TTLSummary
 }
 
-// TTLJobAdapter is used to submit TTL job and trace job status
+// TTLJobAdapter is used to submit TTL job and trace job status.
 type TTLJobAdapter interface {
 	// Now returns the current time with system timezone.
 	Now() (time.Time, error)
-	// CanSubmitJob returns whether a new job can be created for the specified table
+	// CanSubmitJob returns whether a new job can be created for the specified table.
 	CanSubmitJob(tableID, physicalID int64) bool
-	// SubmitJob submits a new job
+	// SubmitJob submits a new job.
 	SubmitJob(ctx context.Context, tableID, physicalID int64, requestID string, watermark time.Time) (*TTLJobTrace, error)
-	// GetJob returns the job to trace
+	// GetJob returns the job to trace.
 	GetJob(ctx context.Context, tableID, physicalID int64, requestID string) (*TTLJobTrace, error)
 }
 
+<<<<<<< HEAD
 type ttlTimerHook struct {
 	adapter             TTLJobAdapter
 	cli                 timerapi.TimerClient
@@ -252,16 +251,20 @@ func (t *ttlTimerHook) waitJobFinished(logger *zap.Logger, data *TTLTimerData, t
 	}
 }
 
+=======
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 type ttlTimerRuntime struct {
-	rt      *timerrt.TimerGroupRuntime
-	store   *timerapi.TimerStore
-	adapter TTLJobAdapter
+	rt                *timerrt.TimerGroupRuntime
+	store             *timerapi.TimerStore
+	ttlAdapter        TTLJobAdapter
+	softdeleteAdapter TTLJobAdapter
 }
 
-func newTTLTimerRuntime(store *timerapi.TimerStore, adapter TTLJobAdapter) *ttlTimerRuntime {
+func newTTLTimerRuntime(store *timerapi.TimerStore, ttlAdapter TTLJobAdapter, softdeleteAdapter TTLJobAdapter) *ttlTimerRuntime {
 	return &ttlTimerRuntime{
-		store:   store,
-		adapter: adapter,
+		store:             store,
+		ttlAdapter:        ttlAdapter,
+		softdeleteAdapter: softdeleteAdapter,
 	}
 }
 
@@ -271,9 +274,18 @@ func (r *ttlTimerRuntime) Resume() {
 	}
 
 	r.rt = timerrt.NewTimerRuntimeBuilder("ttl", r.store).
-		SetCond(&timerapi.TimerCond{Key: timerapi.NewOptionalVal(timerKeyPrefix), KeyPrefix: true}).
-		RegisterHookFactory(timerHookClass, func(hookClass string, cli timerapi.TimerClient) timerapi.Hook {
-			return newTTLTimerHook(r.adapter, cli)
+		// Use OR condition to listen to both TTL and softdelete timers
+		SetCond(timerapi.Or(
+			&timerapi.TimerCond{Key: timerapi.NewOptionalVal(ttlTimerKeyPrefix), KeyPrefix: true},
+			&timerapi.TimerCond{Key: timerapi.NewOptionalVal(softdeleteTimerKeyPrefix), KeyPrefix: true},
+		)).
+		// Register TTL hook factory
+		RegisterHookFactory(ttlTimerHookClass, func(hookClass string, cli timerapi.TimerClient) timerapi.Hook {
+			return newTTLTimerHook(r.ttlAdapter, cli)
+		}).
+		// Register softdelete hook factory
+		RegisterHookFactory(softdeleteTimerHookClass, func(hookClass string, cli timerapi.TimerClient) timerapi.Hook {
+			return newSoftdeleteTimerHook(r.softdeleteAdapter, cli)
 		}).
 		Build()
 	r.rt.Start()

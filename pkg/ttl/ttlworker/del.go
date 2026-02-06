@@ -109,6 +109,12 @@ func (l *defaultDelRateLimiter) reset() (newLimit int64) {
 }
 
 type ttlDeleteTask struct {
+<<<<<<< HEAD
+=======
+	jobID      string
+	scanID     int64
+	jobType    session.TTLJobType
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	tbl        *cache.PhysicalTable
 	expire     time.Time
 	rows       [][]types.Datum
@@ -127,7 +133,16 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		}
 	}()
 
-	se := newTableSession(rawSe, t.tbl, t.expire)
+	se, err := newTableSession(rawSe, t.tbl, t.expire, t.jobType)
+	if err != nil {
+		t.statistics.IncErrorRows(t.jobType, len(leftRows))
+		t.taskLogger(logutil.Logger(ctx)).Warn(
+			"create ttl table session failed",
+			zap.Error(err),
+		)
+		return
+	}
+
 	for len(leftRows) > 0 && ctx.Err() == nil {
 		maxBatch := variable.TTLDeleteBatchSize.Load()
 		var delBatch [][]types.Datum
@@ -139,10 +154,29 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 			leftRows = leftRows[maxBatch:]
 		}
 
-		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, delBatch, t.expire)
+		minCheckpointTS := uint64(0)
+		if t.jobType == session.TTLJobTypeSoftDelete && t.tbl.TableInfo.IsActiveActive {
+			minCheckpointTS, err = rawSe.GetMinActiveActiveCheckpointTS(
+				ctx,
+				t.tbl.Schema.O,
+				t.tbl.Name.O,
+			)
+			if err != nil {
+				t.statistics.IncErrorRows(t.jobType, len(leftRows))
+				t.taskLogger(logutil.Logger(ctx)).Warn("get ticdc min checkpoint ts failed", zap.Error(err))
+				return
+			}
+		}
+
+		sql, err := sqlbuilder.BuildDeleteSQL(t.tbl, t.jobType, delBatch, t.expire, minCheckpointTS)
 		if err != nil {
+<<<<<<< HEAD
 			t.statistics.IncErrorRows(len(delBatch))
 			logutil.BgLogger().Warn(
+=======
+			t.statistics.IncErrorRows(t.jobType, len(delBatch))
+			t.taskLogger(logutil.Logger(ctx)).Warn(
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 				"build delete SQL in TTL failed",
 				zap.Error(err),
 				zap.String("table", t.tbl.Schema.O+"."+t.tbl.Name.O),
@@ -167,11 +201,17 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 		_, needRetry, err := se.ExecuteSQLWithCheck(ctx, sql)
 		sqlInterval := time.Since(sqlStart)
 		if err != nil {
+<<<<<<< HEAD
 			metrics.DeleteErrorDuration.Observe(sqlInterval.Seconds())
 			logutil.BgLogger().Warn(
+=======
+			metrics.QueryDuration(metrics.SQLTypeDelete, t.jobType, false).Observe(sqlInterval.Seconds())
+			t.taskLogger(logutil.Logger(ctx)).Warn(
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 				"delete SQL in TTL failed",
 				zap.Error(err),
 				zap.String("SQL", sql),
+				zap.String("jobType", t.jobType),
 				zap.Bool("needRetry", needRetry),
 			)
 
@@ -181,13 +221,13 @@ func (t *ttlDeleteTask) doDelete(ctx context.Context, rawSe session.Session) (re
 				}
 				retryRows = append(retryRows, delBatch...)
 			} else {
-				t.statistics.IncErrorRows(len(delBatch))
+				t.statistics.IncErrorRows(t.jobType, len(delBatch))
 			}
 			continue
 		}
 
-		metrics.DeleteSuccessDuration.Observe(sqlInterval.Seconds())
-		t.statistics.IncSuccessRows(len(delBatch))
+		metrics.QueryDuration(metrics.SQLTypeDelete, t.jobType, true).Observe(sqlInterval.Seconds())
+		t.statistics.IncSuccessRows(t.jobType, len(delBatch))
 	}
 	return retryRows
 }
@@ -263,7 +303,7 @@ func (b *ttlDelRetryBuffer) SetRetryInterval(interval time.Duration) {
 func (b *ttlDelRetryBuffer) Drain() {
 	for ele := b.list.Front(); ele != nil; ele = ele.Next() {
 		if item, ok := ele.Value.(*ttlDelRetryItem); ok {
-			item.task.statistics.IncErrorRows(len(item.task.rows))
+			item.task.statistics.IncErrorRows(item.task.jobType, len(item.task.rows))
 		} else {
 			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
 		}
@@ -277,14 +317,32 @@ func (b *ttlDelRetryBuffer) recordRetryItem(task *ttlDeleteTask, retryRows [][]t
 	}
 
 	if retryCnt >= b.maxRetry {
+<<<<<<< HEAD
 		task.statistics.IncErrorRows(len(retryRows))
+=======
+		task.taskLogger(logutil.BgLogger()).Warn(
+			"discard TTL rows that has failed more than maxRetry times",
+			zap.Int("rowCnt", len(retryRows)),
+			zap.Int("retryCnt", retryCnt),
+		)
+		task.statistics.IncErrorRows(task.jobType, len(retryRows))
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		return false
 	}
 
 	for b.list.Len() > 0 && b.list.Len() >= b.maxSize {
 		ele := b.list.Front()
 		if item, ok := ele.Value.(*ttlDelRetryItem); ok {
+<<<<<<< HEAD
 			item.task.statistics.IncErrorRows(len(item.task.rows))
+=======
+			task.taskLogger(logutil.BgLogger()).Warn(
+				"discard TTL rows because the retry buffer is full",
+				zap.Int("rowCnt", len(retryRows)),
+				zap.Int("bufferSize", b.list.Len()),
+			)
+			item.task.statistics.IncErrorRows(task.jobType, len(item.task.rows))
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		} else {
 			logutil.BgLogger().Error(fmt.Sprintf("invalid retry buffer item type: %T", ele))
 		}

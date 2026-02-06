@@ -72,7 +72,7 @@ func MockTableInfo(sctx sessionctx.Context, stmt *ast.CreateTableStmt, tableID i
 	}
 
 	// The specified charset will be handled in handleTableOptions
-	if err = handleTableOptions(stmt.Options, tbl); err != nil {
+	if err = handleTableOptions(stmt.Options, tbl, &model.DBInfo{}); err != nil {
 		return nil, errors.Trace(err)
 	}
 

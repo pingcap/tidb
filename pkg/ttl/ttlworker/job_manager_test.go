@@ -152,9 +152,13 @@ func GetSessionForTest(pool util.SessionPool) (session.Session, error) {
 // LockJob is an exported version of lockNewJob for test
 func (m *JobManager) LockJob(ctx context.Context, se session.Session, table *cache.PhysicalTable, now time.Time, createJobID string, checkInterval bool) (*TTLJob, error) {
 	if createJobID == "" {
+<<<<<<< HEAD
 		return m.lockHBTimeoutJob(ctx, se, table, now)
+=======
+		return m.lockHBTimeoutJobByType(ctx, se, session.TTLJobTypeTTL, table.ID, table.TableInfo.ID, now)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	}
-	return m.lockNewJob(ctx, se, table, now, createJobID, checkInterval)
+	return m.lockNewJobByType(ctx, se, session.TTLJobTypeTTL, table, now, createJobID, checkInterval)
 }
 
 // RunningJobs returns the running jobs inside ttl job manager
@@ -168,8 +172,8 @@ func (m *JobManager) InfoSchemaCache() *cache.InfoSchemaCache {
 }
 
 // TableStatusCache is an exported getter of TableStatusCache for test.
-func (m *JobManager) TableStatusCache() *cache.TableStatusCache {
-	return m.tableStatusCache
+func (m *JobManager) TableStatusCache() *cache.TTLTableStatusCache {
+	return m.ttlStatusCache
 }
 
 // RescheduleJobs is an exported version of rescheduleJobs for test
@@ -183,6 +187,19 @@ func (m *JobManager) SubmitJob(se session.Session, tableID, physicalID int64, re
 		TableID:    tableID,
 		PhysicalID: physicalID,
 		RequestID:  requestID,
+		JobType:    session.TTLJobTypeTTL,
+		RespCh:     ch,
+	})
+	return <-ch
+}
+
+func (m *JobManager) SubmitSoftDeleteJob(se session.Session, tableID, physicalID int64, requestID string) error {
+	ch := make(chan error, 1)
+	m.handleSubmitJobRequest(se, &SubmitTTLManagerJobRequest{
+		TableID:    tableID,
+		PhysicalID: physicalID,
+		RequestID:  requestID,
+		JobType:    session.TTLJobTypeSoftDelete,
 		RespCh:     ch,
 	})
 	return <-ch
@@ -279,12 +296,12 @@ func TestReadyForLockHBTimeoutJobTables(t *testing.T) {
 			for _, ist := range c.infoSchemaTables {
 				m.infoSchemaCache.Tables[ist.ID] = ist
 			}
-			m.tableStatusCache.Tables = make(map[int64]*cache.TableStatus)
+			m.ttlStatusCache.Tables = make(map[int64]*cache.TableStatus)
 			for _, st := range c.tableStatus {
-				m.tableStatusCache.Tables[st.TableID] = st
+				m.ttlStatusCache.Tables[st.TableID] = st
 			}
 
-			tables := m.readyForLockHBTimeoutJobTables(se.Now())
+			tables := m.readyForLockHBTimeoutJobTablesByType(session.TTLJobTypeTTL, se.Now())
 			if c.shouldSchedule {
 				assert.Len(t, tables, 1)
 				assert.Equal(t, tbl.ID, tables[0].ID)
@@ -312,83 +329,89 @@ func TestOnTimerTick(t *testing.T) {
 	a := &mockJobAdapter{}
 	a.On("CanSubmitJob").Return(false).Maybe()
 
-	rt := newTTLTimerRuntime(timerStore, a)
+	rt := newTTLTimerRuntime(timerStore, a, a)
 	require.Nil(t, rt.rt)
 	defer rt.Pause()
 
 	now := time.UnixMilli(3600 * 24)
-	syncer := NewTTLTimerSyncer(m.sessPool, timerapi.NewDefaultTimerClient(timerStore))
+	ttlSyncer, err := NewTTLTimerSyncer(m.sessPool, timerapi.NewDefaultTimerClient(timerStore))
+	require.NoError(t, err)
+	softdeleteSyncer, err := NewSoftDeleteTimerSyncer(m.sessPool, timerapi.NewDefaultTimerClient(timerStore))
+	require.NoError(t, err)
 	defer m.sessPool.(*mockSessionPool).AssertNoSessionInUse()
-	syncer.nowFunc = func() time.Time {
+	ttlSyncer.nowFunc = func() time.Time {
+		return now
+	}
+	softdeleteSyncer.nowFunc = func() time.Time {
 		return now
 	}
 
 	// pause after init
-	m.onTimerTick(se, rt, syncer, now)
+	m.onTimerTick(se, rt, ttlSyncer, softdeleteSyncer, now)
 	require.Nil(t, rt.rt)
-	require.Equal(t, 0, len(syncer.key2Timers))
-	syncTime, syncVer := syncer.GetLastSyncInfo()
+	require.Equal(t, 0, len(ttlSyncer.key2Timers))
+	syncTime, syncVer := ttlSyncer.GetLastSyncInfo()
 	require.Zero(t, syncVer)
 	require.True(t, syncTime.IsZero())
 
 	// resume first time
 	leader.Store(true)
-	m.onTimerTick(se, rt, syncer, now)
+	m.onTimerTick(se, rt, ttlSyncer, softdeleteSyncer, now)
 	innerRT := rt.rt
 	require.NotNil(t, innerRT)
 	require.True(t, innerRT.Running())
-	require.Equal(t, 1, len(syncer.key2Timers))
-	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, 1, len(ttlSyncer.key2Timers))
+	syncTime, syncVer = ttlSyncer.GetLastSyncInfo()
 	require.Equal(t, int64(100), syncVer)
 	require.Equal(t, now, syncTime)
 
 	// resume after a very short duration
 	now = now.Add(time.Microsecond * 999)
 	se.sessionInfoSchema = newMockInfoSchemaWithVer(101, tbl.TableInfo)
-	m.onTimerTick(se, rt, syncer, now)
+	m.onTimerTick(se, rt, ttlSyncer, softdeleteSyncer, now)
 	require.Same(t, innerRT, rt.rt)
 	require.True(t, innerRT.Running())
-	require.Equal(t, 1, len(syncer.key2Timers))
-	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, 1, len(ttlSyncer.key2Timers))
+	syncTime, syncVer = ttlSyncer.GetLastSyncInfo()
 	require.Equal(t, int64(100), syncVer)
 	require.Equal(t, now.Add(-999*time.Microsecond), syncTime)
 
 	// resume after a middle duration
 	now = now.Add(2 * time.Millisecond)
-	m.onTimerTick(se, rt, syncer, now)
+	m.onTimerTick(se, rt, ttlSyncer, softdeleteSyncer, now)
 	require.Same(t, innerRT, rt.rt)
 	require.True(t, innerRT.Running())
-	require.Equal(t, 1, len(syncer.key2Timers))
-	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, 1, len(ttlSyncer.key2Timers))
+	syncTime, syncVer = ttlSyncer.GetLastSyncInfo()
 	require.Equal(t, int64(101), syncVer)
 	require.Equal(t, now, syncTime)
 
 	// resume after a middle duration but infoschema not change
 	now = now.Add(6 * time.Second)
-	m.onTimerTick(se, rt, syncer, now)
+	m.onTimerTick(se, rt, ttlSyncer, softdeleteSyncer, now)
 	require.Same(t, innerRT, rt.rt)
 	require.True(t, innerRT.Running())
-	require.Equal(t, 1, len(syncer.key2Timers))
-	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, 1, len(ttlSyncer.key2Timers))
+	syncTime, syncVer = ttlSyncer.GetLastSyncInfo()
 	require.Equal(t, int64(101), syncVer)
 	require.Equal(t, now.Add(-6*time.Second), syncTime)
 
 	// resume after a long duration
 	now = now.Add(3 * time.Minute)
-	m.onTimerTick(se, rt, syncer, now)
+	m.onTimerTick(se, rt, ttlSyncer, softdeleteSyncer, now)
 	require.Same(t, innerRT, rt.rt)
 	require.True(t, innerRT.Running())
-	require.Equal(t, 1, len(syncer.key2Timers))
-	syncTime, syncVer = syncer.GetLastSyncInfo()
+	require.Equal(t, 1, len(ttlSyncer.key2Timers))
+	syncTime, syncVer = ttlSyncer.GetLastSyncInfo()
 	require.Equal(t, int64(101), syncVer)
 	require.Equal(t, now, syncTime)
 
 	// pause
 	leader.Store(false)
-	m.onTimerTick(se, rt, syncer, now)
+	m.onTimerTick(se, rt, ttlSyncer, softdeleteSyncer, now)
 	require.Nil(t, rt.rt)
 	require.False(t, innerRT.Running())
-	syncTime, syncVer = syncer.GetLastSyncInfo()
+	syncTime, syncVer = ttlSyncer.GetLastSyncInfo()
 	require.Zero(t, syncVer)
 	require.True(t, syncTime.IsZero())
 }
@@ -418,6 +441,10 @@ func TestLockTable(t *testing.T) {
 			args,
 		}
 	}
+	getExecuteInfoForUpdateByTableID := func(jobType session.TTLJobType, tableID int64) executeInfo {
+		sql, args := cache.SelectFromTableStatusWithID(jobType, tableID)
+		return getExecuteInfoForUpdate(sql, args)
+	}
 	getExecuteInfoWithErr := func(sql string, args []any, err error) executeInfo {
 		require.NoError(t, err)
 		return executeInfo{
@@ -442,19 +469,23 @@ func TestLockTable(t *testing.T) {
 	}{
 		{"normal lock table for create", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, newJobExpireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL(session.TTLJobTypeTTL, "new-job-id", 1, now, now, &newJobExpireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, newJobExpireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", session.TTLJobTypeTTL, testPhysicalTable, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
+<<<<<<< HEAD
 				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+=======
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", session.TTLJobTypeTTL, 1, 0, nil, nil, newJobExpireTime, now)),
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 				nil, nil,
 			},
 			{
@@ -464,19 +495,23 @@ func TestLockTable(t *testing.T) {
 		}, true, false, false},
 		{"normal lock table for create and check interval", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, newJobExpireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL(session.TTLJobTypeTTL, "new-job-id", 1, now, now, &newJobExpireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, newJobExpireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", session.TTLJobTypeTTL, testPhysicalTable, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
+<<<<<<< HEAD
 				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+=======
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", session.TTLJobTypeTTL, 1, 0, nil, nil, newJobExpireTime, now)),
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 				nil, nil,
 			},
 			{
@@ -486,33 +521,37 @@ func TestLockTable(t *testing.T) {
 		}, true, true, false},
 		{"normal lock table for exist job", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 		}, false, false, true},
 		{"select nothing for create", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(insertNewTableIntoStatusSQL(1, 1)),
+				getExecuteInfo(insertNewTableIntoStatusSQL(session.TTLJobTypeTTL, 1, 1)),
 				nil, nil,
 			},
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, newJobExpireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL(session.TTLJobTypeTTL, "new-job-id", 1, now, now, &newJobExpireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, newJobExpireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", session.TTLJobTypeTTL, testPhysicalTable, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
+<<<<<<< HEAD
 				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+=======
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", session.TTLJobTypeTTL, 1, 0, nil, nil, newJobExpireTime, now)),
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 				nil, nil,
 			},
 			{
@@ -522,27 +561,31 @@ func TestLockTable(t *testing.T) {
 		}, true, false, false},
 		{"select nothing for create and check interval", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(insertNewTableIntoStatusSQL(1, 1)),
+				getExecuteInfo(insertNewTableIntoStatusSQL(session.TTLJobTypeTTL, 1, 1)),
 				nil, nil,
 			},
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, newJobExpireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL(session.TTLJobTypeTTL, "new-job-id", 1, now, now, &newJobExpireTime, "test-id")),
 				nil, nil,
 			},
 			{
-				getExecuteInfo(createJobHistorySQL("new-job-id", testPhysicalTable, newJobExpireTime, now)),
+				getExecuteInfo(createJobHistorySQL("new-job-id", session.TTLJobTypeTTL, testPhysicalTable, newJobExpireTime, now)),
 				nil, nil,
 			},
 			{
+<<<<<<< HEAD
 				getExecuteInfoWithErr(cache.InsertIntoTTLTask(newMockSession(t), "new-job-id", 1, 0, nil, nil, newJobExpireTime, now)),
+=======
+				getExecuteInfoWithErr(cache.InsertIntoTTLTask(time.UTC, "new-job-id", session.TTLJobTypeTTL, 1, 0, nil, nil, newJobExpireTime, now)),
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 				nil, nil,
 			},
 			{
@@ -552,53 +595,53 @@ func TestLockTable(t *testing.T) {
 		}, true, true, false},
 		{"select nothing for exist job", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				nil, nil,
 			},
 		}, false, false, true},
 		{"running job but create", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1, CurrentJobTTLExpire: oldJobExpireTime, CurrentJobID: "job1", CurrentJobOwnerID: "owner1", CurrentJobOwnerHBTime: now, CurrentJobStartTime: oldJobStartTime}),
 				nil,
 			},
 		}, true, false, true},
 		{"running job but create and check interval", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1, CurrentJobTTLExpire: oldJobExpireTime, CurrentJobID: "job1", CurrentJobOwnerID: "owner1", CurrentJobOwnerHBTime: now, CurrentJobStartTime: oldJobStartTime}),
 				nil,
 			},
 		}, true, true, true},
 		{"running job but lock for exist job", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1, CurrentJobTTLExpire: oldJobExpireTime, CurrentJobID: "job1", CurrentJobOwnerID: "owner1", CurrentJobOwnerHBTime: now, CurrentJobStartTime: oldJobStartTime}),
 				nil,
 			},
 		}, false, false, true},
 		{"heartbeat timeout job but create", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1, CurrentJobTTLExpire: oldJobExpireTime, CurrentJobID: "job1", CurrentJobOwnerID: "owner1", CurrentJobOwnerHBTime: now.Add(-20 * time.Minute), CurrentJobStartTime: oldJobStartTime}),
 				nil,
 			},
 		}, true, false, true},
 		{"heartbeat timeout job but create with check interval", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1, CurrentJobTTLExpire: oldJobExpireTime, CurrentJobID: "job1", CurrentJobOwnerID: "owner1", CurrentJobOwnerHBTime: now.Add(-20 * time.Minute), CurrentJobStartTime: oldJobStartTime}),
 				nil,
 			},
 		}, true, true, true},
 		{"heartbeat timeout job for lock", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1, CurrentJobTTLExpire: oldJobExpireTime, CurrentJobID: "job1", CurrentJobOwnerID: "owner1", CurrentJobOwnerHBTime: now.Add(-20 * time.Minute), CurrentJobStartTime: oldJobStartTime}),
 				nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("job1", 1, oldJobStartTime, now, oldJobExpireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL(session.TTLJobTypeTTL, "job1", 1, oldJobStartTime, now, &oldJobExpireTime, "test-id")),
 				nil, nil,
 			},
 			{
@@ -608,11 +651,11 @@ func TestLockTable(t *testing.T) {
 		}, false, false, false},
 		{"return error", testPhysicalTable, []sqlExecute{
 			{
-				getExecuteInfoForUpdate(cache.SelectFromTTLTableStatusWithID(1)),
+				getExecuteInfoForUpdateByTableID(session.TTLJobTypeTTL, 1),
 				newTTLTableStatusRows(&cache.TableStatus{TableID: 1}), nil,
 			},
 			{
-				getExecuteInfo(setTableStatusOwnerSQL("new-job-id", 1, now, now, newJobExpireTime, "test-id")),
+				getExecuteInfo(setTableStatusOwnerSQL(session.TTLJobTypeTTL, "new-job-id", 1, now, now, &newJobExpireTime, "test-id")),
 				nil, errors.New("test error message"),
 			},
 		}, true, false, true},
@@ -638,9 +681,13 @@ func TestLockTable(t *testing.T) {
 			m.ctx = cache.SetMockExpireTime(context.Background(), newJobExpireTime)
 			var job *ttlJob
 			if c.isCreate {
-				job, err = m.lockNewJob(context.Background(), se, c.table, now, "new-job-id", c.checkInterval)
+				job, err = m.lockNewJobByType(context.Background(), se, session.TTLJobTypeTTL, c.table, now, "new-job-id", c.checkInterval)
 			} else {
+<<<<<<< HEAD
 				job, err = m.lockHBTimeoutJob(context.Background(), se, c.table, now)
+=======
+				job, err = m.lockHBTimeoutJobByType(context.Background(), se, session.TTLJobTypeTTL, c.table.ID, c.table.TableInfo.ID, now)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 			}
 			require.Equal(t, len(c.sqls), sqlCounter)
 			if c.hasError {
@@ -677,8 +724,16 @@ func TestLocalJobs(t *testing.T) {
 	m := NewJobManager("test-id", nil, nil, nil, nil)
 	m.sessPool = newMockSessionPool(t, tbl1, tbl2)
 
+<<<<<<< HEAD
 	m.runningJobs = []*ttlJob{{tbl: tbl1, id: "1"}, {tbl: tbl2, id: "2"}}
 	m.tableStatusCache.Tables = map[int64]*cache.TableStatus{
+=======
+	m.runningJobs = []*ttlJob{
+		{tableID: tbl1.ID, id: "1", jobType: session.TTLJobTypeTTL},
+		{tableID: tbl2.ID, id: "2", jobType: session.TTLJobTypeTTL},
+	}
+	m.ttlStatusCache.Tables = map[int64]*cache.TableStatus{
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		tbl1.ID: {
 			CurrentJobOwnerID: m.id,
 		},
@@ -686,6 +741,6 @@ func TestLocalJobs(t *testing.T) {
 			CurrentJobOwnerID: "another-id",
 		},
 	}
-	assert.Len(t, m.localJobs(), 1)
-	assert.Equal(t, m.localJobs()[0].id, "1")
+	require.Len(t, m.localJobs(), 1)
+	require.Equal(t, m.localJobs()[0].id, "1")
 }

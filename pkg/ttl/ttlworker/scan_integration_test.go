@@ -39,7 +39,11 @@ func TestCancelWhileScan(t *testing.T) {
 	for i := 0; i < 10000; i++ {
 		tk.MustExec(fmt.Sprintf("insert into test.t values (%d, NOW() - INTERVAL 24 HOUR)", i))
 	}
+<<<<<<< HEAD
 	testPhysicalTableCache, err := cache.NewPhysicalTable(model.NewCIStr("test"), testTable.Meta(), model.NewCIStr(""))
+=======
+	testPhysicalTableCache, err := cache.NewPhysicalTable(ast.NewCIStr("test"), testTable.Meta(), ast.NewCIStr(""), true, false)
+>>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	require.NoError(t, err)
 
 	delCh := make(chan *ttlworker.TTLDeleteTask)
