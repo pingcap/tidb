@@ -11,7 +11,7 @@ import (
 )
 
 type TaskExecutor struct {
-	maxConcurrency int
+	maxConcurrency atomic.Int64
 	timeoutNanos   atomic.Int64
 
 	metrics struct {
@@ -24,25 +24,35 @@ type TaskExecutor struct {
 		rejectedCount  atomic.Int64
 	}
 
-	gate struct {
-		mu      sync.Mutex
-		cond    *sync.Cond
-		running int
+	queue struct {
+		mu    sync.Mutex
+		cond  *sync.Cond
+		tasks []taskRequest
 	}
 
-	wg     sync.WaitGroup
-	closed atomic.Bool
+	workers struct {
+		count atomic.Int64
+		wg    sync.WaitGroup
+	}
+
+	tasksWG sync.WaitGroup
+	closed  atomic.Bool
+}
+
+type taskRequest struct {
+	name string
+	task func() error
 }
 
 func NewTaskExecutor(maxConcurrency int, timeout time.Duration) *TaskExecutor {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 1
 	}
-	exec := &TaskExecutor{
-		maxConcurrency: maxConcurrency,
-	}
-	exec.gate.cond = sync.NewCond(&exec.gate.mu)
+	exec := &TaskExecutor{}
+	exec.queue.cond = sync.NewCond(&exec.queue.mu)
+	exec.maxConcurrency.Store(int64(maxConcurrency))
 	exec.timeoutNanos.Store(int64(timeout))
+	exec.startWorkers(maxConcurrency)
 	return exec
 }
 
@@ -52,11 +62,21 @@ func (e *TaskExecutor) UpdateConfig(maxConcurrency int, timeout time.Duration) {
 	if e == nil {
 		return
 	}
+	if e.closed.Load() {
+		return
+	}
 	if maxConcurrency > 0 {
-		e.gate.mu.Lock()
-		e.maxConcurrency = maxConcurrency
-		e.gate.cond.Broadcast()
-		e.gate.mu.Unlock()
+		prev := int(e.maxConcurrency.Load())
+		if maxConcurrency != prev {
+			e.maxConcurrency.Store(int64(maxConcurrency))
+			if maxConcurrency > prev {
+				e.startWorkers(maxConcurrency - prev)
+			} else {
+				e.queue.mu.Lock()
+				e.queue.cond.Broadcast()
+				e.queue.mu.Unlock()
+			}
+		}
 	}
 	if timeout >= 0 {
 		e.timeoutNanos.Store(int64(timeout))
@@ -81,8 +101,12 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 	}
 	e.metrics.submittedCount.Add(1)
 	e.metrics.waitingCount.Add(1)
-	e.wg.Add(1)
-	go e.run(name, task)
+	e.tasksWG.Add(1)
+
+	e.queue.mu.Lock()
+	e.queue.tasks = append(e.queue.tasks, taskRequest{name: name, task: task})
+	e.queue.cond.Signal()
+	e.queue.mu.Unlock()
 }
 
 func (e *TaskExecutor) Close() {
@@ -92,37 +116,97 @@ func (e *TaskExecutor) Close() {
 	if e.closed.Swap(true) {
 		return
 	}
-	e.gate.mu.Lock()
-	e.gate.cond.Broadcast()
-	e.gate.mu.Unlock()
-	e.wg.Wait()
+	e.queue.mu.Lock()
+	e.queue.cond.Broadcast()
+	e.queue.mu.Unlock()
+	e.tasksWG.Wait()
+	e.workers.wg.Wait()
+}
+
+func (e *TaskExecutor) startWorkers(n int) {
+	for range n {
+		e.workers.count.Add(1)
+		e.workers.wg.Add(1)
+		go e.workerLoop()
+	}
+}
+
+func (e *TaskExecutor) workerLoop() {
+	defer e.workers.wg.Done()
+	for {
+		req, ok := e.nextTask()
+		if !ok {
+			return
+		}
+		e.runTask(req.name, req.task)
+	}
+}
+
+func (e *TaskExecutor) nextTask() (taskRequest, bool) {
+	e.queue.mu.Lock()
+	for !e.closed.Load() && len(e.queue.tasks) == 0 {
+		if e.tryExitWorkerWithLock() {
+			e.queue.mu.Unlock()
+			return taskRequest{}, false
+		}
+		e.queue.cond.Wait()
+	}
+	if e.closed.Load() && len(e.queue.tasks) == 0 {
+		e.queue.mu.Unlock()
+		e.workers.count.Add(-1)
+		return taskRequest{}, false
+	}
+	if e.tryExitWorkerWithLock() {
+		e.queue.mu.Unlock()
+		return taskRequest{}, false
+	}
+	req := e.queue.tasks[0]
+	e.queue.tasks = e.queue.tasks[1:]
+	queued := len(e.queue.tasks)
+	e.queue.mu.Unlock()
+
+	e.metrics.waitingCount.Add(-1)
+
+	if intest.InTest && mockInjection != nil && queued > 0 {
+		inj := mockInjection
+		mockInjection = nil
+		inj()
+	}
+
+	return req, true
+}
+
+func (e *TaskExecutor) tryExitWorkerWithLock() bool {
+	for {
+		cur := e.workers.count.Load()
+		max := e.maxConcurrency.Load()
+		if cur <= max {
+			return false
+		}
+		if e.workers.count.CompareAndSwap(cur, cur-1) {
+			return true
+		}
+	}
 }
 
 var mockInjectionTimer func(<-chan time.Time) <-chan time.Time
 
-func (e *TaskExecutor) run(name string, task func() error) {
-	if !e.acquire() {
-		e.metrics.waitingCount.Add(-1)
-		e.metrics.rejectedCount.Add(1)
-		e.wg.Done()
+func (e *TaskExecutor) runTask(name string, task func() error) {
+	e.metrics.runningCount.Add(1)
+
+	timeout := time.Duration(e.timeoutNanos.Load())
+	if timeout <= 0 {
+		err := task()
+		e.metrics.runningCount.Add(-1)
+		e.tasksWG.Done()
+		e.logResult(name, err)
 		return
 	}
-	e.metrics.waitingCount.Add(-1)
-	e.metrics.runningCount.Add(1)
 
 	done := make(chan error, 1)
 	go func() {
 		done <- task()
 	}()
-
-	timeout := time.Duration(e.timeoutNanos.Load())
-	if timeout <= 0 {
-		err := <-done
-		e.release()
-		e.wg.Done()
-		e.logResult(name, err)
-		return
-	}
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -136,53 +220,22 @@ func (e *TaskExecutor) run(name string, task func() error) {
 
 	select {
 	case err := <-done:
-		e.release()
-		e.wg.Done()
+		e.metrics.runningCount.Add(-1)
+		e.tasksWG.Done()
 		e.logResult(name, err)
 	case <-ch:
 		e.metrics.timeoutCount.Add(1)
-		e.release()
+		e.metrics.runningCount.Add(-1)
 		logutil.BgLogger().Warn("mv task timed out, continue in background", zap.String("task", name), zap.Duration("timeout", timeout))
 		go func() {
 			err := <-done
-			e.wg.Done()
+			e.tasksWG.Done()
 			e.logResult(name, err)
 		}()
 	}
 }
 
 var mockInjection func()
-
-func (e *TaskExecutor) acquire() bool {
-	e.gate.mu.Lock()
-	defer e.gate.mu.Unlock()
-	for e.gate.running >= e.maxConcurrency {
-		if e.closed.Load() {
-			return false
-		}
-		if intest.InTest {
-			if mockInjection != nil {
-				mockInjection()
-			}
-		}
-		e.gate.cond.Wait()
-	}
-	if e.closed.Load() {
-		return false
-	}
-	e.gate.running++
-	return true
-}
-
-func (e *TaskExecutor) release() {
-	e.gate.mu.Lock()
-	if e.gate.running > 0 {
-		e.gate.running--
-	}
-	e.gate.mu.Unlock()
-	e.gate.cond.Signal()
-	e.metrics.runningCount.Add(-1)
-}
 
 func (e *TaskExecutor) logResult(name string, err error) {
 	if err == nil {

@@ -23,11 +23,9 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 	}
 
 	wg := make(chan struct{})
-
 	mockInjection = func() {
 		close(wg)
 	}
-	defer func() { mockInjection = nil }()
 
 	exec.Submit("t1", task("t1"))
 	exec.Submit("t2", task("t2"))
@@ -80,7 +78,6 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 	mockInjection = func() {
 		close(wg)
 	}
-	defer func() { mockInjection = nil }()
 
 	exec.Submit("t1", task)
 	exec.Submit("t2", task)

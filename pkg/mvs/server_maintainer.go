@@ -2,38 +2,36 @@ package utils
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-// process:
-// 1. periodically fetch all available TiDB nodes from infosync
-// 2. rebuild the consistent hash ring if there is any change
-// 3. periodically fetch all tasks from the task manager
-// 4. for each task, check if the current node can execute it according to the consistent hash ring
-//	if yes, try to acquire the task lock and execute the task
-// 		if yes, execute the task
-// 		if not, skip the task
-//	if not, if the task exec node is not available, try to acquire the task lock and execute the task
-//		if yes, execute the task
-//		if not, skip the task
+type serverInfo struct {
+	ID string
+}
+
+type ServerHelper interface {
+	serverFilter(serverInfo) bool
+	getServerInfo() (serverInfo, error)
+	getAllServerInfo(ctx context.Context) (map[string]serverInfo, error)
+}
 
 type ServerConsistentHash struct {
-	servers map[string]*infosync.ServerInfo
+	servers map[string]serverInfo
 	chash   ConsistentHash // use consistent hash to reduce task movements after nodes changed
 	mu      sync.RWMutex
 	ID      string // current server ID
+	helper  ServerHelper
 }
 
-func NewServerConsistentHash(replicas int) *ServerConsistentHash {
+func NewServerConsistentHash(replicas int, helper ServerHelper) *ServerConsistentHash {
 	return &ServerConsistentHash{
-		servers: make(map[string]*infosync.ServerInfo),
+		servers: make(map[string]serverInfo),
 		chash:   *NewConsistentHash(replicas),
+		helper:  helper,
 	}
 }
 
@@ -44,60 +42,57 @@ func (sch *ServerConsistentHash) Init() {
 	}
 	backoff := time.Second
 	for {
-		info, err := infosync.GetServerInfo()
-		if err == nil && info != nil && info.ID != "" {
+		info, err := sch.helper.getServerInfo()
+		if err == nil {
 			sch.mu.Lock()
 			sch.ID = info.ID
 			sch.mu.Unlock()
-			return
+			break
 		}
-		if err != nil {
-			logutil.BgLogger().Warn("get local TiDB server info failed", zap.Error(err))
-		} else {
-			logutil.BgLogger().Warn("get local TiDB server info empty")
-		}
-		if backoff > time.Minute {
-			backoff = time.Minute
-		}
+		logutil.BgLogger().Warn("get local TiDB server info failed", zap.Error(err))
+
+		backoff = min(backoff, time.Second*5)
 		time.Sleep(backoff)
-		if backoff < time.Minute {
-			backoff *= 2
-			if backoff > time.Minute {
-				backoff = time.Minute
-			}
+		backoff *= 2
+	}
+
+	for {
+		err := sch.Fetch(context.Background())
+		// only break when refresh is successful
+		if err == nil {
+			break
 		}
+		logutil.BgLogger().Warn("initial server consistent hash refresh failed", zap.Error(err))
+		backoff = min(backoff, time.Second*5)
+		time.Sleep(backoff)
+		backoff *= 2
 	}
 }
 
-func (sch *ServerConsistentHash) AddServer(srv *infosync.ServerInfo) {
+func (sch *ServerConsistentHash) addServer(srv serverInfo) {
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 	sch.servers[srv.ID] = srv
 	sch.chash.AddNode(srv.ID)
 }
 
-func (sch *ServerConsistentHash) RemoveServer(srvID string) {
+func (sch *ServerConsistentHash) removeServer(srvID string) {
 	sch.mu.Lock()
 	defer sch.mu.Unlock()
 	delete(sch.servers, srvID)
 	sch.chash.RemoveNode(srvID)
 }
 
-func (sch *ServerConsistentHash) Refresh(ctx context.Context, filter func(*infosync.ServerInfo) bool) error {
-	if sch == nil {
-		return errors.New("server consistent hash is nil")
-	}
-	newServerInfos, err := infosync.GetAllServerInfo(ctx)
+func (sch *ServerConsistentHash) Fetch(ctx context.Context) error {
+	newServerInfos, err := sch.helper.getAllServerInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get available TiDB nodes failed", zap.Error(err))
 		return err
 	}
 	// filter servers by the given filter function
-	if filter != nil {
-		for k, v := range newServerInfos {
-			if !filter(v) {
-				delete(newServerInfos, k)
-			}
+	for k, v := range newServerInfos {
+		if !sch.helper.serverFilter(v) {
+			delete(newServerInfos, k)
 		}
 	}
 
