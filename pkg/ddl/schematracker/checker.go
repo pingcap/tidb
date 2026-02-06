@@ -276,6 +276,7 @@ func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) e
 	return nil
 }
 
+// CreateMaterializedViewLog implements the DDL interface.
 func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
 	err := d.realExecutor.CreateMaterializedViewLog(ctx, stmt)
 	if err != nil || d.closed.Load() {

@@ -231,6 +231,7 @@ func (d *SchemaTracker) CreateTable(ctx sessionctx.Context, s *ast.CreateTableSt
 	return d.CreateTableWithInfo(ctx, schema.Name, tbInfo, nil, ddl.WithOnExist(onExist))
 }
 
+// CreateMaterializedViewLog implements the DDL interface.
 func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) error {
 	schemaName := s.Table.Schema
 	if schemaName.O == "" {
@@ -327,13 +328,12 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 					return err
 				}
 			}
-			if s.Purge.Next != nil {
-				purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
-				if err != nil {
-					return err
-				}
-			} else {
+			if s.Purge.Next == nil {
 				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
+			}
+			purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+			if err != nil {
+				return err
 			}
 		}
 	}
