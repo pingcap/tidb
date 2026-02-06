@@ -28,6 +28,7 @@ import (
 
 	"github.com/apache/arrow-go/v18/parquet"
 	"github.com/apache/arrow-go/v18/parquet/compress"
+	"github.com/apache/arrow-go/v18/parquet/file"
 	"github.com/apache/arrow-go/v18/parquet/schema"
 	"github.com/pingcap/tidb/pkg/objstore"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
@@ -108,6 +109,55 @@ func TestParquetParser(t *testing.T) {
 	}
 
 	require.ErrorIs(t, reader.ReadRow(), io.EOF)
+}
+
+func TestParquetParserMultipleRowGroup(t *testing.T) {
+	pc := []ParquetColumn{
+		{
+			Name:      "v",
+			Type:      parquet.Types.Int64,
+			Converted: schema.ConvertedTypes.Int64,
+			Gen: func(numRows int) (any, []int16) {
+				defLevel := make([]int16, numRows)
+				data := make([]int64, numRows)
+				for i := range numRows {
+					defLevel[i] = 1
+					data[i] = int64(i)
+				}
+				return data, defLevel
+			},
+		},
+	}
+
+	dir := t.TempDir()
+	fileName := "multi-row-group.parquet"
+	err := WriteParquetFile(
+		dir,
+		fileName,
+		pc,
+		50,
+		parquet.WithMaxRowGroupLength(9),
+	)
+	require.NoError(t, err)
+
+	store, err := objstore.NewLocalStorage(dir)
+	require.NoError(t, err)
+	r, err := store.Open(context.Background(), fileName, nil)
+	require.NoError(t, err)
+
+	parser, err := NewParquetParser(context.Background(), store, r, fileName, ParquetFileMeta{})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, parser.Close())
+	})
+
+	for i := range 50 {
+		require.NoError(t, parser.ReadRow())
+		require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
+		last := parser.LastRow()
+		parser.RecycleRow(last)
+	}
+	require.ErrorIs(t, parser.ReadRow(), io.EOF)
 }
 
 func TestParquetVariousTypes(t *testing.T) {
@@ -500,7 +550,92 @@ func TestBasicReadFile(t *testing.T) {
 	for i := range rowCnt {
 		require.NoError(t, reader.ReadRow())
 		require.Equal(t, string(generated[i]), reader.lastRow.Row[0].GetString())
+		require.NotNil(t, reader.rowGroup)
+		require.Len(t, reader.rowGroup.readers, len(reader.lastRow.Row))
 	}
+}
+
+func TestParquetParserMixedRowGroupSize(t *testing.T) {
+	const rowCnt = 20
+	dir := t.TempDir()
+	fileName := "mixed-row-group.parquet"
+
+	store, err := objstore.NewLocalStorage(dir)
+	require.NoError(t, err)
+	writer, err := store.Create(context.Background(), fileName, nil)
+	require.NoError(t, err)
+	ww := &writeWrapper{Writer: writer}
+
+	field, err := schema.NewPrimitiveNodeConverted(
+		"v",
+		parquet.Repetitions.Optional,
+		parquet.Types.Int64,
+		schema.ConvertedTypes.Int64,
+		-1,
+		0,
+		0,
+		-1,
+	)
+	require.NoError(t, err)
+	root, err := schema.NewGroupNode("schema", parquet.Repetitions.Required, []schema.Node{field}, -1)
+	require.NoError(t, err)
+
+	props := parquet.NewWriterProperties(
+		parquet.WithDataPageSize(1),
+		parquet.WithCompressionFor("v", compress.Codecs.Uncompressed),
+	)
+	pw := file.NewParquetWriter(ww, root, file.WithWriterProps(props))
+
+	writeGroup := func(base int64) {
+		rg := pw.AppendBufferedRowGroup()
+		cw, err := rg.Column(0)
+		require.NoError(t, err)
+
+		int64Writer, ok := cw.(*file.Int64ColumnChunkWriter)
+		require.True(t, ok)
+
+		defLevel := make([]int16, rowCnt/2)
+		for i := range defLevel {
+			defLevel[i] = 1
+		}
+
+		vals := make([]int64, rowCnt/2)
+		for i := range vals {
+			vals[i] = base + int64(i)
+		}
+
+		_, err = int64Writer.WriteBatch(vals, defLevel, nil)
+		require.NoError(t, err)
+		require.NoError(t, cw.Close())
+		require.NoError(t, rg.Close())
+	}
+
+	writeGroup(0)
+	writeGroup(rowCnt / 2)
+	require.NoError(t, pw.Close())
+
+	r, err := store.Open(context.Background(), fileName, nil)
+	require.NoError(t, err)
+
+	origThreshold := rowGroupInMemoryThreshold
+	rowGroupInMemoryThreshold = 1
+	t.Cleanup(func() {
+		rowGroupInMemoryThreshold = origThreshold
+	})
+
+	parser, err := NewParquetParser(context.Background(), store, r, fileName, ParquetFileMeta{})
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, parser.Close())
+	})
+
+	for i := range rowCnt {
+		require.NoError(t, parser.ReadRow())
+		require.Equal(t, int64(i), parser.LastRow().Row[0].GetInt64())
+		last := parser.LastRow()
+		parser.RecycleRow(last)
+	}
+	require.ErrorIs(t, parser.ReadRow(), io.EOF)
 }
 
 // getStringFromParquetByteOld is the previous implementation used to convert
