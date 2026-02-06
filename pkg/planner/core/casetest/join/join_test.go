@@ -145,6 +145,33 @@ func TestJoinWithNullEQ(t *testing.T) {
 	})
 }
 
+func TestCantFindColumnJoinReorder(t *testing.T) {
+	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
+		tk.MustExec("use test;")
+		tk.MustExec("drop table if exists t0, t1, t2, t3, t4;")
+		tk.MustExec("create table t0 (id bigint, k0 varchar(64), k1 varchar(64), k2 int, k3 int, p0 float, p1 tinyint(1), primary key (id));")
+		tk.MustExec("create table t1 (id bigint, k0 varchar(64), d0 bigint, d1 double, primary key (id));")
+		tk.MustExec("create table t2 (id bigint, k1 varchar(64), k0 varchar(64), d0 decimal(12,2), d1 double, primary key (id));")
+		tk.MustExec("create table t3 (id bigint, k2 int, k0 varchar(64), d0 float, d1 date, primary key (id), key idx_id_4 (id));")
+		tk.MustExec("create table t4 (id bigint, k3 int, k0 varchar(64), d0 date, d1 bigint, primary key (id));")
+
+		query := "select distinct length(t0.k3) as c0 from t0 " +
+			"join t2 on ((t0.k0 = t2.k0) and ((t0.k0 = t2.k0) and (t0.k0 != t2.k0))) " +
+			"left join t4 on ((t0.k0 = t4.k0) and not (t0.k0 in ('s0'))) " +
+			"left join t1 on ((t0.k0 = t1.k0) and ((t4.k0 < t1.k0) and (t2.k0 != t1.k0))) " +
+			"left join t3 on ((t0.k0 = t3.k0) and ((t0.k0 <= t3.k0) and (t2.k0 < t4.k0))) " +
+			"where (not (t0.k0 in ('s85','s56','s87')) and not (t2.k0 in ((select t0.k0 as c0 from t0 where (t0.k3 = t0.k3)))));"
+		tk.MustQuery(query)
+
+		tk.MustExec("drop table if exists t1, t2, t3;")
+		// Issue: https://github.com/pingcap/tidb/issues/65454
+		tk.MustExec("create table t1 (id bigint not null, hcode text collate utf8mb4_general_ci not null, primary key (id) /*T![clustered_index] CLUSTERED */);")
+		tk.MustExec("create table t2 (id bigint not null, bid bigint not null, cid bigint not null, primary key (id) /*T![clustered_index] CLUSTERED */);")
+		tk.MustExec("create table t3 (id bigint not null, user_id bigint not null, primary key (id) /*T![clustered_index] CLUSTERED */);")
+		tk.MustQuery("explain format = 'plan_tree' select (select count(t3.user_id) from t2 left join t1 as cm on t2.cid = cm.id left join t3 on t2.bid = t3.id where cm.hcode = t1.hcode) as tt from t1 where t1.id in (select min(id) from t1);")
+	})
+}
+
 func TestJoinSimplifyCondition(t *testing.T) {
 	testkit.RunTestUnderCascades(t, func(t *testing.T, tk *testkit.TestKit, cascades, caller string) {
 		tk.MustExec("use test;")
