@@ -27,13 +27,12 @@ import (
 )
 
 // JoinMethodHint records the join method hint for a vertex.
-// JoinMethodHint stores join method hint info associated with a vertex.
 type JoinMethodHint struct {
 	PreferJoinMethod uint
 	HintInfo         *hint.PlanHints
 }
 
-// checkAndGenerateLeadingHint used to check and generate the valid leading hint.
+// CheckAndGenerateLeadingHint used to check and generate the valid leading hint.
 // We are allowed to use at most one leading hint in a join group. When more than one,
 // all leading hints in the current join group will be invalid.
 // For example: select /*+ leading(t3) */ * from (select /*+ leading(t1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b

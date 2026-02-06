@@ -305,7 +305,10 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 			if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
 				if useGreedy {
-					ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+					ok, leftJoinGroup, err := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+					if err != nil {
+						return nil, err
+					}
 					if !ok {
 						ctx.GetSessionVars().StmtCtx.SetHintWarning(
 							"leading hint is inapplicable, check if the leading hint table is valid")
@@ -400,25 +403,29 @@ type baseSingleGroupJoinOrderSolver struct {
 // generateLeadingJoinGroup processes both flat and nested leading hints through the unified LeadingList structure
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(
 	curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool,
-) (bool, []base.LogicalPlan) {
+) (bool, []base.LogicalPlan, error) {
 	if hintInfo == nil || hintInfo.LeadingList == nil {
-		return false, nil
+		return false, nil, nil
 	}
 	// Leading hint processing can partially build join trees and consume otherConds.
 	// If the hint is inapplicable, restore original otherConds to avoid losing filters.
 	origOtherConds := slices.Clone(s.otherConds)
 	// Use the unified nested processing for both flat and nested structures
-	ok, remaining := s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
+	ok, remaining, err := s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
+	if err != nil {
+		s.otherConds = origOtherConds
+		return false, nil, err
+	}
 	if !ok {
 		s.otherConds = origOtherConds
 	}
-	return ok, remaining
+	return ok, remaining, nil
 }
 
 // generateNestedLeadingJoinGroup processes both flat and nested LEADING hint structures
 func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	curJoinGroup []base.LogicalPlan, leadingList *ast.LeadingList, hasOuterJoin bool,
-) (bool, []base.LogicalPlan) {
+) (bool, []base.LogicalPlan, error) {
 	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
 
@@ -439,13 +446,18 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	}
 
 	leadingJoin, remainingGroup, ok, err := joinorder.BuildLeadingTreeFromList(leadingList, leftJoinGroup, find, joiner, warn)
-	if err != nil || !ok {
-		return false, nil
+	if err != nil {
+		return false, nil, err
+	}
+	if !ok {
+		return false, nil, nil
 	}
 	s.leadingJoinGroup = leadingJoin
-	return true, remainingGroup
+	return true, remainingGroup, nil
 }
 
+// connectJoinNodes handles joining two subplans, performing connection checks
+// and enforcing the outer join constraint.
 func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
 	hasOuterJoin bool, availableGroups []base.LogicalPlan,
