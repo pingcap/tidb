@@ -1505,24 +1505,6 @@ type bypassDataSourceExecutor interface {
 
 func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourceExecutor, vars *variable.SessionVars, startTS uint64) {
 	tbl := x.Table()
-<<<<<<< HEAD
-	if tbl.Meta().TableCacheStatusType == model.TableCacheStatusEnable {
-		cachedTable := tbl.(table.CachedTable)
-		// Determine whether the cache can be used.
-		leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
-		cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
-		if cacheData != nil {
-			vars.StmtCtx.ReadFromTableCache = true
-			x.setDummy()
-			us.cacheTable = cacheData
-		} else if loading {
-			return
-		} else {
-			if !b.inUpdateStmt && !b.inDeleteStmt && !b.inInsertStmt && !vars.StmtCtx.InExplainStmt {
-				store := b.ctx.GetStore()
-				cachedTable.UpdateLockForRead(context.Background(), store, startTS, leaseDuration)
-			}
-=======
 	if tbl.Meta().TableCacheStatusType != model.TableCacheStatusEnable {
 		return
 	}
@@ -1532,13 +1514,12 @@ func (us *UnionScanExec) handleCachedTable(b *executorBuilder, x bypassDataSourc
 			// Cached table uses mem-buffer scan APIs, which can't provide `_tidb_commit_ts`.
 			// For correctness, bypass the cached table if `_tidb_commit_ts` is required.
 			return
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		}
 	}
 
 	cachedTable := tbl.(table.CachedTable)
 	// Determine whether the cache can be used.
-	leaseDuration := time.Duration(vardef.TableCacheLease.Load()) * time.Second
+	leaseDuration := time.Duration(variable.TableCacheLease.Load()) * time.Second
 	cacheData, loading := cachedTable.TryReadFromCache(startTS, leaseDuration)
 	if cacheData != nil {
 		vars.StmtCtx.ReadFromTableCache = true
@@ -2422,15 +2403,8 @@ func (b *executorBuilder) buildMemTable(v *plannercore.PhysicalMemTable) exec.Ex
 			strings.ToLower(infoschema.TableTiDBCheckConstraints),
 			strings.ToLower(infoschema.TableKeywords),
 			strings.ToLower(infoschema.TableTiDBIndexUsage),
-<<<<<<< HEAD
-			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage):
-=======
-			strings.ToLower(infoschema.TableTiDBPlanCache),
-			strings.ToLower(infoschema.ClusterTableTiDBPlanCache),
 			strings.ToLower(infoschema.ClusterTableTiDBIndexUsage),
-			strings.ToLower(infoschema.TableKeyspaceMeta),
 			strings.ToLower(infoschema.TableSoftDeleteTableStats):
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 			memTracker := memory.NewTracker(v.ID(), -1)
 			memTracker.AttachTo(b.ctx.GetSessionVars().StmtCtx.MemTracker)
 			return &MemTableReaderExec{

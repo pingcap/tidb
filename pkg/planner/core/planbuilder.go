@@ -45,6 +45,7 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
 	"github.com/pingcap/tidb/pkg/planner/property"
@@ -4143,15 +4144,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		return nil, errors.Errorf("Can't get table %s", tableInfo.Name.O)
 	}
 
-<<<<<<< HEAD
-	insertPlan := Insert{
-		Table:         tableInPlan,
-		Columns:       insert.Columns,
-		tableSchema:   schema,
-		tableColNames: names,
-		IsReplace:     insert.IsReplace,
-		IgnoreErr:     insert.IgnoreErr,
-=======
 	// check table info to see if it's active-active table
 	needExtraCommitTS := tableInfo.IsActiveActive
 
@@ -4174,15 +4166,14 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 		})
 	}
 
-	insertPlan := physicalop.Insert{
+	insertPlan := Insert{
 		Table:             tableInPlan,
 		Columns:           insert.Columns,
-		TableSchema:       schema,
-		TableColNames:     names,
+		tableSchema:       schema,
+		tableColNames:     names,
 		IsReplace:         insert.IsReplace,
 		IgnoreErr:         insert.IgnoreErr,
 		NeedExtraCommitTS: needExtraCommitTS,
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	}.Init(b.ctx)
 
 	if tableInfo.GetPartitionInfo() != nil && len(insert.PartitionNames) != 0 {
@@ -4275,7 +4266,7 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	}
 
 	// Build ReplaceConflictIfExpr for soft delete tables
-	insertPlan.ReplaceConflictIfExpr = b.buildSoftDeleteReplaceExpr(insertPlan.SCtx().GetSessionVars(), insertPlan.TableColNames, insertPlan.TableSchema.Columns, tableInfo)
+	insertPlan.ReplaceConflictIfExpr = b.buildSoftDeleteReplaceExpr(insertPlan.SCtx().GetSessionVars(), insertPlan.tableColNames, insertPlan.tableSchema.Columns, tableInfo)
 
 	err = insertPlan.ResolveIndices()
 	if err != nil {
@@ -4285,7 +4276,6 @@ func (b *PlanBuilder) buildInsert(ctx context.Context, insert *ast.InsertStmt) (
 	return insertPlan, err
 }
 
-<<<<<<< HEAD
 func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.TableInfo, yield func(ast.ExprNode) (expression.Expression, error)) (map[string]struct{}, error) {
 	onDupColSet := make(map[string]struct{}, len(onDup))
 	colMap := make(map[string]*table.Column, len(p.Table.Cols()))
@@ -4340,8 +4330,6 @@ func (p *Insert) resolveOnDuplicate(onDup []*ast.Assignment, tblInfo *model.Tabl
 	return onDupColSet, nil
 }
 
-func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
-=======
 // buildSoftDeleteReplaceExpr builds the ReplaceConflictIfExpr for soft delete enabled tables.
 // It creates an expression: NOT(ISNULL(_tidb_softdelete_time)) to check if a row is soft-deleted.
 func (b *PlanBuilder) buildSoftDeleteReplaceExpr(vars *variable.SessionVars, tableColNames types.NameSlice, columns []*expression.Column, tableInfo *model.TableInfo) []expression.Expression {
@@ -4370,8 +4358,7 @@ func (b *PlanBuilder) buildSoftDeleteReplaceExpr(vars *variable.SessionVars, tab
 	return nil
 }
 
-func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *physicalop.Insert) (affectedValuesCols []*table.Column, err error) {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+func (*PlanBuilder) getAffectCols(insertStmt *ast.InsertStmt, insertPlan *Insert) (affectedValuesCols []*table.Column, err error) {
 	if len(insertStmt.Columns) > 0 {
 		// This branch is for the following scenarios:
 		// 1. `INSERT INTO tbl_name (col_name [, col_name] ...) {VALUES | VALUE} (value_list) [, (value_list)] ...`,

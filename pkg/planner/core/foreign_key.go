@@ -342,28 +342,6 @@ func buildOnUpdateChildFKChecks(ctx base.PlanContext, is infoschema.InfoSchema, 
 	return fkChecks, nil
 }
 
-<<<<<<< HEAD:pkg/planner/core/foreign_key.go
-=======
-// ColumnAndTable represents a column and its table.
-type ColumnAndTable struct {
-	*table.Column
-	table.Table
-}
-
-// GetUpdateColumnsInfo get the update columns info.
-func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []ColumnAndTable {
-	colsInfo := make([]ColumnAndTable, size)
-	for _, content := range tblColPosInfos {
-		tbl := tblID2Table[content.TblID]
-		for i, c := range tbl.WritableCols() {
-			colsInfo[content.Start+i].Column = c
-			colsInfo[content.Start+i].Table = tbl
-		}
-	}
-	return colsInfo
-}
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active):pkg/planner/core/operator/physicalop/foreign_key.go
 func (updt *Update) buildTbl2UpdateColumns() map[int64]map[string]struct{} {
 	colsInfo := GetUpdateColumnsInfo(updt.tblID2Table, updt.TblColPosInfos, len(updt.SelectPlan.Schema().Columns))
 	tblID2UpdateColumns := make(map[int64]map[string]struct{})

@@ -19,14 +19,9 @@ import (
 	"context"
 	"math"
 	"slices"
-<<<<<<< HEAD
 	"sort"
-	"strconv"
-=======
-	"strconv"
 	"sync"
 	"sync/atomic"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"time"
 
 	"github.com/pingcap/errors"

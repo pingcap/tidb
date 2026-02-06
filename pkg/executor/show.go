@@ -1224,19 +1224,9 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		}
 	}
 
-<<<<<<< HEAD
-	for i, idxInfo := range publicIndices {
-		if idxInfo.Primary {
-			buf.WriteString("  PRIMARY KEY ")
-		} else if idxInfo.Unique {
-			fmt.Fprintf(buf, "  UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.VectorInfo != nil {
-			fmt.Fprintf(buf, "  VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-=======
 	writeIndexDef := func(rc *parserformat.RestoreCtx, idxInfo *model.IndexInfo, sp bool) {
 		if sp {
 			restoreCtx.WritePlain(", ")
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		} else {
 			restoreCtx.WritePlain(",\n  ")
 		}
@@ -1246,10 +1236,6 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 			rc.WritePlainf("UNIQUE KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else if idxInfo.VectorInfo != nil {
 			rc.WritePlainf("VECTOR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.FullTextInfo != nil {
-			rc.WritePlainf("FULLTEXT INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
-		} else if idxInfo.InvertedInfo != nil {
-			rc.WritePlainf("COLUMNAR INDEX %s", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		} else {
 			rc.WritePlainf("KEY %s ", stringutil.Escape(idxInfo.Name.O, sqlMode))
 		}
@@ -1273,32 +1259,14 @@ func constructResultOfShowCreateTable(ctx sessionctx.Context, dbName *pmodel.CIS
 		} else {
 			rc.WritePlainf("(%s)", strings.Join(cols, ","))
 		}
-<<<<<<< HEAD
-=======
-
-		if idxInfo.InvertedInfo != nil {
-			rc.WritePlain(" USING INVERTED")
-		}
-		if idxInfo.FullTextInfo != nil {
-			rc.WritePlainf(" WITH PARSER %s", idxInfo.FullTextInfo.ParserType.SQLName())
-		}
-		if idxInfo.ConditionExprString != "" {
-			rc.WritePlainf(" WHERE %s", idxInfo.ConditionExprString)
-		}
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		if idxInfo.Invisible {
 			rc.WritePlain(` /*!80000 INVISIBLE */`)
 		}
 		if idxInfo.Comment != "" {
 			rc.WritePlainf(` COMMENT '%s'`, format.OutputFormat(idxInfo.Comment))
 		}
-<<<<<<< HEAD
 		if idxInfo.Tp == pmodel.IndexTypeHypo {
 			fmt.Fprintf(buf, ` /* HYPO INDEX */`)
-=======
-		if idxInfo.Tp == ast.IndexTypeHypo {
-			rc.WritePlain(` /* HYPO INDEX */`)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		}
 		if idxInfo.Primary {
 			rc.WritePlain(" ")

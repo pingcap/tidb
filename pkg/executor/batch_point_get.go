@@ -114,11 +114,7 @@ func (e *BatchPointGetExec) Open(context.Context) error {
 		// and avoid using the cached value from PessimisticLock response.
 		if e.lock && e.commitTSOffset < 0 {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), &PessimisticLockCacheGetter{txnCtx: txnCtx}, e.snapshot)
-<<<<<<< HEAD
-		} else if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
-=======
-		} else if lock != nil && e.commitTSOffset < 0 && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+		} else if lock != nil && e.commitTSOffset < 0 && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) && e.Ctx().GetSessionVars().EnablePointGetCache {
 			batchGetter = newCacheBatchGetter(e.Ctx(), e.tblInfo.ID, e.snapshot)
 		} else {
 			batchGetter = driver.NewBufferBatchGetter(txn.GetMemBuffer(), nil, e.snapshot)
@@ -266,18 +262,6 @@ func (e *BatchPointGetExec) initialize(ctx context.Context) error {
 	var handleVals map[string]kv.ValueEntry
 	var indexKeys []kv.Key
 	var err error
-<<<<<<< HEAD
-	batchGetter := e.batchGetter
-=======
-	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
-	if maxExecutionTime > 0 {
-		// If MaxExecutionTime is set, we need to set the context deadline for the batch get.
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
-		defer cancel()
-	}
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	rc := e.Ctx().GetSessionVars().IsPessimisticReadConsistency()
 	if e.idxInfo != nil && !isCommonHandleRead(e.tblInfo, e.idxInfo) {
 		// `SELECT a, b FROM t WHERE (a, b) IN ((1, 2), (1, 2), (2, 1), (1, 2))` should not return duplicated rows

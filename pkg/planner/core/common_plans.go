@@ -418,6 +418,9 @@ type Insert struct {
 	Schema4OnDuplicate *expression.Schema `plan-cache-clone:"shallow"`
 	names4OnDuplicate  types.NameSlice    `plan-cache-clone:"shallow"`
 
+	ReplaceConflictIfExpr []expression.Expression
+	NeedExtraCommitTS     bool
+
 	GenCols InsertGeneratedColumns
 
 	SelectPlan base.PhysicalPlan
@@ -477,6 +480,23 @@ func (p *Insert) MemoryUsage() (sum int64) {
 	return
 }
 
+// ExplainInfo returns the explain information of Insert.
+func (p *Insert) ExplainInfo() string {
+	if len(p.ReplaceConflictIfExpr) > 0 {
+		evalCtx := p.SCtx().GetExprCtx().GetEvalCtx()
+		return "ReplaceConflictIfExpr: " + string(expression.SortedExplainExpressionList(evalCtx, p.ReplaceConflictIfExpr))
+	}
+	return "N/A"
+}
+
+// ExplainNormalizedInfo returns the normalized explain information of Insert.
+func (p *Insert) ExplainNormalizedInfo() string {
+	if len(p.ReplaceConflictIfExpr) > 0 {
+		return "ReplaceConflictIfExpr: " + string(expression.SortedExplainNormalizedExpressionList(p.ReplaceConflictIfExpr))
+	}
+	return "N/A"
+}
+
 // Update represents Update plan.
 type Update struct {
 	baseSchemaProducer
@@ -504,6 +524,10 @@ type Update struct {
 
 	FKChecks   map[int64][]*FKCheck   `plan-cache-clone:"must-nil"`
 	FKCascades map[int64][]*FKCascade `plan-cache-clone:"must-nil"`
+
+	// ExtraOriginTSOffset stores the offset of _tidb_origin_ts column in the pruned row for active-active tables.
+	// -1 means the column is not present or not an active-active table.
+	ExtraOriginTSOffset table.ExtraOriginTSOffset
 }
 
 // MemoryUsage return the memory usage of Update
@@ -634,12 +658,8 @@ type LoadData struct {
 	ColumnsAndUserVars []*ast.ColumnNameOrUserVar
 	Options            []*LoadDataOpt
 
-<<<<<<< HEAD
-	GenCols InsertGeneratedColumns
-=======
-	GenCols               physicalop.InsertGeneratedColumns
+	GenCols               InsertGeneratedColumns
 	ReplaceConflictIfExpr []expression.Expression
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }
 
 // LoadDataOpt represents load data option.

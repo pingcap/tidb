@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"runtime/trace"
 
 	"github.com/pingcap/errors"
@@ -25,14 +26,8 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/autoid"
-<<<<<<< HEAD
 	mmodel "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/model"
-=======
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	plannercore "github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -489,11 +484,7 @@ func (e *UpdateExec) updateRows(ctx context.Context) (int, error) {
 	return totalNumRows, nil
 }
 
-<<<<<<< HEAD
 func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mmodel.ColumnInfo, rowIdx int, err error) error {
-=======
-func handleUpdateError(sctx sessionctx.Context, colName ast.CIStr, colInfo *model.ColumnInfo, rowIdx int, err error) error {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err == nil {
 		return nil
 	}

@@ -443,11 +443,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				p.varsReadonly[node.Name] = struct{}{}
 			}
 		}
-<<<<<<< HEAD
-=======
-	case *ast.Constraint:
-		// Used in ALTER TABLE or CREATE TABLE
-		p.checkConstraintGrammar(node)
 	case *ast.ColumnName:
 		// When tidb_translate_softdelete_sql is enabled, the softdelete semantics are enabled for softdelete tables,
 		// and _tidb_softdelete_time column have special meaning, so user query should not reference the hidden column.
@@ -462,7 +457,6 @@ func (p *preprocessor) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 				"column '%s' cannot be referenced when tidb_translate_softdelete_sql is enabled",
 				model.ExtraSoftDeleteTimeName.O)
 		}
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	default:
 		p.flag &= ^parentIsJoin
 	}

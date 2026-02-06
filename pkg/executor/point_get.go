@@ -17,9 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"sort"
-	"strconv"
-
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -45,6 +42,8 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
+	"sort"
+	"strconv"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {
@@ -688,14 +687,8 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 	}
 
 	lock := e.tblInfo.Lock
-<<<<<<< HEAD
 	if lock != nil && (lock.Tp == pmodel.TableLockRead || lock.Tp == pmodel.TableLockReadOnly) {
-		if e.Ctx().GetSessionVars().EnablePointGetCache {
-=======
-	if lock != nil && (lock.Tp == ast.TableLockRead || lock.Tp == ast.TableLockReadOnly) {
-		// About e.commitTSOffset < 0: when user require _tidb_commit_ts value, we just skip using cache.
 		if e.Ctx().GetSessionVars().EnablePointGetCache && e.commitTSOffset < 0 {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 			cacheDB := e.Ctx().GetStore().GetMemCache()
 			val1, err := cacheDB.UnionGet(ctx, e.tblInfo.ID, e.snapshot, key)
 			if err != nil {
@@ -705,23 +698,12 @@ func (e *PointGetExecutor) get(ctx context.Context, key kv.Key) (kv.ValueEntry, 
 		}
 	}
 	// if not read lock or table was unlock then snapshot get
-<<<<<<< HEAD
-	return kv.GetValue(ctx, e.snapshot, key)
-=======
-	maxExecutionTime := e.Ctx().GetSessionVars().GetMaxExecutionTime()
-	if maxExecutionTime > 0 {
-		// if the query has max execution time set, we need to set the context deadline for the get request
-		ctxWithTimeout, cancel := context.WithTimeout(ctx, time.Duration(maxExecutionTime)*time.Millisecond)
-		defer cancel()
-		ctx = ctxWithTimeout
-	}
 	var avoidAllocation [1]kv.GetOption
 	opts := avoidAllocation[:0]
 	if e.commitTSOffset >= 0 {
 		opts = append(opts, kv.WithReturnCommitTS())
 	}
 	return e.snapshot.Get(ctx, key, opts...)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }
 
 func (e *PointGetExecutor) verifyTxnScope() error {

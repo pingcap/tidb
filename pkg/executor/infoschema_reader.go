@@ -235,17 +235,8 @@ func (e *memtableRetriever) retrieve(ctx context.Context, sctx sessionctx.Contex
 			err = e.setDataFromIndexUsage(ctx, sctx)
 		case infoschema.ClusterTableTiDBIndexUsage:
 			err = e.setDataFromClusterIndexUsage(ctx, sctx)
-<<<<<<< HEAD
-=======
-		case infoschema.TableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx, false)
-		case infoschema.ClusterTableTiDBPlanCache:
-			err = e.setDataFromPlanCache(ctx, sctx, true)
-		case infoschema.TableKeyspaceMeta:
-			err = e.setDataForKeyspaceMeta(sctx)
 		case infoschema.TableSoftDeleteTableStats:
 			err = e.setDataFromSoftDeleteTableStats(ctx, sctx)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		}
 		if err != nil {
 			return nil, err

@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/bits"
 	"slices"
 	"sort"
 	"strconv"
@@ -30,10 +29,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -50,7 +47,6 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
-	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -68,7 +64,6 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -4717,19 +4712,7 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ds.TblCols = append(ds.TblCols, extraCol)
 		}
 	}
-	// Append extra commit ts column to the schema.
-<<<<<<< HEAD
-	commitTSCol := ds.NewExtraCommitTSSchemaCol()
-	ds.Columns = append(ds.Columns, model.NewExtraCommitTSColInfo())
-	schema.Append(commitTSCol)
-	names = append(names, &types.FieldName{
-		DBName:      dbName,
-		TblName:     tableInfo.Name,
-		ColName:     model.ExtraCommitTSName,
-		OrigColName: model.ExtraCommitTSName,
-	})
-	ds.TblCols = append(ds.TblCols, commitTSCol)
-=======
+
 	// Cluster tables are memory tables that don't support extra column IDs.
 	// Temporary table doesn't have the column _tidb_commit_ts.
 	if !tbl.Type().IsClusterTable() && tbl.Meta().TempTableType == model.TempTableNone {
@@ -4742,10 +4725,9 @@ func (b *PlanBuilder) buildDataSource(ctx context.Context, tn *ast.TableName, as
 			ColName:     model.ExtraCommitTSName,
 			OrigColName: model.ExtraCommitTSName,
 		})
-		ds.AppendTableCol(commitTSCol)
+		ds.TblCols = append(ds.TblCols, commitTSCol)
 	}
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	ds.HandleCols = handleCols
 	ds.UnMutableHandleCols = handleCols
 	handleMap := make(map[int64][]util.HandleCols)
@@ -5306,7 +5288,7 @@ func (t *TblColPosInfo) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = size.SizeOfInt64 + size.SizeOfInt*2
+	sum = size.SizeOfInt64 + size.SizeOfInt*3
 	if t.HandleCols != nil {
 		sum += t.HandleCols.MemoryUsage()
 	}
@@ -5398,15 +5380,10 @@ func pruneAndBuildColPositionInfoForDelete(
 		}
 	}
 	// Sort by start position. To do the later column pruning.
-<<<<<<< HEAD
-	// TODO: `sort`` package has a rather worse performance. We should replace it with the new `slice` package.
-	sort.Sort(cols2PosInfos)
-=======
 	slices.SortFunc(cols2PosInfos, func(a, b physicalop.TblColPosInfo) int {
 		return a.Cmp(b)
 	})
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	nonPruned := bitset.New(uint(len(names)))
 	nonPruned.SetAll()
 	// Always prune the `_tidb_commit_ts` column.
@@ -5461,18 +5438,11 @@ func initColPosInfo(tid int64, names []*types.FieldName, handleCol util.HandleCo
 	if err != nil {
 		return TblColPosInfo{}, err
 	}
-<<<<<<< HEAD
 	return TblColPosInfo{
-		TblID:      tid,
-		Start:      offset,
-		HandleCols: handleCol,
-=======
-	return physicalop.TblColPosInfo{
 		TblID:               tid,
 		Start:               offset,
 		HandleCols:          handleCol,
 		ExtraOriginTSOffset: -1,
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	}, nil
 }
 
@@ -5509,15 +5479,8 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 
 	// fixedPos records the columns that can not be pruned and their new positions in the row after pruning.
 	fixedPos := make(map[int]int, len(deletableCols))
-<<<<<<< HEAD
 	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
-		col := colPosInfo.HandleCols.GetCol(i)
-=======
-
-	// Mark the columns in handle.
-	for col := range colPosInfo.HandleCols.IterColumns() {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
-		fixedPos[col.Index-originalStart] = 0
+		fixedPos[i-originalStart] = 0
 	}
 
 	// Mark the columns in indexes.
@@ -5834,12 +5797,8 @@ func (b *PlanBuilder) buildUpdatePlan(
 		VirtualAssignmentsOffset:  len(assignList),
 		IgnoreError:               ignoreErr,
 	}.Init(b.ctx)
-<<<<<<< HEAD
-	updt.names = p.OutputNames()
-=======
 	updt.SetOutputNames(p.OutputNames())
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	// We cannot apply projection elimination when building the subplan, because
 	// columns in orderedList cannot be resolved. (^flagEliminateProjection should also be applied in postOptimize)
 	updt.SelectPlan, _, err = DoOptimize(ctx, b.ctx, b.optFlag&^rule.FlagEliminateProjection, p)
@@ -5868,13 +5827,20 @@ func (b *PlanBuilder) buildUpdatePlan(
 	return updt, err
 }
 
+// ColumnAndTable represents a column and its table.
+type ColumnAndTable struct {
+	*table.Column
+	table.Table
+}
+
 // GetUpdateColumnsInfo get the update columns info.
-func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []*table.Column {
-	colsInfo := make([]*table.Column, size)
+func GetUpdateColumnsInfo(tblID2Table map[int64]table.Table, tblColPosInfos TblColPosInfoSlice, size int) []ColumnAndTable {
+	colsInfo := make([]ColumnAndTable, size)
 	for _, content := range tblColPosInfos {
 		tbl := tblID2Table[content.TblID]
 		for i, c := range tbl.WritableCols() {
-			colsInfo[content.Start+i] = c
+			colsInfo[content.Start+i].Column = c
+			colsInfo[content.Start+i].Table = tbl
 		}
 	}
 	return colsInfo
@@ -6161,15 +6127,6 @@ func IsDefaultExprSameColumn(names types.NameSlice, node ast.ExprNode) bool {
 func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base.Plan, error) {
 	var authErr error
 	sessionVars := b.ctx.GetSessionVars()
-<<<<<<< HEAD
-
-	del := Delete{
-		IsMultiTable: ds.IsMultiTable,
-		IgnoreErr:    ds.IgnoreErr,
-	}.Init(b.ctx)
-
-=======
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	localResolveCtx := resolve.NewContext()
 	// softdeleteTables collects tables that have soft delete enabled.
 	// It's only used when SoftDeleteRewrite is enabled.
@@ -6294,7 +6251,7 @@ func (b *PlanBuilder) buildDelete(ctx context.Context, ds *ast.DeleteStmt) (base
 		b.popVisitInfo()
 	}
 
-	del := physicalop.Delete{
+	del := Delete{
 		IsMultiTable: ds.IsMultiTable,
 		IgnoreErr:    ds.IgnoreErr,
 	}.Init(b.ctx)

@@ -1551,9 +1551,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 	}()
 
-<<<<<<< HEAD
 	cntPlan = 0
-=======
 	// TiFlash doesn't support ExtraCommitTS column now.
 	accessCommitTSCol := false
 	for _, col := range ds.Schema().Columns {
@@ -1562,7 +1560,7 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 			break
 		}
 	}
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+
 	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {

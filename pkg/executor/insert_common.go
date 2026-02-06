@@ -36,10 +36,6 @@ import (
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core"
 	"github.com/pingcap/tidb/pkg/sessionctx"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/table"
