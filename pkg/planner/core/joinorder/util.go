@@ -165,7 +165,7 @@ func BuildLeadingTreeFromList[T any](
 	return currentJoin, remainingGroups, true, nil
 }
 
-// FindAndRemovePlanByAstHint: Find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.
+// FindAndRemovePlanByAstHint find the plan in `plans` that matches `ast.HintTable` and remove that plan, returning the new slice.
 // Matching rules:
 //  1. Match by regular table name (db/table/*)
 //  2. Match by query-block alias (subquery name, e.g., tx)
