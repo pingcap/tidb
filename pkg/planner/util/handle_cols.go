@@ -107,7 +107,10 @@ func (cb *CommonHandleCols) IterColumns2() iter.Seq2[int, *expression.Column] {
 	return slices.All(cb.columns)
 }
 
-func (cb *CommonHandleCols) buildHandleByDatumsBuffer(sc *stmtctx.StatementContext, datumBuf []types.Datum) (kv.Handle, error) {
+func (cb *CommonHandleCols) buildHandleByDatumsBuffer(
+	sc *stmtctx.StatementContext,
+	datumBuf []types.Datum,
+) (kv.Handle, error) {
 	tablecodec.TruncateIndexValues(cb.tblInfo, cb.idxInfo, datumBuf)
 	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, datumBuf...)
 	err = sc.HandleError(err)
