@@ -6509,17 +6509,17 @@ IndexOption:
 			Global: false,
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
-    {
+|	"PRE_SPLIT_REGIONS" EqOpt '(' SplitOption ')'
+	{
 		$$ = &ast.IndexOption{
 			SplitOpt: $4.(*ast.SplitOption),
 		}
 	}
-|   "PRE_SPLIT_REGIONS" EqOpt Int64Num
+|	"PRE_SPLIT_REGIONS" EqOpt Int64Num
 	{
 		$$ = &ast.IndexOption{
-			SplitOpt:  &ast.SplitOption{
-				Num:   $3.(int64),
+			SplitOpt: &ast.SplitOption{
+				Num: $3.(int64),
 			},
 		}
 	}
