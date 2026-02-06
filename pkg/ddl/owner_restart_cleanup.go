@@ -21,8 +21,9 @@ import (
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -46,7 +47,7 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, ddlutil.KeyOpDefaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 	defer cancel()
 
 	serverInfos, err := infosync.GetAllServerInfo(ctx)
@@ -62,7 +63,7 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 	}
 
 	selfExecID := net.JoinHostPort(selfInfo.IP, strconv.FormatUint(uint64(selfInfo.Port), 10))
-	bestByExecID := make(map[string]*infosync.ServerInfo, len(serverInfos))
+	bestByExecID := make(map[string]*serverinfo.ServerInfo, len(serverInfos))
 	staleIDs := make(map[string]struct{})
 
 	// Find stale server-info IDs: multiple IDs can exist for the same IP:port after

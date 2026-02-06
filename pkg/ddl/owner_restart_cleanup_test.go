@@ -20,9 +20,9 @@ import (
 	"fmt"
 	"testing"
 
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
+	"github.com/pingcap/tidb/pkg/domain/serverinfo"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/tests/v3/integration"
@@ -35,12 +35,12 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 	cli := cluster.RandClient()
 
 	clearKeys := func() {
-		ctx, cancel := context.WithTimeout(context.Background(), ddlutil.KeyOpDefaultTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		_, _ = cli.Delete(ctx, DDLOwnerKey, clientv3.WithPrefix())
 		cancel()
 	}
 
-	mockGetAllServerInfo := func(t *testing.T, infos map[string]*infosync.ServerInfo) {
+	mockGetAllServerInfo := func(t *testing.T, infos map[string]*serverinfo.ServerInfo) {
 		b, err := json.Marshal(infos)
 		require.NoError(t, err)
 		inTerms := fmt.Sprintf("return(`%s`)", string(b))
@@ -49,16 +49,16 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 
 	t.Run("delete keys for stale instance after restart", func(t *testing.T) {
 		clearKeys()
-		ctx, cancel := context.WithTimeout(context.Background(), ddlutil.KeyOpDefaultTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		_, err := cli.Put(ctx, DDLOwnerKey+"/stale", "old")
 		require.NoError(t, err)
 		_, err = cli.Put(ctx, DDLOwnerKey+"/other", "other")
 		require.NoError(t, err)
 		cancel()
 
-		mockGetAllServerInfo(t, map[string]*infosync.ServerInfo{
+		mockGetAllServerInfo(t, map[string]*serverinfo.ServerInfo{
 			"old": {
-				StaticServerInfo: infosync.StaticServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
 					ID:             "old",
 					IP:             "127.0.0.1",
 					Port:           4000,
@@ -66,7 +66,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 				},
 			},
 			"self": {
-				StaticServerInfo: infosync.StaticServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
 					ID:             "self",
 					IP:             "127.0.0.1",
 					Port:           4000,
@@ -74,7 +74,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 				},
 			},
 			"other": {
-				StaticServerInfo: infosync.StaticServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
 					ID:             "other",
 					IP:             "127.0.0.2",
 					Port:           4000,
@@ -85,7 +85,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 
 		cleanupStaleDDLOwnerKeys(context.Background(), cli, "self")
 
-		ctx, cancel = context.WithTimeout(context.Background(), ddlutil.KeyOpDefaultTimeout)
+		ctx, cancel = context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		defer cancel()
 		resp, err := cli.Get(ctx, DDLOwnerKey+"/stale")
 		require.NoError(t, err)
@@ -98,14 +98,14 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 
 	t.Run("single node deletes unknown key even if stale server info is removed", func(t *testing.T) {
 		clearKeys()
-		ctx, cancel := context.WithTimeout(context.Background(), ddlutil.KeyOpDefaultTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		_, err := cli.Put(ctx, DDLOwnerKey+"/unknown", "old")
 		require.NoError(t, err)
 		cancel()
 
-		mockGetAllServerInfo(t, map[string]*infosync.ServerInfo{
+		mockGetAllServerInfo(t, map[string]*serverinfo.ServerInfo{
 			"self": {
-				StaticServerInfo: infosync.StaticServerInfo{
+				StaticInfo: serverinfo.StaticInfo{
 					ID:             "self",
 					IP:             "127.0.0.1",
 					Port:           4000,
@@ -116,7 +116,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 
 		cleanupStaleDDLOwnerKeys(context.Background(), cli, "self")
 
-		ctx, cancel = context.WithTimeout(context.Background(), ddlutil.KeyOpDefaultTimeout)
+		ctx, cancel = context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		defer cancel()
 		resp, err := cli.Get(ctx, DDLOwnerKey+"/unknown")
 		require.NoError(t, err)
