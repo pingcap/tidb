@@ -981,7 +981,7 @@ func constructSQLBindOPFromPlanDigest(
 	handledSQLDigests[sqlDigestWithDBStr] = struct{}{}
 	if !complete {
 		ctx.GetSessionVars().StmtCtx.AppendWarning(
-			errors.NewNoStackErrorf("%v. Plan Digest: %v", reason, planDigest),
+			errors.NewNoStackError(fmt.Sprintf("%v. Plan Digest: %v", reason, planDigest)),
 		)
 	}
 	op := &SQLBindOpDetail{
