@@ -259,11 +259,7 @@ var Keywords = []KeywordsType{
 	{"ZEROFILL", true, "reserved"},
 	{"ACCOUNT", false, "unreserved"},
 	{"ACTION", false, "unreserved"},
-<<<<<<< HEAD
-=======
 	{"ACTIVE_ACTIVE", false, "unreserved"},
-	{"ADD_COLUMNAR_REPLICA_ON_DEMAND", false, "unreserved"},
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	{"ADVISE", false, "unreserved"},
 	{"AFFINITY", false, "unreserved"},
 	{"AFTER", false, "unreserved"},

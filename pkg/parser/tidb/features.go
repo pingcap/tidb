@@ -53,11 +53,6 @@ var featureIDs = map[string]struct{}{
 	FeatureIDSoftDelete:     {},
 	FeatureIDActiveActive:   {},
 	FeatureIDGlobalIndex:    {},
-<<<<<<< HEAD
-=======
-	FeatureIDResourceGroup:  {},
-	FeatureIDPresplit:       {},
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	FeatureIDAffinity:       {},
 }
 

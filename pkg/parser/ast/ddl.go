@@ -2565,33 +2565,20 @@ const (
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
-<<<<<<< HEAD
 	/* Some options are not cherry-picked from master, reserve the options */
 
-	TableOptionAffinity        = 47
-=======
-	TableOptionSoftDelete
-	TableOptionSoftDeleteRetention
-	TableOptionSoftDeleteJobInterval
-	TableOptionSoftDeleteJobEnable
-	TableOptionActiveActive
-	TableOptionEngineAttribute
-	TableOptionSecondaryEngineAttribute
-	TableOptionAutoextendSize
-	TableOptionPageChecksum
-	TableOptionPageCompressed
-	TableOptionPageCompressionLevel
-	TableOptionTransactional
-	TableOptionIetfQuotes
-	TableOptionSequence
-	TableOptionAffinity
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
-	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
-	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
-	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
-	TableOptionStatsColsChoice = TableOptionType(StatsOptionColsChoice)
-	TableOptionStatsColList    = TableOptionType(StatsOptionColList)
-	TableOptionStatsSampleRate = TableOptionType(StatsOptionSampleRate)
+	TableOptionAffinity              = 47
+	TableOptionSoftDelete            = 48
+	TableOptionSoftDeleteRetention   = 49
+	TableOptionSoftDeleteJobInterval = 50
+	TableOptionSoftDeleteJobEnable   = 51
+	TableOptionActiveActive          = 52
+	TableOptionPlacementPolicy       = TableOptionType(PlacementOptionPolicy)
+	TableOptionStatsBuckets          = TableOptionType(StatsOptionBuckets)
+	TableOptionStatsTopN             = TableOptionType(StatsOptionTopN)
+	TableOptionStatsColsChoice       = TableOptionType(StatsOptionColsChoice)
+	TableOptionStatsColList          = TableOptionType(StatsOptionColList)
+	TableOptionStatsSampleRate       = TableOptionType(StatsOptionSampleRate)
 )
 
 // RowFormat types
@@ -2973,8 +2960,13 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
-<<<<<<< HEAD
-=======
+	case TableOptionAffinity:
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
+			ctx.WriteKeyWord("AFFINITY ")
+			ctx.WritePlain("= ")
+			ctx.WriteString(n.StrValue)
+			return nil
+		})
 	case TableOptionSoftDelete:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE ")
@@ -3002,16 +2994,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
-	case TableOptionAffinity:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
-			ctx.WriteKeyWord("AFFINITY ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-			return nil
-		})
-<<<<<<< HEAD
-=======
 	case TableOptionSoftDeleteJobEnable:
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDSoftDelete, func() error {
 			ctx.WriteKeyWord("SOFTDELETE_JOB_ENABLE ")
@@ -3034,43 +3016,7 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
-	case TableOptionAutoextendSize:
-		ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
-		ctx.WritePlain("= ")
-		ctx.WritePlain(n.StrValue) // e.g. '4M'
 
-	// MariaDB specific options
-	case TableOptionPageChecksum:
-		ctx.WriteKeyWord("PAGE_CHECKSUM ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionPageCompressed:
-		ctx.WriteKeyWord("PAGE_COMPRESSED ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionPageCompressionLevel:
-		ctx.WriteKeyWord("PAGE_COMPRESSION_LEVEL ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionTransactional:
-		ctx.WriteKeyWord("TRANSACTIONAL ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionIetfQuotes:
-		ctx.WriteKeyWord("IETF_QUOTES ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%s", n.StrValue)
-		return nil
-	case TableOptionSequence:
-		ctx.WriteKeyWord("SEQUENCE ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
