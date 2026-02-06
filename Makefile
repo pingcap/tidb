@@ -867,9 +867,13 @@ bazel_lint: bazel_prepare
 
 .PHONY: bazel_lint_changed
 bazel_lint_changed: bazel_prepare
-	@PKGS="$$(scripts/get_changed_pkgs.sh '$(BASE_REF)')"; \
+	@PKGS="$$(build/get_changed_bazel_pkgs.sh)"; \
 	echo "$$PKGS"; \
-	bazel build $(BAZEL_CMD_CONFIG) $(PKGS) --//build:with_nogo_flag=$(NOGO_FLAG)
+	if [ -z "$$PKGS" ]; then \
+		echo "No changed bazel packages detected, skip bazel_lint_changed."; \
+		exit 0; \
+	fi; \
+	bazel build $(BAZEL_CMD_CONFIG) $$PKGS --//build:with_nogo_flag=$(NOGO_FLAG)
 
 .PHONY: docker
 docker: ## Build TiDB Docker image
