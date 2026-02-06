@@ -33,7 +33,14 @@ type JoinMethodHint struct {
 	HintInfo         *hint.PlanHints
 }
 
-func checkAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
+// checkAndGenerateLeadingHint used to check and generate the valid leading hint.
+// We are allowed to use at most one leading hint in a join group. When more than one,
+// all leading hints in the current join group will be invalid.
+// For example: select /*+ leading(t3) */ * from (select /*+ leading(t1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b
+// The Join Group {t1, t2, t3} contains two leading hints includes leading(t3) and leading(t1).
+// Although they are in different query blocks, they are conflicting.
+// In addition, the table alias 't4' cannot be recognized because of the join group.
+func CheckAndGenerateLeadingHint(hintInfo []*hint.PlanHints) (*hint.PlanHints, bool) {
 	leadingHintNum := len(hintInfo)
 	var leadingHintInfo *hint.PlanHints
 	hasDiffLeadingHint := false

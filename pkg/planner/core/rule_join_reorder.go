@@ -297,7 +297,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			joinGroupNum := len(curJoinGroup)
 			useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 
-			leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
+			leadingHintInfo, hasDiffLeadingHint := joinorder.CheckAndGenerateLeadingHint(joinOrderHintInfo)
 			if hasDiffLeadingHint {
 				ctx.GetSessionVars().StmtCtx.SetHintWarning(
 					"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
@@ -369,33 +369,6 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
-}
-
-// checkAndGenerateLeadingHint used to check and generate the valid leading hint.
-// We are allowed to use at most one leading hint in a join group. When more than one,
-// all leading hints in the current join group will be invalid.
-// For example: select /*+ leading(t3) */ * from (select /*+ leading(t1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b
-// The Join Group {t1, t2, t3} contains two leading hints includes leading(t3) and leading(t1).
-// Although they are in different query blocks, they are conflicting.
-// In addition, the table alias 't4' cannot be recognized because of the join group.
-func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
-	leadingHintNum := len(hintInfo)
-	var leadingHintInfo *h.PlanHints
-	hasDiffLeadingHint := false
-	if leadingHintNum > 0 {
-		leadingHintInfo = hintInfo[0]
-		// One join group has one leading hint at most. Check whether there are different join order hints.
-		for i := 1; i < leadingHintNum; i++ {
-			if hintInfo[i] != hintInfo[i-1] {
-				hasDiffLeadingHint = true
-				break
-			}
-		}
-		if hasDiffLeadingHint {
-			leadingHintInfo = nil
-		}
-	}
-	return leadingHintInfo, hasDiffLeadingHint
 }
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
