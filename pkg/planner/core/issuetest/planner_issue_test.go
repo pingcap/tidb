@@ -72,7 +72,7 @@ func Test53726(t *testing.T) {
 		Sort().Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
 	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 		Check(testkit.Rows(
-			"HashAgg_8 8000.00 root  group by:Column#7, Column#8, funcs:firstrow(Column#7)->Column#3, funcs:firstrow(Column#8)->Column#4",
+			"HashAgg_8 8000.00 root  group by:Column#8, Column#9, funcs:firstrow(Column#8)->Column#4, funcs:firstrow(Column#9)->Column#5",
 			"└─TableReader_9 8000.00 root  data:HashAgg_4",
 			"  └─HashAgg_4 8000.00 cop[tikv]  group by:cast(test.t7.c, bigint(22) BINARY), cast(test.t7.c, decimal(10,0) BINARY), ",
 			"    └─TableFullScan_7 10000.00 cop[tikv] table:t7 keep order:false, stats:pseudo"))
@@ -83,8 +83,8 @@ func Test53726(t *testing.T) {
 		Check(testkit.Rows("-258025139 -258025139", "575932053 575932053"))
 	tk.MustQuery("explain select distinct cast(c as decimal), cast(c as signed) from t7").
 		Check(testkit.Rows(
-			"HashAgg_6 2.00 root  group by:Column#11, Column#12, funcs:firstrow(Column#11)->Column#3, funcs:firstrow(Column#12)->Column#4",
-			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#11, cast(test.t7.c, bigint(22) BINARY)->Column#12",
+			"HashAgg_6 2.00 root  group by:Column#12, Column#13, funcs:firstrow(Column#12)->Column#4, funcs:firstrow(Column#13)->Column#5",
+			"└─Projection_12 2.00 root  cast(test.t7.c, decimal(10,0) BINARY)->Column#12, cast(test.t7.c, bigint(22) BINARY)->Column#13",
 			"  └─TableReader_11 2.00 root  data:TableFullScan_10",
 			"    └─TableFullScan_10 2.00 cop[tikv] table:t7 keep order:false"))
 }
@@ -102,16 +102,16 @@ func TestIssue54535(t *testing.T) {
 
 	tk.MustQuery("explain SELECT /*+ inl_join(tmp) */ * FROM ta, (SELECT b1, COUNT(b3) AS cnt FROM tb GROUP BY b1, b2) as tmp where ta.a1 = tmp.b1").
 		Check(testkit.Rows(
-			"Projection_9 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#9",
+			"Projection_9 9990.00 root  test.ta.a1, test.ta.a2, test.ta.a3, test.tb.b1, Column#11",
 			"└─IndexJoin_16 9990.00 root  inner join, inner:HashAgg_14, outer key:test.ta.a1, inner key:test.tb.b1, equal cond:eq(test.ta.a1, test.tb.b1)",
 			"  ├─TableReader_43(Build) 9990.00 root  data:Selection_42",
 			"  │ └─Selection_42 9990.00 cop[tikv]  not(isnull(test.ta.a1))",
 			"  │   └─TableFullScan_41 10000.00 cop[tikv] table:ta keep order:false, stats:pseudo",
-			"  └─HashAgg_14(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#11)->Column#9, funcs:firstrow(test.tb.b1)->test.tb.b1",
+			"  └─HashAgg_14(Probe) 9990.00 root  group by:test.tb.b1, test.tb.b2, funcs:count(Column#13)->Column#11, funcs:firstrow(test.tb.b1)->test.tb.b1",
 			"    └─IndexLookUp_15 9990.00 root  ",
 			"      ├─Selection_12(Build) 9990.00 cop[tikv]  not(isnull(test.tb.b1))",
 			"      │ └─IndexRangeScan_10 10000.00 cop[tikv] table:tb, index:idx_b(b1) range: decided by [eq(test.tb.b1, test.ta.a1)], keep order:false, stats:pseudo",
-			"      └─HashAgg_13(Probe) 9990.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#11",
+			"      └─HashAgg_13(Probe) 9990.00 cop[tikv]  group by:test.tb.b1, test.tb.b2, funcs:count(test.tb.b3)->Column#13",
 			"        └─TableRowIDScan_11 9990.00 cop[tikv] table:tb keep order:false, stats:pseudo"))
 	// test for issues/55169
 	tk.MustExec("create table t1(col_1 int, index idx_1(col_1));")
@@ -243,12 +243,12 @@ func TestIssue59902(t *testing.T) {
 	tk.MustExec("set tidb_enable_inl_join_inner_multi_pattern=on;")
 	tk.MustQuery("explain format='brief' select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").
 		Check(testkit.Rows(
-			"Projection 8.00 root  test.t1.b, ifnull(Column#9, 0)->Column#9",
+			"Projection 8.00 root  test.t1.b, ifnull(Column#12, 0)->Column#12",
 			"└─HashJoin 8.00 root  CARTESIAN left outer join",
 			"  ├─Point_Get(Build) 1.00 root table:t1 handle:1",
-			"  └─StreamAgg(Probe) 8.00 root  group by:test.t2.a, funcs:count(Column#11)->Column#9",
+			"  └─StreamAgg(Probe) 8.00 root  group by:test.t2.a, funcs:count(Column#14)->Column#12",
 			"    └─IndexReader 8.00 root  index:StreamAgg",
-			"      └─StreamAgg 8.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#11",
+			"      └─StreamAgg 8.00 cop[tikv]  group by:test.t2.a, funcs:count(1)->Column#14",
 			"        └─IndexRangeScan 10.00 cop[tikv] table:t2, index:idx(a) range:[1,1], keep order:true, stats:pseudo"))
 	tk.MustQuery("select t1.b,(select count(*) from t2 where t2.a=t1.a) as a from t1 where t1.a=1;").Check(testkit.Rows("100 2"))
 }
@@ -286,8 +286,8 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 	tk.MustExec(`create table t2(c12 integer, c13 integer, c14 varchar(0), c15 double);`)
 	tk.MustExec(`create table t3(vkey varchar(0), c20 integer);`)
 	tk.MustQuery(`explain format=brief select 0 from t2 join(t3 join t0 a on 0) left join(t1 b left join t1 c on 0) on(c20 = b.vkey) on(c13 = a.vkey) join(select c14 d from(t2 join t3 on c12 = vkey)) e on(c3 = d) where nullif(c15, case when(c.c10) then 0 end);`).Check(testkit.Rows(
-		`Projection 0.00 root  0->Column#26`,
-		`└─HashJoin 0.00 root  inner join, equal:[eq(Column#27, Column#28)]`,
+		`Projection 0.00 root  0->Column#33`,
+		`└─HashJoin 0.00 root  inner join, equal:[eq(Column#34, Column#35)]`,
 		`  ├─HashJoin(Build) 0.00 root  inner join, equal:[eq(test.t0.c3, test.t2.c14)]`,
 		`  │ ├─Selection(Build) 0.00 root  if(eq(test.t2.c15, cast(case(test.t1.c10, 0), double BINARY)), NULL, test.t2.c15)`,
 		`  │ │ └─HashJoin 0.00 root  left outer join, equal:[eq(test.t3.c20, test.t1.vkey)]`,
@@ -301,11 +301,11 @@ func TestJoinReorderWithAddSelection(t *testing.T) {
 		`  │ │     └─TableReader(Probe) 9990.00 root  data:Selection`,
 		`  │ │       └─Selection 9990.00 cop[tikv]  not(isnull(test.t1.vkey))`,
 		`  │ │         └─TableFullScan 10000.00 cop[tikv] table:b keep order:false, stats:pseudo`,
-		`  │ └─Projection(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#27`,
+		`  │ └─Projection(Probe) 9990.00 root  test.t2.c14, cast(test.t2.c12, double BINARY)->Column#34`,
 		`  │   └─TableReader 9990.00 root  data:Selection`,
 		`  │     └─Selection 9990.00 cop[tikv]  not(isnull(test.t2.c14))`,
 		`  │       └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
-		`  └─Projection(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#28`,
+		`  └─Projection(Probe) 10000.00 root  cast(test.t3.vkey, double BINARY)->Column#35`,
 		`    └─TableReader 10000.00 root  data:TableFullScan`,
 		`      └─TableFullScan 10000.00 cop[tikv] table:t3 keep order:false, stats:pseudo`))
 }

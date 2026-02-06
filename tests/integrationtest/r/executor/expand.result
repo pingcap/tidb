@@ -102,11 +102,11 @@ ANALYZE TABLE t1;
 EXPLAIN FORMAT='brief' SELECT product, country_id , year, SUM(profit)
 FROM t1 GROUP BY product, country_id, year WITH ROLLUP;
 id	estRows	task	access object	operator info
-Projection	12.00	root		Column#6->Column#11, Column#7->Column#12, Column#8->Column#13, Column#10
-└─HashAgg	12.00	root		group by:Column#16, Column#17, Column#18, Column#19, funcs:sum(Column#15)->Column#10, funcs:firstrow(Column#16)->Column#6, funcs:firstrow(Column#17)->Column#7, funcs:firstrow(Column#18)->Column#8
-  └─Projection	15.00	root		cast(executor__expand.t1.profit, decimal(10,0) BINARY)->Column#15, Column#6->Column#16, Column#7->Column#17, Column#8->Column#18, gid->Column#19
-    └─Expand	15.00	root		level-projection:[executor__expand.t1.profit, <nil>->Column#6, <nil>->Column#7, <nil>->Column#8, 0->gid],[executor__expand.t1.profit, Column#6, <nil>->Column#7, <nil>->Column#8, 1->gid],[executor__expand.t1.profit, Column#6, Column#7, <nil>->Column#8, 3->gid],[executor__expand.t1.profit, Column#6, Column#7, Column#8, 7->gid]; schema: [executor__expand.t1.profit,Column#6,Column#7,Column#8,gid]
-      └─Projection	15.00	root		executor__expand.t1.profit, executor__expand.t1.product->Column#6, executor__expand.t1.country_id->Column#7, executor__expand.t1.year->Column#8
+Projection	4.00	root		Column#7->Column#12, Column#8->Column#13, Column#9->Column#14, Column#11
+└─HashAgg	4.00	root		group by:Column#17, Column#18, Column#19, Column#20, funcs:sum(Column#16)->Column#11, funcs:firstrow(Column#17)->Column#7, funcs:firstrow(Column#18)->Column#8, funcs:firstrow(Column#19)->Column#9
+  └─Projection	15.00	root		cast(executor__expand.t1.profit, decimal(10,0) BINARY)->Column#16, Column#7->Column#17, Column#8->Column#18, Column#9->Column#19, gid->Column#20
+    └─Expand	15.00	root		level-projection:[executor__expand.t1.profit, <nil>->Column#7, <nil>->Column#8, <nil>->Column#9, 0->gid],[executor__expand.t1.profit, Column#7, <nil>->Column#8, <nil>->Column#9, 1->gid],[executor__expand.t1.profit, Column#7, Column#8, <nil>->Column#9, 3->gid],[executor__expand.t1.profit, Column#7, Column#8, Column#9, 7->gid]; schema: [executor__expand.t1.profit,Column#7,Column#8,Column#9,gid]
+      └─Projection	15.00	root		executor__expand.t1.profit, executor__expand.t1.product->Column#7, executor__expand.t1.country_id->Column#8, executor__expand.t1.year->Column#9
         └─TableReader	15.00	root		data:TableFullScan
           └─TableFullScan	15.00	cop[tikv]	table:t1	keep order:false, stats:pseudo
 
@@ -569,13 +569,13 @@ WHERE T0.DATE = DATE_ADD(newTb.DATE, INTERVAL 0 MONTH)
 FROM  (select tr.a as DATE from tr) T0
 GROUP BY T0.DATE WITH ROLLUP;
 id	estRows	task	access object	operator info
-Projection_18	8000.00	root		Column#7
+Projection_18	8000.00	root		Column#8
 └─Apply_20	8000.00	root		CARTESIAN left outer join
-  ├─HashAgg_21(Build)	8000.00	root		group by:Column#4, gid, funcs:firstrow(executor__expand.tr.a)->executor__expand.tr.a
-  │ └─Expand_25	10000.00	root		level-projection:[executor__expand.tr.a, <nil>->Column#4, 0->gid],[executor__expand.tr.a, Column#4, 1->gid]; schema: [executor__expand.tr.a,Column#4,gid]
-  │   └─Projection_27	10000.00	root		executor__expand.tr.a, executor__expand.tr.a->Column#4
+  ├─HashAgg_21(Build)	8000.00	root		group by:Column#5, gid, funcs:firstrow(executor__expand.tr.a)->executor__expand.tr.a
+  │ └─Expand_25	10000.00	root		level-projection:[executor__expand.tr.a, <nil>->Column#5, 0->gid],[executor__expand.tr.a, Column#5, 1->gid]; schema: [executor__expand.tr.a,Column#5,gid]
+  │   └─Projection_27	10000.00	root		executor__expand.tr.a, executor__expand.tr.a->Column#5
   │     └─TableReader_29	10000.00	root		data:TableFullScan_28
   │       └─TableFullScan_28	10000.00	cop[tikv]	table:tr	keep order:false, stats:pseudo
-  └─Projection_30(Probe)	6400.00	root		100.00->Column#7
+  └─Projection_30(Probe)	6400.00	root		100.00->Column#8
     └─Selection_31	6400.00	root		eq(executor__expand.tr.a, 2024-09-15 00:00:00.000000)
       └─TableDual_32	8000.00	root		rows:1

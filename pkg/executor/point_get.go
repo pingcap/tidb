@@ -754,6 +754,9 @@ func decodeOldRowValToChunk(sctx sessionctx.Context, schema *expression.Schema, 
 		cutPos := colID2CutPos[col.ID]
 		if len(cutVals[cutPos]) == 0 {
 			colInfo := getColInfoByID(tblInfo, col.ID)
+			if colInfo == nil && col.ID == model.ExtraCommitTSID {
+				colInfo = model.NewExtraCommitTSColInfo()
+			}
 			d, err1 := table.GetColOriginDefaultValue(sctx.GetExprCtx(), colInfo)
 			if err1 != nil {
 				return err1
