@@ -6,9 +6,10 @@ go_test(
     srcs = [
         "join_test.go",
         "main_test.go",
+        "reports_test.go",
     ],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "//pkg/config",
         "//pkg/testkit",
