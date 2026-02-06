@@ -57,12 +57,15 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.Equal(t, "600", mlogInfo.PurgeNext)
 
 	// Meta columns should exist on the log table.
+	require.NotEmpty(t, mlogInfo.DMLTypeColumnName.O)
+	require.NotEmpty(t, mlogInfo.OldNewColumnName.O)
+
 	var hasDMLType, hasOldNew bool
 	for _, c := range mlogTable.Meta().Columns {
-		if c.Name.L == "dml_type" {
+		if c.Name.L == mlogInfo.DMLTypeColumnName.L {
 			hasDMLType = true
 		}
-		if c.Name.L == "old_new" {
+		if c.Name.L == mlogInfo.OldNewColumnName.L {
 			hasOldNew = true
 			require.Equal(t, mysql.TypeTiny, c.FieldType.GetType())
 		}
@@ -72,6 +75,34 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 
 	// Duplicated MV LOG should fail (same derived table name).
 	tk.MustGetErrMsg("create materialized view log on t (a)", "[schema:1050]Table 'test.$mlog$t' already exists")
+}
+
+func TestCreateMaterializedViewLogMetaColumnNameConflict(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t_conflict (`_MLOG$_DML_TYPE` int, `_MLOG$_OLD_NEW` int, a int)")
+	tk.MustExec("create materialized view log on t_conflict (`_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`, a)")
+
+	is := dom.InfoSchema()
+	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_conflict"))
+	require.NoError(t, err)
+	mlogInfo := mlogTable.Meta().MaterializedViewLog
+	require.NotNil(t, mlogInfo)
+	require.Equal(t, pmodel.NewCIStr("_MLOG$_DML_TYPE_1"), mlogInfo.DMLTypeColumnName)
+	require.Equal(t, pmodel.NewCIStr("_MLOG$_OLD_NEW_1"), mlogInfo.OldNewColumnName)
+
+	var hasDMLType, hasOldNew bool
+	for _, c := range mlogTable.Meta().Columns {
+		if c.Name.L == mlogInfo.DMLTypeColumnName.L {
+			hasDMLType = true
+		}
+		if c.Name.L == mlogInfo.OldNewColumnName.L {
+			hasOldNew = true
+		}
+	}
+	require.True(t, hasDMLType)
+	require.True(t, hasOldNew)
 }
 
 func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {

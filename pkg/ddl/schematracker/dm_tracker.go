@@ -20,6 +20,7 @@ package schematracker
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"unicode/utf8"
 
@@ -283,21 +284,26 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		})
 	}
 
+	dmlTypeColName, oldNewColName, err := allocMaterializedViewLogInternalColumnNames(s.Cols)
+	if err != nil {
+		return err
+	}
+
 	metaCols := []struct {
-		name string
+		name pmodel.CIStr
 		ft   byte
 		flen int
 	}{
-		{name: "dml_type", ft: mysql.TypeVarchar, flen: 1},
+		{name: dmlTypeColName, ft: mysql.TypeVarchar, flen: 1},
 		// old_new is a signed tinyint: NEW=1, OLD=-1.
-		{name: "old_new", ft: mysql.TypeTiny, flen: 4},
+		{name: oldNewColName, ft: mysql.TypeTiny, flen: 4},
 	}
 	for _, metaCol := range metaCols {
 		ft := field_types.NewFieldType(metaCol.ft)
 		ft.SetFlen(metaCol.flen)
 		ft.SetFlag(mysql.NotNullFlag)
 		colDefs = append(colDefs, &ast.ColumnDef{
-			Name: &ast.ColumnName{Name: pmodel.NewCIStr(metaCol.name)},
+			Name: &ast.ColumnName{Name: metaCol.name},
 			Tp:   ft,
 		})
 	}
@@ -343,11 +349,13 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 	}
 
 	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
-		BaseTableID:    baseTable.ID,
-		Columns:        s.Cols,
-		PurgeMethod:    purgeMethod,
-		PurgeStartWith: purgeStartWith,
-		PurgeNext:      purgeNext,
+		BaseTableID:       baseTable.ID,
+		Columns:           s.Cols,
+		DMLTypeColumnName: dmlTypeColName,
+		OldNewColumnName:  oldNewColName,
+		PurgeMethod:       purgeMethod,
+		PurgeStartWith:    purgeStartWith,
+		PurgeNext:         purgeNext,
 	}
 	if err := d.CreateTableWithInfo(ctx, schemaName, mlogTableInfo, nil); err != nil {
 		return err
@@ -363,6 +371,41 @@ func (d *SchemaTracker) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast
 		baseTable.MaterializedViewBase.MLogID = 1
 	}
 	return d.PutTable(schemaName, baseTable)
+}
+
+func allocMaterializedViewLogInternalColumnNames(baseCols []pmodel.CIStr) (dmlTypeColName, oldNewColName pmodel.CIStr, err error) {
+	existing := make(map[string]struct{}, len(baseCols)+2)
+	for _, col := range baseCols {
+		existing[col.L] = struct{}{}
+	}
+
+	dmlTypeColName, err = allocMaterializedViewLogInternalColumnName(model.MaterializedViewLogDMLTypeColumnName, existing)
+	if err != nil {
+		return pmodel.CIStr{}, pmodel.CIStr{}, err
+	}
+	oldNewColName, err = allocMaterializedViewLogInternalColumnName(model.MaterializedViewLogOldNewColumnName, existing)
+	if err != nil {
+		return pmodel.CIStr{}, pmodel.CIStr{}, err
+	}
+	return dmlTypeColName, oldNewColName, nil
+}
+
+func allocMaterializedViewLogInternalColumnName(baseName string, existing map[string]struct{}) (pmodel.CIStr, error) {
+	for suffix := 0; ; suffix++ {
+		name := baseName
+		if suffix > 0 {
+			name = fmt.Sprintf("%s_%d", baseName, suffix)
+		}
+		colName := pmodel.NewCIStr(name)
+		if utf8.RuneCountInString(colName.L) > mysql.MaxColumnNameLength {
+			return pmodel.CIStr{}, dbterror.ErrTooLongIdent.GenWithStackByArgs(colName)
+		}
+		if _, exists := existing[colName.L]; exists {
+			continue
+		}
+		existing[colName.L] = struct{}{}
+		return colName, nil
+	}
 }
 
 func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
