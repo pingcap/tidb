@@ -1724,6 +1724,7 @@ func (er *expressionRewriter) Leave(originInNode ast.Node) (retNode ast.Node, ok
 		}
 		if v.Modifier != ast.FulltextSearchModifierBooleanMode {
 			er.err = errors.Errorf("Currently TiDB only supports BOOLEAN MODE in MATCH AGAINST")
+			return retNode, false
 		}
 		if err := expression.SetFTSMysqlMatchAgainstModifier(sf, v.Modifier); err != nil {
 			er.err = err

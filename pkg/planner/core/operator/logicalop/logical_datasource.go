@@ -744,7 +744,7 @@ func (ds *DataSource) buildTiCIFTSPathAndCleanUp(
 	client := ds.SCtx().GetBuildPBCtx().Client
 	pbConverter := expression.NewPBConverterForTiCI(client, evalCtx)
 	pbExprs := make([]tipb.Expr, 0, len(matchedFuncs))
-	// It represets the TiCI search functions currently.
+	// It represents the TiCI search functions currently.
 	ds.PossibleAccessPaths[0].AccessConds = ds.PossibleAccessPaths[0].AccessConds[:0]
 	for ftsFunc := range matchedFuncs {
 		newF, _, err := expression.RewriteMySQLMatchAgainstRecursively(ds.SCtx().GetExprCtx(), ftsFunc)
