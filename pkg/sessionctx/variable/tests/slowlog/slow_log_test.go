@@ -341,6 +341,27 @@ func TestParseSingleSlowLogField(t *testing.T) {
 	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "abc")
 	require.Error(t, err)
 
+	// negative float64 values should be rejected
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "-1.5")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogCopMVCCReadAmplification, "-0.1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	// zero is still valid
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogQueryTimeStr, "0")
+	require.NoError(t, err)
+	require.Equal(t, float64(0), v)
+
+	// negative int64 values should be rejected
+	_, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "-100")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	// zero is still valid
+	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogMemMax, "0")
+	require.NoError(t, err)
+	require.Equal(t, int64(0), v)
+
 	// string fields
 	v, err = variable.ParseSlowLogFieldValue(variable.SlowLogDBStr, "testdb")
 	require.NoError(t, err)
@@ -471,6 +492,17 @@ func TestParseSessionSlowLogRules(t *testing.T) {
 	_, err = variable.ParseSessionSlowLogRules("Exec_retry_count > 123")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "invalid slow log rule format:Exec_retry_count > 123")
+
+	// Negative numeric thresholds should be rejected
+	_, err = variable.ParseSessionSlowLogRules("Query_time:-1.5")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	_, err = variable.ParseSessionSlowLogRules("cop_mvcc_read_amplification:-0.1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
+	_, err = variable.ParseSessionSlowLogRules("Mem_max:-100")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "non-negative")
 
 	// Field resetting
 	slowLogRules, err = variable.ParseSessionSlowLogRules("Mem_max:100,Succ:true,Succ:false,Mem_max:200")
