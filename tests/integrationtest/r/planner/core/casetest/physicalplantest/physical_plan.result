@@ -3766,32 +3766,35 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select * from t where a = 1 or b in (1, 2, 3) order by c limit 2;
 id	task	access object	operator info
-TopN	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	root		type: union
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], keep order:true, stats:pseudo
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select * from t where a in (1, 2, 3) or b = 1 order by c limit 2;
 id	task	access object	operator info
-TopN	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	root		type: union
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:false, stats:pseudo
-  └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select * from t where a in (1, 2, 3) or b in (1, 2, 3) order by c limit 2;
 id	task	access object	operator info
-TopN	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	root		type: union
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select * from t where (a = 1 and c = 2) or (b = 1) order by c limit 2;
@@ -3807,12 +3810,13 @@ show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select * from t where (a = 1 and c = 2) or b in (1, 2, 3) order by c limit 2;
 id	task	access object	operator info
-TopN	root		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-└─IndexMerge	root		type: union
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx(a, c)	range:[1 2,1 2], keep order:false, stats:pseudo
-  ├─IndexRangeScan(Build)	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:false, stats:pseudo
-  └─TopN(Probe)	cop[tikv]		planner__core__casetest__physicalplantest__physical_plan.t.c, offset:0, count:2
-    └─TableRowIDScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+Projection	root		planner__core__casetest__physicalplantest__physical_plan.t.a, planner__core__casetest__physicalplantest__physical_plan.t.b, planner__core__casetest__physicalplantest__physical_plan.t.c
+└─IndexMerge	root		type: union, limit embedded(offset:0, count:2)
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx(a, c)	range:[1 2,1 2], keep order:true, stats:pseudo
+  ├─Limit(Build)	cop[tikv]		offset:0, count:2
+  │ └─IndexRangeScan	cop[tikv]	table:t, index:idx2(b, c)	range:[1,1], [2,2], [3,3], keep order:true, stats:pseudo
+  └─TableRowIDScan(Probe)	cop[tikv]	table:t	keep order:false, stats:pseudo
 show warnings;
 Level	Code	Message
 explain format = 'plan_tree' select * from t where (a = 1 and c = 2) or (b in (1, 2, 3) and c = 3) order by c limit 2;
