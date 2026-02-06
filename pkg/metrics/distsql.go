@@ -26,7 +26,6 @@ var (
 	DistSQLScanKeysHistogram        prometheus.Histogram
 	DistSQLPartialCountHistogram    prometheus.Histogram
 	DistSQLCoprCacheCounter         *prometheus.CounterVec
-	DistSQLCoprBucketSplitFallback  prometheus.Counter
 	DistSQLCoprClosestReadCounter   *prometheus.CounterVec
 	DistSQLCoprRespBodySize         *prometheus.HistogramVec
 )
@@ -76,15 +75,6 @@ func InitDistSQLMetrics() {
 			Name:      "copr_cache",
 			Help:      "coprocessor cache hit, evict and miss number",
 		}, []string{LblType})
-
-	DistSQLCoprBucketSplitFallback = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "distsql",
-			Name:      "copr_bucket_split_fallback",
-			Help:      "counter of copr bucket split falling back to region-only splitting",
-		},
-	)
 
 	DistSQLCoprClosestReadCounter = metricscommon.NewCounterVec(
 		prometheus.CounterOpts{
