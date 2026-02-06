@@ -40,6 +40,7 @@ var BDRActionMap = map[DDLBDRType][]ActionType{
 	SafeDDL: {
 		ActionCreateSchema,
 		ActionCreateTable,
+		ActionCreateMaterializedViewLog,
 		ActionAddColumn, // add a new column to table if it’s nullable or with default value.
 		ActionAddIndex,  //add non-unique index
 		ActionDropIndex,

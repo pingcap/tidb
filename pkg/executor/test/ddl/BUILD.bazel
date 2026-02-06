@@ -6,9 +6,10 @@ go_test(
     srcs = [
         "ddl_test.go",
         "main_test.go",
+        "mview_log_ddl_test.go",
     ],
     flaky = True,
-    shard_count = 21,
+    shard_count = 26,
     deps = [
         "//pkg/autoid_service",
         "//pkg/config",

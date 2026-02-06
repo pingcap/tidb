@@ -49,6 +49,7 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
+	"github.com/pingcap/tidb/pkg/parser/format"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"
@@ -67,6 +68,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	plannererrors "github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/domainutil"
 	"github.com/pingcap/tidb/pkg/util/generic"
 	"github.com/pingcap/tidb/pkg/util/stringutil"
@@ -106,6 +108,7 @@ type Executor interface {
 	AlterSchema(sctx sessionctx.Context, stmt *ast.AlterDatabaseStmt) error
 	DropSchema(ctx sessionctx.Context, stmt *ast.DropDatabaseStmt) error
 	CreateTable(ctx sessionctx.Context, stmt *ast.CreateTableStmt) error
+	CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error
 	CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) error
 	DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error)
 	RecoverTable(ctx sessionctx.Context, recoverTableInfo *model.RecoverTableInfo) (err error)
@@ -1034,6 +1037,168 @@ func (e *executor) CreateTable(ctx sessionctx.Context, s *ast.CreateTableStmt) (
 	}
 
 	return e.CreateTableWithInfo(ctx, schema.Name, tbInfo, involvingRef, WithOnExist(onExist))
+}
+
+func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.CreateMaterializedViewLogStmt) error {
+	is := e.infoCache.GetLatest()
+	schemaName := s.Table.Schema
+	if schemaName.O == "" {
+		if ctx.GetSessionVars().CurrentDB == "" {
+			return errors.Trace(plannererrors.ErrNoDB)
+		}
+		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	schema, ok := is.SchemaByName(schemaName)
+	if !ok {
+		return infoschema.ErrDatabaseNotExists.GenWithStackByArgs(schemaName)
+	}
+
+	baseTable, err := is.TableByName(e.ctx, schemaName, s.Table.Name)
+	if err != nil {
+		return err
+	}
+	baseTableID := baseTable.Meta().ID
+	if baseTable.Meta().IsView() || baseTable.Meta().IsSequence() || baseTable.Meta().TempTableType != model.TempTableNone {
+		return dbterror.ErrWrongObject.GenWithStackByArgs(schemaName, s.Table.Name, "BASE TABLE")
+	}
+
+	mlogName := "$mlog$" + baseTable.Meta().Name.O
+	mlogNameCIStr := pmodel.NewCIStr(mlogName)
+	if err := checkTooLongTable(mlogNameCIStr); err != nil {
+		return err
+	}
+	_, err = is.TableByName(e.ctx, schemaName, mlogNameCIStr)
+	if err == nil {
+		return infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: schemaName, Name: mlogNameCIStr})
+	}
+	if !infoschema.ErrTableNotExists.Equal(err) {
+		return err
+	}
+
+	colMap := make(map[string]*model.ColumnInfo, len(baseTable.Meta().Columns))
+	for _, col := range baseTable.Meta().Columns {
+		colMap[col.Name.L] = col
+	}
+
+	colDefs := make([]*ast.ColumnDef, 0, len(s.Cols)+2)
+	for _, c := range s.Cols {
+		if c.L == strings.ToLower(model.MaterializedViewLogDMLTypeColumnName) ||
+			c.L == strings.ToLower(model.MaterializedViewLogOldNewColumnName) {
+			return infoschema.ErrColumnExists.GenWithStackByArgs(c.O)
+		}
+		baseCol := colMap[c.L]
+		if baseCol == nil {
+			return infoschema.ErrColumnNotExists.GenWithStackByArgs(c.O, s.Table.Name.O)
+		}
+		ft := baseCol.FieldType
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{Name: c},
+			Tp:   &ft,
+		})
+	}
+
+	metaCols := []struct {
+		name string
+		ft   byte
+		flen int
+	}{
+		{name: model.MaterializedViewLogDMLTypeColumnName, ft: mysql.TypeVarchar, flen: 1},
+		// old_new is a signed tinyint: NEW=1, OLD=-1.
+		{name: model.MaterializedViewLogOldNewColumnName, ft: mysql.TypeTiny, flen: 4},
+	}
+	for _, metaCol := range metaCols {
+		ft := parser_types.NewFieldType(metaCol.ft)
+		ft.SetFlen(metaCol.flen)
+		ft.SetFlag(mysql.NotNullFlag)
+		colDefs = append(colDefs, &ast.ColumnDef{
+			Name: &ast.ColumnName{Name: pmodel.NewCIStr(metaCol.name)},
+			Tp:   ft,
+		})
+	}
+
+	createTableStmt := &ast.CreateTableStmt{
+		Table: &ast.TableName{Schema: schemaName, Name: mlogNameCIStr},
+		Cols:  colDefs,
+	}
+	mlogTableInfo, err := BuildTableInfoWithStmt(
+		NewMetaBuildContextWithSctx(ctx),
+		createTableStmt,
+		schema.Charset,
+		schema.Collate,
+		schema.PlacementPolicyRef,
+	)
+	if err != nil {
+		return err
+	}
+
+	var purgeMethod string
+	var purgeStartWith string
+	var purgeNext string
+	if s.Purge != nil {
+		if s.Purge.Immediate {
+			purgeMethod = "IMMEDIATE"
+		} else {
+			purgeMethod = "DEFERRED"
+			if s.Purge.StartWith != nil {
+				purgeStartWith, err = restoreExprToCanonicalSQL(s.Purge.StartWith)
+				if err != nil {
+					return err
+				}
+			}
+			if s.Purge.Next == nil {
+				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
+			}
+			purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	mlogTableInfo.MaterializedViewLog = &model.MaterializedViewLogInfo{
+		BaseTableID:    baseTableID,
+		Columns:        s.Cols,
+		PurgeMethod:    purgeMethod,
+		PurgeStartWith: purgeStartWith,
+		PurgeNext:      purgeNext,
+	}
+
+	involvingSchemas := []model.InvolvingSchemaInfo{
+		{Database: schema.Name.L, Table: mlogTableInfo.Name.L},
+		{Database: schema.Name.L, Table: baseTable.Meta().Name.L},
+	}
+	job := &model.Job{
+		Version:             model.GetJobVerInUse(),
+		SchemaID:            schema.ID,
+		SchemaName:          schema.Name.L,
+		TableName:           mlogTableInfo.Name.L,
+		Type:                model.ActionCreateMaterializedViewLog,
+		BinlogInfo:          &model.HistoryInfo{},
+		InvolvingSchemaInfo: involvingSchemas,
+		CDCWriteSource:      ctx.GetSessionVars().CDCWriteSource,
+		SQLMode:             ctx.GetSessionVars().SQLMode,
+		SessionVars:         make(map[string]string),
+	}
+	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
+	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewLogArgs{TableInfo: mlogTableInfo}, false)
+	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {
+		return errors.Trace(err)
+	}
+
+	var scatterScope string
+	if val, ok := jobW.GetSessionVars(variable.TiDBScatterRegion); ok {
+		scatterScope = val
+	}
+	return errors.Trace(e.createTableWithInfoPost(ctx, mlogTableInfo, jobW.SchemaID, scatterScope))
+}
+
+func restoreExprToCanonicalSQL(expr ast.ExprNode) (string, error) {
+	var sb strings.Builder
+	rctx := format.NewRestoreCtx(format.DefaultRestoreFlags|format.RestoreStringWithoutCharset, &sb)
+	if err := expr.Restore(rctx); err != nil {
+		return "", err
+	}
+	return sb.String(), nil
 }
 
 // createTableWithInfoJob returns the table creation job.

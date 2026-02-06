@@ -193,6 +193,77 @@ func (w *worker) onCreateTable(jobCtx *jobContext, job *model.Job) (ver int64, _
 	return ver, errors.Trace(err)
 }
 
+func (w *worker) onCreateMaterializedViewLog(jobCtx *jobContext, job *model.Job) (ver int64, _ error) {
+	args, err := model.GetCreateMaterializedViewLogArgs(job)
+	if err != nil {
+		// Invalid arguments, cancel this job.
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+	jobCtx.jobArgs = args
+
+	mlogTblInfo := args.TableInfo
+	if mlogTblInfo == nil || mlogTblInfo.MaterializedViewLog == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid job args")
+	}
+
+	baseTableID := mlogTblInfo.MaterializedViewLog.BaseTableID
+	if baseTableID == 0 {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view log: invalid base table id")
+	}
+
+	baseTblInfo, err := getTableInfo(jobCtx.metaMut, baseTableID, job.SchemaID)
+	if err != nil {
+		if infoschema.ErrDatabaseNotExists.Equal(err) || infoschema.ErrTableNotExists.Equal(err) {
+			job.State = model.JobStateCancelled
+		}
+		return ver, errors.Trace(err)
+	}
+	if baseTblInfo.IsView() || baseTblInfo.IsSequence() || baseTblInfo.TempTableType != model.TempTableNone {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrWrongObject.GenWithStackByArgs(job.SchemaName, baseTblInfo.Name, "BASE TABLE")
+	}
+	if baseTblInfo.State != model.StatePublic {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLState.GenWithStack("table %s is not in public, but %s", baseTblInfo.Name, baseTblInfo.State)
+	}
+	if baseTblInfo.MaterializedViewBase != nil && baseTblInfo.MaterializedViewBase.MLogID != 0 {
+		job.State = model.JobStateCancelled
+		return ver, infoschema.ErrTableExists.GenWithStackByArgs(ast.Ident{Schema: pmodel.NewCIStr(job.SchemaName), Name: mlogTblInfo.Name})
+	}
+
+	mlogTblInfo.State = model.StateNone
+	mlogTblInfo, err = createTable(jobCtx, job, &model.CreateTableArgs{TableInfo: mlogTblInfo, FKCheck: false})
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	if baseTblInfo.MaterializedViewBase == nil {
+		baseTblInfo.MaterializedViewBase = &model.MaterializedViewBaseInfo{}
+	}
+	baseTblInfo.MaterializedViewBase.MLogID = mlogTblInfo.ID
+
+	err = updateTable(jobCtx.metaMut, job.SchemaID, baseTblInfo)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	ver, err = updateSchemaVersion(jobCtx, job, schemaIDAndTableInfo{schemaID: job.SchemaID, tblInfo: baseTblInfo})
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	createTableEvent := notifier.NewCreateTableEvent(mlogTblInfo)
+	err = asyncNotifyEvent(jobCtx, createTableEvent, job, noSubJob, w.sess)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.FinishMultipleTableJob(model.JobStateDone, model.StatePublic, ver, []*model.TableInfo{baseTblInfo, mlogTblInfo})
+	return ver, nil
+}
+
 func (w *worker) createTableWithForeignKeys(jobCtx *jobContext, job *model.Job, args *model.CreateTableArgs) (ver int64, err error) {
 	tbInfo := args.TableInfo
 	switch tbInfo.State {

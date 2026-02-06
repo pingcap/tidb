@@ -116,6 +116,7 @@ const (
 	_                                           ActionType = 77 // reserve for database read-only feature
 	ActionAlterTableSoftDeleteInfo              ActionType = 79 // reserve for soft-delete feature
 	ActionModifySchemaSoftDeleteAndActiveActive ActionType = 80 // reserve for soft-delete and active-active feature
+	ActionCreateMaterializedViewLog             ActionType = 81
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -192,6 +193,7 @@ var ActionMap = map[ActionType]string{
 	ActionRefreshMeta:                           "refresh meta",
 	ActionAlterTableSoftDeleteInfo:              "alter soft delete info",
 	ActionModifySchemaSoftDeleteAndActiveActive: "modify schema soft delete and active active",
+	ActionCreateMaterializedViewLog:             "create materialized view log",
 
 	// `ActionAlterTableAlterPartition` is removed and will never be used.
 	// Just left a tombstone here for compatibility.
