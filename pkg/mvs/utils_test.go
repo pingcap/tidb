@@ -116,19 +116,59 @@ func (t node) Less(other node) bool {
 
 func TestPriorityQueue(t *testing.T) {
 	base := time.Now()
-	pq := &PriorityQueue[node]{}
-	pq.Push(node{v: "b", ts: base.Add(2 * time.Second)})
-	pq.Push(node{v: "a", ts: base.Add(time.Second)})
-	pq.Push(node{v: "c", ts: base.Add(3 * time.Second)})
-	require.True(t, pq.Front().Value.v == "a")
+	t.Run("basic ordering and update", func(t *testing.T) {
+		pq := &PriorityQueue[node]{}
+		pq.Push(node{v: "b", ts: base.Add(2 * time.Second)})
+		pq.Push(node{v: "a", ts: base.Add(time.Second)})
+		pq.Push(node{v: "c", ts: base.Add(3 * time.Second)})
+		require.True(t, pq.Front().Value.v == "a")
 
-	pq.Update(pq.Front(), node{v: "d", ts: base.Add(5 * time.Second)})
-	pq.Push(node{v: "c", ts: base.Add(500 * time.Millisecond)})
+		pq.Update(pq.Front(), node{v: "d", ts: base.Add(5 * time.Second)})
+		pq.Push(node{v: "c", ts: base.Add(500 * time.Millisecond)})
 
-	popRes := make([]string, 0, 4)
-	for pq.Len() > 0 {
-		it := pq.Pop()
-		popRes = append(popRes, it.Value.v)
-	}
-	require.Equal(t, []string{"c", "b", "c", "d"}, popRes)
+		popRes := make([]string, 0, 4)
+		for pq.Len() > 0 {
+			it := pq.Pop()
+			popRes = append(popRes, it.Value.v)
+		}
+		require.Equal(t, []string{"c", "b", "c", "d"}, popRes)
+	})
+
+	t.Run("empty and invalid operations", func(t *testing.T) {
+		pq := &PriorityQueue[node]{}
+		require.Nil(t, pq.Front())
+		require.Nil(t, pq.Pop())
+
+		var zero node
+		require.Equal(t, zero, pq.Remove(nil))
+		pq.Update(nil, node{v: "ignored", ts: base})
+
+		ghost := NewItem(node{v: "ghost", ts: base.Add(time.Second)})
+		pq.Update(ghost, node{v: "still-ghost", ts: base.Add(2 * time.Second)})
+		require.Equal(t, zero, pq.Remove(ghost))
+	})
+
+	t.Run("remove and update after removal", func(t *testing.T) {
+		pq := &PriorityQueue[node]{}
+		itemA := pq.Push(node{v: "a", ts: base.Add(2 * time.Second)})
+		itemB := pq.Push(node{v: "b", ts: base.Add(3 * time.Second)})
+		itemC := pq.Push(node{v: "c", ts: base.Add(time.Second)})
+
+		removed := pq.Remove(itemB)
+		require.Equal(t, "b", removed.v)
+
+		pq.Update(itemB, node{v: "b2", ts: base.Add(500 * time.Millisecond)})
+
+		pq.Update(itemA, node{v: "a2", ts: base.Add(4 * time.Second)})
+		pq.Push(node{v: "d", ts: base.Add(1500 * time.Millisecond)})
+
+		popRes := make([]string, 0, 4)
+		for pq.Len() > 0 {
+			it := pq.Pop()
+			popRes = append(popRes, it.Value.v)
+		}
+		require.Equal(t, []string{"c", "d", "a2"}, popRes)
+		require.NotContains(t, popRes, "b")
+		require.NotNil(t, itemC)
+	})
 }
