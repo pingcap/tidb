@@ -9,7 +9,7 @@ go_test(
         "reports_test.go",
     ],
     flaky = True,
-    shard_count = 5,
+    shard_count = 7,
     deps = [
         "//pkg/config",
         "//pkg/testkit",
