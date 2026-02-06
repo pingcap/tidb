@@ -19,9 +19,9 @@ import (
 	"slices"
 
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 type joinReorderDPSolver struct {
@@ -42,18 +42,9 @@ type joinGroupNonEqEdge struct {
 
 func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan) (base.LogicalPlan, error) {
 	eqConds := expression.ScalarFuncs2Exprs(s.eqEdges)
-	for _, node := range joinGroup {
-		_, _, err := node.RecursiveDeriveStats(nil)
-		if err != nil {
-			return nil, err
-		}
-		cost := s.baseNodeCumCost(node)
-		s.curJoinGroup = append(s.curJoinGroup, &jrNode{
-			p:       node,
-			cumCost: cost,
-		})
-	}
-	adjacents := make([][]int, len(s.curJoinGroup))
+
+	// Build the join graph. DP join reorder only uses equality edges as join connectors.
+	adjacents := make([][]int, len(joinGroup))
 	totalEqEdges := make([]joinGroupEqEdge, 0, len(eqConds))
 	addEqEdge := func(node1, node2 int, edgeContent *expression.ScalarFunction) {
 		totalEqEdges = append(totalEqEdges, joinGroupEqEdge{
@@ -63,27 +54,58 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan) (base.LogicalP
 		adjacents[node1] = append(adjacents[node1], node2)
 		adjacents[node2] = append(adjacents[node2], node1)
 	}
-	// Build Graph for join group
+
+	// Build Graph for join group.
+	// After extractJoinGroup, eqEdges may contain substituted expressions where
+	// derived columns have been replaced by their defining expressions.
+	// We need to extract columns from both sides to find which nodes they belong to.
 	for _, cond := range eqConds {
 		sf := cond.(*expression.ScalarFunction)
-		lCol := sf.GetArgs()[0].(*expression.Column)
-		rCol := sf.GetArgs()[1].(*expression.Column)
-		lIdx, err := findNodeIndexInGroup(joinGroup, lCol)
+		lArg := sf.GetArgs()[0]
+		rArg := sf.GetArgs()[1]
+
+		// Extract columns from the left argument (may be Column or ScalarFunction after substitution)
+		lCols := expression.ExtractColumns(lArg)
+		// Extract columns from the right argument
+		rCols := expression.ExtractColumns(rArg)
+
+		// With projection inlining restrictions, join equality edges should always reference
+		// columns on both sides. If not, this edge can't be a join connector.
+		intest.Assert(len(lCols) > 0 && len(rCols) > 0)
+		if len(lCols) == 0 || len(rCols) == 0 {
+			return nil, plannererrors.ErrInternal.GenWithStack("join reorder dp: eq edge has empty column list")
+		}
+
+		// Find the node index for left side - all columns should be from the same node.
+		// After extractJoinGroup substitution, all columns are base table columns.
+		lIdx, err := findNodeIndexForColumns(joinGroup, lCols)
 		if err != nil {
 			return nil, err
 		}
-		rIdx, err := findNodeIndexInGroup(joinGroup, rCol)
+
+		// Find the node index for right side.
+		rIdx, err := findNodeIndexForColumns(joinGroup, rCols)
 		if err != nil {
 			return nil, err
 		}
+
+		intest.Assert(lIdx != rIdx)
+		if lIdx == rIdx {
+			// For join reorder, eqEdges are expected to be join connectors.
+			return nil, plannererrors.ErrInternal.GenWithStack("join reorder dp: eq edge doesn't connect two join-group nodes")
+		}
+
 		addEqEdge(lIdx, rIdx, sf)
 	}
+
+	// DP join reorder only attaches predicates that span both sides of a join during the DP phase.
 	totalNonEqEdges := make([]joinGroupNonEqEdge, 0, len(s.otherConds))
 	for _, cond := range s.otherConds {
 		cols := expression.ExtractColumns(cond)
 		mask := uint(0)
 		ids := make([]int, 0, len(cols))
 		for _, col := range cols {
+			// After extractJoinGroup substitution, all columns are base table columns
 			idx, err := findNodeIndexInGroup(joinGroup, col)
 			if err != nil {
 				return nil, err
@@ -97,6 +119,14 @@ func (s *joinReorderDPSolver) solve(joinGroup []base.LogicalPlan) (base.LogicalP
 			expr:       cond,
 		})
 	}
+
+	// Now derive stats/costs for the (possibly Selection-wrapped) join group nodes.
+	joinGroupNodes, err := s.generateJoinOrderNode(joinGroup)
+	if err != nil {
+		return nil, err
+	}
+	s.curJoinGroup = joinGroupNodes
+
 	visited := make([]bool, len(joinGroup))
 	nodeID2VisitID := make([]int, len(joinGroup))
 	joins := make([]base.LogicalPlan, 0, len(joinGroup))
@@ -246,15 +276,28 @@ func (*joinReorderDPSolver) nodesAreConnected(leftMask, rightMask uint, oldPos2N
 }
 
 func (s *joinReorderDPSolver) newJoinWithEdge(leftPlan, rightPlan base.LogicalPlan, edges []joinGroupEqEdge, otherConds []expression.Expression) (base.LogicalPlan, error) {
-	var eqConds []*expression.ScalarFunction
+	eqConds := make([]*expression.ScalarFunction, 0, len(edges))
+	var expr2Col map[string]*expression.Column
 	for _, edge := range edges {
-		lCol, rCol := expression.ExtractColumnsFromColOpCol(edge.edge)
-		if leftPlan.Schema().Contains(lCol) {
-			eqConds = append(eqConds, edge.edge)
-		} else {
-			newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), ast.EQ, edge.edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
-			eqConds = append(eqConds, newSf)
+		lArg := edge.edge.GetArgs()[0]
+		rArg := edge.edge.GetArgs()[1]
+
+		// After extractJoinGroup substitution, arguments may be ScalarFunctions instead of simple Columns.
+		// We align the arguments to (leftPlan, rightPlan) and let buildJoinEdge materialize expressions
+		// into columns when needed.
+		lExpr, rExpr, _, ok := alignJoinEdgeArgs(lArg, rArg, leftPlan.Schema(), rightPlan.Schema())
+		if !ok {
+			// Best-effort optimization: if projection inlining produced an edge we can't attribute to
+			// left/right here, return an error so the caller can fallback safely.
+			return nil, plannererrors.ErrInternal.GenWithStack("join reorder dp: eq edge doesn't connect left/right plans")
 		}
+
+		newEdge, newExpr2Col := s.buildJoinEdge(edge.edge, lExpr, rExpr, &leftPlan, &rightPlan)
+		expr2Col = mergeMap(expr2Col, newExpr2Col)
+		eqConds = append(eqConds, newEdge)
+	}
+	if len(expr2Col) > 0 && len(otherConds) > 0 {
+		otherConds = substituteExprsWithColsInExprs(otherConds, expr2Col)
 	}
 	join := s.newJoin(leftPlan, rightPlan, eqConds, otherConds, nil, nil, base.InnerJoin)
 	_, _, err := join.RecursiveDeriveStats(nil)
@@ -292,4 +335,35 @@ func findNodeIndexInGroup(group []base.LogicalPlan, col *expression.Column) (int
 		}
 	}
 	return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE")
+}
+
+// findNodeIndexForColumns finds the node index for a set of columns.
+// All columns must be from the same node; returns error if they span multiple nodes.
+// This function is called after extractJoinGroup has already substituted derived columns
+// with their defining expressions, so all columns should be base table columns.
+func findNodeIndexForColumns(group []base.LogicalPlan, cols []*expression.Column) (int, error) {
+	if len(cols) == 0 {
+		return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs("empty column list", "JOIN REORDER RULE")
+	}
+
+	// Find the node index for the first column
+	firstIdx, err := findNodeIndexInGroup(group, cols[0])
+	if err != nil {
+		return -1, err
+	}
+
+	// Verify all other columns are from the same node
+	for _, col := range cols[1:] {
+		idx, err := findNodeIndexInGroup(group, col)
+		if err != nil {
+			return -1, err
+		}
+		if idx != firstIdx {
+			// Columns span multiple nodes - this shouldn't happen for single-table expressions
+			// (which is what canInlineProjection allows), but handle it gracefully.
+			return -1, plannererrors.ErrUnknownColumn.GenWithStackByArgs(col, "JOIN REORDER RULE: columns span multiple nodes")
+		}
+	}
+
+	return firstIdx, nil
 }

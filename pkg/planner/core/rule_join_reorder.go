@@ -24,7 +24,9 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/joinorder"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
+	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	h "github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/pingcap/tidb/pkg/util/intest"
 )
 
 // extractJoinGroup extracts all the join nodes connected with continuous
@@ -34,6 +36,48 @@ import (
 // For example: "InnerJoin(InnerJoin(a, b), LeftJoin(c, d))"
 // results in a join group {a, b, c, d}.
 func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
+	return extractJoinGroupImpl(p)
+}
+
+// extractJoinGroupImpl is the internal implementation of extractJoinGroup.
+//
+// It recursively extracts a join group from `p`: a set of leaf plans connected by a chain of
+// reorderable joins, together with the join conditions/metadata needed by the join reorder solvers
+// (eqEdges, otherConds, joinTypes, and hint info).
+//
+// When enabled via session variables, it can "look through" a limited set of unary operators while
+// extracting the group (currently Selection/Projection; see the NOTE below).
+//
+// For Projection, we may best-effort inline safe projections on top of a Join and keep a derived
+// column mapping (colExprMap) so join conditions that reference derived columns can be substituted
+// back to their defining expressions. The colExprMap propagation is bottom-up:
+// 1. First recursively process child nodes
+// 2. Use child's returned colExprMap to substitute column references in current expressions
+// 3. Build current node's colExprMap and return
+// This approach is consistent with rule_eliminate_projection.go.
+func extractJoinGroupImpl(p base.LogicalPlan) *joinGroupResult {
+	// NOTE: We only support extracting join groups through a single Selection/Projection layer for now.
+	// TODO: Support stacked unary operators like Projection->Selection->Join or Selection->Projection->Join.
+	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
+	// to otherConds and continue extracting the join group from the child.
+	// Join reorder may distribute/push down conditions during constructing the new join tree.
+	// For volatile or side-effect expressions, moving them can change evaluation times/orders
+	// thus may change query results, so we skip reordering through Selection in such cases.
+	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
+		!slices.ContainsFunc(selection.Conditions, expression.IsMutableEffectsExpr) {
+		child := selection.Children()[0]
+		if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {
+			childResult := extractJoinGroup(child)
+			childResult.otherConds = append(childResult.otherConds, selection.Conditions...)
+			return childResult
+		}
+	} else if proj, isProj := p.(*logicalop.LogicalProjection); isProj && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughProj {
+		// Best-effort: look through a safe Projection on top of a Join when enabled.
+		if result, handled := tryInlineProjectionForJoinGroup(p, proj); handled {
+			return result
+		}
+	}
+
 	joinMethodHintInfo := make(map[int]*joinorder.JoinMethodHint)
 	var (
 		group              []base.LogicalPlan
@@ -59,21 +103,6 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			}
 			nullExtendedColSet[col.UniqueID] = struct{}{}
 			nullExtendedCols = append(nullExtendedCols, col)
-		}
-	}
-
-	// Check if the current plan is a Selection. If its child is a join, add the selection conditions
-	// to otherConds and continue extracting the join group from the child.
-	// Join reorder may distribute/push down conditions during constructing the new join tree.
-	// For volatile or side-effect expressions, moving them can change evaluation times/orders
-	// thus may change query results, so we skip reordering through Selection in such cases.
-	if selection, isSelection := p.(*logicalop.LogicalSelection); isSelection && p.SCtx().GetSessionVars().TiDBOptJoinReorderThroughSel &&
-		!slices.ContainsFunc(selection.Conditions, expression.IsMutableEffectsExpr) {
-		child := selection.Children()[0]
-		if _, isChildJoin := child.(*logicalop.LogicalJoin); isChildJoin {
-			childResult := extractJoinGroup(child)
-			childResult.otherConds = append(childResult.otherConds, selection.Conditions...)
-			return childResult
 		}
 	}
 
@@ -130,6 +159,8 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			rightHasHint = true
 		}
 	}
+	var colExprMap map[int64]expression.Expression
+
 	hasOuterJoin = hasOuterJoin || (join.JoinType != base.InnerJoin)
 	// If the left child has the hint, it means there are some join method hints want to specify the join method based on the left child.
 	// For example: `select .. from t1 join t2 join (select .. from t3 join t4) t5 where ..;` If there are some join method hints related to `t5`, we can't split `t5` into `t3` and `t4`.
@@ -139,32 +170,11 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 	leftShouldPreserve := currentLeadingHint != nil && joinorder.IsDerivedTableInLeadingHint(join.Children()[0], currentLeadingHint)
 
 	if join.JoinType != base.RightOuterJoin && !leftHasHint && !leftShouldPreserve {
-		lhsJoinGroupResult := extractJoinGroup(join.Children()[0])
-		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin := lhsJoinGroupResult.group, lhsJoinGroupResult.eqEdges, lhsJoinGroupResult.otherConds, lhsJoinGroupResult.joinTypes, lhsJoinGroupResult.joinOrderHintInfo, lhsJoinGroupResult.joinMethodHintInfo, lhsJoinGroupResult.hasOuterJoin
-		noExpand := false
+		lhsJoinGroupResult := extractJoinGroupImpl(join.Children()[0])
+		lhsGroup, lhsEqualConds, lhsOtherConds, lhsJoinTypes, lhsJoinOrderHintInfo, lhsJoinMethodHintInfo, lhsHasOuterJoin, lhsColExprMap := lhsJoinGroupResult.group, lhsJoinGroupResult.eqEdges, lhsJoinGroupResult.otherConds, lhsJoinGroupResult.joinTypes, lhsJoinGroupResult.joinOrderHintInfo, lhsJoinGroupResult.joinMethodHintInfo, lhsJoinGroupResult.hasOuterJoin, lhsJoinGroupResult.colExprMap
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
-		if join.JoinType == base.LeftOuterJoin {
-			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
-			extractedCols := make(map[int64]*expression.Column, len(join.LeftConditions)+len(join.OtherConditions)+len(eqConds))
-			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
-			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.LeftConditions...)
-			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
-			affectedGroups := 0
-			for _, lhs := range lhsGroup {
-				lhsSchema := lhs.Schema()
-				for _, col := range extractedCols {
-					if lhsSchema.Contains(col) {
-						affectedGroups++
-						break
-					}
-				}
-				if affectedGroups > 1 {
-					noExpand = true
-					break
-				}
-			}
-		}
-		if noExpand {
+		if join.JoinType == base.LeftOuterJoin &&
+			outerJoinSideFiltersTouchMultipleLeaves(join, lhsGroup, lhsColExprMap, true) {
 			return &joinGroupResult{
 				group:              []base.LogicalPlan{p},
 				basicJoinGroupInfo: &basicJoinGroupInfo{},
@@ -178,6 +188,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		appendNullExtendedCols(lhsJoinGroupResult.nullExtendedCols)
 		maps.Copy(joinMethodHintInfo, lhsJoinMethodHintInfo)
 		hasOuterJoin = hasOuterJoin || lhsHasOuterJoin
+		colExprMap = mergeMap(colExprMap, lhsColExprMap)
 	} else {
 		group = append(group, join.Children()[0])
 	}
@@ -187,32 +198,11 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 
 	// You can see the comments in the upside part which we try to split the left child part. It's the same here.
 	if join.JoinType != base.LeftOuterJoin && !rightHasHint && !rightShouldPreserve {
-		rhsJoinGroupResult := extractJoinGroup(join.Children()[1])
-		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin := rhsJoinGroupResult.group, rhsJoinGroupResult.eqEdges, rhsJoinGroupResult.otherConds, rhsJoinGroupResult.joinTypes, rhsJoinGroupResult.joinOrderHintInfo, rhsJoinGroupResult.joinMethodHintInfo, rhsJoinGroupResult.hasOuterJoin
-		noExpand := false
+		rhsJoinGroupResult := extractJoinGroupImpl(join.Children()[1])
+		rhsGroup, rhsEqualConds, rhsOtherConds, rhsJoinTypes, rhsJoinOrderHintInfo, rhsJoinMethodHintInfo, rhsHasOuterJoin, rhsColExprMap := rhsJoinGroupResult.group, rhsJoinGroupResult.eqEdges, rhsJoinGroupResult.otherConds, rhsJoinGroupResult.joinTypes, rhsJoinGroupResult.joinOrderHintInfo, rhsJoinGroupResult.joinMethodHintInfo, rhsJoinGroupResult.hasOuterJoin, rhsJoinGroupResult.colExprMap
 		// If the filters of the outer join is related with multiple leaves of the outer join side. We don't reorder it for now.
-		if join.JoinType == base.RightOuterJoin {
-			eqConds := expression.ScalarFuncs2Exprs(join.EqualConditions)
-			extractedCols := make(map[int64]*expression.Column, len(join.OtherConditions)+len(join.RightConditions)+len(eqConds))
-			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.OtherConditions...)
-			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, join.RightConditions...)
-			expression.ExtractColumnsMapFromExpressionsWithReusedMap(extractedCols, nil, eqConds...)
-			affectedGroups := 0
-			for _, rhs := range rhsGroup {
-				rhsSchema := rhs.Schema()
-				for _, col := range extractedCols {
-					if rhsSchema.Contains(col) {
-						affectedGroups++
-						break
-					}
-				}
-				if affectedGroups > 1 {
-					noExpand = true
-					break
-				}
-			}
-		}
-		if noExpand {
+		if join.JoinType == base.RightOuterJoin &&
+			outerJoinSideFiltersTouchMultipleLeaves(join, rhsGroup, rhsColExprMap, false) {
 			return &joinGroupResult{
 				group:              []base.LogicalPlan{p},
 				basicJoinGroupInfo: &basicJoinGroupInfo{},
@@ -226,6 +216,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		appendNullExtendedCols(rhsJoinGroupResult.nullExtendedCols)
 		maps.Copy(joinMethodHintInfo, rhsJoinMethodHintInfo)
 		hasOuterJoin = hasOuterJoin || rhsHasOuterJoin
+		colExprMap = mergeMap(colExprMap, rhsColExprMap)
 	} else {
 		group = append(group, join.Children()[1])
 	}
@@ -258,6 +249,25 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 		}
 		otherConds = append(otherConds, tmpOtherConds...)
 	}
+
+	// If we have colExprMap from children (projections were inlined), substitute derived columns in edges
+	if len(colExprMap) > 0 {
+		eqEdges = substituteColsInEqEdges(eqEdges, colExprMap)
+		// TODO: When a derived column (e.g., t2.b * 2) is substituted in otherConds and also
+		// appears in the output projection, the expression may be computed twice. Consider
+		// introducing common subexpression elimination or referencing the computed column
+		// instead of duplicating the expression. Example:
+		//   dt.doubled_b > 100 is substituted to (t2.b * 2) > 100
+		//   while Projection also computes: t2.b * 2 -> Column#X
+		// Ideally, the filter should reference Column#X instead of recomputing.
+		otherConds = substituteColsInExprs(otherConds, colExprMap)
+		// Also substitute in outerBindCondition for outer joins
+		for _, jt := range joinTypes {
+			if jt.outerBindCondition != nil {
+				jt.outerBindCondition = substituteColsInExprs(jt.outerBindCondition, colExprMap)
+			}
+		}
+	}
 	var nullExtendedSchema *expression.Schema
 	if len(nullExtendedCols) > 0 {
 		nullExtendedSchema = expression.NewSchema(nullExtendedCols...)
@@ -273,6 +283,7 @@ func extractJoinGroup(p base.LogicalPlan) *joinGroupResult {
 			nullExtendedCols:   nullExtendedSchema,
 			joinMethodHintInfo: joinMethodHintInfo,
 		},
+		colExprMap: colExprMap,
 	}
 }
 
@@ -308,8 +319,9 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 	var err error
 
+	var result *joinGroupResult
 	if _, ok := p.(*logicalop.LogicalJoin); ok {
-		result := extractJoinGroup(p)
+		result = extractJoinGroup(p)
 		curJoinGroup, joinTypes, joinOrderHintInfo, hasOuterJoin := result.group, result.joinTypes, result.joinOrderHintInfo, result.hasOuterJoin
 		if len(curJoinGroup) > 1 {
 			for i := range curJoinGroup {
@@ -318,7 +330,19 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 					return nil, err
 				}
 			}
+			origJoinRoot := p
 			originalSchema := p.Schema()
+			fallbackOnErr := func(err error) (base.LogicalPlan, error) {
+				if ctx.GetSessionVars().TiDBOptJoinReorderThroughProj {
+					// This optimization is best-effort. If anything goes wrong, fallback to the
+					// original behavior (treat projections as atomic leaves) to keep correctness.
+					saved := ctx.GetSessionVars().TiDBOptJoinReorderThroughProj
+					ctx.GetSessionVars().TiDBOptJoinReorderThroughProj = false
+					defer func() { ctx.GetSessionVars().TiDBOptJoinReorderThroughProj = saved }()
+					return s.optimizeRecursive(ctx, origJoinRoot)
+				}
+				return nil, err
+			}
 
 			// Not support outer join reorder when using the DP algorithm
 			allInnerJoin := true
@@ -374,16 +398,11 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 				p, err = dpSolver.solve(curJoinGroup)
 			}
 			if err != nil {
-				return nil, err
+				return fallbackOnErr(err)
 			}
-			if !p.Schema().Equal(originalSchema) {
-				proj := logicalop.LogicalProjection{
-					Exprs: expression.Column2Exprs(originalSchema.Columns),
-				}.Init(p.SCtx(), p.QueryBlockOffset())
-				// Clone the schema here, because the schema may be changed by column pruning rules.
-				proj.SetSchema(originalSchema.Clone())
-				proj.SetChildren(p)
-				p = proj
+			p, err = restoreSchemaIfChanged(p, originalSchema, result.colExprMap)
+			if err != nil {
+				return fallbackOnErr(err)
 			}
 			return p, nil
 		}
@@ -401,6 +420,75 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
+}
+
+// restoreSchemaIfChanged restores the original schema of a join root after join reorder.
+//
+// Join reorder may inject projections to materialize join keys, which can change the output schema.
+// For correctness, we wrap the reordered plan with a Projection to match the original schema.
+//
+// When projection inlining is enabled, `colExprMap` records derived column definitions. In that
+// case, we reconstruct the original output columns by substituting derived columns with their
+// defining expressions.
+func restoreSchemaIfChanged(
+	p base.LogicalPlan,
+	originalSchema *expression.Schema,
+	colExprMap map[int64]expression.Expression,
+) (base.LogicalPlan, error) {
+	if p == nil || originalSchema == nil {
+		return p, nil
+	}
+
+	// Fast path: schemas are identical (same columns in the same order).
+	schemaChanged := false
+	curCols := p.Schema().Columns
+	origCols := originalSchema.Columns
+	if len(curCols) != len(origCols) {
+		schemaChanged = true
+	} else {
+		for i, col := range curCols {
+			if !col.EqualColumn(origCols[i]) {
+				schemaChanged = true
+				break
+			}
+		}
+	}
+	if !schemaChanged {
+		return p, nil
+	}
+
+	// Build projection expressions.
+	// When projections were inlined (colExprMap exists), we need to substitute derived columns
+	// with their original expressions.
+	var projExprs []expression.Expression
+	if len(colExprMap) > 0 {
+		projExprs = make([]expression.Expression, len(origCols))
+		for i, col := range origCols {
+			if expr, ok := colExprMap[col.UniqueID]; ok {
+				// This is a derived column, use its defining expression.
+				projExprs[i] = expr
+				continue
+			}
+
+			// For non-derived columns, we should be able to reference them from the new join schema.
+			// If not, the inlining mapping is incomplete, and we conservatively return an error so
+			// caller can fallback to the non-inlining behavior.
+			if !p.Schema().Contains(col) {
+				return nil, plannererrors.ErrInternal.GenWithStack("join reorder: schema restore mapping missing after projection inlining")
+			}
+			projExprs[i] = col
+		}
+	} else {
+		projExprs = expression.Column2Exprs(origCols)
+	}
+
+	proj := logicalop.LogicalProjection{
+		Exprs: projExprs,
+	}.Init(p.SCtx(), p.QueryBlockOffset())
+	// Clone the schema here, because the schema may be changed by column pruning rules.
+	proj.SetSchema(originalSchema.Clone())
+	proj.SetChildren(p)
+	return proj, nil
 }
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
@@ -422,6 +510,13 @@ type joinGroupResult struct {
 	hasOuterJoin      bool
 	joinOrderHintInfo []*h.PlanHints
 	*basicJoinGroupInfo
+
+	// colExprMap maps derived column UniqueID to its defining expression.
+	// When a projection is inlined, this records the mapping so parent joins
+	// can substitute references to derived columns back to their original expressions.
+	// key: Column.UniqueID from the projection's output schema
+	// value: the expression used to compute that column (from projection.Exprs)
+	colExprMap map[int64]expression.Expression
 }
 
 // nolint:structcheck
@@ -430,6 +525,56 @@ type baseSingleGroupJoinOrderSolver struct {
 	curJoinGroup     []*jrNode
 	leadingJoinGroup base.LogicalPlan
 	*basicJoinGroupInfo
+}
+
+func getEqEdgeArgsAndCols(edge *expression.ScalarFunction) (lArg, rArg expression.Expression, lCols, rCols []*expression.Column, ok bool) {
+	if edge == nil {
+		return nil, nil, nil, nil, false
+	}
+	args := edge.GetArgs()
+	if len(args) != 2 {
+		return nil, nil, nil, nil, false
+	}
+	lArg, rArg = args[0], args[1]
+	lCols = expression.ExtractColumns(lArg)
+	rCols = expression.ExtractColumns(rArg)
+	return lArg, rArg, lCols, rCols, true
+}
+
+// alignJoinEdgeArgs tries to align a join equality edge arguments to (leftSchema, rightSchema).
+//
+// It returns (lExpr, rExpr, swapped, ok):
+//   - ok is true if the edge connects the two schemas in either direction.
+//   - lExpr is guaranteed to be computable from leftSchema and rExpr from rightSchema.
+//   - swapped indicates the original args were in reverse order and had to be swapped.
+//
+// Note: In extractJoinGroup, derived columns have been substituted into their defining expressions,
+// so ExprFromSchema checks should be reliable for attributing expressions to a side.
+func alignJoinEdgeArgs(
+	lArg, rArg expression.Expression,
+	leftSchema, rightSchema *expression.Schema,
+) (lExpr, rExpr expression.Expression, swapped, ok bool) {
+	if expression.ExprFromSchema(lArg, leftSchema) && expression.ExprFromSchema(rArg, rightSchema) {
+		return lArg, rArg, false, true
+	}
+	if expression.ExprFromSchema(lArg, rightSchema) && expression.ExprFromSchema(rArg, leftSchema) {
+		// Swap to match (leftSchema, rightSchema) order.
+		return rArg, lArg, true, true
+	}
+	return nil, nil, false, false
+}
+
+func mergeMap[K comparable, V any](dst map[K]V, src map[K]V) map[K]V {
+	if len(src) == 0 {
+		return dst
+	}
+	if dst == nil {
+		dst = make(map[K]V, len(src))
+	}
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 // generateLeadingJoinGroup processes both flat and nested leading hints through the unified LeadingList structure
@@ -495,7 +640,7 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
 	hasOuterJoin bool,
 ) (base.LogicalPlan, bool) {
-	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
+	lNode, rNode, usedEdges, joinType, expr2Col := s.checkConnection(currentJoin, nextNode)
 	if hasOuterJoin && len(usedEdges) == 0 {
 		// If the joinGroups contain an outer join, we disable cartesian product.
 		// For non-equality conditions, only allow them when they do not reference
@@ -504,8 +649,13 @@ func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 			return nil, false
 		}
 	}
+	otherConds := s.otherConds
+	if len(expr2Col) > 0 && len(otherConds) > 0 {
+		// Reuse the injected expression columns in non-eq conditions to avoid recomputation.
+		otherConds = substituteExprsWithColsInExprs(otherConds, expr2Col)
+	}
 	var rem []expression.Expression
-	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
+	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType, otherConds)
 	s.otherConds = rem
 	return currentJoin, true
 }
@@ -537,41 +687,62 @@ func (s *baseSingleGroupJoinOrderSolver) baseNodeCumCost(groupNode base.LogicalP
 }
 
 // checkConnection used to check whether two nodes have equal conditions or not.
-func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) {
+// After extractJoinGroup phase, all derived columns in eqEdges have been substituted
+// with their defining expressions (containing only base table columns), so we can
+// directly use expression.ExprFromSchema to check if an expression belongs to a schema.
+// Note: join reorder expects eqEdges to be join connectors. With projection inlining
+// restrictions (single-leaf + must reference columns), substituted eqEdges should still
+// connect two different join-group nodes.
+func (s *baseSingleGroupJoinOrderSolver) checkConnection(leftPlan, rightPlan base.LogicalPlan) (leftNode, rightNode base.LogicalPlan, usedEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg, expr2Col map[string]*expression.Column) {
 	joinType = &joinTypeWithExtMsg{JoinType: base.InnerJoin}
 	leftNode, rightNode = leftPlan, rightPlan
 	for idx, edge := range s.eqEdges {
-		lCol, rCol := expression.ExtractColumnsFromColOpCol(edge)
-		if leftPlan.Schema().Contains(lCol) && rightPlan.Schema().Contains(rCol) {
-			joinType = s.joinTypes[idx]
-			usedEdges = append(usedEdges, edge)
-		} else if rightPlan.Schema().Contains(lCol) && leftPlan.Schema().Contains(rCol) {
-			joinType = s.joinTypes[idx]
-			if joinType.JoinType != base.InnerJoin {
-				rightNode, leftNode = leftPlan, rightPlan
-				usedEdges = append(usedEdges, edge)
-			} else {
-				funcName := edge.FuncName.L
-				newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(), rCol, lCol).(*expression.ScalarFunction)
-
-				// after creating the new EQCondition function, the 2 args might not be column anymore, for example `sf=sf(cast(col))`,
-				// which breaks the assumption that join eq keys must be `col=col`, to handle this, inject 2 projections.
-				_, isCol0 := newSf.GetArgs()[0].(*expression.Column)
-				_, isCol1 := newSf.GetArgs()[1].(*expression.Column)
-				if !isCol0 || !isCol1 {
-					if !isCol0 {
-						leftPlan, rCol = logicalop.InjectExpr(leftPlan, newSf.GetArgs()[0])
-					}
-					if !isCol1 {
-						rightPlan, lCol = logicalop.InjectExpr(rightPlan, newSf.GetArgs()[1])
-					}
-					leftNode, rightNode = leftPlan, rightPlan
-					newSf = expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, edge.GetStaticType(),
-						rCol, lCol).(*expression.ScalarFunction)
-				}
-				usedEdges = append(usedEdges, newSf)
-			}
+		lArg, rArg, lCols, rCols, ok := getEqEdgeArgsAndCols(edge)
+		if !ok {
+			continue
 		}
+
+		// Join reorder expects eqEdges to be real join connectors.
+		// ExprFromSchema returns true for Constant/Correlated-only expressions,
+		// so a side with no column reference can be wrongly attributed to any schema.
+		intest.Assert(len(lCols) > 0 && len(rCols) > 0)
+		if len(lCols) == 0 || len(rCols) == 0 {
+			continue
+		}
+
+		// Check if this edge connects leftPlan and rightPlan.
+		// After substitution in extractJoinGroup, expressions only contain base table columns.
+		lExpr, rExpr, swapped, ok := alignJoinEdgeArgs(lArg, rArg, leftPlan.Schema(), rightPlan.Schema())
+		if !ok {
+			continue
+		}
+
+		joinType = s.joinTypes[idx]
+		if !swapped {
+			// Normal order: lArg from left, rArg from right.
+			newEdge, newExpr2Col := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
+			expr2Col = mergeMap(expr2Col, newExpr2Col)
+			leftNode, rightNode = leftPlan, rightPlan
+			usedEdges = append(usedEdges, newEdge)
+			continue
+		}
+
+		// Reverse order: original args are (right, left).
+		if joinType.JoinType != base.InnerJoin {
+			// For outer joins, keep outer/inner side semantics by swapping the node positions.
+			// Note: buildJoinEdge may inject projections, so we must set leftNode/rightNode AFTER it.
+			newEdge, newExpr2Col := s.buildJoinEdge(edge, lArg, rArg, &rightPlan, &leftPlan)
+			expr2Col = mergeMap(expr2Col, newExpr2Col)
+			leftNode, rightNode = rightPlan, leftPlan
+			usedEdges = append(usedEdges, newEdge)
+			continue
+		}
+
+		// For inner joins, keep the node positions but swap the arguments (already aligned by alignJoinEdgeArgs).
+		newEdge, newExpr2Col := s.buildJoinEdge(edge, lExpr, rExpr, &leftPlan, &rightPlan)
+		expr2Col = mergeMap(expr2Col, newExpr2Col)
+		leftNode, rightNode = leftPlan, rightPlan
+		usedEdges = append(usedEdges, newEdge)
 	}
 	return
 }
@@ -600,10 +771,64 @@ func (s *baseSingleGroupJoinOrderSolver) hasOtherJoinCondition(leftPlan, rightPl
 	return false
 }
 
+// buildJoinEdge creates a join edge (equality condition) ensuring both sides are columns.
+// If an argument is not a column, it injects a projection to materialize it.
+// lExpr is expected to come from leftPlan's schema, rExpr from rightPlan's schema.
+func (s *baseSingleGroupJoinOrderSolver) buildJoinEdge(
+	originalEdge *expression.ScalarFunction,
+	lExpr, rExpr expression.Expression,
+	leftPlan, rightPlan *base.LogicalPlan,
+) (*expression.ScalarFunction, map[string]*expression.Column) {
+	funcName := originalEdge.FuncName.L
+
+	// Check if arguments are already columns
+	lCol, lIsCol := lExpr.(*expression.Column)
+	rCol, rIsCol := rExpr.(*expression.Column)
+
+	// If both are columns, create the edge directly
+	if lIsCol && rIsCol {
+		newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, originalEdge.GetStaticType(), lCol, rCol)
+		return newSf.(*expression.ScalarFunction), nil
+	}
+
+	// Need to inject projections for non-column expressions
+	expr2Col := make(map[string]*expression.Column, 2)
+	if !lIsCol {
+		*leftPlan, lCol = s.injectExpr(*leftPlan, lExpr)
+		expr2Col[string(lExpr.CanonicalHashCode())] = lCol
+	}
+	if !rIsCol {
+		*rightPlan, rCol = s.injectExpr(*rightPlan, rExpr)
+		expr2Col[string(rExpr.CanonicalHashCode())] = rCol
+	}
+
+	// Create the final edge with column arguments
+	newSf := expression.NewFunctionInternal(s.ctx.GetExprCtx(), funcName, originalEdge.GetStaticType(), lCol, rCol)
+	return newSf.(*expression.ScalarFunction), expr2Col
+}
+
+func (*baseSingleGroupJoinOrderSolver) injectExpr(p base.LogicalPlan, expr expression.Expression) (base.LogicalPlan, *expression.Column) {
+	proj, ok := p.(*logicalop.LogicalProjection)
+	if !ok {
+		proj = logicalop.LogicalProjection{Exprs: expression.Column2Exprs(p.Schema().Columns)}.Init(p.SCtx(), p.QueryBlockOffset())
+		proj.SetSchema(p.Schema().Clone())
+		proj.SetChildren(p)
+	}
+	// Avoid injecting duplicate expressions into the same projection.
+	// This keeps plans smaller and allows later predicates to reuse computed columns.
+	substituted := expression.ColumnSubstitute(proj.SCtx().GetExprCtx(), expr, proj.Schema(), proj.Exprs)
+	for i, e := range proj.Exprs {
+		if expression.ExpressionsSemanticEqual(e, substituted) {
+			return proj, proj.Schema().Columns[i]
+		}
+	}
+	return proj, proj.AppendExpr(expr)
+}
+
 // makeJoin build join tree for the nodes which have equal conditions to connect them.
-func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg) (base.LogicalPlan, []expression.Expression) {
-	remainOtherConds := make([]expression.Expression, len(s.otherConds))
-	copy(remainOtherConds, s.otherConds)
+func (s *baseSingleGroupJoinOrderSolver) makeJoin(leftPlan, rightPlan base.LogicalPlan, eqEdges []*expression.ScalarFunction, joinType *joinTypeWithExtMsg, inputOtherConds []expression.Expression) (base.LogicalPlan, []expression.Expression) {
+	remainOtherConds := make([]expression.Expression, len(inputOtherConds))
+	copy(remainOtherConds, inputOtherConds)
 	var (
 		otherConds []expression.Expression
 		leftConds  []expression.Expression
