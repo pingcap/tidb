@@ -61,6 +61,7 @@ var CheckResourceTagForTopSQLInGoTest bool
 // UnistoreRPCClientSendHook exports for test.
 var UnistoreRPCClientSendHook atomic.Pointer[func(*tikvrpc.Request)]
 
+// SendRequestAsync implements Client interface
 func (c *RPCClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
 	panic("Not implemented")
 }

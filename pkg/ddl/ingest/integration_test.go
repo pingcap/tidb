@@ -518,13 +518,15 @@ func TestAddGlobalIndexInIngestWithUpdate(t *testing.T) {
 	var i atomic.Int32
 	i.Store(3)
 	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/onJobUpdated", func(job *model.Job) {
-		tk2 := testkit.NewTestKit(t, store)
-		tmp := i.Add(1)
-		_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
-		assert.Nil(t, err)
+		if job.State != model.JobStateSynced {
+			tk2 := testkit.NewTestKit(t, store)
+			tmp := i.Add(1)
+			_, err := tk2.Exec(fmt.Sprintf("insert into test.t values (%d, %d)", tmp, tmp))
+			assert.Nil(t, err)
 
-		_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
-		assert.Nil(t, err)
+			_, err = tk2.Exec(fmt.Sprintf("update test.t set b = b + 11, a = b where b = %d", tmp-1))
+			assert.Nil(t, err)
+		}
 	})
 	tk.MustExec("alter table t add unique index idx(b) global")
 	rsGlobalIndex := tk.MustQuery("select *,_tidb_rowid from t use index(idx)").Sort()

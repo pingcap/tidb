@@ -77,6 +77,7 @@ func (c *clientRedirector) SetEventListener(listener tikv.ClientEventListener) {
 	c.mockClient.SetEventListener(listener)
 }
 
+// SendRequestAsync implements Client interface
 func (c *clientRedirector) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
 	panic("Not implemented")
 }

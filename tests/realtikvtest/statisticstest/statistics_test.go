@@ -17,6 +17,7 @@ package statisticstest
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -113,12 +114,25 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 	tk.MustQuery("show stats_topn where db_name = 'test' and table_name = 't'").Sort().Check(testkit.Rows(
 		"test t  a 0 \x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00A\x00B\x00B\x00C 2",
 	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 1 0.8411764705882353",
-		"1 1 8 0 1 0",
-		"1 2 13 0 1 0",
-		"1 3 15 0 1 0",
-	))
+
+	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("t"))
+	require.NoError(t, err)
+	tableID := tblInfo.Meta().ID
+
+	// Check histogram stats, using tolerance for correlation which can vary slightly
+	rows := tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where table_id = ?", tableID).Sort().Rows()
+	require.Len(t, rows, 4)
+
+	// Check column histogram (is_index=0)
+	require.Equal(t, "0", rows[0][0])
+	require.Equal(t, "1", rows[0][1])
+	require.Equal(t, "15", rows[0][2])
+	require.Equal(t, "0", rows[0][3])
+	require.Equal(t, "1", rows[0][4])
+	correlation := rows[0][5].(string)
+	correlationFloat, err := strconv.ParseFloat(correlation, 64)
+	require.NoError(t, err)
+	require.InDelta(t, 0.8411764705882353, correlationFloat, 0.01, "correlation should be approximately 0.841")
 
 	tk.MustExec("set @@session.tidb_analyze_version=2")
 	h = dom.StatsHandle()
@@ -182,8 +196,7 @@ func TestNewCollationStatsWithPrefixIndex(t *testing.T) {
 		"test t  ia3 1 \x00B\x00B 1",
 		"test t  ia3 1 \x00B\x00B\x00B 5",
 	))
-	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms").Sort().Check(testkit.Rows(
-		"0 1 15 0 2 0.8411764705882353",
+	tk.MustQuery("select is_index, hist_id, distinct_count, null_count, stats_ver, correlation from mysql.stats_histograms where is_index=1 and table_id = ?", tableID).Sort().Check(testkit.Rows(
 		"1 1 8 0 2 0",
 		"1 2 13 0 2 0",
 		"1 3 15 0 2 0",

@@ -45,6 +45,7 @@ func (t *mockDetectClient) Close() error {
 	return nil
 }
 
+// SendRequestAsync implements Client interface
 func (t *mockDetectClient) SendRequestAsync(ctx context.Context, addr string, req *tikvrpc.Request, cb async.Callback[*tikvrpc.Response]) {
 	panic("Not implemented")
 }
