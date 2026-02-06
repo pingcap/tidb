@@ -6,7 +6,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	basic "github.com/pingcap/tidb/pkg/util"
@@ -422,7 +421,7 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 		for t.mvLogPurgeMu.prio.Len() > 0 {
 			it := t.mvLogPurgeMu.prio.Front()
 			l := it.Value
-			if l.nextPurge.Compare(now) <= 0 {
+			if l.orderTs != maxNextScheduleTs && l.nextPurge.Compare(now) <= 0 {
 				mvLogToPurge = append(mvLogToPurge, l)
 				l.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
 				t.mvLogPurgeMu.prio.Update(it, l)
@@ -438,7 +437,7 @@ func (t *MVService) fetchExecTasks(now time.Time) (mvLogToPurge []*mvLog, mvToRe
 		for t.mvRefreshMu.prio.Len() > 0 {
 			it := t.mvRefreshMu.prio.Front()
 			m := it.Value
-			if m.nextRefresh.Compare(now) <= 0 {
+			if m.orderTs != maxNextScheduleTs && m.nextRefresh.Compare(now) <= 0 {
 				mvToRefresh = append(mvToRefresh, m)
 				m.orderTs = maxNextScheduleTs // set to max to avoid being picked again before reschedule
 				t.mvRefreshMu.prio.Update(it, m)
@@ -675,34 +674,4 @@ func (t *MVService) FetchAllMVMeta() error {
 
 	t.lastRefresh.Store(time.Now().UnixNano())
 	return nil
-}
-
-const (
-	ActionAddMV     = 146
-	ActionDropMV    = 147
-	ActionAlterMV   = 148
-	ActionAddMVLog  = 149
-	ActionDropMVLog = 150
-)
-
-var mvs *MVService
-
-// RegisterMVS registers a DDL event handler for MV-related events.
-func RegisterMVS(ddlNotifier *notifier.DDLNotifier, se basic.SessionPool) {
-	if ddlNotifier == nil {
-		return
-	}
-
-	mvs = NewMVJobsManager(se, nil)
-
-	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
-		switch event.GetType() {
-		case ActionAddMV, ActionDropMVLog, ActionAlterMV, ActionAddMVLog, ActionDropMV:
-			mvs.ddlDirty.Store(true)
-			mvs.notifier.Wake()
-		}
-		return nil
-	})
-
-	mvs.Start()
 }
