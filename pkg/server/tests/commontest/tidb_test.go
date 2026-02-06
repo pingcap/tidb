@@ -3510,3 +3510,184 @@ func TestAuditPluginInfoForStarting(t *testing.T) {
 		testResults = testResults[:0]
 	})
 }
+
+func TestLoginMessagesInVersionComment(t *testing.T) {
+	// The implementation reads the global switch via a process-global atomic variable.
+	// Restore it to avoid impacting other tests in this package.
+	origEnableLoginHistory := variable.EnableLoginHistory.Load()
+	t.Cleanup(func() {
+		variable.EnableLoginHistory.Store(origEnableLoginHistory)
+	})
+
+	ts := servertestkit.CreateTidbTestSuite(t)
+
+	cli := testserverclient.NewTestServerClient()
+	cli.Port = ts.Port
+	cli.WaitUntilServerCanConnect()
+
+	runUser := func(t *testing.T, user string, pwd string, fn func(dbt *testkit.DBTestKit)) {
+		t.Helper()
+		cli.RunTests(t, func(config *mysql.Config) {
+			config.User = user
+			config.Passwd = pwd
+			if user != "root" {
+				config.DBName = ""
+			}
+		}, fn)
+	}
+
+	queryScalar := func(t *testing.T, dbt *testkit.DBTestKit, sql string) string {
+		t.Helper()
+		rows := dbt.MustQuery(sql)
+		records := cli.Rows(t, rows)
+		require.NoError(t, rows.Close())
+		require.Len(t, records, 1, "sql: %s", sql)
+		return records[0]
+	}
+
+	setup := func(t *testing.T, enable bool, insertSQL ...string) {
+		t.Helper()
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			if enable {
+				dbt.MustExec("SET GLOBAL tidb_enable_login_history = 1;")
+			} else {
+				dbt.MustExec("SET GLOBAL tidb_enable_login_history = 0;")
+			}
+			dbt.MustExec("DELETE FROM mysql.login_history;")
+			for _, stmt := range insertSQL {
+				dbt.MustExec(stmt)
+			}
+		})
+	}
+
+	t.Run("Disabled_NoRecords_NoMarkers_NoAutoInsert", func(t *testing.T) {
+		setup(t, false)
+
+		var versionComment string
+		var rowCount string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			rowCount = queryScalar(t, dbt, "SELECT COUNT(*) FROM mysql.login_history;")
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.NotContains(t, versionComment, "[Last Fail Login]")
+		require.Equal(t, "0", rowCount)
+	})
+
+	t.Run("Enabled_EmptyTable_NoMarkers_ButAutoInsert", func(t *testing.T) {
+		setup(t, true)
+
+		var versionComment string
+		var successCount string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			successCount = queryScalar(t, dbt, "SELECT COUNT(*) FROM mysql.login_history WHERE Result = 'success';")
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.NotContains(t, versionComment, "[Last Fail Login]")
+		require.Equal(t, "1", successCount)
+	})
+
+	t.Run("Enabled_WithHistory_ShowsLastSuccessAndFail_ExcludesCurrentLogin", func(t *testing.T) {
+		setup(t, true, `
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+  ('2024-01-01 12:00:00', '10.0.0.1', 'root', '', 2097156, 'success', '1.1.1.1', ''),
+  ('2024-01-01 10:00:00', '10.0.0.9', 'root', '', 2097157, 'success', '9.9.9.9', ''),
+  ('2024-01-01 11:00:00', '10.0.0.2', 'root', '', 2097158, 'fail',    '2.2.2.2', 'denied'),
+  ('2024-01-01 09:00:00', '10.0.0.8', 'root', '', 2097159, 'fail',    '8.8.8.8', 'denied');
+`)
+
+		var versionComment string
+		var currentLoginTime string
+		var successCount string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			connID := queryScalar(t, dbt, "SELECT CONNECTION_ID();")
+			currentLoginTime = queryScalar(t, dbt, fmt.Sprintf(
+				"SELECT Time FROM mysql.login_history WHERE Connection_id = %s AND Result = 'success';",
+				connID,
+			))
+			successCount = queryScalar(t, dbt, "SELECT COUNT(*) FROM mysql.login_history WHERE Result = 'success';")
+		})
+
+		require.Contains(t, versionComment, "[Last Success Login]")
+		require.Contains(t, versionComment, "[Last Fail Login]")
+		require.Contains(t, versionComment, "2024-01-01 12:00:00")
+		require.Contains(t, versionComment, "root@10.0.0.1")
+		require.Contains(t, versionComment, "1.1.1.1")
+		require.Contains(t, versionComment, "success")
+		require.Contains(t, versionComment, "2024-01-01 11:00:00")
+		require.Contains(t, versionComment, "root@10.0.0.2")
+		require.Contains(t, versionComment, "2.2.2.2")
+		require.Contains(t, versionComment, "fail")
+		require.NotContains(t, versionComment, "2024-01-01 10:00:00")
+		require.NotContains(t, versionComment, "2024-01-01 09:00:00")
+		require.NotContains(t, versionComment, currentLoginTime)
+		require.Equal(t, "3", successCount) // 2 pre-inserted + 1 inserted during this login.
+	})
+
+	const historyUser = "loghistory_user"
+	const historyPass = "loghistory_pass"
+	t.Run("Enabled_WithHistory_ShowsLoginHistoryUser", func(t *testing.T) {
+		setup(t, true,
+			fmt.Sprintf("drop user if exists '%s'@'%%';", historyUser),
+			fmt.Sprintf("create user '%s'@'%%' identified by '%s';", historyUser, historyPass),
+			fmt.Sprintf(`
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+	('2024-01-01 12:00:00', '127.0.0.1', 'root', '', 2097156, 'success', '127.0.0.1', ''),
+	('2024-01-01 11:00:00', '127.0.0.1', 'root', '', 2097157, 'fail', '127.0.0.1', '[privilege:1045]Access denied for user ''root''@''127.0.0.1'' (using password: YES)'),
+	('2024-01-01 10:00:00', '127.0.0.1', '%s', '', 2097158, 'success', '127.0.0.1', ''),
+	('2024-01-01 09:00:00', '127.0.0.1', '%s', '', 2097159, 'fail', '127.0.0.1', '')
+`, historyUser, historyUser))
+		var versionComment string
+		runUser(t, historyUser, historyPass, func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+		})
+		require.Contains(t, versionComment, "[Last Success Login]")
+		require.Contains(t, versionComment, "[Last Fail Login]")
+	})
+
+	t.Run("Enabled_OnlyFail_ShowsFailOnly_ExcludesCurrentSuccess", func(t *testing.T) {
+		setup(t, true, `
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+  ('2024-01-01 11:00:00', '10.0.0.2', 'root', '', 2097158, 'fail', '2.2.2.2', 'denied');
+`)
+
+		var versionComment string
+		var currentLoginTime string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+			connID := queryScalar(t, dbt, "SELECT CONNECTION_ID();")
+			currentLoginTime = queryScalar(t, dbt, fmt.Sprintf(
+				"SELECT Time FROM mysql.login_history WHERE Connection_id = %s AND Result = 'success';",
+				connID,
+			))
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.Contains(t, versionComment, "[Last Fail Login]")
+		require.Contains(t, versionComment, "2024-01-01 11:00:00")
+		require.Contains(t, versionComment, "root@10.0.0.2")
+		require.Contains(t, versionComment, "2.2.2.2")
+		require.Contains(t, versionComment, "fail")
+		require.NotContains(t, versionComment, currentLoginTime)
+	})
+
+	t.Run("Disabled_WithExistingRecords_NoMarkers", func(t *testing.T) {
+		setup(t, false, `
+INSERT INTO mysql.login_history(Time, Server_host, User, DB, Connection_id, Result, Client_host, Detail) VALUES
+  ('2024-01-01 12:00:00', '10.0.0.1', 'root', '', 2097156, 'success', '1.1.1.1', ''),
+  ('2024-01-01 11:00:00', '10.0.0.2', 'root', '', 2097157, 'fail', '2.2.2.2', 'denied');
+`)
+
+		var versionComment string
+		runUser(t, "root", "", func(dbt *testkit.DBTestKit) {
+			versionComment = queryScalar(t, dbt, "SELECT @@version_comment;")
+		})
+
+		require.NotContains(t, versionComment, "[Last Success Login]")
+		require.NotContains(t, versionComment, "[Last Fail Login]")
+	})
+}

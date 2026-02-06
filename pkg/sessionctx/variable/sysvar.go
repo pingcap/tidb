@@ -76,7 +76,11 @@ var defaultSysVars = []*SysVar{
 	{Scope: ScopeNone, Name: SystemTimeZone, Value: "CST"},
 	{Scope: ScopeNone, Name: Hostname, Value: DefHostname},
 	{Scope: ScopeNone, Name: Port, Value: "4000", Type: TypeUnsigned, MinValue: 0, MaxValue: math.MaxUint16},
-	{Scope: ScopeNone, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible"},
+	{Scope: ScopeGlobal | ScopeSession, Name: VersionComment, Value: "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL 8.0 compatible", GetSession: func(s *SessionVars) (string, error) {
+		comment := "TiDB Server (Apache License 2.0) " + versioninfo.TiDBEdition + " Edition, MySQL compatible"
+		comment += s.LogHistory
+		return comment, nil
+	}},
 	{Scope: ScopeNone, Name: Version, Value: mysql.ServerVersion},
 	{Scope: ScopeNone, Name: DataDir, Value: "/usr/local/mysql/data/"},
 	{Scope: ScopeNone, Name: Socket, Value: ""},

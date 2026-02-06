@@ -1754,6 +1754,9 @@ type SessionVars struct {
 
 	// PlanCacheMaxDecimalParamNums indicates the max number of decimal parameters which can use the plan cache
 	PlanCacheMaxDecimalParamNums int
+
+	// LogHistory indicate historical login information
+	LogHistory string
 }
 
 // GetSessionVars implements the `SessionVarsProvider` interface.
