@@ -44,7 +44,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 		b, err := json.Marshal(infos)
 		require.NoError(t, err)
 		inTerms := fmt.Sprintf("return(`%s`)", string(b))
-		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/infosync/mockGetAllServerInfo", inTerms)
+		testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", inTerms)
 	}
 
 	t.Run("delete keys for stale instance after restart", func(t *testing.T) {
