@@ -25,6 +25,7 @@ import (
 	"time"
 	"unsafe"
 
+	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/executor/internal/exec"
 	"github.com/pingcap/tidb/pkg/expression"
@@ -122,17 +123,6 @@ type InnerCtx struct {
 	HasPrefixCol bool
 }
 
-// HashIsNullEQ should align with HashCols on the normal planner->builder path.
-// Keep this defensive alignment for manually-constructed executors in tests/benchmarks.
-func (c *InnerCtx) ensureHashIsNullEQAligned() {
-	if len(c.HashIsNullEQ) == len(c.HashCols) {
-		return
-	}
-	normalized := make([]bool, len(c.HashCols))
-	copy(normalized, c.HashIsNullEQ)
-	c.HashIsNullEQ = normalized
-}
-
 type lookUpJoinTask struct {
 	outerResult *chunk.List
 	outerMatch  [][]bool
@@ -190,7 +180,9 @@ func (e *IndexLookUpJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	e.InnerCtx.ensureHashIsNullEQAligned()
+	if len(e.InnerCtx.HashIsNullEQ) != len(e.InnerCtx.HashCols) {
+		return errors.New("index lookup join: hash null-eq flags length must match hash cols length")
+	}
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 	e.innerPtrBytes = make([][]byte, 0, 8)

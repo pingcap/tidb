@@ -140,6 +140,9 @@ func (e *IndexNestedLoopHashJoin) Open(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if len(e.InnerCtx.HashIsNullEQ) != len(e.InnerCtx.HashCols) {
+		return errors.New("index lookup hash join: hash null-eq flags length must match hash cols length")
+	}
 	if e.memTracker != nil {
 		e.memTracker.Reset()
 	} else {
