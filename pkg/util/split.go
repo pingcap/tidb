@@ -27,7 +27,7 @@ func GetValuesList(lower, upper []byte, num int, valuesList [][]byte) [][]byte {
 	startV := getUint64FromBytes(lower[commonPrefixIdx:], 0)
 	// To get `num` regions, only need to split `num-1` idx keys.
 	buf := make([]byte, 8)
-	for range num - 1 {
+	for i := 0; i < num-1; i++ {
 		value := make([]byte, 0, commonPrefixIdx+8)
 		value = append(value, lower[:commonPrefixIdx]...)
 		startV += step

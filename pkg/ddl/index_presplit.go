@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
@@ -34,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"go.uber.org/zap"
@@ -51,8 +49,7 @@ func preSplitIndexRegions(
 	reorgMeta *model.DDLReorgMeta,
 	splitOpts []*IndexArgSplitOpt,
 ) error {
-	warnHandler := contextutil.NewStaticWarnHandler(0)
-	exprCtx, err := newReorgExprCtxWithReorgMeta(reorgMeta, warnHandler)
+	exprCtx, err := newReorgExprCtxWithReorgMeta(store, reorgMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -86,6 +83,21 @@ func preSplitIndexRegions(
 		}
 	}
 	return nil
+}
+
+func newReorgExprCtxWithReorgMeta(store kv.Storage, reorgMeta *model.DDLReorgMeta) (expression.BuildContext, error) {
+	if reorgMeta == nil {
+		sessCtx, err := newSessCtx(store, 0, nil, "")
+		if err != nil {
+			return nil, errors.Trace(err)
+		}
+		return sessCtx.GetExprCtx(), nil
+	}
+	sessCtx, err := newSessCtx(store, reorgMeta.SQLMode, reorgMeta.Location, reorgMeta.ResourceGroupName)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	return sessCtx.GetExprCtx(), nil
 }
 
 type splitArgs struct {
@@ -284,7 +296,7 @@ func splitIndexRegionAndWait(
 }
 
 func evalSplitDatumFromArgs(
-	buildCtx exprctx.BuildContext,
+	buildCtx expression.BuildContext,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,
 	splitOpt *IndexArgSplitOpt,
@@ -335,7 +347,7 @@ func evalSplitDatumFromArgs(
 }
 
 func evalConstExprNodes(
-	buildCtx exprctx.BuildContext,
+	buildCtx expression.BuildContext,
 	valueList []string,
 	tblInfo *model.TableInfo,
 	idxInfo *model.IndexInfo,

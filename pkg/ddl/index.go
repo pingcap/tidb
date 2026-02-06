@@ -675,9 +675,9 @@ SwitchIndexState:
 				indexInfo.BackfillState = model.BackfillStateRunning
 			}
 		}
-		err = preSplitIndexRegions(jobCtx.stepCtx, w.sess.Context, jobCtx.store, tblInfo, allIndexInfos, job.ReorgMeta, splitOpts)
+		err = preSplitIndexRegions(w.ctx, w.sess.Context, w.store, tblInfo, allIndexInfos, job.ReorgMeta, splitOpts)
 		if err != nil {
-			if !isRetryableJobError(err, job.ErrorCount) {
+			if !errorIsRetryable(err, job) {
 				job.State = model.JobStateCancelled
 			}
 			return ver, err

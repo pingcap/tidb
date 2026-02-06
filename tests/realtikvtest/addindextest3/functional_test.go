@@ -25,7 +25,6 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl"
 	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/parser/model"
-	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
@@ -85,22 +84,21 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 func TestBackendCtxConcurrentUnregister(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1, 0, 0)
+	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1)
 	require.NoError(t, err)
 	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
-	uniques := make([]bool, 0, len(idxIDs))
-	for range idxIDs {
-		uniques = append(uniques, false)
+	for _, idxID := range idxIDs {
+		_, err = bCtx.Register(1, idxID, "test", "t")
+		require.NoError(t, err)
 	}
-	_, err = bCtx.Register([]int64{1, 2, 3, 4, 5, 6, 7}, uniques, tables.MockTableFromMeta(&model.TableInfo{}))
-	require.NoError(t, err)
 
 	wg := sync.WaitGroup{}
 	wg.Add(3)
 	for i := 0; i < 3; i++ {
 		go func() {
-			err := bCtx.FinishAndUnregisterEngines(ingest.OptCloseEngines)
-			require.NoError(t, err)
+			for _, idxID := range idxIDs {
+				bCtx.Unregister(1, idxID)
+			}
 			wg.Done()
 		}()
 	}
