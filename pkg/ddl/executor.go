@@ -1138,13 +1138,12 @@ func (e *executor) CreateMaterializedViewLog(ctx sessionctx.Context, s *ast.Crea
 					return err
 				}
 			}
-			if s.Purge.Next != nil {
-				purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
-				if err != nil {
-					return err
-				}
-			} else {
+			if s.Purge.Next == nil {
 				return errors.New("PURGE NEXT is required unless PURGE IMMEDIATE is specified")
+			}
+			purgeNext, err = restoreExprToCanonicalSQL(s.Purge.Next)
+			if err != nil {
+				return err
 			}
 		}
 	}
