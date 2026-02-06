@@ -2,8 +2,8 @@ create table t(a varchar(20) collate utf8mb4_general_ci, index ia(a));
 insert into t value('测试'),('测试Abc'),('测试     '),('你好'),('aABBccdd'),('Aa'),(''),(' '),('  '),(' 语言'),('  语 言 '),('测测试 '),('测测试    '),(NULL);
 explain format = brief select *, length(a) from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5","mK\x8b\xd6"), keep order:true, stats:pseudo
@@ -14,8 +14,8 @@ a	length(a)
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK","mL"), keep order:true, stats:pseudo
@@ -28,8 +28,8 @@ a	length(a)
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测%%试' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%试", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK","mL"), keep order:true, stats:pseudo
@@ -38,8 +38,8 @@ a	length(a)
 测试	6
 explain format = brief select *, length(a) from t use index (ia) where a like '测试%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5","mK\x8b\xd6"), keep order:true, stats:pseudo
@@ -50,8 +50,8 @@ a	length(a)
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测试_' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试_", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["mK\x8b\xd5","mK\x8b\xd6"), keep order:true, stats:pseudo
@@ -59,8 +59,8 @@ select *, length(a) from t use index (ia) where a like '测试_' order by a,_tid
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like '你好%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "你好%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["O`Y}","O`Y~"), keep order:true, stats:pseudo
@@ -69,8 +69,8 @@ a	length(a)
 你好	6
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	10.00	root		index:Selection
     └─Selection	10.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa", 92)
       └─IndexRangeScan	10.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00A"], keep order:true, stats:pseudo
@@ -79,8 +79,8 @@ a	length(a)
 Aa	2
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00B"), keep order:true, stats:pseudo
@@ -90,8 +90,8 @@ Aa	2
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%cc", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00B"), keep order:true, stats:pseudo
@@ -99,8 +99,8 @@ select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	10.00	root		index:Selection
     └─Selection	10.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "", 92)
       └─IndexRangeScan	10.00	cop[tikv]	table:t, index:ia(a)	range:["",""], keep order:true, stats:pseudo
@@ -109,8 +109,8 @@ a	length(a)
 	0
 explain format = brief select *, length(a) from t use index (ia) where a like ' ' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	10.00	root		index:Selection
     └─Selection	10.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " ", 92)
       └─IndexRangeScan	10.00	cop[tikv]	table:t, index:ia(a)	range:["",""], keep order:true, stats:pseudo
@@ -119,8 +119,8 @@ a	length(a)
  	1
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%dd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%dd", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00B"), keep order:true, stats:pseudo
@@ -129,8 +129,8 @@ a	length(a)
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%%dd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%%dd", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00B"), keep order:true, stats:pseudo
@@ -139,8 +139,8 @@ a	length(a)
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa_bccdd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa_bccdd", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00A\x00A","\x00A\x00B"), keep order:true, stats:pseudo
@@ -149,8 +149,8 @@ a	length(a)
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like '%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	8000.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	8000.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	8000.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	8000.00	root		index:Selection
     └─Selection	8000.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "%%", 92)
       └─IndexFullScan	10000.00	cop[tikv]	table:t, index:ia(a)	keep order:true, stats:pseudo
@@ -171,8 +171,8 @@ aABBccdd	8
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like ' %%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["","\x00!"), keep order:true, stats:pseudo
@@ -184,8 +184,8 @@ a	length(a)
  语言	7
 explain format = brief select *, length(a) from t use index (ia) where a like ' %%语言' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%语言", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["","\x00!"), keep order:true, stats:pseudo
@@ -194,8 +194,8 @@ a	length(a)
  语言	7
 explain format = brief select *, length(a) from t use index (ia) where a like '  语 %' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语 %", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00 \x00 \x8b\xed","\x00 \x00 \x8b\xed\x00!"), keep order:true, stats:pseudo
@@ -204,8 +204,8 @@ a	length(a)
   语 言 	10
 explain format = brief select *, length(a) from t use index (ia) where a like '  语  _' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语  _", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x00 \x00 \x8b\xed","\x00 \x00 \x8b\xed\x00 \x00!"), keep order:true, stats:pseudo
@@ -216,9 +216,9 @@ create table t(a varchar(20) collate utf8mb4_unicode_ci, unique index ia(a));
 insert into t value(''),('测试'),('测试abc'),('你好'),('aabbccdd'),(' 语言'),('  语 言 '),('测测试    ');
 explain format = brief select *, length(a) from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:false, stats:pseudo
@@ -228,9 +228,9 @@ a	length(a)
 测试abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK","\xfb@\xedL"), keep order:false, stats:pseudo
@@ -241,9 +241,9 @@ a	length(a)
 测试abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测%%试' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%试", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK","\xfb@\xedL"), keep order:false, stats:pseudo
@@ -252,9 +252,9 @@ a	length(a)
 测试	6
 explain format = brief select *, length(a) from t use index (ia) where a like '测试%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%%", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:false, stats:pseudo
@@ -264,9 +264,9 @@ a	length(a)
 测试abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测试_' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试_", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:false, stats:pseudo
@@ -274,9 +274,9 @@ select *, length(a) from t use index (ia) where a like '测试_' order by a,_tid
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like '你好%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "你好%", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xcf`\xfb@\xd9}","\xfb@\xcf`\xfb@\xd9~"), keep order:false, stats:pseudo
@@ -285,18 +285,18 @@ a	length(a)
 你好	6
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	1.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	1.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	1.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	1.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─Selection	1.00	root		like(planner__core__range_scan_for_like.t.a, "aa", 92)
       └─Point_Get	1.00	root	table:t, index:ia(a)	
 select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x0e3\x0e3","\x0e3\x0e4"), keep order:false, stats:pseudo
@@ -305,9 +305,9 @@ a	length(a)
 aabbccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%cc", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x0e3\x0e3","\x0e3\x0e4"), keep order:false, stats:pseudo
@@ -315,9 +315,9 @@ select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	1.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	1.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	1.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	1.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	1.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─Selection	1.00	root		like(planner__core__range_scan_for_like.t.a, "", 92)
       └─Point_Get	1.00	root	table:t, index:ia(a)	
 select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
@@ -325,9 +325,9 @@ a	length(a)
 	0
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%dd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%dd", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x0e3\x0e3","\x0e3\x0e4"), keep order:false, stats:pseudo
@@ -336,9 +336,9 @@ a	length(a)
 aabbccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%%dd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%%dd", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x0e3\x0e3","\x0e3\x0e4"), keep order:false, stats:pseudo
@@ -347,9 +347,9 @@ a	length(a)
 aabbccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa_bccdd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa_bccdd", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x0e3\x0e3","\x0e3\x0e4"), keep order:false, stats:pseudo
@@ -358,9 +358,9 @@ a	length(a)
 aabbccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like '%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	8000.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	8000.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	8000.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	8000.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	8000.00	root		index:Selection
       └─Selection	8000.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "%%", 92)
         └─IndexFullScan	10000.00	cop[tikv]	table:t, index:ia(a)	keep order:false, stats:pseudo
@@ -376,9 +376,9 @@ aabbccdd	8
 测试abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like ' %%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["","\x02\n"), keep order:false, stats:pseudo
@@ -388,9 +388,9 @@ a	length(a)
  语言	7
 explain format = brief select *, length(a) from t use index (ia) where a like ' %%语言' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%语言", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["","\x02\n"), keep order:false, stats:pseudo
@@ -399,9 +399,9 @@ a	length(a)
  语言	7
 explain format = brief select *, length(a) from t use index (ia) where a like '  语 %' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语 %", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x02\t\x02\t\xfbA\x8b\xed","\x02\t\x02\t\xfbA\x8b\xed\x02\n"), keep order:false, stats:pseudo
@@ -410,9 +410,9 @@ a	length(a)
   语 言 	10
 explain format = brief select *, length(a) from t use index (ia) where a like '  语  _' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
 └─Sort	250.00	root		planner__core__range_scan_for_like.t.a, planner__core__range_scan_for_like.t._tidb_rowid
-  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+  └─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
     └─IndexReader	250.00	root		index:Selection
       └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语  _", 92)
         └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x02\t\x02\t\xfbA\x8b\xed","\x02\t\x02\t\xfbA\x8b\xed\x02\t\x02\n"), keep order:false, stats:pseudo
@@ -1040,8 +1040,8 @@ insert into t value('测试'),('测试Abc'),('测试     '),('你好'),('aABBccd
 insert into t2 value('测试'),('测试Abc'),('测试     '),('你好'),('aABBccdd'),('Aa'),(''),(' '),('  '),(' 语言'),('  语 言 '),('测测试 '),('测测试    '),(NULL);
 explain format = brief select *, length(a) from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:IndexRangeScan
     └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:true, stats:pseudo
 select *, length(a) from t use index (ia) where a like '测试%' order by a,_tidb_rowid;
@@ -1051,8 +1051,8 @@ a	length(a)
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK","\xfb@\xedL"), keep order:true, stats:pseudo
@@ -1065,8 +1065,8 @@ a	length(a)
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测%%试' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测%%试", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK","\xfb@\xedL"), keep order:true, stats:pseudo
@@ -1075,8 +1075,8 @@ a	length(a)
 测试	6
 explain format = brief select *, length(a) from t use index (ia) where a like '测试%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试%%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:true, stats:pseudo
@@ -1087,8 +1087,8 @@ a	length(a)
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like '测试_' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "测试_", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:("\xfb@\xedK\xfbA\x8b\xd5","\xfb@\xedK\xfbA\x8b\xd6"), keep order:true, stats:pseudo
@@ -1096,8 +1096,8 @@ select *, length(a) from t use index (ia) where a like '测试_' order by a,_tid
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like '你好%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:IndexRangeScan
     └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\xfb@\xcf`\xfb@\xd9}","\xfb@\xcf`\xfb@\xd9~"), keep order:true, stats:pseudo
 select *, length(a) from t use index (ia) where a like '你好%' order by a,_tidb_rowid;
@@ -1105,8 +1105,8 @@ a	length(a)
 你好	6
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	10.00	root		index:IndexRangeScan
     └─IndexRangeScan	10.00	cop[tikv]	table:t, index:ia(a)	range:["\x1cG\x1cG","\x1cG\x1cG"], keep order:true, stats:pseudo
 select *, length(a) from t use index (ia) where a like 'aa' order by a,_tidb_rowid;
@@ -1114,8 +1114,8 @@ a	length(a)
 Aa	2
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:IndexRangeScan
     └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x1cG\x1cG","\x1cG\x1cH"), keep order:true, stats:pseudo
 select *, length(a) from t use index (ia) where a like 'aa%' order by a,_tidb_rowid;
@@ -1124,8 +1124,8 @@ Aa	2
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%cc", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x1cG\x1cG","\x1cG\x1cH"), keep order:true, stats:pseudo
@@ -1133,8 +1133,8 @@ select *, length(a) from t use index (ia) where a like 'aa%cc' order by a,_tidb_
 a	length(a)
 explain format = brief select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	10.00	root		index:IndexRangeScan
     └─IndexRangeScan	10.00	cop[tikv]	table:t, index:ia(a)	range:["",""], keep order:true, stats:pseudo
 select *, length(a) from t use index (ia) where a like '' order by a,_tidb_rowid;
@@ -1142,8 +1142,8 @@ a	length(a)
 	0
 explain format = brief select *, length(a) from t use index (ia) where a like ' ' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	10.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	10.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	10.00	root		index:IndexRangeScan
     └─IndexRangeScan	10.00	cop[tikv]	table:t, index:ia(a)	range:["\x02\t","\x02\t"], keep order:true, stats:pseudo
 select *, length(a) from t use index (ia) where a like ' ' order by a,_tidb_rowid;
@@ -1151,8 +1151,8 @@ a	length(a)
  	1
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%dd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%dd", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x1cG\x1cG","\x1cG\x1cH"), keep order:true, stats:pseudo
@@ -1161,8 +1161,8 @@ a	length(a)
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa%%dd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa%%dd", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x1cG\x1cG","\x1cG\x1cH"), keep order:true, stats:pseudo
@@ -1171,8 +1171,8 @@ a	length(a)
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like 'aa_bccdd' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "aa_bccdd", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:("\x1cG\x1cG","\x1cG\x1cH"), keep order:true, stats:pseudo
@@ -1181,8 +1181,8 @@ a	length(a)
 aABBccdd	8
 explain format = brief select *, length(a) from t use index (ia) where a like '%%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	8000.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	8000.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	8000.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	8000.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	8000.00	root		index:Selection
     └─Selection	8000.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "%%", 92)
       └─IndexFullScan	10000.00	cop[tikv]	table:t, index:ia(a)	keep order:true, stats:pseudo
@@ -1203,8 +1203,8 @@ aABBccdd	8
 测试Abc	9
 explain format = brief select *, length(a) from t use index (ia) where a like ' %%' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x02\t","\x02\n"), keep order:true, stats:pseudo
@@ -1216,8 +1216,8 @@ a	length(a)
  语言	7
 explain format = brief select *, length(a) from t use index (ia) where a like ' %%语言' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, " %%语言", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x02\t","\x02\n"), keep order:true, stats:pseudo
@@ -1226,8 +1226,8 @@ a	length(a)
  语言	7
 explain format = brief select *, length(a) from t use index (ia) where a like '  语 %' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:IndexRangeScan
     └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:["\x02\t\x02\t\xfbA\x8b\xed\x02\t","\x02\t\x02\t\xfbA\x8b\xed\x02\n"), keep order:true, stats:pseudo
 select *, length(a) from t use index (ia) where a like '  语 %' order by a,_tidb_rowid;
@@ -1235,8 +1235,8 @@ a	length(a)
   语 言 	10
 explain format = brief select *, length(a) from t use index (ia) where a like '  语  _' order by a,_tidb_rowid;
 id	estRows	task	access object	operator info
-Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#3->Column#5
-└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#3, planner__core__range_scan_for_like.t._tidb_rowid
+Projection	250.00	root		planner__core__range_scan_for_like.t.a, Column#4->Column#6
+└─Projection	250.00	root		planner__core__range_scan_for_like.t.a, length(planner__core__range_scan_for_like.t.a)->Column#4, planner__core__range_scan_for_like.t._tidb_rowid
   └─IndexReader	250.00	root		index:Selection
     └─Selection	250.00	cop[tikv]		like(planner__core__range_scan_for_like.t.a, "  语  _", 92)
       └─IndexRangeScan	250.00	cop[tikv]	table:t, index:ia(a)	range:("\x02\t\x02\t\xfbA\x8b\xed\x02\t\x02\t","\x02\t\x02\t\xfbA\x8b\xed\x02\t\x02\n"), keep order:true, stats:pseudo

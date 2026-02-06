@@ -1557,12 +1557,12 @@ func TestSemiJoinRewriter(t *testing.T) {
 	tk.MustExec(`create table t2(a varchar(10));`)
 	tk.MustExec(`create table t3(a int);`)
 	tk.MustQuery(`explain format = 'brief' select * from t1 where exists(select 1 from t2 where t1.a=t2.a);`).Check(testkit.Rows(
-		`HashJoin 10000.00 root  inner join, equal:[eq(Column#6, Column#7)]`,
-		`├─HashAgg(Build) 8000.00 root  group by:Column#7, funcs:firstrow(Column#7)->Column#7`,
-		`│ └─Projection 10000.00 root  cast(test.t2.a, double BINARY)->Column#7`,
+		`HashJoin 10000.00 root  inner join, equal:[eq(Column#8, Column#9)]`,
+		`├─HashAgg(Build) 8000.00 root  group by:Column#9, funcs:firstrow(Column#9)->Column#9`,
+		`│ └─Projection 10000.00 root  cast(test.t2.a, double BINARY)->Column#9`,
 		`│   └─TableReader 10000.00 root  data:TableFullScan`,
 		`│     └─TableFullScan 10000.00 cop[tikv] table:t2 keep order:false, stats:pseudo`,
-		`└─Projection(Probe) 10000.00 root  test.t1.a, cast(test.t1.a, double BINARY)->Column#6`,
+		`└─Projection(Probe) 10000.00 root  test.t1.a, cast(test.t1.a, double BINARY)->Column#8`,
 		`  └─TableReader 10000.00 root  data:TableFullScan`,
 		`    └─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 }
