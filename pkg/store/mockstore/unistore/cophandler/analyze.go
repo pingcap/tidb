@@ -630,15 +630,13 @@ type analyzeMixedExec struct {
 }
 
 func (e *analyzeMixedExec) Process(key, value []byte, _ uint64) error {
-	decodedKey := key
 	if !kv.Key(key).HasPrefix(tablecodec.TablePrefix()) {
 		// If the key is in API V2, then ignore the prefix
 		_, k, err := tikv.DecodeKey(key, kvrpcpb.APIVersion_V2)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		decodedKey = k
-		if !kv.Key(decodedKey).HasPrefix(tablecodec.TablePrefix()) {
+		if !kv.Key(k).HasPrefix(tablecodec.TablePrefix()) {
 			return errors.Errorf("invalid index key %q after decoded", key)
 		}
 	}
