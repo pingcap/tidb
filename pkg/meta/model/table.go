@@ -761,6 +761,16 @@ type MaterializedViewLogInfo struct {
 	PurgeNext string `json:"purge_next,omitempty"`
 }
 
+const (
+	// MaterializedViewLogDMLTypeColumnName is the auto-added internal column on a materialized view log table,
+	// recording row operation type (I/U/D).
+	MaterializedViewLogDMLTypeColumnName = "_MLOG$_DML_TYPE"
+
+	// MaterializedViewLogOldNewColumnName is the auto-added internal column on a materialized view log table,
+	// recording row image kind (NEW=1, OLD=-1).
+	MaterializedViewLogOldNewColumnName = "_MLOG$_OLD_NEW"
+)
+
 // Clone clones MaterializedViewLogInfo.
 func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 	if i == nil {
