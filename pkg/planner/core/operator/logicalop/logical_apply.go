@@ -232,7 +232,13 @@ func (la *LogicalApply) CanPullUpAgg() bool {
 	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
 		return false
 	}
-	return len(la.Children()[0].Schema().PKOrUK) > 0
+	outerSchema := la.Children()[0].Schema()
+	for _, key := range outerSchema.PKOrUK {
+		if outerSchema.ColumnsIndices(key) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // DeCorColFromEqExpr checks whether it's an equal condition of form `col = correlated col`. If so we will change the decorrelated
