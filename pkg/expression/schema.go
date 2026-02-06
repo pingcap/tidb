@@ -98,8 +98,8 @@ func (s *Schema) Clone() *Schema {
 
 // Equal checks if two schemas are equal.
 func (s *Schema) Equal(other *Schema) bool {
-	if other == nil {
-		return false
+	if s == nil || other == nil {
+		return s == other
 	}
 	if len(s.Columns) != len(other.Columns) {
 		return false

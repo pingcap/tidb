@@ -631,24 +631,6 @@ func (d *ConflictDetector) CheckAllEdgesUsed(usedEdges map[uint64]struct{}) bool
 	return true
 }
 
-// SetNewJoinWithHint sets the join method hint for the join node.
-func SetNewJoinWithHint(newJoin *logicalop.LogicalJoin, vertexHints map[int]*JoinMethodHint) {
-	if newJoin == nil {
-		return
-	}
-	lChild := newJoin.Children()[0]
-	rChild := newJoin.Children()[1]
-	if joinMethodHint, ok := vertexHints[lChild.ID()]; ok {
-		newJoin.LeftPreferJoinType = joinMethodHint.PreferJoinMethod
-		newJoin.HintInfo = joinMethodHint.HintInfo
-	}
-	if joinMethodHint, ok := vertexHints[rChild.ID()]; ok {
-		newJoin.RightPreferJoinType = joinMethodHint.PreferJoinMethod
-		newJoin.HintInfo = joinMethodHint.HintInfo
-	}
-	newJoin.SetPreferredJoinType()
-}
-
 // 0: rule doesn't apply
 // 1: rule applies
 // 2: rule applies when null-rejective holds

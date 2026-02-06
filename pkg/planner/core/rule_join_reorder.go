@@ -257,9 +257,9 @@ type joinTypeWithExtMsg struct {
 // Optimize implements the base.LogicalOptRule.<0th> interface.
 func (s *JoinReOrderSolver) Optimize(_ context.Context, p base.LogicalPlan) (base.LogicalPlan, bool, error) {
 	if p.SCtx().GetSessionVars().EnableOuterJoinReorder {
-		p, err := joinorder.Optimize(p)
-		return p, false, err
-	}
+               p, err := joinorder.Optimize(p)
+               return p, false, err
+       }
 	p, err := s.optimizeRecursive(p.SCtx(), p)
 	return p, false, err
 }
@@ -301,7 +301,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			joinGroupNum := len(curJoinGroup)
 			useGreedy := !allInnerJoin || joinGroupNum > ctx.GetSessionVars().TiDBOptJoinReorderThreshold
 
-			leadingHintInfo, hasDiffLeadingHint := checkAndGenerateLeadingHint(joinOrderHintInfo)
+			leadingHintInfo, hasDiffLeadingHint := joinorder.CheckAndGenerateLeadingHint(joinOrderHintInfo)
 			if hasDiffLeadingHint {
 				ctx.GetSessionVars().StmtCtx.SetHintWarning(
 					"We can only use one leading hint at most, when multiple leading hints are used, all leading hints will be invalid")
@@ -309,7 +309,10 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 
 			if leadingHintInfo != nil && leadingHintInfo.LeadingJoinOrder != nil {
 				if useGreedy {
-					ok, leftJoinGroup := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+					ok, leftJoinGroup, err := baseGroupSolver.generateLeadingJoinGroup(curJoinGroup, leadingHintInfo, hasOuterJoin)
+					if err != nil {
+						return nil, err
+					}
 					if !ok {
 						ctx.GetSessionVars().StmtCtx.SetHintWarning(
 							"leading hint is inapplicable, check if the leading hint table is valid")
@@ -337,18 +340,7 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 			if err != nil {
 				return nil, err
 			}
-			schemaChanged := false
-			if len(p.Schema().Columns) != len(originalSchema.Columns) {
-				schemaChanged = true
-			} else {
-				for i, col := range p.Schema().Columns {
-					if !col.EqualColumn(originalSchema.Columns[i]) {
-						schemaChanged = true
-						break
-					}
-				}
-			}
-			if schemaChanged {
+			if !p.Schema().Equal(originalSchema) {
 				proj := logicalop.LogicalProjection{
 					Exprs: expression.Column2Exprs(originalSchema.Columns),
 				}.Init(p.SCtx(), p.QueryBlockOffset())
@@ -373,33 +365,6 @@ func (s *JoinReOrderSolver) optimizeRecursive(ctx base.PlanContext, p base.Logic
 	}
 	p.SetChildren(newChildren...)
 	return p, nil
-}
-
-// checkAndGenerateLeadingHint used to check and generate the valid leading hint.
-// We are allowed to use at most one leading hint in a join group. When more than one,
-// all leading hints in the current join group will be invalid.
-// For example: select /*+ leading(t3) */ * from (select /*+ leading(t1) */ t2.b from t1 join t2 on t1.a=t2.a) t4 join t3 on t4.b=t3.b
-// The Join Group {t1, t2, t3} contains two leading hints includes leading(t3) and leading(t1).
-// Although they are in different query blocks, they are conflicting.
-// In addition, the table alias 't4' cannot be recognized because of the join group.
-func checkAndGenerateLeadingHint(hintInfo []*h.PlanHints) (*h.PlanHints, bool) {
-	leadingHintNum := len(hintInfo)
-	var leadingHintInfo *h.PlanHints
-	hasDiffLeadingHint := false
-	if leadingHintNum > 0 {
-		leadingHintInfo = hintInfo[0]
-		// One join group has one leading hint at most. Check whether there are different join order hints.
-		for i := 1; i < leadingHintNum; i++ {
-			if hintInfo[i] != hintInfo[i-1] {
-				hasDiffLeadingHint = true
-				break
-			}
-		}
-		if hasDiffLeadingHint {
-			leadingHintInfo = nil
-		}
-	}
-	return leadingHintInfo, hasDiffLeadingHint
 }
 
 // basicJoinGroupInfo represents basic information for a join group in the join reorder process.
@@ -431,25 +396,29 @@ type baseSingleGroupJoinOrderSolver struct {
 // generateLeadingJoinGroup processes both flat and nested leading hints through the unified LeadingList structure
 func (s *baseSingleGroupJoinOrderSolver) generateLeadingJoinGroup(
 	curJoinGroup []base.LogicalPlan, hintInfo *h.PlanHints, hasOuterJoin bool,
-) (bool, []base.LogicalPlan) {
+) (bool, []base.LogicalPlan, error) {
 	if hintInfo == nil || hintInfo.LeadingList == nil {
-		return false, nil
+		return false, nil, nil
 	}
 	// Leading hint processing can partially build join trees and consume otherConds.
 	// If the hint is inapplicable, restore original otherConds to avoid losing filters.
 	origOtherConds := slices.Clone(s.otherConds)
 	// Use the unified nested processing for both flat and nested structures
-	ok, remaining := s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
+	ok, remaining, err := s.generateNestedLeadingJoinGroup(curJoinGroup, hintInfo.LeadingList, hasOuterJoin)
+	if err != nil {
+		s.otherConds = origOtherConds
+		return false, nil, err
+	}
 	if !ok {
 		s.otherConds = origOtherConds
 	}
-	return ok, remaining
+	return ok, remaining, nil
 }
 
 // generateNestedLeadingJoinGroup processes both flat and nested LEADING hint structures
 func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	curJoinGroup []base.LogicalPlan, leadingList *ast.LeadingList, hasOuterJoin bool,
-) (bool, []base.LogicalPlan) {
+) (bool, []base.LogicalPlan, error) {
 	leftJoinGroup := make([]base.LogicalPlan, len(curJoinGroup))
 	copy(leftJoinGroup, curJoinGroup)
 
@@ -459,7 +428,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 		})
 	}
 	joiner := func(left, right base.LogicalPlan) (base.LogicalPlan, bool, error) {
-		currentJoin, _, ok := s.connectJoinNodes(left, right, hasOuterJoin, leftJoinGroup)
+		currentJoin, ok := s.connectJoinNodes(left, right, hasOuterJoin)
 		if !ok {
 			return nil, false, nil
 		}
@@ -470,26 +439,31 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 	}
 
 	leadingJoin, remainingGroup, ok, err := joinorder.BuildLeadingTreeFromList(leadingList, leftJoinGroup, find, joiner, warn)
-	if err != nil || !ok {
-		return false, nil
+	if err != nil {
+		return false, nil, err
+	}
+	if !ok {
+		return false, nil, nil
 	}
 	s.leadingJoinGroup = leadingJoin
-	return true, remainingGroup
+	return true, remainingGroup, nil
 }
 
+// connectJoinNodes handles joining two subplans, performing connection checks
+// and enforcing the outer join constraint.
 func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
-	hasOuterJoin bool, availableGroups []base.LogicalPlan,
-) (base.LogicalPlan, []base.LogicalPlan, bool) {
+	hasOuterJoin bool,
+) (base.LogicalPlan, bool) {
 	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
 	if hasOuterJoin && usedEdges == nil {
 		// If the joinGroups contain an outer join, we disable cartesian product.
-		return nil, availableGroups, false
+		return nil, false
 	}
 	var rem []expression.Expression
 	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
 	s.otherConds = rem
-	return currentJoin, availableGroups, true
+	return currentJoin, true
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
