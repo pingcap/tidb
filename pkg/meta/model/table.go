@@ -751,12 +751,6 @@ type MaterializedViewLogInfo struct {
 	// Columns is the base table column list recorded in the log (user-specified columns).
 	Columns []model.CIStr `json:"columns"`
 
-	// DMLTypeColumnName is the internal auto-added column name recording operation type (I/U/D).
-	DMLTypeColumnName model.CIStr `json:"dml_type_column_name,omitempty"`
-
-	// OldNewColumnName is the internal auto-added column name recording row image kind (NEW=1, OLD=-1).
-	OldNewColumnName model.CIStr `json:"old_new_column_name,omitempty"`
-
 	// PurgeMethod is the purge method specified in CREATE MATERIALIZED VIEW LOG, for example, IMMEDIATE.
 	PurgeMethod string `json:"purge_method,omitempty"`
 
@@ -784,8 +778,6 @@ func (i *MaterializedViewLogInfo) Clone() *MaterializedViewLogInfo {
 	}
 	ni := *i
 	ni.Columns = append([]model.CIStr(nil), i.Columns...)
-	ni.DMLTypeColumnName = i.DMLTypeColumnName
-	ni.OldNewColumnName = i.OldNewColumnName
 	return &ni
 }
 

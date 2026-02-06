@@ -21,6 +21,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
+	tidbmodel "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -57,15 +58,15 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.Equal(t, "600", mlogInfo.PurgeNext)
 
 	// Meta columns should exist on the log table.
-	require.NotEmpty(t, mlogInfo.DMLTypeColumnName.O)
-	require.NotEmpty(t, mlogInfo.OldNewColumnName.O)
+	dmlTypeColName := pmodel.NewCIStr(tidbmodel.MaterializedViewLogDMLTypeColumnName)
+	oldNewColName := pmodel.NewCIStr(tidbmodel.MaterializedViewLogOldNewColumnName)
 
 	var hasDMLType, hasOldNew bool
 	for _, c := range mlogTable.Meta().Columns {
-		if c.Name.L == mlogInfo.DMLTypeColumnName.L {
+		if c.Name.L == dmlTypeColName.L {
 			hasDMLType = true
 		}
-		if c.Name.L == mlogInfo.OldNewColumnName.L {
+		if c.Name.L == oldNewColName.L {
 			hasOldNew = true
 			require.Equal(t, mysql.TypeTiny, c.FieldType.GetType())
 		}
@@ -78,31 +79,11 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 }
 
 func TestCreateMaterializedViewLogMetaColumnNameConflict(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("create table t_conflict (`_MLOG$_DML_TYPE` int, `_MLOG$_OLD_NEW` int, a int)")
-	tk.MustExec("create materialized view log on t_conflict (`_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW`, a)")
-
-	is := dom.InfoSchema()
-	mlogTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("$mlog$t_conflict"))
-	require.NoError(t, err)
-	mlogInfo := mlogTable.Meta().MaterializedViewLog
-	require.NotNil(t, mlogInfo)
-	require.Equal(t, pmodel.NewCIStr("_MLOG$_DML_TYPE_1"), mlogInfo.DMLTypeColumnName)
-	require.Equal(t, pmodel.NewCIStr("_MLOG$_OLD_NEW_1"), mlogInfo.OldNewColumnName)
-
-	var hasDMLType, hasOldNew bool
-	for _, c := range mlogTable.Meta().Columns {
-		if c.Name.L == mlogInfo.DMLTypeColumnName.L {
-			hasDMLType = true
-		}
-		if c.Name.L == mlogInfo.OldNewColumnName.L {
-			hasOldNew = true
-		}
-	}
-	require.True(t, hasDMLType)
-	require.True(t, hasOldNew)
+	tk.MustExec("create table t_conflict (`_MLOG$_DML_TYPE` int, a int)")
+	tk.MustGetErrCode("create materialized view log on t_conflict (`_MLOG$_DML_TYPE`, a)", errno.ErrDupFieldName)
 }
 
 func TestCreateMaterializedViewLogRejectNonBaseObject(t *testing.T) {
