@@ -424,7 +424,7 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 		})
 	}
 	joiner := func(left, right base.LogicalPlan) (base.LogicalPlan, bool, error) {
-		currentJoin, _, ok := s.connectJoinNodes(left, right, hasOuterJoin, leftJoinGroup)
+		currentJoin, ok := s.connectJoinNodes(left, right, hasOuterJoin)
 		if !ok {
 			return nil, false, nil
 		}
@@ -449,17 +449,17 @@ func (s *baseSingleGroupJoinOrderSolver) generateNestedLeadingJoinGroup(
 // and enforcing the outer join constraint.
 func (s *baseSingleGroupJoinOrderSolver) connectJoinNodes(
 	currentJoin, nextNode base.LogicalPlan,
-	hasOuterJoin bool, availableGroups []base.LogicalPlan,
-) (base.LogicalPlan, []base.LogicalPlan, bool) {
+	hasOuterJoin bool,
+) (base.LogicalPlan, bool) {
 	lNode, rNode, usedEdges, joinType := s.checkConnection(currentJoin, nextNode)
 	if hasOuterJoin && usedEdges == nil {
 		// If the joinGroups contain an outer join, we disable cartesian product.
-		return nil, availableGroups, false
+		return nil, false
 	}
 	var rem []expression.Expression
 	currentJoin, rem = s.makeJoin(lNode, rNode, usedEdges, joinType)
 	s.otherConds = rem
-	return currentJoin, availableGroups, true
+	return currentJoin, true
 }
 
 // generateJoinOrderNode used to derive the stats for the joinNodePlans and generate the jrNode groups based on the cost.
