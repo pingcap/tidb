@@ -161,14 +161,14 @@ func TestCantFindColumnJoinReorder(t *testing.T) {
 			"left join t1 on ((t0.k0 = t1.k0) and ((t4.k0 < t1.k0) and (t2.k0 != t1.k0))) " +
 			"left join t3 on ((t0.k0 = t3.k0) and ((t0.k0 <= t3.k0) and (t2.k0 < t4.k0))) " +
 			"where (not (t0.k0 in ('s85','s56','s87')) and not (t2.k0 in ((select t0.k0 as c0 from t0 where (t0.k3 = t0.k3)))));"
-		tk.MustQuery(query)
+		tk.MustQuery(query).Check(testkit.Rows())
 
 		tk.MustExec("drop table if exists t1, t2, t3;")
 		// Issue: https://github.com/pingcap/tidb/issues/65454
 		tk.MustExec("create table t1 (id bigint not null, hcode text collate utf8mb4_general_ci not null, primary key (id) /*T![clustered_index] CLUSTERED */);")
 		tk.MustExec("create table t2 (id bigint not null, bid bigint not null, cid bigint not null, primary key (id) /*T![clustered_index] CLUSTERED */);")
 		tk.MustExec("create table t3 (id bigint not null, user_id bigint not null, primary key (id) /*T![clustered_index] CLUSTERED */);")
-		tk.MustQuery("explain format = 'plan_tree' select (select count(t3.user_id) from t2 left join t1 as cm on t2.cid = cm.id left join t3 on t2.bid = t3.id where cm.hcode = t1.hcode) as tt from t1 where t1.id in (select min(id) from t1);")
+		tk.MustExec("explain format = 'plan_tree' select (select count(t3.user_id) from t2 left join t1 as cm on t2.cid = cm.id left join t3 on t2.bid = t3.id where cm.hcode = t1.hcode) as tt from t1 where t1.id in (select min(id) from t1);")
 	})
 }
 
