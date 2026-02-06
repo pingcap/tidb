@@ -79,7 +79,7 @@ go mod tidy
 # keep remote refs fresh so base-branch auto-detection is accurate
 git fetch origin --prune
 
-# Run before committing or finishing tasks
+# Run before committing or finishing tasks, to ensure we pass the static check
 make bazel_lint_changed
 ```
 
