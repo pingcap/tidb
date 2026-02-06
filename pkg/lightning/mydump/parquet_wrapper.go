@@ -31,7 +31,7 @@ import (
 const (
 	// defaultBufSize specifies the default size of skip buffer.
 	// Skip buffer is used when reading data from the cloud. If there is a gap
-	// between the current read position and the last read position, these
+	// between the current read position and the last read position, the
 	// data is stored in this buffer to avoid potentially reopening the
 	// underlying file when the gap size is less than the buffer size.
 	defaultBufSize = 64 * 1024
@@ -39,9 +39,10 @@ const (
 
 var (
 	// rowGroupInMemoryThreshold is the max row-group size that enables in-memory
-	// reader. If every row group in a Parquet file is smaller than this threshold,
-	// we load row groups into memory once, reducing the number of GET requests for
-	// less throttling risk, with the acceptable memory consumption.
+	// reader. For each row group in a Parquet file that is smaller than this
+	// threshold, we load that row group into memory once, reducing the number
+	// of GET requests for less throttling risk, with the acceptable memory
+	// consumption.
 	rowGroupInMemoryThreshold = 140 * units.MiB
 )
 
@@ -94,7 +95,7 @@ func (p *parquetWrapper) ReadAt(buf []byte, off int64) (int, error) {
 	return len(buf), nil
 }
 
-// Seek implemement Seeker interface
+// Seek implement Seeker interface
 func (p *parquetWrapper) Seek(offset int64, whence int) (int64, error) {
 	newOffset, err := p.ReadSeekCloser.Seek(offset, whence)
 	p.lastOff = newOffset
@@ -175,7 +176,11 @@ func (r *inMemoryReaderBase) ReadAt(p []byte, off int64) (int, error) {
 		return 0, io.EOF
 	}
 
-	return copy(p, r.buffer[start:groupSize]), nil
+	n := copy(p, r.buffer[start:groupSize])
+	if n < len(p) {
+		return n, io.EOF
+	}
+	return n, nil
 }
 
 func (r *inMemoryReaderBase) loadRowGroup(

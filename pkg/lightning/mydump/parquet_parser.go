@@ -309,15 +309,14 @@ func (pp *ParquetParser) Init(loc *time.Location) error {
 
 func (pp *ParquetParser) buildRowGroupParser() (err error) {
 	var (
-		eg       errgroup.Group
-		builder  = pp.getBuilder()
-		wrappers = make([]readerAtSeekerCloser, pp.fileMeta.NumColumns())
-		readers  = make([]*file.Reader, pp.fileMeta.NumColumns())
+		eg      errgroup.Group
+		builder = pp.getBuilder()
+		readers = make([]*file.Reader, pp.fileMeta.NumColumns())
 	)
 
 	defer func() {
 		if err != nil {
-			for _, r := range wrappers {
+			for _, r := range readers {
 				if r != nil {
 					_ = r.Close()
 				}
@@ -332,13 +331,17 @@ func (pp *ParquetParser) buildRowGroupParser() (err error) {
 				return errors.Trace(err)
 			}
 
-			wrappers[i] = wrapper
-			readers[i], err = file.NewParquetReader(
+			reader, err := file.NewParquetReader(
 				wrapper,
 				file.WithReadProps(pp.prop),
 				file.WithMetadata(pp.fileMeta),
 			)
-			return errors.Trace(err)
+			if err != nil {
+				_ = wrapper.Close()
+				return errors.Trace(err)
+			}
+			readers[i] = reader
+			return nil
 		})
 	}
 
