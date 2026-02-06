@@ -367,13 +367,14 @@ import (
 	collation             "COLLATION"
 	columns               "COLUMNS"
 	columnFormat          "COLUMN_FORMAT"
-	comment               "COMMENT"
-	commit                "COMMIT"
-	committed             "COMMITTED"
-	compact               "COMPACT"
-	compressed            "COMPRESSED"
-	compression           "COMPRESSION"
-	compressionLevel      "COMPRESSION_LEVEL"
+		comment               "COMMENT"
+		commit                "COMMIT"
+		committed             "COMMITTED"
+		compact               "COMPACT"
+		complete              "COMPLETE"
+		compressed            "COMPRESSED"
+		compression           "COMPRESSION"
+		compressionLevel      "COMPRESSION_LEVEL"
 	compressionType       "COMPRESSION_TYPE"
 	concurrency           "CONCURRENCY"
 	config                "CONFIG"
@@ -431,6 +432,7 @@ import (
 	expire                "EXPIRE"
 	extended              "EXTENDED"
 	failedLoginAttempts   "FAILED_LOGIN_ATTEMPTS"
+	fast                  "FAST"
 	faultsSym             "FAULTS"
 	fields                "FIELDS"
 	file                  "FILE"
@@ -455,6 +457,7 @@ import (
 	hypo                  "HYPO"
 	identified            "IDENTIFIED"
 	ignoreStats           "IGNORE_STATS"
+	immediate             "IMMEDIATE"
 	importKwd             "IMPORT"
 	imports               "IMPORTS"
 	increment             "INCREMENT"
@@ -484,6 +487,7 @@ import (
 	locked                "LOCKED"
 	logs                  "LOGS"
 	master                "MASTER"
+	materialized          "MATERIALIZED"
 	maxConnectionsPerHour "MAX_CONNECTIONS_PER_HOUR"
 	max_idxnum            "MAX_IDXNUM"
 	max_minutes           "MAX_MINUTES"
@@ -565,6 +569,7 @@ import (
 	recommend             "RECOMMEND"
 	recover               "RECOVER"
 	redundant             "REDUNDANT"
+	refresh               "REFRESH"
 	reload                "RELOAD"
 	remove                "REMOVE"
 	reorganize            "REORGANIZE"
@@ -646,6 +651,7 @@ import (
 	super                 "SUPER"
 	swaps                 "SWAPS"
 	switchesSym           "SWITCHES"
+	syncKwd               "SYNC"
 	system                "SYSTEM"
 	systemTime            "SYSTEM_TIME"
 	tables                "TABLES"
@@ -978,6 +984,13 @@ import (
 	CommitStmt                 "COMMIT statement"
 	CreateTableStmt            "CREATE TABLE statement"
 	CreateViewStmt             "CREATE VIEW  statement"
+	CreateMaterializedViewStmt "CREATE MATERIALIZED VIEW statement"
+	CreateMaterializedViewLogStmt "CREATE MATERIALIZED VIEW LOG statement"
+	AlterMaterializedViewStmt  "ALTER MATERIALIZED VIEW statement"
+	AlterMaterializedViewLogStmt "ALTER MATERIALIZED VIEW LOG statement"
+	DropMaterializedViewStmt   "DROP MATERIALIZED VIEW statement"
+	DropMaterializedViewLogStmt "DROP MATERIALIZED VIEW LOG statement"
+	RefreshMaterializedViewStmt "REFRESH MATERIALIZED VIEW statement"
 	CreateUserStmt             "CREATE User statement"
 	CreateRoleStmt             "CREATE Role statement"
 	CreateDatabaseStmt         "Create Database Statement"
@@ -1406,6 +1419,25 @@ import (
 	ViewDefiner                            "view definer"
 	ViewName                               "view name"
 	ViewFieldList                          "create view statement field list"
+	MViewCreateOptionListOpt               "materialized view create options"
+	MViewCreateOptionList                  "materialized view create option list"
+	MViewCreateOption                      "materialized view create option"
+	MViewRefreshClause                     "materialized view refresh clause"
+	MViewRefreshOnClauseOpt                "materialized view refresh ON clause"
+		MViewStartWithOpt                      "materialized view START WITH option"
+		MViewNextOpt                           "materialized view NEXT option"
+		MViewStartWithOrNextOpt                "materialized view START WITH/NEXT option list"
+		MViewStartWithOrNext                   "materialized view START WITH/NEXT option"
+		MLogPurgeClauseOpt                     "materialized view log optional PURGE clause"
+		MLogPurgeClause                        "materialized view log PURGE clause"
+		MLogStartWithOpt                       "materialized view log START WITH option"
+		MLogNextOpt                            "materialized view log NEXT option"
+		AlterMaterializedViewAction            "ALTER MATERIALIZED VIEW action"
+	AlterMaterializedViewActionList        "ALTER MATERIALIZED VIEW action list"
+	AlterMaterializedViewLogAction         "ALTER MATERIALIZED VIEW LOG action"
+	AlterMaterializedViewLogActionList     "ALTER MATERIALIZED VIEW LOG action list"
+	RefreshMaterializedViewType            "REFRESH MATERIALIZED VIEW type"
+	RefreshWithSyncModeOpt                 "REFRESH MATERIALIZED VIEW WITH SYNC MODE option"
 	ViewSQLSecurity                        "view sql security"
 	WhereClause                            "WHERE clause"
 	WhereClauseOptional                    "Optional WHERE clause"
@@ -5210,6 +5242,301 @@ ViewCheckOption:
 		$$ = model.CheckOptionLocal
 	}
 
+/*******************************************************************
+ *
+ *  Materialized View Statements
+ *
+ *******************************************************************/
+
+CreateMaterializedViewStmt:
+	"CREATE" "MATERIALIZED" "VIEW" TableName '(' ColumnList ')' MViewCreateOptionListOpt "AS" CreateViewSelectOpt
+		{
+			opts := $8.(*mviewCreateOptions)
+			x := &ast.CreateMaterializedViewStmt{
+				ViewName:        $4.(*ast.TableName),
+				Cols:            $6.([]model.CIStr),
+				Comment:         opts.comment,
+				Refresh:         opts.refresh,
+				Select:          $10.(ast.StmtNode).(ast.ResultSetNode),
+			}
+			$$ = x
+		}
+
+MViewCreateOptionListOpt:
+	/* EMPTY */
+	{
+		$$ = &mviewCreateOptions{}
+	}
+|	MViewCreateOptionList
+	{
+		$$ = $1
+	}
+
+MViewCreateOptionList:
+	MViewCreateOption
+	{
+		$$ = $1
+	}
+|	MViewCreateOptionList MViewCreateOption
+	{
+		opts := $1.(*mviewCreateOptions)
+		opt := $2.(*mviewCreateOptions)
+			if opt.hasComment {
+				if opts.hasComment {
+					yylex.AppendError(yylex.Errorf("Duplicate COMMENT specified in CREATE MATERIALIZED VIEW"))
+				}
+				opts.hasComment = true
+				opts.comment = opt.comment
+			}
+			if opt.hasRefresh {
+				if opts.hasRefresh {
+					yylex.AppendError(yylex.Errorf("Duplicate REFRESH clause specified in CREATE MATERIALIZED VIEW"))
+				}
+				opts.hasRefresh = true
+			opts.refresh = opt.refresh
+		}
+		$$ = opts
+	}
+
+	MViewCreateOption:
+		"COMMENT" "=" stringLit
+		{
+			$$ = &mviewCreateOptions{hasComment: true, comment: $3}
+		}
+	|	MViewRefreshClause
+		{
+			$$ = &mviewCreateOptions{hasRefresh: true, refresh: $1.(*ast.MViewRefreshClause)}
+		}
+
+MViewRefreshClause:
+	"REFRESH" "FAST" MViewRefreshOnClauseOpt
+	{
+		x := $3.(*ast.MViewRefreshClause)
+		x.Method = ast.MViewRefreshMethodFast
+		$$ = x
+	}
+
+MViewRefreshOnClauseOpt:
+	/* EMPTY */
+	{
+		$$ = &ast.MViewRefreshClause{}
+	}
+|	MViewStartWithOrNext
+	{
+		$$ = $1
+	}
+
+MViewStartWithOrNextOpt:
+	/* EMPTY */
+	{
+		// NOTE: don't use typed-nil here, otherwise `$3 != nil` checks may be wrong (Go interface nil gotcha).
+		$$ = nil
+	}
+|	MViewStartWithOrNext
+	{
+		$$ = $1
+	}
+
+MViewStartWithOrNext:
+	"START" "WITH" Expression "NEXT" Expression
+	{
+		$$ = &ast.MViewRefreshClause{StartWith: $3.(ast.ExprNode), Next: $5.(ast.ExprNode)}
+	}
+|	"NEXT" Expression
+	{
+		$$ = &ast.MViewRefreshClause{Next: $2.(ast.ExprNode)}
+	}
+
+MViewStartWithOpt:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|	"START" "WITH" Expression
+	{
+		$$ = $3
+	}
+
+MViewNextOpt:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|	"NEXT" Expression
+	{
+		$$ = $2
+	}
+
+	CreateMaterializedViewLogStmt:
+		"CREATE" "MATERIALIZED" "VIEW" "LOG" "ON" TableName '(' ColumnList ')' MLogPurgeClauseOpt
+		{
+			x := &ast.CreateMaterializedViewLogStmt{
+				Table:            $6.(*ast.TableName),
+				Cols:             $8.([]model.CIStr),
+				Purge:            $10.(*ast.MLogPurgeClause),
+			}
+			$$ = x
+		}
+
+	MLogPurgeClauseOpt:
+		/* EMPTY */
+		{
+			$$ = (*ast.MLogPurgeClause)(nil)
+	}
+|	MLogPurgeClause
+	{
+		$$ = $1
+	}
+
+MLogPurgeClause:
+	"PURGE" "IMMEDIATE"
+	{
+		$$ = &ast.MLogPurgeClause{Immediate: true}
+	}
+|	"PURGE" MLogStartWithOpt "NEXT" Expression
+	{
+		var startWith ast.ExprNode
+		if $2 != nil {
+			startWith = $2.(ast.ExprNode)
+		}
+		$$ = &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: $4}
+	}
+
+MLogStartWithOpt:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|	"START" "WITH" Expression
+	{
+		$$ = $3
+	}
+
+MLogNextOpt:
+	/* EMPTY */
+	{
+		$$ = nil
+	}
+|	"NEXT" Expression
+	{
+		$$ = $2
+	}
+
+AlterMaterializedViewStmt:
+	"ALTER" "MATERIALIZED" "VIEW" TableName AlterMaterializedViewActionList
+	{
+		x := &ast.AlterMaterializedViewStmt{
+			ViewName: $4.(*ast.TableName),
+			Actions:  $5.([]*ast.AlterMaterializedViewAction),
+		}
+		$$ = x
+	}
+
+AlterMaterializedViewActionList:
+	AlterMaterializedViewAction
+	{
+		$$ = []*ast.AlterMaterializedViewAction{$1.(*ast.AlterMaterializedViewAction)}
+	}
+|	AlterMaterializedViewActionList ',' AlterMaterializedViewAction
+	{
+		$$ = append($1.([]*ast.AlterMaterializedViewAction), $3.(*ast.AlterMaterializedViewAction))
+	}
+
+	AlterMaterializedViewAction:
+		"COMMENT" "=" stringLit
+		{
+			$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionComment, Comment: $3}
+		}
+	|	"REFRESH" MViewStartWithOpt MViewNextOpt
+		{
+			var startWith ast.ExprNode
+			if $2 != nil {
+				startWith = $2.(ast.ExprNode)
+		}
+		var next ast.ExprNode
+		if $3 != nil {
+			next = $3.(ast.ExprNode)
+		}
+		refresh := &ast.MViewRefreshClause{Method: ast.MViewRefreshMethodFast, StartWith: startWith, Next: next}
+		$$ = &ast.AlterMaterializedViewAction{Tp: ast.AlterMaterializedViewActionRefresh, Refresh: refresh}
+	}
+
+AlterMaterializedViewLogStmt:
+	"ALTER" "MATERIALIZED" "VIEW" "LOG" "ON" TableName AlterMaterializedViewLogActionList
+	{
+		x := &ast.AlterMaterializedViewLogStmt{
+			Table:   $6.(*ast.TableName),
+			Actions: $7.([]*ast.AlterMaterializedViewLogAction),
+		}
+		$$ = x
+	}
+
+AlterMaterializedViewLogActionList:
+	AlterMaterializedViewLogAction
+	{
+		$$ = []*ast.AlterMaterializedViewLogAction{$1.(*ast.AlterMaterializedViewLogAction)}
+	}
+|	AlterMaterializedViewLogActionList ',' AlterMaterializedViewLogAction
+	{
+		$$ = append($1.([]*ast.AlterMaterializedViewLogAction), $3.(*ast.AlterMaterializedViewLogAction))
+	}
+
+	AlterMaterializedViewLogAction:
+		"PURGE" "IMMEDIATE"
+		{
+			$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: true}}
+		}
+	|	"PURGE" MLogStartWithOpt MLogNextOpt
+		{
+		var startWith ast.ExprNode
+		if $2 != nil {
+			startWith = $2.(ast.ExprNode)
+		}
+		var next ast.ExprNode
+		if $3 != nil {
+			next = $3.(ast.ExprNode)
+		}
+		$$ = &ast.AlterMaterializedViewLogAction{Tp: ast.AlterMaterializedViewLogActionPurge, Purge: &ast.MLogPurgeClause{Immediate: false, StartWith: startWith, Next: next}}
+	}
+
+DropMaterializedViewStmt:
+	"DROP" "MATERIALIZED" "VIEW" TableName
+	{
+		$$ = &ast.DropMaterializedViewStmt{ViewName: $4.(*ast.TableName)}
+	}
+
+DropMaterializedViewLogStmt:
+	"DROP" "MATERIALIZED" "VIEW" "LOG" "ON" TableName
+	{
+		$$ = &ast.DropMaterializedViewLogStmt{Table: $6.(*ast.TableName)}
+	}
+
+RefreshMaterializedViewStmt:
+	"REFRESH" "MATERIALIZED" "VIEW" TableName RefreshWithSyncModeOpt RefreshMaterializedViewType
+	{
+		$$ = &ast.RefreshMaterializedViewStmt{ViewName: $4.(*ast.TableName), WithSyncMode: $5.(bool), Type: $6.(ast.RefreshMaterializedViewType)}
+	}
+
+RefreshMaterializedViewType:
+	"COMPLETE"
+	{
+		$$ = ast.RefreshMaterializedViewTypeComplete
+	}
+|	"FAST"
+	{
+		$$ = ast.RefreshMaterializedViewTypeFast
+	}
+
+RefreshWithSyncModeOpt:
+	/* EMPTY */
+	{
+		$$ = false
+	}
+|	"WITH" "SYNC" "MODE"
+	{
+		$$ = true
+	}
+
 /******************************************************************
  * Do statement
  * See https://dev.mysql.com/doc/refman/5.7/en/do.html
@@ -6811,6 +7138,7 @@ UnReservedKeyword:
 |	"SAN"
 |	"COMMIT"
 |	"COMPACT"
+|	"COMPLETE"
 |	"COMPRESSED"
 |	"CONSISTENCY"
 |	"CONSISTENT"
@@ -6915,6 +7243,11 @@ UnReservedKeyword:
 |	"COMPRESSION"
 |	"KEY_BLOCK_SIZE"
 |	"MASTER"
+|	"MATERIALIZED"
+|	"FAST"
+|	"IMMEDIATE"
+|	"REFRESH"
+|	"SYNC"
 |	"MAX_ROWS"
 |	"MIN_ROWS"
 |	"NATIONAL"
@@ -12265,6 +12598,8 @@ Statement:
 |	AdminStmt
 |	AlterDatabaseStmt
 |	AlterTableStmt
+|	AlterMaterializedViewStmt
+|	AlterMaterializedViewLogStmt
 |	AlterUserStmt
 |	AlterInstanceStmt
 |	AlterRangeStmt
@@ -12286,6 +12621,8 @@ Statement:
 |	CreateIndexStmt
 |	CreateTableStmt
 |	CreateViewStmt
+|	CreateMaterializedViewStmt
+|	CreateMaterializedViewLogStmt
 |	CreateUserStmt
 |	CreateRoleStmt
 |	CreateBindingStmt
@@ -12297,6 +12634,7 @@ Statement:
 |	CreateStatisticsStmt
 |	DistributeTableStmt
 |	DoStmt
+|	RefreshMaterializedViewStmt
 |	DropDatabaseStmt
 |	DropIndexStmt
 |	DropTableStmt
@@ -12304,6 +12642,8 @@ Statement:
 |	DropPolicyStmt
 |	DropSequenceStmt
 |	DropViewStmt
+|	DropMaterializedViewStmt
+|	DropMaterializedViewLogStmt
 |	DropUserStmt
 |	DropResourceGroupStmt
 |	DropQueryWatchStmt
