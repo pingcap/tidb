@@ -21,7 +21,6 @@ import (
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/errno"
-	tidbmodel "github.com/pingcap/tidb/pkg/meta/model"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/testkit"
@@ -58,8 +57,8 @@ func TestCreateMaterializedViewLogBasic(t *testing.T) {
 	require.Equal(t, "600", mlogInfo.PurgeNext)
 
 	// Meta columns should exist on the log table.
-	dmlTypeColName := pmodel.NewCIStr(tidbmodel.MaterializedViewLogDMLTypeColumnName)
-	oldNewColName := pmodel.NewCIStr(tidbmodel.MaterializedViewLogOldNewColumnName)
+	dmlTypeColName := pmodel.NewCIStr("_MLOG$_DML_TYPE")
+	oldNewColName := pmodel.NewCIStr("_MLOG$_OLD_NEW")
 
 	var hasDMLType, hasOldNew bool
 	for _, c := range mlogTable.Meta().Columns {
