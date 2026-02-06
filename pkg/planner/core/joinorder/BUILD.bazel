@@ -1,0 +1,16 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "joinorder",
+    srcs = ["util.go"],
+    importpath = "github.com/pingcap/tidb/pkg/planner/core/joinorder",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//pkg/parser/ast",
+        "//pkg/planner/core/base",
+        "//pkg/planner/core/operator/logicalop",
+        "//pkg/planner/util",
+        "//pkg/util/hint",
+        "//pkg/util/intest",
+    ],
+)
