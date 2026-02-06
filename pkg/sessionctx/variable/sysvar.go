@@ -529,9 +529,9 @@ var defaultSysVars = []*SysVar{
 		oldConfig := config.GetGlobalConfig()
 		newValue := TiDBOptOn(val)
 		if oldConfig.Instance.EnableCollectExecutionInfo.Load() != newValue {
-			newConfig := *oldConfig
-			newConfig.Instance.EnableCollectExecutionInfo.Store(newValue)
-			config.StoreGlobalConfig(&newConfig)
+			config.UpdateGlobal(func(conf *config.Config) {
+				conf.Instance.EnableCollectExecutionInfo.Store(newValue)
+			})
 		}
 		return nil
 	}, GetGlobal: func(_ context.Context, s *SessionVars) (string, error) {
