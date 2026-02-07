@@ -163,6 +163,8 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 		err = e.executeCreateTable(x)
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
+	case *ast.CreateMaterializedViewLogStmt:
+		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:

@@ -1554,21 +1554,51 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int);")
 	tk.MustExec("insert into t values (1, 1);")
-	err := tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
+	dom := domain.GetDomain(tk.Session())
+	is := dom.InfoSchema()
+	tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	recordKey := hex.EncodeToString(tablecodec.EncodeRowKeyWithHandle(tbl.Meta().ID, kv.IntHandle(1)))
+
+	err = tk.QueryToErr("select tidb_encode_record_key('test', 't1', 0);")
 	require.ErrorContains(t, err, "doesn't exist")
 	tk.MustQuery("select tidb_encode_record_key('test', 't', 1);").
-		Check(testkit.Rows("74800000000000006e5f728000000000000001"))
+		Check(testkit.Rows(recordKey))
 
 	tk.MustExec("alter table t add index i(b);")
+	dom = domain.GetDomain(tk.Session())
+	is = dom.InfoSchema()
+	tbl, err = is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	idx := tbl.Meta().FindIndexByName("i")
+	require.NotNil(t, idx)
+	indexKeyData := []types.Datum{types.NewIntDatum(1), types.NewIntDatum(1)}
+	indexKeyBytes, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, indexKeyData...)
+	require.NoError(t, err)
+	indexKeyBytes = tablecodec.EncodeIndexSeekKey(tbl.Meta().ID, idx.ID, indexKeyBytes)
+	indexKey := hex.EncodeToString(indexKeyBytes)
 	err = tk.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "index not found")
 	tk.MustQuery("select tidb_encode_index_key('test', 't', 'i', 1, 1);").
-		Check(testkit.Rows("74800000000000006e5f698000000000000001038000000000000001038000000000000001"))
+		Check(testkit.Rows(indexKey))
 
 	tk.MustExec("create table t1 (a int primary key, b int) partition by hash(a) partitions 4;")
 	tk.MustExec("insert into t1 values (1, 1);")
-	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
-	rs := tk.MustQuery("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	dom = domain.GetDomain(tk.Session())
+	is = dom.InfoSchema()
+	tbl1, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t1"))
+	require.NoError(t, err)
+	var partitionID int64
+	for _, def := range tbl1.Meta().Partition.Definitions {
+		if def.Name.O == "p1" {
+			partitionID = def.ID
+			break
+		}
+	}
+	require.NotZero(t, partitionID)
+	partitionRecordKey := hex.EncodeToString(tablecodec.EncodeRowKeyWithHandle(partitionID, kv.IntHandle(1)))
+	tk.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(partitionRecordKey))
+	rs := tk.MustQuery(fmt.Sprintf("select tidb_mvcc_info('%s');", recordKey))
 	mvccInfo := rs.Rows()[0][0].(string)
 	require.NotEqual(t, mvccInfo, `{"info":{}}`)
 
@@ -1577,14 +1607,14 @@ func TestTiDBEncodeKey(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	err = tk2.Session().Auth(&auth.UserIdentity{Username: "alice", Hostname: "localhost"}, nil, nil, nil)
 	require.NoError(t, err)
-	err = tk2.QueryToErr("select tidb_mvcc_info('74800000000000006f5f728000000000000001');")
+	err = tk2.QueryToErr(fmt.Sprintf("select tidb_mvcc_info('%s');", recordKey))
 	require.ErrorContains(t, err, "Access denied")
 	err = tk2.QueryToErr("select tidb_encode_record_key('test', 't1(p1)', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	err = tk2.QueryToErr("select tidb_encode_index_key('test', 't', 'i1', 1);")
 	require.ErrorContains(t, err, "SELECT command denied")
 	tk.MustExec("grant select on test.t1 to 'alice'@'%';")
-	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows("7480000000000000735f728000000000000001"))
+	tk2.MustQuery("select tidb_encode_record_key('test', 't1(p1)', 1);").Check(testkit.Rows(partitionRecordKey))
 }
 
 func TestIssue9710(t *testing.T) {

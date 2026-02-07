@@ -276,6 +276,27 @@ func (d *Checker) CreateView(ctx sessionctx.Context, stmt *ast.CreateViewStmt) e
 	return nil
 }
 
+// CreateMaterializedViewLog implements the DDL interface.
+func (d *Checker) CreateMaterializedViewLog(ctx sessionctx.Context, stmt *ast.CreateMaterializedViewLogStmt) error {
+	err := d.realExecutor.CreateMaterializedViewLog(ctx, stmt)
+	if err != nil || d.closed.Load() {
+		return err
+	}
+
+	err = d.tracker.CreateMaterializedViewLog(ctx, stmt)
+	if err != nil {
+		panic(err)
+	}
+
+	schemaName := stmt.Table.Schema
+	if schemaName.O == "" {
+		schemaName = pmodel.NewCIStr(ctx.GetSessionVars().CurrentDB)
+	}
+	d.checkTableInfo(ctx, schemaName, pmodel.NewCIStr("$mlog$"+stmt.Table.Name.O))
+	d.checkTableInfo(ctx, schemaName, stmt.Table.Name)
+	return nil
+}
+
 // DropTable implements the DDL interface.
 func (d *Checker) DropTable(ctx sessionctx.Context, stmt *ast.DropTableStmt) (err error) {
 	err = d.realExecutor.DropTable(ctx, stmt)

@@ -96,21 +96,22 @@ const (
 	ActionAlterTablePlacement           ActionType = 56
 	ActionAlterCacheTable               ActionType = 57
 	// not used
-	ActionAlterTableStatsOptions ActionType = 58
-	ActionAlterNoCacheTable      ActionType = 59
-	ActionCreateTables           ActionType = 60
-	ActionMultiSchemaChange      ActionType = 61
-	ActionFlashbackCluster       ActionType = 62
-	ActionRecoverSchema          ActionType = 63
-	ActionReorganizePartition    ActionType = 64
-	ActionAlterTTLInfo           ActionType = 65
-	ActionAlterTTLRemove         ActionType = 67
-	ActionCreateResourceGroup    ActionType = 68
-	ActionAlterResourceGroup     ActionType = 69
-	ActionDropResourceGroup      ActionType = 70
-	ActionAlterTablePartitioning ActionType = 71
-	ActionRemovePartitioning     ActionType = 72
-	ActionAddVectorIndex         ActionType = 73
+	ActionAlterTableStatsOptions    ActionType = 58
+	ActionAlterNoCacheTable         ActionType = 59
+	ActionCreateTables              ActionType = 60
+	ActionMultiSchemaChange         ActionType = 61
+	ActionFlashbackCluster          ActionType = 62
+	ActionRecoverSchema             ActionType = 63
+	ActionReorganizePartition       ActionType = 64
+	ActionAlterTTLInfo              ActionType = 65
+	ActionAlterTTLRemove            ActionType = 67
+	ActionCreateResourceGroup       ActionType = 68
+	ActionAlterResourceGroup        ActionType = 69
+	ActionDropResourceGroup         ActionType = 70
+	ActionAlterTablePartitioning    ActionType = 71
+	ActionRemovePartitioning        ActionType = 72
+	ActionAddVectorIndex            ActionType = 73
+	ActionCreateMaterializedViewLog ActionType = 74
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -118,6 +119,7 @@ var ActionMap = map[ActionType]string{
 	ActionCreateSchema:                  "create schema",
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
+	ActionCreateMaterializedViewLog:     "create materialized view log",
 	ActionCreateTables:                  "create tables",
 	ActionDropTable:                     "drop table",
 	ActionAddColumn:                     "add column",

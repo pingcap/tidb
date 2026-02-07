@@ -15,6 +15,7 @@ go_library(
         "keywords.go",
         "lexer.go",
         "misc.go",
+        "mview_stmt_options.go",
         "parser.go",
         "yy_parser.go",
     ],
