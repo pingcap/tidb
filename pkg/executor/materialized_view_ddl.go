@@ -186,7 +186,7 @@ func buildMViewRefreshMeta(refresh *ast.MViewRefreshClause) (method, startWith, 
 		method = "FAST"
 		startWith = "NOW()"
 		if refresh.StartWith != nil {
-			s, err := restoreExprToCanonicalSQL(refresh.StartWith)
+			s, err := restoreToCanonicalSQL(refresh.StartWith)
 			if err != nil {
 				return "", "", "", err
 			}
@@ -194,7 +194,7 @@ func buildMViewRefreshMeta(refresh *ast.MViewRefreshClause) (method, startWith, 
 		}
 		next = fmt.Sprintf("%d", defaultNextSeconds)
 		if refresh.Next != nil {
-			s, err := restoreExprToCanonicalSQL(refresh.Next)
+			s, err := restoreToCanonicalSQL(refresh.Next)
 			if err != nil {
 				return "", "", "", err
 			}
