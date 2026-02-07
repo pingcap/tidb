@@ -35,11 +35,7 @@
         "LastPlanFromCache": [
           "0"
         ],
-        "Warning": [
-          "Warning 1105 Scalar function 'find_in_set'(signature: FindInSet, return type: bigint(3)) is not supported to push down to tiflash now.",
-          "Warning 1105 Scalar function 'find_in_set'(signature: FindInSet, return type: bigint(3)) is not supported to push down to tiflash now.",
-          "Warning 1105 Scalar function 'find_in_set'(signature: FindInSet, return type: bigint(3)) is not supported to push down to tiflash now."
-        ]
+        "Warning": null
       },
       {
         "SQL": "with cte_81 ( col_108 ) AS ( select    space( 2 ) as r0 from t7c899916 where t7c899916.col_44 = '[17764220206423580415]' and t7c899916.col_44 != '[5725396597060626308,5860284933591136807,11766074999769332834,11879855656810383243]' order by r0 limit 385374223 ) ( select 1,col_108 from cte_81 where cte_81.col_108 = null or cte_81.col_108 in ( '^w#txObGH*=J*Jn5kq' ,'+PzzjiWQ7y&PQV' ,'=%4C7Oain' )   )",
