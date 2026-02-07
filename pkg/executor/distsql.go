@@ -1956,19 +1956,34 @@ func (w *tableWorker) executeTask(ctx context.Context, task *lookupTableTask) er
 				obtainedHandlesMap.Set(handle, true)
 			}
 			missHds := GetLackHandles(task.handles, obtainedHandlesMap)
-			return reportIndexLookupInconsistency(ctx,
-				w.idxLookup.dctx,
-				w.idxLookup.table.Meta(),
-				w.idxLookup.index,
-				w.idxLookup.enableRedactLog,
-				w.idxLookup.storage,
-				func(hd kv.Handle) kv.Key {
+			if w.idxLookup.index.IsTiCIIndex() {
+				warn := consistency.ErrLookupInconsistent.GenWithStackByArgs(
+					w.idxLookup.table.Meta().Name.O,
+					w.idxLookup.index.Name.O,
+					handleCnt,
+					len(task.rows),
+				)
+				if w.idxLookup.dctx != nil {
+					w.idxLookup.dctx.AppendWarning(warn)
+					return nil
+				}
+				return warn
+			}
+			return (&consistency.Reporter{
+				HandleEncode: func(hd kv.Handle) kv.Key {
 					return tablecodec.EncodeRecordKey(w.idxLookup.table.RecordPrefix(), hd)
 				},
+				Tbl:             w.idxLookup.table.Meta(),
+				Idx:             w.idxLookup.index,
+				EnableRedactLog: w.idxLookup.enableRedactLog,
+				Storage:         w.idxLookup.storage,
+			}).ReportLookupInconsistent(ctx,
 				handleCnt,
 				len(task.rows),
 				missHds,
 				task.handles,
+				nil,
+				//missRecords,
 			)
 		}
 	}
@@ -1997,36 +2012,6 @@ func GetLackHandles(expectedHandles []kv.Handle, obtainedHandlesMap *kv.HandleMa
 	}
 
 	return diffHandles
-}
-
-func reportIndexLookupInconsistency(
-	ctx context.Context,
-	dctx *distsqlctx.DistSQLContext,
-	tblInfo *model.TableInfo,
-	idxInfo *model.IndexInfo,
-	enableRedactLog string,
-	storage kv.Storage,
-	handleEncode func(kv.Handle) kv.Key,
-	indexCnt, recordCnt int,
-	missHd, fullHd []kv.Handle,
-) error {
-	// TiCI index lookup has eventual consistency characteristics in some cases.
-	// Keep returning rows and expose inconsistency through warnings instead of failing the query.
-	if idxInfo.IsTiCIIndex() {
-		warn := consistency.ErrLookupInconsistent.GenWithStackByArgs(tblInfo.Name.O, idxInfo.Name.O, indexCnt, recordCnt)
-		if dctx != nil {
-			dctx.AppendWarning(warn)
-			return nil
-		}
-		return warn
-	}
-	return (&consistency.Reporter{
-		HandleEncode:    handleEncode,
-		Tbl:             tblInfo,
-		Idx:             idxInfo,
-		EnableRedactLog: enableRedactLog,
-		Storage:         storage,
-	}).ReportLookupInconsistent(ctx, indexCnt, recordCnt, missHd, fullHd, nil)
 }
 
 func getPhysicalPlanIDs(plans []base.PhysicalPlan) []int {
