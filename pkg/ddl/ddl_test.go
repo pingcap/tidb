@@ -554,12 +554,17 @@ func TestCheckHistoryJobStmtType(t *testing.T) {
 	}
 
 	createTableStmt := parseStmt("create table t (a int)")
+	createMViewStmt := parseStmt("create materialized view mv (a, c) as select a, count(1) from t group by a")
 	createMLogStmt := parseStmt("create materialized view log on t (a)")
 	createDBStmt := parseStmt("create database test")
 	createPolicyStmt := parseStmt("create placement policy p followers=1")
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateTable, createTableStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMLogStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateTable, createMViewStmt))
+
+	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createMViewStmt))
+	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedView, createTableStmt))
 
 	require.True(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createMLogStmt))
 	require.False(t, checkHistoryJobStmtType(model.ActionCreateMaterializedViewLog, createTableStmt))

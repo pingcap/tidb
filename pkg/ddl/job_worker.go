@@ -949,6 +949,8 @@ func (w *worker) runOneJobStep(
 		ver, err = w.onCreateTable(jobCtx, job)
 	case model.ActionCreateMaterializedViewLog:
 		ver, err = w.onCreateMaterializedViewLog(jobCtx, job)
+	case model.ActionCreateMaterializedView:
+		ver, err = w.onCreateMaterializedView(jobCtx, job)
 	case model.ActionCreateTables:
 		ver, err = w.onCreateTables(jobCtx, job)
 	case model.ActionRepairTable:

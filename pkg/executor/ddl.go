@@ -164,13 +164,13 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.CreateViewStmt:
 		err = e.executeCreateView(ctx, x)
 	case *ast.CreateMaterializedViewStmt:
-		err = e.executeCreateMaterializedView(ctx, x)
+		err = e.ddlExecutor.CreateMaterializedView(e.Ctx(), x)
 	case *ast.CreateMaterializedViewLogStmt:
 		err = e.ddlExecutor.CreateMaterializedViewLog(e.Ctx(), x)
 	case *ast.AlterMaterializedViewStmt:
-		err = e.executeAlterMaterializedView(ctx, x)
+		err = e.ddlExecutor.AlterMaterializedView(e.Ctx(), x)
 	case *ast.AlterMaterializedViewLogStmt:
-		err = e.executeAlterMaterializedViewLog(ctx, x)
+		err = e.ddlExecutor.AlterMaterializedViewLog(e.Ctx(), x)
 	case *ast.DropIndexStmt:
 		err = e.executeDropIndex(x)
 	case *ast.DropDatabaseStmt:
@@ -213,11 +213,11 @@ func (e *DDLExec) Next(ctx context.Context, _ *chunk.Chunk) (err error) {
 	case *ast.DropSequenceStmt:
 		err = e.executeDropSequence(x)
 	case *ast.DropMaterializedViewStmt:
-		err = e.executeDropMaterializedView(ctx, x)
+		err = e.ddlExecutor.DropMaterializedView(e.Ctx(), x)
 	case *ast.DropMaterializedViewLogStmt:
-		err = e.executeDropMaterializedViewLog(ctx, x)
+		err = e.ddlExecutor.DropMaterializedViewLog(e.Ctx(), x)
 	case *ast.RefreshMaterializedViewStmt:
-		err = e.executeRefreshMaterializedView(ctx, x)
+		err = e.ddlExecutor.RefreshMaterializedView(e.Ctx(), x)
 	case *ast.AlterSequenceStmt:
 		err = e.executeAlterSequence(x)
 	case *ast.CreatePlacementPolicyStmt:

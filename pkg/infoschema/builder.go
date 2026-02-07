@@ -355,7 +355,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 	switch diff.Type {
 	case model.ActionCreateSequence, model.ActionRecoverTable:
 		newTableID = diff.TableID
-	case model.ActionCreateTable, model.ActionCreateMaterializedViewLog:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog:
 		// WARN: when support create table with foreign key in https://github.com/pingcap/tidb/pull/37148,
 		// create table with foreign key requires a multi-step state change(none -> write-only -> public),
 		// when the table's state changes from write-only to public, infoSchema need to drop the old table
@@ -396,7 +396,7 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateMaterializedViewLog, model.ActionAddTablePartition:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
 	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)

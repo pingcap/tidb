@@ -246,6 +246,9 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, job
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
 func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	diff.TableID = job.TableID
+	if job.Type != model.ActionCreateTable {
+		return nil
+	}
 	tbInfo := jobCtx.jobArgs.(*model.CreateTableArgs).TableInfo
 
 	// When create table with foreign key, there are two schema status change:
@@ -347,7 +350,7 @@ func updateSchemaVersion(jobCtx *jobContext, job *model.Job, multiInfos ...schem
 		SetSchemaDiffForReorganizePartition(diff, job, jobCtx)
 	case model.ActionRemovePartitioning, model.ActionAlterTablePartitioning:
 		SetSchemaDiffForPartitionModify(diff, job, jobCtx)
-	case model.ActionCreateTable:
+	case model.ActionCreateTable, model.ActionCreateMaterializedView:
 		err = SetSchemaDiffForCreateTable(diff, job, jobCtx)
 	case model.ActionRecoverSchema:
 		err = SetSchemaDiffForRecoverSchema(diff, job)

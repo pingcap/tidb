@@ -112,6 +112,7 @@ const (
 	ActionRemovePartitioning        ActionType = 72
 	ActionAddVectorIndex            ActionType = 73
 	ActionCreateMaterializedViewLog ActionType = 74
+	ActionCreateMaterializedView    ActionType = 75
 )
 
 // ActionMap is the map of DDL ActionType to string.
@@ -120,6 +121,7 @@ var ActionMap = map[ActionType]string{
 	ActionDropSchema:                    "drop schema",
 	ActionCreateTable:                   "create table",
 	ActionCreateMaterializedViewLog:     "create materialized view log",
+	ActionCreateMaterializedView:        "create materialized view",
 	ActionCreateTables:                  "create tables",
 	ActionDropTable:                     "drop table",
 	ActionAddColumn:                     "add column",

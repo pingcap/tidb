@@ -243,9 +243,11 @@ func checkHistoryJobStmtType(jobType model.ActionType, st ast.StmtNode) bool {
 		_, ok := st.(*ast.CreatePlacementPolicyStmt)
 		return ok
 	case model.ActionCreateTable:
-		_, isCreateTable := st.(*ast.CreateTableStmt)
-		_, isCreateMView := st.(*ast.CreateMaterializedViewStmt)
-		return isCreateTable || isCreateMView
+		_, ok := st.(*ast.CreateTableStmt)
+		return ok
+	case model.ActionCreateMaterializedView:
+		_, ok := st.(*ast.CreateMaterializedViewStmt)
+		return ok
 	case model.ActionCreateMaterializedViewLog:
 		_, ok := st.(*ast.CreateMaterializedViewLogStmt)
 		return ok
