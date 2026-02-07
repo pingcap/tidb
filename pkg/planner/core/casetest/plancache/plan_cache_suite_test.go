@@ -219,6 +219,8 @@ func TestNonPreparedPlanCacheBasically(t *testing.T) {
 		"select * from t where a in (1, 2) and b < 15",
 		"select * from t where a between 1 and 10",
 		"select * from t where a between 1 and 10 and b < 15",
+		"select * from t where a is null",
+		"select * from t where a is not null",
 	}
 
 	for _, query := range queries {
