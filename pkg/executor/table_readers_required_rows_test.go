@@ -28,6 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/table/tables"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -262,4 +264,56 @@ func TestIndexReaderRequiredRows(t *testing.T) {
 		}
 		require.NoError(t, executor.Close())
 	}
+}
+
+func TestReportIndexLookupInconsistencyForTiCI(t *testing.T) {
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	dctx := &distsqlctx.DistSQLContext{WarnHandler: warnHandler}
+	tbl := &model.TableInfo{Name: ast.NewCIStr("t")}
+	idx := &model.IndexInfo{
+		Name:         ast.NewCIStr("idx"),
+		FullTextInfo: &model.FullTextIndexInfo{},
+	}
+
+	err := reportIndexLookupInconsistency(
+		context.Background(),
+		dctx,
+		tbl,
+		idx,
+		"",
+		nil,
+		nil,
+		2,
+		1,
+		nil,
+		nil,
+	)
+	require.NoError(t, err)
+	warns := warnHandler.GetWarnings()
+	require.Len(t, warns, 1)
+	require.Equal(t, contextutil.WarnLevelWarning, warns[0].Level)
+	require.Equal(t, "[executor:8133]data inconsistency in table: t, index: idx, index-count:2 != record-count:1", warns[0].Err.Error())
+}
+
+func TestReportIndexLookupInconsistencyForNonTiCI(t *testing.T) {
+	warnHandler := contextutil.NewStaticWarnHandler(0)
+	dctx := &distsqlctx.DistSQLContext{WarnHandler: warnHandler}
+	tbl := &model.TableInfo{Name: ast.NewCIStr("t")}
+	idx := &model.IndexInfo{Name: ast.NewCIStr("idx")}
+
+	err := reportIndexLookupInconsistency(
+		context.Background(),
+		dctx,
+		tbl,
+		idx,
+		"",
+		nil,
+		func(hd kv.Handle) kv.Key { return nil },
+		1,
+		0,
+		[]kv.Handle{kv.IntHandle(1)},
+		[]kv.Handle{kv.IntHandle(1)},
+	)
+	require.EqualError(t, err, "[executor:8133]data inconsistency in table: t, index: idx, index-count:1 != record-count:0")
+	require.Equal(t, 0, warnHandler.WarningCount())
 }
