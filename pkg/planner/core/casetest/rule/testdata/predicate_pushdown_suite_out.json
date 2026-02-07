@@ -108,11 +108,7 @@
         ],
         "Result": null,
         "Warning": [
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to storage layer now.",
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now.",
-          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to tiflash now."
+          "Warning 1105 Scalar function 'rand'(signature: Rand, return type: double) is not supported to push down to storage layer now."
         ]
       },
       {

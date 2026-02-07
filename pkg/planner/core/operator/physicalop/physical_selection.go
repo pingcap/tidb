@@ -57,7 +57,9 @@ func ExhaustPhysicalPlans4LogicalSelection(p *logicalop.LogicalSelection, prop *
 	childProp := prop.CloneEssentialFields()
 	newProps = append(newProps, childProp)
 	// we lift the p.CanPushDown(kv.TiFlash) check here, which may depend on the children.
-	canPushDownToTiFlash := !expression.ContainVirtualColumn(p.Conditions) &&
+	// Guard with HasTiFlash first to avoid emitting TiFlash pushdown warnings when no TiFlash path exists.
+	canPushDownToTiFlash := p.GetHasTiFlash() &&
+		!expression.ContainVirtualColumn(p.Conditions) &&
 		expression.CanExprsPushDown(util.GetPushDownCtx(p.SCtx()), p.Conditions, kv.TiFlash)
 
 	if prop.TaskTp != property.MppTaskType &&
