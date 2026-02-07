@@ -1,6 +1,8 @@
 package utils
 
 import (
+	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -11,6 +13,8 @@ import (
 )
 
 type TaskExecutor struct {
+	ctx context.Context
+
 	maxConcurrency atomic.Int64
 	timeoutNanos   atomic.Int64
 
@@ -44,11 +48,13 @@ type taskRequest struct {
 	task func() error
 }
 
-func NewTaskExecutor(maxConcurrency int, timeout time.Duration) *TaskExecutor {
+func NewTaskExecutor(ctx context.Context, maxConcurrency int, timeout time.Duration) *TaskExecutor {
 	if maxConcurrency <= 0 {
 		maxConcurrency = 1
 	}
-	exec := &TaskExecutor{}
+	exec := &TaskExecutor{
+		ctx: ctx,
+	}
 	exec.queue.cond = sync.NewCond(&exec.queue.mu)
 	exec.maxConcurrency.Store(int64(maxConcurrency))
 	exec.timeoutNanos.Store(int64(timeout))
@@ -95,7 +101,7 @@ func (e *TaskExecutor) Submit(name string, task func() error) {
 	if e == nil || task == nil {
 		return
 	}
-	if e.closed.Load() {
+	if e.closed.Load() || e.ctx.Err() != nil {
 		e.metrics.rejectedCount.Add(1)
 		return
 	}
@@ -196,7 +202,7 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 
 	timeout := time.Duration(e.timeoutNanos.Load())
 	if timeout <= 0 {
-		err := task()
+		err := e.safeExecute(name, task)
 		e.metrics.runningCount.Add(-1)
 		e.tasksWG.Done()
 		e.logResult(name, err)
@@ -205,7 +211,7 @@ func (e *TaskExecutor) runTask(name string, task func() error) {
 
 	done := make(chan error, 1)
 	go func() {
-		done <- task()
+		done <- e.safeExecute(name, task)
 	}()
 
 	timer := time.NewTimer(timeout)
@@ -245,4 +251,13 @@ func (e *TaskExecutor) logResult(name string, err error) {
 	e.metrics.completedCount.Add(1)
 	e.metrics.failedCount.Add(1)
 	logutil.BgLogger().Warn("mv task failed", zap.String("task", name), zap.Error(err))
+}
+
+func (e *TaskExecutor) safeExecute(_ string, task func() error) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("mv task panicked: %v", r)
+		}
+	}()
+	return task()
 }

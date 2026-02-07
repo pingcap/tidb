@@ -89,6 +89,10 @@ func TestConsistentHash_RemoveNodeUpdatesState(t *testing.T) {
 	if !reflect.DeepEqual(nodes, []string{"nodeA"}) {
 		t.Fatalf("expected nodes [nodeA], got %v", nodes)
 	}
+
+	if !sort.SliceIsSorted(c.ring, func(i, j int) bool { return c.ring[i].hash < c.ring[j].hash }) {
+		t.Fatalf("expected ring to remain sorted after removal")
+	}
 }
 
 func TestConsistentHash_EmptyState(t *testing.T) {
@@ -102,6 +106,78 @@ func TestConsistentHash_EmptyState(t *testing.T) {
 	}
 	if nodes := c.GetNodes(); len(nodes) != 0 {
 		t.Fatalf("expected no nodes, got %v", nodes)
+	}
+}
+
+func TestConsistentHash_RebuildResetsRing(t *testing.T) {
+	mapping := map[string]uint32{
+		"nodeA#0": 10,
+		"nodeA#1": 30,
+		"nodeB#0": 20,
+		"nodeB#1": 40,
+		"nodeC#0": 15,
+		"nodeC#1": 35,
+		"key":     25,
+	}
+
+	c := NewConsistentHash(2)
+	c.hashFunc = mustHash(mapping)
+
+	c.AddNode("nodeA")
+	c.AddNode("nodeB")
+
+	if got := c.NodeCount(); got != 2 {
+		t.Fatalf("expected 2 nodes, got %d", got)
+	}
+	if got := c.GetNode("key"); got == "" {
+		t.Fatalf("expected non-empty node before rebuild")
+	}
+
+	c.Rebuild([]string{"nodeC"})
+
+	if got := c.NodeCount(); got != 1 {
+		t.Fatalf("expected 1 node after rebuild, got %d", got)
+	}
+	if got := len(c.ring); got != 2 {
+		t.Fatalf("expected ring size 2 after rebuild, got %d", got)
+	}
+	if got := c.GetNode("key"); got != "nodeC" {
+		t.Fatalf("expected key mapped to nodeC after rebuild, got %q", got)
+	}
+	if !sort.SliceIsSorted(c.ring, func(i, j int) bool { return c.ring[i].hash < c.ring[j].hash }) {
+		t.Fatalf("expected ring to be sorted after rebuild")
+	}
+}
+
+func TestConsistentHash_RebuildFromMap(t *testing.T) {
+	mapping := map[string]uint32{
+		"nodeA#0": 10,
+		"nodeA#1": 30,
+		"nodeB#0": 20,
+		"nodeB#1": 40,
+		"key":     35,
+	}
+
+	c := NewConsistentHash(2)
+	c.hashFunc = mustHash(mapping)
+
+	nodes := map[string]int{
+		"nodeA": 1,
+		"nodeB": 2,
+	}
+	RebuildFromMap(c, nodes)
+
+	if got := c.NodeCount(); got != 2 {
+		t.Fatalf("expected 2 nodes, got %d", got)
+	}
+	if got := len(c.ring); got != 4 {
+		t.Fatalf("expected ring size 4, got %d", got)
+	}
+	if got := c.GetNode("key"); got == "" {
+		t.Fatalf("expected non-empty node for key")
+	}
+	if !sort.SliceIsSorted(c.ring, func(i, j int) bool { return c.ring[i].hash < c.ring[j].hash }) {
+		t.Fatalf("expected ring to be sorted after rebuild from map")
 	}
 }
 

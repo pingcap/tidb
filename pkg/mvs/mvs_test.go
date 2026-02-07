@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -8,7 +9,7 @@ import (
 )
 
 func TestTaskExecutorMaxConcurrency(t *testing.T) {
-	exec := NewTaskExecutor(1, 0)
+	exec := NewTaskExecutor(context.Background(), 1, 0)
 	defer exec.Close()
 
 	started := make(chan string, 2)
@@ -62,7 +63,7 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 }
 
 func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
-	exec := NewTaskExecutor(1, 0)
+	exec := NewTaskExecutor(context.Background(), 1, 0)
 	defer exec.Close()
 
 	started := make(chan struct{}, 2)
@@ -117,7 +118,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 }
 
 func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
-	exec := NewTaskExecutor(1, 50*time.Millisecond)
+	exec := NewTaskExecutor(context.Background(), 1, 50*time.Millisecond)
 	defer exec.Close()
 
 	started := make(chan string, 2)
@@ -167,7 +168,7 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 }
 
 func TestTaskExecutorUpdateTimeout(t *testing.T) {
-	exec := NewTaskExecutor(1, 0)
+	exec := NewTaskExecutor(context.Background(), 1, 0)
 	defer exec.Close()
 
 	exec.setTimeout(40 * time.Millisecond)
@@ -213,7 +214,7 @@ func TestTaskExecutorUpdateTimeout(t *testing.T) {
 }
 
 func TestTaskExecutorRejectAfterClose(t *testing.T) {
-	exec := NewTaskExecutor(1, 0)
+	exec := NewTaskExecutor(context.Background(), 1, 0)
 	exec.Close()
 
 	exec.Submit("rejected", func() error { return nil })

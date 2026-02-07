@@ -36,7 +36,7 @@ func NewServerConsistentHash(replicas int, helper ServerHelper) *ServerConsisten
 }
 
 // Init initializes current server ID. It keeps retrying until successful.
-func (sch *ServerConsistentHash) Init() {
+func (sch *ServerConsistentHash) Init(ctx context.Context) {
 	if sch == nil {
 		return
 	}
@@ -57,7 +57,7 @@ func (sch *ServerConsistentHash) Init() {
 	}
 
 	for {
-		err := sch.Fetch(context.Background())
+		err := sch.Fetch(ctx)
 		// only break when refresh is successful
 		if err == nil {
 			break

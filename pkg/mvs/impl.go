@@ -56,7 +56,7 @@ func RegisterMVS(ddlNotifier *notifier.DDLNotifier, se basic.SessionPool) {
 		return
 	}
 
-	mvs = NewMVJobsManager(se, &serverHelper{})
+	mvs = NewMVJobsManager(se, &serverHelper{}, noopMVTaskHandler{})
 
 	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		switch event.GetType() {

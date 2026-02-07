@@ -30,18 +30,18 @@ func (m *mockMVTaskHandler) PurgeMVLog(_ context.Context, mvLogID string) (nextP
 }
 
 func TestMVServiceDefaultTaskHandler(t *testing.T) {
-	svc := NewMVJobsManager(nil, nil)
+	svc := NewMVJobsManager(nil, nil, noopMVTaskHandler{})
 	defer svc.Close()
 
-	_, _, err := svc.executeMVRefresh(&mv{ID: "mv-1"})
+	_, _, err := svc.executeMVRefresh(context.Background(), &mv{ID: "mv-1"})
 	require.ErrorIs(t, err, ErrMVRefreshHandlerNotRegistered)
 
-	_, err = svc.executeMVLogPurge(&mvLog{ID: "mlog-1"})
+	_, err = svc.executeMVLogPurge(context.Background(), &mvLog{ID: "mlog-1"})
 	require.ErrorIs(t, err, ErrMVLogPurgeHandlerNotRegistered)
 }
 
 func TestMVServiceSetTaskHandler(t *testing.T) {
-	svc := NewMVJobsManager(nil, nil)
+	svc := NewMVJobsManager(nil, nil, noopMVTaskHandler{})
 	defer svc.Close()
 
 	nextRefresh := time.Now().Add(time.Minute).Round(0)
@@ -53,13 +53,13 @@ func TestMVServiceSetTaskHandler(t *testing.T) {
 	}
 	svc.SetTaskHandler(handler)
 
-	related, gotNextRefresh, err := svc.executeMVRefresh(&mv{ID: "mv-2"})
+	related, gotNextRefresh, err := svc.executeMVRefresh(context.Background(), &mv{ID: "mv-2"})
 	require.NoError(t, err)
 	require.Equal(t, []string{"mlog-a", "mlog-b"}, related)
 	require.True(t, nextRefresh.Equal(gotNextRefresh))
 	require.Equal(t, "mv-2", handler.lastRefreshID)
 
-	gotNextPurge, err := svc.executeMVLogPurge(&mvLog{ID: "mlog-2"})
+	gotNextPurge, err := svc.executeMVLogPurge(context.Background(), &mvLog{ID: "mlog-2"})
 	require.NoError(t, err)
 	require.True(t, nextPurge.Equal(gotNextPurge))
 	require.Equal(t, "mlog-2", handler.lastPurgeID)

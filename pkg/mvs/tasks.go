@@ -20,16 +20,16 @@ type MVService struct {
 	sysSessionPool basic.SessionPool
 	lastRefresh    atomic.Int64
 	running        atomic.Bool
+	runWg          sync.WaitGroup
+	ctx            context.Context
+	cancel         context.CancelFunc
 	sch            *ServerConsistentHash
 
 	executor *TaskExecutor
 	notifier Notifier
 	ddlDirty atomic.Bool
 
-	taskHandler struct {
-		refresh MVRefreshHandler
-		purge   MVLogPurgeHandler
-	}
+	taskHandler MVTaskHandler
 
 	metrics struct {
 		mvCount                atomic.Int64
@@ -62,16 +62,18 @@ const (
 )
 
 // NewMVJobsManager creates a MVJobsManager with a SQL executor.
-func NewMVJobsManager(se basic.SessionPool, helper ServerHelper) *MVService {
+func NewMVJobsManager(se basic.SessionPool, helper ServerHelper, taskHandler MVTaskHandler) *MVService {
+	ctx, cancel := context.WithCancel(context.Background())
 	mgr := &MVService{
 		sysSessionPool: se,
 		sch:            NewServerConsistentHash(10, helper),
-		executor:       NewTaskExecutor(defaultMVTaskMaxConcurrency, defaultMVTaskTimeout),
-		notifier:       NewNotifier(),
+		executor:       NewTaskExecutor(ctx, defaultMVTaskMaxConcurrency, defaultMVTaskTimeout),
+
+		notifier:    NewNotifier(),
+		ctx:         ctx,
+		cancel:      cancel,
+		taskHandler: taskHandler,
 	}
-	noopHandler := noopMVTaskHandler{}
-	mgr.taskHandler.refresh = noopHandler
-	mgr.taskHandler.purge = noopHandler
 	return mgr
 }
 
@@ -85,8 +87,7 @@ func (t *MVService) SetTaskHandler(handler MVTaskHandler) {
 	if handler == nil {
 		return
 	}
-	t.taskHandler.refresh = handler
-	t.taskHandler.purge = handler
+	t.taskHandler = handler
 }
 
 type mv struct {
@@ -185,8 +186,8 @@ COMMIT;
 返回所有相关 MVLOG 的 ID
 */
 
-func (t *MVService) executeMVRefresh(m *mv) (relatedMVLog []string, nextRefresh time.Time, err error) {
-	return t.taskHandler.refresh.RefreshMV(context.Background(), m.ID)
+func (t *MVService) executeMVRefresh(ctx context.Context, m *mv) (relatedMVLog []string, nextRefresh time.Time, err error) {
+	return t.taskHandler.RefreshMV(ctx, m.ID)
 }
 
 /*
@@ -209,8 +210,8 @@ COMMIT;
 
 return TS + PURGE_INTERVAL
 */
-func (t *MVService) executeMVLogPurge(l *mvLog) (nextPurge time.Time, err error) {
-	return t.taskHandler.purge.PurgeMVLog(context.Background(), l.ID)
+func (t *MVService) executeMVLogPurge(ctx context.Context, l *mvLog) (nextPurge time.Time, err error) {
+	return t.taskHandler.PurgeMVLog(ctx, l.ID)
 }
 
 /*
@@ -304,16 +305,20 @@ func (t *MVService) Start() {
 	if t.running.Swap(true) {
 		return
 	}
-	t.sch.Init()
+	t.sch.Init(t.ctx)
 	t.ddlDirty.Store(true)
 	t.notifier.Wake()
 
+	t.runWg.Add(1)
 	go t.scheduleLoop()
 }
 
 func (t *MVService) scheduleLoop() {
 	timer := time.NewTimer(0)
-	defer timer.Stop()
+	defer func() {
+		timer.Stop()
+		t.runWg.Done()
+	}()
 
 	for {
 		forceFetch := false
@@ -322,6 +327,8 @@ func (t *MVService) scheduleLoop() {
 		case <-t.notifier.C:
 			t.notifier.clear()
 			forceFetch = t.ddlDirty.Swap(false)
+		case <-t.ctx.Done():
+			return
 		}
 
 		if !t.running.Load() {
@@ -331,8 +338,8 @@ func (t *MVService) scheduleLoop() {
 		now := time.Now()
 
 		if forceFetch || t.shouldFetch(now) {
-			t.sch.Fetch(context.Background())
-			if err := t.FetchAllMVMeta(); err != nil {
+			t.sch.Fetch(t.ctx)
+			if err := t.FetchAllMVMeta(t.ctx); err != nil {
 				// avoid tight retries on fetch failures
 				t.lastRefresh.Store(now.UnixNano())
 			}
@@ -349,9 +356,11 @@ func (t *MVService) scheduleLoop() {
 
 // Close stops the background refresh loop.
 func (t *MVService) Close() {
-	if t.running.Swap(false) {
-		t.notifier.Wake()
+	t.cancel()
+	if !t.running.Swap(false) {
+		return
 	}
+	t.runWg.Wait()
 	if t.executor != nil {
 		t.executor.Close()
 		t.executor = nil
@@ -459,7 +468,7 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 		t.executor.Submit("mv-refresh/"+m.ID, func() error {
 			t.metrics.runningMVRefreshCount.Add(1)
 			defer t.metrics.runningMVRefreshCount.Add(-1)
-			_, nextRefresh, err := t.executeMVRefresh(m)
+			_, nextRefresh, err := t.executeMVRefresh(t.ctx, m)
 			if err != nil {
 				retryCount := m.retryCount.Add(1)
 				t.rescheduleMV(m, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
@@ -482,7 +491,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 		t.executor.Submit("mvlog-purge/"+l.ID, func() error {
 			t.metrics.runningMVLogPurgeCount.Add(1)
 			defer t.metrics.runningMVLogPurgeCount.Add(-1)
-			nextPurge, err := t.executeMVLogPurge(l)
+			nextPurge, err := t.executeMVLogPurge(t.ctx, l)
 			if err != nil {
 				retryCount := l.retryCount.Add(1)
 				t.rescheduleMVLog(l, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
@@ -518,7 +527,7 @@ func (t *MVService) rescheduleMVLog(l *mvLog, next int64) {
 }
 
 // ExecRCRestrictedSQL is used to execute a restricted SQL which related to resource control.
-func ExecRCRestrictedSQL(sysSessionPool basic.SessionPool, sql string, params []any) ([]chunk.Row, error) {
+func ExecRCRestrictedSQL(ctx context.Context, sysSessionPool basic.SessionPool, sql string, params []any) ([]chunk.Row, error) {
 	se, err := sysSessionPool.Get()
 	if err != nil {
 		return nil, err
@@ -528,7 +537,10 @@ func ExecRCRestrictedSQL(sysSessionPool basic.SessionPool, sql string, params []
 	}()
 	sctx := se.(sessionctx.Context)
 	exec := sctx.GetRestrictedSQLExecutor()
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnOthers)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
 	)
@@ -611,9 +623,9 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 	return nil
 }
 
-func (t *MVService) fetchAllTiDBMLogPurge() error {
+func (t *MVService) fetchAllTiDBMLogPurge(ctx context.Context) error {
 	const SQL = `SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlog_purge t join mysql.tidb_mlogs l on t.MLOG_ID = l.MLOG_ID`
-	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, SQL, nil)
+	rows, err := ExecRCRestrictedSQL(ctx, t.sysSessionPool, SQL, nil)
 	if err != nil {
 		return err
 	}
@@ -627,8 +639,12 @@ func (t *MVService) fetchAllTiDBMLogPurge() error {
 		}
 		l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
 		if !row.IsNull(2) {
-			gt, _ := row.GetTime(2).GoTime(time.Local)
-			l.nextPurge = gt.Add(l.purgeInterval)
+			gt, gtErr := row.GetTime(2).GoTime(time.Local)
+			if gtErr != nil {
+				l.nextPurge = time.Now()
+			} else {
+				l.nextPurge = gt.Add(l.purgeInterval)
+			}
 			l.orderTs = l.nextPurge.UnixMilli()
 		}
 		newPending[l.ID] = l
@@ -637,9 +653,9 @@ func (t *MVService) fetchAllTiDBMLogPurge() error {
 	return t.buildMLogPurgeTasks(newPending)
 }
 
-func (t *MVService) fetchAllTiDBMViews() error {
+func (t *MVService) fetchAllTiDBMViews(ctx context.Context) error {
 	const SQL = `SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mview_refresh t JOIN mysql.tidb_mviews v ON t.MVIEW_ID = v.MVIEW_ID`
-	rows, err := ExecRCRestrictedSQL(t.sysSessionPool, SQL, nil)
+	rows, err := ExecRCRestrictedSQL(ctx, t.sysSessionPool, SQL, nil)
 
 	if err != nil {
 		return err
@@ -654,8 +670,12 @@ func (t *MVService) fetchAllTiDBMViews() error {
 		}
 		m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
 		if !row.IsNull(2) {
-			gt, _ := row.GetTime(2).GoTime(time.Local)
-			m.nextRefresh = gt.Add(m.refreshInterval)
+			gt, gtErr := row.GetTime(2).GoTime(time.Local)
+			if gtErr != nil {
+				m.nextRefresh = time.Now()
+			} else {
+				m.nextRefresh = gt.Add(m.refreshInterval)
+			}
 			m.orderTs = m.nextRefresh.UnixMilli()
 		}
 		newPending[m.ID] = m
@@ -664,11 +684,11 @@ func (t *MVService) fetchAllTiDBMViews() error {
 	return t.buildMVRefreshTasks(newPending)
 }
 
-func (t *MVService) FetchAllMVMeta() error {
-	if err := t.fetchAllTiDBMLogPurge(); err != nil {
+func (t *MVService) FetchAllMVMeta(ctx context.Context) error {
+	if err := t.fetchAllTiDBMLogPurge(ctx); err != nil {
 		return err
 	}
-	if err := t.fetchAllTiDBMViews(); err != nil {
+	if err := t.fetchAllTiDBMViews(ctx); err != nil {
 		return err
 	}
 
