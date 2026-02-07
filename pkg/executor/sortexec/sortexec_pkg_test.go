@@ -17,6 +17,7 @@ package sortexec
 import (
 	"fmt"
 	"math/rand"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -239,6 +240,37 @@ func TestSortPartitionAQSortFallbackToStdSortOnEncodeError(t *testing.T) {
 	for i := range std.savedRows {
 		require.Equal(t, std.savedRows[i].GetInt64(2), aqs.savedRows[i].GetInt64(2), "row mismatch at index %d", i)
 	}
+}
+
+func TestSortPartitionAQSortMemTrackerAndKeyCap(t *testing.T) {
+	defer SetAQSortEnabled(false)
+	SetAQSortEnabled(true)
+
+	fields := []*types.FieldType{
+		types.NewFieldType(mysql.TypeVarString),
+	}
+	keyColumns := []int{0}
+	keyCmpFuncs := []chunk.CompareFunc{
+		chunk.GetCompareFunc(fields[keyColumns[0]]),
+	}
+
+	chk := chunk.NewChunkWithCapacity(fields, 4)
+	longStr := strings.Repeat("x", 2000)
+	for i := 0; i < 4; i++ {
+		chk.AppendString(0, fmt.Sprintf("%s_%d", longStr, i))
+	}
+
+	partition := newSortPartition(fields, []bool{false}, keyColumns, keyCmpFuncs, 1<<60, "", time.UTC)
+	defer partition.close()
+	rootTracker := memory.NewTracker(-1, -1)
+	partition.getMemTracker().AttachTo(rootTracker)
+	require.True(t, partition.add(chk))
+
+	before := partition.getMemTracker().BytesConsumed()
+	require.NoError(t, partition.sort())
+	after := partition.getMemTracker().BytesConsumed()
+	require.Equal(t, before, after)
+	require.Equal(t, 1024, partition.aqsKeyCap)
 }
 
 func TestSortPartitionAQSortMatchesStdSort_MultiTypesAndNulls(t *testing.T) {

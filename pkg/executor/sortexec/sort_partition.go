@@ -15,6 +15,7 @@
 package sortexec
 
 import (
+	"sort"
 	"sync"
 	"time"
 
@@ -74,6 +75,7 @@ type sortPartition struct {
 	loc        *time.Location
 	useAQSort  bool
 	aqsortCtrl *aqsortControl
+	aqsKeyCap  int
 }
 
 // Creates a new SortPartition in memory.
@@ -100,6 +102,7 @@ func newSortPartition(fieldTypes []*types.FieldType, byItemsDesc []bool,
 		fileNamePrefixForTest: fileNamePrefixForTest,
 		loc:                   loc,
 		useAQSort:             isAQSortEnabled(),
+		aqsKeyCap:             64,
 	}
 
 	return retVal
@@ -159,20 +162,17 @@ func (s *sortPartition) sortNoLock() (ret error) {
 		}
 	})
 
-	aqsort.Slice(s.savedRows, s.keyColumnsLess, s.aqsortConfig())
+	if s.shouldUseAQSort() {
+		if err := s.sortRowsByEncodedKey(); err != nil {
+			s.disableAQSort(err)
+			s.sortRowsByColumns()
+		}
+	} else {
+		s.sortRowsByColumns()
+	}
 	s.isSorted = true
 	s.sliceIter = chunk.NewIterator4Slice(s.savedRows)
 	return
-}
-
-func (s *sortPartition) aqsortConfig() aqsort.SliceConfig[chunk.Row] {
-	return aqsort.SliceConfig[chunk.Row]{
-		Enabled:         s.shouldUseAQSort,
-		EncodeKey:       s.encodeRowSortKeyWithCheckpoint,
-		Disable:         s.disableAQSort,
-		CheckpointEvery: signalCheckpointForSort,
-		CheckpointFn:    s.memTracker.HandleKillSignal,
-	}
 }
 
 func (s *sortPartition) shouldUseAQSort() bool {
@@ -190,24 +190,88 @@ func (s *sortPartition) disableAQSort(err error) {
 	}
 }
 
-func (s *sortPartition) encodeRowSortKeyWithCheckpoint(idx int, row chunk.Row) ([]byte, error) {
-	failpoint.Inject("AQSortForceEncodeKeyError", func(val failpoint.Value) {
-		if val.(bool) {
-			failpoint.Return(nil, errors.NewNoStackError("injected aqsort sort key encode error"))
-		}
-	})
+func (s *sortPartition) sortRowsByColumns() {
+	sort.Slice(s.savedRows, s.keyColumnsLess)
+}
+
+func (s *sortPartition) sortRowsByEncodedKey() error {
+	rows := s.savedRows
+	if len(rows) <= 1 {
+		return nil
+	}
 
 	if s.loc == nil {
 		s.loc = time.UTC
 	}
-	if idx%1024 == 0 {
-		s.memTracker.HandleKillSignal()
+
+	failpoint.Inject("AQSortForceEncodeKeyError", func(val failpoint.Value) {
+		if val.(bool) {
+			failpoint.Return(errors.NewNoStackError("injected aqsort sort key encode error"))
+		}
+	})
+
+	keyCap := s.aqsKeyCap
+	if keyCap < 64 {
+		keyCap = 64
 	}
-	return s.encodeRowSortKey(row)
+	neededArena := len(rows) * keyCap
+	arena := make([]byte, neededArena)
+	pairs := make([]aqsort.Pair[chunk.Row], len(rows))
+
+	pairBytes := int64(len(rows)) * aqsortPairSize
+	totalBytes := pairBytes*2 + int64(neededArena)
+	var overflowBytes int64
+	if s.memTracker != nil {
+		s.memTracker.Consume(totalBytes)
+		defer func() {
+			if overflowBytes > 0 {
+				s.memTracker.Consume(-overflowBytes)
+			}
+			s.memTracker.Consume(-totalBytes)
+		}()
+	}
+
+	maxKeyLen := 0
+	for i := range rows {
+		if i%1024 == 0 && s.memTracker != nil {
+			s.memTracker.HandleKillSignal()
+		}
+		key := arena[i*keyCap : i*keyCap : i*keyCap+keyCap]
+		encoded, err := s.encodeRowSortKey(rows[i], key)
+		if err != nil {
+			return err
+		}
+		if cap(encoded) > keyCap && s.memTracker != nil {
+			overflowBytes += int64(cap(encoded))
+			s.memTracker.Consume(int64(cap(encoded)))
+		}
+		if ln := len(encoded); ln > maxKeyLen {
+			maxKeyLen = ln
+		}
+		pairs[i] = aqsort.Pair[chunk.Row]{Key: encoded, Val: rows[i]}
+	}
+	if maxKeyLen > keyCap {
+		if maxKeyLen > 1024 {
+			s.aqsKeyCap = 1024
+		} else {
+			s.aqsKeyCap = maxKeyLen
+		}
+	}
+
+	var sorter aqsort.PairSorter[chunk.Row]
+	if s.memTracker != nil {
+		sorter.SortWithCheckpoint(pairs, signalCheckpointForSort, s.memTracker.HandleKillSignal)
+	} else {
+		sorter.Sort(pairs)
+	}
+	for i := range rows {
+		rows[i] = pairs[i].Val
+	}
+	return nil
 }
 
-func (s *sortPartition) encodeRowSortKey(row chunk.Row) ([]byte, error) {
-	key := make([]byte, 0, len(s.keyColumns)*16)
+func (s *sortPartition) encodeRowSortKey(row chunk.Row, dst []byte) ([]byte, error) {
+	key := dst[:0]
 	for i, colIdx := range s.keyColumns {
 		start := len(key)
 		datum := row.GetDatum(colIdx, s.fieldTypes[colIdx])

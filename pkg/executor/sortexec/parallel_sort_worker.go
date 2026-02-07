@@ -69,6 +69,10 @@ type parallelSortWorker struct {
 	aqsArena  []byte
 	aqsKeyCap int
 
+	aqsPairsBytes int64
+	aqsArenaBytes int64
+	aqsTmpBytes   int64
+
 	useAQSort  bool
 	aqsortCtrl *aqsortControl
 }
@@ -117,6 +121,9 @@ func (p *parallelSortWorker) reset() {
 	p.sortedRowsIter = nil
 	p.merger = nil
 	p.memTracker.ReplaceBytesUsed(0)
+	p.aqsPairsBytes = 0
+	p.aqsArenaBytes = 0
+	p.aqsTmpBytes = 0
 }
 
 func (p *parallelSortWorker) injectFailPointForParallelSortWorker(triggerFactor int32) {
@@ -229,11 +236,44 @@ func (p *parallelSortWorker) disableAQSort(err error) {
 	}
 }
 
+func (p *parallelSortWorker) trackAQSortPairsCap(capacity int) {
+	if p.memTracker == nil || capacity <= 0 {
+		return
+	}
+	bytes := int64(capacity) * aqsortPairSize
+	if bytes > p.aqsPairsBytes {
+		p.memTracker.Consume(bytes - p.aqsPairsBytes)
+		p.aqsPairsBytes = bytes
+	}
+}
+
+func (p *parallelSortWorker) trackAQSortArenaCap(capacity int) {
+	if p.memTracker == nil || capacity <= 0 {
+		return
+	}
+	bytes := int64(capacity)
+	if bytes > p.aqsArenaBytes {
+		p.memTracker.Consume(bytes - p.aqsArenaBytes)
+		p.aqsArenaBytes = bytes
+	}
+}
+
+func (p *parallelSortWorker) trackAQSortTmpCap(capacity int) {
+	if p.memTracker == nil || capacity <= 0 {
+		return
+	}
+	bytes := int64(capacity) * aqsortPairSize
+	if bytes > p.aqsTmpBytes {
+		p.memTracker.Consume(bytes - p.aqsTmpBytes)
+		p.aqsTmpBytes = bytes
+	}
+}
+
 func (p *parallelSortWorker) sortRowsByColumns(rows []chunk.Row) {
 	slices.SortFunc(rows, p.keyColumnsLess)
 }
 
-func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) error {
+func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) (err error) {
 	if len(rows) <= 1 {
 		return nil
 	}
@@ -252,6 +292,8 @@ func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) error {
 	} else {
 		p.aqsPairs = p.aqsPairs[:len(rows)]
 	}
+	p.trackAQSortPairsCap(cap(p.aqsPairs))
+	p.trackAQSortTmpCap(len(rows))
 
 	keyCap := p.aqsKeyCap
 	if keyCap < 64 {
@@ -263,8 +305,20 @@ func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) error {
 	} else {
 		p.aqsArena = p.aqsArena[:neededArena]
 	}
+	p.trackAQSortArenaCap(cap(p.aqsArena))
 
 	maxKeyLen := 0
+	var overflowBytes int64
+	defer func() {
+		if overflowBytes > 0 && p.memTracker != nil {
+			p.memTracker.Consume(-overflowBytes)
+		}
+		if err != nil {
+			for i := range p.aqsPairs {
+				p.aqsPairs[i].Key = nil
+			}
+		}
+	}()
 	for i := range rows {
 		if i%1024 == 0 {
 			p.checkKillSignal()
@@ -273,6 +327,10 @@ func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) error {
 		encoded, err := p.encodeRowSortKey(rows[i], key)
 		if err != nil {
 			return err
+		}
+		if cap(encoded) > keyCap && p.memTracker != nil {
+			overflowBytes += int64(cap(encoded))
+			p.memTracker.Consume(int64(cap(encoded)))
 		}
 		if ln := len(encoded); ln > maxKeyLen {
 			maxKeyLen = ln
@@ -290,6 +348,7 @@ func (p *parallelSortWorker) sortBatchRowsByEncodedKey(rows []chunk.Row) error {
 	p.aqsSorter.SortWithCheckpoint(p.aqsPairs, SignalCheckpointForSort, p.checkKillSignal)
 	for i := range rows {
 		rows[i] = p.aqsPairs[i].Val
+		p.aqsPairs[i].Key = nil
 	}
 	return nil
 }
