@@ -45,8 +45,8 @@ type LogicalAggregation struct {
 	PreferAggType  uint
 	PreferAggToCop bool
 
-	PossibleProperties [][]*expression.Column `hash64-equals:"true" shallow-ref:"true"`
-	InputCount         float64                // InputCount is the input count of this plan.
+	PossibleProperties base.PossiblePropertiesInfo `hash64-equals:"true" shallow-ref:"true"`
+	InputCount         float64                     // InputCount is the input count of this plan.
 
 	// Deprecated: NoCopPushDown is substituted by prop.NoCopPushDown.
 	// NoCopPushDown indicates if planner must not push this agg down to coprocessor.
@@ -267,12 +267,21 @@ func (la *LogicalAggregation) ExtractColGroups(_ [][]*expression.Column) [][]*ex
 // PreparePossibleProperties implements base.LogicalPlan.<13th> interface.
 func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, childrenProperties ...*base.PossiblePropertiesInfo) *base.PossiblePropertiesInfo {
 	childProps := childrenProperties[0]
-	la.hasTiflash = la.hasTiflash && childProps.HasTiflash
+	la.hasTiflash = childProps != nil && childProps.HasTiflash
 	// If there's no group-by item, the stream aggregation could have no order property. So we can add an empty property
 	// when its group-by item is empty.
 	if len(la.GroupByItems) == 0 {
-		la.PossibleProperties = [][]*expression.Column{nil}
-		return nil
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			Order:      [][]*expression.Column{nil},
+			HasTiflash: la.hasTiflash,
+		}
+		return &la.PossibleProperties
+	}
+	if childProps == nil {
+		la.PossibleProperties = base.PossiblePropertiesInfo{
+			HasTiflash: la.hasTiflash,
+		}
+		return &la.PossibleProperties
 	}
 	resultProperties := make([][]*expression.Column, 0, len(childProps.Order))
 	groupByCols := la.GetGroupByCols()
@@ -283,11 +292,11 @@ func (la *LogicalAggregation) PreparePossibleProperties(_ *expression.Schema, ch
 			resultProperties = append(resultProperties, prop)
 		}
 	}
-	la.PossibleProperties = resultProperties
-	return &base.PossiblePropertiesInfo{
+	la.PossibleProperties = base.PossiblePropertiesInfo{
 		Order:      resultProperties,
 		HasTiflash: la.hasTiflash,
 	}
+	return &la.PossibleProperties
 }
 
 // ExtractCorrelatedCols implements base.LogicalPlan.<15th> interface.
