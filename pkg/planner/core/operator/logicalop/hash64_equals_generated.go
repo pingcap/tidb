@@ -156,19 +156,7 @@ func (op *LogicalAggregation) Hash64(h base.Hasher) {
 			one.Hash64(h)
 		}
 	}
-	if op.PossibleProperties.Order == nil {
-		h.HashByte(base.NilFlag)
-	} else {
-		h.HashByte(base.NotNilFlag)
-		h.HashInt(len(op.PossibleProperties.Order))
-		for _, one := range op.PossibleProperties.Order {
-			h.HashInt(len(one))
-			for _, onee := range one {
-				onee.Hash64(h)
-			}
-		}
-	}
-	h.HashBool(op.PossibleProperties.HasTiflash)
+	op.PossibleProperties.Hash64(h)
 }
 
 // Equals implements the Hash64Equals interface, only receive *LogicalAggregation pointer.
@@ -202,21 +190,8 @@ func (op *LogicalAggregation) Equals(other any) bool {
 			return false
 		}
 	}
-	if op.PossibleProperties.HasTiflash != op2.PossibleProperties.HasTiflash {
+	if !op.PossibleProperties.Equals(&op2.PossibleProperties) {
 		return false
-	}
-	if (op.PossibleProperties.Order == nil && op2.PossibleProperties.Order != nil) || (op.PossibleProperties.Order != nil && op2.PossibleProperties.Order == nil) || len(op.PossibleProperties.Order) != len(op2.PossibleProperties.Order) {
-		return false
-	}
-	for i, one := range op.PossibleProperties.Order {
-		if (one == nil && op2.PossibleProperties.Order[i] != nil) || (one != nil && op2.PossibleProperties.Order[i] == nil) || len(one) != len(op2.PossibleProperties.Order[i]) {
-			return false
-		}
-		for ii, onee := range one {
-			if !onee.Equals(op2.PossibleProperties.Order[i][ii]) {
-				return false
-			}
-		}
 	}
 	return true
 }

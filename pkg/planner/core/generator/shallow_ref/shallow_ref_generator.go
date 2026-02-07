@@ -116,6 +116,8 @@ func (c *cc) shallowRefElement(fType reflect.Type, caller, fieldName string) str
 		// only the outermost caller need to assign the new slice back to the original one.
 		if !strings.HasPrefix(fieldName, "one") {
 			c.write("%v = %v", caller+fieldName, tmpFieldName)
+		} else {
+			return tmpFieldName
 		}
 	case reflect.Pointer: // just ref it.
 	case reflect.String:
@@ -124,6 +126,22 @@ func (c *cc) shallowRefElement(fType reflect.Type, caller, fieldName string) str
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
 	case reflect.Float32, reflect.Float64:
+	case reflect.Struct:
+		// For struct fields, copy the whole struct first, then recursively COW its fields.
+		// Return the copied variable so slice-of-struct elements can append the copied one.
+		tmpFieldName := fieldName + "CP"
+		c.write("%v := %v", tmpFieldName, caller+fieldName)
+		for i := range fType.NumField() {
+			f := fType.Field(i)
+			if !f.IsExported() {
+				continue
+			}
+			c.shallowRefElement(f.Type, tmpFieldName+".", f.Name)
+		}
+		if !strings.HasPrefix(fieldName, "one") {
+			c.write("%v = %v", caller+fieldName, tmpFieldName)
+		}
+		return tmpFieldName
 	default:
 		panic("doesn't support element type" + fType.Kind().String())
 	}
@@ -166,9 +184,10 @@ const codeGenLogicalOpCowPrefix = `// Copyright 2025 PingCAP, Inc.
 package logicalop
 
 import (
+	"github.com/pingcap/tidb/pkg/planner/core/base"
 	"github.com/pingcap/tidb/pkg/expression"
-    "github.com/pingcap/tidb/pkg/expression/aggregation"
-    "github.com/pingcap/tidb/pkg/planner/util"
+	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/planner/util"
 )
 `
 
