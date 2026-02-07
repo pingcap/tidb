@@ -120,8 +120,21 @@ func extractOuterApplyCorrelatedColsHelper(p base.PhysicalPlan) ([]*expression.C
 type DecorrelateSolver struct{}
 
 func pickVisibleUniqueKey(schema *expression.Schema) []*expression.Column {
+	if schema == nil {
+		return nil
+	}
 	for _, key := range schema.PKOrUK {
-		if schema.ColumnsIndices(key) != nil {
+		if len(key) == 0 {
+			continue
+		}
+		allVisible := true
+		for _, keyCol := range key {
+			if keyCol == nil || !schema.Contains(keyCol) {
+				allVisible = false
+				break
+			}
+		}
+		if allVisible {
 			return key
 		}
 	}

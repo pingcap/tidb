@@ -232,9 +232,26 @@ func (la *LogicalApply) CanPullUpAgg() bool {
 	if len(la.EqualConditions)+len(la.LeftConditions)+len(la.RightConditions)+len(la.OtherConditions) > 0 {
 		return false
 	}
-	outerSchema := la.Children()[0].Schema()
+	children := la.Children()
+	if len(children) == 0 || children[0] == nil {
+		return false
+	}
+	outerSchema := children[0].Schema()
+	if outerSchema == nil {
+		return false
+	}
 	for _, key := range outerSchema.PKOrUK {
-		if outerSchema.ColumnsIndices(key) != nil {
+		if len(key) == 0 {
+			continue
+		}
+		allVisible := true
+		for _, keyCol := range key {
+			if keyCol == nil || !outerSchema.Contains(keyCol) {
+				allVisible = false
+				break
+			}
+		}
+		if allVisible {
 			return true
 		}
 	}
