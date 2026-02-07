@@ -114,11 +114,10 @@ func (c *cc) shallowRefElement(fType reflect.Type, caller, fieldName string) str
 		c.write("%v = append(%v, %v)", tmpFieldName, tmpFieldName, res)
 		c.write("}")
 		// only the outermost caller need to assign the new slice back to the original one.
-		if !strings.HasPrefix(fieldName, "one") {
-			c.write("%v = %v", caller+fieldName, tmpFieldName)
-		} else {
+		if strings.HasPrefix(fieldName, "one") {
 			return tmpFieldName
 		}
+		c.write("%v = %v", caller+fieldName, tmpFieldName)
 	case reflect.Pointer: // just ref it.
 	case reflect.String:
 	case reflect.Interface:
