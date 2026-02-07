@@ -84,6 +84,12 @@ make gogenerate
 
 # optional: keep Go modules tidy if go.mod/go.sum changed
 go mod tidy
+
+# keep remote refs fresh so base-branch auto-detection is accurate
+git fetch origin --prune
+
+# Run before committing or finishing tasks, to ensure we pass the static check
+make bazel_lint_changed
 ```
 
 ## Testing 
