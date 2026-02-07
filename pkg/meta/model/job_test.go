@@ -358,6 +358,7 @@ func TestMayNeedReorg(t *testing.T) {
 		ActionAlterTablePartitioning,
 		ActionAddIndex,
 		ActionAddPrimaryKey,
+		ActionCreateMaterializedView,
 	}
 	generalJobTypes := []ActionType{
 		ActionCreateTable,

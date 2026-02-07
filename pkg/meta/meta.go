@@ -1541,11 +1541,11 @@ var (
 )
 
 var (
-	// DefaultJobListKey keeps all actions of DDL jobs except "add index".
+	// DefaultJobListKey keeps non-reorg DDL jobs.
 	// this and below list are always appended, so the order is the same as the
 	// job's creation order.
 	DefaultJobListKey JobListKeyType = mDDLJobListKey
-	// AddIndexJobListKey only keeps the action of adding index.
+	// AddIndexJobListKey keeps DDL jobs that need reorg workers (e.g. add index, create materialized view).
 	AddIndexJobListKey JobListKeyType = mDDLJobAddIdxList
 )
 

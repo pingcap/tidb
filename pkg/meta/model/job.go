@@ -816,7 +816,7 @@ func (job *Job) GetSessionVars(name string) (string, bool) {
 // MayNeedReorg indicates that this job may need to reorganize the data.
 func (job *Job) MayNeedReorg() bool {
 	switch job.Type {
-	case ActionAddIndex, ActionAddPrimaryKey, ActionReorganizePartition,
+	case ActionAddIndex, ActionAddPrimaryKey, ActionCreateMaterializedView, ActionReorganizePartition,
 		ActionRemovePartitioning, ActionAlterTablePartitioning:
 		return true
 	case ActionModifyColumn:
