@@ -10,6 +10,10 @@ Typical examples:
 - Modify column that requires data rewrite.
 - Some partition operations that move/transform data.
 
+Deep dive:
+
+- Add index: `docs/note/ddl/06-add-index.md`
+
 These jobs usually enter the schema state `reorg`, where:
 
 - the schema change is partially visible/compatible, and
@@ -69,4 +73,3 @@ When you change reorg/backfill code, always verify:
 - Schema version sync is still correct at state boundaries.
 
 If the change is large or introduces a new reorg mode, prefer adding a short design doc under `docs/design/` and link it from `docs/note/ddl/README.md`.
-

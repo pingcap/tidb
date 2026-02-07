@@ -2,7 +2,7 @@
 
 This doc explains the *execution skeleton* of TiDB DDL and the responsibility boundary of each layer.
 
-## 1) SQL executor layer: `pkg/executor.DDLExec`
+## 1) SQL executor layer: `pkg/executor/ddl.go`
 
 Entry: `pkg/executor/ddl.go` (`type DDLExec`, `(*DDLExec).Next`)
 
@@ -27,8 +27,8 @@ The DDL module has its own “executor” (different from `pkg/executor/`). Its 
 2. Build a persistent `model.Job` (or multiple jobs) and wrap it in `ddl.JobWrapper`.
 3. Submit the job via `JobSubmitter` by sending it into a bounded channel (`deliverJobTask` → `limitJobCh`).
 4. Block the SQL session until the job finishes, using:
-   - an etcd notification channel (fast path), and
-   - a ticker-based polling fallback (lease-based) for robustness.
+   - an in-process notification channel (fast path; works when the job is executed on the same TiDB node), and
+   - a ticker-based polling loop (always needed for cross-node execution; also a robustness fallback if notifications can’t be delivered).
 
 The waiting loop is in `(*executor).DoDDLJobWrapper` and includes:
 
@@ -108,4 +108,3 @@ Rule of thumb:
 - **SQL session boundaries / generic dispatch**: `pkg/executor/ddl.go` (keep thin)
 
 If the change modifies *schema state transitions*, *job steps*, or *meta writes*, it almost certainly belongs in `pkg/ddl/`.
-

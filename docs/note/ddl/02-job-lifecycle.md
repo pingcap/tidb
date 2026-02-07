@@ -30,7 +30,7 @@ There are two related but distinct “state” dimensions:
    - `reorg` (reorganization / backfill)
    - `public`
 
-The SQL layer explicitly assumes this (see the wait loop comment in `pkg/ddl/executor.go:DoDDLJobWrapper`).
+The submitter-side wait loop assumes this simplified sequence (see the comment in `pkg/ddl/executor.go:DoDDLJobWrapper`).
 
 **Why schema states exist:** to keep DML and queries safe while the schema is changing, by gradually changing allowed operations and ensuring all nodes see each transition before the next.
 
@@ -83,8 +83,8 @@ The submitting session waits in `pkg/ddl/executor.go:DoDDLJobWrapper` via:
 
 This dual approach is important:
 
-- etcd notifications make “normal case” fast.
-- polling makes the system robust if notifications are missed.
+- The in-process channel makes owner-local jobs return quickly without waiting for the next polling tick.
+- Polling is required for cross-node execution (submitter is not owner), and also covers cases where in-process notifications can’t be delivered (e.g. owner transfer).
 
 ## Common lifecycle pitfalls (checklist)
 
@@ -92,4 +92,3 @@ This dual approach is important:
 - Meta change committed but global schema version not updated → followers don’t reload; SQL sees inconsistent schema.
 - Schema version updated but `WaitVersionSynced` skipped incorrectly → nodes observe incompatible states.
 - Reorg progress not persisted → reorg restarts from scratch after retry.
-

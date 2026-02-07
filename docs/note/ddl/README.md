@@ -18,8 +18,8 @@ This note set is meant to be **the first thing to read** before touching DDL-rel
 
 ## Mental model (60 seconds)
 
-1. `pkg/executor.DDLExec` receives a DDL AST node and calls `ddl.Executor` (DDL module).
-2. `pkg/ddl.executor` converts the statement to a `model.Job` (or multiple jobs), then **submits** it via `JobSubmitter`.
+1. `pkg/executor/ddl.go` (`DDLExec`) receives a DDL AST node and calls into the DDL module.
+2. `pkg/ddl/executor.go` converts the statement to a `model.Job` (or multiple jobs), then **submits** it via `JobSubmitter`.
 3. `JobSubmitter` allocates IDs, writes the job into `mysql.tidb_ddl_job`, and notifies the owner-side scheduler.
 4. Only the **DDL owner** runs `jobScheduler`, which dispatches jobs into worker pools.
 5. Workers run the job **step-by-step** (meta changes + schema state transitions), update global schema version, then wait for followers to sync.
@@ -30,13 +30,13 @@ This note set is meant to be **the first thing to read** before touching DDL-rel
 ```mermaid
 sequenceDiagram
   participant S as Session
-  participant X as pkg/executor.DDLExec
-  participant E as pkg/ddl.executor
-  participant J as pkg/ddl.JobSubmitter
+  participant X as DDLExec (pkg/executor/ddl.go)
+  participant E as DDL executor (pkg/ddl/executor.go)
+  participant J as JobSubmitter (pkg/ddl/job_submitter.go)
   participant T as mysql.tidb_ddl_job
   participant O as DDL Owner (jobScheduler)
   participant W as ddl workers
-  participant V as schemaver.Syncer
+  participant V as Syncer (pkg/ddl/schemaver/syncer.go)
 
   S->>X: Execute DDL statement (AST)
   X->>E: ddl.Executor.*(stmt)
@@ -76,8 +76,9 @@ sequenceDiagram
 1. `docs/note/ddl/01-execution-flow.md` — end-to-end call chain and responsibilities.
 2. `docs/note/ddl/02-job-lifecycle.md` — job/version/state machines, schema sync, owner/failover.
 3. `docs/note/ddl/03-reorg-backfill.md` — reorg/backfill and distributed backfill overview.
-4. `docs/note/ddl/04-dev-checklist.md` — where-to-change, testing, and common pitfalls.
-5. `docs/note/ddl/05-file-map.md` — quick “where is this implemented?” map inside `pkg/ddl/`.
+4. `docs/note/ddl/06-add-index.md` — add-index deep dive (fast reorg, ingest, backfill-merge).
+5. `docs/note/ddl/04-dev-checklist.md` — where-to-change, testing, and common pitfalls.
+6. `docs/note/ddl/05-file-map.md` — quick “where is this implemented?” map inside `pkg/ddl/`.
 
 ## Related design docs (deep dives)
 

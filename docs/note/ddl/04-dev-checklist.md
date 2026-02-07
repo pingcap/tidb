@@ -47,6 +47,14 @@ Integration tests (when behavior is user-visible / cross-module):
 
 ```bash
 pushd tests/integrationtest
+./run-tests.sh -t <TestName>
+popd
+```
+
+If you need to update the recorded result set, use `-r`:
+
+```bash
+pushd tests/integrationtest
 ./run-tests.sh -r <TestName>
 popd
 ```

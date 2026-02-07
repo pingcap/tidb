@@ -42,3 +42,6 @@ This is a pragmatic map from common DDL areas to `pkg/ddl/` files. It’s intent
 
 - Schema change event publish/subscribe: `pkg/ddl/notifier/*`
 
+## Deep dives
+
+- Add index: `docs/note/ddl/06-add-index.md`
