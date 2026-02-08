@@ -15,6 +15,7 @@
 package ddl
 
 import (
+	"bytes"
 	"context"
 	"net"
 	"strconv"
@@ -47,6 +48,15 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 		return
 	}
 
+	// The owner key value can be either "<ownerID>" or "<ownerID>_<opByte>".
+	// See pkg/owner/manager.go splitOwnerValues/joinOwnerValues.
+	parseOwnerID := func(val []byte) string {
+		if idx := bytes.IndexByte(val, '_'); idx >= 0 {
+			return string(val[:idx])
+		}
+		return string(val)
+	}
+
 	ctx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
 	defer cancel()
 
@@ -70,10 +80,14 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 	// an ungraceful restart.
 	for _, info := range serverInfos {
 		execID := net.JoinHostPort(info.IP, strconv.FormatUint(uint64(info.Port), 10))
-		if prev, ok := bestByExecID[execID]; !ok {
+		prev, ok := bestByExecID[execID]
+		if !ok {
 			bestByExecID[execID] = info
 			continue
-		} else if info.StartTimestamp > prev.StartTimestamp ||
+		}
+		// StartTimestamp is seconds-level (time.Now().Unix()). When it ties, we use ID
+		// string order as a deterministic tie-breaker for this best-effort cleanup.
+		if info.StartTimestamp > prev.StartTimestamp ||
 			(info.StartTimestamp == prev.StartTimestamp && info.ID > prev.ID) {
 			staleIDs[prev.ID] = struct{}{}
 			bestByExecID[execID] = info
@@ -89,6 +103,10 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 		bestByExecID[selfExecID] != nil &&
 		bestByExecID[selfExecID].ID == selfID
 
+	if len(staleIDs) == 0 && !singleNodeAndSelfIsBest {
+		return
+	}
+
 	prefix := DDLOwnerKey + "/"
 	getResp, err := etcdCli.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
@@ -98,7 +116,7 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 
 	deleted := 0
 	for _, kv := range getResp.Kvs {
-		ownerID := string(kv.Value)
+		ownerID := parseOwnerID(kv.Value)
 		if ownerID == selfID {
 			continue
 		}

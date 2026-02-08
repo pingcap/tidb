@@ -18,9 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"runtime"
 	"testing"
 
+	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/keyspace"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	"github.com/stretchr/testify/require"
@@ -29,6 +32,13 @@ import (
 )
 
 func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	require.NoError(t, err)
+
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
@@ -50,7 +60,7 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 	t.Run("delete keys for stale instance after restart", func(t *testing.T) {
 		clearKeys()
 		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
-		_, err := cli.Put(ctx, DDLOwnerKey+"/stale", "old")
+		_, err := cli.Put(ctx, DDLOwnerKey+"/stale", string(append([]byte("old_"), byte(1))))
 		require.NoError(t, err)
 		_, err = cli.Put(ctx, DDLOwnerKey+"/other", "other")
 		require.NoError(t, err)
@@ -101,6 +111,8 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), etcd.KeyOpDefaultTimeout)
 		_, err := cli.Put(ctx, DDLOwnerKey+"/unknown", "old")
 		require.NoError(t, err)
+		_, err = cli.Put(ctx, DDLOwnerKey+"/self", string(append([]byte("self_"), byte(1))))
+		require.NoError(t, err)
 		cancel()
 
 		mockGetAllServerInfo(t, map[string]*serverinfo.ServerInfo{
@@ -121,5 +133,9 @@ func TestCleanupStaleDDLOwnerKeys(t *testing.T) {
 		resp, err := cli.Get(ctx, DDLOwnerKey+"/unknown")
 		require.NoError(t, err)
 		require.Empty(t, resp.Kvs)
+
+		resp, err = cli.Get(ctx, DDLOwnerKey+"/self")
+		require.NoError(t, err)
+		require.Len(t, resp.Kvs, 1)
 	})
 }
