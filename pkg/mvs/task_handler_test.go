@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ngaut/pools"
+	basic "github.com/pingcap/tidb/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -27,18 +28,6 @@ func (mockTaskHandlerServerHelper) getAllServerInfo(context.Context) (map[string
 
 type mockMVServiceHelper struct {
 	mockTaskHandlerServerHelper
-	taskHandler MVTaskHandler
-}
-
-func (m mockMVServiceHelper) RefreshMV(ctx context.Context, mvID string) (relatedMVLog []string, nextRefresh time.Time, err error) {
-	return m.taskHandler.RefreshMV(ctx, mvID)
-}
-
-func (m mockMVServiceHelper) PurgeMVLog(ctx context.Context, mvLogID string) (nextPurge time.Time, err error) {
-	return m.taskHandler.PurgeMVLog(ctx, mvLogID)
-}
-
-type mockMVTaskHandler struct {
 	refreshRelated []string
 	refreshNext    time.Time
 	purgeNext      time.Time
@@ -49,46 +38,58 @@ type mockMVTaskHandler struct {
 	lastPurgeID   string
 }
 
-func (m *mockMVTaskHandler) RefreshMV(_ context.Context, mvID string) (relatedMVLog []string, nextRefresh time.Time, err error) {
+func (m *mockMVServiceHelper) RefreshMV(_ context.Context, _ basic.SessionPool, mvID string) (relatedMVLog []string, nextRefresh time.Time, err error) {
 	m.lastRefreshID = mvID
 	return m.refreshRelated, m.refreshNext, m.refreshErr
 }
 
-func (m *mockMVTaskHandler) PurgeMVLog(_ context.Context, mvLogID string) (nextPurge time.Time, err error) {
+func (m *mockMVServiceHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool, mvLogID string) (nextPurge time.Time, err error) {
 	m.lastPurgeID = mvLogID
 	return m.purgeNext, m.purgeErr
 }
 
+func (*mockMVServiceHelper) fetchAllTiDBMLogPurge(context.Context, basic.SessionPool) (map[string]*mvLog, error) {
+	return nil, nil
+}
+
+func (*mockMVServiceHelper) fetchAllTiDBMViews(context.Context, basic.SessionPool) (map[string]*mv, error) {
+	return nil, nil
+}
+
 func TestMVServiceDefaultTaskHandler(t *testing.T) {
-	svc := NewMVJobsManager(mockSessionPool{}, mockMVServiceHelper{taskHandler: noopMVTaskHandler{}})
+	helper := &mockMVServiceHelper{
+		refreshErr: ErrMVRefreshHandlerNotRegistered,
+		purgeErr:   ErrMVLogPurgeHandlerNotRegistered,
+	}
+	svc := NewMVJobsManager(mockSessionPool{}, helper)
 	defer svc.Close()
 
-	_, _, err := svc.executeMVRefresh(context.Background(), &mv{ID: "mv-1"})
+	_, _, err := svc.mh.RefreshMV(context.Background(), mockSessionPool{}, "mv-1")
 	require.ErrorIs(t, err, ErrMVRefreshHandlerNotRegistered)
 
-	_, err = svc.executeMVLogPurge(context.Background(), &mvLog{ID: "mlog-1"})
+	_, err = svc.mh.PurgeMVLog(context.Background(), mockSessionPool{}, "mlog-1")
 	require.ErrorIs(t, err, ErrMVLogPurgeHandlerNotRegistered)
 }
 
 func TestMVServiceUseInjectedTaskHandler(t *testing.T) {
 	nextRefresh := time.Now().Add(time.Minute).Round(0)
 	nextPurge := time.Now().Add(2 * time.Minute).Round(0)
-	handler := &mockMVTaskHandler{
+	helper := &mockMVServiceHelper{
 		refreshRelated: []string{"mlog-a", "mlog-b"},
 		refreshNext:    nextRefresh,
 		purgeNext:      nextPurge,
 	}
-	svc := NewMVJobsManager(mockSessionPool{}, mockMVServiceHelper{taskHandler: handler})
+	svc := NewMVJobsManager(mockSessionPool{}, helper)
 	defer svc.Close()
 
-	related, gotNextRefresh, err := svc.executeMVRefresh(context.Background(), &mv{ID: "mv-2"})
+	related, gotNextRefresh, err := svc.mh.RefreshMV(context.Background(), mockSessionPool{}, "mv-2")
 	require.NoError(t, err)
 	require.Equal(t, []string{"mlog-a", "mlog-b"}, related)
 	require.True(t, nextRefresh.Equal(gotNextRefresh))
-	require.Equal(t, "mv-2", handler.lastRefreshID)
+	require.Equal(t, "mv-2", helper.lastRefreshID)
 
-	gotNextPurge, err := svc.executeMVLogPurge(context.Background(), &mvLog{ID: "mlog-2"})
+	gotNextPurge, err := svc.mh.PurgeMVLog(context.Background(), mockSessionPool{}, "mlog-2")
 	require.NoError(t, err)
 	require.True(t, nextPurge.Equal(gotNextPurge))
-	require.Equal(t, "mlog-2", handler.lastPurgeID)
+	require.Equal(t, "mlog-2", helper.lastPurgeID)
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"time"
+
+	basic "github.com/pingcap/tidb/pkg/util"
 )
 
 var (
@@ -15,26 +17,23 @@ var (
 
 // MVRefreshHandler defines the refresh contract for one MV ID.
 type MVRefreshHandler interface {
-	RefreshMV(ctx context.Context, mvID string) (relatedMVLog []string, nextRefresh time.Time, err error)
+	RefreshMV(ctx context.Context, sysSessionPool basic.SessionPool, mvID string) (relatedMVLog []string, nextRefresh time.Time, err error)
 }
 
 // MVLogPurgeHandler defines the purge contract for one MVLog ID.
 type MVLogPurgeHandler interface {
-	PurgeMVLog(ctx context.Context, mvLogID string) (nextPurge time.Time, err error)
+	PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, err error)
+}
+
+// MVMetaFetchHandler defines the metadata fetch contract for MV scheduler bootstrap.
+type MVMetaFetchHandler interface {
+	fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mvLog, error)
+	fetchAllTiDBMViews(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mv, error)
 }
 
 // MVTaskHandler is a convenience interface that implements both refresh and purge.
 type MVTaskHandler interface {
 	MVRefreshHandler
 	MVLogPurgeHandler
-}
-
-type noopMVTaskHandler struct{}
-
-func (noopMVTaskHandler) RefreshMV(_ context.Context, _ string) (relatedMVLog []string, nextRefresh time.Time, err error) {
-	return nil, time.Time{}, ErrMVRefreshHandlerNotRegistered
-}
-
-func (noopMVTaskHandler) PurgeMVLog(_ context.Context, _ string) (nextPurge time.Time, err error) {
-	return time.Time{}, ErrMVLogPurgeHandlerNotRegistered
+	MVMetaFetchHandler
 }

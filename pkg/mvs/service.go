@@ -6,11 +6,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx"
 	basic "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
 )
 
 type mvLogItem Item[*mvLog]
@@ -152,69 +148,6 @@ func resetTimer(timer *time.Timer, delay time.Duration) {
 }
 
 /*
-TODO: implement the refresh logic, the pseudo code is as follows:
-
-BEGIN;
-
-SELECT * FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = ? FOR UPDATE;
-
-如果非手动 refresh 且 LAST_REFRESH_TIME + REFRESH_INTERVAL > now()
-
-	COMMIT;
-	RETURN;
-
-TSO = GET_COMMIT_TSO();
-
-找出该物化视图所依赖的所有 MVLOG
-
-READ MVLOG data in range (LAST_REFRESH_READ_TSO, TSO])
-
-COMPUTE new MV data;
-
-UPDATE MV table with new data;
-
-UPDATE mysql.tidb_mview_refresh SET
-
-	LAST_REFRESH_TIME = now(),
-	LAST_REFRESH_READ_TSO = TSO,
-	LAST_REFRESH_ERR = NULL
-
-WHERE MVIEW_ID = ?;
-
-COMMIT;
-
-返回所有相关 MVLOG 的 ID
-*/
-
-func (t *MVService) executeMVRefresh(ctx context.Context, m *mv) (relatedMVLog []string, nextRefresh time.Time, err error) {
-	return t.mh.RefreshMV(ctx, m.ID)
-}
-
-/*
-TODO: 实现 purge 逻辑，伪代码如下：
-
-BEGIN;
-SELECT * FROM mysql.tidb_mlog_purge WHERE MLOG_ID = ? FOR UPDATE;
-
-find_min_mv_tso
-
-	找出所有依赖的 MV，返回这些 MV 中最小的 LAST_REFRESH_READ_TSO
-
-DELETE FROM find_mvlog_by_base_table() WHERE COMMIT_TSO IN (0, find_min_mv_tso()];
-
-TS = now()
-
-UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = TS, LAST_PURGE_ERR = NULL WHERE MLOG_ID = ?;
-
-COMMIT;
-
-return TS + PURGE_INTERVAL
-*/
-func (t *MVService) executeMVLogPurge(ctx context.Context, l *mvLog) (nextPurge time.Time, err error) {
-	return t.mh.PurgeMVLog(ctx, l.ID)
-}
-
-/*
 // CreateTiDBMViewsTable is a table to store materialized view metadata.
 CreateTiDBMViewsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mviews (
     TABLE_CATALOG varchar(512) NOT NULL,
@@ -229,6 +162,7 @@ CreateTiDBMViewsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mviews (
     REFRESH_MODE varchar(256) DEFAULT NULL,
     REFRESH_START datetime NOT NULL,
     REFRESH_INTERVAL bigint NOT NULL,
+	RELATED_MVLOG varchar(256) DEFAULT NULL,
     PRIMARY KEY(MVIEW_ID),
     UNIQUE KEY uniq_mview_name(TABLE_SCHEMA, MVIEW_NAME))`
 
@@ -246,6 +180,7 @@ CreateTiDBMLogsTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlogs (
     PURGE_METHOD varchar(32) NOT NULL,
     PURGE_START datetime NOT NULL,
     PURGE_INTERVAL bigint NOT NULL,
+	RELATED_MV varchar(256) DEFAULT NULL,
     PRIMARY KEY(MLOG_ID),
     UNIQUE KEY uniq_base_table(BASE_TABLE_ID),
     UNIQUE KEY uniq_mlog_name(TABLE_SCHEMA, MLOG_NAME))`
@@ -278,27 +213,6 @@ CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge
     PURGE_STATUS varchar(16) DEFAULT NULL,
     PRIMARY KEY(PURGE_JOB_ID),
     KEY idx_mlog_newest(MLOG_ID, IS_NEWEST_PURGE))`
-*/
-
-/*
-
-CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge (
-	MLOG_ID bigint NOT NULL,
-	LAST_PURGE_TIME datetime DEFAULT NULL,
-	LAST_PURGE_ROWS bigint DEFAULT NULL,
-	LAST_PURGE_DURATION bigint DEFAULT NULL,
-	PRIMARY KEY(MLOG_ID)
-)
-
-CREATE TABLE IF NOT EXISTS mysql.tidb_mview_refresh (
-	MVIEW_ID bigint NOT NULL,
-	LAST_REFRESH_RESULT varchar(16) DEFAULT NULL,
-	LAST_REFRESH_TYPE varchar(16) DEFAULT NULL,
-	LAST_REFRESH_TIME datetime DEFAULT NULL,
-	LAST_SUCCESSFUL_REFRESH_READ_TSO bigint DEFAULT NULL,
-	LAST_REFRESH_FAILED_REASON longtext DEFAULT NULL,
-	PRIMARY KEY(MVIEW_ID)
-)
 */
 
 func (t *MVService) Start() {
@@ -338,10 +252,10 @@ func (t *MVService) scheduleLoop() {
 		now := time.Now()
 
 		if forceFetch || t.shouldFetch(now) {
-			t.sch.Fetch(t.ctx)
+			t.sch.Refresh(t.ctx)
 			if err := t.FetchAllMVMeta(t.ctx); err != nil {
 				// avoid tight retries on fetch failures
-				t.lastRefresh.Store(now.UnixNano())
+				t.lastRefresh.Store(now.UnixMilli())
 			}
 		}
 
@@ -369,7 +283,7 @@ func (t *MVService) shouldFetch(now time.Time) bool {
 	if last == 0 {
 		return true
 	}
-	return now.Sub(time.Unix(0, last)) >= defaultMVFetchInterval
+	return now.Sub(time.UnixMilli(last)) >= defaultMVFetchInterval
 }
 
 func (t *MVService) nextFetchTime(now time.Time) time.Time {
@@ -377,7 +291,7 @@ func (t *MVService) nextFetchTime(now time.Time) time.Time {
 	if last == 0 {
 		return now
 	}
-	next := time.Unix(0, last).Add(defaultMVFetchInterval)
+	next := time.UnixMilli(last).Add(defaultMVFetchInterval)
 	if next.Before(now) {
 		return now
 	}
@@ -465,7 +379,7 @@ func (t *MVService) refreshMV(mvToRefresh []*mv) {
 		t.executor.Submit("mv-refresh/"+m.ID, func() error {
 			t.metrics.runningMVRefreshCount.Add(1)
 			defer t.metrics.runningMVRefreshCount.Add(-1)
-			_, nextRefresh, err := t.executeMVRefresh(t.ctx, m)
+			_, nextRefresh, err := t.mh.RefreshMV(t.ctx, t.sysSessionPool, m.ID)
 			if err != nil {
 				retryCount := m.retryCount.Add(1)
 				t.rescheduleMV(m, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
@@ -488,7 +402,7 @@ func (t *MVService) purgeMVLog(mvLogToPurge []*mvLog) {
 		t.executor.Submit("mvlog-purge/"+l.ID, func() error {
 			t.metrics.runningMVLogPurgeCount.Add(1)
 			defer t.metrics.runningMVLogPurgeCount.Add(-1)
-			nextPurge, err := t.executeMVLogPurge(t.ctx, l)
+			nextPurge, err := t.mh.PurgeMVLog(t.ctx, t.sysSessionPool, l.ID)
 			if err != nil {
 				retryCount := l.retryCount.Add(1)
 				t.rescheduleMVLog(l, time.Now().Add(retryDelay(int(retryCount))).UnixMilli())
@@ -521,27 +435,6 @@ func (t *MVService) rescheduleMVLog(l *mvLog, next int64) {
 	}
 	t.metrics.pendingMVLogPurgeCount.Store(int64(t.mvLogPurgeMu.prio.Len()))
 	t.mvLogPurgeMu.Unlock() // release mvlog purge queue guard
-}
-
-// ExecRCRestrictedSQL is used to execute a restricted SQL which related to resource control.
-func ExecRCRestrictedSQL(ctx context.Context, sysSessionPool basic.SessionPool, sql string, params []any) ([]chunk.Row, error) {
-	se, err := sysSessionPool.Get()
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		sysSessionPool.Put(se)
-	}()
-	sctx := se.(sessionctx.Context)
-	exec := sctx.GetRestrictedSQLExecutor()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
-	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
-		sql, params...,
-	)
-	return r, err
 }
 
 func (t *MVService) buildMLogPurgeTasks(newPending map[string]*mvLog) error {
@@ -621,63 +514,28 @@ func (t *MVService) buildMVRefreshTasks(newPending map[string]*mv) error {
 }
 
 func (t *MVService) fetchAllTiDBMLogPurge(ctx context.Context) error {
-	const SQL = `SELECT MLOG_ID, PURGE_INTERVAL, LAST_PURGE_TIME FROM mysql.tidb_mlog_purge t join mysql.tidb_mlogs l on t.MLOG_ID = l.MLOG_ID`
-	rows, err := ExecRCRestrictedSQL(ctx, t.sysSessionPool, SQL, nil)
+	newPending, err := t.mh.fetchAllTiDBMLogPurge(ctx, t.sysSessionPool)
 	if err != nil {
 		return err
 	}
-	newPending := make(map[string]*mvLog, len(rows))
-	for _, row := range rows {
-		l := &mvLog{
-			ID: row.GetString(0),
+	for id := range newPending {
+		if id == "" || !t.sch.Available(id) {
+			delete(newPending, id)
 		}
-		if l.ID == "" || !t.sch.Available(l.ID) {
-			continue
-		}
-		l.purgeInterval = time.Second * time.Duration(row.GetInt64(1))
-		if !row.IsNull(2) {
-			gt, gtErr := row.GetTime(2).GoTime(time.Local)
-			if gtErr != nil {
-				l.nextPurge = time.Now()
-			} else {
-				l.nextPurge = gt.Add(l.purgeInterval)
-			}
-			l.orderTs = l.nextPurge.UnixMilli()
-		}
-		newPending[l.ID] = l
 	}
-
 	return t.buildMLogPurgeTasks(newPending)
 }
 
 func (t *MVService) fetchAllTiDBMViews(ctx context.Context) error {
-	const SQL = `SELECT MVIEW_ID, REFRESH_INTERVAL, LAST_REFRESH_TIME FROM mysql.tidb_mview_refresh t JOIN mysql.tidb_mviews v ON t.MVIEW_ID = v.MVIEW_ID`
-	rows, err := ExecRCRestrictedSQL(ctx, t.sysSessionPool, SQL, nil)
-
+	newPending, err := t.mh.fetchAllTiDBMViews(ctx, t.sysSessionPool)
 	if err != nil {
 		return err
 	}
-	newPending := make(map[string]*mv, len(rows))
-	for _, row := range rows {
-		m := &mv{
-			ID: row.GetString(0),
+	for id := range newPending {
+		if id == "" || !t.sch.Available(id) {
+			delete(newPending, id)
 		}
-		if m.ID == "" || !t.sch.Available(m.ID) {
-			continue
-		}
-		m.refreshInterval = time.Duration(row.GetInt64(1)) * time.Second
-		if !row.IsNull(2) {
-			gt, gtErr := row.GetTime(2).GoTime(time.Local)
-			if gtErr != nil {
-				m.nextRefresh = time.Now()
-			} else {
-				m.nextRefresh = gt.Add(m.refreshInterval)
-			}
-			m.orderTs = m.nextRefresh.UnixMilli()
-		}
-		newPending[m.ID] = m
 	}
-
 	return t.buildMVRefreshTasks(newPending)
 }
 
@@ -689,6 +547,6 @@ func (t *MVService) FetchAllMVMeta(ctx context.Context) error {
 		return err
 	}
 
-	t.lastRefresh.Store(time.Now().UnixNano())
+	t.lastRefresh.Store(time.Now().UnixMilli())
 	return nil
 }

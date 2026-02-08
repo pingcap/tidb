@@ -56,7 +56,7 @@ func (sch *ServerConsistentHash) init(ctx context.Context) {
 	}
 
 	for {
-		err := sch.Fetch(ctx)
+		err := sch.Refresh(ctx)
 		// only break when refresh is successful
 		if err == nil {
 			break
@@ -82,7 +82,7 @@ func (sch *ServerConsistentHash) removeServer(srvID string) {
 	sch.chash.RemoveNode(srvID)
 }
 
-func (sch *ServerConsistentHash) Fetch(ctx context.Context) error {
+func (sch *ServerConsistentHash) Refresh(ctx context.Context) error {
 	newServerInfos, err := sch.helper.getAllServerInfo(ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get available TiDB nodes failed", zap.Error(err))
