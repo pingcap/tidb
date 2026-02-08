@@ -186,6 +186,9 @@ func (e *executor) CreateMaterializedView(ctx sessionctx.Context, s *ast.CreateM
 		SQLMode:             ctx.GetSessionVars().SQLMode,
 		SessionVars:         make(map[string]string),
 	}
+	if err := initJobReorgMetaFromVariables(job, ctx); err != nil {
+		return err
+	}
 	job.AddSessionVars(variable.TiDBScatterRegion, getScatterScopeFromSessionctx(ctx))
 	jobW := NewJobWrapperWithArgs(job, &model.CreateMaterializedViewArgs{TableInfo: mvTableInfo}, false)
 	if err := e.DoDDLJobWrapper(ctx, jobW); err != nil {

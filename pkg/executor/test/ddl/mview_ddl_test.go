@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/pingcap/failpoint"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -144,4 +145,66 @@ func TestCreateMaterializedViewRejectNonBaseObject(t *testing.T) {
 
 	err := tk.ExecToErr("create materialized view mv_v (a, c) as select a, count(1) from v group by a")
 	require.ErrorContains(t, err, "is not BASE TABLE")
+}
+
+func TestCreateMaterializedViewCancelRollback(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	tkCancel := testkit.NewTestKit(t, store)
+	tkCancel.MustExec("use test")
+
+	const pauseBuildFailpoint = "github.com/pingcap/tidb/pkg/ddl/pauseCreateMaterializedViewBuild"
+	require.NoError(t, failpoint.Enable(pauseBuildFailpoint, "pause"))
+	enabled := true
+	defer func() {
+		if enabled {
+			require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+		}
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_cancel (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	}()
+
+	jobID := ""
+	require.Eventually(t, func() bool {
+		rows := tkCancel.MustQuery("admin show ddl jobs where JOB_TYPE='create materialized view'").Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		if len(rows[0]) < 5 || strings.ToLower(fmt.Sprint(rows[0][4])) != "write reorganization" {
+			return false
+		}
+		jobID = rows[0][0].(string)
+		return jobID != ""
+	}, 30*time.Second, 100*time.Millisecond)
+
+	tkCancel.MustExec("admin cancel ddl jobs " + jobID)
+	require.NoError(t, failpoint.Disable(pauseBuildFailpoint))
+	enabled = false
+
+	err := <-ddlDone
+	require.ErrorContains(t, err, "Cancelled DDL job")
+
+	rows := tkCancel.MustQuery("admin show ddl jobs where JOB_ID=" + jobID).Rows()
+	require.Equal(t, 1, len(rows))
+	require.Equal(t, "rollback done", rows[0][len(rows[0])-2])
+
+	tk.MustQuery("show tables like 'mv_cancel'").Check(testkit.Rows())
+	tk.MustQuery("select count(*) from mysql.tidb_mview_refresh").Check(testkit.Rows("0"))
+
+	is := dom.InfoSchema()
+	baseTable, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+	require.NoError(t, err)
+	require.NotNil(t, baseTable.Meta().MaterializedViewBase)
+	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
+	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }

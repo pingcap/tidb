@@ -396,8 +396,14 @@ func (b *Builder) getTableIDs(m meta.Reader, diff *model.SchemaDiff) (oldTableID
 func (b *Builder) updateBundleForTableUpdate(diff *model.SchemaDiff, newTableID, oldTableID int64) {
 	// handle placement rule cache
 	switch diff.Type {
-	case model.ActionCreateTable, model.ActionCreateMaterializedView, model.ActionCreateMaterializedViewLog, model.ActionAddTablePartition:
+	case model.ActionCreateTable, model.ActionCreateMaterializedViewLog, model.ActionAddTablePartition:
 		b.markTableBundleShouldUpdate(newTableID)
+	case model.ActionCreateMaterializedView:
+		if tableIDIsValid(newTableID) {
+			b.markTableBundleShouldUpdate(newTableID)
+		} else if tableIDIsValid(oldTableID) {
+			b.deleteBundle(b.infoSchema, oldTableID)
+		}
 	case model.ActionDropTable:
 		b.deleteBundle(b.infoSchema, oldTableID)
 	case model.ActionTruncateTable:

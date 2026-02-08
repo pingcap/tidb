@@ -309,6 +309,10 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 		job.State = model.JobStateCancelled
 		return ver, errors.Trace(err)
 	}
+	if args == nil {
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid job args")
+	}
 	jobCtx.jobArgs = args
 
 	mvTblInfo := args.TableInfo
@@ -319,6 +323,10 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 	if len(mvTblInfo.MaterializedView.BaseTableIDs) != 1 || mvTblInfo.MaterializedView.BaseTableIDs[0] == 0 {
 		job.State = model.JobStateCancelled
 		return ver, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid base table id")
+	}
+
+	if job.IsRollingback() {
+		return w.rollbackCreateMaterializedView(jobCtx, job, mvTblInfo)
 	}
 
 	baseTableID := mvTblInfo.MaterializedView.BaseTableIDs[0]
@@ -378,7 +386,14 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 			return w.buildCreateMaterializedViewData(jobCtx.stepCtx, storeName, job, mvTblInfo)
 		})
 		if err != nil {
-			if dbterror.ErrPausedDDLJob.Equal(err) || dbterror.ErrWaitReorgTimeout.Equal(err) || errors.Cause(err) == context.Canceled {
+			if dbterror.ErrPausedDDLJob.Equal(err) || dbterror.ErrWaitReorgTimeout.Equal(err) {
+				return ver, nil
+			}
+			if isCreateMaterializedViewCancelledErr(jobCtx, err) {
+				job.State = model.JobStateRollingback
+				return ver, nil
+			}
+			if errors.Cause(err) == context.Canceled {
 				return ver, nil
 			}
 			if upsertErr := w.upsertCreateMaterializedViewRefreshInfoDetached(jobCtx.stepCtx, mvTblInfo.ID, job.SnapshotVer, false, err.Error()); upsertErr != nil {
@@ -405,6 +420,62 @@ func (w *worker) onCreateMaterializedView(jobCtx *jobContext, job *model.Job) (v
 	default:
 		return ver, dbterror.ErrInvalidDDLState.GenWithStack("invalid create materialized view schema state %s", job.SchemaState)
 	}
+}
+
+func isCreateMaterializedViewCancelledErr(jobCtx *jobContext, err error) bool {
+	if dbterror.ErrCancelledDDLJob.Equal(err) {
+		return true
+	}
+	if errors.Cause(err) != context.Canceled || jobCtx.stepCtx == nil {
+		return false
+	}
+	return dbterror.ErrCancelledDDLJob.Equal(context.Cause(jobCtx.stepCtx))
+}
+
+func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.Job, mvTblInfo *model.TableInfo) (ver int64, _ error) {
+	droppingTblInfo := mvTblInfo
+	actualTblInfo, err := getTableInfo(jobCtx.metaMut, job.TableID, job.SchemaID)
+	if err == nil {
+		droppingTblInfo = actualTblInfo
+	} else if !infoschema.ErrDatabaseNotExists.Equal(err) && !infoschema.ErrTableNotExists.Equal(err) {
+		return ver, errors.Trace(err)
+	}
+
+	var extraInfos []schemaIDAndTableInfo
+	if droppingTblInfo != nil {
+		extra, err := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, droppingTblInfo)
+		if err != nil {
+			return ver, errors.Trace(err)
+		}
+		if extra != nil {
+			if err := updateTable(jobCtx.metaMut, extra.schemaID, extra.tblInfo); err != nil {
+				return ver, errors.Trace(err)
+			}
+			extraInfos = append(extraInfos, *extra)
+		}
+	}
+
+	if actualTblInfo != nil {
+		if err := jobCtx.metaMut.DropTableOrView(job.SchemaID, job.TableID); err != nil {
+			return ver, errors.Trace(err)
+		}
+		if err := jobCtx.metaMut.GetAutoIDAccessors(job.SchemaID, job.TableID).Del(); err != nil {
+			return ver, errors.Trace(err)
+		}
+	}
+
+	if err := w.deleteCreateMaterializedViewRefreshInfo(jobCtx, job.TableID); err != nil {
+		return ver, errors.Trace(err)
+	}
+
+	job.State = model.JobStateRollbackDone
+	job.SchemaState = model.StateNone
+	ver, err = updateSchemaVersion(jobCtx, job, extraInfos...)
+	if err != nil {
+		return ver, errors.Trace(err)
+	}
+	job.FillArgs(&model.CreateMaterializedViewArgs{TableInfo: mvTblInfo})
+	return ver, nil
 }
 
 func buildCreateMaterializedViewSelectSQLWithSnapshot(selectSQL string, snapshotTS uint64) (string, error) {
@@ -469,6 +540,8 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 		return errors.Trace(err)
 	}
 
+	failpoint.Inject("pauseCreateMaterializedViewBuild", func() {})
+
 	failpoint.Inject("mockCreateMaterializedViewBuildErr", func() {
 		failpoint.Return(errors.New("mock create materialized view build error"))
 	})
@@ -485,6 +558,16 @@ func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mvi
 	}
 	upsertSQL := buildCreateMaterializedViewRefreshInfoUpsertSQL(mviewID, readTS, success, failedReason)
 	_, err := w.sess.Execute(ctx, upsertSQL, "mview-refresh-info-upsert")
+	return errors.Trace(err)
+}
+
+func (w *worker) deleteCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64) error {
+	ctx := jobCtx.stepCtx
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	deleteSQL := sqlescape.MustEscapeSQL("DELETE FROM mysql.tidb_mview_refresh WHERE MVIEW_ID = %?", mviewID)
+	_, err := w.sess.Execute(ctx, deleteSQL, "mview-refresh-info-delete")
 	return errors.Trace(err)
 }
 

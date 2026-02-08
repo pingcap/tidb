@@ -495,10 +495,11 @@ func (w *ReorgContext) setDDLLabelForTopSQL(jobQuery string) {
 
 // DDLBackfillers contains the DDL need backfill step.
 var DDLBackfillers = map[model.ActionType]string{
-	model.ActionAddIndex:            "add_index",
-	model.ActionModifyColumn:        "modify_column",
-	model.ActionDropIndex:           "drop_index",
-	model.ActionReorganizePartition: "reorganize_partition",
+	model.ActionAddIndex:               "add_index",
+	model.ActionModifyColumn:           "modify_column",
+	model.ActionDropIndex:              "drop_index",
+	model.ActionReorganizePartition:    "reorganize_partition",
+	model.ActionCreateMaterializedView: "create_materialized_view",
 }
 
 func getDDLRequestSource(jobType model.ActionType) string {

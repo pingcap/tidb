@@ -290,6 +290,25 @@ func rollingbackAddIndex(jobCtx *jobContext, job *model.Job) (ver int64, err err
 	return convertNotReorgAddIdxJob2RollbackJob(jobCtx, job, dbterror.ErrCancelledDDLJob)
 }
 
+func rollingbackCreateMaterializedView(jobCtx *jobContext, job *model.Job) (ver int64, err error) {
+	if _, err = model.GetCreateMaterializedViewArgs(job); err != nil {
+		job.State = model.JobStateCancelled
+		return ver, errors.Trace(err)
+	}
+
+	switch job.SchemaState {
+	case model.StateNone:
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCancelledDDLJob
+	case model.StateWriteReorganization:
+		job.State = model.JobStateRollingback
+		return ver, dbterror.ErrCancelledDDLJob
+	default:
+		job.State = model.JobStateCancelled
+		return ver, dbterror.ErrCannotCancelDDLJob.GenWithStackByArgs(job.ID)
+	}
+}
+
 // rollbackExchangeTablePartition will clear the non-partitioned
 // table's ExchangePartitionInfo state.
 func rollbackExchangeTablePartition(jobCtx *jobContext, job *model.Job, tblInfo *model.TableInfo) (ver int64, err error) {
@@ -627,6 +646,8 @@ func convertJob2RollbackJob(w *worker, jobCtx *jobContext, job *model.Job) (ver 
 		ver, err = rollingbackAddIndex(jobCtx, job)
 	case model.ActionAddVectorIndex:
 		ver, err = rollingbackAddVectorIndex(w, jobCtx, job)
+	case model.ActionCreateMaterializedView:
+		ver, err = rollingbackCreateMaterializedView(jobCtx, job)
 	case model.ActionAddTablePartition:
 		ver, err = rollingbackAddTablePartition(jobCtx, job)
 	case model.ActionReorganizePartition, model.ActionRemovePartitioning,

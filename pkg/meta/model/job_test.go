@@ -385,6 +385,18 @@ func TestMayNeedReorg(t *testing.T) {
 	}
 }
 
+func TestCreateMaterializedViewRollbackable(t *testing.T) {
+	job := &Job{Type: ActionCreateMaterializedView}
+	job.SchemaState = StateNone
+	require.True(t, job.IsRollbackable())
+
+	job.SchemaState = StateWriteReorganization
+	require.True(t, job.IsRollbackable())
+
+	job.SchemaState = StatePublic
+	require.False(t, job.IsRollbackable())
+}
+
 func TestInFinalState(t *testing.T) {
 	for s, v := range map[JobState]bool{
 		JobStateSynced:       true,

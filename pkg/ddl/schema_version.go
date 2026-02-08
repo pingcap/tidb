@@ -246,6 +246,11 @@ func SetSchemaDiffForPartitionModify(diff *model.SchemaDiff, job *model.Job, job
 // SetSchemaDiffForCreateTable set SchemaDiff for ActionCreateTable.
 func SetSchemaDiffForCreateTable(diff *model.SchemaDiff, job *model.Job, jobCtx *jobContext) error {
 	diff.TableID = job.TableID
+	if job.Type == model.ActionCreateMaterializedView && job.State == model.JobStateRollbackDone {
+		diff.OldTableID = job.TableID
+		diff.TableID = 0
+		return nil
+	}
 	if job.Type != model.ActionCreateTable {
 		return nil
 	}

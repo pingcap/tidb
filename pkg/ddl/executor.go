@@ -5161,6 +5161,8 @@ func initJobReorgMetaFromVariables(job *model.Job, sctx sessionctx.Context) erro
 				return err
 			}
 		}
+	case model.ActionCreateMaterializedView:
+		setReorgParam()
 	case model.ActionReorganizePartition,
 		model.ActionRemovePartitioning,
 		model.ActionAlterTablePartitioning:
