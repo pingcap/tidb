@@ -1159,7 +1159,7 @@ func (hg *Histogram) calcOutOfRangePercent(lDatum, rDatum *types.Datum) (leftPer
 	return leftPercent, rightPercent
 }
 
-// Calculate the out-of-range rows for range and equals predicates.
+// outOfRangeRowCount calculates the out-of-range rows for range and equals predicates.
 // The caller may provide a lDatum and rDatum if the predicate is a range predicate.
 // If the predicate is an equals predicate, set lDatum and rDatum to nil.
 func (hg *Histogram) OutOfRangeRowCount(
@@ -1178,10 +1178,10 @@ func (hg *Histogram) OutOfRangeRowCount(
 	if hg == nil || hg.NDV == 0 {
 		histNDV = topNNDV
 	} else {
-		histNDV = int64(hg.NDV) - topNNDV
+		histNDV = hg.NDV - topNNDV
 	}
 	// Ensure that we don't estimate <= 0 NDV
-	histNDV = max(histNDV, topNNDV, 1)
+	histNDV = max(histNDV, 1)
 
 	// Step 2: Calculate a default of "one value"
 	// oneValue assumes "one value qualifies", and is used as a lower bound.
@@ -1227,7 +1227,7 @@ func (hg *Histogram) OutOfRangeRowCount(
 	// Use absolute value to account for the case where rows may have been added on one side,
 	// but deleted from the other, resulting in qualifying out of range rows even though
 	// realtimeRowCount is less than histogram count
-	addedRows := hg.AbsRowCountDifference(int64(realtimeRowCount))
+	addedRows := hg.AbsRowCountDifference(realtimeRowCount)
 	maxAddedRows := addedRows
 
 	// Step 7: Calculate the estimated rows
