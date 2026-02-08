@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/planner/core/cost"
 	"github.com/pingcap/tidb/pkg/planner/planctx"
+	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/statistics"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -79,8 +80,8 @@ func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val t
 			return statistics.DefaultRowEst(0.0), nil
 		}
 		if c.Histogram.NDV > 0 && c.OutOfRange(val) {
-			outOfRangeCnt := outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount()
-			return statistics.DefaultRowEst(outOfRangeCnt), nil
+			count := c.Histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, nil, 0)
+			return statistics.DefaultRowEst(count.Est), nil
 		}
 		if c.CMSketch != nil {
 			count, err := statistics.QueryValue(sctx, c.CMSketch, c.TopN, val)
@@ -221,13 +222,16 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		atFullRange := cnt.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
 		// handling the out-of-range part if the estimate does not cover the full range.
 		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
-			histNDV := c.NDV
-			// Exclude the TopN
+			var topN *statistics.TopN
 			if c.StatsVer == statistics.Version2 {
-				histNDV -= int64(c.TopN.Num())
+				topN = c.TopN
+			} else {
+
 			}
+			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 			var count statistics.RowEstimate
-			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV))
+			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, topN, skewRatio))
 			cnt.Add(count)
 		}
 

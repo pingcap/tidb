@@ -316,9 +316,9 @@ IndexLookUp	83406.52	root
 └─TableRowIDScan(Probe)	83406.52	cop[tikv]	table:cast_info	keep order:false
 explain format = 'brief' select * from aka_title where kind_id = 5;
 id	estRows	task	access object	operator info
-TableReader	34260.33	root		data:Selection
-└─Selection	34260.33	cop[tikv]		eq(imdbload.aka_title.kind_id, 5)
-  └─TableFullScan	528337.00	cop[tikv]	table:aka_title	keep order:false
+IndexLookUp	5283.37	root		
+├─IndexRangeScan(Build)	5283.37	cop[tikv]	table:aka_title, index:aka_title_idx_kindid(kind_id)	range:[5,5], keep order:false
+└─TableRowIDScan(Probe)	5283.37	cop[tikv]	table:aka_title	keep order:false
 explain format = 'brief' select * from aka_title where kind_id > 7;
 id	estRows	task	access object	operator info
 TableReader	106389.00	root		data:Selection

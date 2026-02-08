@@ -287,6 +287,8 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 		atFullRange := count.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
 		// handling the out-of-range part if the estimate does not cover the full range.
 		if !atFullRange && ((outOfRangeOnIndex(idx, l) && !(isSingleColIdx && lowIsNull)) || outOfRangeOnIndex(idx, r)) {
+			skewRatio := sctx.GetSessionVars().RiskRangeSkewRatio
+			sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskRangeSkewRatio)
 			histNDV := idx.NDV
 			// Exclude the TopN in Stats Version 2
 			if idx.StatsVer == statistics.Version2 {
@@ -298,14 +300,14 @@ func getIndexRowCountForStatsV2(sctx planctx.PlanContext, idx *statistics.Index,
 				isSingleColRange := len(indexRange.LowVal) == len(indexRange.HighVal) && len(indexRange.LowVal) == 1
 				if isSingleColRange && c != nil && c.Histogram.NDV > 0 && c.Histogram.Len() > 0 {
 					histNDV = c.Histogram.NDV - int64(c.TopN.Num())
-					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, histNDV))
+					count.Add(c.Histogram.OutOfRangeRowCount(sctx, &indexRange.LowVal[0], &indexRange.HighVal[0], realtimeRowCount, modifyCount, c.TopN, skewRatio))
 				} else {
 					// TODO: Extend original datatype out-of-range estimation to multi-column
 					histNDV -= int64(idx.TopN.Num())
-					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
+					count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, idx.TopN, skewRatio))
 				}
 			} else {
-				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, histNDV))
+				count.Add(idx.Histogram.OutOfRangeRowCount(sctx, &l, &r, realtimeRowCount, modifyCount, nil, skewRatio))
 			}
 		}
 
@@ -345,45 +347,32 @@ func estimateRowCountWithUniformDistribution(
 	}
 	histogram := stats.GetHistogram()
 	topN := stats.GetTopN()
-	// Calculate histNDV excluding TopN from NDV
-	histNDV := float64(histogram.NDV - int64(topN.Num()))
-	totalRowCount := stats.TotalRowCount()
-	increaseFactor := stats.GetIncreaseFactor(realtimeRowCount)
-	notNullCount := histogram.NotNullCount()
-
-	var avgRowEstimate float64
-	if histNDV <= 0 || notNullCount == 0 { // Branch 1: all NDV's are in TopN, and no histograms.
-		// We have no histograms, but c.Histogram.NDV > c.TopN.Num().
-		// This can happen when sampling collects fewer than all NDV.
-		if histNDV > 0 && modifyCount == 0 {
-			return statistics.DefaultRowEst(max(float64(topN.MinCount()-1), 1))
-		}
-		// All values are in TopN (and TopN NDV is accurate).
-		// We need to derive a RowCount because the histogram is empty.
-		if notNullCount <= 0 {
-			notNullCount = totalRowCount - float64(histogram.NullCount)
-		}
-		avgRowEstimate = outOfRangeFullNDV(float64(histogram.NDV), totalRowCount, notNullCount, float64(realtimeRowCount), increaseFactor, modifyCount)
-	} else { // Branch 2: some NDV's are in histograms
-		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
-		avgRowEstimate = notNullCount / histNDV
-	}
-
 	// skewRatio determines how much of the potential skew should be considered
 	skewRatio := sctx.GetSessionVars().RiskEqSkewRatio
 	sctx.GetSessionVars().RecordRelevantOptVar(vardef.TiDBOptRiskEqSkewRatio)
-	if skewRatio > 0 {
-		// Calculate the worst case selectivity assuming the value is skewed within the remaining values not in TopN.
-		skewEstimate := notNullCount - (histNDV - 1)
-		minTopN := topN.MinCount()
-		if minTopN > 0 {
-			// The skewEstimate should not be larger than the minimum TopN value.
-			skewEstimate = min(skewEstimate, float64(minTopN))
-		}
-		return statistics.CalculateSkewRatioCounts(avgRowEstimate, skewEstimate, skewRatio)
+
+	histNDV := float64(histogram.NDV - int64(topN.Num()))
+	notNullCount := histogram.NotNullCount()
+	var count statistics.RowEstimate
+	if histNDV <= 0 || notNullCount == 0 || modifyCount == 0 {
+		// Branch 1: all NDV's are in TopN, and no histograms.
+		count = histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, topN, skewRatio)
+	} else {
+		// Branch 2: some NDV's are in histograms
+		// Calculate the average histogram rows (which excludes topN) and NDV that excluded topN
+		// Calculate histNDV excluding TopN from NDV
+		count.MinEst = 0
+		count.Est = float64(notNullCount) / float64(histNDV)
 	}
 
-	return statistics.DefaultRowEst(avgRowEstimate)
+	minTopN := float64(topN.MinCount())
+	if count.MaxEst > count.Est && minTopN > count.Est {
+		count.MaxEst = min(count.MaxEst, minTopN)
+	} else {
+		count.MaxEst = max(count.Est, minTopN)
+	}
+
+	return count
 }
 
 // equalRowCountOnIndex estimates the row count by a slice of Range and a Datum.
@@ -396,8 +385,8 @@ func equalRowCountOnIndex(sctx planctx.PlanContext, idx *statistics.Index, b []b
 	val := types.NewBytesDatum(b)
 	if idx.StatsVer < statistics.Version2 {
 		if idx.Histogram.NDV > 0 && outOfRangeOnIndex(idx, val) {
-			outOfRangeCnt := outOfRangeEQSelectivity(sctx, idx.Histogram.NDV, realtimeRowCount, int64(idx.TotalRowCount())) * idx.TotalRowCount()
-			return statistics.DefaultRowEst(outOfRangeCnt)
+			count := idx.Histogram.OutOfRangeRowCount(sctx, nil, nil, realtimeRowCount, modifyCount, nil, 0)
+			return statistics.DefaultRowEst(count.Est)
 		}
 		if idx.CMSketch != nil {
 			return statistics.DefaultRowEst(float64(idx.QueryBytes(sctx, b)))

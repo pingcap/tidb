@@ -25,70 +25,70 @@
         "Start": 800,
         "End": 900,
         "Count": 763,
-        "MinEst": 759,
+        "MinEst": 751,
         "MaxEst": 763
       },
       {
         "Start": 900,
         "End": 950,
         "Count": 67,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 247
       },
       {
         "Start": 950,
         "End": 1000,
         "Count": 62,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 226
       },
       {
         "Start": 1000,
         "End": 1050,
         "Count": 57,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 205
       },
       {
         "Start": 1050,
         "End": 1100,
         "Count": 52,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 184
       },
       {
         "Start": 1150,
         "End": 1200,
         "Count": 41,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 143
       },
       {
         "Start": 1200,
         "End": 1300,
         "Count": 59,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 215
       },
       {
         "Start": 1300,
         "End": 1400,
         "Count": 38,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 131
       },
       {
         "Start": 1400,
         "End": 1500,
         "Count": 18,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 48
       },
       {
         "Start": 1500,
         "End": 1600,
         "Count": 13,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 1508
       },
       {
@@ -102,14 +102,14 @@
         "Start": 800,
         "End": 1000,
         "Count": 873,
-        "MinEst": 763,
+        "MinEst": 755,
         "MaxEst": 1221
       },
       {
         "Start": 900,
         "End": 1500,
         "Count": 381,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 1502
       },
       {
@@ -130,7 +130,7 @@
         "Start": 100,
         "End": 200,
         "Count": 101,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 383
       },
       {
@@ -151,21 +151,21 @@
         "Start": 0,
         "End": 100,
         "Count": 80,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 299
       },
       {
         "Start": -100,
         "End": 100,
         "Count": 132,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 507
       },
       {
         "Start": -100,
         "End": 0,
         "Count": 60,
-        "MinEst": 13,
+        "MinEst": 5,
         "MaxEst": 216
       }
     ]
