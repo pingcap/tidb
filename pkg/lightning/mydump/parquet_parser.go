@@ -364,9 +364,10 @@ func (pp *ParquetParser) getBuilder() func(int) (readerAtSeekerCloser, error) {
 	ranges := rowGroupRangeFromMeta(pp.fileMeta.RowGroup(pp.curRowGroup))
 	if ranges.end-ranges.start <= int64(rowGroupInMemoryThreshold) {
 		base, err := newInMemoryReaderBase(pp.ctx, pp.store, pp.path, ranges)
-		return func(int) (readerAtSeekerCloser, error) {
+		return func(c int) (readerAtSeekerCloser, error) {
 			return &inMemoryParquetWrapper{
 				base:     base,
+				pos:      ranges.columnStarts[c],
 				fileSize: pp.fileMeta.GetSourceFileSize(),
 			}, err
 		}
