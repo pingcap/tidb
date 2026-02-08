@@ -420,6 +420,7 @@ go_test(
         "//pkg/extension",
         "//pkg/infoschema",
         "//pkg/kv",
+        "//pkg/lightning/mydump",
         "//pkg/meta",
         "//pkg/meta/autoid",
         "//pkg/meta/model",

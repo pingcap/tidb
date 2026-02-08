@@ -14,7 +14,6 @@ go_library(
         "//pkg/sessiontxn",
         "//pkg/ttl/metrics",
         "//pkg/util/chunk",
-        "//pkg/util/intest",
         "//pkg/util/sqlescape",
         "//pkg/util/sqlexec",
         "//pkg/util/sqlkiller",
