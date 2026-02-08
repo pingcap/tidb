@@ -59,12 +59,15 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	if region == "" {
 		region = defaultRegion
 	}
+	logger := log.L().With(
+		zap.String("bucket", backend.GetBucket()),
+		zap.String("prefix", backend.GetPrefix()),
+		zap.String("context", "s3"),
+		zap.String("provider", qs.Provider),
+	)
 	configOpts = append(configOpts,
 		config.WithRegion(region),
-		config.WithLogger(newLogger(
-			zap.String("bucket", backend.GetBucket()),
-			zap.String("prefix", backend.GetPrefix()),
-			zap.String("context", "aws-sdk-global"))),
+		config.WithLogger(newLogger(logger)),
 		config.WithClientLogMode(aws.LogRequest|aws.LogRetries|aws.LogResponse|aws.LogDeprecatedUsage),
 		config.WithLogConfigurationWarnings(true),
 	)
@@ -117,7 +120,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 	}
 
 	s3Opts = append(s3Opts, func(o *s3.Options) {
-		o.Logger = newLogger(zap.String("bucket", backend.GetBucket()), zap.String("prefix", backend.GetPrefix()), zap.String("context", "s3"))
+		o.Logger = newLogger(logger)
 		// These logs will be printed when log level is `DEBUG`.
 		o.ClientLogMode |= aws.LogRetries | aws.LogRequest | aws.LogResponse | aws.LogDeprecatedUsage
 	})
@@ -269,7 +272,7 @@ func NewS3Storage(ctx context.Context, backend *backuppb.S3, opts *storeapi.Opti
 			client = s3.NewFromConfig(cfg, s3Opts...)
 		}
 	}
-	log.Info("succeed to get bucket region from s3", zap.String("bucket region", detectedRegion))
+	logger.Info("succeed to get bucket region from s3", zap.String("bucket region", detectedRegion))
 
 	qs.Prefix = storeapi.NewPrefix(qs.Prefix).String()
 	bucketPrefix := storeapi.NewBucketPrefix(qs.Bucket, qs.Prefix)
