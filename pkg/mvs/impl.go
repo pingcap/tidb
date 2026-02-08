@@ -2,19 +2,13 @@ package utils
 
 import (
 	"context"
+	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
+	meta "github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	basic "github.com/pingcap/tidb/pkg/util"
-)
-
-const (
-	ActionAddMV     = 146
-	ActionDropMV    = 147
-	ActionAlterMV   = 148
-	ActionAddMVLog  = 149
-	ActionDropMVLog = 150
 )
 
 type serverHelper struct {
@@ -48,6 +42,14 @@ func (m *serverHelper) getAllServerInfo(ctx context.Context) (map[string]serverI
 	return servers, nil
 }
 
+func (*serverHelper) RefreshMV(_ context.Context, _ string) (relatedMVLog []string, nextRefresh time.Time, err error) {
+	return nil, time.Time{}, ErrMVRefreshHandlerNotRegistered
+}
+
+func (*serverHelper) PurgeMVLog(_ context.Context, _ string) (nextPurge time.Time, err error) {
+	return time.Time{}, ErrMVLogPurgeHandlerNotRegistered
+}
+
 var mvs *MVService
 
 // RegisterMVS registers a DDL event handler for MV-related events.
@@ -56,11 +58,11 @@ func RegisterMVS(ddlNotifier *notifier.DDLNotifier, se basic.SessionPool) {
 		return
 	}
 
-	mvs = NewMVJobsManager(se, &serverHelper{}, noopMVTaskHandler{})
+	mvs = NewMVJobsManager(se, &serverHelper{})
 
 	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		switch event.GetType() {
-		case ActionAddMV, ActionDropMVLog, ActionAlterMV, ActionAddMVLog, ActionDropMV:
+		case meta.ActionCreateMaterializedViewLog:
 			mvs.ddlDirty.Store(true)
 			mvs.notifier.Wake()
 		}

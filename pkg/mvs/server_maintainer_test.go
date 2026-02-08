@@ -192,7 +192,7 @@ func TestServerConsistentHashInit(t *testing.T) {
 	sch := NewServerConsistentHash(1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 
-	sch.Init(context.Background())
+	sch.init(context.Background())
 
 	if sch.ID != "nodeA" {
 		t.Fatalf("expected current ID nodeA, got %s", sch.ID)

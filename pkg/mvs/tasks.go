@@ -16,6 +16,11 @@ import (
 type mvLogItem Item[*mvLog]
 type mvItem Item[*mv]
 
+type MVServiceHelper interface {
+	ServerHelper
+	MVTaskHandler
+}
+
 type MVService struct {
 	sysSessionPool basic.SessionPool
 	lastRefresh    atomic.Int64
@@ -29,7 +34,7 @@ type MVService struct {
 	notifier Notifier
 	ddlDirty atomic.Bool
 
-	taskHandler MVTaskHandler
+	mh MVServiceHelper
 
 	metrics struct {
 		mvCount                atomic.Int64
@@ -62,17 +67,20 @@ const (
 )
 
 // NewMVJobsManager creates a MVJobsManager with a SQL executor.
-func NewMVJobsManager(se basic.SessionPool, helper ServerHelper, taskHandler MVTaskHandler) *MVService {
+func NewMVJobsManager(se basic.SessionPool, helper MVServiceHelper) *MVService {
+	if helper == nil || se == nil {
+		panic("invalid arguments")
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	mgr := &MVService{
 		sysSessionPool: se,
 		sch:            NewServerConsistentHash(10, helper),
 		executor:       NewTaskExecutor(ctx, defaultMVTaskMaxConcurrency, defaultMVTaskTimeout),
 
-		notifier:    NewNotifier(),
-		ctx:         ctx,
-		cancel:      cancel,
-		taskHandler: taskHandler,
+		notifier: NewNotifier(),
+		ctx:      ctx,
+		cancel:   cancel,
+		mh:       helper,
 	}
 	return mgr
 }
@@ -80,14 +88,6 @@ func NewMVJobsManager(se basic.SessionPool, helper ServerHelper, taskHandler MVT
 // SetTaskExecConfig sets the execution config for MV tasks.
 func (t *MVService) SetTaskExecConfig(maxConcurrency int, timeout time.Duration) {
 	t.executor.UpdateConfig(maxConcurrency, timeout)
-}
-
-// SetTaskHandler sets both refresh/purge handlers with a unified implementation.
-func (t *MVService) SetTaskHandler(handler MVTaskHandler) {
-	if handler == nil {
-		return
-	}
-	t.taskHandler = handler
 }
 
 type mv struct {
@@ -187,7 +187,7 @@ COMMIT;
 */
 
 func (t *MVService) executeMVRefresh(ctx context.Context, m *mv) (relatedMVLog []string, nextRefresh time.Time, err error) {
-	return t.taskHandler.RefreshMV(ctx, m.ID)
+	return t.mh.RefreshMV(ctx, m.ID)
 }
 
 /*
@@ -211,7 +211,7 @@ COMMIT;
 return TS + PURGE_INTERVAL
 */
 func (t *MVService) executeMVLogPurge(ctx context.Context, l *mvLog) (nextPurge time.Time, err error) {
-	return t.taskHandler.PurgeMVLog(ctx, l.ID)
+	return t.mh.PurgeMVLog(ctx, l.ID)
 }
 
 /*
@@ -305,7 +305,7 @@ func (t *MVService) Start() {
 	if t.running.Swap(true) {
 		return
 	}
-	t.sch.Init(t.ctx)
+	t.sch.init(t.ctx)
 	t.ddlDirty.Store(true)
 	t.notifier.Wake()
 
@@ -361,10 +361,7 @@ func (t *MVService) Close() {
 		return
 	}
 	t.runWg.Wait()
-	if t.executor != nil {
-		t.executor.Close()
-		t.executor = nil
-	}
+	t.executor.Close()
 }
 
 func (t *MVService) shouldFetch(now time.Time) bool {

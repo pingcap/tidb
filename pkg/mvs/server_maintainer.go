@@ -35,8 +35,7 @@ func NewServerConsistentHash(replicas int, helper ServerHelper) *ServerConsisten
 	}
 }
 
-// Init initializes current server ID. It keeps retrying until successful.
-func (sch *ServerConsistentHash) Init(ctx context.Context) {
+func (sch *ServerConsistentHash) init(ctx context.Context) {
 	if sch == nil {
 		return
 	}
@@ -49,9 +48,9 @@ func (sch *ServerConsistentHash) Init(ctx context.Context) {
 			sch.mu.Unlock()
 			break
 		}
-		logutil.BgLogger().Warn("get local TiDB server info failed", zap.Error(err))
 
 		backoff = min(backoff, time.Second*5)
+		logutil.BgLogger().Warn("get local TiDB server info failed, retrying after backoff", zap.Error(err), zap.Duration("backoff", backoff))
 		time.Sleep(backoff)
 		backoff *= 2
 	}

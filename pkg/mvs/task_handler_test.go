@@ -5,8 +5,38 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/stretchr/testify/require"
 )
+
+type mockSessionPool struct{}
+
+func (mockSessionPool) Get() (pools.Resource, error) { return nil, nil }
+func (mockSessionPool) Put(pools.Resource)           {}
+func (mockSessionPool) Close()                       {}
+
+type mockTaskHandlerServerHelper struct{}
+
+func (mockTaskHandlerServerHelper) serverFilter(serverInfo) bool { return true }
+func (mockTaskHandlerServerHelper) getServerInfo() (serverInfo, error) {
+	return serverInfo{ID: "test-server"}, nil
+}
+func (mockTaskHandlerServerHelper) getAllServerInfo(context.Context) (map[string]serverInfo, error) {
+	return map[string]serverInfo{"test-server": {ID: "test-server"}}, nil
+}
+
+type mockMVServiceHelper struct {
+	mockTaskHandlerServerHelper
+	taskHandler MVTaskHandler
+}
+
+func (m mockMVServiceHelper) RefreshMV(ctx context.Context, mvID string) (relatedMVLog []string, nextRefresh time.Time, err error) {
+	return m.taskHandler.RefreshMV(ctx, mvID)
+}
+
+func (m mockMVServiceHelper) PurgeMVLog(ctx context.Context, mvLogID string) (nextPurge time.Time, err error) {
+	return m.taskHandler.PurgeMVLog(ctx, mvLogID)
+}
 
 type mockMVTaskHandler struct {
 	refreshRelated []string
@@ -30,7 +60,7 @@ func (m *mockMVTaskHandler) PurgeMVLog(_ context.Context, mvLogID string) (nextP
 }
 
 func TestMVServiceDefaultTaskHandler(t *testing.T) {
-	svc := NewMVJobsManager(nil, nil, noopMVTaskHandler{})
+	svc := NewMVJobsManager(mockSessionPool{}, mockMVServiceHelper{taskHandler: noopMVTaskHandler{}})
 	defer svc.Close()
 
 	_, _, err := svc.executeMVRefresh(context.Background(), &mv{ID: "mv-1"})
@@ -40,10 +70,7 @@ func TestMVServiceDefaultTaskHandler(t *testing.T) {
 	require.ErrorIs(t, err, ErrMVLogPurgeHandlerNotRegistered)
 }
 
-func TestMVServiceSetTaskHandler(t *testing.T) {
-	svc := NewMVJobsManager(nil, nil, noopMVTaskHandler{})
-	defer svc.Close()
-
+func TestMVServiceUseInjectedTaskHandler(t *testing.T) {
 	nextRefresh := time.Now().Add(time.Minute).Round(0)
 	nextPurge := time.Now().Add(2 * time.Minute).Round(0)
 	handler := &mockMVTaskHandler{
@@ -51,7 +78,8 @@ func TestMVServiceSetTaskHandler(t *testing.T) {
 		refreshNext:    nextRefresh,
 		purgeNext:      nextPurge,
 	}
-	svc.SetTaskHandler(handler)
+	svc := NewMVJobsManager(mockSessionPool{}, mockMVServiceHelper{taskHandler: handler})
+	defer svc.Close()
 
 	related, gotNextRefresh, err := svc.executeMVRefresh(context.Background(), &mv{ID: "mv-2"})
 	require.NoError(t, err)
