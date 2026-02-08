@@ -151,7 +151,7 @@ func deriveStats4DataSource(lp base.LogicalPlan, colGroups [][]*expression.Colum
 			ctx := ds.SCtx().GetExprCtx()
 			notNullExpr, err := expression.NewFunction(ctx, ast.IsNull, types.NewFieldType(mysql.TypeTiny), softDeleteCol)
 			if err != nil {
-				return nil, false, err
+				return nil, err
 			}
 			// Add to both PushedDownConds and AllConds
 			ds.PushedDownConds = append(ds.PushedDownConds, notNullExpr)

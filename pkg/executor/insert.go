@@ -620,7 +620,7 @@ func (e *InsertExec) doDupRowUpdate(
 		// Only CDC uses this pattern:
 		// _tidb_origin_ts = IF(@cond, VALUES(_tidb_origin_ts), test._tidb_origin_ts)
 		for _, assign := range nonGenerated {
-			if assign.ColName.Equals(&model.ExtraOriginTSName) {
+			if assign.ColName.L == model.ExtraOriginTSName.L {
 				needActiveActiveSyncStats = true
 				break
 			}
@@ -674,7 +674,7 @@ func (e *InsertExec) doDupRowUpdate(
 			if !e.row4Update[assign.Col.Index].Equals(val) {
 				realOverwrite = true
 			}
-			if assign.ColName.Equals(&model.ExtraOriginTSName) {
+			if assign.ColName.L == model.ExtraOriginTSName.L {
 				if newRow[updateOriginTSCol].Equals(val) {
 					originTSEqual = true
 				}

@@ -903,7 +903,7 @@ func (p *Insert) ResolveIndices() (err error) {
 	}
 	// Resolve ReplaceConflictIfExpr for soft delete
 	for i, expr := range p.ReplaceConflictIfExpr {
-		p.ReplaceConflictIfExpr[i], err = expr.ResolveIndices(p.TableSchema)
+		p.ReplaceConflictIfExpr[i], err = expr.ResolveIndices(p.tableSchema)
 		if err != nil {
 			return err
 		}

@@ -504,19 +504,19 @@ func handleUpdateError(sctx sessionctx.Context, colName model.CIStr, colInfo *mm
 	return err
 }
 
-func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
+func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []plannercore.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for i, col := range cols {
 		// For active-active table, when duplicate key is found, value of _tidb_origin_ts
 		// should be set to null rather than copy the old value.
 		if col.Column != nil && col.Table.Meta().IsActiveActive &&
-			col.Name.Equals(&model.ExtraOriginTSName) {
+			col.Name.L == mmodel.ExtraOriginTSName.L {
 			newRowData[i].SetNull()
 		}
 	}
 
 	for _, assign := range e.OrderedList {
-		var colInfo *model.ColumnInfo
+		var colInfo *mmodel.ColumnInfo
 		if cols[assign.Col.Index].Column != nil {
 			colInfo = cols[assign.Col.Index].ColumnInfo
 		}
@@ -545,11 +545,11 @@ func (e *UpdateExec) fastComposeNewRow(rowIdx int, oldRow []types.Datum, cols []
 	return newRowData, nil
 }
 
-func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []physicalop.ColumnAndTable) ([]types.Datum, error) {
+func (e *UpdateExec) composeNewRow(rowIdx int, oldRow []types.Datum, cols []plannercore.ColumnAndTable) ([]types.Datum, error) {
 	newRowData := types.CloneRow(oldRow)
 	for i, col := range cols {
 		if col.Column != nil && col.Table.Meta().IsActiveActive &&
-			col.Name.Equals(&model.ExtraOriginTSName) {
+			col.Name.L == mmodel.ExtraOriginTSName.L {
 			// For active-active table, when duplicate key is found, value of _tidb_origin_ts
 			// should be set to null rather than copy the old value.
 			newRowData[i].SetNull()

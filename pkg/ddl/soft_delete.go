@@ -19,6 +19,7 @@ import (
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/util/dbterror"
 )
 
@@ -198,7 +199,7 @@ func getSoftDeleteAndActiveActive(oldInfo *model.SoftdeleteInfo, newInfo *model.
 }
 
 // checkSoftDeleteAndActiveActive validates soft delete configuration
-func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo, is infoschema.InfoSchema, dbName ast.CIStr) error {
+func checkSoftDeleteAndActiveActive(tblInfo *model.TableInfo, is infoschema.InfoSchema, dbName pmodel.CIStr) error {
 	if tblInfo.TempTableType != model.TempTableNone && (tblInfo.IsActiveActive || tblInfo.SoftdeleteInfo != nil) {
 		return dbterror.ErrGeneralUnsupportedDDL.GenWithStackByArgs("SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table")
 	}

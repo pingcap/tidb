@@ -327,7 +327,7 @@ func buildColumnAndConstraint(
 	return col, cts, nil
 }
 
-func checkInternalColumnFieldTypeMatch(colName ast.CIStr, got, expected *field_types.FieldType) error {
+func checkInternalColumnFieldTypeMatch(colName pmodel.CIStr, got, expected *field_types.FieldType) error {
 	if got.GetType() != expected.GetType() || got.GetDecimal() != expected.GetDecimal() || got.GetFlen() != expected.GetFlen() {
 		return types.ErrWrongFieldSpec.GenWithStackByArgs(colName.L)
 	}

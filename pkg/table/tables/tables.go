@@ -499,7 +499,7 @@ func (t *TableCommon) updateRecord(sctx table.MutateContext, txn kv.Transaction,
 
 		// For active-active replication, if _tidb_origin_ts is not null, it means the row is updated by upstream TiDBs.
 		// Then this txn must make sure its commit ts is greater than the _tidb_origin_ts. (last-write-win conflict resolving strategy, so-called LWW)
-		if t.Meta().IsActiveActive && col.Name.Equals(&model.ExtraOriginTSName) {
+		if t.Meta().IsActiveActive && col.Name.L == model.ExtraOriginTSName.L {
 			oldVal := oldData[col.Offset]
 			if !oldVal.IsNull() && value.IsNull() {
 				// In update or insert-on-dup update, the new value of _tidb_origin_ts column should be NULL, rather than the old _tidb_origin_ts value.

@@ -20,8 +20,7 @@ import (
 	"math"
 	"slices"
 	"sort"
-	"sync"
-	"sync/atomic"
+	"strconv"
 	"time"
 
 	"github.com/pingcap/errors"

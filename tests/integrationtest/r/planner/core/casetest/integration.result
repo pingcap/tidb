@@ -1800,7 +1800,6 @@ NULL
 use test;
 drop table if exists tt;
 create table tt(a bigint, b bigint, c bigint, d bigint, e bigint, primary key(c,d));
-<<<<<<< HEAD
 explain format = brief update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
 id	estRows	task	access object	operator info
 Update	N/A	root		N/A
@@ -1816,29 +1815,3 @@ Update	N/A	root		N/A
     └─TableReader(Probe)	0.00	root		data:Selection
       └─Selection	0.00	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444)))), or(or(eq(test.tt.c, 11), eq(test.tt.c, 22)), or(eq(test.tt.c, 33), eq(test.tt.c, 44))), or(or(eq(test.tt.d, 111), eq(test.tt.d, 222)), or(eq(test.tt.d, 333), eq(test.tt.d, 444)))
         └─TableRangeScan	0.00	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)], keep order:false, stats:pseudo
-=======
-explain format='plan_tree' update tt, (select 1 as c1 ,2 as c2 ,3 as c3, 4 as c4 union all select 2,3,4,5 union all select 3,4,5,6) tmp set tt.a=tmp.c1, tt.b=tmp.c2 where tt.c=tmp.c3 and tt.d=tmp.c4 and (tt.c,tt.d) in ((11,111),(22,222),(33,333),(44,444));
-id	task	access object	operator info
-Update	root		N/A
-└─IndexJoin	root		inner join, inner:TableReader, outer key:Column, Column, inner key:test.tt.c, test.tt.d, equal cond:eq(Column, test.tt.c), eq(Column, test.tt.d)
-  ├─Union(Build)	root		
-  │ ├─Projection	root		1->Column, 2->Column, 3->Column, 4->Column
-  │ │ └─TableDual	root		rows:1
-  │ ├─Projection	root		2->Column, 3->Column, 4->Column, 5->Column
-  │ │ └─TableDual	root		rows:1
-  │ └─Projection	root		3->Column, 4->Column, 5->Column, 6->Column
-  │   └─TableDual	root		rows:1
-  └─TableReader(Probe)	root		data:Selection
-    └─Selection	cop[tikv]		or(or(and(eq(test.tt.c, 11), eq(test.tt.d, 111)), and(eq(test.tt.c, 22), eq(test.tt.d, 222))), or(and(eq(test.tt.c, 33), eq(test.tt.d, 333)), and(eq(test.tt.c, 44), eq(test.tt.d, 444))))
-      └─TableRangeScan	cop[tikv]	table:tt	range: decided by [eq(test.tt.c, Column#21) eq(test.tt.d, Column#22)], keep order:false, stats:pseudo
-CREATE TABLE test_62564(c0 DECIMAL);
-INSERT INTO test_62564 VALUES (0);
-SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE NULL END ) AS DATE);
-c0
-0
-SET @b = NULL;
-PREPARE prepare_query FROM 'SELECT * FROM test_62564 WHERE CAST((CASE test_62564.c0 WHEN test_62564.c0 THEN CAST(test_62564.c0 AS TIME) ELSE ? END ) AS DATE)';
-EXECUTE prepare_query USING @b;
-c0
-0
->>>>>>> 6e50f2744f (Squashed commit of the active-active)

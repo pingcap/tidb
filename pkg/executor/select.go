@@ -1106,7 +1106,6 @@ func ResetContextOfStmt(ctx sessionctx.Context, s ast.StmtNode) (err error) {
 		ResetDeleteStmtCtx(sc, stmt, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.RecoverValuesStmt:
-		sc.MemSensitive = true
 		ResetRecoverValuesStmtCtx(sc, vars)
 		errLevels = sc.ErrLevels()
 	case *ast.InsertStmt:

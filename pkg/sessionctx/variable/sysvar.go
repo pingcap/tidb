@@ -32,6 +32,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/servicescope"
 	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
@@ -2904,11 +2905,11 @@ var defaultSysVars = []*SysVar{
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
 		return BoolToOnOff(EnableTTLJob.Load()), nil
 	}},
-	{Scope: ScopeGlobal, Name: TiDBSoftDeleteJobEnable, Value: BoolToOnOff(variable.DefTiDBSoftDeleteJobEnable), Type: variable.TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
-		variable.SoftDeleteJobEnable.Store(TiDBOptOn(s))
+	{Scope: ScopeGlobal, Name: TiDBSoftDeleteJobEnable, Value: BoolToOnOff(DefTiDBSoftDeleteJobEnable), Type: TypeBool, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
+		SoftDeleteJobEnable.Store(TiDBOptOn(s))
 		return nil
 	}, GetGlobal: func(ctx context.Context, vars *SessionVars) (string, error) {
-		return BoolToOnOff(variable.SoftDeleteJobEnable.Load()), nil
+		return BoolToOnOff(SoftDeleteJobEnable.Load()), nil
 	}},
 	{Scope: ScopeGlobal, Name: TiDBTTLScanBatchSize, Value: strconv.Itoa(DefTiDBTTLScanBatchSize), Type: TypeInt, MinValue: DefTiDBTTLScanBatchMinSize, MaxValue: DefTiDBTTLScanBatchMaxSize, SetGlobal: func(ctx context.Context, vars *SessionVars, s string) error {
 		val, err := strconv.ParseInt(s, 10, 64)

@@ -985,7 +985,7 @@ func ensureInternalColumnsForTableOptions(tbInfo *model.TableInfo, dbInfo *model
 	if err != nil {
 		return errors.Trace(err)
 	}
-	if err := checkSoftDeleteAndActiveActive(tbInfo, nil, ast.CIStr{}); err != nil {
+	if err := checkSoftDeleteAndActiveActive(tbInfo, nil, pmodel.CIStr{}); err != nil {
 		return errors.Trace(err)
 	}
 

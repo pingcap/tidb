@@ -615,6 +615,18 @@ set @@tidb_opt_join_reorder_threshold=5;
 explain format='brief' select 1 from t1,t2,t3,t4 where t1.a=t2.a and t3.b=t4.b;
 set @@tidb_opt_join_reorder_threshold=default;
 
+# TestIssue64922
+drop table if exists t, t1, t2;
+create table t(a int, b int);
+insert into t value (1,1);
+select *, _tidb_rowid from t;
+select * from (select *, _tidb_rowid from t) n;
+
+create table t1(a int, b int);
+create table t2(aa int, bb int);
+explain format = 'brief' select * from (select _tidb_rowid from t1) n1 natural join (select _tidb_rowid from t2) n2;
+explain format = 'brief' select * from (select _tidb_rowid, a from t1) n1 natural join (select _tidb_rowid, aa from t2) n2;
+
 # Issue64697
 drop table if exists t1, t2;
 create table t1(a int, b int);

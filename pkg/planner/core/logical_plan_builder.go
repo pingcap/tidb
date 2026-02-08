@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"math/bits"
 	"slices"
 	"sort"
 	"strconv"
@@ -29,8 +30,10 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/domain"
+	"github.com/pingcap/tidb/pkg/errctx"
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/expression/aggregation"
+	"github.com/pingcap/tidb/pkg/expression/exprctx"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
@@ -47,6 +50,7 @@ import (
 	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
 	"github.com/pingcap/tidb/pkg/planner/core/resolve"
 	"github.com/pingcap/tidb/pkg/planner/core/rule"
+	"github.com/pingcap/tidb/pkg/planner/property"
 	"github.com/pingcap/tidb/pkg/planner/util"
 	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
 	"github.com/pingcap/tidb/pkg/planner/util/debugtrace"
@@ -64,6 +68,7 @@ import (
 	util2 "github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/pingcap/tidb/pkg/util/dbterror"
 	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
 	"github.com/pingcap/tidb/pkg/util/hack"
 	h "github.com/pingcap/tidb/pkg/util/hint"
@@ -5276,6 +5281,8 @@ type TblColPosInfo struct {
 	Start, End int
 	// HandleOrdinal represents the ordinal of the handle column.
 	HandleCols util.HandleCols
+	// ExtraOriginTSOffset stores the offset of _tidb_origin_ts for active-active tables.
+	ExtraOriginTSOffset table.ExtraOriginTSOffset
 
 	// IndexesRowLayout store the row layout of indexes. We need it if column pruning happens.
 	// If it's nil, means no column pruning happens.
@@ -5380,9 +5387,7 @@ func pruneAndBuildColPositionInfoForDelete(
 		}
 	}
 	// Sort by start position. To do the later column pruning.
-	slices.SortFunc(cols2PosInfos, func(a, b physicalop.TblColPosInfo) int {
-		return a.Cmp(b)
-	})
+	sort.Sort(cols2PosInfos)
 
 	nonPruned := bitset.New(uint(len(names)))
 	nonPruned.SetAll()
@@ -5480,7 +5485,8 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	// fixedPos records the columns that can not be pruned and their new positions in the row after pruning.
 	fixedPos := make(map[int]int, len(deletableCols))
 	for i := 0; i < colPosInfo.HandleCols.NumCols(); i++ {
-		fixedPos[i-originalStart] = 0
+		col := colPosInfo.HandleCols.GetCol(i)
+		fixedPos[col.Index-originalStart] = 0
 	}
 
 	// Mark the columns in indexes.
@@ -5499,7 +5505,7 @@ func pruneAndBuildSingleTableColPosInfoForDelete(
 	extraOriginTSColOffset := -1
 	if t.Meta().IsActiveActive {
 		for _, col := range deletableCols {
-			if col.Name.Equals(&model.ExtraOriginTSName) {
+			if col.Name.L == model.ExtraOriginTSName.L {
 				fixedPos[col.Offset] = 0
 				extraOriginTSColOffset = col.Offset
 				break
@@ -5609,7 +5615,7 @@ func (b *PlanBuilder) buildRecoverValues(ctx context.Context, recoverStmt *ast.R
 	// Get the table info to verify it's a soft delete table
 	dbName := recoverStmt.Table.Schema
 	if dbName.L == "" {
-		dbName = ast.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
+		dbName = pmodel.NewCIStr(b.ctx.GetSessionVars().CurrentDB)
 	}
 	tbl, err := b.is.TableByName(ctx, dbName, recoverStmt.Table.Name)
 	if err != nil {
@@ -6357,7 +6363,7 @@ func (b *PlanBuilder) buildSoftdeleteAsUpdate(
 				Name:   model.ExtraSoftDeleteTimeName,
 			},
 			Expr: &ast.FuncCallExpr{
-				FnName: ast.NewCIStr(ast.Now),
+				FnName: pmodel.NewCIStr(ast.Now),
 				Args: []ast.ExprNode{
 					&driver.ValueExpr{
 						Datum: types.NewIntDatum(6),
