@@ -2,6 +2,8 @@ package utils
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/pingcap/tidb/pkg/ddl/notifier"
@@ -113,8 +115,70 @@ UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = TS, LAST_PURGE_ERR = NULL WHE
 
 return TS + PURGE_INTERVAL
 */
-func (*serverHelper) PurgeMVLog(_ context.Context, _ basic.SessionPool, _ string) (nextPurge time.Time, err error) {
-	return time.Time{}, ErrMVLogPurgeHandlerNotRegistered
+func (*serverHelper) PurgeMVLog(ctx context.Context, sysSessionPool basic.SessionPool, mvLogID string) (nextPurge time.Time, err error) {
+	err = withRCRestrictedTxn(ctx, sysSessionPool, func(txnCtx context.Context, sctx sessionctx.Context) error {
+		const findMLogSQL = `SELECT TABLE_SCHEMA, MLOG_NAME, RELATED_MV, PURGE_INTERVAL FROM mysql.tidb_mlogs WHERE MLOG_ID = %?`
+		rows, err := execRCRestrictedSQLWithSession(txnCtx, sctx, findMLogSQL, []any{mvLogID})
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return errors.New("mvlog metadata not found")
+		}
+		row := rows[0]
+		if row.IsNull(0) || row.IsNull(1) || row.IsNull(3) {
+			return errors.New("mvlog metadata is invalid")
+		}
+		schemaName := row.GetString(0)
+		mlogName := row.GetString(1)
+		purgeInterval := time.Second * time.Duration(row.GetInt64(3))
+		var relatedMVs []string
+		if !row.IsNull(2) {
+			relatedMVs = parseRelatedMVIDs(row.GetString(2))
+		}
+
+		const lockPurgeSQL = `SELECT LAST_PURGE_TIME FROM mysql.tidb_mlog_purge WHERE MLOG_ID = %? FOR UPDATE`
+		rows, err = execRCRestrictedSQLWithSession(txnCtx, sctx, lockPurgeSQL, []any{mvLogID})
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return errors.New("mvlog purge state not found")
+		}
+
+		now := time.Now()
+		if !rows[0].IsNull(0) {
+			lastPurge, gtErr := rows[0].GetTime(0).GoTime(time.Local)
+			if gtErr == nil {
+				nextPurge = lastPurge.Add(purgeInterval)
+				if nextPurge.After(now) {
+					return nil
+				}
+			}
+		}
+
+		minRefreshReadTSO, err := getMinRefreshReadTSO(txnCtx, sctx, relatedMVs)
+		if err != nil {
+			return err
+		}
+
+		const deleteMLogSQL = `DELETE FROM %n.%n WHERE COMMIT_TSO > 0 AND COMMIT_TSO <= %?`
+		deleteStart := time.Now()
+		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, deleteMLogSQL, []any{schemaName, mlogName, minRefreshReadTSO}); err != nil {
+			return err
+		}
+		deleteDurationMS := time.Since(deleteStart).Milliseconds()
+		affectedRows := sctx.GetSessionVars().StmtCtx.AffectedRows()
+
+		purgeTS := time.Now()
+		const updatePurgeSQL = `UPDATE mysql.tidb_mlog_purge SET LAST_PURGE_TIME = %?, LAST_PURGE_ROWS = %?, LAST_PURGE_DURATION = %? WHERE MLOG_ID = %?`
+		if _, err = execRCRestrictedSQLWithSession(txnCtx, sctx, updatePurgeSQL, []any{purgeTS, affectedRows, deleteDurationMS, mvLogID}); err != nil {
+			return err
+		}
+		nextPurge = purgeTS.Add(purgeInterval)
+		return nil
+	})
+	return nextPurge, err
 }
 
 func (*serverHelper) fetchAllTiDBMLogPurge(ctx context.Context, sysSessionPool basic.SessionPool) (map[string]*mvLog, error) {
@@ -180,19 +244,85 @@ func execRCRestrictedSQL(ctx context.Context, sysSessionPool basic.SessionPool, 
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		sysSessionPool.Put(se)
-	}()
+	defer sysSessionPool.Put(se)
 	sctx := se.(sessionctx.Context)
+	return execRCRestrictedSQLWithSession(ctx, sctx, sql, params)
+}
+
+func execRCRestrictedSQLWithSession(ctx context.Context, sctx sessionctx.Context, sql string, params []any) ([]chunk.Row, error) {
 	exec := sctx.GetRestrictedSQLExecutor()
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
 	r, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession},
 		sql, params...,
 	)
 	return r, err
+}
+
+func withRCRestrictedTxn(ctx context.Context, sysSessionPool basic.SessionPool, fn func(txnCtx context.Context, sctx sessionctx.Context) error) (err error) {
+	se, err := sysSessionPool.Get()
+	if err != nil {
+		return err
+	}
+	defer sysSessionPool.Put(se)
+
+	sctx := se.(sessionctx.Context)
+	sqlExec := sctx.GetSQLExecutor()
+	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
+
+	if _, err = sqlExec.ExecuteInternal(ctx, "BEGIN PESSIMISTIC"); err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			_, err = sqlExec.ExecuteInternal(ctx, "COMMIT")
+			return
+		}
+		_, _ = sqlExec.ExecuteInternal(ctx, "ROLLBACK")
+	}()
+
+	err = fn(ctx, sctx)
+	return err
+}
+
+func parseRelatedMVIDs(v string) []string {
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	mvIDs := make([]string, 0, len(parts))
+	for _, p := range parts {
+		id := strings.TrimSpace(p)
+		if id == "" {
+			continue
+		}
+		mvIDs = append(mvIDs, id)
+	}
+	return mvIDs
+}
+
+func getMinRefreshReadTSO(ctx context.Context, sctx sessionctx.Context, mvIDs []string) (int64, error) {
+	if len(mvIDs) == 0 {
+		return 0, nil
+	}
+	var b strings.Builder
+	params := make([]any, 0, len(mvIDs))
+	b.WriteString(`SELECT COALESCE(MIN(LAST_SUCCESSFUL_REFRESH_READ_TSO), 0) FROM mysql.tidb_mview_refresh WHERE MVIEW_ID IN (`)
+	for i, id := range mvIDs {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString("%?")
+		params = append(params, id)
+	}
+	b.WriteString(")")
+	rows, err := execRCRestrictedSQLWithSession(ctx, sctx, b.String(), params)
+	if err != nil {
+		return 0, err
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, nil
+	}
+	return rows[0].GetInt64(0), nil
 }
 
 var mvs *MVService
