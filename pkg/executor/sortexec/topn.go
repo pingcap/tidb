@@ -82,11 +82,11 @@ type TopNExec struct {
 
 	typeCtx types.Context
 
-	truncateKeyExprs            []expression.Expression
+	TruncateKeyExprs            []expression.Expression
 	truncateFieldTypes          []*types.FieldType
 	truncateFieldCollators      []collate.Collator
 	truncateKeyColIdxs          []int
-	truncateKeyPrefixCharCounts []int
+	TruncateKeyPrefixCharCounts []int
 	prevTruncateKeys            []truncateKey
 	truncateKeyCount            int
 }
@@ -108,7 +108,7 @@ func (e *TopNExec) Open(ctx context.Context) error {
 	e.isSpillTriggeredInStage1ForTest = false
 	e.isSpillTriggeredInStage2ForTest = false
 
-	if len(e.truncateKeyPrefixCharCounts) > 0 {
+	if len(e.TruncateKeyPrefixCharCounts) > 0 {
 		e.typeCtx = e.Ctx().GetSessionVars().StmtCtx.TypeCtx()
 	}
 
@@ -292,7 +292,7 @@ func (e *TopNExec) fetchChunks(ctx context.Context) error {
 		return nil
 	}
 
-	if len(e.truncateKeyExprs) > 0 {
+	if len(e.TruncateKeyExprs) > 0 {
 		err := e.loadChunksUntilTotalLimitForRankTopN(ctx)
 		if err != nil {
 			close(e.resultChannel)
@@ -323,12 +323,12 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 		return err
 	}
 
-	e.truncateKeyCount = len(e.truncateKeyExprs)
+	e.truncateKeyCount = len(e.TruncateKeyExprs)
 	e.truncateFieldCollators = make([]collate.Collator, 0, e.truncateKeyCount)
 	e.truncateFieldTypes = make([]*types.FieldType, 0, e.truncateKeyCount)
 	e.truncateKeyColIdxs = make([]int, 0, e.truncateKeyCount)
-	for i := range e.truncateKeyExprs {
-		fieldType := e.truncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
+	for i := range e.TruncateKeyExprs {
+		fieldType := e.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx())
 		e.truncateFieldTypes = append(e.truncateFieldTypes, fieldType)
 		switch fieldType.GetType() {
 		case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -338,7 +338,7 @@ func (e *TopNExec) initBeforeLoadingChunks() error {
 			e.truncateFieldCollators = append(e.truncateFieldCollators, nil)
 		}
 
-		switch col := e.truncateKeyExprs[i].(type) {
+		switch col := e.TruncateKeyExprs[i].(type) {
 		case *expression.Column:
 			e.truncateKeyColIdxs = append(e.truncateKeyColIdxs, col.Index)
 		default:
@@ -382,8 +382,8 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 	e.initBeforeLoadingChunks()
 
 	// Check types, we need string types as prefix index only supports string types.
-	for i := range e.truncateKeyExprs {
-		prefixKeyType := e.truncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
+	for i := range e.TruncateKeyExprs {
+		prefixKeyType := e.TruncateKeyExprs[i].GetType(e.Ctx().GetExprCtx().GetEvalCtx()).GetType()
 		switch prefixKeyType {
 		case mysql.TypeString, mysql.TypeVarString, mysql.TypeVarchar,
 			mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
@@ -440,7 +440,7 @@ func (e *TopNExec) loadChunksUntilTotalLimitForRankTopN(ctx context.Context) err
 func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
 	prefixKeys := make([]truncateKey, 0, e.truncateKeyCount)
 	for i := range e.truncateFieldCollators {
-		if e.truncateKeyPrefixCharCounts[i] == -1 {
+		if e.TruncateKeyPrefixCharCounts[i] == -1 {
 			if row.IsNull(e.truncateKeyColIdxs[i]) {
 				prefixKeys = append(prefixKeys, truncateKey{isNull: true})
 			} else {
@@ -456,7 +456,7 @@ func (e *TopNExec) getPrefixKeys(row chunk.Row) ([]truncateKey, error) {
 			}
 		} else {
 			key := row.GetString(e.truncateKeyColIdxs[i])
-			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.truncateKeyPrefixCharCounts[i])))})
+			prefixKeys = append(prefixKeys, truncateKey{val: string(hack.String(e.truncateFieldCollators[i].ImmutablePrefixKey(key, e.TruncateKeyPrefixCharCounts[i])))})
 		}
 	}
 	return prefixKeys, nil
@@ -888,6 +888,6 @@ func GetResultForTest(topnExec *TopNExec) []int64 {
 
 // SetTruncateKeyMetasForTest sets truncate key fields for testing the RankTopN path.
 func (e *TopNExec) SetTruncateKeyMetasForTest(truncateKeyExprs []expression.Expression, truncateKeyCharCounts []int) {
-	e.truncateKeyExprs = truncateKeyExprs
-	e.truncateKeyPrefixCharCounts = truncateKeyCharCounts
+	e.TruncateKeyExprs = truncateKeyExprs
+	e.TruncateKeyPrefixCharCounts = truncateKeyCharCounts
 }

@@ -2699,6 +2699,14 @@ func (b *executorBuilder) buildTopN(v *physicalop.PhysicalTopN) exec.Executor {
 		// return nil
 	}
 	t.ColumnIdxsUsedByChild = columnIdxsUsedByChild
+
+	// init partial order params
+	if v.PrefixCol != nil {
+		t.TruncateKeyExprs = make([]expression.Expression, 0, 1)
+		t.TruncateKeyExprs = append(t.TruncateKeyExprs, v.PrefixCol)
+		t.TruncateKeyPrefixCharCounts = make([]int, 0, 1)
+		t.TruncateKeyPrefixCharCounts = append(t.TruncateKeyPrefixCharCounts, v.PrefixLen)
+	}
 	return t
 }
 
