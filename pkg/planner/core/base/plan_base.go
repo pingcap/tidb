@@ -305,7 +305,6 @@ func GetGEAndLogicalOp[T LogicalPlan](super LogicalPlan) (ge GroupExpression, lo
 // JoinType contains CrossJoin, InnerJoin, LeftOuterJoin, RightOuterJoin, SemiJoin, AntiJoin.
 type JoinType int
 
-// NOTE: keep the order and value unchanged, because they are used in conflict_detector.go!!!
 const (
 	// InnerJoin means inner join.
 	InnerJoin JoinType = iota
@@ -323,6 +322,7 @@ const (
 	AntiLeftOuterSemiJoin
 )
 
+// NOTE: keep JoinType value unchanged, because they are used in conflict_detector.go
 func init() {
 	intest.Assert(InnerJoin == 0 &&
 		LeftOuterJoin == 1 &&

@@ -272,6 +272,10 @@ func (d *ConflictDetector) makeEdge(joinType base.JoinType, conds []expression.E
 	return e
 }
 
+// rightToLeftRule creates a conflict rule: if child's right vertexes appear in S,
+// then child's left vertexes (or the subset intersecting TES) must also be in S.
+// The name means "from right to left": the presence of right-side relations
+// requires the presence of left-side relations.
 func rightToLeftRule(child *edge) *rule {
 	rule := &rule{from: child.rightVertexes}
 	if child.leftVertexes.Intersects(child.tes) {
@@ -282,6 +286,10 @@ func rightToLeftRule(child *edge) *rule {
 	return rule
 }
 
+// leftToRightRule creates a conflict rule: if child's left vertexes appear in S,
+// then child's right vertexes (or the subset intersecting TES) must also be in S.
+// The name means "from left to right": the presence of left-side relations
+// requires the presence of right-side relations.
 func leftToRightRule(child *edge) *rule {
 	rule := &rule{from: child.leftVertexes}
 	if child.rightVertexes.Intersects(child.tes) {
@@ -604,10 +612,8 @@ func newCartesianJoin(ctx base.PlanContext, joinType base.JoinType, left, right 
 		JoinType:  joinType,
 		Reordered: true,
 	}.Init(ctx, offset)
-	join.SetChildren(left, right)
 	join.SetSchema(expression.MergeSchema(left.Schema(), right.Schema()))
 	join.SetChildren(left, right)
-
 	SetNewJoinWithHint(join, vertexHints)
 	return join, nil
 }
