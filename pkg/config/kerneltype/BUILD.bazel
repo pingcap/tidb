@@ -1,0 +1,23 @@
+load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "kerneltype",
+    srcs = [
+        "classic.go",
+        "doc.go",
+        "nextgen.go",  #keep
+        "type.go",
+    ],
+    importpath = "github.com/pingcap/tidb/pkg/config/kerneltype",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "kerneltype_test",
+    timeout = "short",
+    srcs = ["type_test.go"],
+    embed = [":kerneltype"],
+    flaky = True,
+    shard_count = 2,
+    deps = ["@com_github_stretchr_testify//require"],
+)

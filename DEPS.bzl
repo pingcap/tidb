@@ -1162,6 +1162,19 @@ def go_deps():
         ],
     )
     go_repository(
+        name = "com_github_zyedidia_generic",
+        build_file_proto_mode = "disable_global",
+        importpath = "github.com/zyedidia/generic",
+        sha256 = "21f980420a46e0f6ed564dd9658ddab9991cef8eca32804a956fb65f7f9d4c31",
+        strip_prefix = "github.com/zyedidia/generic@v1.2.1",
+        urls = [
+            "http://bazel-cache.pingcap.net:8080/gomod/github.com/zyedidia/generic/com_github_zyedidia_generic-v1.2.1.zip",
+            "http://ats.apps.svc/gomod/github.com/zyedidia/generic/com_github_zyedidia_generic-v1.2.1.zip",
+            "https://cache.hawkingrei.com/gomod/github.com/zyedidia/generic/com_github_zyedidia_generic-v1.2.1.zip",
+            "https://storage.googleapis.com/pingcapmirror/gomod/github.com/zyedidia/generic/com_github_zyedidia_generic-v1.2.1.zip",
+        ],
+    )
+    go_repository(
         name = "com_github_codegangsta_inject",
         build_file_proto_mode = "disable_global",
         importpath = "github.com/codegangsta/inject",
