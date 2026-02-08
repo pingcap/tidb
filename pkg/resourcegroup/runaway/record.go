@@ -262,11 +262,7 @@ func (rm *Manager) deleteExpiredRows(expiredDuration time.Duration) {
 		logutil.BgLogger().Error("time column is not public in table", zap.String("table", tableName), zap.String("column", colName))
 		return
 	}
-<<<<<<< HEAD
-	tb, err := cache.NewBasePhysicalTable(systemSchemaCIStr, tbInfo, model.NewCIStr(""), col)
-=======
-	tb, err := cache.NewPhysicalTableWithTimeColumnForJob(systemSchemaCIStr, tbInfo, ast.NewCIStr(""), session.TTLJobTypeRunawayGC, col)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	tb, err := cache.NewPhysicalTableWithTimeColumnForJob(systemSchemaCIStr, tbInfo, model.NewCIStr(""), session.TTLJobTypeRunawayGC, col)
 	if err != nil {
 		logutil.BgLogger().Error("delete system table failed", zap.String("table", tableName), zap.Error(err))
 		return

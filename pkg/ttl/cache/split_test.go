@@ -362,11 +362,7 @@ func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql s
 	require.True(t, ok)
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr(name))
 	require.NoError(t, err)
-<<<<<<< HEAD
-	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tbl.Meta(), model.NewCIStr(""))
-=======
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""), true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tbl.Meta(), model.NewCIStr(""), true, false)
 	require.NoError(t, err)
 	return ttlTbl
 }

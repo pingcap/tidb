@@ -18,11 +18,8 @@ import (
 	"encoding/json"
 	"time"
 
-<<<<<<< HEAD
 	"github.com/pingcap/tidb/pkg/sessionctx"
-=======
 	"github.com/pingcap/tidb/pkg/ttl/session"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/pingcap/tidb/pkg/util/codec"
@@ -72,17 +69,10 @@ func PeekWaitingTTLTask(hbExpire time.Time) (string, []any) {
 }
 
 // InsertIntoTTLTask returns an SQL statement to insert a ttl task into mysql.tidb_ttl_task
-<<<<<<< HEAD
-func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, tableID int64, scanID int, scanRangeStart []types.Datum,
-	scanRangeEnd []types.Datum, expireTime time.Time, createdTime time.Time) (string, []any, error) {
-	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeStart...)
-=======
-func InsertIntoTTLTask(loc *time.Location, jobID string, jobType session.TTLJobType, tableID int64, scanID int,
-
+func InsertIntoTTLTask(sctx sessionctx.Context, jobID string, jobType session.TTLJobType, tableID int64, scanID int,
 	scanRangeStart []types.Datum, scanRangeEnd []types.Datum,
 	expireTime time.Time, createdTime time.Time) (string, []any, error) {
-	rangeStart, err := codec.EncodeKey(loc, []byte{}, scanRangeStart...)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	rangeStart, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx.TimeZone(), []byte{}, scanRangeStart...)
 	if err != nil {
 		return "", nil, err
 	}

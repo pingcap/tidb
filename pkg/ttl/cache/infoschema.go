@@ -97,18 +97,13 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	return nil
 }
 
-<<<<<<< HEAD
-func (isc *InfoSchemaCache) newTable(schema pmodel.CIStr, tblInfo *model.TableInfo,
-	par *model.PartitionDefinition) (*PhysicalTable, error) {
-=======
 func (isc *InfoSchemaCache) newTable(
-	schema ast.CIStr,
+	schema pmodel.CIStr,
 	tblInfo *model.TableInfo,
 	par *model.PartitionDefinition,
 	checkTTL bool,
 	checkSoftdelete bool,
 ) (*PhysicalTable, error) {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	id := tblInfo.ID
 	if par != nil {
 		id = par.ID

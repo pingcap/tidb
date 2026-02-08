@@ -534,9 +534,30 @@ const (
 		current_job_status varchar(64) DEFAULT NULL,
   		current_job_status_update_time timestamp NULL DEFAULT NULL);`
 
+	// CreateTiDBSoftDeleteTableStatusTable is a table about softdelete job schedule
+	CreateTiDBSoftDeleteTableStatusTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_softdelete_table_status (
+		table_id bigint(64) PRIMARY KEY,
+		parent_table_id bigint(64),
+		table_statistics text DEFAULT NULL,
+		last_job_id varchar(64) DEFAULT NULL,
+		last_job_start_time timestamp NULL DEFAULT NULL,
+		last_job_finish_time timestamp NULL DEFAULT NULL,
+		last_job_ttl_expire timestamp NULL DEFAULT NULL,
+		last_job_summary text DEFAULT NULL,
+		current_job_id varchar(64) DEFAULT NULL,
+		current_job_owner_id varchar(64) DEFAULT NULL,
+		current_job_owner_addr varchar(256) DEFAULT NULL,
+		current_job_owner_hb_time timestamp,
+		current_job_start_time timestamp NULL DEFAULT NULL,
+		current_job_ttl_expire timestamp NULL DEFAULT NULL,
+		current_job_state text DEFAULT NULL,
+		current_job_status varchar(64) DEFAULT NULL,
+		current_job_status_update_time timestamp NULL DEFAULT NULL);`
+
 	// CreateTTLTask is a table about parallel ttl tasks
 	CreateTTLTask = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_task (
 		job_id varchar(64) NOT NULL,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
 		scan_id int NOT NULL,
 		scan_range_start BLOB,
@@ -550,11 +571,13 @@ const (
 		state text,
 		created_time timestamp NOT NULL,
 		primary key(job_id, scan_id),
+		key idx_job_type (job_type),
 		key(created_time));`
 
 	// CreateTTLJobHistory is a table that stores ttl job's history
 	CreateTTLJobHistory = `CREATE TABLE IF NOT EXISTS mysql.tidb_ttl_job_history (
 		job_id varchar(64) PRIMARY KEY,
+		job_type varchar(32) NOT NULL DEFAULT 'ttl',
 		table_id bigint(64) NOT NULL,
         parent_table_id bigint(64) NOT NULL,
     	table_schema varchar(64) NOT NULL,
@@ -1238,6 +1261,12 @@ const (
 	// add modify_params to tidb_global_task and tidb_global_task_history.
 	version223 = 223
 
+	// version224
+	// Add tidb_softdelete_table_status system table and evolve TTL tables schema to support softdelete jobs.
+	// - Add job_type to mysql.tidb_ttl_task.
+	// - Add job_type to mysql.tidb_ttl_job_history.
+	version224 = 224
+
 	// ...
 	// [version223, version238] is the version range reserved for patches of 8.5.x
 	// ...
@@ -1247,7 +1276,7 @@ const (
 
 // currentBootstrapVersion is defined as a variable, so we can modify its value for testing.
 // please make sure this is the largest version
-var currentBootstrapVersion int64 = version223
+var currentBootstrapVersion int64 = version224
 
 // DDL owner key's expired time is ManagerSessionTTL seconds, we should wait the time and give more time to have a chance to finish it.
 var internalSQLTimeout = owner.ManagerSessionTTL + 15
@@ -1426,6 +1455,7 @@ var (
 		upgradeToVer221,
 		upgradeToVer222,
 		upgradeToVer223,
+		upgradeToVer224,
 	}
 )
 
@@ -3302,6 +3332,19 @@ func upgradeToVer223(s sessiontypes.Session, ver int64) {
 	doReentrantDDL(s, "ALTER TABLE mysql.tidb_global_task_history ADD COLUMN modify_params json AFTER `error`;", infoschema.ErrColumnExists)
 }
 
+func upgradeToVer224(s sessiontypes.Session, ver int64) {
+	if ver >= version224 {
+		return
+	}
+	doReentrantDDL(s, CreateTiDBSoftDeleteTableStatusTable)
+
+	// mysql.tidb_ttl_task is introduced in version131, but schema may vary for upgraded clusters.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD COLUMN IF NOT EXISTS job_type varchar(32) NOT NULL DEFAULT 'ttl' AFTER job_id", infoschema.ErrColumnExists)
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_task ADD INDEX idx_job_type (job_type)", dbterror.ErrDupKeyName)
+	// mysql.tidb_ttl_job_history is introduced in version131.
+	doReentrantDDL(s, "ALTER TABLE mysql.tidb_ttl_job_history ADD COLUMN IF NOT EXISTS job_type varchar(32) NOT NULL DEFAULT 'ttl' AFTER job_id", infoschema.ErrColumnExists)
+}
+
 // initGlobalVariableIfNotExists initialize a global variable with specific val if it does not exist.
 func initGlobalVariableIfNotExists(s sessiontypes.Session, name string, val any) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnBootstrap)
@@ -3342,141 +3385,6 @@ func getBootstrapVersion(s sessiontypes.Session) (int64, error) {
 	return strconv.ParseInt(sVal, 10, 64)
 }
 
-<<<<<<< HEAD
-=======
-var systemDatabases = []DatabaseBasicInfo{
-	{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB},
-	{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
-}
-
-// tablesInSystemDatabase contains the definitions of system tables in the mysql
-// database, or the system database, except DDL related tables, see ddlTableVersionTables.
-var tablesInSystemDatabase = []TableBasicInfo{
-	{ID: metadef.UserTableID, Name: "user", SQL: metadef.CreateUserTable},
-	{ID: metadef.PasswordHistoryTableID, Name: "password_history", SQL: metadef.CreatePasswordHistoryTable},
-	{ID: metadef.GlobalPrivTableID, Name: "global_priv", SQL: metadef.CreateGlobalPrivTable},
-	{ID: metadef.DBTableID, Name: "db", SQL: metadef.CreateDBTable},
-	{ID: metadef.TablesPrivTableID, Name: "tables_priv", SQL: metadef.CreateTablesPrivTable},
-	{ID: metadef.ColumnsPrivTableID, Name: "columns_priv", SQL: metadef.CreateColumnsPrivTable},
-	{ID: metadef.GlobalVariablesTableID, Name: "global_variables", SQL: metadef.CreateGlobalVariablesTable},
-	{ID: metadef.TiDBTableID, Name: "tidb", SQL: metadef.CreateTiDBTable},
-	{ID: metadef.HelpTopicTableID, Name: "help_topic", SQL: metadef.CreateHelpTopicTable},
-	{ID: metadef.StatsMetaTableID, Name: "stats_meta", SQL: metadef.CreateStatsMetaTable},
-	{ID: metadef.StatsHistogramsTableID, Name: "stats_histograms", SQL: metadef.CreateStatsHistogramsTable},
-	{ID: metadef.StatsBucketsTableID, Name: "stats_buckets", SQL: metadef.CreateStatsBucketsTable},
-	{ID: metadef.GCDeleteRangeTableID, Name: "gc_delete_range", SQL: metadef.CreateGCDeleteRangeTable},
-	{ID: metadef.GCDeleteRangeDoneTableID, Name: "gc_delete_range_done", SQL: metadef.CreateGCDeleteRangeDoneTable},
-	{ID: metadef.StatsFeedbackTableID, Name: "stats_feedback", SQL: metadef.CreateStatsFeedbackTable},
-	{ID: metadef.RoleEdgesTableID, Name: "role_edges", SQL: metadef.CreateRoleEdgesTable},
-	{ID: metadef.DefaultRolesTableID, Name: "default_roles", SQL: metadef.CreateDefaultRolesTable},
-	{ID: metadef.BindInfoTableID, Name: "bind_info", SQL: metadef.CreateBindInfoTable},
-	{ID: metadef.StatsTopNTableID, Name: "stats_top_n", SQL: metadef.CreateStatsTopNTable},
-	{ID: metadef.ExprPushdownBlacklistTableID, Name: "expr_pushdown_blacklist", SQL: metadef.CreateExprPushdownBlacklistTable},
-	{ID: metadef.OptRuleBlacklistTableID, Name: "opt_rule_blacklist", SQL: metadef.CreateOptRuleBlacklistTable},
-	{ID: metadef.StatsExtendedTableID, Name: "stats_extended", SQL: metadef.CreateStatsExtendedTable},
-	{ID: metadef.StatsFMSketchTableID, Name: "stats_fm_sketch", SQL: metadef.CreateStatsFMSketchTable},
-	{ID: metadef.GlobalGrantsTableID, Name: "global_grants", SQL: metadef.CreateGlobalGrantsTable},
-	{ID: metadef.CapturePlanBaselinesBlacklistTableID, Name: "capture_plan_baselines_blacklist", SQL: metadef.CreateCapturePlanBaselinesBlacklistTable},
-	{ID: metadef.ColumnStatsUsageTableID, Name: "column_stats_usage", SQL: metadef.CreateColumnStatsUsageTable},
-	{ID: metadef.TableCacheMetaTableID, Name: "table_cache_meta", SQL: metadef.CreateTableCacheMetaTable},
-	{ID: metadef.AnalyzeOptionsTableID, Name: "analyze_options", SQL: metadef.CreateAnalyzeOptionsTable},
-	{ID: metadef.StatsHistoryTableID, Name: "stats_history", SQL: metadef.CreateStatsHistoryTable},
-	{ID: metadef.StatsMetaHistoryTableID, Name: "stats_meta_history", SQL: metadef.CreateStatsMetaHistoryTable},
-	{ID: metadef.AnalyzeJobsTableID, Name: "analyze_jobs", SQL: metadef.CreateAnalyzeJobsTable},
-	{ID: metadef.AdvisoryLocksTableID, Name: "advisory_locks", SQL: metadef.CreateAdvisoryLocksTable},
-	{ID: metadef.PlanReplayerStatusTableID, Name: "plan_replayer_status", SQL: metadef.CreatePlanReplayerStatusTable},
-	{ID: metadef.PlanReplayerTaskTableID, Name: "plan_replayer_task", SQL: metadef.CreatePlanReplayerTaskTable},
-	{ID: metadef.StatsTableLockedTableID, Name: "stats_table_locked", SQL: metadef.CreateStatsTableLockedTable},
-	{ID: metadef.TiDBTTLTableStatusTableID, Name: "tidb_ttl_table_status", SQL: metadef.CreateTiDBTTLTableStatusTable},
-	{ID: metadef.TiDBTTLTaskTableID, Name: "tidb_ttl_task", SQL: metadef.CreateTiDBTTLTaskTable},
-	{ID: metadef.TiDBTTLJobHistoryTableID, Name: "tidb_ttl_job_history", SQL: metadef.CreateTiDBTTLJobHistoryTable},
-	{ID: metadef.TiDBGlobalTaskTableID, Name: "tidb_global_task", SQL: metadef.CreateTiDBGlobalTaskTable},
-	{ID: metadef.TiDBGlobalTaskHistoryTableID, Name: "tidb_global_task_history", SQL: metadef.CreateTiDBGlobalTaskHistoryTable},
-	{ID: metadef.TiDBImportJobsTableID, Name: "tidb_import_jobs", SQL: metadef.CreateTiDBImportJobsTable},
-	{ID: metadef.TiDBRunawayWatchTableID, Name: "tidb_runaway_watch", SQL: metadef.CreateTiDBRunawayWatchTable},
-	{ID: metadef.TiDBRunawayQueriesTableID, Name: "tidb_runaway_queries", SQL: metadef.CreateTiDBRunawayQueriesTable},
-	{ID: metadef.TiDBTimersTableID, Name: "tidb_timers", SQL: metadef.CreateTiDBTimersTable},
-	{ID: metadef.TiDBRunawayWatchDoneTableID, Name: "tidb_runaway_watch_done", SQL: metadef.CreateTiDBRunawayWatchDoneTable},
-	{ID: metadef.DistFrameworkMetaTableID, Name: "dist_framework_meta", SQL: metadef.CreateDistFrameworkMetaTable},
-	{ID: metadef.RequestUnitByGroupTableID, Name: "request_unit_by_group", SQL: metadef.CreateRequestUnitByGroupTable},
-	{ID: metadef.TiDBPITRIDMapTableID, Name: "tidb_pitr_id_map", SQL: metadef.CreateTiDBPITRIDMapTable},
-	{ID: metadef.TiDBRestoreRegistryTableID, Name: "tidb_restore_registry", SQL: metadef.CreateTiDBRestoreRegistryTable},
-	{ID: metadef.IndexAdvisorResultsTableID, Name: "index_advisor_results", SQL: metadef.CreateIndexAdvisorResultsTable},
-	{ID: metadef.TiDBKernelOptionsTableID, Name: "tidb_kernel_options", SQL: metadef.CreateTiDBKernelOptionsTable},
-	{ID: metadef.TiDBWorkloadValuesTableID, Name: "tidb_workload_values", SQL: metadef.CreateTiDBWorkloadValuesTable},
-	{ID: metadef.TiDBSoftDeleteTableStatusTableID, Name: "tidb_softdelete_table_status", SQL: metadef.CreateTiDBSoftDeleteTableStatusTable},
-
-	// NOTE: if you need to add more tables to 'mysql' database, please also add
-	// an entry to versionedBootstrapSchemas, to make sure the table is created
-	// correctly in nextgen kennel.
-}
-
-type versionedBootstrapSchema struct {
-	ver       meta.NextGenBootTableVersion
-	databases []DatabaseBasicInfo
-}
-
-const (
-	// 52 is the number of system tables as we do this change.
-	// as tablesInSystemDatabase is shared with classic kernel, it's simple to
-	// use a slice to hold all system tables in classic kernel. but in nextgen,
-	// we need to make those tables versioned, as we don't create system tables
-	// through DDL, we need this version to avoid create tables again.
-	// if we add more system tables later, we should increase the version, and
-	// add another versionedBootstrapSchema entry.
-	tableCountInFirstVerOnNextGen = 52
-	// added tidb_softdelete_table_status
-	tableCountInSecondVerOnNextGen = 53
-)
-
-// used in nextgen, to create system tables directly through meta kv, without
-// going through DDL, so we can create them with reversed ID range.
-var versionedBootstrapSchemas = []versionedBootstrapSchema{
-	{ver: meta.BaseNextGenBootTableVersion, databases: []DatabaseBasicInfo{
-		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[:tableCountInFirstVerOnNextGen]},
-		{ID: metadef.SysDatabaseID, Name: mysql.SysDB},
-	}},
-	{ver: meta.SecondNextGenBootTableVersion, databases: []DatabaseBasicInfo{
-		{ID: metadef.SystemDatabaseID, Name: mysql.SystemDB, Tables: tablesInSystemDatabase[tableCountInFirstVerOnNextGen:tableCountInSecondVerOnNextGen]},
-	}},
-}
-
-func bootstrapSchemas(store kv.Storage) error {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
-	return kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		currVer, err := m.GetNextGenBootTableVersion()
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		largestVer := currVer
-		for _, vt := range versionedBootstrapSchemas {
-			if currVer >= vt.ver {
-				continue
-			}
-			logutil.BgLogger().Info("bootstrap tables", zap.Int("currVer", int(currVer)),
-				zap.Int("targetVer", int(vt.ver)))
-			for _, bdb := range vt.databases {
-				if err = m.CreateSysDatabaseByIDIfNotExists(bdb.Name, bdb.ID); err != nil {
-					return err
-				}
-				if len(bdb.Tables) > 0 {
-					if err = createAndSplitTables(store, m, bdb.ID, bdb.Tables); err != nil {
-						return err
-					}
-				}
-			}
-			largestVer = max(largestVer, vt.ver)
-		}
-		if largestVer > currVer {
-			return m.SetNextGenBootTableVersion(largestVer)
-		}
-		return nil
-	})
-}
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 // doDDLWorks executes DDL statements in bootstrap stage.
 func doDDLWorks(s sessiontypes.Session) {
 	// Create a test database.
@@ -3555,6 +3463,8 @@ func doDDLWorks(s sessiontypes.Session) {
 	mustExecute(s, CreateStatsTableLocked)
 	// Create tidb_ttl_table_status table
 	mustExecute(s, CreateTTLTableStatus)
+	// Create tidb_softdelete_table_status table
+	mustExecute(s, CreateTiDBSoftDeleteTableStatusTable)
 	// Create tidb_ttl_task table
 	mustExecute(s, CreateTTLTask)
 	// Create tidb_ttl_job_history table

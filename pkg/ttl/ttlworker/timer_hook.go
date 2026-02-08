@@ -21,7 +21,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/util/logutil"
@@ -32,14 +32,14 @@ import (
 type ttlTimerHook = ttlJobTimerHook
 
 func newTTLTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *ttlTimerHook {
-	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: session.TTLJobTypeTTL, jobEnable: vardef.EnableTTLJob.Load})
+	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: session.TTLJobTypeTTL, jobEnable: variable.EnableTTLJob.Load})
 }
 
 // softdeleteTimerHook handles softdelete timer events.
 type softdeleteTimerHook = ttlJobTimerHook
 
 func newSoftdeleteTimerHook(adapter TTLJobAdapter, cli timerapi.TimerClient) *softdeleteTimerHook {
-	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: session.TTLJobTypeSoftDelete, jobEnable: vardef.SoftDeleteJobEnable.Load})
+	return newTTLJobTimerHook(adapter, cli, ttlJobTimerHookConfig{jobType: session.TTLJobTypeSoftDelete, jobEnable: variable.SoftDeleteJobEnable.Load})
 }
 
 type ttlJobTimerHookConfig struct {
@@ -104,7 +104,7 @@ func (t *ttlJobTimerHook) OnPreSchedEvent(_ context.Context, event timerapi.Time
 		return r, err
 	}
 
-	windowStart, windowEnd := vardef.TTLJobScheduleWindowStartTime.Load(), vardef.TTLJobScheduleWindowEndTime.Load()
+	windowStart, windowEnd := variable.TTLJobScheduleWindowStartTime.Load(), variable.TTLJobScheduleWindowEndTime.Load()
 	if !timeutil.WithinDayTimePeriod(windowStart, windowEnd, now) {
 		r.Delay = time.Minute
 		return

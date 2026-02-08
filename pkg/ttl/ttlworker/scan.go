@@ -17,15 +17,16 @@ package ttlworker
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
+	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util"
@@ -131,6 +132,16 @@ func (t *ttlScanTask) taskLogger(l *zap.Logger) *zap.Logger {
 }
 
 func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, sessPool util.SessionPool) *ttlScanTaskExecResult {
+	se, err := getSession(sessPool)
+	if err != nil {
+		return t.result(err)
+	}
+	defer se.Close()
+
+	return t.result(t.doScanWithSession(ctx, delCh, se))
+}
+
+func (t *ttlScanTask) doScanWithSession(ctx context.Context, delCh chan<- *ttlDeleteTask, rawSess session.Session) error {
 	// TODO: merge the ctx and the taskCtx in ttl scan task, to allow both "cancel" and gracefully stop workers
 	// now, the taskCtx is only check at the beginning of every loop
 	taskCtx := t.ctx
@@ -138,11 +149,6 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	rawSess, err := getSession(sessPool)
-	if err != nil {
-		return t.result(err)
-	}
-
 	doScanFinished, setDoScanFinished := context.WithCancel(context.Background())
 	wg := util.WaitGroupWrapper{}
 	wg.Run(func() {
@@ -173,17 +179,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	defer func() {
 		setDoScanFinished()
 		wg.Wait()
-		rawSess.Close()
 	}()
 
-<<<<<<< HEAD
-	safeExpire, err := t.tbl.EvalExpireTime(taskCtx, rawSess, rawSess.Now())
-=======
 	now := rawSess.Now()
 	safeExpire, err := t.tbl.EvalExpireTimeForJob(taskCtx, rawSess, now, t.JobType)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
-		return t.result(err)
+		return err
 	}
 	safeExpire = safeExpire.Add(time.Minute)
 
@@ -197,14 +198,6 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	// because `ExecuteSQLWithCheck` only do checks when the table meta used by task is different with the latest one.
 	// In this case, some rows will be deleted unexpectedly.
 	if t.ExpireTime.After(safeExpire) {
-<<<<<<< HEAD
-		return t.result(errors.Errorf("current expire time is after safe expire time. (%d > %d)", t.ExpireTime.Unix(), safeExpire.Unix()))
-	}
-
-	origConcurrency := rawSess.GetSessionVars().DistSQLScanConcurrency()
-	if _, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency=1"); err != nil {
-		return t.result(err)
-=======
 		interval := t.tbl.TTLInfo.IntervalExprStr
 		timeunit := ast.TimeUnitType(t.tbl.TTLInfo.IntervalTimeUnit).String()
 		if t.JobType == session.TTLJobTypeSoftDelete {
@@ -221,19 +214,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	sess, restoreSession, err := NewScanSession(rawSess, t.tbl, t.ExpireTime, t.JobType)
 	if err != nil {
 		return err
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	}
-	rawSess.GetSessionVars().InternalSQLScanUserTable = true
-	defer func() {
-		rawSess.GetSessionVars().InternalSQLScanUserTable = false
-		_, err = rawSess.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency="+strconv.Itoa(origConcurrency))
-		terror.Log(err)
-	}()
+	defer terror.Call(restoreSession)
 
-<<<<<<< HEAD
-	sess := newTableSession(rawSess, t.tbl, t.ExpireTime)
-	generator, err := sqlbuilder.NewScanQueryGenerator(t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
-=======
 	minCheckpointTS := uint64(0)
 	if t.JobType == session.TTLJobTypeSoftDelete && t.tbl.TableInfo.IsActiveActive {
 		minCheckpointTS, err = rawSess.GetMinActiveActiveCheckpointTS(
@@ -247,9 +230,8 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	}
 
 	generator, err := sqlbuilder.NewScanQueryGenerator(t.JobType, t.tbl, t.ExpireTime, t.ScanRangeStart, t.ScanRangeEnd)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
-		return t.result(err)
+		return err
 	}
 	generator.SetMinCheckpointTS(minCheckpointTS)
 	retrySQL := ""
@@ -257,15 +239,15 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 	var lastResult [][]types.Datum
 	for {
 		if err = taskCtx.Err(); err != nil {
-			return t.result(err)
+			return err
 		}
 		if err = ctx.Err(); err != nil {
-			return t.result(err)
+			return err
 		}
 
 		if total := t.statistics.TotalRows.Load(); total > uint64(taskStartCheckErrorRateCnt) {
 			if t.statistics.ErrorRows.Load() > uint64(float64(total)*taskMaxErrorRate) {
-				return t.result(errors.Errorf("error exceeds the limit"))
+				return errors.Errorf("error exceeds the limit")
 			}
 		}
 
@@ -273,12 +255,12 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		if sql == "" {
 			limit := int(variable.TTLScanBatchSize.Load())
 			if sql, err = generator.NextSQL(lastResult, limit); err != nil {
-				return t.result(err)
+				return err
 			}
 		}
 
 		if sql == "" {
-			return t.result(nil)
+			return nil
 		}
 
 		sqlStart := time.Now()
@@ -295,7 +277,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 			)
 
 			if !needRetry {
-				return t.result(sqlErr)
+				return sqlErr
 			}
 			retrySQL = sql
 			retryTimes++
@@ -303,7 +285,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 			tracer.EnterPhase(metrics.PhaseWaitRetry)
 			select {
 			case <-ctx.Done():
-				return t.result(ctx.Err())
+				return ctx.Err()
 			case <-time.After(scanTaskExecuteSQLRetryInterval):
 			}
 			tracer.EnterPhase(metrics.PhaseOther)
@@ -319,12 +301,9 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		}
 
 		delTask := &ttlDeleteTask{
-<<<<<<< HEAD
-=======
 			jobID:      t.JobID,
 			scanID:     t.ScanID,
 			jobType:    t.JobType,
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 			tbl:        t.tbl,
 			expire:     t.ExpireTime,
 			rows:       lastResult,
@@ -334,7 +313,7 @@ func (t *ttlScanTask) doScan(ctx context.Context, delCh chan<- *ttlDeleteTask, s
 		tracer.EnterPhase(metrics.PhaseDispatch)
 		select {
 		case <-ctx.Done():
-			return t.result(ctx.Err())
+			return ctx.Err()
 		case delCh <- delTask:
 			t.statistics.IncTotalRows(delTask.jobType, len(lastResult))
 		}

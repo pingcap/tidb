@@ -33,6 +33,7 @@ import (
 	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -207,7 +208,7 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 	case session.TTLJobTypeSoftDelete:
 		cfg = ttlWorkConfig{
 			jobType:   jobType,
-			jobEnable: vardef.SoftDeleteJobEnable.Load,
+			jobEnable: variable.SoftDeleteJobEnable.Load,
 			validateNew: func(_ context.Context, _ session.Session, _ *cache.PhysicalTable, _ *cache.PhysicalTable, newTblInfo *model.TableInfo, _ time.Time) error {
 				if newTblInfo.SoftdeleteInfo == nil {
 					return errors.New("table softdelete disabled")
@@ -221,7 +222,7 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 	case session.TTLJobTypeTTL:
 		cfg = ttlWorkConfig{
 			jobType:   jobType,
-			jobEnable: vardef.EnableTTLJob.Load,
+			jobEnable: variable.EnableTTLJob.Load,
 			validateNew: func(ctx context.Context, s session.Session, oldTbl, newTbl *cache.PhysicalTable, newTblInfo *model.TableInfo, expire time.Time) error {
 				if !newTbl.TTLInfo.Enable {
 					return errors.New("table TTL disabled")
@@ -265,8 +266,6 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 	}, nil
 }
 
-<<<<<<< HEAD
-=======
 // NewScanSession creates a session for scan
 func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time, jobType session.TTLJobType) (*ttlTableSession, func() error, error) {
 	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
@@ -276,14 +275,11 @@ func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Ti
 		se.GetSessionVars().InternalSQLScanUserTable = false
 		_, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=%?", origConcurrency)
 		terror.Log(err)
-		if err != nil {
-			se.AvoidReuse()
-		}
 
 		_, tmpErr := se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=%?", origPaging)
 		if tmpErr != nil {
+			terror.Log(tmpErr)
 			err = multierr.Append(err, tmpErr)
-			se.AvoidReuse()
 		}
 
 		return err
@@ -313,7 +309,6 @@ func NewScanSession(se session.Session, tbl *cache.PhysicalTable, expire time.Ti
 	return tblSe, restore, nil
 }
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 type ttlTableSession struct {
 	session.Session
 	tbl    *cache.PhysicalTable
@@ -332,13 +327,8 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseOther)
-<<<<<<< HEAD
-	if !variable.EnableTTLJob.Load() {
-		return nil, false, errors.New("global TTL job is disabled")
-=======
 	if !s.cfg.jobEnable() {
 		return nil, false, errors.Errorf("global %s job is disabled", s.cfg.jobType)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	}
 
 	if err := s.ResetWithGlobalTimeZone(ctx); err != nil {
@@ -374,23 +364,13 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	return result, false, nil
 }
 
-<<<<<<< HEAD
-func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.PhysicalTable, expire time.Time) error {
-	curTbl, err := s.SessionInfoSchema().TableByName(context.Background(), tbl.Schema, tbl.Name)
-=======
 func (s *ttlTableSession) validateTTLWork(ctx context.Context) error {
 	newTblInfo, err := s.SessionInfoSchema().TableInfoByName(s.tbl.Schema, s.tbl.Name)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
 		return err
 	}
 
-<<<<<<< HEAD
-	newTblInfo := curTbl.Meta()
-	if tbl.TableInfo == newTblInfo {
-=======
 	if s.tbl.TableInfo == newTblInfo {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		return nil
 	}
 

@@ -531,11 +531,7 @@ func getPhysicalTableInfo(t *testing.T, do *domain.Domain, db, table, partition 
 	tbl, err := is.TableByName(context.Background(), model.NewCIStr(db), model.NewCIStr(table))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
-<<<<<<< HEAD
-	physical, err := cache.NewPhysicalTable(model.NewCIStr(db), tblInfo, model.NewCIStr(partition))
-=======
-	physical, err := cache.NewPhysicalTable(ast.NewCIStr(db), tblInfo, ast.NewCIStr(partition), true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	physical, err := cache.NewPhysicalTable(model.NewCIStr(db), tblInfo, model.NewCIStr(partition), true, false)
 	require.NoError(t, err)
 	return fmt.Sprintf("/tidb/ttl/physical_table/%d/%d", tblInfo.ID, physical.ID), physical
 }

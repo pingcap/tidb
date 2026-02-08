@@ -16,11 +16,7 @@ package ttlworker
 
 import (
 	"context"
-<<<<<<< HEAD
-	"sync"
-=======
 	"fmt"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"time"
 
 	"github.com/pingcap/errors"
@@ -130,12 +126,11 @@ type ttlJob struct {
 	createTime    time.Time
 	ttlExpireTime time.Time
 
-	tbl *cache.PhysicalTable
+	tableID int64
 
 	// status is the only field which should be protected by a mutex, as `Cancel` may be called at any time, and will
 	// change the status
-	statusMutex sync.Mutex
-	status      cache.JobStatus
+	status cache.JobStatus
 }
 
 // finish turns current job into last job, and update the error message and statistics summary
@@ -145,11 +140,7 @@ func (job *ttlJob) finish(se session.Session, now time.Time, summary *TTLSummary
 	// at this time, the job.ctx may have been canceled (to cancel this job)
 	// even when it's canceled, we'll need to update the states, so use another context
 	err := se.RunInTxn(context.TODO(), func() error {
-<<<<<<< HEAD
-		sql, args := finishJobSQL(job.tbl.ID, now, summary.SummaryText, job.id)
-=======
 		sql, args := finishJobSQL(job.jobType, job.tableID, now, summary.SummaryText, job.id)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		_, err := se.ExecuteSQL(context.TODO(), sql, args...)
 		if err != nil {
 			return errors.Wrapf(err, "execute sql: %s", sql)

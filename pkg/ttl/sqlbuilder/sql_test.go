@@ -49,13 +49,8 @@ func TestEscape(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: pmodel.NewCIStr("col1\"';123`456"), FieldType: *types.NewFieldType(mysql.TypeString)},
 		},
-<<<<<<< HEAD
-		TimeColumn: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("time\"';123`456"),
-=======
 		TTLTimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time\"';123`456"),
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			Name:      pmodel.NewCIStr("time\"';123`456"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 		PartitionDef: &model.PartitionDefinition{
@@ -620,13 +615,8 @@ func TestSQLBuilder(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
-<<<<<<< HEAD
-		TimeColumn: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("time"),
-=======
 		TTLTimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -640,13 +630,8 @@ func TestSQLBuilder(t *testing.T) {
 			{Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 			{Name: pmodel.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
-<<<<<<< HEAD
-		TimeColumn: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("time"),
-=======
 		TTLTimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -806,13 +791,8 @@ func TestScanQueryGenerator(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
-<<<<<<< HEAD
-		TimeColumn: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("time"),
-=======
 		TTLTimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -827,13 +807,8 @@ func TestScanQueryGenerator(t *testing.T) {
 			{Name: pmodel.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 			{Name: pmodel.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
 		},
-<<<<<<< HEAD
-		TimeColumn: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("time"),
-=======
 		TTLTimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -1101,13 +1076,8 @@ func TestBuildDeleteSQL(t *testing.T) {
 		KeyColumns: []*model.ColumnInfo{
 			{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
-<<<<<<< HEAD
-		TimeColumn: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("time"),
-=======
 		TTLTimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -1121,13 +1091,8 @@ func TestBuildDeleteSQL(t *testing.T) {
 			{Name: pmodel.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 			{Name: pmodel.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
-<<<<<<< HEAD
-		TimeColumn: &model.ColumnInfo{
-			Name:      pmodel.NewCIStr("time"),
-=======
 		TTLTimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			Name:      pmodel.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}

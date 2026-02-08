@@ -20,10 +20,10 @@ import (
 
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/syssession"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 const (
@@ -37,7 +37,7 @@ type TTLTimersSyncer struct {
 }
 
 // NewTTLTimerSyncer creates a new TTLTimersSyncer
-func NewTTLTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) (*TTLTimersSyncer, error) {
+func NewTTLTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) (*TTLTimersSyncer, error) {
 	cfg := timersSyncerConfig{
 		keyPrefix: ttlTimerKeyPrefix,
 		attr:      infoschemacontext.TTLAttribute,
@@ -52,9 +52,7 @@ func NewTTLTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) (*TTLTime
 			interval := tblInfo.TTLInfo.JobInterval
 			if interval == "" {
 				// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
-				// We use `OldDefaultTTLJobInterval` as the return value to ensure a consistent behavior for the
-				// upgrades: v6.5 -> v8.5(or previous version) -> newer version than v8.5.
-				interval = model.OldDefaultTTLJobInterval
+				interval = model.DefaultJobIntervalStr
 			}
 			return timerapi.SchedEventInterval, interval
 		},

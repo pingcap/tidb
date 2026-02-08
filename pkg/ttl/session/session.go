@@ -28,11 +28,7 @@ import (
 	"github.com/pingcap/tidb/pkg/sessiontxn"
 	"github.com/pingcap/tidb/pkg/ttl/metrics"
 	"github.com/pingcap/tidb/pkg/util/chunk"
-<<<<<<< HEAD
-=======
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/pingcap/tidb/pkg/util/sqlescape"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/pingcap/tidb/pkg/util/sqlkiller"
 	"github.com/pingcap/tidb/pkg/util/timeutil"
@@ -85,28 +81,17 @@ type Session interface {
 	Close()
 	// Now returns the current time in location specified by session var
 	Now() time.Time
-<<<<<<< HEAD
-=======
 	// GetMinActiveActiveCheckpointTS returns cached min checkpoint ts from TiCDC progress table.
 	// It refreshes the cache periodically to avoid querying for every SQL.
 	GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error)
-	// AvoidReuse is used to avoid reuse the session
-	AvoidReuse()
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }
 type session struct {
-<<<<<<< HEAD
 	sessionctx.Context
 	sqlExec sqlexec.SQLExecutor
 	closeFn func(Session)
-=======
-	sctx       sessionctx.Context
-	sqlExec    sqlexec.SQLExecutor
-	avoidReuse func()
 
 	minActiveActiveCheckpointTS            uint64
 	minActiveActiveCheckpointTSLastRefresh time.Time
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }
 
 // NewSession creates a new Session

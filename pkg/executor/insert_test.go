@@ -432,10 +432,6 @@ func TestInsertRuntimeStat(t *testing.T) {
 	stats.BasicRuntimeStats.Record(5*time.Second, 1)
 	require.Equal(t, "prepare: 3s, check_insert: {total_time: 2s, mem_insert_time: 1s, prefetch: 1s}, active_active: {cdc_conflict_skip_cnt: 1, unsafe_write_origin_ts_cnt: 2}, softdelete: {implicit_remove_rows: 7}", stats.String())
 	require.Equal(t, stats.Clone().String(), stats.String())
-<<<<<<< HEAD
-	stats.Merge(stats.Clone())
-	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}", stats.String())
-=======
 	newStats := stats.Clone().(*executor.InsertRuntimeStat)
 	require.NotSame(t, stats.ActiveActive, newStats.ActiveActive)
 	require.NotSame(t, stats.SoftDelete, newStats.SoftDelete)
@@ -445,7 +441,6 @@ func TestInsertRuntimeStat(t *testing.T) {
 	newStats.SoftDelete.ImplicitRemoveRows = 11
 	stats.Merge(newStats)
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	stats.FKCheckTime = time.Second
 	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
 

@@ -100,11 +100,7 @@ func TestNewTTLTable(t *testing.T) {
 		tblInfo := tbl.Meta()
 		var physicalTbls []*cache.PhysicalTable
 		if tblInfo.Partition == nil {
-<<<<<<< HEAD
-			ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, pmodel.NewCIStr(""))
-=======
-			ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, ast.NewCIStr(""), true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+			ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, pmodel.NewCIStr(""), true, false)
 			if c.timeCol == "" {
 				require.Error(t, err)
 				continue
@@ -113,11 +109,7 @@ func TestNewTTLTable(t *testing.T) {
 			physicalTbls = append(physicalTbls, ttlTbl)
 		} else {
 			for _, partition := range tblInfo.Partition.Definitions {
-<<<<<<< HEAD
-				ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, partition.Name)
-=======
-				ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, partition.Name, true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+				ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, partition.Name, true, false)
 				if c.timeCol == "" {
 					require.Error(t, err)
 					continue
@@ -222,7 +214,7 @@ func TestNewSoftdeleteTable(t *testing.T) {
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 
-		sdTbl, err := cache.NewPhysicalTable(ast.NewCIStr(c.db), tblInfo, ast.NewCIStr(""), false, true)
+		sdTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr(c.db), tblInfo, pmodel.NewCIStr(""), false, true)
 		if c.tbl == "sd_job_off" {
 			require.NoError(t, err)
 			continue
@@ -255,11 +247,7 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tb, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 	require.NoError(t, err)
 	tblInfo := tb.Meta()
-<<<<<<< HEAD
-	ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo, pmodel.NewCIStr(""))
-=======
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""), true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	ttlTbl, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo, pmodel.NewCIStr(""), true, false)
 	require.NoError(t, err)
 
 	se := session.NewSession(tk.Session(), tk.Session(), nil)
@@ -284,11 +272,7 @@ func TestTableEvalTTLExpireTime(t *testing.T) {
 	tb2, err := do.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t2"))
 	require.NoError(t, err)
 	tblInfo2 := tb2.Meta()
-<<<<<<< HEAD
-	ttlTbl2, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo2, pmodel.NewCIStr(""))
-=======
-	ttlTbl2, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo2, ast.NewCIStr(""), true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	ttlTbl2, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo2, pmodel.NewCIStr(""), true, false)
 	require.NoError(t, err)
 	now, err = time.ParseInLocation(time.DateTime, "2020-01-01 15:00:00", tz1)
 	require.NoError(t, err)

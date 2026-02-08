@@ -1130,6 +1130,8 @@ const (
 	TiDBExternalTS = "tidb_external_ts"
 	// TiDBTTLJobEnable is used to enable/disable scheduling ttl job
 	TiDBTTLJobEnable = "tidb_ttl_job_enable"
+	// TiDBSoftDeleteJobEnable is used to enable/disable scheduling softdelete cleanup job
+	TiDBSoftDeleteJobEnable = "tidb_softdelete_job_enable"
 	// TiDBTTLScanBatchSize is used to control the batch size in the SELECT statement for TTL jobs
 	TiDBTTLScanBatchSize = "tidb_ttl_scan_batch_size"
 	// TiDBTTLDeleteBatchSize is used to control the batch size in the DELETE statement for TTL jobs
@@ -1565,6 +1567,7 @@ const (
 	DefTiDBEnablePlanReplayerCapture                  = true
 	DefTiDBIndexMergeIntersectionConcurrency          = ConcurrencyUnset
 	DefTiDBTTLJobEnable                               = true
+	DefTiDBSoftDeleteJobEnable                        = true
 	DefTiDBTTLScanBatchSize                           = 500
 	DefTiDBTTLScanBatchMaxSize                        = 10240
 	DefTiDBTTLScanBatchMinSize                        = 1
@@ -1721,6 +1724,7 @@ var (
 	PasswordValidtaionNumberCount      = atomic.NewInt32(1)
 	PasswordValidationSpecialCharCount = atomic.NewInt32(1)
 	EnableTTLJob                       = atomic.NewBool(DefTiDBTTLJobEnable)
+	SoftDeleteJobEnable                = atomic.NewBool(DefTiDBSoftDeleteJobEnable)
 	TTLScanBatchSize                   = atomic.NewInt64(DefTiDBTTLScanBatchSize)
 	TTLDeleteBatchSize                 = atomic.NewInt64(DefTiDBTTLDeleteBatchSize)
 	TTLDeleteRateLimit                 = atomic.NewInt64(DefTiDBTTLDeleteRateLimit)

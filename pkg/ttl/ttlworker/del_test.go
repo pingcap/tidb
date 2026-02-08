@@ -35,8 +35,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-<<<<<<< HEAD
-=======
 func newMockDeleteTask(tbl *cache.PhysicalTable, rows [][]types.Datum, expire time.Time) *ttlDeleteTask {
 	task := &ttlDeleteTask{
 		tbl:        tbl,
@@ -49,22 +47,13 @@ func newMockDeleteTask(tbl *cache.PhysicalTable, rows [][]types.Datum, expire ti
 	return task
 }
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 func TestTTLDelRetryBuffer(t *testing.T) {
 	createTask := func(name string) (*ttlDeleteTask, [][]types.Datum, *ttlStatistics) {
-		rows := make([][]types.Datum, 10)
-		statistics := &ttlStatistics{}
-		statistics.IncTotalRows(10)
-		task := &ttlDeleteTask{
-			tbl:        newMockTTLTbl(t, name),
-			expire:     time.UnixMilli(0),
-			rows:       rows,
-			statistics: statistics,
-		}
-		return task, rows, statistics
+		task := newMockDeleteTask(newMockTTLTbl(t, name), make([][]types.Datum, 10), time.UnixMilli(0))
+		return task, task.rows, task.statistics
 	}
 
-	shouldNotDoRetry := func(task *ttlDeleteTask) [][]types.Datum {
+	shouldNotDoRetry := func(*ttlDelRetryItem) [][]types.Datum {
 		require.FailNow(t, "should not do retry")
 		return nil
 	}
@@ -124,14 +113,9 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 	// poll up-to-date tasks
 	tm = tm.Add(10*time.Second - time.Millisecond)
 	tasks := make([]*ttlDeleteTask, 0)
-<<<<<<< HEAD
-	doRetrySuccess := func(task *ttlDeleteTask) [][]types.Datum {
-		task.statistics.IncSuccessRows(len(task.rows))
-=======
 	doRetrySuccess := func(item *ttlDelRetryItem) [][]types.Datum {
 		task := item.task
 		task.statistics.IncSuccessRows(task.jobType, len(task.rows))
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		tasks = append(tasks, task)
 		return nil
 	}
@@ -167,7 +151,8 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 
 	// test retry max count
 	retryCnt := 0
-	doRetryFail := func(task *ttlDeleteTask) [][]types.Datum {
+	doRetryFail := func(item *ttlDelRetryItem) [][]types.Datum {
+		task := item.task
 		retryCnt++
 		task.statistics.SuccessRows.Add(1)
 		return task.rows[1:]
@@ -211,10 +196,10 @@ func TestTTLDelRetryBuffer(t *testing.T) {
 	buffer2.RecordTaskResult(task7, rows7[:8])
 	require.Equal(t, 1, buffer2.Len())
 	currentRetryFn := doRetryFail
-	buffer2.DoRetry(func(task *ttlDeleteTask) [][]types.Datum {
+	buffer2.DoRetry(func(item *ttlDelRetryItem) [][]types.Datum {
 		fn := currentRetryFn
 		currentRetryFn = shouldNotDoRetry
-		return fn(task)
+		return fn(item)
 	})
 	require.Equal(t, uint64(1), statics7.SuccessRows.Load())
 	require.Equal(t, uint64(0), statics7.ErrorRows.Load())
@@ -279,6 +264,7 @@ func TestTTLDeleteTaskDoDelete(t *testing.T) {
 
 	delTask := func(batchCnt int) *ttlDeleteTask {
 		task := &ttlDeleteTask{
+			jobType:    session.TTLJobTypeTTL,
 			tbl:        t1,
 			expire:     time.UnixMilli(0),
 			rows:       nRows(batchCnt * delBatch),
@@ -550,8 +536,9 @@ func TestTTLDeleteTaskWorker(t *testing.T) {
 	tasks := make([]*ttlDeleteTask, 0)
 	for _, tbl := range []*cache.PhysicalTable{t1, t2, t3, t4, t5} {
 		task := &ttlDeleteTask{
-			tbl:    tbl,
-			expire: time.UnixMilli(0),
+			jobType: session.TTLJobTypeTTL,
+			tbl:     tbl,
+			expire:  time.UnixMilli(0),
 			rows: [][]types.Datum{
 				{types.NewIntDatum(1)},
 				{types.NewIntDatum(2)},

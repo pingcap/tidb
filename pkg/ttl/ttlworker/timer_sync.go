@@ -33,7 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/logutil"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
 )
 
 const (
@@ -47,14 +46,8 @@ type TTLTimerData struct {
 	PhysicalID int64 `json:"physical_id"`
 }
 
-<<<<<<< HEAD
-// TTLTimersSyncer is used to sync timers for ttl
-type TTLTimersSyncer struct {
-	pool           util.SessionPool
-=======
 type timersSyncerBase struct {
-	pool           syssession.Pool
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	pool           util.SessionPool
 	cli            timerapi.TimerClient
 	cfg            timersSyncerConfig
 	key2Timers     map[string]*timerapi.TimerRecord
@@ -65,11 +58,6 @@ type timersSyncerBase struct {
 	nowFunc        func() time.Time
 }
 
-<<<<<<< HEAD
-// NewTTLTimerSyncer creates a new TTLTimersSyncer
-func NewTTLTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) *TTLTimersSyncer {
-	return &TTLTimersSyncer{
-=======
 type timersSyncerConfig struct {
 	keyPrefix string
 	attr      infoschemacontext.SpecialAttributeFilter
@@ -81,7 +69,7 @@ type timersSyncerConfig struct {
 	getWatermark    func(ctx context.Context, se session.Session, tblInfo *model.TableInfo, partition *model.PartitionDefinition) (time.Time, error)
 }
 
-func newTimersSyncerBase(pool syssession.Pool, cli timerapi.TimerClient, cfg timersSyncerConfig) (timersSyncerBase, error) {
+func newTimersSyncerBase(pool util.SessionPool, cli timerapi.TimerClient, cfg timersSyncerConfig) (timersSyncerBase, error) {
 	if cfg.keyPrefix == "" {
 		return timersSyncerBase{}, errors.New("timersSyncerConfig: keyPrefix is empty")
 	}
@@ -101,7 +89,6 @@ func newTimersSyncerBase(pool syssession.Pool, cli timerapi.TimerClient, cfg tim
 		return timersSyncerBase{}, errors.New("timersSyncerConfig: getSchedPolicy is nil")
 	}
 	return timersSyncerBase{
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 		pool:        pool,
 		cli:         cli,
 		cfg:         cfg,
@@ -127,40 +114,23 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 	}
 	defer se.Close()
 
-<<<<<<< HEAD
 	timer, err := g.syncOneTimer(ctx, se, tbl.Schema, tbl.TableInfo, tbl.PartitionDef, true)
 	if err != nil {
 		return nil, err
 	}
-=======
-		timerID = timer.ID
 
-		reqID, err = g.cli.ManualTriggerEvent(ctx, timer.ID)
-		if err != nil {
-			return err
-		}
-
-		return nil
-	})
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
-
+	timerID := timer.ID
 	reqID, err := g.cli.ManualTriggerEvent(ctx, timer.ID)
 	if err != nil {
 		return nil, err
 	}
 
 	return func() (string, bool, error) {
-		se, err = getSession(g.pool)
-		if err != nil {
-			return "", false, err
-		}
-		defer se.Close()
-
-		if err = ctx.Err(); err != nil {
+		if err := ctx.Err(); err != nil {
 			return "", false, err
 		}
 
-		timer, err = g.cli.GetTimerByID(ctx, timer.ID)
+		timer, err := g.cli.GetTimerByID(ctx, timerID)
 		if err != nil {
 			return "", false, err
 		}
@@ -181,6 +151,12 @@ func (g *TTLTimersSyncer) ManualTriggerTTLTimer(ctx context.Context, tbl *cache.
 		}
 
 		jobID := timer.ManualEventID
+		se, err := getSession(g.pool)
+		if err != nil {
+			return "", false, err
+		}
+		defer se.Close()
+
 		rows, err := se.ExecuteSQL(ctx, "select 1 from mysql.tidb_ttl_job_history where job_id=%?", jobID)
 		if err != nil {
 			return "", false, err
@@ -201,7 +177,7 @@ func (g *timersSyncerBase) Reset() {
 	g.lastSyncTime = zeroTime
 	g.lastSyncVer = 0
 	if len(g.key2Timers) > 0 {
-		maps.Clear(g.key2Timers)
+		clear(g.key2Timers)
 	}
 }
 
@@ -238,23 +214,7 @@ func (g *timersSyncerBase) SyncTimers(ctx context.Context, is infoschema.InfoSch
 		g.lastPullTimers = g.nowFunc()
 	}
 
-<<<<<<< HEAD
 	se, err := getSession(g.pool)
-=======
-	currentTimerKeys := make(map[string]struct{})
-	err := withSession(g.pool, func(se session.Session) error {
-		ch := is.ListTablesWithSpecialAttribute(cfg.attr)
-		for _, v := range ch {
-			for _, tblInfo := range v.TableInfos {
-				for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
-					currentTimerKeys[key] = struct{}{}
-				}
-			}
-		}
-		return nil
-	})
-
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if err != nil {
 		logutil.BgLogger().Error("failed to sync timers", zap.Error(err), zap.String("timer", cfg.keyPrefix))
 		return
@@ -262,7 +222,7 @@ func (g *timersSyncerBase) SyncTimers(ctx context.Context, is infoschema.InfoSch
 	defer se.Close()
 
 	currentTimerKeys := make(map[string]struct{})
-	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
+	ch := is.ListTablesWithSpecialAttribute(cfg.attr)
 	for _, v := range ch {
 		for _, tblInfo := range v.TableInfos {
 			for _, key := range g.syncTimersForTable(ctx, se, v.DBName, tblInfo) {
@@ -302,16 +262,12 @@ func (g *timersSyncerBase) SyncTimers(ctx context.Context, is infoschema.InfoSch
 	}
 }
 
-<<<<<<< HEAD
-func (g *TTLTimersSyncer) syncTimersForTable(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo) []string {
-=======
-func (g *timersSyncerBase) syncTimersForTable(ctx context.Context, se session.Session, schema ast.CIStr, tblInfo *model.TableInfo) []string {
+func (g *timersSyncerBase) syncTimersForTable(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo) []string {
 	cfg := g.cfg
 	if !cfg.shouldSyncTable(tblInfo) {
 		return nil
 	}
 
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if tblInfo.Partition == nil {
 		key := buildTimerKey(cfg.keyPrefix, tblInfo, nil)
 		if _, err := g.syncOneTimer(ctx, se, schema, tblInfo, nil, false); err != nil {
@@ -333,11 +289,7 @@ func (g *timersSyncerBase) syncTimersForTable(ctx context.Context, se session.Se
 	return keys
 }
 
-<<<<<<< HEAD
-func (g *TTLTimersSyncer) shouldSyncTimer(timer *timerapi.TimerRecord, schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) bool {
-=======
 func (g *timersSyncerBase) shouldSyncTimer(timer *timerapi.TimerRecord, tags []string, enable bool, policyType timerapi.SchedPolicyType, policyExpr string) bool {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if timer == nil {
 		return true
 	}
@@ -348,14 +300,10 @@ func (g *timersSyncerBase) shouldSyncTimer(timer *timerapi.TimerRecord, tags []s
 		timer.SchedPolicyExpr != policyExpr
 }
 
-<<<<<<< HEAD
-func (g *TTLTimersSyncer) syncOneTimer(ctx context.Context, se session.Session, schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition, skipCache bool) (*timerapi.TimerRecord, error) {
-	key := buildTimerKey(tblInfo, partition)
-=======
 func (g *timersSyncerBase) syncOneTimer(
 	ctx context.Context,
 	se session.Session,
-	schema ast.CIStr,
+	schema pmodel.CIStr,
 	tblInfo *model.TableInfo,
 	partition *model.PartitionDefinition,
 	skipCache bool,
@@ -374,7 +322,6 @@ func (g *timersSyncerBase) syncOneTimer(
 	}
 
 	key := buildTimerKey(cfg.keyPrefix, tblInfo, partition)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	tags := getTimerTags(schema, tblInfo, partition)
 
 	if !skipCache {
@@ -448,24 +395,7 @@ func (g *timersSyncerBase) syncOneTimer(
 	return timer, nil
 }
 
-<<<<<<< HEAD
-func getTimerTags(schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) []string {
-	dbTag := fmt.Sprintf("db=%s", schema.O)
-	tblTag := fmt.Sprintf("table=%s", tblInfo.Name.O)
-	if partition != nil {
-		return []string{
-			dbTag, tblTag,
-			fmt.Sprintf("partition=%s", partition.Name.O),
-		}
-	}
-
-	return []string{dbTag, tblTag}
-}
-
-func buildTimerKey(tblInfo *model.TableInfo, partition *model.PartitionDefinition) string {
-=======
 func buildTimerKey(prefix string, tblInfo *model.TableInfo, partition *model.PartitionDefinition) string {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	physicalID := tblInfo.ID
 	if partition != nil {
 		physicalID = partition.ID
@@ -477,36 +407,11 @@ func buildTimerKeyWithID(prefix string, tblID, physicalID int64) string {
 	return fmt.Sprintf("%s%d/%d", prefix, tblID, physicalID)
 }
 
-func getTimerTags(schema ast.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) []string {
+func getTimerTags(schema pmodel.CIStr, tblInfo *model.TableInfo, partition *model.PartitionDefinition) []string {
 	dbTag := fmt.Sprintf("db=%s", schema.O)
 	tblTag := fmt.Sprintf("table=%s", tblInfo.Name.O)
 	if partition != nil {
 		return []string{dbTag, tblTag, fmt.Sprintf("partition=%s", partition.Name.O)}
 	}
-<<<<<<< HEAD
-
-	sql, args := cache.SelectFromTTLTableStatusWithID(pid)
-	rows, err := se.ExecuteSQL(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-
-	if len(rows) == 0 {
-		return nil, nil
-	}
-
-	return cache.RowToTableStatus(se, rows[0])
-}
-
-// getTTLSchedulePolicy returns the timer's schedule policy and expression for a TTL job
-func getTTLSchedulePolicy(info *model.TTLInfo) (timerapi.SchedPolicyType, string) {
-	interval := info.JobInterval
-	if interval == "" {
-		// This only happens when the table is created from 6.5 in which the `tidb_job_interval` is not introduced yet.
-		interval = model.DefaultJobIntervalStr
-	}
-	return timerapi.SchedEventInterval, interval
-=======
 	return []string{dbTag, tblTag}
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 }

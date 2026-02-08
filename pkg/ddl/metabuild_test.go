@@ -21,13 +21,10 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	contextutil "github.com/pingcap/tidb/pkg/util/context"
 	"github.com/pingcap/tidb/pkg/util/deeptest"
 	"github.com/pingcap/tidb/pkg/util/mock"
@@ -45,10 +42,10 @@ func TestCreateTableIndexOnSoftDeleteInternalColumn(t *testing.T) {
 	}
 
 	stmt := &ast.CreateTableStmt{
-		Table: &ast.TableName{Name: ast.NewCIStr("t")},
+		Table: &ast.TableName{Name: pmodel.NewCIStr("t")},
 		Cols: []*ast.ColumnDef{
 			{
-				Name: &ast.ColumnName{Name: ast.NewCIStr("id")},
+				Name: &ast.ColumnName{Name: pmodel.NewCIStr("id")},
 				Tp:   types.NewFieldType(mysql.TypeLong),
 				Options: []*ast.ColumnOption{
 					{Tp: ast.ColumnOptionNotNull},
@@ -56,7 +53,7 @@ func TestCreateTableIndexOnSoftDeleteInternalColumn(t *testing.T) {
 			},
 		},
 		Constraints: []*ast.Constraint{
-			{Tp: ast.ConstraintPrimaryKey, Keys: []*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: ast.NewCIStr("id")}}}},
+			{Tp: ast.ConstraintPrimaryKey, Keys: []*ast.IndexPartSpecification{{Column: &ast.ColumnName{Name: pmodel.NewCIStr("id")}}}},
 			{
 				Tp:   ast.ConstraintIndex,
 				Name: "i1",

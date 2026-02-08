@@ -25,6 +25,7 @@ import (
 	"github.com/ngaut/pools"
 	"github.com/pingcap/tidb/pkg/infoschema"
 	infoschemactx "github.com/pingcap/tidb/pkg/infoschema/context"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	pmodel "github.com/pingcap/tidb/pkg/parser/model"
@@ -35,6 +36,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ttl/session"
 	"github.com/pingcap/tidb/pkg/types"
 	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/pingcap/tidb/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -63,11 +65,7 @@ func newMockTTLTbl(t *testing.T, name string) *cache.PhysicalTable {
 		State: model.StatePublic,
 	}
 
-<<<<<<< HEAD
-	tbl, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo, pmodel.NewCIStr(""))
-=======
-	tbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tblInfo, ast.NewCIStr(""), true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	tbl, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tblInfo, pmodel.NewCIStr(""), true, false)
 	require.NoError(t, err)
 	return tbl
 }
@@ -188,24 +186,22 @@ func newMockSession(t *testing.T, tbl ...*cache.PhysicalTable) *mockSession {
 	}
 }
 
+func (s *mockSession) GetStore() kv.Storage {
+	return nil
+}
+
 func (s *mockSession) GetDomainInfoSchema() infoschemactx.MetaOnlyInfoSchema {
+	require.False(s.t, s.closed)
 	return s.sessionInfoSchema
 }
 
-<<<<<<< HEAD
-func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
-=======
+func (s *mockSession) GetSQLExecutor() sqlexec.SQLExecutor { return nil }
+
 func (s *mockSession) GetMinActiveActiveCheckpointTS(ctx context.Context, dbName, tableName string) (uint64, error) {
 	return 0, nil
 }
 
-func (s *mockSession) GetLatestISWithoutSessExt() infoschemactx.MetaOnlyInfoSchema {
-	return s.GetLatestInfoSchema()
-}
-
-func (s *mockSession) SessionInfoSchema() infoschemactx.MetaOnlyInfoSchema {
-	require.False(s.t, s.inPool)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+func (s *mockSession) SessionInfoSchema() infoschema.InfoSchema {
 	require.False(s.t, s.closed)
 	return s.sessionInfoSchema
 }
@@ -416,11 +412,7 @@ func TestValidateTTLWork(t *testing.T) {
 			{ID: 1023, Name: pmodel.NewCIStr("p0")},
 		},
 	}
-<<<<<<< HEAD
-	tbl, err = cache.NewPhysicalTable(pmodel.NewCIStr("test"), tp, pmodel.NewCIStr("p0"))
-=======
-	tbl, err = cache.NewPhysicalTable(ast.NewCIStr("test"), tp, ast.NewCIStr("p0"), true, false)
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	tbl, err = cache.NewPhysicalTable(pmodel.NewCIStr("test"), tp, pmodel.NewCIStr("p0"), true, false)
 	require.NoError(t, err)
 	tbl2 = tp.Clone()
 	tbl2.Partition = tp.Partition.Clone()

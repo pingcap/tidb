@@ -20,10 +20,10 @@ import (
 
 	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
 	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/session/syssession"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
 	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/pingcap/tidb/pkg/util"
 )
 
 const (
@@ -37,7 +37,7 @@ type SoftDeleteTimersSyncer struct {
 }
 
 // NewSoftDeleteTimerSyncer creates a new SoftDeleteTimersSyncer.
-func NewSoftDeleteTimerSyncer(pool syssession.Pool, cli timerapi.TimerClient) (*SoftDeleteTimersSyncer, error) {
+func NewSoftDeleteTimerSyncer(pool util.SessionPool, cli timerapi.TimerClient) (*SoftDeleteTimersSyncer, error) {
 	cfg := timersSyncerConfig{
 		keyPrefix: softdeleteTimerKeyPrefix,
 		attr:      infoschemacontext.SoftDeleteAttribute,

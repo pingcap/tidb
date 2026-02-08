@@ -119,18 +119,10 @@ type PhysicalTable struct {
 	RunawayGCTimeColumn *model.ColumnInfo
 }
 
-<<<<<<< HEAD
-// NewBasePhysicalTable create a new PhysicalTable with specific timeColumn.
+// NewBasePhysicalTable create a new PhysicalTable.
 func NewBasePhysicalTable(schema pmodel.CIStr,
 	tbl *model.TableInfo,
 	partition pmodel.CIStr,
-	timeColumn *model.ColumnInfo,
-=======
-// NewBasePhysicalTable create a new PhysicalTable.
-func NewBasePhysicalTable(schema ast.CIStr,
-	tbl *model.TableInfo,
-	partition ast.CIStr,
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 ) (*PhysicalTable, error) {
 	if tbl.State != model.StatePublic {
 		return nil, errors.Errorf("table '%s.%s' is not a public table", schema, tbl.Name)
@@ -178,18 +170,11 @@ func NewBasePhysicalTable(schema ast.CIStr,
 	}, nil
 }
 
-<<<<<<< HEAD
-// NewPhysicalTable create a new PhysicalTable
-func NewPhysicalTable(schema pmodel.CIStr, tbl *model.TableInfo, partition pmodel.CIStr) (*PhysicalTable, error) {
-	ttlInfo := tbl.TTLInfo
-	if ttlInfo == nil {
-		return nil, errors.Errorf("table '%s.%s' is not a ttl table", schema, tbl.Name)
-=======
 // NewPhysicalTable creates a new PhysicalTable for TTL/softdelete.
 func NewPhysicalTable(
-	schema ast.CIStr,
+	schema pmodel.CIStr,
 	tbl *model.TableInfo,
-	partition ast.CIStr,
+	partition pmodel.CIStr,
 	checkTTL bool,
 	checkSoftdelete bool) (*PhysicalTable, error) {
 	var ttlTimeColumn *model.ColumnInfo
@@ -206,7 +191,6 @@ func NewPhysicalTable(
 				schema,
 				tbl.Name)
 		}
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	}
 
 	if checkSoftdelete {
@@ -228,9 +212,9 @@ func NewPhysicalTable(
 // NewPhysicalTableWithTimeColumnForJob creates a PhysicalTable with a custom time column for a specific job type.
 // It is used for non-TTL/softdelete system tables which still need to reuse TTL SQL builder.
 func NewPhysicalTableWithTimeColumnForJob(
-	schema ast.CIStr,
+	schema pmodel.CIStr,
 	tbl *model.TableInfo,
-	partition ast.CIStr,
+	partition pmodel.CIStr,
 	jobType session.TTLJobType,
 	timeColumn *model.ColumnInfo,
 ) (*PhysicalTable, error) {
@@ -342,27 +326,11 @@ func EvalExpireTime(now time.Time, interval string, unit ast.TimeUnitType) (time
 	return expiredTime, nil
 }
 
-<<<<<<< HEAD
-// EvalExpireTime returns the expired time for the current time.
-// It uses the global timezone in session to evaluation the context
-// and the return time is in the same timezone of now argument.
-func (t *PhysicalTable) EvalExpireTime(ctx context.Context, se session.Session,
-	now time.Time) (time.Time, error) {
-=======
-// FullName returns the full name of the table
-func (t *PhysicalTable) FullName() string {
-	if t.Partition.L != "" {
-		return fmt.Sprintf("%s.%s.%s", t.Schema.O, t.Name.O, t.Partition.O)
-	}
-	return fmt.Sprintf("%s.%s", t.Schema.O, t.Name.O)
-}
-
 // EvalExpireTimeForJob evaluates the expire time for the given job type.
 // For TTL jobs, it uses the TTL definition in table meta.
 // For softdelete jobs, it uses the retention in `SoftdeleteInfo`.
 func (t *PhysicalTable) EvalExpireTimeForJob(ctx context.Context, se session.Session,
 	now time.Time, jobType session.TTLJobType) (time.Time, error) {
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
 	if intest.InTest {
 		if tm, ok := ctx.Value(mockExpireTimeKey{}).(time.Time); ok {
 			return tm, nil

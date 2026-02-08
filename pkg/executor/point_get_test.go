@@ -20,7 +20,6 @@ import (
 	"io"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,12 +32,8 @@ import (
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/terror"
 	"github.com/pingcap/tidb/pkg/session"
-<<<<<<< HEAD
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-=======
 	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
->>>>>>> 6e50f2744f (Squashed commit of the active-active)
+	"github.com/pingcap/tidb/pkg/sessionctx/variable"
 	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
 	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
 	"github.com/pingcap/tidb/pkg/tablecodec"
@@ -605,11 +600,10 @@ func TestSoftDeleteImplicitDeleteRowsMetricsBySQLType(t *testing.T) {
 			name:  "load data",
 			label: "LoadData",
 			exec: func() {
-				readerBuilder := executor.LoadDataReaderBuilder{
-					Build: func(_ string) (io.ReadCloser, error) {
-						return mydump.NewStringReader("1 2\n3 4\n4 5\n"), nil
-					},
-					Wg: &sync.WaitGroup{},
+				var readerBuilder executor.LoadDataReaderBuilder = func(_ string) (
+					r io.ReadCloser, err error,
+				) {
+					return mydump.NewStringReader("1 2\n3 4\n4 5\n"), nil
 				}
 				sctx.SetValue(executor.LoadDataReaderBuilderKey, readerBuilder)
 				defer sctx.SetValue(executor.LoadDataReaderBuilderKey, nil)
