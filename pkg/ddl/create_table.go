@@ -16,8 +16,10 @@ package ddl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"unicode/utf8"
@@ -441,6 +443,12 @@ func (w *worker) rollbackCreateMaterializedView(jobCtx *jobContext, job *model.J
 		return ver, errors.Trace(err)
 	}
 
+	if cancelErr := w.cancelCreateMaterializedViewBuildImportJob(jobCtx.stepCtx, job); cancelErr != nil {
+		logutil.DDLLogger().Warn("failed to cancel create materialized view build import job",
+			zap.Int64("jobID", job.ID),
+			zap.Error(cancelErr))
+	}
+
 	var extraInfos []schemaIDAndTableInfo
 	if droppingTblInfo != nil {
 		extra, err := updateMaterializedViewBaseInfoOnDrop(jobCtx, job, droppingTblInfo)
@@ -501,13 +509,49 @@ func buildCreateMaterializedViewSelectSQLWithSnapshot(selectSQL string, snapshot
 	return restoreNodeToCanonicalSQL(sel)
 }
 
+const (
+	createMaterializedViewBuildCheckpointVersionCurrent = int64(1)
+
+	createMaterializedViewBuildPhaseInit           = "init"
+	createMaterializedViewBuildPhaseImportRunning  = "import_running"
+	createMaterializedViewBuildPhaseImportFinished = "import_finished"
+
+	createMaterializedViewImportJobStatusPending   = "pending"
+	createMaterializedViewImportJobStatusRunning   = "running"
+	createMaterializedViewImportJobStatusFinished  = "finished"
+	createMaterializedViewImportJobStatusFailed    = "failed"
+	createMaterializedViewImportJobStatusCancelled = "cancelled"
+)
+
+type createMaterializedViewBuildCheckpointMeta struct {
+	MViewBuild *createMaterializedViewBuildCheckpoint `json:"mview_build,omitempty"`
+}
+
+type createMaterializedViewBuildCheckpoint struct {
+	Version     int64  `json:"version"`
+	SnapshotTS  uint64 `json:"snapshot_ts"`
+	Phase       string `json:"phase"`
+	ImportJobID int64  `json:"import_job_id,omitempty"`
+	LastError   string `json:"last_error,omitempty"`
+}
+
+func isCreateMaterializedViewBuildImportEnabled(storeName string) bool {
+	useImportBuild := storeName == "TiKV"
+	failpoint.Inject("forceCreateMaterializedViewBuildWithImport", func(val failpoint.Value) {
+		if forced, ok := val.(bool); ok && forced {
+			useImportBuild = true
+		}
+	})
+	return useImportBuild
+}
+
 func buildCreateMaterializedViewImportSQL(schemaName string, mvTblInfo *model.TableInfo, snapshotTS uint64) (string, error) {
 	selectSQL, err := buildCreateMaterializedViewSelectSQLWithSnapshot(mvTblInfo.MaterializedView.SQLContent, snapshotTS)
 	if err != nil {
 		return "", errors.Trace(err)
 	}
 	prefix := sqlescape.MustEscapeSQL("IMPORT INTO %n.%n FROM ", schemaName, mvTblInfo.Name.O)
-	return prefix + "(" + selectSQL + ") WITH disable_precheck", nil
+	return prefix + "(" + selectSQL + ") WITH disable_precheck, detached", nil
 }
 
 func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.TableInfo) (string, error) {
@@ -518,9 +562,78 @@ func buildCreateMaterializedViewInsertSQL(schemaName string, mvTblInfo *model.Ta
 	return prefix + mvTblInfo.MaterializedView.SQLContent, nil
 }
 
-func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName string, job *model.Job, mvTblInfo *model.TableInfo) error {
+func parseCreateMaterializedViewImportJobIDFromFailpointValue(val failpoint.Value) (int64, bool) {
+	switch value := val.(type) {
+	case int:
+		return int64(value), true
+	case int64:
+		return value, true
+	case float64:
+		return int64(value), true
+	case string:
+		importJobID, err := strconv.ParseInt(value, 10, 64)
+		if err != nil {
+			return 0, false
+		}
+		return importJobID, true
+	default:
+		return 0, false
+	}
+}
+
+func parseCreateMaterializedViewImportJobStatusFromFailpointValue(val failpoint.Value) (status string, errorMessage string, ok bool) {
+	statusValue, ok := val.(string)
+	if !ok {
+		return "", "", false
+	}
+	parts := strings.SplitN(statusValue, ":", 2)
+	if len(parts) == 2 {
+		return strings.ToLower(parts[0]), parts[1], true
+	}
+	return strings.ToLower(parts[0]), "", true
+}
+
+func (w *worker) getCreateMaterializedViewBuildCheckpoint(ctx context.Context, job *model.Job) (*createMaterializedViewBuildCheckpoint, error) {
 	if ctx == nil {
 		ctx = w.workCtx
+	}
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	ddlSess := sess.NewSession(sessCtx)
+	selectSQL := sqlescape.MustEscapeSQL(`SELECT reorg_meta FROM mysql.tidb_ddl_reorg
+		WHERE job_id = %? AND ele_id = %? AND ele_type = %?`, job.ID, job.TableID, string(meta.IndexElementKey))
+	rows, err := ddlSess.Execute(ctx, selectSQL, "create-materialized-view-checkpoint-get")
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return nil, nil
+	}
+	reorgMetaRaw := rows[0].GetBytes(0)
+	if len(reorgMetaRaw) == 0 {
+		return nil, nil
+	}
+	checkpointMeta := &createMaterializedViewBuildCheckpointMeta{}
+	if err := json.Unmarshal(reorgMetaRaw, checkpointMeta); err != nil {
+		return nil, errors.Trace(err)
+	}
+	return checkpointMeta.MViewBuild, nil
+}
+
+func (w *worker) upsertCreateMaterializedViewBuildCheckpoint(ctx context.Context, job *model.Job, checkpoint *createMaterializedViewBuildCheckpoint) error {
+	if checkpoint == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	reorgMetaRaw, err := json.Marshal(&createMaterializedViewBuildCheckpointMeta{MViewBuild: checkpoint})
+	if err != nil {
+		return errors.Trace(err)
 	}
 	sessCtx, err := w.sessPool.Get()
 	if err != nil {
@@ -528,16 +641,265 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 	}
 	defer w.sessPool.Put(sessCtx)
 
-	buildSQL := ""
-	builderName := "create-materialized-view-build-import"
-	if storeName == "TiKV" {
-		buildSQL, err = buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, job.SnapshotVer)
-	} else {
-		builderName = "create-materialized-view-build-insert"
-		buildSQL, err = buildCreateMaterializedViewInsertSQL(job.SchemaName, mvTblInfo)
+	ddlSess := sess.NewSession(sessCtx)
+	upsertSQL := sqlescape.MustEscapeSQL(`INSERT INTO mysql.tidb_ddl_reorg
+		(job_id, ele_id, ele_type, start_key, end_key, physical_id, reorg_meta)
+		VALUES (%?, %?, %?, %?, %?, %?, %?)
+		ON DUPLICATE KEY UPDATE
+			reorg_meta = VALUES(reorg_meta),
+			physical_id = VALUES(physical_id),
+			start_key = VALUES(start_key),
+			end_key = VALUES(end_key)`,
+		job.ID,
+		job.TableID,
+		string(meta.IndexElementKey),
+		[]byte{},
+		[]byte{},
+		job.TableID,
+		reorgMetaRaw,
+	)
+	_, err = ddlSess.Execute(ctx, upsertSQL, "create-materialized-view-checkpoint-upsert")
+	return errors.Trace(err)
+}
+
+func normalizeCreateMaterializedViewBuildCheckpoint(snapshotTS uint64, checkpoint *createMaterializedViewBuildCheckpoint) (*createMaterializedViewBuildCheckpoint, error) {
+	if checkpoint == nil {
+		return &createMaterializedViewBuildCheckpoint{
+			Version:    createMaterializedViewBuildCheckpointVersionCurrent,
+			SnapshotTS: snapshotTS,
+			Phase:      createMaterializedViewBuildPhaseInit,
+		}, nil
 	}
+	if checkpoint.Version == 0 {
+		checkpoint.Version = createMaterializedViewBuildCheckpointVersionCurrent
+	}
+	if checkpoint.SnapshotTS == 0 {
+		checkpoint.SnapshotTS = snapshotTS
+	} else if checkpoint.SnapshotTS != snapshotTS {
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: checkpoint snapshot tso mismatch")
+	}
+	if checkpoint.Phase == "" {
+		checkpoint.Phase = createMaterializedViewBuildPhaseInit
+	}
+	switch checkpoint.Phase {
+	case createMaterializedViewBuildPhaseInit,
+		createMaterializedViewBuildPhaseImportRunning,
+		createMaterializedViewBuildPhaseImportFinished:
+		return checkpoint, nil
+	default:
+		return nil, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid checkpoint phase")
+	}
+}
+
+func (w *worker) submitCreateMaterializedViewBuildImportJob(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) (int64, error) {
+	failpoint.Inject("mockCreateMaterializedViewBuildImportJobID", func(val failpoint.Value) {
+		if importJobID, ok := parseCreateMaterializedViewImportJobIDFromFailpointValue(val); ok {
+			failpoint.Return(importJobID, nil)
+		}
+	})
+
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	ddlSess := sess.NewSession(sessCtx)
+	buildSQL, err := buildCreateMaterializedViewImportSQL(job.SchemaName, mvTblInfo, job.SnapshotVer)
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	rows, err := ddlSess.Execute(ctx, buildSQL, "create-materialized-view-build-import")
+	if err != nil {
+		return 0, errors.Trace(err)
+	}
+	if len(rows) == 0 || rows[0].IsNull(0) {
+		return 0, dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: import build returns empty job id")
+	}
+	return rows[0].GetInt64(0), nil
+}
+
+func (w *worker) getCreateMaterializedViewImportJobStatus(ctx context.Context, importJobID int64) (status string, errorMessage string, found bool, err error) {
+	failpoint.Inject("mockCreateMaterializedViewBuildImportJobStatus", func(val failpoint.Value) {
+		if mockedStatus, mockedErrorMessage, ok := parseCreateMaterializedViewImportJobStatusFromFailpointValue(val); ok {
+			failpoint.Return(mockedStatus, mockedErrorMessage, true, nil)
+		}
+	})
+
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return "", "", false, errors.Trace(err)
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	ddlSess := sess.NewSession(sessCtx)
+	selectSQL := sqlescape.MustEscapeSQL(`SELECT status, IFNULL(error_message, '')
+		FROM mysql.tidb_import_jobs WHERE id = %?`, importJobID)
+	rows, err := ddlSess.Execute(ctx, selectSQL, "create-materialized-view-import-job-status")
+	if err != nil {
+		return "", "", false, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return "", "", false, nil
+	}
+	return strings.ToLower(rows[0].GetString(0)), rows[0].GetString(1), true, nil
+}
+
+func (w *worker) isCreateMaterializedViewTableEmpty(ctx context.Context, schemaName, tableName string) (bool, error) {
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	ddlSess := sess.NewSession(sessCtx)
+	querySQL := sqlescape.MustEscapeSQL("SELECT 1 FROM %n.%n LIMIT 1", schemaName, tableName)
+	rows, err := ddlSess.Execute(ctx, querySQL, "create-materialized-view-table-empty-check")
+	if err != nil {
+		return false, errors.Trace(err)
+	}
+	return len(rows) == 0, nil
+}
+
+func (w *worker) cancelCreateMaterializedViewBuildImportJob(ctx context.Context, job *model.Job) error {
+	if ctx == nil {
+		ctx = w.workCtx
+	}
+	checkpoint, err := w.getCreateMaterializedViewBuildCheckpoint(ctx, job)
 	if err != nil {
 		return errors.Trace(err)
+	}
+	if checkpoint == nil || checkpoint.ImportJobID == 0 {
+		return nil
+	}
+	status, _, found, err := w.getCreateMaterializedViewImportJobStatus(ctx, checkpoint.ImportJobID)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	if !found {
+		return nil
+	}
+	switch status {
+	case createMaterializedViewImportJobStatusFinished,
+		createMaterializedViewImportJobStatusFailed,
+		createMaterializedViewImportJobStatusCancelled:
+		return nil
+	}
+
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	ddlSess := sess.NewSession(sessCtx)
+	cancelSQL := fmt.Sprintf("CANCEL IMPORT JOB %d", checkpoint.ImportJobID)
+	_, err = ddlSess.Execute(ctx, cancelSQL, "create-materialized-view-build-cancel-import")
+	if err != nil {
+		errMsg := strings.ToLower(err.Error())
+		if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "invalid operation") {
+			return nil
+		}
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+func (w *worker) buildCreateMaterializedViewDataByInsert(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
+	sessCtx, err := w.sessPool.Get()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer w.sessPool.Put(sessCtx)
+
+	buildSQL, err := buildCreateMaterializedViewInsertSQL(job.SchemaName, mvTblInfo)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	ddlSess := sess.NewSession(sessCtx)
+	_, err = ddlSess.Execute(ctx, buildSQL, "create-materialized-view-build-insert")
+	return errors.Trace(err)
+}
+
+func (w *worker) buildCreateMaterializedViewDataByImport(ctx context.Context, job *model.Job, mvTblInfo *model.TableInfo) error {
+	checkpoint, err := w.getCreateMaterializedViewBuildCheckpoint(ctx, job)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	checkpoint, err = normalizeCreateMaterializedViewBuildCheckpoint(job.SnapshotVer, checkpoint)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	switch checkpoint.Phase {
+	case createMaterializedViewBuildPhaseInit:
+		importJobID, err := w.submitCreateMaterializedViewBuildImportJob(ctx, job, mvTblInfo)
+		if err != nil {
+			checkpoint.LastError = err.Error()
+			if upsertErr := w.upsertCreateMaterializedViewBuildCheckpoint(ctx, job, checkpoint); upsertErr != nil {
+				return errors.Annotatef(upsertErr, "create materialized view: submit import build job failed: %v", err)
+			}
+			return errors.Trace(err)
+		}
+		checkpoint.Phase = createMaterializedViewBuildPhaseImportRunning
+		checkpoint.ImportJobID = importJobID
+		checkpoint.LastError = ""
+		if err = w.upsertCreateMaterializedViewBuildCheckpoint(ctx, job, checkpoint); err != nil {
+			return errors.Trace(err)
+		}
+		return dbterror.ErrWaitReorgTimeout
+	case createMaterializedViewBuildPhaseImportRunning:
+		status, importErrorMessage, found, err := w.getCreateMaterializedViewImportJobStatus(ctx, checkpoint.ImportJobID)
+		if err != nil {
+			return errors.Trace(err)
+		}
+		if !found {
+			tableEmpty, tableEmptyErr := w.isCreateMaterializedViewTableEmpty(ctx, job.SchemaName, mvTblInfo.Name.O)
+			if tableEmptyErr != nil {
+				return errors.Trace(tableEmptyErr)
+			}
+			if !tableEmpty {
+				return dbterror.ErrInvalidDDLJob.GenWithStackByArgs(
+					fmt.Sprintf("create materialized view: import job %d not found and mv table is not empty", checkpoint.ImportJobID),
+				)
+			}
+			checkpoint.Phase = createMaterializedViewBuildPhaseInit
+			checkpoint.ImportJobID = 0
+			checkpoint.LastError = ""
+			if err := w.upsertCreateMaterializedViewBuildCheckpoint(ctx, job, checkpoint); err != nil {
+				return errors.Trace(err)
+			}
+			return dbterror.ErrWaitReorgTimeout
+		}
+		switch status {
+		case createMaterializedViewImportJobStatusPending, createMaterializedViewImportJobStatusRunning:
+			return dbterror.ErrWaitReorgTimeout
+		case createMaterializedViewImportJobStatusFinished:
+			checkpoint.Phase = createMaterializedViewBuildPhaseImportFinished
+			checkpoint.LastError = ""
+			return errors.Trace(w.upsertCreateMaterializedViewBuildCheckpoint(ctx, job, checkpoint))
+		case createMaterializedViewImportJobStatusFailed, createMaterializedViewImportJobStatusCancelled:
+			checkpoint.LastError = importErrorMessage
+			if err := w.upsertCreateMaterializedViewBuildCheckpoint(ctx, job, checkpoint); err != nil {
+				return errors.Trace(err)
+			}
+			if importErrorMessage == "" {
+				importErrorMessage = "unknown error"
+			}
+			return errors.Errorf("create materialized view: import job %d %s: %s", checkpoint.ImportJobID, status, importErrorMessage)
+		default:
+			return dbterror.ErrWaitReorgTimeout
+		}
+	case createMaterializedViewBuildPhaseImportFinished:
+		return nil
+	default:
+		return dbterror.ErrInvalidDDLJob.GenWithStackByArgs("create materialized view: invalid checkpoint phase")
+	}
+}
+
+func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName string, job *model.Job, mvTblInfo *model.TableInfo) error {
+	if ctx == nil {
+		ctx = w.workCtx
 	}
 
 	failpoint.Inject("pauseCreateMaterializedViewBuild", func() {})
@@ -546,9 +908,10 @@ func (w *worker) buildCreateMaterializedViewData(ctx context.Context, storeName 
 		failpoint.Return(errors.New("mock create materialized view build error"))
 	})
 
-	ddlSess := sess.NewSession(sessCtx)
-	_, err = ddlSess.Execute(ctx, buildSQL, builderName)
-	return errors.Trace(err)
+	if isCreateMaterializedViewBuildImportEnabled(storeName) {
+		return w.buildCreateMaterializedViewDataByImport(ctx, job, mvTblInfo)
+	}
+	return w.buildCreateMaterializedViewDataByInsert(ctx, job, mvTblInfo)
 }
 
 func (w *worker) upsertCreateMaterializedViewRefreshInfo(jobCtx *jobContext, mviewID int64, readTS uint64, success bool, failedReason string) error {

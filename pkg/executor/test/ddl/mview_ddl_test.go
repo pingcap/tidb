@@ -208,3 +208,58 @@ func TestCreateMaterializedViewCancelRollback(t *testing.T) {
 	require.NotZero(t, baseTable.Meta().MaterializedViewBase.MLogID)
 	require.Empty(t, baseTable.Meta().MaterializedViewBase.MViewIDs)
 }
+
+func TestCreateMaterializedViewImportCheckpoint(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t (a int not null, b int)")
+	tk.MustExec("insert into t values (1, 10), (1, 5), (2, 7)")
+	tk.MustExec("create materialized view log on t (a, b) purge immediate")
+
+	const (
+		forceImportFailpoint = "github.com/pingcap/tidb/pkg/ddl/forceCreateMaterializedViewBuildWithImport"
+		mockJobIDFailpoint   = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildImportJobID"
+		mockStatusFailpoint  = "github.com/pingcap/tidb/pkg/ddl/mockCreateMaterializedViewBuildImportJobStatus"
+	)
+	require.NoError(t, failpoint.Enable(forceImportFailpoint, "return(true)"))
+	require.NoError(t, failpoint.Enable(mockJobIDFailpoint, "return(\"9527\")"))
+	require.NoError(t, failpoint.Enable(mockStatusFailpoint, "return(\"running\")"))
+	defer func() {
+		require.NoError(t, failpoint.Disable(forceImportFailpoint))
+		require.NoError(t, failpoint.Disable(mockJobIDFailpoint))
+		require.NoError(t, failpoint.Disable(mockStatusFailpoint))
+	}()
+
+	ddlDone := make(chan error, 1)
+	go func() {
+		tkDDL := testkit.NewTestKit(t, store)
+		tkDDL.MustExec("use test")
+		ddlDone <- tkDDL.ExecToErr("create materialized view mv_cp (a, s, cnt) refresh fast next 300 as select a, sum(b), count(1) from t group by a")
+	}()
+
+	jobID := ""
+	require.Eventually(t, func() bool {
+		rows := tk.MustQuery("admin show ddl jobs where JOB_TYPE='create materialized view' and TABLE_NAME='mv_cp'").Rows()
+		if len(rows) == 0 {
+			return false
+		}
+		if len(rows[0]) < 5 || strings.ToLower(fmt.Sprint(rows[0][4])) != "write reorganization" {
+			return false
+		}
+		jobID = rows[0][0].(string)
+		return jobID != ""
+	}, 30*time.Second, 100*time.Millisecond)
+
+	tk.MustQuery("select json_unquote(json_extract(convert(reorg_meta using utf8mb4), '$.mview_build.phase')), json_unquote(json_extract(convert(reorg_meta using utf8mb4), '$.mview_build.import_job_id')) from mysql.tidb_ddl_reorg where job_id = " + jobID).
+		Check(testkit.Rows("import_running 9527"))
+
+	require.NoError(t, failpoint.Disable(mockStatusFailpoint))
+	require.NoError(t, failpoint.Enable(mockStatusFailpoint, "return(\"finished\")"))
+
+	err := <-ddlDone
+	require.NoError(t, err)
+
+	tk.MustQuery("select count(*) from mysql.tidb_ddl_reorg where job_id = " + jobID).Check(testkit.Rows("0"))
+	tk.MustQuery("select LAST_REFRESH_RESULT, LAST_REFRESH_TYPE from mysql.tidb_mview_refresh").Check(testkit.Rows("success complete"))
+}
