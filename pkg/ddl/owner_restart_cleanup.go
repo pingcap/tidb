@@ -15,7 +15,6 @@
 package ddl
 
 import (
-	"bytes"
 	"context"
 	"net"
 	"strconv"
@@ -24,6 +23,7 @@ import (
 	"github.com/pingcap/tidb/pkg/ddl/logutil"
 	"github.com/pingcap/tidb/pkg/domain/infosync"
 	"github.com/pingcap/tidb/pkg/domain/serverinfo"
+	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/util/etcd"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
@@ -46,15 +46,6 @@ import (
 func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, selfID string) {
 	if etcdCli == nil || selfID == "" {
 		return
-	}
-
-	// The owner key value can be either "<ownerID>" or "<ownerID>_<opByte>".
-	// See pkg/owner/manager.go splitOwnerValues/joinOwnerValues.
-	parseOwnerID := func(val []byte) string {
-		if idx := bytes.IndexByte(val, '_'); idx >= 0 {
-			return string(val[:idx])
-		}
-		return string(val)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, etcd.KeyOpDefaultTimeout)
@@ -116,7 +107,8 @@ func cleanupStaleDDLOwnerKeys(ctx context.Context, etcdCli *clientv3.Client, sel
 
 	deleted := 0
 	for _, kv := range getResp.Kvs {
-		ownerID := parseOwnerID(kv.Value)
+		ownerIDBytes, _ := owner.SplitOwnerValues(kv.Value)
+		ownerID := string(ownerIDBytes)
 		if ownerID == selfID {
 			continue
 		}
