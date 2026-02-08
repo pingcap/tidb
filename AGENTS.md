@@ -49,6 +49,15 @@ This file provides guidance to agents when working with code in this repository.
 
 - When creating new source files (for example: `*.go`), include the standard TiDB copyright (and Apache 2.0 license) header at the top; copy the header from an existing file in the same directory and update the year if needed.
 
+### Notes
+
+- Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
+- Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
+- Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
+- If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
+- Predicate pushdown testdata (`pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`) should contain SQL-only cases; put DDL in the test setup to avoid `EXPLAIN` parsing DDL during record runs.
+- Integration test recording uses `./run-tests.sh -r <name>` (not `-record`).
+
 ## Building
 
 ### Bazel bootstrap (`make bazel_prepare`)
@@ -75,6 +84,12 @@ make gogenerate
 
 # optional: keep Go modules tidy if go.mod/go.sum changed
 go mod tidy
+
+# keep remote refs fresh so base-branch auto-detection is accurate
+git fetch origin --prune
+
+# Run before committing or finishing tasks, to ensure we pass the static check
+make bazel_lint_changed
 ```
 
 ## Testing 
@@ -280,3 +295,11 @@ The PR title **must** strictly adhere to the following format. It uses the packa
 ### PR description
 
 The PR description **must** strictly follow the template located at @.github/pull_request_template.md and **must** keep the HTML comment elements like `Tests <!-- At least one of them must be included. -->` unchanged in the pull request description according to the pull request template. These elements are essential for CI and removing them will cause processing failures.
+
+### Language
+
+Issues and PRs **must** be written in English (title and description).
+
+### Force push
+
+Avoid force-push whenever possible; prefer adding follow-up commits and letting GitHub squash-merge. If a force-push is unavoidable, use `--force-with-lease` and coordinate with reviewers.

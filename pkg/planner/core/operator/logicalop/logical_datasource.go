@@ -504,6 +504,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IdxCols:        path.IdxCols,
 		IdxColLens:     path.IdxColLens,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	is.SetNoncacheableReason(path.NoncacheableReason)
 
 	is.Columns = make([]*model.ColumnInfo, len(ds.Columns))
 	copy(is.Columns, ds.Columns)
@@ -515,6 +516,7 @@ func (ds *DataSource) buildIndexGather(path *util.AccessPath) base.LogicalPlan {
 		IsIndexGather: true,
 		Index:         path.Index,
 	}.Init(ds.SCtx(), ds.QueryBlockOffset())
+	sg.SetNoncacheableReason(path.NoncacheableReason)
 	sg.SetSchema(ds.Schema())
 	sg.SetChildren(is)
 	return sg
@@ -787,7 +789,9 @@ func (ds *DataSource) CheckPartialIndexes() {
 		// A special handler for plan cache.
 		// We only do it for single IS NOT NULL constraint now.
 		if ds.SCtx().GetSessionVars().StmtCtx.UseCache() {
-			path.PartIdxCondNotAlwaysValid = !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds)
+			if !partidx.AlwaysMeetConstraints(ds.SCtx(), cnfExprs, ds.PushedDownConds) {
+				path.NoncacheableReason = "IndexScan of partial index is uncacheable"
+			}
 		}
 	}
 	// 1. No partial index,

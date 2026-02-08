@@ -4100,6 +4100,53 @@ func getPartitionKeyColOffsets(keyColIDs []int64, pt table.PartitionedTable) []i
 	return keyColOffsets
 }
 
+type indexJoinPartitionRanges struct {
+	partitions []table.PhysicalTable
+	rangeMap   map[int64][]*ranger.Range
+	ranges     []*ranger.Range
+	empty      bool
+	canPrune   bool
+}
+
+func (builder *dataReaderBuilder) buildIndexJoinPartitionRanges(
+	ctx context.Context,
+	tableID int64,
+	physPlanPartInfo *physicalop.PhysPlanPartInfo,
+	rctx *rangerctx.RangerContext,
+	lookUpContents []*join.IndexJoinLookUpContent,
+	indexRanges []*ranger.Range,
+	keyOff2IdxOff []int,
+	cwc *physicalop.ColWithCmpFuncManager,
+) (*indexJoinPartitionRanges, error) {
+	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tableID)
+	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, physPlanPartInfo, lookUpContents)
+	if err != nil {
+		return nil, err
+	}
+	if len(usedPartition) == 0 {
+		return &indexJoinPartitionRanges{empty: true}, nil
+	}
+	res := &indexJoinPartitionRanges{
+		partitions: usedPartition,
+		canPrune:   canPrune,
+	}
+	if canPrune {
+		rangeMap, err := buildIndexRangeForEachPartition(rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+		if err != nil {
+			return nil, err
+		}
+		res.rangeMap = rangeMap
+		res.ranges = indexRanges
+		return res, nil
+	}
+	ranges, err := buildRangesForIndexJoin(rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
+	if err != nil {
+		return nil, err
+	}
+	res.ranges = ranges
+	return res, nil
+}
+
 func (builder *dataReaderBuilder) prunePartitionForInnerExecutor(tbl table.Table, physPlanPartInfo *physicalop.PhysPlanPartInfo,
 	lookUpContent []*join.IndexJoinLookUpContent) (usedPartition []table.PhysicalTable, canPrune bool, contentPos []int64, err error) {
 	partitionTbl := tbl.(table.PartitionedTable)
@@ -5123,34 +5170,24 @@ func (builder *dataReaderBuilder) buildIndexReaderForIndexJoin(ctx context.Conte
 		return e, nil
 	}
 
-	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
+	rangeResult, err := builder.buildIndexJoinPartitionRanges(ctx, tbInfo.ID, v.PlanPartInfo, e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err
 	}
-	if len(usedPartition) != 0 {
-		if canPrune {
-			rangeMap, err := buildIndexRangeForEachPartition(e.rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-			if err != nil {
-				return nil, err
-			}
-			e.partitions = usedPartition
-			e.ranges = indexRanges
-			e.partRangeMap = rangeMap
-		} else {
-			e.partitions = usedPartition
-			if e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc); err != nil {
-				return nil, err
-			}
-		}
-		if err := exec.Open(ctx, e); err != nil {
-			return nil, err
-		}
-		return e, nil
+	if rangeResult.empty {
+		ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
+		err = exec.Open(ctx, ret)
+		return ret, err
 	}
-	ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
-	err = exec.Open(ctx, ret)
-	return ret, err
+	e.partitions = rangeResult.partitions
+	e.ranges = rangeResult.ranges
+	if rangeResult.canPrune {
+		e.partRangeMap = rangeResult.rangeMap
+	}
+	if err := exec.Open(ctx, e); err != nil {
+		return nil, err
+	}
+	return e, nil
 }
 
 func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context.Context, v *physicalop.PhysicalIndexLookUpReader,
@@ -5194,36 +5231,25 @@ func (builder *dataReaderBuilder) buildIndexLookUpReaderForIndexJoin(ctx context
 		return e, err
 	}
 
-	tbl, _ := builder.executorBuilder.is.TableByID(ctx, tbInfo.ID)
-	usedPartition, canPrune, contentPos, err := builder.prunePartitionForInnerExecutor(tbl, v.PlanPartInfo, lookUpContents)
+	rangeResult, err := builder.buildIndexJoinPartitionRanges(ctx, tbInfo.ID, v.PlanPartInfo, e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
 	if err != nil {
 		return nil, err
 	}
-	if len(usedPartition) != 0 {
-		if canPrune {
-			rangeMap, err := buildIndexRangeForEachPartition(e.rctx, usedPartition, contentPos, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-			if err != nil {
-				return nil, err
-			}
-			e.prunedPartitions = usedPartition
-			e.ranges = indexRanges
-			e.partitionRangeMap = rangeMap
-		} else {
-			e.prunedPartitions = usedPartition
-			e.ranges, err = buildRangesForIndexJoin(e.rctx, lookUpContents, indexRanges, keyOff2IdxOff, cwc)
-			if err != nil {
-				return nil, err
-			}
-		}
-		e.partitionTableMode = true
-		if err := exec.Open(ctx, e); err != nil {
-			return nil, err
-		}
-		return e, err
+	if rangeResult.empty {
+		ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
+		err = exec.Open(ctx, ret)
+		return ret, err
 	}
-	ret := &TableDualExec{BaseExecutorV2: e.BaseExecutorV2}
-	err = exec.Open(ctx, ret)
-	return ret, err
+	e.prunedPartitions = rangeResult.partitions
+	e.ranges = rangeResult.ranges
+	if rangeResult.canPrune {
+		e.partitionRangeMap = rangeResult.rangeMap
+	}
+	e.partitionTableMode = true
+	if err := exec.Open(ctx, e); err != nil {
+		return nil, err
+	}
+	return e, err
 }
 
 func (builder *dataReaderBuilder) buildProjectionForIndexJoin(

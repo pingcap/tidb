@@ -21,7 +21,6 @@ go_library(
         "//pkg/metrics",
         "//pkg/parser",
         "//pkg/parser/ast",
-        "//pkg/parser/auth",
         "//pkg/parser/format",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",

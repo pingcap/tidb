@@ -150,15 +150,17 @@ func walkLeafMetaFile(
 
 // Table wraps the schema and files of a table.
 type Table struct {
-	DB               *model.DBInfo
-	Info             *model.TableInfo
-	Crc64Xor         uint64
-	TotalKvs         uint64
-	TotalBytes       uint64
-	FilesOfPhysicals map[int64][]*backuppb.File
-	TiFlashReplicas  int
-	Stats            *util.JSONTable
-	StatsFileIndexes []*backuppb.StatsFileIndex
+	DB                          *model.DBInfo
+	Info                        *model.TableInfo
+	Crc64Xor                    uint64
+	TotalKvs                    uint64
+	TotalBytes                  uint64
+	FilesOfPhysicals            map[int64][]*backuppb.File
+	TiFlashReplicas             int
+	Stats                       *util.JSONTable
+	StatsFileIndexes            []*backuppb.StatsFileIndex
+	IsMergeOptionAllowed        bool
+	PartitionMergeOptionAllowed map[string]bool
 }
 
 // MetaReader wraps a reader to read both old and new version of backupmeta.
@@ -509,16 +511,23 @@ func parseSchemaFile(s *backuppb.Schema) (*Table, error) {
 		statsFileIndexes = s.StatsIndex
 	}
 
+	var partitionMergeOptionAllowed map[string]bool
+	if s.PartitionMergeOptionAllowed != nil {
+		partitionMergeOptionAllowed = s.PartitionMergeOptionAllowed
+	}
+
 	return &Table{
-		DB:               dbInfo,
-		Info:             tableInfo,
-		Crc64Xor:         s.Crc64Xor,
-		TotalKvs:         s.TotalKvs,
-		TotalBytes:       s.TotalBytes,
-		FilesOfPhysicals: make(map[int64][]*backuppb.File),
-		TiFlashReplicas:  int(s.TiflashReplicas),
-		Stats:            stats,
-		StatsFileIndexes: statsFileIndexes,
+		DB:                          dbInfo,
+		Info:                        tableInfo,
+		Crc64Xor:                    s.Crc64Xor,
+		TotalKvs:                    s.TotalKvs,
+		TotalBytes:                  s.TotalBytes,
+		FilesOfPhysicals:            make(map[int64][]*backuppb.File),
+		TiFlashReplicas:             int(s.TiflashReplicas),
+		Stats:                       stats,
+		StatsFileIndexes:            statsFileIndexes,
+		IsMergeOptionAllowed:        s.IsMergeOptionAllowed,
+		PartitionMergeOptionAllowed: partitionMergeOptionAllowed,
 	}, nil
 }
 

@@ -397,7 +397,7 @@
 - `pkg/planner/core/casetest/rule/rule_join_reorder_test.go` - planner/core/casetest/rule: Tests join reorder hints, hash-join toggle, and TiFlash/dynamic partitions.
 - `pkg/planner/core/casetest/rule/rule_outer2inner_test.go` - planner/core/casetest/rule: Tests outer-to-inner rewrites with merged issue regressions.
 - `pkg/planner/core/casetest/rule/rule_outer_to_semi_join_test.go` - planner/core/casetest/rule: Tests outer-to-semi join rewrite correctness.
-- `pkg/planner/core/casetest/rule/rule_predicate_pushdown_test.go` - planner/core/casetest/rule: Tests predicate pushdown cases including TiFlash-related regressions.
+- `pkg/planner/core/casetest/rule/rule_predicate_pushdown_test.go` - planner/core/casetest/rule: Tests predicate pushdown cases and records plan+result for selected cases.
 - `pkg/planner/core/casetest/rule/rule_predicate_simplification_test.go` - planner/core/casetest/rule: Tests predicate simplification across complex schemas.
 
 ### Testdata

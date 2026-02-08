@@ -17,8 +17,8 @@ package domain
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -31,8 +31,10 @@ import (
 	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
 	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/objstore/storeapi"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/pingcap/tidb/pkg/planner/extstore"
 	"github.com/pingcap/tidb/pkg/sessionctx"
 	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/pingcap/tidb/pkg/sessionctx/variable"
@@ -71,11 +73,11 @@ func parseTime(s string) (time.Time, error) {
 }
 
 // GCDumpFiles periodically cleans the outdated files for plan replayer and plan trace.
-func (p *dumpFileGcChecker) GCDumpFiles(gcDurationDefault, gcDurationForCapture time.Duration) {
+func (p *dumpFileGcChecker) GCDumpFiles(ctx context.Context, gcDurationDefault, gcDurationForCapture time.Duration) {
 	p.Lock()
 	defer p.Unlock()
 	for _, path := range p.paths {
-		p.gcDumpFilesByPath(path, gcDurationDefault, gcDurationForCapture)
+		p.gcDumpFilesByPath(ctx, path, gcDurationDefault, gcDurationForCapture)
 	}
 }
 
@@ -83,37 +85,27 @@ func (p *dumpFileGcChecker) setupSctx(sctx sessionctx.Context) {
 	p.sctx = sctx
 }
 
-func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gcDurationForCapture time.Duration) {
-	entries, err := os.ReadDir(path)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			absPath, err2 := filepath.Abs(path)
-			if err2 != nil {
-				logutil.BgLogger().Warn("failed to get absolute path",
-					zap.Error(err2), zap.String("category", "dumpFileGcChecker"))
-				absPath = path
-			}
-			logutil.BgLogger().Warn("open plan replayer directory failed",
-				zap.Error(err), zap.String("category", "dumpFileGcChecker"),
-				zap.String("path", absPath))
-		}
-	}
-
+func (p *dumpFileGcChecker) gcDumpFilesByPath(ctx context.Context, path string, gcDurationDefault, gcDurationForCapture time.Duration) {
 	gcTargetTimeDefault := time.Now().Add(-gcDurationDefault)
 	gcTargetTimeForCapture := time.Now().Add(-gcDurationForCapture)
-	for _, entry := range entries {
-		f, err := entry.Info()
+
+	storage, err := extstore.GetGlobalExtStorage(ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("get global ext storage failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err))
+		return
+	}
+	opt := &storeapi.WalkOption{
+		SubDir: path,
+	}
+	err = storage.WalkDir(ctx, opt, func(fileName string, _ int64) error {
+		baseName := filepath.Base(fileName)
+		createTime, err := parseTime(baseName)
 		if err != nil {
-			logutil.BgLogger().Warn("open plan replayer directory failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err))
+			logutil.BgLogger().Warn("parseTime failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
+			return nil
 		}
-		fileName := f.Name()
-		createTime, err := parseTime(fileName)
-		if err != nil {
-			logutil.BgLogger().Error("parseTime failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
-			continue
-		}
-		isPlanReplayer := strings.Contains(fileName, "replayer")
-		isPlanReplayerCapture := strings.Contains(fileName, "capture")
+		isPlanReplayer := strings.Contains(baseName, "replayer")
+		isPlanReplayerCapture := strings.Contains(baseName, "capture")
 		canGC := false
 		if isPlanReplayer && isPlanReplayerCapture {
 			canGC = !createTime.After(gcTargetTimeForCapture)
@@ -121,17 +113,21 @@ func (p *dumpFileGcChecker) gcDumpFilesByPath(path string, gcDurationDefault, gc
 			canGC = !createTime.After(gcTargetTimeDefault)
 		}
 		if canGC {
-			err := os.Remove(filepath.Join(path, f.Name()))
+			err := storage.DeleteFile(ctx, fileName)
 			if err != nil {
 				logutil.BgLogger().Warn("remove file failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("filename", fileName))
-				continue
+				return nil
 			}
 			logutil.BgLogger().Info("dumpFileGcChecker successful", zap.String("filename", fileName))
 			if isPlanReplayer && p.sctx != nil {
-				deletePlanReplayerStatus(context.Background(), p.sctx, fileName)
+				deletePlanReplayerStatus(ctx, p.sctx, baseName)
 				p.planReplayerTaskStatus.clearFinishedTask()
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		logutil.BgLogger().Warn("walk dir failed", zap.String("category", "dumpFileGcChecker"), zap.Error(err), zap.String("path", path))
 	}
 }
 
@@ -150,7 +146,7 @@ func insertPlanReplayerStatus(ctx context.Context, sctx sessionctx.Context, reco
 	var instance string
 	serverInfo, err := infosync.GetServerInfo()
 	if err != nil {
-		logutil.BgLogger().Error("failed to get server info", zap.Error(err))
+		logutil.BgLogger().Warn("failed to get server info", zap.Error(err))
 		instance = "unknown"
 	} else {
 		instance = net.JoinHostPort(serverInfo.IP, strconv.FormatUint(uint64(serverInfo.Port), 10))
@@ -466,7 +462,15 @@ func (w *planReplayerTaskDumpWorker) HandleTask(task *PlanReplayerDumpTask) (suc
 		return true
 	}
 
-	file, fileName, err := replayer.GeneratePlanReplayerFile(task.IsCapture, task.IsContinuesCapture, vardef.EnableHistoricalStatsForCapture.Load())
+	storage, err := extstore.GetGlobalExtStorage(w.ctx)
+	if err != nil {
+		logutil.BgLogger().Warn("get global ext storage failed", zap.String("category", "plan-replayer-capture"),
+			zap.String("sqlDigest", taskKey.SQLDigest),
+			zap.String("planDigest", taskKey.PlanDigest),
+			zap.Error(err))
+		return false
+	}
+	file, fileName, err := replayer.GeneratePlanReplayerFile(w.ctx, storage, task.IsCapture, task.IsContinuesCapture, vardef.EnableHistoricalStatsForCapture.Load())
 	if err != nil {
 		logutil.BgLogger().Warn("generate task file failed", zap.String("category", "plan-replayer-capture"),
 			zap.String("sqlDigest", taskKey.SQLDigest),
@@ -582,7 +586,7 @@ type PlanReplayerDumpTask struct {
 	DebugTrace        []any
 
 	FileName string
-	Zf       *os.File
+	Zf       io.WriteCloser
 
 	// IsCapture indicates whether the task is from capture
 	IsCapture bool
