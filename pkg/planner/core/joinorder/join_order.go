@@ -340,7 +340,10 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint contains unexpected element type")
 	}
 
-	nodeWithHint, nodes, ok, err := BuildLeadingTreeFromList(leadingHint.LeadingList, nodes, findAndRemoveByHint, joiner, warn)
+	// BuildLeadingTreeFromList may modify nodes slice, so we need to clone it first.
+	// And only return the modified nodes(nodesAfterHint) when the leading hint is applicable,
+	// and original nodes slice will be returned when the leading hint is inapplicable.
+	nodeWithHint, nodesAfterHint, ok, err := BuildLeadingTreeFromList(leadingHint.LeadingList, slices.Clone(nodes), findAndRemoveByHint, joiner, warn)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -348,7 +351,7 @@ func (j *joinOrderGreedy) buildJoinByHint(detector *ConflictDetector, nodes []*N
 		j.ctx.GetSessionVars().StmtCtx.SetHintWarning("leading hint is inapplicable, check if the leading hint table is valid")
 		return nil, nodes, nil
 	}
-	return nodeWithHint, nodes, nil
+	return nodeWithHint, nodesAfterHint, nil
 }
 
 func checkConnection(detector *ConflictDetector, leftPlan, rightPlan *Node) (*CheckConnectionResult, error) {
