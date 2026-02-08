@@ -586,40 +586,41 @@ func TestRescheduleJobsAfterTableDropped(t *testing.T) {
 		{"alter table test.t ttl_enable = 'OFF'", "alter table test.t ttl_enable = 'ON'"},
 	}
 	for i, rb := range removeBehaviors {
-		se := sessionFactory()
-		defer se.Close()
-		m := ttlworker.NewJobManager("manager-1", dom.SysSessionPool(), store, nil, func() bool {
-			return true
-		})
-		m.TaskManager().ResizeWorkersWithSysVar()
-		defer m.TaskManager().ResizeWorkersToZero(t)
-		require.NoError(t, m.InfoSchemaCache().Update(se))
-		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
-		// submit job
-		require.NoError(t, m.SubmitJob(se, table.Meta().ID, table.Meta().ID, fmt.Sprintf("request%d", i)))
-		sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
-		rows, err := se.ExecuteSQL(ctx, sql, args...)
-		require.NoError(t, err)
-		tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
-		require.NoError(t, err)
-		require.Equal(t, "manager-1", tableStatus.CurrentJobOwnerID)
-		// there is already a task
-		tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
+		func() {
+			se := sessionFactory()
+			defer se.Close()
+			m := ttlworker.NewJobManager("manager-1", dom.SysSessionPool(), store, nil, func() bool {
+				return true
+			})
+			m.TaskManager().ResizeWorkersWithSysVar()
+			defer m.TaskManager().ResizeWorkersToZero(t)
+			require.NoError(t, m.InfoSchemaCache().Update(se))
+			require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+			// submit job
+			require.NoError(t, m.SubmitJob(se, table.Meta().ID, table.Meta().ID, fmt.Sprintf("request%d", i)))
+			sql, args := cache.SelectFromTableStatusWithID(session.TTLJobTypeTTL, table.Meta().ID)
+			rows, err := se.ExecuteSQL(ctx, sql, args...)
+			require.NoError(t, err)
+			tableStatus, err := cache.RowToTableStatus(se.GetSessionVars().Location(), rows[0])
+			require.NoError(t, err)
+			require.Equal(t, "manager-1", tableStatus.CurrentJobOwnerID)
+			// there is already a task
+			tk.MustQuery("select count(*) from mysql.tidb_ttl_task").Check(testkit.Rows("1"))
 
-		// break the table
-		tk.MustExec(rb.remove)
-		require.NoError(t, m.InfoSchemaCache().Update(se))
-		require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
-		m.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
-		tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or TTL on this table has been stopped"))
+			// break the table
+			tk.MustExec(rb.remove)
+			require.NoError(t, m.InfoSchemaCache().Update(se))
+			require.NoError(t, m.TableStatusCache().Update(context.Background(), se))
+			m.RescheduleJobs(se, time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, now.Nanosecond(), now.Location()))
+			tk.MustQuery("select last_job_summary->>'$.scan_task_err' from mysql.tidb_ttl_table_status").Check(testkit.Rows("TTL table has been removed or TTL on this table has been stopped"))
 
-		// resume the table
-		tk.MustExec(rb.resume)
-		table, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
-		require.NoError(t, err)
-		m.DoGC(context.TODO(), se, now)
+			// resume the table
+			tk.MustExec(rb.resume)
+			table, err = dom.InfoSchema().TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
+			require.NoError(t, err)
+			m.DoGC(context.TODO(), se, now)
+		}()
 	}
-
 }
 
 func TestJobTimeout(t *testing.T) {
@@ -1604,8 +1605,8 @@ func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
 		require.NoError(t, m2.TableStatusCache().Update(ctx, se))
 		m2.RescheduleJobs(se, now)
 
-		// the job cannot be cancelled, because it doesn't exist in the infoschema cache.
-		tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("running"))
+		// the job will be cancelled, because it doesn't exist in the infoschema cache.
+		tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
 
 		// run GC
 		m2.DoGC(ctx, se, now)
@@ -1634,8 +1635,9 @@ func TestDisableTTLAfterLoseHeartbeat(t *testing.T) {
 		require.NoError(t, m2.TableStatusCache().Update(ctx, se))
 		m2.RescheduleJobs(se, now)
 
-		// the job cannot be cancelled, because it doesn't exist in the infoschema cache.
-		tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("running"))
+		// after taking over a heartbeat-timeout job, it should be cancelled immediately
+		// because the table is no longer in TTL infoschema cache.
+		tk.MustQuery("select current_job_status from mysql.tidb_ttl_table_status").Check(testkit.Rows("<nil>"))
 
 		// run GC
 		m2.DoGC(ctx, se, now)

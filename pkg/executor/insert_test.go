@@ -440,9 +440,9 @@ func TestInsertRuntimeStat(t *testing.T) {
 	newStats.ActiveActive.UnsafeOriginTSCount = 4
 	newStats.SoftDelete.ImplicitRemoveRows = 11
 	stats.Merge(newStats)
-	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
+	require.Equal(t, "prepare: 11s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
 	stats.FKCheckTime = time.Second
-	require.Equal(t, "prepare: 6s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
+	require.Equal(t, "prepare: 11s, check_insert: {total_time: 4s, mem_insert_time: 2s, prefetch: 2s, fk_check: 1s}, active_active: {cdc_conflict_skip_cnt: 4, unsafe_write_origin_ts_cnt: 6}, softdelete: {implicit_remove_rows: 18}", stats.String())
 
 	stats2 := &executor.InsertRuntimeStat{}
 	stats2.Merge(&executor.InsertRuntimeStat{

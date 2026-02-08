@@ -420,11 +420,11 @@ func TestSoftDeleteTimerSync(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec(createTimerTableSQL("test", "test_timers"))
-	timerStore := tablestore.NewTableTimerStore(1, do.AdvancedSysSessionPool(), "test", "test_timers", nil)
+	tk.MustExec(tablestore.CreateTimerTableSQL("test", "test_timers"))
+	timerStore := tablestore.NewTableTimerStore(1, do.SysSessionPool(), "test", "test_timers", nil)
 	defer timerStore.Close()
 	cli := timerapi.NewDefaultTimerClient(timerStore)
-	pool := wrapPoolForTest(do.AdvancedSysSessionPool())
+	pool := wrapPoolForTest(do.SysSessionPool())
 	defer pool.AssertNoSessionInUse(t)
 	sync, err := ttlworker.NewSoftDeleteTimerSyncer(pool, cli)
 	require.NoError(t, err)
@@ -437,7 +437,7 @@ func TestSoftDeleteTimerSync(t *testing.T) {
 	require.Equal(t, float64(1), fullRefreshTimersCounter.Val())
 
 	is := do.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("sd1"))
+	tbl, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("sd1"))
 	require.NoError(t, err)
 	tblInfo := tbl.Meta()
 	require.NotNil(t, tblInfo.Partition)

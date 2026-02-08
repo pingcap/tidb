@@ -17,6 +17,9 @@ package executor
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strconv"
+
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/tidb/pkg/distsql"
@@ -42,8 +45,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/rowcodec"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
-	"sort"
-	"strconv"
 )
 
 func (b *executorBuilder) buildPointGet(p *plannercore.PointGetPlan) exec.Executor {

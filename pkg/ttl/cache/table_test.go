@@ -210,7 +210,7 @@ func TestNewSoftdeleteTable(t *testing.T) {
 
 	for _, c := range cases {
 		is := do.InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr(c.db), ast.NewCIStr(c.tbl))
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr(c.db), pmodel.NewCIStr(c.tbl))
 		require.NoError(t, err)
 		tblInfo := tbl.Meta()
 

@@ -36,7 +36,6 @@ func parseEventuallyExpectation(t *testing.T, expected string) (minOK bool, minV
 
 func TestSoftDeleteCleanupJobIntegration(t *testing.T) {
 	defer boostJobScheduleForTest(t)()
-	defer overwriteJobInterval(t)()
 
 	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)

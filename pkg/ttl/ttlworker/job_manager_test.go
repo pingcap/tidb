@@ -23,6 +23,7 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/parser/ast"
+	pmodel "github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	timerapi "github.com/pingcap/tidb/pkg/timer/api"
 	"github.com/pingcap/tidb/pkg/ttl/cache"
@@ -32,9 +33,6 @@ import (
 	"github.com/pingcap/tidb/pkg/util/chunk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
 func newTTLTableStatusRows(status ...*cache.TableStatus) []chunk.Row {
@@ -422,7 +420,7 @@ func TestLockTable(t *testing.T) {
 	oldJobExpireTime := now.Add(-time.Hour)
 	oldJobStartTime := now.Add(-30 * time.Minute)
 
-	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: ast.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: ast.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: ast.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
+	testPhysicalTable := &cache.PhysicalTable{ID: 1, Schema: pmodel.NewCIStr("test"), TableInfo: &model.TableInfo{ID: 1, Name: pmodel.NewCIStr("t1"), TTLInfo: &model.TTLInfo{ColumnName: pmodel.NewCIStr("test"), IntervalExprStr: "1", IntervalTimeUnit: int(ast.TimeUnitMinute), JobInterval: "1h"}}}
 
 	type executeInfo struct {
 		sql  string
@@ -719,34 +717,4 @@ func TestLocalJobs(t *testing.T) {
 	}
 	require.Len(t, m.localJobs(), 1)
 	require.Equal(t, m.localJobs()[0].id, "1")
-}
-
-func TestSplitCnt(t *testing.T) {
-	mockClient, _, pdClient, err := testutils.NewMockTiKV("", nil)
-	require.NoError(t, err)
-	defer func() {
-		pdClient.Close()
-		err = mockClient.Close()
-		require.NoError(t, err)
-	}()
-
-	require.Equal(t, 64, getScanSplitCnt(nil))
-	require.Equal(t, 64, getScanSplitCnt(&mockKVStore{}))
-
-	s := &mockTiKVStore{regionCache: tikv.NewRegionCache(pdClient)}
-	for i := uint64(1); i <= 128; i++ {
-		s.GetRegionCache().SetRegionCacheStore(i, "", "", tikvrpc.TiKV, 1, nil)
-		if i <= 64 {
-			require.Equal(t, 64, getScanSplitCnt(s))
-		} else {
-			require.Equal(t, int(i), getScanSplitCnt(s))
-		}
-	}
-}
-
-// SetTimeFormat sets the time format used by the test.
-// Some tests require a greater precision than the default time format. We don't change it globally to avoid potential compatibility issues.
-// Therefore, the format for most tests are also not changed, to make sure the tests can represent the real-world scenarios.
-func SetTimeFormat(format string) {
-	timeFormat = format
 }

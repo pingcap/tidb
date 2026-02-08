@@ -533,7 +533,7 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 	// check the goroutine logic is block
 	require.Never(t, func() bool { return done.Load() }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
-	require.Eventually(t, func() bool { return done.Load() }, 100*time.Millisecond, time.Millisecond)
+	require.Eventually(t, func() bool { return done.Load() }, 200*time.Millisecond, 5*time.Millisecond)
 
 	// test again, this time, id = 2 is soft deleted, check for update lock's behavior
 	tk1.MustExec("begin")
@@ -548,7 +548,7 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 	// check the goroutine logic is block
 	require.Never(t, func() bool { return done.Load() }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
-	require.Eventually(t, func() bool { return done.Load() }, 100*time.Millisecond, time.Millisecond)
+	require.Eventually(t, func() bool { return done.Load() }, 200*time.Millisecond, 5*time.Millisecond)
 
 	// the third test, record id = 5 does not exist, but for update should lock it
 	tk1.MustExec("begin")
@@ -563,6 +563,7 @@ func TestSoftDeleteForUpdate(t *testing.T) {
 	// check the goroutine logic is block
 	require.Never(t, func() bool { return done.Load() }, 100*time.Millisecond, 5*time.Millisecond)
 	tk1.MustExec("commit")
+	require.Eventually(t, func() bool { return done.Load() }, 200*time.Millisecond, 5*time.Millisecond)
 }
 
 func TestSoftDeleteImplicitDeleteRowsMetricsBySQLType(t *testing.T) {

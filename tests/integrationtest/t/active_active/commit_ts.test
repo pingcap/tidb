@@ -43,7 +43,7 @@ begin;
 select _tidb_commit_ts, v from t where id = 2 for update;
 --replace_regex /^[1-9][0-9]+/TSO/
 select _tidb_commit_ts, v from t where id in (1, 2) for update;
-explain select _tidb_commit_ts, v from t where id < 3;
+explain format='brief' select _tidb_commit_ts, v from t where id < 3;
 --replace_regex /^[1-9][0-9]+/TSO/
 select _tidb_commit_ts, v from t where id < 3;
 rollback;

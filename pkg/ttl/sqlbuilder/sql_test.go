@@ -396,14 +396,14 @@ func TestFormatSQLDatum(t *testing.T) {
 }
 
 func TestSoftDeleteScanQueryGeneratorPaging(t *testing.T) {
-	idCol := &model.ColumnInfo{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong), State: model.StatePublic, Offset: 1}
+	idCol := &model.ColumnInfo{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong), State: model.StatePublic, Offset: 1}
 	timeCol := model.NewExtraSoftDeleteTimeColInfo()
 	timeCol.State = model.StatePublic
 	timeCol.Offset = 0
 	tbl := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
+		Schema: pmodel.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name:    ast.NewCIStr("t"),
+			Name:    pmodel.NewCIStr("t"),
 			Columns: []*model.ColumnInfo{timeCol, idCol},
 		},
 		KeyColumns:           []*model.ColumnInfo{idCol},
@@ -438,14 +438,14 @@ func TestSoftDeleteScanQueryGeneratorPaging(t *testing.T) {
 }
 
 func TestSoftDeleteCleanupSQL(t *testing.T) {
-	idCol := &model.ColumnInfo{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong), State: model.StatePublic, Offset: 1}
+	idCol := &model.ColumnInfo{Name: pmodel.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLonglong), State: model.StatePublic, Offset: 1}
 	timeCol := model.NewExtraSoftDeleteTimeColInfo()
 	timeCol.State = model.StatePublic
 	timeCol.Offset = 0
 	tbl := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
+		Schema: pmodel.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name:    ast.NewCIStr("t"),
+			Name:    pmodel.NewCIStr("t"),
 			Columns: []*model.ColumnInfo{timeCol, idCol},
 		},
 		KeyColumns:           []*model.ColumnInfo{idCol},
@@ -464,12 +464,12 @@ func TestSoftDeleteCleanupSQL(t *testing.T) {
 func TestSoftDeleteSQLActiveActiveSafety(t *testing.T) {
 	expire := time.UnixMilli(100000).In(time.UTC)
 
-	tblInfo := &model.TableInfo{Name: ast.NewCIStr("t"), IsActiveActive: true}
+	tblInfo := &model.TableInfo{Name: pmodel.NewCIStr("t"), IsActiveActive: true}
 	tbl := &cache.PhysicalTable{
-		Schema:    ast.NewCIStr("test"),
+		Schema:    pmodel.NewCIStr("test"),
 		TableInfo: tblInfo,
 		KeyColumns: []*model.ColumnInfo{{
-			Name:      ast.NewCIStr("id"),
+			Name:      pmodel.NewCIStr("id"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		}},
 		KeyColumnTypes:       []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)},
@@ -507,9 +507,9 @@ func TestActiveActiveSafetySQLExecutable(t *testing.T) {
 
 	preparePhysicalTable := func(t *testing.T) *cache.PhysicalTable {
 		is := domain.GetDomain(tk.Session()).InfoSchema()
-		tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+		tbl, err := is.TableByName(context.Background(), pmodel.NewCIStr("test"), pmodel.NewCIStr("t"))
 		require.NoError(t, err)
-		pt, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""), false, true)
+		pt, err := cache.NewPhysicalTable(pmodel.NewCIStr("test"), tbl.Meta(), pmodel.NewCIStr(""), false, true)
 		require.NoError(t, err)
 		return pt
 	}

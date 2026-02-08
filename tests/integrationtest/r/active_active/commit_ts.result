@@ -60,11 +60,11 @@ select _tidb_commit_ts, v from t where id in (1, 2) for update;
 _tidb_commit_ts	v
 TSO	1
 TSO	2
-explain select _tidb_commit_ts, v from t where id < 3;
+explain format='brief' select _tidb_commit_ts, v from t where id < 3;
 id	estRows	task	access object	operator info
-TableReader_10	3.00	root		data:Projection_6
-└─Projection_6	3.00	cop[tikv]		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.v
-  └─TableRangeScan_9	3333.33	cop[tikv]	table:t	range:[-inf,3), keep order:false, stats:pseudo
+TableReader	3.00	root		data:Projection
+└─Projection	3.00	cop[tikv]		active_active__commit_ts.t._tidb_commit_ts, active_active__commit_ts.t.v
+  └─TableRangeScan	3333.33	cop[tikv]	table:t	range:[-inf,3), keep order:false, stats:pseudo
 select _tidb_commit_ts, v from t where id < 3;
 _tidb_commit_ts	v
 TSO	1

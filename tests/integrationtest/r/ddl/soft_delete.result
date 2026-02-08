@@ -135,13 +135,13 @@ t4	CREATE TABLE `t4` (
   PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 alter database test_sd softdelete = 'INVALID';
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 45 near ""The SOFTDELETE option must be RETENTION XXX or 'OFF' 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 46 near ";"The SOFTDELETE option must be RETENTION XXX or 'OFF' 
 create table t5 (id int) softdelete = 'YES';
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 43 near ""The SOFTDELETE option must be RETENTION XXX or 'OFF' 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 44 near ";"The SOFTDELETE option must be RETENTION XXX or 'OFF' 
 alter table t1 softdelete_job_enable = 'MAYBE';
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 46 near ""The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF' 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 47 near ";"The SOFTDELETE_JOB_ENABLE option must be 'ON' or 'OFF' 
 create table t6 (id int) softdelete = retention 'invalid_duration' DAY;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 66 near "'invalid_duration' DAY" 
+Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 66 near "'invalid_duration' DAY;" 
 create global temporary table tmp_aa (id int) softdelete = retention 7 day on commit delete rows;
 Error 8200 (HY000): Unsupported SOFTDELETE and ACTIVE_ACTIVE is unspported on temp table
 create global temporary table tmp_aa like t3 on commit delete rows;

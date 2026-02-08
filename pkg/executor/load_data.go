@@ -17,7 +17,6 @@ package executor
 import (
 	"context"
 	"fmt"
-	"github.com/pingcap/tidb/pkg/metrics"
 	"io"
 	"math"
 	"strings"
@@ -32,6 +31,7 @@ import (
 	"github.com/pingcap/tidb/pkg/expression"
 	"github.com/pingcap/tidb/pkg/lightning/mydump"
 	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/parser/terror"

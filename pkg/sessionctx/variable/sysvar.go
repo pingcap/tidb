@@ -19,19 +19,35 @@ import (
 	"encoding/json"
 	goerr "errors"
 	"fmt"
+	"math"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync/atomic"
+	"time"
+
 	"github.com/docker/go-units"
+	"github.com/pingcap/errors"
+	"github.com/pingcap/tidb/pkg/config"
 	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
+	"github.com/pingcap/tidb/pkg/keyspace"
+	"github.com/pingcap/tidb/pkg/kv"
 	"github.com/pingcap/tidb/pkg/metrics"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/model"
+	"github.com/pingcap/tidb/pkg/parser/mysql"
 	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
 	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
+	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
+	"github.com/pingcap/tidb/pkg/types"
+	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
 	"github.com/pingcap/tidb/pkg/util"
 	"github.com/pingcap/tidb/pkg/util/collate"
 	"github.com/pingcap/tidb/pkg/util/gctuner"
 	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/pingcap/tidb/pkg/util/logutil"
 	"github.com/pingcap/tidb/pkg/util/mathutil"
 	"github.com/pingcap/tidb/pkg/util/memory"
 	"github.com/pingcap/tidb/pkg/util/servicescope"
@@ -42,27 +58,11 @@ import (
 	"github.com/pingcap/tidb/pkg/util/timeutil"
 	"github.com/pingcap/tidb/pkg/util/tls"
 	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	tikvstore "github.com/tikv/client-go/v2/kv"
-	"go.uber.org/zap"
-	"math"
-	"runtime"
-	"strconv"
-	"strings"
-	"sync/atomic"
-	"time"
-
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
 	tikvcliutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/zap"
 )
 
 // All system variables declared here are ordered by their scopes, which follow the order of scopes below:
@@ -330,7 +330,6 @@ var defaultSysVars = []*SysVar{
 		return fmt.Sprintf("{\"conflict_skip_rows\": %d}", s.ActiveActiveConflictSkipRows.Load()), nil
 	}},
 	{Scope: ScopeSession, Name: TiDBAllowRemoveAutoInc, Value: BoolToOnOff(DefTiDBAllowRemoveAutoInc), Type: TypeBool, SetSession: func(s *SessionVars, val string) error {
-
 		s.AllowRemoveAutoInc = TiDBOptOn(val)
 		return nil
 	}},
