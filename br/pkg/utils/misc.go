@@ -51,6 +51,10 @@ const (
 	// https://github.com/tikv/pd/blob/c40e319f50822678cda71ae62ee2fd70a9cac010/pkg/core/store.go#L523
 
 	storeDisconnectionDuration = 100 * time.Second
+
+	// LabelRuleBatchSize is the batch size for getting/putting label rules to/from PD
+	// to avoid overwhelming PD with too many requests at once
+	LabelRuleBatchSize = 50
 )
 
 // IsTypeCompatible checks whether type target is compatible with type src
