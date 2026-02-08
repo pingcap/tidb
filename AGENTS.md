@@ -54,6 +54,10 @@ This file provides guidance to agents when working with code in this repository.
 - Notes directory: `docs/note/<component>/` is the canonical location for component notes. If missing, create it and add an entry here.
 - Notes rules: update existing sections when topics overlap; append new sections only for new topics. Purpose: capture decisions, pitfalls, and test patterns.
 - Planner rule notes: `docs/note/planner/rule/rule_ai_notes.md`.
+- Planner join notes: `docs/note/planner/join_notes.md`.
+- Planner plan cache notes: `docs/note/planner/plan_cache_notes.md`.
+- Planner reports tests: keep `reports` cases focused on a target error string; allow non-target SQL errors in `case.sql` so regression tests only guard the intended failure mode.
+- Planner reports tests: close `RecordSet` returned by `tk.Exec` to avoid coprocessor goroutine leaks.
 - If a single notes file exceeds 2000 lines, split by functionality into multiple markdown files and update references here.
 - Predicate pushdown testdata (`pkg/planner/core/casetest/rule/testdata/predicate_pushdown_suite_in.json`) should contain SQL-only cases; put DDL in the test setup to avoid `EXPLAIN` parsing DDL during record runs.
 - Integration test recording uses `./run-tests.sh -r <name>` (not `-record`).

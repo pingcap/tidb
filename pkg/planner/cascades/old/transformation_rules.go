@@ -1176,7 +1176,7 @@ func (*MergeAdjacentProjection) OnTransform(old *memo.ExprIter) (newExprs []*mem
 	}
 
 	newProj := logicalop.LogicalProjection{Exprs: make([]expression.Expression, len(proj.Exprs))}.Init(proj.SCtx(), proj.QueryBlockOffset())
-	newProj.SetSchema(old.GetExpr().Group.Prop.Schema)
+	newProj.SetSchema(old.GetExpr().Group.Prop.Schema.Clone())
 	for i, expr := range proj.Exprs {
 		newExpr := expr.Clone()
 		ruleutil.ResolveExprAndReplace(newExpr, replace)
@@ -1472,7 +1472,7 @@ func (*MergeAdjacentTopN) OnTransform(old *memo.ExprIter) (newExprs []*memo.Grou
 
 	if child.Count <= topN.Offset {
 		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
-		tableDual.SetSchema(old.GetExpr().Schema())
+		tableDual.SetSchema(old.GetExpr().Schema().Clone())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
 	}
@@ -1708,7 +1708,7 @@ func (*MergeAdjacentLimit) OnTransform(old *memo.ExprIter) (newExprs []*memo.Gro
 
 	if child.Count <= limit.Offset {
 		tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(child.SCtx(), child.QueryBlockOffset())
-		tableDual.SetSchema(old.GetExpr().Schema())
+		tableDual.SetSchema(old.GetExpr().Schema().Clone())
 		tableDualExpr := memo.NewGroupExpr(tableDual)
 		return []*memo.GroupExpr{tableDualExpr}, true, true, nil
 	}
@@ -1751,7 +1751,7 @@ func (*TransformLimitToTableDual) Match(expr *memo.ExprIter) bool {
 func (*TransformLimitToTableDual) OnTransform(old *memo.ExprIter) (newExprs []*memo.GroupExpr, eraseOld bool, eraseAll bool, err error) {
 	limit := old.GetExpr().ExprNode.(*logicalop.LogicalLimit)
 	tableDual := logicalop.LogicalTableDual{RowCount: 0}.Init(limit.SCtx(), limit.QueryBlockOffset())
-	tableDual.SetSchema(old.GetExpr().Schema())
+	tableDual.SetSchema(old.GetExpr().Schema().Clone())
 	tableDualExpr := memo.NewGroupExpr(tableDual)
 	return []*memo.GroupExpr{tableDualExpr}, true, true, nil
 }
@@ -2285,14 +2285,14 @@ func (*InjectProjectionBelowTopN) OnTransform(old *memo.ExprIter) (newExprs []*m
 	topProj := logicalop.LogicalProjection{
 		Exprs: topProjExprs,
 	}.Init(topN.SCtx(), topN.QueryBlockOffset())
-	topProj.SetSchema(oldTopNSchema)
+	topProj.SetSchema(oldTopNSchema.Clone())
 
 	// Construct bottom Projection.
 	bottomProjExprs := make([]expression.Expression, 0, oldTopNSchema.Len()+len(topN.ByItems))
 	bottomProjSchema := make([]*expression.Column, 0, oldTopNSchema.Len()+len(topN.ByItems))
 	for _, col := range oldTopNSchema.Columns {
 		bottomProjExprs = append(bottomProjExprs, col)
-		bottomProjSchema = append(bottomProjSchema, col)
+		bottomProjSchema = append(bottomProjSchema, col.Clone().(*expression.Column))
 	}
 	newByItems := make([]*util.ByItems, 0, len(topN.ByItems))
 	for _, item := range topN.ByItems {

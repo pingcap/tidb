@@ -314,11 +314,22 @@ func (s *DecorrelateSolver) optimize(ctx context.Context, p base.LogicalPlan, gr
 			}
 		} else if agg, ok := innerPlan.(*logicalop.LogicalAggregation); ok {
 			if apply.CanPullUpAgg() && agg.CanPullUp() {
+				validKey := []*expression.Column(nil)
+				outerSchema := outerPlan.Schema()
+				for _, key := range outerSchema.PKOrUK {
+					if outerSchema.ColumnsIndices(key) != nil {
+						validKey = key
+						break
+					}
+				}
+				if len(validKey) == 0 {
+					goto NoOptimize
+				}
 				innerPlan = agg.Children()[0]
 				apply.JoinType = base.LeftOuterJoin
 				apply.SetChildren(outerPlan, innerPlan)
 				agg.SetSchema(apply.Schema())
-				agg.GroupByItems = expression.Column2Exprs(outerPlan.Schema().PKOrUK[0])
+				agg.GroupByItems = expression.Column2Exprs(validKey)
 				newAggFuncs := make([]*aggregation.AggFuncDesc, 0, apply.Schema().Len())
 
 				outerColsInSchema := make([]*expression.Column, 0, outerPlan.Schema().Len())

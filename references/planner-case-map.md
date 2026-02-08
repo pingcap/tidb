@@ -1,6 +1,5 @@
 # Planner Case Map
 
-## pkg/planner/core/casetest/rule
+## casetest/join
 
-- predicate_pushdown_suite_in.json
-  - TestConstantPropagateWithCollation: predicate simplification + results; includes outer join OR-constant case (`/* issue:65994 */`).
+- `reports_test.go`: replays `reports/case_*` with `summary.json` filtering, only targets "Can't find column" regressions (case SQL tolerates non-target errors).

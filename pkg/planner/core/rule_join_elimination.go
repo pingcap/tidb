@@ -210,6 +210,30 @@ func (o *OuterJoinEliminator) doOptimize(p base.LogicalPlan, aggCols []*expressi
 	}
 
 	switch x := p.(type) {
+	case *logicalop.LogicalJoin:
+		parentCols = parentCols[:0]
+		parentCols = append(parentCols, x.Schema().Columns...)
+		if x.JoinType == base.LeftOuterJoin || x.JoinType == base.RightOuterJoin {
+			outerIdx := 0
+			if x.JoinType == base.RightOuterJoin {
+				outerIdx = 1
+			}
+			outerSchema := x.Children()[outerIdx].Schema()
+			if join, ok := x.Children()[outerIdx].(*logicalop.LogicalJoin); ok && join.FullSchema != nil {
+				outerSchema = join.FullSchema
+			}
+			condCols := make([]*expression.Column, 0)
+			condCols = append(condCols, expression.ExtractColumnsFromExpressions(x.OtherConditions, nil)...)
+			condCols = append(condCols, expression.ExtractColumnsFromExpressions(x.LeftConditions, nil)...)
+			condCols = append(condCols, expression.ExtractColumnsFromExpressions(x.RightConditions, nil)...)
+			condCols = append(condCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.EqualConditions), nil)...)
+			condCols = append(condCols, expression.ExtractColumnsFromExpressions(expression.ScalarFuncs2Exprs(x.NAEQConditions), nil)...)
+			for _, col := range condCols {
+				if outerSchema != nil && outerSchema.Contains(col) {
+					parentCols = append(parentCols, col)
+				}
+			}
+		}
 	case *logicalop.LogicalApply:
 		// TODO: this is tied to variable tidb_opt_enable_no_decorrelate_in_select
 		// to enable outer join elimination when correlated subqueries exist in the select
