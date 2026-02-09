@@ -378,7 +378,6 @@ func checkConnectionAndMakeJoin(detector *ConflictDetector, leftPlan, rightPlan 
 		if !allowNoEQ {
 			return nil, nil, nil
 		}
-		// TODO duplicated with makeBushyTree?
 		if checkResult = detector.TryCreateCartesianCheckResult(leftPlan, rightPlan); checkResult == nil {
 			return nil, nil, nil
 		}
