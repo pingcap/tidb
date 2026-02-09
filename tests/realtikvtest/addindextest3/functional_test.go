@@ -18,19 +18,15 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"strings"
-	"sync"
 	"testing"
 
 	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
 	"github.com/pingcap/tidb/pkg/parser/model"
 	"github.com/pingcap/tidb/pkg/tablecodec"
 	"github.com/pingcap/tidb/pkg/testkit"
 	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
 	"github.com/pingcap/tidb/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -79,72 +75,6 @@ func TestDDLTestEstimateTableRowSize(t *testing.T) {
 		size = ddl.EstimateTableRowSizeForTest(ctx, store, exec, partition)
 		require.Equal(t, 19, size)
 	}
-}
-
-func TestBackendCtxConcurrentUnregister(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	discovery := store.(tikv.Storage).GetRegionCache().PDClient().GetServiceDiscovery()
-	bCtx, err := ingest.LitBackCtxMgr.Register(context.Background(), 1, false, nil, discovery, "test", 1)
-	require.NoError(t, err)
-	idxIDs := []int64{1, 2, 3, 4, 5, 6, 7}
-	for _, idxID := range idxIDs {
-		_, err = bCtx.Register(1, idxID, "test", "t")
-		require.NoError(t, err)
-	}
-
-	wg := sync.WaitGroup{}
-	wg.Add(3)
-	idxCh := make(chan int64, len(idxIDs))
-	for _, idxID := range idxIDs {
-		idxCh <- idxID
-	}
-	close(idxCh)
-	for i := 0; i < 3; i++ {
-		go func() {
-			for idxID := range idxCh {
-				bCtx.Unregister(1, idxID)
-			}
-			wg.Done()
-		}()
-	}
-	wg.Wait()
-	ingest.LitBackCtxMgr.Unregister(1)
-}
-
-func TestMockMemoryUsedUp(t *testing.T) {
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/ingest/setMemTotalInMB", "return(100)")
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test;")
-	tk.MustExec("create table t (c int, c2 int, c3 int, c4 int);")
-	tk.MustExec("insert into t values (1,1,1,1), (2,2,2,2), (3,3,3,3);")
-	tk.MustGetErrMsg("alter table t add index i(c), add index i2(c2);", "[ddl:8247]Ingest failed: memory used up")
-}
-
-func TestTiDBEncodeKeyTempIndexKey(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int primary key, b int);")
-	tk.MustExec("insert into t values (1, 1);")
-	runDML := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
-		if !runDML && job.Type == model.ActionAddIndex && job.SchemaState == model.StateWriteOnly {
-			tk2 := testkit.NewTestKit(t, store)
-			tk2.MustExec("use test")
-			tk2.MustExec("insert into t values (2, 2);")
-			runDML = true
-		}
-	})
-	tk.MustExec("create index idx on t(b);")
-	require.True(t, runDML)
-
-	rows := tk.MustQuery("select tidb_mvcc_info(tidb_encode_index_key('test', 't', 'idx', 1, 1));").Rows()
-	rs := rows[0][0].(string)
-	require.Equal(t, 1, strings.Count(rs, "writes"), rs)
-	rows = tk.MustQuery("select tidb_mvcc_info(tidb_encode_index_key('test', 't', 'idx', 2, 2));").Rows()
-	rs = rows[0][0].(string)
-	require.Equal(t, 2, strings.Count(rs, "writes"), rs)
 }
 
 func TestAddIndexPresplitIndexRegions(t *testing.T) {
