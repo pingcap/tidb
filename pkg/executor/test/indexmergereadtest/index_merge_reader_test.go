@@ -905,9 +905,6 @@ func TestOrderByWithLimitForINConditions(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(a int, b int, c int, index idx_ac(a, c), index idx_bc(b, c))")
 
-	// Analyze before insert to speed up UT.
-	tk.MustExec("analyze table t")
-
 	valueSlice := make([]*valueStruct, 0, 500)
 	vals := make([]string, 0, 500)
 	for range 500 {
