@@ -1549,16 +1549,16 @@ func findBestTask4LogicalDataSource(lp base.LogicalPlan, prop *property.Physical
 		}
 	}()
 
-		// TiFlash doesn't support ExtraCommitTS column now.
-		accessCommitTSCol := false
-		for _, col := range ds.Schema().Columns {
-			if col.ID == model.ExtraCommitTSID {
-				accessCommitTSCol = true
-				break
-			}
+	// TiFlash doesn't support ExtraCommitTS column now.
+	accessCommitTSCol := false
+	for _, col := range ds.Schema().Columns {
+		if col.ID == model.ExtraCommitTSID {
+			accessCommitTSCol = true
+			break
 		}
-		cntPlan = 0
-		for _, candidate := range candidates {
+	}
+	cntPlan = 0
+	for _, candidate := range candidates {
 		path := candidate.path
 		if path.PartialIndexPaths != nil {
 			// prefer tiflash, while current table path is tikv, skip it.
@@ -2862,7 +2862,7 @@ func convertToPointGet(ds *logicalop.DataSource, prop *property.PhysicalProperty
 		return base.InvalidTask
 	}
 	for _, col := range ds.Columns {
-		if col.ID == model.ExtraCommitTsID {
+		if col.ID == model.ExtraCommitTSID {
 			return base.InvalidTask
 		}
 	}
@@ -2939,7 +2939,7 @@ func convertToBatchPointGet(ds *logicalop.DataSource, prop *property.PhysicalPro
 		return base.InvalidTask
 	}
 	for _, col := range ds.Columns {
-		if col.ID == model.ExtraCommitTsID {
+		if col.ID == model.ExtraCommitTSID {
 			return base.InvalidTask
 		}
 	}

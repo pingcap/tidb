@@ -519,7 +519,7 @@ func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, co
 			execSummary[i] = e.buildSummary()
 			execSummary[i].TimeProcessedNs = &timeProcessed
 			if i != 0 {
-				e = exec.child()
+				e = e.getChildren()[0]
 			}
 		}
 		selResp.ExecutionSummaries = execSummary

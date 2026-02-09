@@ -19,7 +19,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/charset"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -193,31 +192,31 @@ func TestModelBasic(t *testing.T) {
 }
 
 func TestIsXXXColumn(t *testing.T) {
-	name := ast.NewCIStr("a")
+	name := model.NewCIStr("a")
 	require.False(t, IsSoftDeleteColumn(name))
 	require.False(t, IsActiveActiveColumn(name))
 	require.False(t, IsSoftDeleteOrActiveActiveColumn(name))
 	require.False(t, IsInternalColumn(name))
 
-	softDeleteTime := ast.NewCIStr(ExtraSoftDeleteTimeName.O)
+	softDeleteTime := model.NewCIStr(ExtraSoftDeleteTimeName.O)
 	require.True(t, IsSoftDeleteColumn(softDeleteTime))
 	require.False(t, IsActiveActiveColumn(softDeleteTime))
 	require.True(t, IsSoftDeleteOrActiveActiveColumn(softDeleteTime))
 	require.True(t, IsInternalColumn(softDeleteTime))
 
-	originTS := ast.NewCIStr(ExtraOriginTSName.O)
+	originTS := model.NewCIStr(ExtraOriginTSName.O)
 	require.False(t, IsSoftDeleteColumn(originTS))
 	require.True(t, IsActiveActiveColumn(originTS))
 	require.True(t, IsSoftDeleteOrActiveActiveColumn(originTS))
 	require.True(t, IsInternalColumn(originTS))
 
-	commitTS := ast.NewCIStr(ExtraCommitTSName.O)
+	commitTS := model.NewCIStr(ExtraCommitTSName.O)
 	require.False(t, IsSoftDeleteColumn(commitTS))
 	require.False(t, IsActiveActiveColumn(commitTS))
 	require.False(t, IsSoftDeleteOrActiveActiveColumn(commitTS))
 	require.True(t, IsInternalColumn(commitTS))
 
-	handle := ast.NewCIStr(ExtraHandleName.O)
+	handle := model.NewCIStr(ExtraHandleName.O)
 	require.False(t, IsSoftDeleteColumn(handle))
 	require.False(t, IsActiveActiveColumn(handle))
 	require.False(t, IsSoftDeleteOrActiveActiveColumn(handle))

@@ -20,6 +20,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/pingcap/badger"
@@ -412,7 +413,7 @@ func TestIndexScanWithExtraPhysTblIDAndCommitTs(t *testing.T) {
 		{ColumnId: indexColID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 		{ColumnId: model.ExtraHandleID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 		{ColumnId: model.ExtraPhysTblID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
-		{ColumnId: model.ExtraCommitTsID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraCommitTSID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 	}
 
 	dagRequest := newDagBuilder().
@@ -446,7 +447,7 @@ func TestIndexScanSpecialColumnsMustBeTrailing(t *testing.T) {
 
 	colInfos := []*tipb.ColumnInfo{
 		{ColumnId: 1, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
-		{ColumnId: model.ExtraCommitTsID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
+		{ColumnId: model.ExtraCommitTSID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 		{ColumnId: model.ExtraHandleID, Tp: int32(mysql.TypeLonglong), Collation: -mysql.DefaultCollationID},
 	}
 

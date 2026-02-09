@@ -22,7 +22,6 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
 	"github.com/pingcap/tidb/pkg/parser/auth"
 	"github.com/pingcap/tidb/pkg/parser/duration"
 	"github.com/pingcap/tidb/pkg/parser/model"
@@ -94,28 +93,28 @@ var ExtraPhysTblIDName = model.NewCIStr("_tidb_tid")
 var ExtraCommitTSName = model.NewCIStr("_tidb_commit_ts")
 
 // ExtraOriginTSName is the name of ExtraOriginTSID Column.
-var ExtraOriginTSName = ast.NewCIStr("_tidb_origin_ts")
+var ExtraOriginTSName = model.NewCIStr("_tidb_origin_ts")
 
 // ExtraSoftDeleteTimeName is the name of ExtraSoftDeleteTimeID Column.
-var ExtraSoftDeleteTimeName = ast.NewCIStr("_tidb_softdelete_time")
+var ExtraSoftDeleteTimeName = model.NewCIStr("_tidb_softdelete_time")
 
 // IsInternalColumn will check if a column name is reserved.
-func IsInternalColumn(x ast.CIStr) bool {
+func IsInternalColumn(x model.CIStr) bool {
 	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x) || x.L == ExtraHandleName.L || x.L == ExtraCommitTSName.L
 }
 
 // IsSoftDeleteOrActiveActiveColumn will check if a column name is reserved.
-func IsSoftDeleteOrActiveActiveColumn(x ast.CIStr) bool {
+func IsSoftDeleteOrActiveActiveColumn(x model.CIStr) bool {
 	return IsSoftDeleteColumn(x) || IsActiveActiveColumn(x)
 }
 
 // IsActiveActiveColumn will check if a column name is reserved.
-func IsActiveActiveColumn(x ast.CIStr) bool {
+func IsActiveActiveColumn(x model.CIStr) bool {
 	return x.L == ExtraOriginTSName.L
 }
 
 // IsSoftDeleteColumn will check if a column name is reserved.
-func IsSoftDeleteColumn(x ast.CIStr) bool {
+func IsSoftDeleteColumn(x model.CIStr) bool {
 	return x.L == ExtraSoftDeleteTimeName.L
 }
 

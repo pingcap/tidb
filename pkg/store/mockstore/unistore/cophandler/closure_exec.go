@@ -306,9 +306,9 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 	)
 	for i, col := range e.columnInfos {
 		switch col.ColumnId {
-		case model.ExtraCommitTsID:
+		case model.ExtraCommitTSID:
 			if commitTsIdx != -1 {
-				return errors.Errorf("duplicated special column %d", model.ExtraCommitTsID)
+				return errors.Errorf("duplicated special column %d", model.ExtraCommitTSID)
 			}
 			commitTsIdx = i
 		case model.ExtraPhysTblID:
@@ -319,7 +319,7 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 		}
 	}
 	if commitTsIdx != -1 && commitTsIdx != len(e.columnInfos)-1 {
-		return errors.Errorf("special column %d must be last (got idx=%d, len=%d)", model.ExtraCommitTsID, commitTsIdx, len(e.columnInfos))
+		return errors.Errorf("special column %d must be last (got idx=%d, len=%d)", model.ExtraCommitTSID, commitTsIdx, len(e.columnInfos))
 	}
 	if physTblIDIdx != -1 {
 		expected := len(e.columnInfos) - 1
@@ -336,7 +336,7 @@ func (e *closureExecutor) initIdxScanCtx(idxScan *tipb.IndexScan) error {
 
 	// Trim trailing special columns which are not encoded in the index key/value.
 	// See `tablecodec.DecodeIndexKV` / coprocessor returned special columns.
-	if lastColumn.GetColumnId() == model.ExtraCommitTsID {
+	if lastColumn.GetColumnId() == model.ExtraCommitTSID {
 		e.idxScanCtx.columnLen--
 		lastColumn = e.columnInfos[e.idxScanCtx.columnLen-1]
 	}
@@ -603,7 +603,7 @@ func (e *closureExecutor) execute() ([]tipb.Chunk, error) {
 	for i, ran := range e.kvRanges {
 		e.curNdv = 0
 		if e.isPointGetRange(ran) {
-			val, meta, err := dbReader.Get(ran.StartKey, e.startTS)
+			val, meta, err := dbReader.GetWithUserMeta(ran.StartKey, e.startTS)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -986,7 +986,7 @@ func (e *closureExecutor) indexScanProcessCore(key, value []byte) error {
 
 	idxCommitTs := -1
 	idxPhysTblID := -1
-	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraCommitTsID {
+	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraCommitTSID {
 		idxCommitTs = len(e.columnInfos) - 1
 	}
 	if len(e.columnInfos) > 0 && e.columnInfos[len(e.columnInfos)-1].ColumnId == model.ExtraPhysTblID {

@@ -106,22 +106,32 @@ func (r *DBReader) GetMvccInfoByKey(key []byte, _ bool, mvccInfo *kvrpcpb.MvccIn
 
 // Get gets a value with the key and start ts.
 func (r *DBReader) Get(key []byte, startTS uint64) ([]byte, error) {
+	val, _, err := r.GetWithUserMeta(key, startTS)
+	return val, err
+}
+
+// GetWithUserMeta gets a value with the key and start ts and returns user meta.
+func (r *DBReader) GetWithUserMeta(key []byte, startTS uint64) ([]byte, mvcc.DBUserMeta, error) {
 	r.txn.SetReadTS(startTS)
 	if r.RcCheckTS {
 		r.txn.SetReadTS(math.MaxUint64)
 	}
 	item, err := r.txn.Get(key)
 	if err != nil && err != badger.ErrKeyNotFound {
-		return nil, errors.Trace(err)
+		return nil, mvcc.DBUserMeta{}, errors.Trace(err)
 	}
 	if item == nil {
-		return nil, nil
+		return nil, mvcc.DBUserMeta{}, nil
 	}
 	err = r.CheckWriteItemForRcCheckTSRead(startTS, item)
 	if err != nil {
-		return nil, errors.Trace(err)
+		return nil, mvcc.DBUserMeta{}, errors.Trace(err)
 	}
-	return item.Value()
+	val, err := item.Value()
+	if err != nil {
+		return nil, mvcc.DBUserMeta{}, errors.Trace(err)
+	}
+	return val, item.UserMeta(), nil
 }
 
 // GetIter returns the *badger.Iterator of a *DBReader.
