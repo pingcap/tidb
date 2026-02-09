@@ -84,23 +84,6 @@ func (d *ConflictDetector) iterateEdges(fn func(e *edge) bool) {
 	}
 }
 
-func (d *ConflictDetector) CountRemainingEdges(usedEdges map[uint64]struct{}) (numOfEQEdges int, numOfNonEQEdges int) {
-	d.iterateEdges(func(e *edge) bool {
-		if len(e.eqConds) > 0 {
-			if _, ok := usedEdges[e.idx]; !ok {
-				numOfEQEdges++
-			}
-		}
-		if len(e.nonEQConds) > 0 {
-			if _, ok := usedEdges[e.idx]; !ok {
-				numOfNonEQEdges++
-			}
-		}
-		return true
-	})
-	return
-}
-
 type rule struct {
 	from intset.FastIntSet
 	to   intset.FastIntSet
