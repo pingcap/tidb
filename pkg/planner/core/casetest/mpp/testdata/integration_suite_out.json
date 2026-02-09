@@ -1363,14 +1363,15 @@
         "Plan": [
           "TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender",
           "└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough",
-          "  └─HashJoin 10000.00 mpp[tiflash]  inner join, equal:[eq(test.t.id, Column#11)]",
-          "    ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
-          "    │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
-          "    │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#11",
-          "    │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
-          "    │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
-          "    └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
-          "      └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
+          "  └─Projection 10000.00 mpp[tiflash]  test.t.id, test.t.value, test.t.name, Column#11",
+          "    └─HashJoin 10000.00 mpp[tiflash]  inner join, equal:[eq(Column#11, test.t.id)]",
+          "      ├─ExchangeReceiver(Build) 8000.00 mpp[tiflash]  ",
+          "      │ └─ExchangeSender 8000.00 mpp[tiflash]  ExchangeType: Broadcast, Compression: FAST",
+          "      │   └─Projection 8000.00 mpp[tiflash]  minus(test.t.id, 2)->Column#11",
+          "      │     └─Selection 8000.00 mpp[tiflash]  not(isnull(minus(test.t.id, 2)))",
+          "      │       └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo",
+          "      └─Selection(Probe) 9990.00 mpp[tiflash]  not(isnull(test.t.id))",
+          "        └─TableFullScan 10000.00 mpp[tiflash] table:t keep order:false, stats:pseudo"
         ]
       },
       {
