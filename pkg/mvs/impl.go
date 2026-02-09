@@ -1,4 +1,4 @@
-package utils
+package mvs
 
 import (
 	"context"
@@ -325,24 +325,23 @@ func getMinRefreshReadTSO(ctx context.Context, sctx sessionctx.Context, mvIDs []
 	return rows[0].GetInt64(0), nil
 }
 
-var mvs *MVService
-
 // RegisterMVS registers a DDL event handler for MV-related events.
-func RegisterMVS(ddlNotifier *notifier.DDLNotifier, se basic.SessionPool) {
-	if ddlNotifier == nil {
-		return
+// onDDLHandled is invoked after the local MV service is notified, and can be
+// used by callers to fan out this event to other nodes.
+func RegisterMVS(ctx context.Context, ddlNotifier *notifier.DDLNotifier, se basic.SessionPool, onDDLHandled func()) *MVService {
+	if ddlNotifier == nil || se == nil || onDDLHandled == nil {
+		return nil
 	}
 
-	mvs = NewMVJobsManager(se, &serverHelper{})
+	mvs := NewMVJobsManager(ctx, se, &serverHelper{})
 
 	ddlNotifier.RegisterHandler(notifier.MVJobsHandlerID, func(_ context.Context, _ sessionctx.Context, event *notifier.SchemaChangeEvent) error {
 		switch event.GetType() {
 		case meta.ActionCreateMaterializedViewLog:
-			mvs.ddlDirty.Store(true)
-			mvs.notifier.Wake()
+			onDDLHandled()
 		}
 		return nil
 	})
 
-	mvs.Start()
+	return mvs
 }

@@ -59,6 +59,7 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/autoid"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/pingcap/tidb/pkg/mvs"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/parser"
 	"github.com/pingcap/tidb/pkg/parser/ast"
@@ -151,6 +152,7 @@ type Domain struct {
 	ddl             ddl.DDL
 	ddlExecutor     ddl.Executor
 	ddlNotifier     *notifier.DDLNotifier
+	mvService       *mvs.MVService
 	info            *infosync.InfoSyncer
 	globalCfgSyncer *globalconfigsync.GlobalConfigSyncer
 	m               syncutil.Mutex
@@ -1388,7 +1390,8 @@ func (do *Domain) Init(
 	)
 	// TODO(lance6716): find a more representative place for subscriber
 	failpoint.InjectCall("afterDDLNotifierCreated", do.ddlNotifier)
-
+	// Register MVS DDL handler before DDLNotifier may start.
+	do.mvService = mvs.RegisterMVS(do.ctx, do.ddlNotifier, do.sysSessionPool, do.notifyMVSMetadataChange)
 	d := do.ddl
 	eBak := do.ddlExecutor
 	do.ddl, do.ddlExecutor = ddl.NewDDL(
@@ -1765,6 +1768,48 @@ func (do *Domain) InitDistTaskLoop() error {
 		logutil.BgLogger().Error("initialize global max batch split ranges failed", zap.Error(err))
 	}
 	return nil
+}
+
+// StartMVService starts the MV service.
+func (do *Domain) StartMVService() error {
+	if do.mvService == nil {
+		return errors.New("failed to register MV service")
+	}
+	do.wg.Run(do.mvService.Run, "mvService")
+	do.wg.Run(do.watchMVSMetaChange, "watchMVSMetaChange")
+	return nil
+}
+
+func (do *Domain) watchMVSMetaChange() {
+	if do.etcdClient == nil {
+		return
+	}
+	watchCh := do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
+	defer func() {
+		logutil.BgLogger().Info("watchMVSMetaChange exited.")
+	}()
+	defer util.Recover(metrics.LabelDomain, "watchMVSMetaChange", nil, false)
+
+	var count int
+	for {
+		ok := true
+		select {
+		case <-do.exit:
+			return
+		case _, ok = <-watchCh:
+		}
+		if !ok {
+			logutil.BgLogger().Warn("watch MVS metadata change loop watch channel closed")
+			watchCh = do.etcdClient.Watch(do.ctx, mvsDDLNotifyKey)
+			count++
+			if count > 10 {
+				time.Sleep(time.Duration(count) * time.Second)
+			}
+			continue
+		}
+		count = 0
+		do.mvService.NotifyDDLChange()
+	}
 }
 
 func (do *Domain) distTaskFrameworkLoop(ctx context.Context, taskManager *storage.TaskManager, executorManager *taskexecutor.Manager, serverID string) {
@@ -2883,6 +2928,7 @@ const (
 	privilegeKey          = "/tidb/privilege"
 	sysVarCacheKey        = "/tidb/sysvars"
 	tiflashComputeNodeKey = "/tiflash/new_tiflash_compute_nodes"
+	mvsDDLNotifyKey       = "/tidb/mvs/ddl"
 )
 
 // NotifyUpdatePrivilege updates privilege key in etcd, TiDB client that watches
@@ -2925,6 +2971,17 @@ func (do *Domain) NotifyUpdateSysVarCache(updateLocal bool) {
 		if err := do.rebuildSysVarCache(nil); err != nil {
 			logutil.BgLogger().Error("rebuilding sysvar cache failed", zap.Error(err))
 		}
+	}
+}
+
+func (do *Domain) notifyMVSMetadataChange() {
+	if do.etcdClient == nil {
+		return
+	}
+	row := do.etcdClient.KV
+	_, err := row.Put(context.Background(), mvsDDLNotifyKey, "")
+	if err != nil {
+		logutil.BgLogger().Warn("notify mvs metadata change failed", zap.Error(err))
 	}
 }
 

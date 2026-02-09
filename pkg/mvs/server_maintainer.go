@@ -1,4 +1,4 @@
-package utils
+package mvs
 
 import (
 	"context"
@@ -20,6 +20,7 @@ type ServerHelper interface {
 }
 
 type ServerConsistentHash struct {
+	ctx     context.Context
 	servers map[string]serverInfo
 	chash   ConsistentHash // use consistent hash to reduce task movements after nodes changed
 	mu      sync.RWMutex
@@ -27,15 +28,19 @@ type ServerConsistentHash struct {
 	helper  ServerHelper
 }
 
-func NewServerConsistentHash(replicas int, helper ServerHelper) *ServerConsistentHash {
+func NewServerConsistentHash(ctx context.Context, replicas int, helper ServerHelper) *ServerConsistentHash {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return &ServerConsistentHash{
+		ctx:     ctx,
 		servers: make(map[string]serverInfo),
 		chash:   *NewConsistentHash(replicas),
 		helper:  helper,
 	}
 }
 
-func (sch *ServerConsistentHash) init(ctx context.Context) {
+func (sch *ServerConsistentHash) init() {
 	if sch == nil {
 		return
 	}
@@ -56,7 +61,7 @@ func (sch *ServerConsistentHash) init(ctx context.Context) {
 	}
 
 	for {
-		err := sch.Refresh(ctx)
+		err := sch.Refresh()
 		// only break when refresh is successful
 		if err == nil {
 			break
@@ -82,8 +87,8 @@ func (sch *ServerConsistentHash) removeServer(srvID string) {
 	sch.chash.RemoveNode(srvID)
 }
 
-func (sch *ServerConsistentHash) Refresh(ctx context.Context) error {
-	newServerInfos, err := sch.helper.getAllServerInfo(ctx)
+func (sch *ServerConsistentHash) Refresh() error {
+	newServerInfos, err := sch.helper.getAllServerInfo(sch.ctx)
 	if err != nil {
 		logutil.BgLogger().Warn("get available TiDB nodes failed", zap.Error(err))
 		return err

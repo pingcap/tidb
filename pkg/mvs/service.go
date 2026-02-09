@@ -1,4 +1,4 @@
-package utils
+package mvs
 
 import (
 	"context"
@@ -20,10 +20,7 @@ type MVServiceHelper interface {
 type MVService struct {
 	sysSessionPool basic.SessionPool
 	lastRefresh    atomic.Int64
-	running        atomic.Bool
-	runWg          sync.WaitGroup
 	ctx            context.Context
-	cancel         context.CancelFunc
 	sch            *ServerConsistentHash
 
 	executor *TaskExecutor
@@ -63,19 +60,17 @@ const (
 )
 
 // NewMVJobsManager creates a MVJobsManager with a SQL executor.
-func NewMVJobsManager(se basic.SessionPool, helper MVServiceHelper) *MVService {
+func NewMVJobsManager(ctx context.Context, se basic.SessionPool, helper MVServiceHelper) *MVService {
 	if helper == nil || se == nil {
 		panic("invalid arguments")
 	}
-	ctx, cancel := context.WithCancel(context.Background())
 	mgr := &MVService{
 		sysSessionPool: se,
-		sch:            NewServerConsistentHash(10, helper),
+		sch:            NewServerConsistentHash(ctx, 10, helper),
 		executor:       NewTaskExecutor(ctx, defaultMVTaskMaxConcurrency, defaultMVTaskTimeout),
 
 		notifier: NewNotifier(),
 		ctx:      ctx,
-		cancel:   cancel,
 		mh:       helper,
 	}
 	return mgr
@@ -84,6 +79,15 @@ func NewMVJobsManager(se basic.SessionPool, helper MVServiceHelper) *MVService {
 // SetTaskExecConfig sets the execution config for MV tasks.
 func (t *MVService) SetTaskExecConfig(maxConcurrency int, timeout time.Duration) {
 	t.executor.UpdateConfig(maxConcurrency, timeout)
+}
+
+// NotifyDDLChange marks MV metadata as dirty and wakes the service loop.
+func (t *MVService) NotifyDDLChange() {
+	if t == nil {
+		return
+	}
+	t.ddlDirty.Store(true)
+	t.notifier.Wake()
 }
 
 type mv struct {
@@ -215,23 +219,14 @@ CreateTiDBMLogPurgeHistTable = `CREATE TABLE IF NOT EXISTS mysql.tidb_mlog_purge
     KEY idx_mlog_newest(MLOG_ID, IS_NEWEST_PURGE))`
 */
 
-func (t *MVService) Start() {
-	if t.running.Swap(true) {
-		return
-	}
-	t.sch.init(t.ctx)
-	t.ddlDirty.Store(true)
-	t.notifier.Wake()
+func (t *MVService) Run() {
+	t.sch.init()
+	t.executor.Run()
 
-	t.runWg.Add(1)
-	go t.scheduleLoop()
-}
-
-func (t *MVService) scheduleLoop() {
 	timer := time.NewTimer(0)
 	defer func() {
 		timer.Stop()
-		t.runWg.Done()
+		t.executor.Close()
 	}()
 
 	for {
@@ -245,14 +240,10 @@ func (t *MVService) scheduleLoop() {
 			return
 		}
 
-		if !t.running.Load() {
-			return
-		}
-
 		now := time.Now()
 
 		if forceFetch || t.shouldFetch(now) {
-			t.sch.Refresh(t.ctx)
+			t.sch.Refresh()
 			if err := t.FetchAllMVMeta(t.ctx); err != nil {
 				// avoid tight retries on fetch failures
 				t.lastRefresh.Store(now.UnixMilli())
@@ -266,16 +257,6 @@ func (t *MVService) scheduleLoop() {
 		next := t.nextScheduleTime(now)
 		resetTimer(timer, time.Until(next))
 	}
-}
-
-// Close stops the background refresh loop.
-func (t *MVService) Close() {
-	t.cancel()
-	if !t.running.Swap(false) {
-		return
-	}
-	t.runWg.Wait()
-	t.executor.Close()
 }
 
 func (t *MVService) shouldFetch(now time.Time) bool {

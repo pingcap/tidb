@@ -1,4 +1,4 @@
-package utils
+package mvs
 
 import (
 	"context"
@@ -62,7 +62,7 @@ func TestServerConsistentHashAddRemoveAndAvailable(t *testing.T) {
 		"key-mid": 15,
 	}
 
-	sch := NewServerConsistentHash(1, &mockServerHelper{})
+	sch := NewServerConsistentHash(context.Background(), 1, &mockServerHelper{})
 	sch.chash.hashFunc = mustHash(mapping)
 	sch.ID = "nodeB"
 
@@ -120,10 +120,10 @@ func TestServerConsistentHashFetchAppliesFilter(t *testing.T) {
 			return s.ID == "nodeA"
 		},
 	}
-	sch := NewServerConsistentHash(1, helper)
+	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 
-	if err := sch.Refresh(context.Background()); err != nil {
+	if err := sch.Refresh(); err != nil {
 		t.Fatalf("fetch failed: %v", err)
 	}
 	if len(sch.servers) != 1 {
@@ -151,16 +151,16 @@ func TestServerConsistentHashFetchNoChange(t *testing.T) {
 			"nodeA": {ID: "nodeA"},
 		},
 	}
-	sch := NewServerConsistentHash(1, helper)
+	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 
-	if err := sch.Refresh(context.Background()); err != nil {
+	if err := sch.Refresh(); err != nil {
 		t.Fatalf("first fetch failed: %v", err)
 	}
 	beforeNodeCount := sch.chash.NodeCount()
 	beforeRingSize := len(sch.chash.ring)
 
-	if err := sch.Refresh(context.Background()); err != nil {
+	if err := sch.Refresh(); err != nil {
 		t.Fatalf("second fetch failed: %v", err)
 	}
 	if got := sch.chash.NodeCount(); got != beforeNodeCount {
@@ -189,10 +189,10 @@ func TestServerConsistentHashInit(t *testing.T) {
 			"nodeA": {ID: "nodeA"},
 		},
 	}
-	sch := NewServerConsistentHash(1, helper)
+	sch := NewServerConsistentHash(context.Background(), 1, helper)
 	sch.chash.hashFunc = mustHash(mapping)
 
-	sch.init(context.Background())
+	sch.init()
 
 	if sch.ID != "nodeA" {
 		t.Fatalf("expected current ID nodeA, got %s", sch.ID)
@@ -212,9 +212,9 @@ func TestServerConsistentHashFetchError(t *testing.T) {
 	helper := &mockServerHelper{
 		allErr: errors.New("boom"),
 	}
-	sch := NewServerConsistentHash(1, helper)
+	sch := NewServerConsistentHash(context.Background(), 1, helper)
 
-	err := sch.Refresh(context.Background())
+	err := sch.Refresh()
 	if err == nil {
 		t.Fatalf("expected fetch error, got nil")
 	}

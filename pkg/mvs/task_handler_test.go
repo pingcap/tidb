@@ -1,4 +1,4 @@
-package utils
+package mvs
 
 import (
 	"context"
@@ -61,8 +61,7 @@ func TestMVServiceDefaultTaskHandler(t *testing.T) {
 		refreshErr: ErrMVRefreshHandlerNotRegistered,
 		purgeErr:   ErrMVLogPurgeHandlerNotRegistered,
 	}
-	svc := NewMVJobsManager(mockSessionPool{}, helper)
-	defer svc.Close()
+	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
 
 	_, _, err := svc.mh.RefreshMV(context.Background(), mockSessionPool{}, "mv-1")
 	require.ErrorIs(t, err, ErrMVRefreshHandlerNotRegistered)
@@ -79,8 +78,7 @@ func TestMVServiceUseInjectedTaskHandler(t *testing.T) {
 		refreshNext:    nextRefresh,
 		purgeNext:      nextPurge,
 	}
-	svc := NewMVJobsManager(mockSessionPool{}, helper)
-	defer svc.Close()
+	svc := NewMVJobsManager(context.Background(), mockSessionPool{}, helper)
 
 	related, gotNextRefresh, err := svc.mh.RefreshMV(context.Background(), mockSessionPool{}, "mv-2")
 	require.NoError(t, err)

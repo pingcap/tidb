@@ -66,7 +66,6 @@ import (
 	"github.com/pingcap/tidb/pkg/meta/metabuild"
 	"github.com/pingcap/tidb/pkg/meta/model"
 	"github.com/pingcap/tidb/pkg/metrics"
-	mvs "github.com/pingcap/tidb/pkg/mvs"
 	"github.com/pingcap/tidb/pkg/owner"
 	"github.com/pingcap/tidb/pkg/param"
 	"github.com/pingcap/tidb/pkg/parser"
@@ -3711,7 +3710,10 @@ func bootstrapSessionImpl(ctx context.Context, store kv.Storage, createSessionsI
 		return nil, err
 	}
 
-	mvs.RegisterMVS(dom.DDLNotifier(), dom.SysSessionPool())
+	err = dom.StartMVService()
+	if err != nil {
+		return nil, err
+	}
 
 	// This only happens in testing, since the failure of loading or parsing sql file
 	// would panic the bootstrapping.

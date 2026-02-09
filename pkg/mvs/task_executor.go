@@ -1,4 +1,4 @@
-package utils
+package mvs
 
 import (
 	"context"
@@ -58,8 +58,19 @@ func NewTaskExecutor(ctx context.Context, maxConcurrency int, timeout time.Durat
 	exec.queue.cond = sync.NewCond(&exec.queue.mu)
 	exec.maxConcurrency.Store(int64(maxConcurrency))
 	exec.timeoutNanos.Store(int64(timeout))
-	exec.startWorkers(maxConcurrency)
 	return exec
+}
+
+// Run starts worker goroutines according to current maxConcurrency.
+func (e *TaskExecutor) Run() {
+	if e == nil || e.closed.Load() {
+		return
+	}
+	workers := int(e.maxConcurrency.Load())
+	if workers <= 0 {
+		workers = 1
+	}
+	e.startWorkers(workers)
 }
 
 // UpdateConfig updates maxConcurrency and timeout dynamically.
@@ -123,8 +134,16 @@ func (e *TaskExecutor) Close() {
 		return
 	}
 	e.queue.mu.Lock()
+	pending := len(e.queue.tasks)
+	e.queue.tasks = nil
 	e.queue.cond.Broadcast()
 	e.queue.mu.Unlock()
+	if pending > 0 {
+		e.metrics.waitingCount.Add(-int64(pending))
+		for range pending {
+			e.tasksWG.Done()
+		}
+	}
 	e.tasksWG.Wait()
 	e.workers.wg.Wait()
 }

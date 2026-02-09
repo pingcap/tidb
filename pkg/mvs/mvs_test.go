@@ -1,4 +1,4 @@
-package utils
+package mvs
 
 import (
 	"context"
@@ -10,6 +10,7 @@ import (
 
 func TestTaskExecutorMaxConcurrency(t *testing.T) {
 	exec := NewTaskExecutor(context.Background(), 1, 0)
+	exec.Run()
 	defer exec.Close()
 
 	started := make(chan string, 2)
@@ -64,6 +65,7 @@ func TestTaskExecutorMaxConcurrency(t *testing.T) {
 
 func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 	exec := NewTaskExecutor(context.Background(), 1, 0)
+	exec.Run()
 	defer exec.Close()
 
 	started := make(chan struct{}, 2)
@@ -119,6 +121,7 @@ func TestTaskExecutorUpdateMaxConcurrency(t *testing.T) {
 
 func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 	exec := NewTaskExecutor(context.Background(), 1, 50*time.Millisecond)
+	exec.Run()
 	defer exec.Close()
 
 	started := make(chan string, 2)
@@ -169,6 +172,7 @@ func TestTaskExecutorTimeoutReleasesSlot(t *testing.T) {
 
 func TestTaskExecutorUpdateTimeout(t *testing.T) {
 	exec := NewTaskExecutor(context.Background(), 1, 0)
+	exec.Run()
 	defer exec.Close()
 
 	exec.setTimeout(40 * time.Millisecond)
